@@ -317,7 +317,10 @@ describe("layer_ops — op → command mapping (§2.2 ids, one batch)", () => {
   });
 
   it("reports the batch's documentRevision", async () => {
-    const { result } = await runOk({ op: "duplicate", layer: { layerId: "2" } }, { revision: 42 });
+    const { result } = await runOk(
+      { op: "duplicate", layer: { layerId: "2" } },
+      { revision: 42 },
+    );
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.documentRevision).toBe(42);
@@ -636,7 +639,7 @@ describe("layer_ops — §10.1 group-before-multiply warnings", () => {
   it("a failed advisory relist never fails the mutation", async () => {
     const { result } = await runOk({ op: "duplicate", layer: { layerId: "2" } }, {
       trees: [TREE],
-      listFailure: { ok: false, code: "engine_timeout", message: "listing timed out", retryable: true },
+      listFailure: { ok: false, code: "engine_timeout", message: "timed out", retryable: true },
       failListFromCall: 2,
     });
     expect(result.ok).toBe(true);
