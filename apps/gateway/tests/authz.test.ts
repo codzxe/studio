@@ -142,7 +142,9 @@ describe("ROLE_RANK (W4-C contract)", () => {
     expect(ROLES).toEqual(["viewer", "editor", "admin", "owner"]);
   });
 
-  it.each(ROLES)("PERMISSIONS.%s lists exactly the expected grants", (role) => {
+  const roleCases: [Role][] = ROLES.map((role): [Role] => [role]);
+
+  it.each(roleCases)("PERMISSIONS.%s lists exactly the expected grants", (role) => {
     expect([...PERMISSIONS[role]]).toEqual([...EXPECTED_PERMISSIONS_BY_ROLE[role]]);
   });
 });
@@ -152,17 +154,17 @@ describe("ROLE_RANK (W4-C contract)", () => {
 // ---------------------------------------------------------------------------
 
 describe("can() — full matrix, every role × every permission (§15.2)", () => {
-  const matrixCases: [Permission, Role, boolean][] = ALL_PERMISSIONS.flatMap((permission) =>
+  const matrixCases: [Role, Permission, boolean][] = ALL_PERMISSIONS.flatMap((permission) =>
     ROLES.map(
-      (role): [Permission, Role, boolean] => [
-        permission,
+      (role): [Role, Permission, boolean] => [
         role,
+        permission,
         EXPECTED_PERMISSIONS_BY_ROLE[role].includes(permission)
       ]
     )
   );
 
-  it.each(matrixCases)("can(%s, %s) → %s", (permission, role, expected) => {
+  it.each(matrixCases)("can(%s, %s) → %s", (role, permission, expected) => {
     expect(can(role, permission)).toBe(expected);
   });
 
@@ -380,7 +382,9 @@ describe("assertTenant", () => {
       expect(error.message).not.toContain(resourceOrgId);
       expect(error.hint ?? "").not.toContain(resourceOrgId);
     }
-    expect(error.message).not.toContain(ctxOrgId === "" ? "EMPTY_ORG_NEVER_MATCHES" : ctxOrgId);
+    if (ctxOrgId !== "") {
+      expect(error.message).not.toContain(ctxOrgId);
+    }
   });
 
   it("assertDocAccess routes documents through the same seam (resource_kind: document)", () => {

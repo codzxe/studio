@@ -22,6 +22,10 @@
 //   v1.route("/", createRunEventRoutes({ auth, runLookup, bus }));
 //   // …or keep the exported const: wireRunEventRoutes({ auth, runLookup, bus });
 //   // and mount `runEventRoutes` unchanged.
+// The injected seams adapt to the landed W4 surfaces with ~10-line adapters:
+//   auth       — W4-B's middleware/auth-context.ts (requireAuth → c.get session)
+//                or W4-G's services/runs.ts `AuthLike` (map Result → caller|null)
+//   runLookup  — W4-G's services/runs.ts `RunsStore` (org-scoped run fetch)
 // Live fan-out note: the worker is the only publisher (§5.1) and it lives in
 // another process, so in-process bus live events only cover gateway-side
 // publishes until the §3.1 Valkey/queue SSE-bridge lands. This router only
@@ -35,11 +39,10 @@
 // The real bus satisfies them shape-for-shape; DO NOT let them drift — diff
 // against packages/agent/src/eventbus.ts first.
 
-import type { Context } from "hono";
-import { Hono } from "hono";
+import type { RunEventType } from "@studio/db";
+import { type Context, Hono } from "hono";
 import type { Logger } from "pino";
 import { z } from "zod";
-import type { RunEventType } from "@studio/db";
 import { AppError } from "../middleware/error-mapper.js";
 import type { AppEnv } from "../types.js";
 
@@ -241,6 +244,15 @@ async function streamRunEvents(c: Context<AppEnv>, deps: RunEventsDeps): Promise
   const organizationId = caller.organizationId;
   const heartbeatMs = deps.heartbeatMs ?? SSE_HEARTBEAT_MS;
 
+  // A request whose signal already fired (client vanished mid-dispatch) must
+  // never open a stream: the abort listener below would never fire (signals
+  // don't replay) and the subscription would park until the run ended.
+  if (c.req.raw.signal.aborted) {
+    throw new AppError(499, "client_disconnected", "The client went away before the stream opened.", {
+      retryable: false,
+    });
+  }
+
   // Client-disconnect bridge: the request signal aborts on socket close and
   // the reader-side `cancel()` covers body aborts; both stop the pump.
   const disconnect = new AbortController();
@@ -308,12 +320,15 @@ async function streamRunEvents(c: Context<AppEnv>, deps: RunEventsDeps): Promise
       } finally {
         clearInterval(heartbeat);
         disconnect.signal.removeEventListener("abort", onAbort);
-        if (disconnect.signal.aborted) {
+        if (end === "drained" && disconnect.signal.aborted) {
           end = "disconnected";
         }
         subscription.unsubscribe();
         closeStream();
-        logger?.debug({ run_id: runId, last_seq: lastSentSeq, reason: end }, "run_event_stream_closed");
+        logger?.debug(
+          { run_id: runId, last_seq: lastSentSeq, reason: end },
+          "run_event_stream_closed",
+        );
       }
     },
     cancel() {

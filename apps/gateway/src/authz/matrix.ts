@@ -217,8 +217,9 @@ export function auditMatrix(): RbacMatrixAudit {
 
   for (const entry of PERMISSION_MATRIX) {
     // (4) Cited ADR rows must exist; extras must carry a citation.
-    if (entry.source.adrRow !== null && !ADR_RBAC_TABLE.some((row) => row.capability === entry.source.adrRow)) {
-      problems.push(`"${entry.permission}" cites an ADR row that does not exist: "${entry.source.adrRow}"`);
+    const citedRow = entry.source.adrRow;
+    if (citedRow !== null && !ADR_RBAC_TABLE.some((row) => row.capability === citedRow)) {
+      problems.push(`"${entry.permission}" cites an ADR row that does not exist: "${citedRow}"`);
     }
     if (entry.source.citation.trim() === "") {
       problems.push(`"${entry.permission}" has no source citation`);
@@ -257,9 +258,13 @@ export function auditMatrix(): RbacMatrixAudit {
 
   // (8) PERMISSIONS per-role lists match the matrix grants exactly (order + contents).
   for (const role of ROLES) {
-    const fromMatrix = PERMISSION_MATRIX.filter((entry) => entry.grants[role]).map((entry) => entry.permission);
+    const grantedRows = PERMISSION_MATRIX.filter((entry) => entry.grants[role]);
+    const fromMatrix = grantedRows.map((entry) => entry.permission);
     const declared = [...PERMISSIONS[role]];
-    if (declared.length !== fromMatrix.length || declared.some((p, index) => p !== fromMatrix[index])) {
+    if (
+      declared.length !== fromMatrix.length ||
+      declared.some((p, index) => p !== fromMatrix[index])
+    ) {
       problems.push(`PERMISSIONS["${role}"] does not match the matrix grants`);
     }
   }

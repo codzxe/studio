@@ -26,11 +26,11 @@
 //   guard.assertTenant({ organizationId: doc.organizationId }, session);
 //
 // GuardContext is structurally satisfied by SessionContext
-// (src/auth/session.ts: { userId, organizationId, role, permissions }): the
-// auth middleware populates `role` (narrowed with isRole) and `permissions`
-// with PERMISSIONS[role] for member sessions, or the API-key scope
-// intersection for key sessions — never wider than the creating member
-// (ADR-0003).
+// (src/middleware/auth-context.ts / src/auth/session.ts:
+// { userId, organizationId, role, permissions }): the auth middleware
+// populates `role` (narrowed with isRole) and `permissions` with
+// PERMISSIONS[role] for member sessions, or the API-key scope intersection
+// for key sessions — never wider than the creating member (ADR-0003).
 
 import { httpStatusFor } from "@studio/config";
 import { AppError } from "../middleware/error-mapper.js";
@@ -46,8 +46,13 @@ export interface GuardContext {
    * Effective grants for this session. Member sessions: PERMISSIONS[role]
    * (src/authz/roles.ts). API-key sessions: intersection with the key's
    * scopes (§15.2) — an empty or malformed list grants NOTHING (fail closed).
+   *
+   * Typed as `readonly string[]` (not the Permission union) on purpose so the
+   * auth middleware's SessionContext composes without casts (W4-B's mirror
+   * uses `Permission = string`); a grant still requires the ADR-bounded
+   * matrix check AND membership here, so unknown strings can only narrow.
    */
-  readonly permissions: readonly Permission[];
+  readonly permissions: readonly string[];
 }
 
 /** A resource owned by an organization — the tenant key every row carries (§15.1). */
@@ -95,7 +100,7 @@ export class CrossTenantDeniedError extends AppError {
 /** Runtime defense: only a real grants array counts — anything else grants nothing. */
 function hasSessionPermission(ctx: GuardContext, permission: Permission): boolean {
   const granted: unknown = ctx.permissions;
-  return Array.isArray(granted) && (granted as readonly string[]).includes(permission);
+  return Array.isArray(granted) && granted.includes(permission);
 }
 
 /** True when the resource is not provably in the caller's organization (fail closed). */

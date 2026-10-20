@@ -90,7 +90,8 @@ export function isPermission(value: unknown): value is Permission {
 /** All permissions, ascending by minimum role then name (deterministic order). */
 export const ALL_PERMISSIONS: readonly Permission[] = Object.freeze(
   (Object.keys(MIN_ROLE_FOR_PERMISSION) as Permission[]).sort((a, b) => {
-    const rankDelta = ROLE_RANK[MIN_ROLE_FOR_PERMISSION[b]] - ROLE_RANK[MIN_ROLE_FOR_PERMISSION[a]];
+    const rankDelta =
+      ROLE_RANK[MIN_ROLE_FOR_PERMISSION[b]] - ROLE_RANK[MIN_ROLE_FOR_PERMISSION[a]];
     return rankDelta !== 0 ? rankDelta : a.localeCompare(b);
   })
 );
