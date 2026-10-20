@@ -1,0 +1,38 @@
+# dependencies / build artifacts
+node_modules/
+dist/
+build/
+.next/
+out/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# logs & os
+*.log
+.DS_Store
+
+# fonts are NEVER committed (spec §1.5 rule 9) — they come from CRAFT_FONTS_DIR
+*.ttf
+*.otf
+*.woff
+*.woff2
+fonts/
+
+# rust artifacts (engine-patches are source-only)
+target/
+
+# heavy binary assets — outputs go to object storage, not git
+*.pcraft
+!evals/fixtures/**/*.pcraft
+*.psd
+*.psb
+
+# editor misc
+.idea/
+.vscode/
