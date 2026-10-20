@@ -136,6 +136,7 @@ describe('env: gateway', () => {
   it('exposes isEnvFatalError for app entrypoints', () => {
     try {
       parseGatewayEnv(fixtureWithout(gatewayFixture, 'AUTH_SECRET'));
+      expect.unreachable('parseGatewayEnv must throw');
     } catch (error) {
       expect(isEnvFatalError(error)).toBe(true);
       expect(isEnvFatalError(new Error('plain'))).toBe(false);

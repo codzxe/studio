@@ -52,6 +52,18 @@ const VERSION_THUMBNAIL_KEY = `seed/${DEMO_ORG_SLUG}/demo-flyer-r1.png`;
 
 // --- env (minimal local zod check; mirrors src/client.ts) --------------------
 const EXAMPLE_URL = "postgres://studio:changeme@localhost:5432/studio";
+
+/** Host token after optional userinfo — same rules as src/client.ts hostOf(). */
+function hostOf(value: string): string | undefined {
+  const schemeEnd = value.indexOf("://");
+  if (schemeEnd === -1) {
+    return undefined;
+  }
+  const authority = (value.slice(schemeEnd + 3).split(/[/?#]/, 1)[0] ?? "").trim();
+  const host = authority.slice(authority.lastIndexOf("@") + 1);
+  return /^[a-z0-9._-]+(:\d+)?$/i.test(host) || host.startsWith("[") ? host : undefined;
+}
+
 const urlSchema = z
   .string()
   .trim()
@@ -59,7 +71,7 @@ const urlSchema = z
   .refine((value) => /^postgres(?:ql)?:\/\//i.test(value), {
     message: "DATABASE_URL must start with postgres:// or postgresql://",
   })
-  .refine((value) => value.split("://", 2)[1]?.split(/[/?#]/, 1)[0]?.trim() !== "", {
+  .refine((value) => hostOf(value) !== undefined, {
     message: `DATABASE_URL must include a host, e.g. ${EXAMPLE_URL}`,
   });
 
