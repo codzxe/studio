@@ -108,26 +108,37 @@ pub(crate) fn scan(dir: &Path) -> Result<Catalog> {
         let file = path.to_string_lossy().into_owned();
         let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         if std::fs::metadata(&path).map_or(true, |m| m.len() > MAX_MANIFEST_BYTES) {
-            cat.skipped.push((stem, format!("{file}: the manifest is unreadable or larger than {} bytes", MAX_MANIFEST_BYTES)));
+            // `skipped` is sized by an untrusted directory: past the cap the scan keeps
+            // walking for servable templates but stops recording junk (the vendor's
+            // profile walk never accumulates the files it passes over).
+            if cat.skipped.len() < MAX_TEMPLATES {
+                cat.skipped.push((stem, format!("{file}: the manifest is unreadable or larger than {} bytes", MAX_MANIFEST_BYTES)));
+            }
             continue;
         }
         let bytes = match read_file(&file) {
             Ok(b) => b,
             Err(e) => {
-                cat.skipped.push((stem, e.to_string()));
+                if cat.skipped.len() < MAX_TEMPLATES {
+                    cat.skipped.push((stem, e.to_string()));
+                }
                 continue;
             }
         };
         let manifest = match TemplateManifest::from_slice(&bytes) {
             Ok(m) => m,
             Err(e) => {
-                cat.skipped.push((stem, e.at(file.as_str()).to_string()));
+                if cat.skipped.len() < MAX_TEMPLATES {
+                    cat.skipped.push((stem, e.at(file.as_str()).to_string()));
+                }
                 continue;
             }
         };
         let doc = path.with_extension("pcraft").to_string_lossy().into_owned();
         if !Path::new(&doc).is_file() {
-            cat.skipped.push((stem, format!("{file}: no .pcraft document beside the manifest")));
+            if cat.skipped.len() < MAX_TEMPLATES {
+                cat.skipped.push((stem, format!("{file}: no .pcraft document beside the manifest")));
+            }
             continue;
         }
         cat.templates.push(TemplateFile { manifest, file, doc });
