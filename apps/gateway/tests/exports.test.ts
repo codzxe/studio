@@ -7,12 +7,16 @@
 // The idempotent enqueue wrapper (services/exports.ts) is exercised through
 // the mounted routes AND directly — including the concurrent in-flight replay.
 
-import { err, ok, type Result } from "@studio/config";
+import { err, ok, type PlanId, type Result } from "@studio/config";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { gatewayTransportSchema } from "../src/env.js";
-import { mountExportRoutes, type ExportPrincipal } from "../src/routes/exports.js";
+import {
+  mountExportRoutes,
+  type ExportPrincipal,
+  type ExportRoutesDeps,
+} from "../src/routes/exports.js";
 import {
   EXPORTS_QUEUE_NAME,
   PREVIEW_URL_TTL_SECONDS,
@@ -24,7 +28,6 @@ import {
   type ExportDocumentsLike,
   type ExportJobPayload,
   type ExportRecord,
-  type ExportRoutesDepsAlias,
   type ExportStatusLike,
   type ExportsLike,
   type ObjectUrlSignerLike,
@@ -125,13 +128,15 @@ class FakeEnqueue implements ExportsLike {
 /** Gated producer for the concurrent in-flight replay test. */
 class GatedEnqueue implements ExportsLike {
   calls = 0;
-  private readonly gate: Promise<void>;
-  readonly release: () => void;
+  private readonly resolvers: (() => void)[] = [];
+  private readonly gate: Promise<void> = new Promise<void>((resolve) => {
+    this.resolvers.push(resolve);
+  });
 
-  constructor() {
-    this.gate = new Promise<void>((resolve) => {
-      this.release = resolve;
-    });
+  release(): void {
+    for (const resolve of this.resolvers) {
+      resolve();
+    }
   }
 
   async enqueue(
@@ -150,10 +155,10 @@ class FakePreviewCache implements PreviewCacheLike {
 
   /** Seeds a well-formed key: renders/organizations/<org>/documents/<doc>/… */
   seed(organizationId: string, documentId: string, width: number, revision: number): void {
-    this.rows.set(`${documentId}:${width}`, {
-      storageKey: `renders/organizations/${organizationId}/documents/${documentId}/preview-${width}-${revision}.png`,
-      revision,
-    });
+    const storageKey =
+      `renders/organizations/${organizationId}/documents/${documentId}` +
+      `/preview-${width}-${revision}.png`;
+    this.rows.set(`${documentId}:${width}`, { storageKey, revision });
   }
 
   /** Seeds a raw row (foreign/invalid keys for the §15.1 re-guard tests). */
@@ -202,9 +207,7 @@ class FakeExportStatus implements ExportStatusLike {
     options: { readonly limit: number },
   ): Promise<readonly ExportRecord[]> {
     return this.rows
-      .filter(
-        (row) => row.organizationId === organizationId && row.documentId === documentId,
-      )
+      .filter((row) => row.organizationId === organizationId && row.documentId === documentId)
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
       .slice(0, options.limit);
   }
@@ -242,7 +245,7 @@ function makeHarness(): Harness {
   const previewCache = new FakePreviewCache();
   const signer = new FakeSigner();
   const status = new FakeExportStatus();
-  const deps: ExportRoutesDepsAlias = {
+  const deps: ExportRoutesDeps = {
     auth,
     documents,
     enqueue: withIdempotentEnqueue(enqueue),
@@ -263,7 +266,10 @@ function makeHarness(): Harness {
   return { documents, enqueue, previewCache, signer, status, app };
 }
 
-function jsonHeaders(token: string | undefined, extra: Record<string, string> = {}): Record<string, string> {
+function jsonHeaders(
+  token: string | undefined,
+  extra: Record<string, string> = {},
+): Record<string, string> {
   const headers: Record<string, string> = { "content-type": "application/json", ...extra };
   if (token !== undefined) {
     headers.authorization = `Bearer ${token}`;
@@ -311,27 +317,31 @@ async function getPreview(
 // --- pure gates -----------------------------------------------------------------
 
 describe("checkExportMegapixels (§14.1 plan ceiling)", () => {
-  it.each([
-    { width: 5000, height: 6400, plan: "starter" as const, ok: true }, // exactly 32 MP
-    { width: 5657, height: 5657, plan: "starter" as const, ok: false }, // 32.001 MP
-    { width: 8000, height: 8000, plan: "starter" as const, ok: false }, // 64 MP > 32
-    { width: 8000, height: 8000, plan: "pro" as const, ok: true }, // 64 MP == pro ceiling
-    { width: 10_000, height: 13_000, plan: "business" as const, ok: false }, // 130 MP > 128
-    { width: 0, height: 100, plan: "starter" as const, ok: false },
-    { width: 1.5, height: 100, plan: "starter" as const, ok: false },
-  ])("$width×$height on $plan → ok=$ok", ({ width, height, plan, ok: passes }) => {
+  const rows: readonly {
+    readonly width: number;
+    readonly height: number;
+    readonly plan: PlanId;
+    readonly passes: boolean;
+    readonly code: "plan_limit" | "validation_failed" | null;
+  }[] = [
+    { width: 5000, height: 6400, plan: "starter", passes: true, code: null }, // exactly 32 MP
+    { width: 5657, height: 5657, plan: "starter", passes: false, code: "plan_limit" },
+    { width: 8000, height: 8000, plan: "starter", passes: false, code: "plan_limit" },
+    { width: 8000, height: 8000, plan: "pro", passes: true, code: null }, // 64 MP == pro
+    { width: 10_000, height: 13_000, plan: "business", passes: false, code: "plan_limit" },
+    { width: 0, height: 100, plan: "starter", passes: false, code: "validation_failed" },
+    { width: 1.5, height: 100, plan: "starter", passes: false, code: "validation_failed" },
+  ];
+
+  it.each(rows)("$width×$height on $plan", ({ width, height, plan, passes, code }) => {
     const result = checkExportMegapixels(width, height, plan);
     expect(result.ok).toBe(passes);
-    if (passes) {
-      expect(result.ok && result.value.megapixels).toBeCloseTo((width * height) / 1_000_000, 6);
-    } else if (!result.ok) {
-      expect(result.code).toBe(result.code === "validation_failed" ? "validation_failed" : "plan_limit");
+    if (result.ok) {
+      expect(result.value.megapixels).toBeCloseTo((width * height) / 1_000_000, 6);
+    } else {
+      expect(result.code).toBe(code);
+      expect(result.retryable).toBe(false);
     }
-  });
-
-  it("maps a ceiling rejection to the 402 catalog code plan_limit", () => {
-    const result = checkExportMegapixels(8000, 8000, "starter");
-    expect(result).toMatchObject({ ok: false, code: "plan_limit", retryable: false });
   });
 });
 
@@ -360,7 +370,7 @@ describe("withIdempotentEnqueue (§3.4)", () => {
     expect(two).toMatchObject({ ok: true, value: { jobId: "k" } });
   });
 
-  it("rejects the same key held by another organization (409 conflict)", async () => {
+  it("rejects the same key held by another organization (conflict)", async () => {
     const inner = new FakeEnqueue();
     const wrapped = withIdempotentEnqueue(inner);
     const first = await wrapped.enqueue(EXPORTS_QUEUE_NAME, payload(ORG_A, "k"), { jobId: "k" });
@@ -423,25 +433,31 @@ describe("POST /v1/documents/:id/exports (§13.1 → job)", () => {
     });
     expect(first.status).toBe(202);
     expect(second.status).toBe(202);
-    expect((await second.json()) as unknown).toEqual(await first.json());
+    expect(await second.json()).toEqual(await first.json());
     expect(harness.enqueue.calls).toHaveLength(1);
   });
 
   it("rejects unknown formats and unknown fields with 422", async () => {
     const harness = makeHarness();
-    for (const body of [{ format: "pdf" }, { format: "" }, { format: 42 }, { format: "png", speed: 9 }]) {
+    const bodies: Record<string, unknown>[] = [
+      { format: "pdf" },
+      { format: "" },
+      { format: 42 },
+      { format: "png", speed: 9 },
+    ];
+    for (const body of bodies) {
       const res = await createExport(harness, DOC_A, body, {
         headers: { "Idempotency-Key": "k" },
       });
       expect(res.status).toBe(422);
       expect((await envelope(res)).code).toBe("validation_failed");
-      expect(harness.enqueue.calls).toHaveLength(0);
     }
+    expect(harness.enqueue.calls).toHaveLength(0);
   });
 
   it("bounds width/height to 1..8192 and quality to 1..100 (worker contract)", async () => {
     const harness = makeHarness();
-    const rejections = [
+    const rejections: Record<string, unknown>[] = [
       { format: "png", width: 0 },
       { format: "png", width: 8193 },
       { format: "png", height: 0 },
@@ -454,7 +470,11 @@ describe("POST /v1/documents/:id/exports (§13.1 → job)", () => {
       });
       expect(res.status).toBe(422);
     }
-    for (const body of [{ format: "jpg", quality: 1 }, { format: "jpg", quality: 100 }]) {
+    const accepted: Record<string, unknown>[] = [
+      { format: "jpg", quality: 1 },
+      { format: "jpg", quality: 100 },
+    ];
+    for (const body of accepted) {
       const res = await createExport(harness, DOC_A, body, {
         headers: { "Idempotency-Key": "bounds-ok" },
       });
@@ -464,12 +484,14 @@ describe("POST /v1/documents/:id/exports (§13.1 → job)", () => {
 
   it("rejects a requested size over the plan MP ceiling with 402 plan_limit", async () => {
     const harness = makeHarness();
-    const res = await createExport(harness, DOC_A, { format: "png", width: 8000, height: 8000 }, {
-      headers: { "Idempotency-Key": "over" },
-    });
+    const res = await createExport(
+      harness,
+      DOC_A,
+      { format: "png", width: 8000, height: 8000 },
+      { headers: { "Idempotency-Key": "over" } },
+    );
     expect(res.status).toBe(402);
-    const body = await envelope(res);
-    expect(body.code).toBe("plan_limit");
+    expect((await envelope(res)).code).toBe("plan_limit");
     expect(harness.enqueue.calls).toHaveLength(0);
   });
 
@@ -508,9 +530,12 @@ describe("POST /v1/documents/:id/exports (§13.1 → job)", () => {
     expect(missing.status).toBe(422);
     expect((await envelope(missing)).code).toBe("validation_failed");
 
-    const disagree = await createExport(harness, DOC_A, { format: "png", idempotency_key: "b" }, {
-      headers: { "Idempotency-Key": "a" },
-    });
+    const disagree = await createExport(
+      harness,
+      DOC_A,
+      { format: "png", idempotency_key: "b" },
+      { headers: { "Idempotency-Key": "a" } },
+    );
     expect(disagree.status).toBe(422);
 
     const bodyOnly = await createExport(harness, DOC_A, { format: "png", idempotency_key: "c" });
@@ -529,7 +554,7 @@ describe("POST /v1/documents/:id/exports (§13.1 → job)", () => {
     });
     expect(foreign.status).toBe(404);
     expect(unknown.status).toBe(404);
-    expect((await envelope(foreign))).toEqual(await envelope(unknown));
+    expect(await envelope(foreign)).toEqual(await envelope(unknown));
   });
 
   it("409s when another organization holds the same idempotency key", async () => {
@@ -616,17 +641,13 @@ describe("GET /v1/documents/:id/preview?w=1024 (§13.1 cached preview)", () => {
     const res = await getPreview(harness, DOC_A, "?w=1024");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { url: string; revision: number; expires_at: string };
+    const expectedKey = `renders/organizations/${ORG_A}/documents/${DOC_A}/preview-1024-7.png`;
     expect(body.revision).toBe(7);
-    expect(body.url).toBe(
-      `https://objects.example.test/renders/organizations/${ORG_A}/documents/${DOC_A}/preview-1024-7.png?sig=test`,
-    );
+    expect(body.url).toBe(`https://objects.example.test/${expectedKey}?sig=test`);
     expect(res.headers.get("location")).toBe(body.url);
     expect(new Date(body.expires_at).getTime()).toBeGreaterThan(Date.now());
     expect(harness.signer.calls).toEqual([
-      {
-        key: `renders/organizations/${ORG_A}/documents/${DOC_A}/preview-1024-7.png`,
-        ttlSeconds: PREVIEW_URL_TTL_SECONDS,
-      },
+      { key: expectedKey, ttlSeconds: PREVIEW_URL_TTL_SECONDS },
     ]);
   });
 
@@ -663,7 +684,6 @@ describe("GET /v1/documents/:id/preview?w=1024 (§13.1 cached preview)", () => {
 
   it("404s a foreign document as not_found, not preview_not_rendered (§15.1)", async () => {
     const harness = makeHarness();
-    harness.previewCache.seed(ORG_B, DOC_B, 1024, 3);
     const res = await getPreview(harness, DOC_A, "?w=1024", TOKEN_B);
     expect(res.status).toBe(404);
     expect((await envelope(res)).code).toBe("not_found");
@@ -738,7 +758,7 @@ describe("GET /v1/documents/:id/exports (§13.1 list)", () => {
       format: "jpg",
       status: "succeeded",
       revision: 3,
-      createdAt,
+      createdAt: created,
     });
 
     const res = await listExports(harness, DOC_A);
@@ -774,7 +794,7 @@ describe("GET /v1/documents/:id/exports (§13.1 list)", () => {
 
   it("honors the limit bound and 404s foreign documents (§15.1)", async () => {
     const harness = makeHarness();
-    for (const id of ["l1", "l2", "l3"]) {
+    for (const [index, id] of ["l1", "l2", "l3"].entries()) {
       harness.status.seed({
         exportId: id,
         documentId: DOC_A,
@@ -782,7 +802,7 @@ describe("GET /v1/documents/:id/exports (§13.1 list)", () => {
         format: "png",
         status: "failed",
         revision: 7,
-        createdAt: new Date(`2025-01-0${id.slice(1)}T00:00:00.000Z`),
+        createdAt: new Date(`2025-01-0${index + 1}T00:00:00.000Z`),
       });
     }
     const limited = await listExports(harness, DOC_A, "?limit=2");

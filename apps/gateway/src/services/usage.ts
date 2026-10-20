@@ -213,7 +213,15 @@ export interface RunDayStats {
 
 /** A zeroed run day (no runs landed in this UTC bucket). */
 export function emptyRunDayStats(day: DayKey): RunDayStats {
-  return { day, runs: 0, runsByStatus: {}, runsByTier: {}, costMicroUsd: 0, tokensIn: 0, tokensOut: 0 };
+  return {
+    day,
+    runs: 0,
+    runsByStatus: {},
+    runsByTier: {},
+    costMicroUsd: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+  };
 }
 
 function countInto(buckets: Record<string, number>, key: string, count: number): void {

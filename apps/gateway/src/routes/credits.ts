@@ -510,7 +510,7 @@ creditRoutes.get("/", async (c) => {
 
   const query = CREDITS_PAGE_QUERY_SCHEMA.parse(c.req.query());
   const before = query.cursor !== undefined ? decodeLedgerCursor(query.cursor) : undefined;
-  if (query.cursor !== undefined && before === undefined) {
+  if (before === null) {
     throw new AppError(422, "validation_failed", "The pagination cursor is malformed.", {
       hint: "Pass the next_cursor value from the previous page unmodified.",
       retryable: true,

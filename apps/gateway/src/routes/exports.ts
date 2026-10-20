@@ -188,7 +188,9 @@ function resolveIdempotencyKey(c: Context<ExportsEnv>, bodyKey: string | undefin
       "validation_failed",
       "An idempotency key is required to create an export.",
       {
-        hint: "Send an Idempotency-Key header (a client-generated UUID) — retries with the same key return the same export job (§3.4).",
+        hint:
+          "Send an Idempotency-Key header (a client-generated UUID) — retries with " +
+          "the same key return the same export job (§3.4).",
         retryable: true,
       },
     );
@@ -280,7 +282,10 @@ previewRoutes.get("/", async (c) => {
       "preview_not_rendered",
       "No preview has been rendered for this document at the requested size yet.",
       {
-        hint: "Open the document in the editor or run an edit first — the worker renders and caches previews after the first open or run (§13.1), then this endpoint serves a signed URL.",
+        hint:
+          "Open the document in the editor or run an edit first — the worker renders " +
+          "and caches previews after the first open or run (§13.1), then this " +
+          "endpoint serves a signed URL.",
         retryable: true,
       },
     );

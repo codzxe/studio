@@ -92,7 +92,10 @@ export const EXPORT_QUALITY_MAX = 100;
  * fidelity report. Returned in `warnings` for every psd request.
  */
 export const PSD_EXPERIMENTAL_WARNING =
-  "PSD export is experimental: Photoshop acceptance is not yet reliable (engine issues #1281, #2469), so it ships with a warning label and a fidelity report. The layered .pcraft format is the primary output and the only format promised as round-trip-perfect (§2.3).";
+  "PSD export is experimental: Photoshop acceptance is not yet reliable " +
+  "(engine issues #1281, #2469), so it ships with a warning label and a fidelity " +
+  "report. The layered .pcraft format is the primary output and the only format " +
+  "promised as round-trip-perfect (§2.3).";
 
 // ---------------------------------------------------------------------------
 // Format → MIME map (artifact content types for the storage adapter)
@@ -147,7 +150,8 @@ export function checkExportMegapixels(
   if (width > ceilingPixels || height > ceilingPixels || pixels > ceilingPixels) {
     return err(
       "plan_limit",
-      `${subject} of ${width}×${height} px exceeds the ${limits.maxCanvasMegapixels} MP ceiling of the ${plan} plan`,
+      `${subject} of ${width}×${height} px exceeds the ${limits.maxCanvasMegapixels} MP ` +
+        `ceiling of the ${plan} plan`,
       {
         hint: "Export a smaller canvas or upgrade the workspace plan (§14.1).",
         retryable: false,
@@ -393,7 +397,10 @@ export interface SignedObjectUrl {
  * per-request (15-minute TTL, §13) so URLs are never persisted.
  */
 export interface ObjectUrlSignerLike {
-  sign(storageKey: string, options: { readonly ttlSeconds: number }): Promise<Result<SignedObjectUrl>>;
+  sign(
+    storageKey: string,
+    options: { readonly ttlSeconds: number },
+  ): Promise<Result<SignedObjectUrl>>;
 }
 
 /**
@@ -581,12 +588,13 @@ export async function createExportJob(
     return enqueued;
   }
 
-  return ok({
+  const queued: ExportQueued = {
     exportId: enqueued.value.jobId,
     status: "queued",
     revision: document.currentRevision,
     warnings,
-  });
+  };
+  return ok(queued);
 }
 
 // ---------------------------------------------------------------------------
@@ -632,7 +640,8 @@ export async function resolvePreview(
   if (cached === null) {
     // Cache-write is the worker's job (W2-N PreviewPipeline after open/run) —
     // the route turns this into 404 preview_not_rendered with a hint.
-    return ok({ found: false, reason: "not_cached" });
+    const miss: PreviewResolution = { found: false, reason: "not_cached" };
+    return ok(miss);
   }
 
   // §15.1 defense in depth: the seam is org-scoped by contract, but the key is
@@ -661,12 +670,13 @@ export async function resolvePreview(
     });
   }
 
-  return ok({
+  const hit: PreviewResolution = {
     found: true,
     url: signed.value.url,
     revision: cached.revision,
     expiresAt: signed.value.expiresAt,
-  });
+  };
+  return ok(hit);
 }
 
 // ---------------------------------------------------------------------------
