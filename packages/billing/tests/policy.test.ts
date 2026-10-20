@@ -33,12 +33,13 @@ describe("creditsForRun (§5.2 + §14.4 exact table)", () => {
 });
 
 describe("creditsForImages (§14.1: 1024² = 1, HD = 2, per image)", () => {
-  it.each([
+  const imageCases: ReadonlyArray<readonly [number, boolean, number]> = [
     [1, false, 1],
     [3, false, 3],
     [1, true, 2],
     [4, true, 8],
-  ])("%d image(s), hd=%s → %d credits", (count, hd, credits) => {
+  ];
+  it.each(imageCases)("%d image(s), hd=%s → %d credits", (count, hd, credits) => {
     expect(creditsForImages(count, { hd })).toBe(credits);
   });
 
