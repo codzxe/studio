@@ -1,87 +1,45 @@
-// @studio/mock-engine — fault injection hooks for integration tests.
-//
-// The real headless server (vendor/photocraft `photocraft-cli serve`) never misbehaves on
-// purpose, but the studio spine (W2-J) must survive the ways a real engine process can fail:
-// a hard crash mid-command, a method that never replies (client timeout path), and a reply
-// too large for the transport (the 8 MiB reply ceiling in docs/control-protocol.md ›
-// Transport limits). This module is mock-only and has no vendor counterpart.
-//
-// Faults are configured two ways:
-//   1. at launch: MOCK_ENGINE_FAULTS='<json>' (see README.md › Fault hooks)
-//   2. at runtime: the mock-only `mock.faults` method — `{"config": {...}}` arms, `{"config": null}`
-//      resets; the reply is `{"faults": {...}}`. `mock.faults` is intentionally NOT part of the
-//      `methods` reply, which stays byte-identical to the vendor list.
+// @ts-check
+/**
+ * Env-driven fault injection for chaos tests: `MOCK_FAULT=crash-on-command|hang|oversized-reply`.
+ * Hooks fire on every `engine.execute` dispatch, before the command runs
+ * (docs/control-protocol.md › Engine commands). Zero dependencies.
+ */
+import process from "node:process";
+
+/** @typedef {"crash-on-command" | "hang" | "oversized-reply"} FaultMode */
+
+/** The recognized `MOCK_FAULT` values (anything else is ignored). */
+export const FAULT_MODES = /** @type {const} */ (["crash-on-command", "hang", "oversized-reply"]);
 
 /**
- * @typedef {Object} FaultConfig
- * @property {string|null} [crashOnCommand]
- *   An engine command id (`engine.execute`/batch dispatch kills the process with exit code 1
- *   when this command runs, before any reply — the client sees the connection drop).
- * @property {string|null} [hangOnMethod]
- *   A control method id whose reply is never written (the connection stays open until the
- *   30 s idle timeout drops it — the client must hit its own request timeout).
- * @property {string|null} [oversizedReply]
- *   A control method id whose result is padded past the 8 MiB reply ceiling, so the transport
- *   answers with the vendor's reply-budget error ("response exceeds …; operation may have
- *   completed" — studio typed name `frame_too_large`).
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {FaultMode | ""}
  */
-
-const CONFIG_KEYS = new Set(["crashOnCommand", "hangOnMethod", "oversizedReply"]);
-
-/** Parse and validate a fault configuration object. Returns a frozen plain object. */
-export function parseFaultConfig(value) {
-  if (value === null || value === undefined) return Object.freeze({});
-  if (typeof value === "string") {
-    try {
-      value = JSON.parse(value);
-    } catch (error) {
-      throw new Error(`MOCK_ENGINE_FAULTS is not valid JSON: ${error.message}`);
-    }
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("MOCK_ENGINE_FAULTS must be a JSON object");
-  }
-  /** @type {Record<string, string|null>} */
-  const out = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (!CONFIG_KEYS.has(key)) continue; // unknown keys ignored, forward-compatible
-    if (entry === null || entry === undefined) continue;
-    if (typeof entry !== "string" || entry.length === 0) {
-      throw new Error(`MOCK_ENGINE_FAULTS: ${key} must be a non-empty string or null`);
-    }
-    out[key] = entry;
-  }
-  return Object.freeze(out);
+export function activeFault(env = process.env) {
+  const v = env.MOCK_FAULT ?? "";
+  return /** @type {any} */ (FAULT_MODES).includes(v) ? v : "";
 }
 
 /**
- * Mutable holder for the active fault configuration; the transport consults it on every
- * request so tests can arm faults through `mock.faults` while the server is running.
+ * What to do before a dispatched command runs. The caller performs the action:
+ * `exit` → `process.exit(86)` (engine hard-crash), `hang` → write no reply at all,
+ * `oversized` → write a well-formed reply far past the protocol's 8 MiB reply ceiling.
+ * @param {FaultMode | ""} fault
+ * @returns {"exit" | "hang" | "oversized" | null}
  */
-export class FaultHooks {
-  /** @param {FaultConfig} config */
-  constructor(config = {}) {
-    this.config = parseFaultConfig(config);
-  }
+export function beforeCommand(fault) {
+  if (fault === "crash-on-command") return "exit";
+  if (fault === "hang") return "hang";
+  if (fault === "oversized-reply") return "oversized";
+  return null;
+}
 
-  /** @param {FaultConfig|null} config */
-  set(config) {
-    this.config = parseFaultConfig(config);
-    return this.config;
-  }
-
-  /** @param {string} commandId */
-  crashOn(commandId) {
-    return this.config.crashOnCommand === commandId;
-  }
-
-  /** @param {string} methodId */
-  hangs(methodId) {
-    return this.config.hangOnMethod === methodId;
-  }
-
-  /** @param {string} methodId */
-  oversizes(methodId) {
-    return this.config.oversizedReply === methodId;
-  }
+/**
+ * A >8 MiB encoded reply line (9 MiB of padding) for `MOCK_FAULT=oversized-reply`,
+ * testing the client's reply-budget handling (protocol › Transport limits).
+ * @param {unknown} id
+ * @returns {string}
+ */
+export function oversizedReply(id) {
+  return JSON.stringify({ id, ok: true, result: { pad: "x".repeat(9 * 1024 * 1024) } }) + "\n";
 }

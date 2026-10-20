@@ -14,7 +14,7 @@ import {
 export const webEnvSchema = z
   .object({
     NODE_ENV: nodeEnv,
-    PORT: portFromString.default(3000),
+    PORT: portFromString.default('3000'),
 
     // Canonical public URL of the web app (OAuth redirects, emails, links).
     APP_URL: httpUrl,

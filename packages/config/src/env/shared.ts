@@ -63,15 +63,22 @@ export const postgresUrl = z
   .string()
   .min(1, 'must not be empty')
   .refine(
-    (value) => /^postgres(ql)?:\/\//.test(value),
+    (value: string) => /^postgres(ql)?:\/\//.test(value),
     'must be a PostgreSQL URL starting with postgres:// or postgresql://',
   );
 
 export const valkeyUrl = z.string().min(1, 'must not be empty').refine(
-  (value) => /^rediss?:\/\//.test(value),
+  (value: string) => /^rediss?:\/\//.test(value),
   'must be a Valkey/Redis URL (redis:// or rediss://); Valkey only, not Redis 7.4+ (§16.5)',
 );
 
+// NOTE (zod 3.24 typing): `.default()` on these string→number pipelines takes an
+// INPUT-typed value (zod 3.24.1 overloads: `(def: string)` / `(def: () => string)`).
+// Call sites therefore write policy defaults as digit STRINGS, e.g.
+// `portFromString.default('3001')`. Zod parses the default through the pipeline
+// (ZodDefault._parse feeds the default into the inner schema), so the parsed and
+// inferred OUTPUT stays a number — identical behavior to what a numeric default was
+// meant to express under older zod typings, and it typechecks under 3.24.
 const digits = z
   .string()
   .regex(/^\d+$/, 'must be a positive integer written in plain digits');
@@ -130,7 +137,9 @@ export function parseEnvSchema<Shape extends z.ZodRawShape>(
   const invalid: EnvInvalidVar[] = [];
   for (const issue of result.error.issues) {
     const name =
-      issue.path.length > 0 ? issue.path.map((part) => String(part)).join('.') : '(root)';
+      issue.path.length > 0
+        ? issue.path.map((part: string | number) => String(part)).join('.')
+        : '(root)';
     if (
       issue.code === 'invalid_type' &&
       typeof issue.received === 'string' &&

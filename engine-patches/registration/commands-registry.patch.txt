@@ -1,0 +1,59 @@
+# commands-registry.patch.txt — the ONE existing-file edit (spec §2.3)
+#
+# Registers the four SaaS engine modules at the ADR-0001 pin
+# (872748fb5b2a53e09dd4e385e31968d985c0515b):
+#
+#   crates/engine/src/lib.rs      +4 lines  (alphabetical `pub mod` slots)
+#   crates/engine/src/commands.rs +4 lines  (end of the v.extend registration list)
+#
+# Applied only by engine-patches/scripts/apply-engine-patches.sh
+# (git apply --check, then git apply). Never hand-apply or hand-edit vendor/*.
+# Context/anchors documented in commands-registry.patch.md.
+
+diff --git a/crates/engine/src/lib.rs b/crates/engine/src/lib.rs
+--- a/crates/engine/src/lib.rs
++++ b/crates/engine/src/lib.rs
+@@ -12,4 +12,5 @@
+ pub mod adjust_cmds;
+ pub mod adjust_params;
++pub mod agent_cmds;
+ pub mod align_cmds;
+ mod allocation;
+@@ -29,6 +30,7 @@
+ pub mod color_cmds;
+ pub mod color_to_alpha_cmds;
+ pub mod commands;
++pub mod component_cmds;
+ pub mod comps_cmds;
+ mod crop_fill;
+ pub mod cutout_cmds;
+@@ -72,6 +74,7 @@
+ pub mod layer_multi_cmds;
+ pub mod layer_nav_cmds;
+ pub mod layer_style;
++pub mod layout_cmds;
+ pub mod lens_cmds;
+ pub mod link_watch;
+ pub mod magnetic_cmds;
+@@ -115,6 +118,7 @@
+ pub mod stamp_cmds;
+ pub mod swatch_cmds;
+ pub mod symmetry_cmds;
++pub mod template_cmds;
+ mod timeline_cmds;
+ pub mod transform_cmds;
+ mod trap_cmds;
+diff --git a/crates/engine/src/commands.rs b/crates/engine/src/commands.rs
+--- a/crates/engine/src/commands.rs
++++ b/crates/engine/src/commands.rs
+@@ -1537,6 +1537,10 @@
+     v.extend(crate::mask_view_cmds::specs());
+     v.extend(crate::layer_mask_props_cmds::specs());
+     v.extend(crate::actions_cmds::specs());
++    v.extend(crate::template_cmds::specs());
++    v.extend(crate::component_cmds::specs());
++    v.extend(crate::layout_cmds::specs());
++    v.extend(crate::agent_cmds::specs());
+     // The dispatch guard's unit test needs a command that panics on purpose (REL-3).
+     #[cfg(test)]
+     v.push(test_panic_command());

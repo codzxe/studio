@@ -271,6 +271,14 @@ export function resolveTierConfig(tier: RunTierId): ResolvedTierBudget {
         wallClockMs: row.wallClockMs,
         roundtripsPerPhase: null,
       };
+    default: {
+      // Exhaustiveness guard: `row` narrows to `never` only while every
+      // TierConfig kind has a case above. The throw also keeps this function
+      // return-complete under `noImplicitReturns` (TS2366) and covers untyped
+      // (JS) callers passing a drifted row shape.
+      const unhandled: never = row;
+      throw new Error(`[config] unhandled tier kind: ${String(unhandled)}`);
+    }
   }
 }
 

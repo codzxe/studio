@@ -65,10 +65,10 @@ export const workerEnvSchema = z
     ENGINE_CAPABILITY_ROOT_BASE: requiredString,
 
     // Timeouts per §3.4: tool 5 s, render 30 s, run 10 min, session idle 15 min.
-    ENGINE_TOOL_TIMEOUT_MS: positiveIntMsFromString.default(5000),
-    ENGINE_RENDER_TIMEOUT_MS: positiveIntMsFromString.default(30000),
-    ENGINE_RUN_TIMEOUT_MS: positiveIntMsFromString.default(600000),
-    ENGINE_SESSION_IDLE_TIMEOUT_MS: positiveIntMsFromString.default(900000),
+    ENGINE_TOOL_TIMEOUT_MS: positiveIntMsFromString.default('5000'),
+    ENGINE_RENDER_TIMEOUT_MS: positiveIntMsFromString.default('30000'),
+    ENGINE_RUN_TIMEOUT_MS: positiveIntMsFromString.default('600000'),
+    ENGINE_SESSION_IDLE_TIMEOUT_MS: positiveIntMsFromString.default('900000'),
 
     // Model provider keys — optional-with-health-flag (§5.3). Constraint 6 (§1.5):
     // no free LLM tiers for customer data; no OpenRouter in production.

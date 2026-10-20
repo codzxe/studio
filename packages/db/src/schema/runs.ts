@@ -11,6 +11,13 @@
 // agents) are intentionally not declared here; tenant scoping is enforced in the
 // repository layer (§12.2). Only the intra-file run references are DB-enforced.
 
+// W2-Q id unification: every auth/content/billing table points at runs with TEXT
+// columns (commands.run_id, credit_ledger.run_id, credit_reservations.run_id) and
+// the auth tables own TEXT ids (Better Auth pattern), so the run tables use text
+// ids with the same gen_random_uuid()::text default as content.ts — joins and
+// FKs across tables never need uuid casts.
+
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -21,7 +28,6 @@ import {
   text,
   timestamp,
   uniqueIndex,
-  uuid,
 } from "drizzle-orm/pg-core";
 
 /** §5.1 — deterministic state machine: non-terminal phases + terminal states. */
@@ -93,11 +99,11 @@ export interface ModelCallUsage {
 export const agentRuns = pgTable(
   "agent_runs",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     // §12.2 tenant root — every query on this table is scoped by organization_id.
-    organizationId: uuid("organization_id").notNull(),
-    documentId: uuid("document_id").notNull(),
-    userId: uuid("user_id").notNull(),
+    organizationId: text("organization_id").notNull(),
+    documentId: text("document_id").notNull(),
+    userId: text("user_id").notNull(),
     prompt: text("prompt").notNull(),
     tier: text("tier").notNull(), // §5.2 tier budgets (quick|standard|complex|premium|max|image)
     status: text("status").$type<RunStatus>().notNull().default("queued"), // §5.1
@@ -135,9 +141,9 @@ export const agentRuns = pgTable(
 export const agentSteps = pgTable(
   "agent_steps",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    organizationId: uuid("organization_id").notNull(), // §12.2 tenant column
-    runId: uuid("run_id")
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    organizationId: text("organization_id").notNull(), // §12.2 tenant column
+    runId: text("run_id")
       .notNull()
       .references(() => agentRuns.id, { onDelete: "cascade" }),
     seq: integer("seq").notNull(), // 1-based position in the run timeline
@@ -163,9 +169,9 @@ export const agentSteps = pgTable(
 export const runEvents = pgTable(
   "run_events",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    organizationId: uuid("organization_id").notNull(), // §12.2 tenant column
-    runId: uuid("run_id")
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    organizationId: text("organization_id").notNull(), // §12.2 tenant column
+    runId: text("run_id")
       .notNull()
       .references(() => agentRuns.id, { onDelete: "cascade" }),
     // §13.2: monotonic per-run counter; clients dedupe by seq and resume with

@@ -113,7 +113,9 @@ export interface LayerNode {
   children?: LayerNode[];
   expanded?: boolean;
   text?: { text: string; font: string; sizePt: number };
-  adjustment?: { kind: string; params: unknown };
+  // `params` mirrors serde_json::Value; zod types an unknown-typed payload as an optional
+  // key (runtime parse still accepts the recorded object shape).
+  adjustment?: { kind: string; params?: unknown };
 }
 
 /**
@@ -121,7 +123,10 @@ export interface LayerNode {
  * extras (children/expanded on groups, text on type layers, adjustment on adjustment
  * layers, smart* on smart objects). Recursive: groups list their `children`.
  */
-export const layerNodeSchema: z.ZodType<LayerNode> = z
+// The Input side is an index signature: zod's Input type marks lazy/unknown payloads
+// optional (`params?: unknown`), so pinning Input = LayerNode would not typecheck; parse
+// outputs are what the suite consumes and those are pinned exactly by LayerNode above.
+export const layerNodeSchema: z.ZodType<LayerNode, z.ZodTypeDef, Record<string, unknown>> = z
   .object({
     id: z.number().int().nonnegative(),
     name: z.string(),

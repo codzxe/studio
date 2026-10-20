@@ -24,7 +24,7 @@ const s3SecretAccessKey = requiredString;
 export const gatewayEnvSchema = z
   .object({
     NODE_ENV: nodeEnv,
-    PORT: portFromString.default(3001),
+    PORT: portFromString.default('3001'),
 
     // Postgres is the source of truth (§3.1 db) — required.
     DATABASE_URL: postgresUrl,
@@ -58,9 +58,9 @@ export const gatewayEnvSchema = z
 
     // SSE stream tuning (§13.2: client dedupes by seq, resumes with Last-Event-ID).
     // Policy defaults; override per deployment.
-    SSE_HEARTBEAT_MS: positiveIntMsFromString.default(15000),
-    SSE_RETRY_MS: positiveIntMsFromString.default(3000),
-    SSE_BACKFILL_LIMIT: positiveIntFromString.default(500),
+    SSE_HEARTBEAT_MS: positiveIntMsFromString.default('15000'),
+    SSE_RETRY_MS: positiveIntMsFromString.default('3000'),
+    SSE_BACKFILL_LIMIT: positiveIntFromString.default('500'),
 
     // Engine pool internal URL, used by /v1/health/deep only (§13.1). Optional.
     ENGINE_POOL_URL: httpUrl.optional(),
