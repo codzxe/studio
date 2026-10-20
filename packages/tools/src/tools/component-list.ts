@@ -31,13 +31,7 @@ import {
   ok,
   strictObject,
 } from "../kit.js";
-import type {
-  EngineCommandReport,
-  EngineFailure,
-  Tool,
-  ToolErr,
-  ToolErrorCode,
-} from "../types.js";
+import type { EngineCommandReport, EngineFailure, Tool, ToolErr, ToolErrorCode } from "../types.js";
 import { capText } from "./template-list.js";
 
 // ---------------------------------------------------------------------------
@@ -237,10 +231,7 @@ export const componentListTool: Tool<ComponentListArgs> = defineTool({
     if (args.tags !== undefined) params.tags = [...args.tags];
     if (args.query !== undefined) params.query = args.query;
 
-    const reply = await ctx.engine.execute(
-      { id: COMPONENT_LIST_COMMAND, params },
-      { signal },
-    );
+    const reply = await ctx.engine.execute({ id: COMPONENT_LIST_COMMAND, params }, { signal });
     if (!reply.ok) return engineFailureErr(reply);
 
     const { rows, problems, unreadableRows } = readComponentList(reply.value);
@@ -252,7 +243,9 @@ export const componentListTool: Tool<ComponentListArgs> = defineTool({
       warnings.push(`${problems.length - MAX_SHOWN_PROBLEMS} more library problems omitted`);
     }
     if (unreadableRows > 0) {
-      warnings.push(`${unreadableRows} component row(s) from the reply were unreadable and skipped`);
+      warnings.push(
+        `${unreadableRows} component row(s) from the reply were unreadable and skipped`,
+      );
     }
     if (rows.length === 0) {
       const filtered = args.tags !== undefined || args.query !== undefined;
@@ -267,15 +260,13 @@ export const componentListTool: Tool<ComponentListArgs> = defineTool({
     const sorted = [...rows].sort((a, b) =>
       a.id !== b.id ? (a.id < b.id ? -1 : 1) : a.version - b.version,
     );
-    const cards: ComponentCardView[] = sorted
-      .slice(0, MAX_LIST_CARDS)
-      .map((row) => ({
-        id: row.id,
-        name: row.name,
-        version: row.version,
-        tags: [...row.tags],
-        variables: [...row.variables],
-      }));
+    const cards: ComponentCardView[] = sorted.slice(0, MAX_LIST_CARDS).map((row) => ({
+      id: row.id,
+      name: row.name,
+      version: row.version,
+      tags: [...row.tags],
+      variables: [...row.variables],
+    }));
     let summaryJson = JSON.stringify({ components: cards });
     while (summaryJson.length > MAX_SUMMARY_CHARS && cards.length > 0) {
       cards.pop();

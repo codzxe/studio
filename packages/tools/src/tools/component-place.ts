@@ -55,8 +55,8 @@ import {
   zIdempotencyKey,
   zLayerRef,
 } from "../kit.js";
-import type { EngineCommandReport, Tool, ToolErr, ToolErrorCode } from "../types.js";
 import type { LayerRef } from "../kit.js";
+import type { EngineCommandReport, Tool, ToolErr, ToolErrorCode } from "../types.js";
 import {
   COMPONENT_LIST_COMMAND,
   candidatePins,
@@ -127,13 +127,17 @@ function joinCapped(items: readonly string[], budget: number): string {
 
 /** §8.4: unknown component id — candidates are `id@version` pins (§7.2 pins). */
 export function unknownComponentErr(component: string, candidates: readonly string[]): ToolErr {
-  return err(UNKNOWN_COMPONENT_CODE, `No component matches "${truncateStr(component, 60)}" in the library`, {
-    hint:
-      candidates.length > 0
-        ? `component_list shows the library; candidates: ${candidates.slice(0, 8).join(", ")}`
-        : "component_list shows this workspace's components.",
-    retryable: false,
-  });
+  return err(
+    UNKNOWN_COMPONENT_CODE,
+    `No component matches "${truncateStr(component, 60)}" in the library`,
+    {
+      hint:
+        candidates.length > 0
+          ? `component_list shows the library; candidates: ${candidates.slice(0, 8).join(", ")}`
+          : "component_list shows this workspace's components.",
+      retryable: false,
+    },
+  );
 }
 
 /** §8.4: unknown variable names — the allowed list travels in the hint. */
@@ -142,10 +146,14 @@ export function unknownComponentVarsErr(
   unknown: readonly string[],
   allowed: readonly string[],
 ): ToolErr {
-  return err(UNKNOWN_COMPONENT_VARS_CODE, `unknown component variable(s): ${joinCapped(unknown, 400)}`, {
-    hint: `variables of ${truncateStr(component, 60)}: ${joinCapped(allowed, 400)}`,
-    retryable: false,
-  });
+  return err(
+    UNKNOWN_COMPONENT_VARS_CODE,
+    `unknown component variable(s): ${joinCapped(unknown, 400)}`,
+    {
+      hint: `variables of ${truncateStr(component, 60)}: ${joinCapped(allowed, 400)}`,
+      retryable: false,
+    },
+  );
 }
 
 /** The 9-point anchor would push the component frame off the canvas top/left. */
@@ -317,32 +325,53 @@ function countChars(value: string): number {
 }
 
 function kindErr(name: string, expected: string, got: string, hint: string): ToolErr {
-  return err("validation_failed", `Variable "${truncateStr(name, 64)}" must be ${expected}, got ${got}`, {
-    hint,
-    retryable: false,
-  });
+  return err(
+    "validation_failed",
+    `Variable "${truncateStr(name, 64)}" must be ${expected}, got ${got}`,
+    {
+      hint,
+      retryable: false,
+    },
+  );
 }
 
 /** One declared variable's value vs its §8.2 spec; undefined when it passes. */
-function varKindErr(name: string, spec: ComponentVariableSpec, value: ComponentVarValue): ToolErr | undefined {
+function varKindErr(
+  name: string,
+  spec: ComponentVariableSpec,
+  value: ComponentVarValue,
+): ToolErr | undefined {
   switch (spec.kind) {
     case "text": {
       if (typeof value !== "string") {
-        return kindErr(name, "a string (text variable)", typeof value, "component_list shows the variable names; the manifest declares each one's kind (§8.2).");
+        return kindErr(
+          name,
+          "a string (text variable)",
+          typeof value,
+          "component_list shows the variable names; the manifest declares each one's kind (§8.2).",
+        );
       }
       const max = spec.maxChars;
       if (max !== undefined && countChars(value) > max) {
         return err(
           "validation_failed",
           `Variable "${truncateStr(name, 64)}" is ${countChars(value)} characters; the manifest caps it at ${max}`,
-          { hint: `Shorten "${truncateStr(name, 64)}" to at most ${max} characters (§8.4 maxChars).`, retryable: false },
+          {
+            hint: `Shorten "${truncateStr(name, 64)}" to at most ${max} characters (§8.4 maxChars).`,
+            retryable: false,
+          },
         );
       }
       return undefined;
     }
     case "color": {
       if (typeof value !== "string") {
-        return kindErr(name, "a colour string", typeof value, "Colour variables take #rgb/#rrggbb/#rrggbbaa hex (§8.2).");
+        return kindErr(
+          name,
+          "a colour string",
+          typeof value,
+          "Colour variables take #rgb/#rrggbb/#rrggbbaa hex (§8.2).",
+        );
       }
       if (!ENGINE_VAR_COLOR_RE.test(value)) {
         return err(
@@ -358,16 +387,19 @@ function varKindErr(name: string, spec: ComponentVariableSpec, value: ComponentV
     }
     case "visibility": {
       if (typeof value !== "boolean") {
-        return kindErr(name, "true or false (visibility variable)", typeof value, "Visibility variables toggle a layer on or off (§8.2).");
+        return kindErr(
+          name,
+          "true or false (visibility variable)",
+          typeof value,
+          "Visibility variables toggle a layer on or off (§8.2).",
+        );
       }
       return undefined;
     }
   }
 }
 
-export type VarsValidation =
-  | { readonly ok: true; readonly applied: readonly string[] }
-  | ToolErr;
+export type VarsValidation = { readonly ok: true; readonly applied: readonly string[] } | ToolErr;
 
 /**
  * Validates `vars` against the manifest's variable schema (§8.4): unknown names
@@ -503,7 +535,10 @@ const componentPlaceArgs = strictObject({
   anchor: z.enum(COMPONENT_ANCHORS).optional(),
   // ≤20 entries (§8.4 per-call cap); values are string|boolean — the manifest
   // decides which (text/colour → string, visibility → boolean).
-  vars: cappedRecord(MAX_PLACE_VARS, z.union([cappedString(MAX_ARG_STRING_CHARS), z.boolean()])).optional(),
+  vars: cappedRecord(
+    MAX_PLACE_VARS,
+    z.union([cappedString(MAX_ARG_STRING_CHARS), z.boolean()]),
+  ).optional(),
   // §6 says every mutating tool carries one; the executor's journal (§5.6)
   // coalesces retries, so the key is accepted but not engine-forwarded.
   idempotencyKey: zIdempotencyKey.optional(),
@@ -609,10 +644,7 @@ export const componentPlaceTool: Tool<ComponentPlaceArgs> = defineTool({
     }
 
     // 6. Place (§8.3): the master is copied with fresh ids, never mutated.
-    const placed = await ctx.engine.execute(
-      { id: COMPONENT_PLACE_COMMAND, params },
-      { signal },
-    );
+    const placed = await ctx.engine.execute({ id: COMPONENT_PLACE_COMMAND, params }, { signal });
     if (!placed.ok) return engineFailureErr(placed);
 
     // 7. Compact §6.1 reply: { instanceId, component, variablesApplied }.

@@ -48,7 +48,10 @@ import { abortedSignal, freshSignal, makeFakeContext } from "./fakes.js";
 // ---------------------------------------------------------------------------
 
 // (Three segments up: tests/ → tools/ → packages/ → studio root.)
-const REAL_MANIFEST_URL = new URL("../../../evals/components/offer-badge/component.json", import.meta.url);
+const REAL_MANIFEST_URL = new URL(
+  "../../../evals/components/offer-badge/component.json",
+  import.meta.url,
+);
 const offerBadge = JSON.parse(readFileSync(REAL_MANIFEST_URL, "utf8")) as unknown;
 const OFFER_BADGE_VARS = ["label", "bg", "textColor", "showRibbon"]; // manifest order
 
@@ -101,7 +104,10 @@ function stubEngine(execute: Execute): { engine: EngineLike; commands: EngineCom
       return execute(cmd);
     },
     render: async () => ({ ok: true, value: { image: new Uint8Array(), widthPx: 8, heightPx: 8 } }),
-    inspect: async () => ({ ok: true, value: { revision: 1, widthPx: 1080, heightPx: 1080, layers: [] } }),
+    inspect: async () => ({
+      ok: true,
+      value: { revision: 1, widthPx: 1080, heightPx: 1080, layers: [] },
+    }),
     listLayers: async () => ({ ok: true, value: [] }),
   };
   return { engine, commands };
@@ -123,7 +129,10 @@ type PlaceReport = EngineCommandReport & {
   warnings?: unknown;
 };
 
-function listReport(components: unknown = LIBRARY_ROWS, problems: unknown = []): EngineCommandReport {
+function listReport(
+  components: unknown = LIBRARY_ROWS,
+  problems: unknown = [],
+): EngineCommandReport {
   const report: ListReport = { revision: 1, components, problems };
   return report;
 }
@@ -306,9 +315,7 @@ describe("component_list: cards and filters", () => {
     const result = await componentListTool.run(ctx, {}, freshSignal());
     const okResult = expectOk(result);
     expect(okResult.warnings).toContain("component `broken-thing`: no readable component.json");
-    expect(okResult.warnings).toContain(
-      "the components root `components` cannot be read",
-    );
+    expect(okResult.warnings).toContain("the components root `components` cannot be read");
     const cards = summaryJson(okResult).components as unknown[];
     expect(cards).toHaveLength(1);
   });
@@ -336,10 +343,13 @@ describe("component_list: cards and filters", () => {
   });
 
   it("accepts record-shaped variables (stale doc shape) as names", async () => {
-    const row = { id: "offer-badge", name: "Offer Badge", version: 2, variables: { label: { kind: "text" } } };
-    const { ctx } = contextWith(
-      componentsRouter({ list: { ok: true, value: listReport([row]) } }),
-    );
+    const row = {
+      id: "offer-badge",
+      name: "Offer Badge",
+      version: 2,
+      variables: { label: { kind: "text" } },
+    };
+    const { ctx } = contextWith(componentsRouter({ list: { ok: true, value: listReport([row]) } }));
     const result = await componentListTool.run(ctx, {}, freshSignal());
     const cards = summaryJson(expectOk(result)).components as Record<string, unknown>[];
     expect(cards[0]?.variables).toEqual(["label"]);
@@ -360,7 +370,9 @@ describe("component_list: cards and filters", () => {
     const okResult = expectOk(result);
     const cards = summaryJson(okResult).components as unknown[];
     expect(cards).toHaveLength(MAX_LIST_CARDS);
-    expect(okResult.warnings).toContain(`showing ${MAX_LIST_CARDS} of 20 components; narrow with tags or query`);
+    expect(okResult.warnings).toContain(
+      `showing ${MAX_LIST_CARDS} of 20 components; narrow with tags or query`,
+    );
   });
 
   it("keeps the summary under 2000 chars even for wide cards", async () => {
@@ -385,7 +397,9 @@ describe("component_list: cards and filters", () => {
       componentsRouter({ list: { ok: true, value: listReport([], []) } }),
     );
     const noFilters = await componentListTool.run(harness.ctx, {}, freshSignal());
-    expect(expectOk(noFilters).warnings).toContain("the component library is empty — nothing to list");
+    expect(expectOk(noFilters).warnings).toContain(
+      "the component library is empty — nothing to list",
+    );
 
     const filtered = await componentListTool.run(harness.ctx, { query: "zzz" }, freshSignal());
     const filteredOk = expectOk(filtered);
@@ -537,7 +551,9 @@ describe("component_place: argument schema", () => {
 
     const twenty: Record<string, unknown> = {};
     for (let i = 0; i < MAX_PLACE_VARS; i += 1) twenty[`label${i}`] = "x";
-    expect(parseToolArgs(componentPlaceTool, { component: "offer-badge@2", vars: twenty }).ok).toBe(true);
+    expect(parseToolArgs(componentPlaceTool, { component: "offer-badge@2", vars: twenty }).ok).toBe(
+      true,
+    );
   });
 });
 
@@ -726,11 +742,7 @@ describe("component_place: flow", () => {
 
   it("omits the vars key entirely when no variables were set", async () => {
     const { ctx, commands } = contextWith(componentsRouter());
-    const result = await componentPlaceTool.run(
-      ctx,
-      { component: "offer-badge@2" },
-      freshSignal(),
-    );
+    const result = await componentPlaceTool.run(ctx, { component: "offer-badge@2" }, freshSignal());
     const params = commands[1]?.params as Record<string, unknown>;
     expect("vars" in params).toBe(false);
     expect(summaryJson(expectOk(result)).variablesApplied).toEqual([]);
@@ -884,7 +896,13 @@ describe("component_place: flow", () => {
   });
 
   it("validates variable kinds against the manifest (color hex, text maxChars, visibility)", async () => {
-    const colorFails: unknown[] = ["rgb(217, 108, 59)", "hsl(20, 63%, 54%)", "#GGG3B", "D96C3B", ""];
+    const colorFails: unknown[] = [
+      "rgb(217, 108, 59)",
+      "hsl(20, 63%, 54%)",
+      "#GGG3B",
+      "D96C3B",
+      "",
+    ];
     for (const [index, value] of colorFails.entries()) {
       const { ctx, commands } = contextWith(componentsRouter());
       const result = await componentPlaceTool.run(
@@ -993,11 +1011,7 @@ describe("component_place: flow", () => {
         },
       }),
     );
-    const result = await componentPlaceTool.run(
-      ctx,
-      { component: "offer-badge@2" },
-      freshSignal(),
-    );
+    const result = await componentPlaceTool.run(ctx, { component: "offer-badge@2" }, freshSignal());
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("engine_unavailable");
@@ -1016,18 +1030,17 @@ describe("component_place: flow", () => {
                 warning:
                   'the component was authored as "RGB" 8; its layers keep their own mode and depth inside this document',
               },
-              { variable: "bg", warning: "the layer this variable drives is no longer in the instance" },
+              {
+                variable: "bg",
+                warning: "the layer this variable drives is no longer in the instance",
+              },
               "a plain string warning",
             ],
           }),
         },
       }),
     );
-    const result = await componentPlaceTool.run(
-      ctx,
-      { component: "offer-badge@2" },
-      freshSignal(),
-    );
+    const result = await componentPlaceTool.run(ctx, { component: "offer-badge@2" }, freshSignal());
     const okResult = expectOk(result);
     expect(okResult.warnings?.[0]).toContain("authored as");
     expect(okResult.warnings?.[1]).toContain("bg: the layer this variable drives");
