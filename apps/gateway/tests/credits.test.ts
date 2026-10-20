@@ -462,9 +462,33 @@ describe("foldLedgerDailyRows", () => {
 describe("foldRunDailyRows", () => {
   it("counts by status/tier and sums cost/tokens per day", () => {
     const byDay = foldRunDailyRows([
-      { day: "2025-01-01", status: "succeeded", tier: "standard", runCount: 2, costMicroUsd: 10, tokensIn: 100, tokensOut: 200 },
-      { day: "2025-01-01", status: "failed", tier: "quick", runCount: 1, costMicroUsd: 5, tokensIn: 10, tokensOut: 20 },
-      { day: "2025-01-02", status: "succeeded", tier: "standard", runCount: 3, costMicroUsd: 30, tokensIn: 300, tokensOut: 600 },
+      {
+        day: "2025-01-01",
+        status: "succeeded",
+        tier: "standard",
+        runCount: 2,
+        costMicroUsd: 10,
+        tokensIn: 100,
+        tokensOut: 200,
+      },
+      {
+        day: "2025-01-01",
+        status: "failed",
+        tier: "quick",
+        runCount: 1,
+        costMicroUsd: 5,
+        tokensIn: 10,
+        tokensOut: 20,
+      },
+      {
+        day: "2025-01-02",
+        status: "succeeded",
+        tier: "standard",
+        runCount: 3,
+        costMicroUsd: 30,
+        tokensIn: 300,
+        tokensOut: 600,
+      },
     ]);
     const day1 = byDay.get("2025-01-01");
     expect(day1?.runs).toBe(3);
@@ -489,10 +513,25 @@ describe("foldRunDailyRows", () => {
 describe("dailyUsage (service)", () => {
   it("zero-fills every day ascending and buckets at the UTC edges", async () => {
     const usage = new FakeUsageQueries();
-    usage.seedLedger({ organizationId: ORG_A, at: new Date("2025-07-01T23:59:59.999Z"), kind: "grant", delta: 30 });
-    usage.seedLedger({ organizationId: ORG_A, at: new Date("2025-07-02T00:00:00.000Z"), kind: "reserve", delta: -2 });
+    usage.seedLedger({
+      organizationId: ORG_A,
+      at: new Date("2025-07-01T23:59:59.999Z"),
+      kind: "grant",
+      delta: 30,
+    });
+    usage.seedLedger({
+      organizationId: ORG_A,
+      at: new Date("2025-07-02T00:00:00.000Z"),
+      kind: "reserve",
+      delta: -2,
+    });
     // §15.1 tenant guard: another org's money is invisible.
-    usage.seedLedger({ organizationId: ORG_B, at: new Date("2025-07-01T12:00:00.000Z"), kind: "grant", delta: 500 });
+    usage.seedLedger({
+      organizationId: ORG_B,
+      at: new Date("2025-07-01T12:00:00.000Z"),
+      kind: "grant",
+      delta: 500,
+    });
 
     const result = await dailyUsage(usage, {
       organizationId: ORG_A,
@@ -517,7 +556,11 @@ describe("dailyUsage (service)", () => {
 
   it("rejects malformed windows with validation_failed (table)", async () => {
     const usage = new FakeUsageQueries();
-    const table: readonly { readonly from: string; readonly to: string; readonly organizationId?: string }[] = [
+    const table: readonly {
+      readonly from: string;
+      readonly to: string;
+      readonly organizationId?: string;
+    }[] = [
       { from: "2025-07-03", to: "2025-07-01" }, // reversed
       { from: "2025-13-01", to: "2025-07-01" }, // impossible month
       { from: "2025-02-30", to: "2025-03-01" }, // not a calendar day
@@ -541,12 +584,48 @@ describe("dailyUsage (service)", () => {
 describe("runStats (service)", () => {
   it("aggregates by day/status/tier, zero-fills, and totals the window", async () => {
     const usage = new FakeUsageQueries();
-    usage.seedRun({ organizationId: ORG_A, at: new Date("2025-07-01T10:00:00.000Z"), status: "succeeded", tier: "standard", costMicroUsd: 56_000, tokensIn: 1000, tokensOut: 2000 });
-    usage.seedRun({ organizationId: ORG_A, at: new Date("2025-07-01T18:00:00.000Z"), status: "failed", tier: "quick", costMicroUsd: 5_000, tokensIn: 100, tokensOut: 200 });
-    usage.seedRun({ organizationId: ORG_A, at: new Date("2025-07-02T00:00:00.000Z"), status: "succeeded", tier: "standard", costMicroUsd: 60_000, tokensIn: 1200, tokensOut: 2400 });
-    usage.seedRun({ organizationId: ORG_B, at: new Date("2025-07-01T12:00:00.000Z"), status: "succeeded", tier: "max", costMicroUsd: 999_999, tokensIn: 99_999, tokensOut: 99_999 });
+    usage.seedRun({
+      organizationId: ORG_A,
+      at: new Date("2025-07-01T10:00:00.000Z"),
+      status: "succeeded",
+      tier: "standard",
+      costMicroUsd: 56_000,
+      tokensIn: 1000,
+      tokensOut: 2000,
+    });
+    usage.seedRun({
+      organizationId: ORG_A,
+      at: new Date("2025-07-01T18:00:00.000Z"),
+      status: "failed",
+      tier: "quick",
+      costMicroUsd: 5_000,
+      tokensIn: 100,
+      tokensOut: 200,
+    });
+    usage.seedRun({
+      organizationId: ORG_A,
+      at: new Date("2025-07-02T00:00:00.000Z"),
+      status: "succeeded",
+      tier: "standard",
+      costMicroUsd: 60_000,
+      tokensIn: 1200,
+      tokensOut: 2400,
+    });
+    usage.seedRun({
+      organizationId: ORG_B,
+      at: new Date("2025-07-01T12:00:00.000Z"),
+      status: "succeeded",
+      tier: "max",
+      costMicroUsd: 999_999,
+      tokensIn: 99_999,
+      tokensOut: 99_999,
+    });
 
-    const result = await runStats(usage, { organizationId: ORG_A, from: "2025-07-01", to: "2025-07-03" });
+    const result = await runStats(usage, {
+      organizationId: ORG_A,
+      from: "2025-07-01",
+      to: "2025-07-03",
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
@@ -575,10 +654,30 @@ describe("runStats (service)", () => {
 describe("GET /v1/credits", () => {
   it("serves the derived balance with the newest-first page and no internals", async () => {
     const harness = makeHarness();
-    harness.ledger.seed({ organizationId: ORG_A, kind: "grant", delta: 30, createdAt: new Date(T0) });
-    harness.ledger.seed({ organizationId: ORG_A, kind: "reserve", delta: -2, createdAt: new Date(T0 + 1000) });
-    harness.ledger.seed({ organizationId: ORG_A, kind: "refund", delta: 2, createdAt: new Date(T0 + 2000) });
-    harness.ledger.seed({ organizationId: ORG_B, kind: "grant", delta: 500, createdAt: new Date(T0 + 3000) });
+    harness.ledger.seed({
+      organizationId: ORG_A,
+      kind: "grant",
+      delta: 30,
+      createdAt: new Date(T0),
+    });
+    harness.ledger.seed({
+      organizationId: ORG_A,
+      kind: "reserve",
+      delta: -2,
+      createdAt: new Date(T0 + 1000),
+    });
+    harness.ledger.seed({
+      organizationId: ORG_A,
+      kind: "refund",
+      delta: 2,
+      createdAt: new Date(T0 + 2000),
+    });
+    harness.ledger.seed({
+      organizationId: ORG_B,
+      kind: "grant",
+      delta: 500,
+      createdAt: new Date(T0 + 3000),
+    });
 
     const body = await creditsBody(await get(harness, "/v1/credits"));
 
@@ -690,8 +789,20 @@ describe("GET /v1/credits", () => {
   it("breaks created_at ties by id, descending", async () => {
     const harness = makeHarness();
     const sameInstant = new Date(T0);
-    harness.ledger.seed({ organizationId: ORG_A, kind: "adjustment", delta: -1, createdAt: sameInstant, id: "row-aaa" });
-    harness.ledger.seed({ organizationId: ORG_A, kind: "adjustment", delta: -1, createdAt: sameInstant, id: "row-bbb" });
+    harness.ledger.seed({
+      organizationId: ORG_A,
+      kind: "adjustment",
+      delta: -1,
+      createdAt: sameInstant,
+      id: "row-aaa",
+    });
+    harness.ledger.seed({
+      organizationId: ORG_A,
+      kind: "adjustment",
+      delta: -1,
+      createdAt: sameInstant,
+      id: "row-bbb",
+    });
 
     const body = await creditsBody(await get(harness, "/v1/credits?limit=2"));
     expect(body.ledger.rows.map((row) => row.id)).toEqual(["row-bbb", "row-aaa"]);
@@ -711,7 +822,12 @@ describe("GET /v1/credits", () => {
   it("guards the tenant boundary and requires auth (§15.1)", async () => {
     const harness = makeHarness();
     seedLedgerSeries(harness.ledger, ORG_A, 2);
-    harness.ledger.seed({ organizationId: ORG_B, kind: "grant", delta: 7, createdAt: new Date(T0) });
+    harness.ledger.seed({
+      organizationId: ORG_B,
+      kind: "grant",
+      delta: 7,
+      createdAt: new Date(T0),
+    });
 
     // No credentials → 401, never a partial body.
     const anon = await get(harness, "/v1/credits", undefined);
@@ -731,7 +847,12 @@ describe("GET /v1/credits", () => {
 
   it("allows the viewer role (no RBAC read gate on own workspace)", async () => {
     const harness = makeHarness();
-    harness.ledger.seed({ organizationId: ORG_A, kind: "grant", delta: 30, createdAt: new Date(T0) });
+    harness.ledger.seed({
+      organizationId: ORG_A,
+      kind: "grant",
+      delta: 30,
+      createdAt: new Date(T0),
+    });
     const body = await creditsBody(await get(harness, "/v1/credits", TOKEN_VIEWER));
     expect(body.balance).toBe(30);
   });
@@ -864,12 +985,49 @@ describe("GET /v1/usage", () => {
 
   it("rolls up ledger + run days at the UTC bucket edges, snake_case wire", async () => {
     const harness = makeHarness();
-    harness.usage.seedLedger({ organizationId: ORG_A, at: new Date("2025-07-01T23:59:59.999Z"), kind: "grant", delta: 30 });
-    harness.usage.seedLedger({ organizationId: ORG_A, at: new Date("2025-07-02T00:00:00.000Z"), kind: "reserve", delta: -2 });
-    harness.usage.seedLedger({ organizationId: ORG_B, at: new Date("2025-07-01T12:00:00.000Z"), kind: "grant", delta: 500 });
-    harness.usage.seedRun({ organizationId: ORG_A, at: new Date("2025-07-01T10:00:00.000Z"), status: "succeeded", tier: "standard", costMicroUsd: 56_000, tokensIn: 1000, tokensOut: 2000 });
-    harness.usage.seedRun({ organizationId: ORG_A, at: new Date("2025-07-02T00:00:00.000Z"), status: "failed", tier: "quick", costMicroUsd: 5_000, tokensIn: 100, tokensOut: 200 });
-    harness.usage.seedRun({ organizationId: ORG_B, at: new Date("2025-07-01T12:00:00.000Z"), status: "succeeded", tier: "max", costMicroUsd: 999_999 });
+    harness.usage.seedLedger({
+      organizationId: ORG_A,
+      at: new Date("2025-07-01T23:59:59.999Z"),
+      kind: "grant",
+      delta: 30,
+    });
+    harness.usage.seedLedger({
+      organizationId: ORG_A,
+      at: new Date("2025-07-02T00:00:00.000Z"),
+      kind: "reserve",
+      delta: -2,
+    });
+    harness.usage.seedLedger({
+      organizationId: ORG_B,
+      at: new Date("2025-07-01T12:00:00.000Z"),
+      kind: "grant",
+      delta: 500,
+    });
+    harness.usage.seedRun({
+      organizationId: ORG_A,
+      at: new Date("2025-07-01T10:00:00.000Z"),
+      status: "succeeded",
+      tier: "standard",
+      costMicroUsd: 56_000,
+      tokensIn: 1000,
+      tokensOut: 2000,
+    });
+    harness.usage.seedRun({
+      organizationId: ORG_A,
+      at: new Date("2025-07-02T00:00:00.000Z"),
+      status: "failed",
+      tier: "quick",
+      costMicroUsd: 5_000,
+      tokensIn: 100,
+      tokensOut: 200,
+    });
+    harness.usage.seedRun({
+      organizationId: ORG_B,
+      at: new Date("2025-07-01T12:00:00.000Z"),
+      status: "succeeded",
+      tier: "max",
+      costMicroUsd: 999_999,
+    });
 
     const res = await get(harness, "/v1/usage?from=2025-07-01&to=2025-07-02");
     expect(res.status).toBe(200);
@@ -931,21 +1089,36 @@ describe("GET /v1/usage", () => {
     const okBody = (await okRes.json()) as UsageApiView;
     expect(okBody.days).toHaveLength(USAGE_MAX_DAYS);
 
-    const tooWide = await get(harness, `/v1/usage?from=2024-01-01&to=${addDays("2024-01-01", USAGE_MAX_DAYS)}`);
+    const tooWide = await get(
+      harness,
+      `/v1/usage?from=2024-01-01&to=${addDays("2024-01-01", USAGE_MAX_DAYS)}`,
+    );
     expect(tooWide.status).toBe(422);
   });
 
   it("guards the tenant boundary and requires auth", async () => {
     const harness = makeHarness();
-    harness.usage.seedLedger({ organizationId: ORG_A, at: new Date("2025-07-01T12:00:00.000Z"), kind: "grant", delta: 30 });
-    harness.usage.seedLedger({ organizationId: ORG_B, at: new Date("2025-07-01T12:00:00.000Z"), kind: "grant", delta: 500 });
+    harness.usage.seedLedger({
+      organizationId: ORG_A,
+      at: new Date("2025-07-01T12:00:00.000Z"),
+      kind: "grant",
+      delta: 30,
+    });
+    harness.usage.seedLedger({
+      organizationId: ORG_B,
+      at: new Date("2025-07-01T12:00:00.000Z"),
+      kind: "grant",
+      delta: 500,
+    });
 
     const anon = await get(harness, "/v1/usage", undefined);
     expect(anon.status).toBe(401);
 
-    const bodyA = (await (await get(harness, "/v1/usage?from=2025-07-01&to=2025-07-01")).json()) as UsageApiView;
+    const resA = await get(harness, "/v1/usage?from=2025-07-01&to=2025-07-01");
+    const bodyA = (await resA.json()) as UsageApiView;
     expect(bodyA.days[0]?.credits.grant).toBe(30);
-    const bodyB = (await (await get(harness, "/v1/usage?from=2025-07-01&to=2025-07-01", TOKEN_B)).json()) as UsageApiView;
+    const resB = await get(harness, "/v1/usage?from=2025-07-01&to=2025-07-01", TOKEN_B);
+    const bodyB = (await resB.json()) as UsageApiView;
     expect(bodyB.days[0]?.credits.grant).toBe(500);
   });
 

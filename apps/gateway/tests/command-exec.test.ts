@@ -36,6 +36,7 @@ import {
   type CommandExecutionContext,
   type CommandWalAppend,
   type CommandsStore,
+  type EngineCommandReply,
   type EngineCommandRequest,
   type EngineExecution,
   type EngineLike,
@@ -56,6 +57,8 @@ const ORG_A = "org-a";
 const ORG_B = "org-b";
 const DOC_A = "doc-a";
 const DOC_B = "doc-b";
+/** Seeded in ORG_A but with NO engine session attached (the §13.1 gate case). */
+const DOC_CLOSED = "doc-closed";
 const DOC_ARCHIVED = "doc-archived";
 const TOKEN_A = "token-a";
 
@@ -80,7 +83,7 @@ type EngineFailure = Extract<EngineExecution, { ok: false }>;
 class FakeEngine implements EngineLike {
   readonly calls: { command: string; params: Record<string, unknown> }[] = [];
   /** The next success reply (engine revisions + result payload). */
-  reply: EngineExecution extends { ok: true; reply: infer R } ? R : never = {
+  reply: EngineCommandReply = {
     revisionBefore: 0,
     revisionAfter: 0,
     result: null,
@@ -254,6 +257,8 @@ function makeExecutor(): ExecutorHarness {
   const idempotency = new FakeIdempotency();
   store.seedDocument(ORG_A, DOC_A);
   store.seedDocument(ORG_B, DOC_B);
+  // ORG_A document with no attached engine session — the §13.1 session gate.
+  store.seedDocument(ORG_A, DOC_CLOSED);
   store.seedDocument(ORG_A, DOC_ARCHIVED, { archived: true });
   sessions.map.set(DOC_A, engine);
   const deps: ManualCommandDeps = { sessions, store, idempotency, allowlist: ALLOWLIST };
@@ -447,7 +452,7 @@ describe("ManualCommandExecutor — session and tenant gates (§12.2/§13.1)", (
   it("no session → engine_session_unavailable with the open-the-document hint", async () => {
     const h = makeExecutor();
     const failure = expectFailure(
-      await h.executor.executeManualCommand(ctx(ORG_A, "user-a"), DOC_B, {
+      await h.executor.executeManualCommand(ctx(ORG_A, "user-a"), DOC_CLOSED, {
         command: "layer.new.layer",
         params: {},
         idempotencyKey: "key-nosession-1",
@@ -642,6 +647,7 @@ function makeApp(options: { readonly principal?: CommandPrincipal } = {}): AppHa
   const store = new FakeCommandsStore();
   const idempotency = new FakeIdempotency();
   store.seedDocument(ORG_A, DOC_A);
+  store.seedDocument(ORG_A, DOC_CLOSED); // no session attached below → 503 path
   sessions.map.set(DOC_A, engine);
   const deps: ManualCommandDeps = { sessions, store, idempotency, allowlist: ALLOWLIST };
   const routes: CommandRoutesDeps = {
@@ -803,7 +809,7 @@ describe("POST /v1/documents/:id/{commands,undo,redo} (§13.1 routes)", () => {
     const h = makeApp();
     const res = await post(
       h,
-      `/v1/documents/${DOC_B}/commands`,
+      `/v1/documents/${DOC_CLOSED}/commands`,
       { command: "layer.new.layer", params: {}, idempotency_key: "http-key-6" },
       { headers: { "Idempotency-Key": "http-key-6" } },
     );

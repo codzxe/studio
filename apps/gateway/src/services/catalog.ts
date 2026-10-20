@@ -304,8 +304,13 @@ export const COMPONENT_MANIFEST_SCHEMA = z.object({
 
 export type ComponentManifest = z.infer<typeof COMPONENT_MANIFEST_SCHEMA>;
 
-/** POST /v1/workspaces/:id/templates body — a full §7.2 manifest. */
-export const REGISTER_TEMPLATE_BODY_SCHEMA = TEMPLATE_MANIFEST_SCHEMA;
+/**
+ * POST /v1/workspaces/:id/templates body — a full §7.2 manifest. STRICT on
+ * purpose (unlike the load schema above): registration is a WRITE of a
+ * manifest the engine's serde must also accept (`deny_unknown_fields`), so
+ * an extra field is a 422, never silently stripped from the stored jsonb.
+ */
+export const REGISTER_TEMPLATE_BODY_SCHEMA = TEMPLATE_MANIFEST_SCHEMA.strict();
 export type RegisterTemplateBody = TemplateManifest;
 
 // ---------------------------------------------------------------------------

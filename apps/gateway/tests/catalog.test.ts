@@ -7,7 +7,7 @@
 // Workspace registration runs over an in-memory WorkspaceTemplatesStore fake
 // through buildApp's full middleware stack (error mapper, request id, logger).
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import pino from "pino";
 import { err, ok, type Result } from "@studio/config";
 import type { WorkspaceTemplate } from "@studio/db";
@@ -97,9 +97,10 @@ class FakeStore implements WorkspaceTemplatesStore {
     version: number,
   ): Promise<WorkspaceTemplate | null> {
     const found = this.rows.find((row) => {
-      const id = (row.manifest as Record<string, unknown>).id;
       return (
-        row.organizationId === organizationId && id === templateId && row.version === version
+        row.organizationId === organizationId &&
+        row.manifest.id === templateId &&
+        row.version === version
       );
     });
     return found ?? null;
@@ -443,10 +444,13 @@ describe("GET /v1/templates", () => {
       canvas: { width: 1080, height: 1080 },
       slots: ["badge", "headline", "logo", "photo", "subhead"],
     });
-    // Cards are deliberately NOT the full manifest (§7.4 list shape).
+    // Cards are deliberately NOT the full manifest (§7.4 list shape):
+    // slots are NAMES, and layerMap/rules never appear.
     expect(card).not.toHaveProperty("layerMap");
     expect(card).not.toHaveProperty("rules");
-    expect(card).not.toHaveProperty("slots");
+    for (const slot of card?.slots ?? []) {
+      expect(typeof slot).toBe("string");
+    }
   });
 
   it("filters by tags with AND semantics, case-insensitively", async () => {
@@ -656,11 +660,12 @@ describe("auth and rate limits", () => {
   });
 
   it("fails open when the limiter KV errors (W4-D posture)", async () => {
-    const brokenKv = new InMemoryKV(() => FIXED_NOW_MS);
-    brokenKv.set = async () => {
-      throw new Error("kv down");
-    };
-    const limiter = new RateLimiter({ kv: brokenKv, now: () => FIXED_NOW_MS });
+    class ExplodingKv extends InMemoryKV {
+      async get(): Promise<string | null> {
+        throw new Error("kv down");
+      }
+    }
+    const limiter = new RateLimiter({ kv: new ExplodingKv(), now: () => FIXED_NOW_MS });
     const harness = makeHarness({ limiter, rateLimit: { limit: 1, windowSec: 60 } });
     const res = await get(harness, "/v1/templates");
     expect(res.status).toBe(200); // limiter outage ≠ catalog outage
@@ -812,6 +817,12 @@ describe("POST /v1/workspaces/:id/templates", () => {
 
 describe("catalog loading (skip invalid, fail loud on zero)", () => {
   const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   function makeTempCatalog(): string {
     const dir = mkdtempSync(join(tmpdir(), "studio-catalog-"));

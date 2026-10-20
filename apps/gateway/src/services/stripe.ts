@@ -141,7 +141,7 @@ export function priceMapFromEnv(
   }
   if (missing.length > 0) {
     return err("validation_failed", "Stripe price ids are not configured.", {
-      hint: `Set ${missing.join(", ")} (or the STRIPE_PRICE_PLAN_*_CREDITS aliases from .env.example).`,
+      hint: `Set ${missing.join(", ")} (or the PLAN_*_CREDITS aliases).`,
     });
   }
   return ok({ starter, pro, max, pack, seat });
@@ -845,7 +845,8 @@ export function createStripeBillingService(deps: StripeBillingDeps): StripeBilli
   async function handleCheckoutCompleted(event: StripeEvent): Promise<WebhookOutcome> {
     const session = event.data.object;
     const metadata = recordField(session, "metadata");
-    const organizationId = metadata === undefined ? undefined : stringField(metadata, "organizationId");
+    const organizationId =
+      metadata === undefined ? undefined : stringField(metadata, "organizationId");
     if (organizationId === undefined) {
       // Cannot attribute and cannot claim (idempotency_keys.organization_id
       // NOT NULL) — a replay after metadata is fixed still processes.
@@ -900,7 +901,11 @@ export function createStripeBillingService(deps: StripeBillingDeps): StripeBilli
         actorId: null,
         action: "billing.subscription.attached",
         target: `subscription:${row.id}`,
-        metadata: { reason: "checkout.session.completed", planCode, stripeSubscriptionId: subscriptionId },
+        metadata: {
+          reason: "checkout.session.completed",
+          planCode,
+          stripeSubscriptionId: subscriptionId
+        },
       });
     });
   }

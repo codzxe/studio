@@ -504,7 +504,9 @@ export function drizzleUsageQueries(db: DbLike): UsageQueryLike {
           status: agentRuns.status,
           tier: agentRuns.tier,
           runCount: sql<string>`count(*)`.as("run_count"),
-          costMicroUsd: sql<string>`coalesce(sum(${agentRuns.costMicroUsd}), 0)`.as("cost_micro_usd"),
+          costMicroUsd: sql<string>`coalesce(sum(${agentRuns.costMicroUsd}), 0)`.as(
+            "cost_micro_usd",
+          ),
           tokensIn: sql<string>`coalesce(sum(${agentRuns.tokensIn}), 0)`.as("tokens_in"),
           tokensOut: sql<string>`coalesce(sum(${agentRuns.tokensOut}), 0)`.as("tokens_out"),
         })

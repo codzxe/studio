@@ -1114,6 +1114,8 @@ export interface GatewayHarness {
   readonly sessions: ReadonlyMap<string, TestSession>;
   /** Re-binds a session's active workspace (the signup accept flow, §20 #1). */
   setSessionOrg(token: string, organizationId: string): void;
+  /** Registers an extra session — e.g. an API key with narrowed scopes (§15.2). */
+  addSession(token: string, session: TestSession): void;
 }
 
 export interface BuildGatewayOptions {
@@ -1399,6 +1401,9 @@ export function buildGateway(options: BuildGatewayOptions = {}): GatewayHarness 
         throw new Error(`harness: no session registered for token ${token}`);
       }
       sessions.set(token, { ...session, organizationId });
+    },
+    addSession(token, session) {
+      sessions.set(token, { ...session });
     },
   };
 }

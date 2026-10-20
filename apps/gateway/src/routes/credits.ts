@@ -355,7 +355,9 @@ async function enforceReadLimit(
       "rate_limited",
       "Too many requests — slow down and retry shortly.",
       {
-        hint: `Limit is ${policy.limit} per ${policy.windowSec}s. Retry after ${decision.retryAfterSec}s.`,
+        hint:
+          `Limit is ${policy.limit} per ${policy.windowSec}s. ` +
+          `Retry after ${decision.retryAfterSec}s.`,
         retryable: true,
       },
     );
