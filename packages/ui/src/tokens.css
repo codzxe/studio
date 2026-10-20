@@ -1,0 +1,186 @@
+/**
+ * @studio/ui — design tokens (§16.3: shadcn/ui-style kit paired with a design-token theme).
+ *
+ * THEMING NOTE: the palette below is a neutral template default. The final palette —
+ * including the accent — comes from the workspace's brand tokens (§7.5); these values are
+ * the fallback used when a workspace has no brand tokens set. Apps override these custom
+ * properties at `:root` scope (e.g. in a `[data-workspace-theme]` block) — no component
+ * changes needed.
+ *
+ * Format: colors are raw HSL channel triplets ("<h> <s>% <l>%") consumed via
+ * `hsl(var(--token) / <alpha-value>)` in the app's Tailwind config (see README.md for
+ * the exact mapping block). Channel triplets keep Tailwind opacity modifiers working.
+ *
+ * Dark mode: class-driven (`.dark`) with a `prefers-color-scheme: dark` fallback for
+ * class-less embeddings. `.light` always forces the light set.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces & text — neutral base */
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+
+  /* Interactive neutrals */
+  --primary: 240 5.9% 10%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+
+  /* Accent — PLACEHOLDER (one accent slot): overridden by workspace brand tokens (§7.5). */
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+
+  /* Borders, inputs, focus rings */
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 240 5.9% 10%;
+
+  /* Destructive + run-status semantics (§13.2 → Badge STATUS_BADGE_VARIANT map) */
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 98%;
+  --success: 142 72% 30%;
+  --success-foreground: 0 0% 98%;
+  --warning: 35 92% 40%;
+  --warning-foreground: 33 100% 96%;
+  --info: 221 83% 53%;
+  --info-foreground: 0 0% 98%;
+
+  /* Radius scale */
+  --radius: 0.5rem;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  /* Spacing scale — base 4px unit, Tailwind-compatible multipliers */
+  --spacing: 0.25rem;
+  --spacing-0: 0px;
+  --spacing-1: calc(var(--spacing) * 1);
+  --spacing-2: calc(var(--spacing) * 2);
+  --spacing-3: calc(var(--spacing) * 3);
+  --spacing-4: calc(var(--spacing) * 4);
+  --spacing-6: calc(var(--spacing) * 6);
+  --spacing-8: calc(var(--spacing) * 8);
+  --spacing-12: calc(var(--spacing) * 12);
+  --spacing-16: calc(var(--spacing) * 16);
+
+  /* Panel — the editor layout's building block (layers / chat / versions rails) */
+  --panel-width: 18rem;
+  --panel-collapsed-width: 2.75rem;
+  --panel-min-width: 14rem;
+  --panel-max-width: 28rem;
+
+  /* Skeleton shimmer */
+  --shimmer-duration: 1.6s;
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Surfaces & text */
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+
+  /* Interactive neutrals */
+  --primary: 0 0% 98%;
+  --primary-foreground: 240 5.9% 10%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+
+  /* Accent — brand placeholder (§7.5) */
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+
+  /* Borders, inputs, focus rings */
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 240 4.9% 83.9%;
+
+  /* Status semantics */
+  --destructive: 0 72% 56%;
+  --destructive-foreground: 0 0% 98%;
+  --success: 142 70% 45%;
+  --success-foreground: 0 0% 98%;
+  --warning: 39 92% 55%;
+  --warning-foreground: 32 81% 15%;
+  --info: 217 91% 65%;
+  --info-foreground: 0 0% 98%;
+}
+
+/* Class-less dark embedding: follow the OS unless `.light` forces light. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    color-scheme: dark;
+
+    /* Surfaces & text */
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    /* Interactive neutrals */
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    /* Accent — brand placeholder (§7.5) */
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+
+    /* Borders, inputs, focus rings */
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+
+    /* Status semantics */
+    --destructive: 0 72% 56%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 142 70% 45%;
+    --success-foreground: 0 0% 98%;
+    --warning: 39 92% 55%;
+    --warning-foreground: 32 81% 15%;
+    --info: 217 91% 65%;
+    --info-foreground: 0 0% 98%;
+  }
+}
+
+/* Skeleton shimmer — keyframe + utility used by <Skeleton shimmer /> */
+@keyframes ui-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.ui-shimmer {
+  animation: ui-shimmer var(--shimmer-duration) linear infinite;
+  background-image: linear-gradient(
+    110deg,
+    hsl(var(--muted)) 33%,
+    hsl(var(--muted-foreground) / 0.12) 50%,
+    hsl(var(--muted)) 66%
+  );
+  background-size: 200% 100%;
+}

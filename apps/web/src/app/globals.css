@@ -1,0 +1,52 @@
+/*
+ * apps/web — global styles (W1-K).
+ *
+ * Tailwind v4 CSS-first configuration: no tailwind.config.js — design tokens
+ * live below and are exposed as utilities via `@theme inline`
+ * (bg-background, text-muted-foreground, border-border, …).
+ *
+ * TODO(branding): "Layerly" is a temporary neutral working name (W1-K);
+ * the accent is a placeholder hue — swap the palette with the real brand
+ * system before launch, and add a dark-mode variant (`@custom-variant dark`)
+ * in the editor-UI wave.
+ */
+
+@import "tailwindcss";
+
+/* Design tokens as CSS variables — neutral palette, accent placeholder. */
+:root {
+  --background: #fafafa;
+  --foreground: #18181b;
+  --surface: #ffffff;
+  --surface-muted: #f4f4f5;
+  --muted-foreground: #52525b;
+  --border: #e4e4e7;
+  --accent: #4f46e5; /* placeholder accent — TODO(branding) */
+  --accent-foreground: #ffffff;
+  --ring: #a5b4fc;
+}
+
+/* Map the tokens into Tailwind utilities while keeping a single source of
+ * truth in :root (values are `var()` references, not copies). */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-ring: var(--ring);
+  /* Fonts via CSS system stacks only — no font files are ever committed
+   * (docs/AGENTS.md; CRAFT_FONTS_DIR is an engine-side build input). */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}

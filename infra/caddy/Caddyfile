@@ -1,0 +1,115 @@
+# =============================================================================
+# infra/caddy/Caddyfile — TLS + reverse proxy for the single box (§3.1 proxy)
+# =============================================================================
+# Caddy 2 (Apache-2.0, §16.3) terminates TLS for ONE domain and forwards to
+# the gateway (API under /v1/*) and web (everything else). Automatic ACME
+# certificates on first start — DNS must already point at the box (§17.1
+# first-boot runbook; see infra/README.md).
+#
+# Env vars come from the caddy service's `environment:` block in
+# infra/compose/docker-compose.yml (APP_DOMAIN, GATEWAY_INTERNAL,
+# WEB_INTERNAL, ACME_EMAIL) — least privilege: Caddy gets no app secrets.
+# {$VAR} is Caddy's env substitution. An unset APP_DOMAIN aborts startup
+# (compose already fails fast on it).
+# =============================================================================
+
+# Global options — none needed by default. For ACME expiry notices, set
+# ACME_EMAIL in ../../.env, add it to the caddy service `environment:` block
+# in docker-compose.yml AND uncomment the block below. Only enable when the
+# value is actually set — an empty `email` argument is a config error:
+#   {
+#       email {$ACME_EMAIL}
+#   }
+
+{$APP_DOMAIN} {
+        # --- TLS defaults (§15.2) ----------------------------------------------
+        # Caddy's defaults are already modern; we pin the floor explicitly.
+        # Automatic HTTPS (ACME http-01/tls-alpn-01) needs 80/443 reachable —
+        # see Lightsail firewall notes in infra/README.md.
+        tls {
+                protocols tls1.2 tls1.3
+                # Key type default (p256) is fine; no client certs — gateway auth
+                # is Better Auth sessions/API keys, not mTLS (§16.3).
+        }
+
+        # --- Compression (§3.1 proxy row: gzip/brotli) --------------------------
+        # Caddy ≥ 2.8 ships zstd natively: better ratio than gzip, cheap CPU.
+        # Brotli: NOT built into stock caddy:2-alpine — requires the
+        # mholt/caddy-brotli plugin via an xcaddy custom build. Only worth a
+        # custom image if static asset bytes matter; zstd+gzip covers us.
+        encode zstd gzip
+
+        # --- Security headers (§15.2 app security) ------------------------------
+        header {
+                # Force HTTPS for a year on all subdomains. Add `preload` only after
+                # the apex domain is permanently HTTPS (hstspreload.org is a one-way
+                # door).
+                Strict-Transport-Security "max-age=31536000; includeSubDomains"
+                X-Content-Type-Options "nosniff"
+                # §3.1: the wasm editor is embedded same-origin (iframe or
+                # full-page). SAMEORIGIN keeps that working while blocking
+                # third-party framing/clickjacking.
+                X-Frame-Options "SAMEORIGIN"
+                Referrer-Policy "strict-origin-when-cross-origin"
+                Permissions-Policy "camera=(), microphone=(), geolocation=()"
+                # Hide implementation details (§22: no version leakage).
+                -Server
+                # CSP is deliberately NOT set here: the Next.js app owns its
+                # content-security-policy (needs per-route nonces for the wasm
+                # editor). Setting a blanket CSP at the proxy would break it.
+        }
+        # Defer header writes so the app can override any header above.
+        # header / declarative blocks are defaults; app-provided headers win.
+
+        # --- Request body limit -------------------------------------------------
+        # 25 MB app-side upload cap (§15.2 hard caps; §20 acceptance #2) + slack
+        # for multipart envelopes/base64 expansion → reject at the edge with a
+        # plain 413 instead of buffering 100 GB bodies into a 4 GB box.
+        request_body {
+                max_size 30MB
+        }
+
+        # --- Rate limiting (stub) -----------------------------------------------
+        # Edge rate limiting needs mholt/caddy-ratelimit, a custom xcaddy build
+        # — deferred until abuse shows up (cheap, boring, reliable, §17). The
+        # gateway already enforces the app-level limits of §15.2 (see
+        # RATE_LIMIT_* in .env.example: auth/runs/uploads/exports, per IP /
+        # user / workspace). To add the plugin later:
+        #   xcaddy build --with github.com/mholt/caddy-ratelimit
+        #   rate_limit {
+        #       zone auth_ip {
+        #           key    {remote_host}
+        #           events 10
+        #           window 1m
+        #       }
+        #   }
+
+        # --- Routing (§3.1, §13) -------------------------------------------------
+        # /v1/* → gateway (Hono REST + SSE). flush_interval -1 disables response
+        # buffering so SSE events (§13.2: progress, heartbeat, resume via
+        # Last-Event-ID) reach the browser immediately — do NOT change this.
+        @v1 path /v1/*
+        handle @v1 {
+                reverse_proxy {$GATEWAY_INTERNAL} {
+                        flush_interval -1
+                        # Preserve X-Forwarded-For/Proto (Caddy defaults) so Better Auth
+                        # builds correct callbacks behind TLS (§15.2).
+                }
+        }
+
+        # Everything else → web (Next.js marketing + product UI).
+        handle {
+                reverse_proxy {$WEB_INTERNAL}
+        }
+
+        # --- Access logs (§22) ----------------------------------------------------
+        # Structured JSON to stdout → docker json-file driver with rotation
+        # caps (see compose x-logging; ≤ 500 MB box-wide, §17.4).
+        log {
+                output stdout
+                format json
+        }
+}
+
+# Caddy answers unmatched hosts (e.g. raw IP scans) with an empty 200 — fine;
+# it publishes nothing else. HTTP→HTTPS redirect for the site is automatic.

@@ -16,3 +16,14 @@ here in the same change (spec §1.5 rule 9). License texts live in `LICENSES/`.
 Runtime dependencies (installed from the package manager) are pinned in `pnpm-lock.yaml`
 and must pass the CI license allowlist: MIT, Apache-2.0, BSD-2/3, ISC, MPL-2.0 (unmodified),
 PostgreSQL. **Not allowed:** AGPL-3.0, SSPL, BUSL-1.1, RSALv2, Elastic, Sustainable Use.
+
+## Declared dependency licenses
+
+Every external dependency of the root + `apps/*/` + `packages/*/` `package.json` files
+is declared in [`licenses.overrides.json`](./licenses.overrides.json) (repo root, owned by
+the license policy). `scripts/check-licenses.mjs` (`pnpm check:licenses`, spec §16.0/§16.5,
+§1.5 rules 8–9) validates that manifest offline and fails on any forbidden license
+(AGPL/SSPL/BUSL/RSALv2/Elastic/FSL/…) or undeclared dependency; it also fails the build if
+font binaries or `.env` secret files are committed. Entries marked `TODO-verify` are declared
+from offline knowledge and must be confirmed against package metadata in CI
+(`LICENSE_CHECK_STRICT=1` makes them fatal). License texts live in `LICENSES/`.

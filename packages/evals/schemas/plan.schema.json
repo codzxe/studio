@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "packages/evals/schemas/plan.schema.json — the {plan, run} envelope asserted by the promptfoo suite. `plan` mirrors the planner output contract (spec §5.5 / §23.2); `run` mirrors the worker's run-outcome envelope (§5.1 loop + §11.1 validator verdict + §24 trace fields) that carries the tier-cost and budget assertions. NOTE: the eval-binding copy of this schema lives inline in promptfoo.config.yaml (defaultTest.assert is-json) because promptfoo inlines object schemas most reliably; keep the two in sync. TODO(W6): extract to a single shared source imported by both the eval config and packages/agent.",
+  "type": "object",
+  "required": ["plan", "run"],
+  "additionalProperties": false,
+  "properties": {
+    "plan": {
+      "type": "object",
+      "required": ["intent", "template", "assets", "slots", "palette", "typography", "steps", "checks", "model_tier", "notes_for_user"],
+      "additionalProperties": false,
+      "properties": {
+        "intent": { "enum": ["create_post", "edit_layers", "resize", "variant", "export"] },
+        "template": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*@\\d+$" },
+            { "type": "null" }
+          ]
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ref", "slot"],
+            "additionalProperties": false,
+            "properties": {
+              "ref": { "type": "string", "minLength": 1, "$comment": "asset_id from SNAPSHOT, or an imagegen:<slug> ref for a to-be-generated image (§24.4)" },
+              "slot": { "type": "string", "minLength": 1 },
+              "fit": { "enum": ["cover", "contain", "fill"] },
+              "focal": {
+                "type": "object",
+                "required": ["x", "y"],
+                "additionalProperties": false,
+                "properties": {
+                  "x": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "y": { "type": "number", "minimum": 0, "maximum": 1 }
+                }
+              }
+            }
+          }
+        },
+        "slots": { "type": "object", "additionalProperties": { "type": "string" } },
+        "palette": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+        },
+        "typography": { "type": "object" },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["tool", "args"],
+            "additionalProperties": false,
+            "properties": {
+              "tool": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9_]*(\\.[a-zA-Z0-9_]+)*$" },
+              "args": { "type": "object" }
+            }
+          }
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "$comment": "validator checks the planner requests (§23.2 example: in_bounds, contrast>=4.5, headline_largest, safe_area; codes per §11.1)"
+        },
+        "model_tier": { "enum": ["quick", "standard", "complex"] },
+        "notes_for_user": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": ["status", "credits_charged", "tool_calls", "revisions", "validator", "layers", "undo_entries", "rolled_back", "reservation_released"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["succeeded", "succeeded_with_warnings", "failed"] },
+        "credits_charged": { "type": "number", "minimum": 0, "maximum": 20, "$comment": "§5.2 exact tier costs: quick=1, standard=2, complex=5 (premium x2, max x4); 0 on refunded provider failures (§14.2, §24.4)" },
+        "tool_calls": { "type": "integer", "minimum": 0, "maximum": 24, "$comment": "§5.2 hard caps: quick 6 / standard 12 / complex 24" },
+        "revisions": { "type": "integer", "minimum": 0, "maximum": 3, "$comment": "§5.1: max 2 repair cycles; §5.2 max tier 3 revisions" },
+        "code": { "anyOf": [{ "type": "string" }, { "type": "null" }], "$comment": "error code on failed runs (e.g. image_provider_error §24.4)" },
+        "retryable": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] },
+        "retry_grace": { "type": "integer", "minimum": 0, "$comment": "§24.4 policy constant retry_grace: 1 — first provider-caused retry is free" },
+        "validator": {
+          "anyOf": [
+            { "type": "null", "$comment": "null when the run failed or paused before a render/validate happened" },
+            {
+              "type": "object",
+              "required": ["ok", "blockers", "majors", "minors"],
+              "additionalProperties": false,
+              "properties": {
+                "ok": { "type": "boolean" },
+                "blockers": { "type": "integer", "minimum": 0 },
+                "majors": { "type": "integer", "minimum": 0 },
+                "minors": { "type": "integer", "minimum": 0 }
+              }
+            }
+          ]
+        },
+        "layers": { "type": "array", "items": { "type": "string" }, "$comment": "final layer names (or pre-run tree after a rollback) — §23.1 rule 5 role naming" },
+        "undo_entries": { "type": "integer", "minimum": 0, "maximum": 1, "$comment": "§1.5 constraint 10: one transaction per run — undo is exactly one history entry" },
+        "rolled_back": { "type": "boolean", "$comment": "§5.6 agent.rollback on failure/cancel" },
+        "reservation_released": { "type": "boolean", "$comment": "credit reservation released (always true once the run settles; §12 reservations held->committed/released)" }
+      }
+    }
+  }
+}

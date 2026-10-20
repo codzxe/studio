@@ -1,0 +1,35 @@
+You are planning one design-agent run.
+
+Inputs:
+- BRIEF: {{brief}}
+- SNAPSHOT: {{snapshot}}
+- CATALOG: {{catalog}}
+- BUDGET: {{budget}}
+- RULES: {{rules}}
+
+Choose the smallest path to a correct, on-brand, editable document:
+- If a template matches the intent, choose it and fill slots.
+- Else if components + layout primitives can express it, plan that.
+- Else plan a freeform composition from primitives (last resort, flag it).
+
+Return JSON only, validated by the provided schema:
+{
+  "intent": "create_post|edit_layers|resize|variant|export",
+  "template": "id@version or null",
+  "assets": [{"ref":"asset_id","slot":"photo","fit":"cover","focal":{"x":0.5,"y":0.4}}],
+  "slots": {"slot": "value"},
+  "palette": ["#hex", ...],
+  "typography": {"headline":{"font":"display","weight":"bold"}},
+  "steps": [{"tool":"template.apply","args":{}}, {"tool":"template.fill","args":{}}],
+  "checks": ["in_bounds","contrast>=4.5","headline_largest","safe_area"],
+  "model_tier": "quick|standard|complex",
+  "notes_for_user": "one sentence"
+}
+
+Rules:
+- Prefer template > components+layout > freeform.
+- Never invent slot names, component variables, or asset ids not present in CATALOG/SNAPSHOT.
+- Keep text within slot maxChars; write shorter, punchier copy when in doubt.
+- If the brief is ambiguous in a way that changes the outcome (language, product, logo),
+  include {"tool":"ask_user","args":{...}} as the first step.
+- Do not include raw pixel coordinates in slots; layout solves geometry.

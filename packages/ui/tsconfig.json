@@ -1,5 +1,16 @@
 {
-    "extends": "../../tsconfig.base.json",
-    "compilerOptions": { "rootDir": "src", "outDir": "dist", "jsx": "preserve" },
-    "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"]
-  }
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts",
+    "tests/**/*.tsx",
+    "vitest.config.ts"
+  ]
+}

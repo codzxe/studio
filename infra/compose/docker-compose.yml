@@ -68,8 +68,9 @@ services:
       APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN required in ../../.env (public DNS name for TLS, §17.1)}
       GATEWAY_INTERNAL: ${GATEWAY_INTERNAL:-gateway:8787}
       WEB_INTERNAL: ${WEB_INTERNAL:-web:3000}
-      # Optional: ACME account email for expiry notices. Empty = anonymous.
-      ACME_EMAIL: ${ACME_EMAIL:-}
+      # ACME_EMAIL (optional, for expiry notices): add here + the Caddyfile's
+      # global `email` block — an empty value is a Caddy config error, so it
+      # is deliberately NOT defaulted here.
     healthcheck:
       <<: *healthcheck-defaults
       # Port 80 always answers (ACME http-01 + redirect) — no self-signed TLS
