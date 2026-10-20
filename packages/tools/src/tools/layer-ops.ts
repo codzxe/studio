@@ -23,6 +23,7 @@
 
 import { z } from "zod";
 import {
+  type LayerRef,
   MAX_ERROR_MESSAGE_CHARS,
   MAX_HINT_CHARS,
   ambiguousLayerErr,
@@ -33,14 +34,13 @@ import {
   ok,
   strictObject,
   zLayerRef,
-  type LayerRef,
 } from "../kit.js";
 import {
-  TOOL_ERROR_CODE_SCHEMA,
   type EngineBatchReport,
   type EngineCommand,
   type EngineFailure,
   type EngineLayerSummary,
+  TOOL_ERROR_CODE_SCHEMA,
   type Tool,
   type ToolContext,
   type ToolErr,
@@ -137,18 +137,15 @@ export type LayerOpsArgs =
     }
   | { readonly op: "group"; readonly layers: readonly LayerRef[]; readonly name?: string };
 
-const LAYER_OPS_ARGS: z.ZodType<LayerOpsArgs, z.ZodTypeDef, unknown> = z.discriminatedUnion(
-  "op",
-  [
-    CREATE_GROUP_OP,
-    DUPLICATE_OP,
-    RENAME_OP,
-    REORDER_OP,
-    ALIGN_OP,
-    SET_PROPS_OP,
-    GROUP_OP,
-  ],
-);
+const LAYER_OPS_ARGS: z.ZodType<LayerOpsArgs, z.ZodTypeDef, unknown> = z.discriminatedUnion("op", [
+  CREATE_GROUP_OP,
+  DUPLICATE_OP,
+  RENAME_OP,
+  REORDER_OP,
+  ALIGN_OP,
+  SET_PROPS_OP,
+  GROUP_OP,
+]);
 
 // ---------------------------------------------------------------------------
 // The exact §2.2 command ids this tool may emit (tests grep-check them against
@@ -271,10 +268,9 @@ export function resolveLayerRef(
     return { ok: true, layer: byId };
   }
   const name = ref.layerName;
-  const matches =
-    layers.some((layer) => layer.name === name)
-      ? layers.filter((layer) => layer.name === name)
-      : layers.filter((layer) => layer.name.toLowerCase() === name.toLowerCase());
+  const matches = layers.some((layer) => layer.name === name)
+    ? layers.filter((layer) => layer.name === name)
+    : layers.filter((layer) => layer.name.toLowerCase() === name.toLowerCase());
   if (matches.length === 0) {
     return err("layer_not_found", "No layer matched this reference", {
       hint: clip(`No layer is named ${quote(name)}; ${candidateHint(layers)}`, MAX_HINT_CHARS),
@@ -283,7 +279,10 @@ export function resolveLayerRef(
   }
   if (matches.length > 1) {
     // The name is the same on every match by construction — candidates are ids.
-    return ambiguousLayerErr(name, matches.map((layer) => `id ${layer.layerId}`));
+    return ambiguousLayerErr(
+      name,
+      matches.map((layer) => `id ${layer.layerId}`),
+    );
   }
   const layer = matches.at(0);
   return layer === undefined
@@ -579,7 +578,9 @@ export const layerOpsTool: Tool<LayerOpsArgs> = defineTool({
         const what = count === 1 ? "layer" : "layers";
         const warnings: string[] = [];
         if (count === 1) {
-          warnings.push("aligning a single layer to its own combined bounds is a no-op — pass 2 or more layers");
+          warnings.push(
+            "aligning a single layer to its own combined bounds is a no-op — pass 2 or more layers",
+          );
         }
         return ok({
           summary: `Aligned ${count} ${what} (${nameList(targets.layers)}) by ${args.mode}`,
@@ -591,7 +592,8 @@ export const layerOpsTool: Tool<LayerOpsArgs> = defineTool({
         const keys = ["visible", "opacity", "locked"] as const;
         const given = keys.filter((key) => args[key] !== undefined);
         if (given.length === 0) {
-          const hint = "Pass visible (show/hide), opacity (0–1) or locked (lock/unlock) — nothing to apply otherwise.";
+          const hint =
+            "Pass visible (show/hide), opacity (0–1) or locked (lock/unlock) — nothing to apply otherwise.";
           return err(
             "validation_failed",
             "set_props needs at least one of visible, opacity, locked",
@@ -644,7 +646,9 @@ export const layerOpsTool: Tool<LayerOpsArgs> = defineTool({
         // Grouping is the §10.1 fix, not a violation — no loose-layer warning here.
         const warnings: string[] = [];
         if (name === undefined) {
-          warnings.push("the engine auto-named the group — rename it to a §10.2 role name such as Content or Brand");
+          warnings.push(
+            "the engine auto-named the group — rename it to a §10.2 role name such as Content or Brand",
+          );
         }
         const after = name === undefined ? undefined : await readTreeAfter(ctx);
         const groupId =

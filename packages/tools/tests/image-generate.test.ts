@@ -1,6 +1,7 @@
 // image-generate.test.ts — W5-F. Table-driven, deterministic, no network:
 // credit-charge table (§5.2), provider-failure mapping, PNG validation,
-// target placement mechanics, prompt cap/sanitisation, schema strictness.
+// target placement mechanics (mirroring asset-place), prompt cap/sanitisation,
+// schema strictness, budget + seam behaviour.
 
 import { ENGINE_PNG_MAX_BYTES } from "@studio/config";
 import { describe, expect, it } from "vitest";
@@ -10,6 +11,7 @@ import {
   IMAGE_CREDIT_COST,
   imageGenerateArgsSchema,
   imageGenerateTool,
+  isPlaceableGeneratedPath,
   sanitizePrompt,
   validatePng,
   type CreditSpender,
@@ -205,12 +207,12 @@ function makeProvider(script: { result?: ImageProviderResult; throw?: () => Erro
   return { imageProvider, calls };
 }
 
-function makeSink() {
+function makeSink(path: string = "generated/stored.png") {
   const calls: Array<{ bytes: Uint8Array; fileName: string }> = [];
   const generatedImages: GeneratedImageSinkLike = {
     async put(bytes, fileName) {
       calls.push({ bytes, fileName });
-      return { ok: true, value: { path: `generated/${fileName}` } };
+      return { ok: true, value: { path: path.replace("<name>", fileName) } };
     },
   };
   return { generatedImages, calls };
@@ -235,13 +237,14 @@ const SLOT_MANIFEST = {
   layerMap: { photo: "Photo", headline: "Headline" },
 };
 
-function slotTemplates(ref: string): TemplateCatalogLike {
+/** Catalog with one template: menu-a4@1.0.0 (§7.2 layer map: photo → "Photo"). */
+function slotTemplates(): TemplateCatalogLike {
   return {
     async get(templateRef) {
-      return templateRef === ref ? SLOT_MANIFEST : undefined;
+      return templateRef === "menu-a4@1.0.0" ? SLOT_MANIFEST : undefined;
     },
     async list() {
-      return [];
+      return [{ id: "menu-a4", version: "1.0.0", title: "Menu", tags: [], slotCount: 2 }];
     },
   };
 }
@@ -252,7 +255,6 @@ interface Parts {
   readonly provider: ReturnType<typeof makeProvider>;
   readonly sink: ReturnType<typeof makeSink>;
   readonly budgets: ReturnType<typeof makeBudgets>;
-  readonly appliedTemplateRef?: string;
   readonly templates?: TemplateCatalogLike;
 }
 
@@ -263,22 +265,17 @@ function makeImageContext(parts: Parts): ImageGenerateContext {
     credits: parts.credits.credits,
     imageProvider: parts.provider.imageProvider,
     generatedImages: parts.sink.generatedImages,
-    ...(parts.appliedTemplateRef !== undefined
-      ? { appliedTemplateRef: parts.appliedTemplateRef }
-      : {}),
     ...(parts.templates !== undefined ? { templates: parts.templates } : {}),
   };
 }
 
 function assemble(overrides: Partial<Parts> = {}) {
-  const engine = overrides.engine ?? makeEngine({ before: [LAYER_BG, LAYER_PHOTO, LAYER_GROUP] });
   const parts: Parts = {
-    engine,
+    engine: overrides.engine ?? makeEngine({ before: [LAYER_BG, LAYER_PHOTO, LAYER_GROUP] }),
     credits: overrides.credits ?? makeCredits(),
     provider: overrides.provider ?? makeProvider(),
     sink: overrides.sink ?? makeSink(),
     budgets: overrides.budgets ?? makeBudgets(),
-    appliedTemplateRef: overrides.appliedTemplateRef,
     templates: overrides.templates,
   };
   return { parts, ctx: makeImageContext(parts) };
@@ -346,12 +343,14 @@ describe("image_generate argument schema", () => {
   });
 
   it("validates size, quality and the idempotency key", () => {
-    expect(parseToolArgs(imageGenerateTool, baseArgs({ size: "1792x1024" })).ok).toBe(true);
-    expect(parseToolArgs(imageGenerateTool, baseArgs({ size: "1024x1792" })).ok).toBe(true);
-    expect(parseToolArgs(imageGenerateTool, baseArgs({ size: "512x512" })).ok).toBe(false);
-    expect(parseToolArgs(imageGenerateTool, baseArgs({ quality: "final" })).ok).toBe(true);
-    expect(parseToolArgs(imageGenerateTool, baseArgs({ quality: "hd" })).ok).toBe(false);
-    expect(parseToolArgs(imageGenerateTool, baseArgs({ idempotencyKey: "short" })).ok).toBe(false);
+    const accepts = (raw: Record<string, unknown>): boolean =>
+      parseToolArgs(imageGenerateTool, baseArgs(raw)).ok === true;
+    expect(accepts({ size: "1792x1024" })).toBe(true);
+    expect(accepts({ size: "1024x1792" })).toBe(true);
+    expect(accepts({ size: "512x512" })).toBe(false);
+    expect(accepts({ quality: "final" })).toBe(true);
+    expect(accepts({ quality: "hd" })).toBe(false);
+    expect(accepts({ idempotencyKey: "short" })).toBe(false);
   });
 
   it("requires prompt, idempotencyKey and target", () => {
@@ -362,22 +361,27 @@ describe("image_generate argument schema", () => {
     expect(accepts({ prompt: "p", idempotencyKey: KEY })).toBe(false);
   });
 
-  it("allows at most one target anchor", () => {
+  it("rejects slot+layer but allows explicit bounds to combine with either", () => {
     const accepts = (raw: Record<string, unknown>): boolean =>
       parseToolArgs(imageGenerateTool, baseArgs(raw)).ok === true;
     expect(accepts({ target: { slot: "photo" } })).toBe(true);
     expect(accepts({ target: { layer: { layerName: "Photo" } } })).toBe(true);
-    expect(accepts({ target: { bounds: { x: 0, y: 0, width: 10, height: 10 } } })).toBe(true);
+    expect(accepts({ target: { bounds: [0, 0, 10, 10] } })).toBe(true);
     expect(accepts({ target: { slot: "photo", layer: { layerName: "Photo" } } })).toBe(false);
+    expect(accepts({ target: { slot: "photo", bounds: [0, 0, 10, 10] } })).toBe(true);
+    expect(accepts({ target: { layer: { layerId: "l-photo" }, bounds: [0, 0, 10, 10] } })).toBe(
+      true,
+    );
   });
 
-  it("enforces layer-ref XOR and bounds sanity", () => {
+  it("enforces layer-ref XOR and canvas-space bounds", () => {
     const accepts = (raw: Record<string, unknown>): boolean =>
       parseToolArgs(imageGenerateTool, baseArgs(raw)).ok === true;
     expect(accepts({ target: { layer: { layerId: "a", layerName: "b" } } })).toBe(false);
-    expect(accepts({ target: { bounds: { x: 0, y: 0, width: 0, height: 10 } } })).toBe(false);
-    expect(accepts({ target: { bounds: { x: "0", y: 0, width: 10, height: 10 } } })).toBe(false);
-    expect(accepts({ target: { bounds: { x: -5, y: 0, width: 10, height: 10 } } })).toBe(true);
+    expect(accepts({ target: { bounds: [0, 0, 0, 10] } })).toBe(false);
+    expect(accepts({ target: { bounds: [-5, 0, 10, 10] } })).toBe(false);
+    expect(accepts({ target: { bounds: ["0", 0, 10, 10] } })).toBe(false);
+    expect(accepts({ target: { bounds: [0, 0, 10, 10] } })).toBe(true);
   });
 });
 
@@ -466,7 +470,8 @@ describe("image_generate provider failures", () => {
 
   it("maps PNG magic violations", async () => {
     const bytes = new TextEncoder().encode("GIF89a definitely not a png");
-    const { ctx } = assemble({ provider: makeProvider({ result: { bytes, mime: "image/png" } }) });
+    const provider = makeProvider({ result: { bytes, mime: "image/png" } });
+    const { ctx } = assemble({ provider });
     const failure = expectErr(await run(ctx));
     expect(failure.code).toBe("image_provider_error");
     expect(failure.message).toContain("bad_magic");
@@ -474,7 +479,8 @@ describe("image_generate provider failures", () => {
 
   it("maps truncated PNG payloads", async () => {
     const bytes = pngBytes(4, 4).slice(0, 10);
-    const { ctx } = assemble({ provider: makeProvider({ result: { bytes, mime: "image/png" } }) });
+    const provider = makeProvider({ result: { bytes, mime: "image/png" } });
+    const { ctx } = assemble({ provider });
     const failure = expectErr(await run(ctx));
     expect(failure.message).toContain("truncated");
   });
@@ -482,14 +488,15 @@ describe("image_generate provider failures", () => {
   it("lets AbortError reach the deadline boundary as engine_timeout", async () => {
     const abortError = new Error("The operation was aborted");
     abortError.name = "AbortError";
-    const { ctx } = assemble({ provider: makeProvider({ throw: () => abortError }) });
+    const provider = makeProvider({ throw: () => abortError });
+    const { ctx } = assemble({ provider });
     const failure = expectErr(await run(ctx));
     expect(failure.code).toBe("engine_timeout");
   });
 });
 
 // ---------------------------------------------------------------------------
-// PNG validation + prompt sanitisation (pure logic)
+// PNG validation + prompt sanitisation + path guard (pure logic)
 // ---------------------------------------------------------------------------
 
 describe("validatePng", () => {
@@ -527,22 +534,49 @@ describe("sanitizePrompt", () => {
   });
 });
 
+describe("isPlaceableGeneratedPath", () => {
+  it("accepts workspace-relative keys only", () => {
+    expect(isPlaceableGeneratedPath("generated/runkey-0001.png")).toBe(true);
+    expect(isPlaceableGeneratedPath("workspace/ws-1/doc-2/generated/a.png")).toBe(true);
+    expect(isPlaceableGeneratedPath("/abs/path.png")).toBe(false);
+    expect(isPlaceableGeneratedPath("../escape.png")).toBe(false);
+    expect(isPlaceableGeneratedPath("a\\b.png")).toBe(false);
+    expect(isPlaceableGeneratedPath("http://cdn/x.png")).toBe(false);
+    expect(isPlaceableGeneratedPath("gen\u0000erated.png")).toBe(false);
+    expect(isPlaceableGeneratedPath("")).toBe(false);
+  });
+
+  it("refuses a sink path outside the workspace scope before any engine call", async () => {
+    const { ctx, parts } = assemble({ sink: makeSink("/etc/critical.png") });
+    const failure = expectErr(await run(ctx));
+    expect(failure.code).toBe("internal_error");
+    expect(parts.engine.commands.length).toBe(0);
+  });
+});
+
 // ---------------------------------------------------------------------------
-// Target placement (§6 row 7: doc.place → smart object; §10.2 naming)
+// Target placement (§6 row 7 via the asset-place mechanics; §10.2 naming)
 // ---------------------------------------------------------------------------
 
 describe("image_generate target placement", () => {
-  it("places above a named target layer with cover fit and renames per §10.2", async () => {
+  it("places over a named target layer with cover fit and renames per §10.2", async () => {
     const { ctx, parts } = assemble();
     const result = expectOk(await run(ctx, { target: { layer: { layerName: "Photo" } } }));
-    const [select, place, rename, convert] = parts.engine.commands;
-    expect(select).toMatchObject({ id: "layer.select", mode: "batch" });
-    expect(select.params).toEqual({ layer: "l-photo", mode: "replace" });
+    const [place, transform, rename, convert] = parts.engine.commands;
     expect(place.id).toBe("doc.place");
+    expect(place.mode).toBe("batch");
     expect(place.params).toEqual({
-      path: `generated/${KEY}.png`,
-      scale: 105.47,
+      path: `generated/stored.png`,
+      scale: 100,
+      smartObject: true,
       center: [540, 350],
+    });
+    expect(transform.id).toBe("edit.transform");
+    expect(transform.params).toEqual({
+      scaleX: 105.46875,
+      scaleY: 105.46875,
+      dx: 0,
+      dy: 0,
     });
     expect(rename).toMatchObject({
       id: "layer.setProps",
@@ -559,7 +593,7 @@ describe("image_generate target placement", () => {
   it("resolves the target by layer id identically", async () => {
     const { ctx, parts } = assemble();
     expectOk(await run(ctx, { target: { layer: { layerId: "l-photo" } } }));
-    expect(parts.engine.commands[0].params).toEqual({ layer: "l-photo", mode: "replace" });
+    expect(parts.engine.commands[0].params).toMatchObject({ center: [540, 350] });
   });
 
   it("lists candidates when a layer name is ambiguous", async () => {
@@ -577,67 +611,83 @@ describe("image_generate target placement", () => {
     expect(failure.code).toBe("layer_not_found");
   });
 
-  it("rejects targets without pixel bounds (groups)", async () => {
+  it("rejects targets without usable bounds (groups)", async () => {
     const { ctx } = assemble();
     const failure = expectErr(await run(ctx, { target: { layer: { layerName: "Content" } } }));
     expect(failure.code).toBe("validation_failed");
   });
 
-  it("places into a template slot through the applied manifest", async () => {
-    const ref = "menu-a4@1.0.0";
-    const { ctx, parts } = assemble({ appliedTemplateRef: ref, templates: slotTemplates(ref) });
+  it("places into a template slot through the catalog's image-slot layer map", async () => {
+    const { ctx, parts } = assemble({ templates: slotTemplates() });
     const result = expectOk(await run(ctx, { target: { slot: "photo" } }));
-    expect(parts.engine.commands[0].params).toEqual({ layer: "l-photo", mode: "replace" });
+    expect(parts.engine.commands[0].params).toMatchObject({ center: [540, 350] });
     expect(result.summary).toContain('into slot "photo"');
   });
 
-  it("rejects unknown slots and lists the mapped ones", async () => {
-    const ref = "menu-a4@1.0.0";
-    const { ctx } = assemble({ appliedTemplateRef: ref, templates: slotTemplates(ref) });
+  it("rejects non-image slots", async () => {
+    const { ctx } = assemble({ templates: slotTemplates() });
+    const failure = expectErr(await run(ctx, { target: { slot: "headline" } }));
+    expect(failure.code).toBe("invalid_slots");
+  });
+
+  it("rejects unknown slots and lists the image slots", async () => {
+    const { ctx } = assemble({ templates: slotTemplates() });
     const failure = expectErr(await run(ctx, { target: { slot: "logo" } }));
     expect(failure.code).toBe("unknown_slots");
     expect(failure.hint).toContain("photo");
   });
 
-  it("rejects slot targets when no template is applied", async () => {
+  it("rejects slot targets when the catalog defines no image slots", async () => {
     const { ctx } = assemble();
     const failure = expectErr(await run(ctx, { target: { slot: "photo" } }));
     expect(failure.code).toBe("unknown_slots");
   });
 
-  it("reports an unavailable applied manifest as not_found", async () => {
-    const ref = "menu-a4@1.0.0";
-    const { ctx } = assemble({
-      appliedTemplateRef: "menu-a4@2.0.0",
-      templates: slotTemplates(ref),
-    });
-    const failure = expectErr(await run(ctx, { target: { slot: "photo" } }));
-    expect(failure.code).toBe("not_found");
+  it("explicit bounds override the slot's own box", async () => {
+    const { ctx, parts } = assemble({ templates: slotTemplates() });
+    const result = expectOk(
+      await run(ctx, { target: { slot: "photo", bounds: [10, 20, 500, 400] } }),
+    );
+    expect(parts.engine.commands[0].params).toMatchObject({ center: [260, 220] });
+    expect(result.summary).toContain('into slot "photo"');
   });
 
-  it("places at explicit bounds without selecting a layer", async () => {
+  it("places at explicit bounds without a slot/layer anchor", async () => {
     const { ctx, parts } = assemble();
-    expectOk(await run(ctx, { target: { bounds: { x: 10, y: 20, width: 500, height: 400 } } }));
-    const [place] = parts.engine.commands;
-    expect(place.id).toBe("doc.place");
+    expectOk(await run(ctx, { target: { bounds: [10, 20, 500, 400] } }));
+    const [place, transform] = parts.engine.commands;
     expect(place.params).toEqual({
-      path: `generated/${KEY}.png`,
-      scale: 48.83,
+      path: "generated/stored.png",
+      scale: 100,
+      smartObject: true,
       center: [260, 220],
+    });
+    expect(transform.params).toEqual({
+      scaleX: 48.828125,
+      scaleY: 48.828125,
+      dx: 0,
+      dy: 0,
     });
   });
 
   it("places at natural size above the active layer when no anchor is given", async () => {
     const { ctx, parts } = assemble();
-    expectOk(await run(ctx, { target: {} }));
-    const [place] = parts.engine.commands;
+    const result = expectOk(await run(ctx, { target: {} }));
+    const [place, rename, convert] = parts.engine.commands;
     expect(place.id).toBe("doc.place");
-    expect(place.params).toEqual({ path: `generated/${KEY}.png` });
+    expect(place.params).toEqual({
+      path: "generated/stored.png",
+      scale: 100,
+      smartObject: true,
+    });
+    expect(rename.id).toBe("layer.setProps");
+    expect(convert.id).toBe("layer.smartObjects.convertToSmartObject");
+    expect(result.documentRevision).toBe(10);
   });
 
   it("warns instead of failing when the explicit smart-object conversion is refused", async () => {
     const engine = makeEngine({ before: [LAYER_BG, LAYER_PHOTO], convertFails: true });
-    const { ctx, parts } = assemble({ engine });
+    const { ctx } = assemble({ engine });
     const result = expectOk(await run(ctx, { target: { layer: { layerId: "l-photo" } } }));
     expect(result.warnings?.some((warning) => /smart object/.test(warning))).toBe(true);
     expect(result.documentRevision).toBe(9);
@@ -648,6 +698,23 @@ describe("image_generate target placement", () => {
     const { ctx } = assemble({ provider });
     const result = expectOk(await run(ctx));
     expect(result.warnings?.some((warning) => warning.includes("512×512"))).toBe(true);
+  });
+
+  it("warns past the 125% upscale advisory and hard-errors past 200% (§7.3)", async () => {
+    const warned = assemble();
+    const warnedResult = expectOk(
+      await run(warned.ctx, { target: { bounds: [0, 0, 1500, 1000] } }),
+    );
+    expect(warnedResult.warnings?.some((warning) => warning.includes("146%"))).toBe(true);
+
+    const blocked = assemble();
+    const failure = expectErr(
+      await run(blocked.ctx, { target: { bounds: [0, 0, 3000, 3000] } }),
+    );
+    expect(failure.code).toBe("validation_failed");
+    expect(failure.message).toContain("200%");
+    expect(blocked.parts.engine.commands.length).toBe(0);
+    expect(blocked.parts.budgets.charges.length).toBe(0);
   });
 });
 
@@ -660,19 +727,14 @@ describe("image_generate budgets and seams", () => {
     const { ctx, parts } = assemble({ budgets: makeBudgets(() => false) });
     const failure = expectErr(await run(ctx));
     expect(failure.code).toBe("budget_exceeded");
-    expect(parts.budgets.charges.length).toBe(1);
+    expect(parts.budgets.charges).toEqual([{ commands: 3 }]);
     expect(parts.engine.commands.length).toBe(0);
   });
 
-  it("skips the explicit conversion with a warning when the budget ends mid-run", async () => {
-    const allowances = [true, true, false];
-    const { ctx, parts } = assemble({ budgets: makeBudgets(() => allowances.shift() ?? true) });
-    const result = expectOk(await run(ctx, { target: { layer: { layerName: "Photo" } } }));
-    expect(parts.budgets.charges).toEqual([{ commands: 2 }, { commands: 1 }, { commands: 1 }]);
-    expect(
-      parts.engine.commands.some((cmd) => cmd.id === "layer.smartObjects.convertToSmartObject"),
-    ).toBe(false);
-    expect(result.warnings?.some((warning) => /budget/.test(warning))).toBe(true);
+  it("charges the command meter once, for exactly what it batches", async () => {
+    const { ctx, parts } = assemble();
+    await run(ctx, { target: { layer: { layerName: "Photo" } } });
+    expect(parts.budgets.charges).toEqual([{ commands: 4 }]);
   });
 
   it("fails typed when the worker did not wire the image seams", async () => {
@@ -684,12 +746,6 @@ describe("image_generate budgets and seams", () => {
     const failure = expectErr(result);
     expect(failure.code).toBe("internal_error");
     expect(failure.hint).toContain("ctx.credits");
-  });
-
-  it("charges the command meter only for what it batches", async () => {
-    const { parts } = assemble();
-    await run(makeImageContext(parts), { target: { layer: { layerName: "Photo" } } });
-    expect(parts.budgets.charges).toEqual([{ commands: 2 }, { commands: 1 }, { commands: 1 }]);
   });
 });
 

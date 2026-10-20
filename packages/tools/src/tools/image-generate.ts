@@ -394,19 +394,27 @@ async function resolveImageSlot(
   }
   if (candidateRefs.length === 0) {
     if (nonImageKind !== undefined) {
-      return err("invalid_slots", `Slot "${shortName(slot)}" is a ${nonImageKind} slot, not an image slot`, {
-        hint: "Generated images place into image slots only; inspect the template with template_inspect.",
-        retryable: false,
-      });
+      return err(
+        "invalid_slots",
+        `Slot "${shortName(slot)}" is a ${nonImageKind} slot, not an image slot`,
+        {
+          hint: "Generated images place into image slots only; inspect the template with template_inspect.",
+          retryable: false,
+        },
+      );
     }
     const known = [...imageSlots].sort().slice(0, 10).join(", ");
-    return err("unknown_slots", `No template in the catalog defines an image slot "${shortName(slot)}"`, {
-      hint:
-        known.length > 0
-          ? `Image slots: ${known}`
-          : "No image slots are defined in the catalog; pass target.layer or target.bounds instead.",
-      retryable: false,
-    });
+    return err(
+      "unknown_slots",
+      `No template in the catalog defines an image slot "${shortName(slot)}"`,
+      {
+        hint:
+          known.length > 0
+            ? `Image slots: ${known}`
+            : "No image slots are defined in the catalog; pass target.layer or target.bounds instead.",
+        retryable: false,
+      },
+    );
   }
   const resolved = new Map<string, EngineLayerSummary>();
   for (const ref of candidateRefs) {
@@ -422,19 +430,27 @@ async function resolveImageSlot(
     }
   }
   if (resolved.size === 0) {
-    return err("layer_not_found", `The layers mapped to slot "${shortName(slot)}" are not in this document`, {
-      hint: "Apply the template first, or address a layer directly with target.layer.",
-      retryable: false,
-    });
+    return err(
+      "layer_not_found",
+      `The layers mapped to slot "${shortName(slot)}" are not in this document`,
+      {
+        hint: "Apply the template first, or address a layer directly with target.layer.",
+        retryable: false,
+      },
+    );
   }
   if (resolved.size > 1) {
     const candidates = [...resolved.entries()]
       .map(([id, layer]) => `${layer.name} (${id})`)
       .slice(0, 10);
-    return err("ambiguous_layer", `Slot "${shortName(slot)}" resolves to ${resolved.size} different layers`, {
-      hint: `Address one directly with target.layer.layerId. Candidates: ${candidates.join(", ")}`,
-      retryable: false,
-    });
+    return err(
+      "ambiguous_layer",
+      `Slot "${shortName(slot)}" resolves to ${resolved.size} different layers`,
+      {
+        hint: `Address one directly with target.layer.layerId. Candidates: ${candidates.join(", ")}`,
+        retryable: false,
+      },
+    );
   }
   const [winner] = [...resolved.values()];
   return winner === undefined ? layerNotFoundErr(slot) : winner;

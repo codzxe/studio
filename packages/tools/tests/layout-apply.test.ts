@@ -23,6 +23,7 @@ import type {
   EngineCallOptions,
   EngineCommand,
   EngineCommandReport,
+  EngineFailure,
   EngineOutcome,
   ToolErrorCode,
   ToolResult,
@@ -43,8 +44,8 @@ type ExecuteFn = (
 ) => Promise<EngineOutcome<EngineCommandReport>>;
 
 interface Probe {
-  readonly commands: readonly EngineCommand[];
-  readonly options: readonly (EngineCallOptions | undefined)[];
+  readonly commands: EngineCommand[];
+  readonly options: (EngineCallOptions | undefined)[];
 }
 
 const success = <T>(value: T): EngineOutcome<T> => ({ ok: true, value });
@@ -54,7 +55,7 @@ function failure(
   code: string,
   message: string,
   extra: { hint?: string; retryable?: boolean } = {},
-): EngineOutcome<EngineCommandReport> {
+): EngineFailure {
   return {
     ok: false,
     code: code as ToolErrorCode,

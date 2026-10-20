@@ -327,8 +327,16 @@ describe("template_list card view (§7.4)", () => {
     if (!result.ok) throw new Error("expected an ok result");
     expect(result.summary.length).toBeLessThanOrEqual(MAX_SUMMARY_CHARS);
     expect(result.summary).toContain('"slots"');
-    for (const dumped of ['"bounds"', '"rules"', '"layerMap"', '"thumbnail"', '"author"', '"license"']) {
-      expect(result.summary, dumped).not.toContain(dumped);
+    const dumped: readonly string[] = [
+      '"bounds"',
+      '"rules"',
+      '"layerMap"',
+      '"thumbnail"',
+      '"author"',
+      '"license"',
+    ];
+    for (const field of dumped) {
+      expect(result.summary, field).not.toContain(field);
     }
   });
 

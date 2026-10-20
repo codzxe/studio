@@ -3,18 +3,18 @@
 //
 // Pure + fake-engine tests only: no engine, no db, no network (AGENTS.md).
 
-import { describe, expect, it } from "vitest";
 import { LAYER_COMMANDS } from "@studio/engine-client";
+import { describe, expect, it } from "vitest";
+import { parseToolArgs } from "../src/kit.js";
 import {
   ALIGN_MODES,
+  LAYER_OPS_COMMANDS,
+  type LayerOpsArgs,
   checkLayerName,
   isAutoLayerName,
-  LAYER_OPS_COMMANDS,
   layerOpsTool,
   resolveLayerRef,
-  type LayerOpsArgs,
 } from "../src/tools/layer-ops.js";
-import { parseToolArgs } from "../src/kit.js";
 import type {
   EngineBatchOptions,
   EngineCommand,
@@ -320,10 +320,7 @@ describe("layer_ops — op → command mapping (§2.2 ids, one batch)", () => {
   });
 
   it("reports the batch's documentRevision", async () => {
-    const { result } = await runOk(
-      { op: "duplicate", layer: { layerId: "2" } },
-      { revision: 42 },
-    );
+    const { result } = await runOk({ op: "duplicate", layer: { layerId: "2" } }, { revision: 42 });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.documentRevision).toBe(42);
@@ -415,9 +412,11 @@ describe("layer_ops — §10.2 naming", () => {
   });
 
   it("rename rejects placeholders before any engine call", async () => {
-    const { result, batches } = await runTool(
-      { op: "rename", layer: { layerId: "2" }, name: "Layer 1" },
-    );
+    const { result, batches } = await runTool({
+      op: "rename",
+      layer: { layerId: "2" },
+      name: "Layer 1",
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("validation_failed");
@@ -611,16 +610,22 @@ describe("layer_ops — opacity range (0–1, engine fractions)", () => {
 
 describe("layer_ops — §10.1 group-before-multiply warnings", () => {
   it("warns 'document needs grouping' past 7 loose layers after a create", async () => {
-    const { result } = await runOk({ op: "duplicate", layer: { layerId: "2" } }, {
-      trees: [TREE, manyLayers(8)],
-    });
+    const { result } = await runOk(
+      { op: "duplicate", layer: { layerId: "2" } },
+      {
+        trees: [TREE, manyLayers(8)],
+      },
+    );
     expect(warningsOf(result)).toContain("document needs grouping");
   });
 
   it("stays quiet at exactly 7 loose layers", async () => {
-    const { result } = await runOk({ op: "duplicate", layer: { layerId: "2" } }, {
-      trees: [TREE, manyLayers(7)],
-    });
+    const { result } = await runOk(
+      { op: "duplicate", layer: { layerId: "2" } },
+      {
+        trees: [TREE, manyLayers(7)],
+      },
+    );
     expect(warningsOf(result)).not.toContain("document needs grouping");
   });
 
@@ -641,11 +646,14 @@ describe("layer_ops — §10.1 group-before-multiply warnings", () => {
   });
 
   it("a failed advisory relist never fails the mutation", async () => {
-    const { result } = await runOk({ op: "duplicate", layer: { layerId: "2" } }, {
-      trees: [TREE],
-      listFailure: { ok: false, code: "engine_timeout", message: "timed out", retryable: true },
-      failListFromCall: 2,
-    });
+    const { result } = await runOk(
+      { op: "duplicate", layer: { layerId: "2" } },
+      {
+        trees: [TREE],
+        listFailure: { ok: false, code: "engine_timeout", message: "timed out", retryable: true },
+        failListFromCall: 2,
+      },
+    );
     expect(result.ok).toBe(true);
     expect(warningsOf(result)).not.toContain("document needs grouping");
   });
@@ -682,10 +690,13 @@ describe("layer_ops — engine failures mapped to typed envelopes", () => {
       hint: "retry on a fresh connection",
       retryable: true,
     };
-    const { result, batches } = await runTool({ op: "duplicate", layer: { layerId: "2" } }, {
-      trees: [TREE],
-      batchFailure: failure,
-    });
+    const { result, batches } = await runTool(
+      { op: "duplicate", layer: { layerId: "2" } },
+      {
+        trees: [TREE],
+        batchFailure: failure,
+      },
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("engine_unavailable");
@@ -706,10 +717,13 @@ describe("layer_ops — engine failures mapped to typed envelopes", () => {
       message: "the engine rejected a command mid-batch",
       retryable: false,
     } as unknown as EngineFailure;
-    const { result } = await runTool({ op: "duplicate", layer: { layerId: "2" } }, {
-      trees: [TREE],
-      batchFailure: failure,
-    });
+    const { result } = await runTool(
+      { op: "duplicate", layer: { layerId: "2" } },
+      {
+        trees: [TREE],
+        batchFailure: failure,
+      },
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("engine_unavailable");
