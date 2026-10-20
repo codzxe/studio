@@ -1,18 +1,18 @@
 // Ledger domain tests — reserve → commit | refund (§14.2 exact semantics).
 // Pure in-memory LedgerStore; table-driven; deterministic; no network.
 
-import { describe, expect, it } from "vitest";
 import type { Failure, Result } from "@studio/config";
 import type { RunTierId } from "@studio/config";
+import { describe, expect, it } from "vitest";
 
 import {
   commitKey,
   commitReservation,
-  releaseReservation,
-  reserveCredits,
-  reservationStatus,
-  reserveKey,
   refundKey,
+  releaseReservation,
+  reservationStatus,
+  reserveCredits,
+  reserveKey,
 } from "../src/index.js";
 import { InMemoryLedgerStore, seedCredits } from "./fakes.js";
 
@@ -69,7 +69,11 @@ describe("reserve → commit happy path (§14.2 rules 1-2)", () => {
 
     const rows = store.entriesForRun(runId);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ kind: "reserve", delta: -cost, idempotencyKey: reserveKey(runId) });
+    expect(rows[0]).toMatchObject({
+      kind: "reserve",
+      delta: -cost,
+      idempotencyKey: reserveKey(runId),
+    });
     // Settlement row: releases the hold, applies the charge → delta 0 on a full charge.
     expect(rows[1]).toMatchObject({ kind: "commit", delta: 0, idempotencyKey: commitKey(runId) });
   });
@@ -80,9 +84,13 @@ describe("idempotency — retries never double-charge (§14.2 rule 6, §3.4)", (
     const store = new InMemoryLedgerStore();
     await seedCredits(store, ORG, 10);
 
-    const first = expectOk(await reserveCredits(store, { organizationId: ORG, runId: "run-a", amount: 5 }));
+    const first = expectOk(
+      await reserveCredits(store, { organizationId: ORG, runId: "run-a", amount: 5 }),
+    );
     expect(first.duplicate).toBe(false);
-    const second = expectOk(await reserveCredits(store, { organizationId: ORG, runId: "run-a", amount: 5 }));
+    const second = expectOk(
+      await reserveCredits(store, { organizationId: ORG, runId: "run-a", amount: 5 }),
+    );
     expect(second.duplicate).toBe(true);
 
     expect(await store.balanceAfter(ORG)).toBe(5);
@@ -95,7 +103,9 @@ describe("idempotency — retries never double-charge (§14.2 rule 6, §3.4)", (
     expectOk(await reserveCredits(store, { organizationId: ORG, runId: "run-a", amount: 2 }));
     expectOk(await commitReservation(store, { organizationId: ORG, runId: "run-a", amount: 2 }));
 
-    const again = expectOk(await commitReservation(store, { organizationId: ORG, runId: "run-a", amount: 2 }));
+    const again = expectOk(
+      await commitReservation(store, { organizationId: ORG, runId: "run-a", amount: 2 }),
+    );
     expect(again.duplicate).toBe(true);
     expect(again.amountCharged).toBe(2);
 
@@ -109,7 +119,9 @@ describe("idempotency — retries never double-charge (§14.2 rule 6, §3.4)", (
     expectOk(await reserveCredits(store, { organizationId: ORG, runId: "run-a", amount: 3 }));
     expectOk(await releaseReservation(store, { organizationId: ORG, runId: "run-a", amount: 3 }));
 
-    const again = expectOk(await releaseReservation(store, { organizationId: ORG, runId: "run-a", amount: 3 }));
+    const again = expectOk(
+      await releaseReservation(store, { organizationId: ORG, runId: "run-a", amount: 3 }),
+    );
     expect(again.duplicate).toBe(true);
 
     expect(await store.balanceAfter(ORG)).toBe(10);
@@ -148,7 +160,12 @@ describe("refund after failure (§14.2 rule 3, §3.3 step 7)", () => {
     // Attempt 1 (the retry): runs, succeeds, and commits a zero charge.
     expectOk(await reserveCredits(store, { organizationId: ORG, runId: "run-1", amount: 2 }));
     const committed = expectOk(
-      await commitReservation(store, { organizationId: ORG, runId: "run-1", amount: 2, amountCharged: 0 }),
+      await commitReservation(store, {
+        organizationId: ORG,
+        runId: "run-1",
+        amount: 2,
+        amountCharged: 0,
+      }),
     );
     expect(committed.amountCharged).toBe(0);
 
@@ -201,7 +218,12 @@ describe("partial charges (§5.2 budget stop, §14.2 rule 4)", () => {
     expectOk(await reserveCredits(store, { organizationId: ORG, runId: "run-a", amount: 5 }));
 
     const committed = expectOk(
-      await commitReservation(store, { organizationId: ORG, runId: "run-a", amount: 5, amountCharged: 2 }),
+      await commitReservation(store, {
+        organizationId: ORG,
+        runId: "run-a",
+        amount: 5,
+        amountCharged: 2,
+      }),
     );
     expect(committed.amountCharged).toBe(2);
     expect(await store.balanceAfter(ORG)).toBe(8); // paid 2, not 5
@@ -216,7 +238,12 @@ describe("partial charges (§5.2 budget stop, §14.2 rule 4)", () => {
     expectOk(await reserveCredits(store, { organizationId: ORG, runId: "run-a", amount: 5 }));
 
     const committed = expectOk(
-      await commitReservation(store, { organizationId: ORG, runId: "run-a", amount: 5, amountCharged: 9 }),
+      await commitReservation(store, {
+        organizationId: ORG,
+        runId: "run-a",
+        amount: 5,
+        amountCharged: 9,
+      }),
     );
     expect(committed.amountCharged).toBe(5);
     expect(await store.balanceAfter(ORG)).toBe(5);
@@ -230,24 +257,29 @@ describe("partial charges (§5.2 budget stop, §14.2 rule 4)", () => {
     ["reserved 8, asks 4 → 4", 8, 4, 4],
     ["reserved 10, asks 5 → 5", 10, 5, 5],
   ];
-  it.each(partialReleaseCases)("partial failure release: %s", async (_label, reserved, asked, applied) => {
-    const store = new InMemoryLedgerStore();
-    await seedCredits(store, ORG, 10);
-    expectOk(await reserveCredits(store, { organizationId: ORG, runId: "run-a", amount: reserved }));
+  it.each(partialReleaseCases)(
+    "partial failure release: %s",
+    async (_label, reserved, asked, applied) => {
+      const store = new InMemoryLedgerStore();
+      await seedCredits(store, ORG, 10);
+      expectOk(
+        await reserveCredits(store, { organizationId: ORG, runId: "run-a", amount: reserved }),
+      );
 
-    const released = expectOk(
-      await releaseReservation(store, {
-        organizationId: ORG,
-        runId: "run-a",
-        amount: reserved,
-        amountCharged: asked,
-      }),
-    );
-    expect(released.amountCharged).toBe(applied);
-    expect(released.amountRefunded).toBe(reserved - applied);
-    expect(await store.balanceAfter(ORG)).toBe(10 - applied);
-    expect(await reservationStatus(store, "run-a")).toBe("released");
-  });
+      const released = expectOk(
+        await releaseReservation(store, {
+          organizationId: ORG,
+          runId: "run-a",
+          amount: reserved,
+          amountCharged: asked,
+        }),
+      );
+      expect(released.amountCharged).toBe(applied);
+      expect(released.amountRefunded).toBe(reserved - applied);
+      expect(await store.balanceAfter(ORG)).toBe(10 - applied);
+      expect(await reservationStatus(store, "run-a")).toBe("released");
+    },
+  );
 });
 
 describe("lifecycle conflicts (terminals are mutually exclusive)", () => {
@@ -283,8 +315,12 @@ describe("lifecycle conflicts (terminals are mutually exclusive)", () => {
     const store = new InMemoryLedgerStore();
     await seedCredits(store, ORG, 10);
 
-    expect((await commitReservation(store, { organizationId: ORG, runId: "ghost", amount: 2 })).ok).toBe(false);
-    expect((await releaseReservation(store, { organizationId: ORG, runId: "ghost", amount: 2 })).ok).toBe(false);
+    expect(
+      (await commitReservation(store, { organizationId: ORG, runId: "ghost", amount: 2 })).ok,
+    ).toBe(false);
+    expect(
+      (await releaseReservation(store, { organizationId: ORG, runId: "ghost", amount: 2 })).ok,
+    ).toBe(false);
     expect(store.size()).toBe(1); // only the seed grant
   });
 });
@@ -300,9 +336,7 @@ describe("request validation (Zod at the boundary)", () => {
       );
       expect(failure.code).toBe("validation_failed");
     }
-    expectErr(
-      await reserveCredits(store, { organizationId: "", runId: "run-a", amount: 1 }),
-    );
+    expectErr(await reserveCredits(store, { organizationId: "", runId: "run-a", amount: 1 }));
     expect(store.size()).toBe(1);
   });
 });

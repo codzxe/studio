@@ -230,6 +230,8 @@
           run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
     - type: javascript          # intent match: export (§5.5)
       value: "return JSON.parse(output).plan.intent === 'export'"
+    - type: javascript          # template not chosen — export never regenerates (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
     - type: javascript          # §1.5-3: export must not flatten/merge/rasterize the source doc
       value: "return JSON.parse(output).plan.steps.every(s => !/flatten|merge|rasterize/i.test(s.tool))"
     - type: javascript          # tier cost exact (§5.2: quick = 1 credit)

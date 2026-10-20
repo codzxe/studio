@@ -34,7 +34,7 @@
 // org balance can never dip below zero (the only negative append, reserve, is
 // balance-checked first).
 
-import { err, isFailure, ok, type Result } from "@studio/config";
+import { type Result, err, isFailure, ok } from "@studio/config";
 import { z } from "zod";
 
 import { maxPartialFailureCharge } from "./policy.js";
@@ -294,11 +294,9 @@ export async function commitReservation(
   const fKey = refundKey(runId);
 
   if (await store.findByIdempotency(fKey, "refund")) {
-    return err(
-      "conflict",
-      "This run's credits were already released; it cannot be committed.",
-      { hint: "The run already failed and was refunded — check its terminal state." },
-    );
+    return err("conflict", "This run's credits were already released; it cannot be committed.", {
+      hint: "The run already failed and was refunded — check its terminal state.",
+    });
   }
 
   if (await store.findByIdempotency(cKey, "commit")) {

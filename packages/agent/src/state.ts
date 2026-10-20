@@ -142,7 +142,7 @@ export function transition(from: RunStatus, to: RunStatus): AgentResult<RunStatu
   if (isTerminal(from)) {
     return agentErr(
       'invalid_transition',
-      `Run is already ${from}; terminal states never transition (§5.1).`,
+      `Cannot transition '${from} → ${to}': '${from}' is terminal (§5.1) — runs never leave a terminal state.`,
       { hint: 'Start a new run instead of continuing this one.' },
     );
   }

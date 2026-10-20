@@ -70,6 +70,8 @@
           run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
     - type: javascript          # intent match
       value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # template not chosen — targeted swap on the existing doc (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
     - type: javascript          # §24.4: failure code + retryability on the wire
       value: "return JSON.parse(output).run.status === 'failed' && JSON.parse(output).run.code === 'image_provider_error' && JSON.parse(output).run.retryable === true"
     - type: javascript          # tier cost exact (§5.2): 0 charged — refund contract, reservation released

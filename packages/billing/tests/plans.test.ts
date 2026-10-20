@@ -4,8 +4,8 @@
 // import); these tests pin the billing-domain behaviour built on top of them:
 // the catalog view, plan gating, the daily-cap policy and the one-time trial.
 
-import { describe, expect, it } from "vitest";
 import type { Failure, Result, RunTierId } from "@studio/config";
+import { describe, expect, it } from "vitest";
 
 import {
   PLAN_CATALOG,
@@ -76,15 +76,18 @@ describe("seatPlanLimits (§14.1 plan gates)", () => {
     ["starter", 1, 1, 1, 32],
     ["pro", 3, 3, 3, 64],
     ["business", 10, 6, 6, 128],
-  ])("%s: seats %d, concurrent runs %d, sessions %d, canvas %d MP", (code, seats, runs, sessions, mp) => {
-    const limits = expectOk(seatPlanLimits(code));
-    expect(limits).toEqual({
-      seats,
-      concurrentRuns: runs,
-      concurrentSessions: sessions,
-      maxCanvasMegapixels: mp,
-    });
-  });
+  ])(
+    "%s: seats %d, concurrent runs %d, sessions %d, canvas %d MP",
+    (code, seats, runs, sessions, mp) => {
+      const limits = expectOk(seatPlanLimits(code));
+      expect(limits).toEqual({
+        seats,
+        concurrentRuns: runs,
+        concurrentSessions: sessions,
+        maxCanvasMegapixels: mp,
+      });
+    },
+  );
 
   it("rejects unknown plan codes (subscriptions keep free-text codes)", () => {
     for (const code of ["max", "free", "", "starter "]) {
@@ -124,13 +127,23 @@ describe("trialGrant (§1.4 one-time, §14.1: 30 credits)", () => {
     const store = new InMemoryLedgerStore();
 
     const first = expectOk(await trialGrant("org-a", store));
-    expect(first).toEqual({ organizationId: "org-a", granted: true, credits: 30, duplicate: false });
+    expect(first).toEqual({
+      organizationId: "org-a",
+      granted: true,
+      credits: 30,
+      duplicate: false,
+    });
     expect(await store.balanceAfter("org-a")).toBe(30);
 
     // Replay (double-clicked signup, retried webhook) — one-time enforced by
     // the ledger's unique (idempotencyKey, kind) pair.
     const second = expectOk(await trialGrant("org-a", store));
-    expect(second).toEqual({ organizationId: "org-a", granted: false, credits: 0, duplicate: true });
+    expect(second).toEqual({
+      organizationId: "org-a",
+      granted: false,
+      credits: 0,
+      duplicate: true,
+    });
     expect(await store.balanceAfter("org-a")).toBe(30);
 
     const rows = store.entriesFor("org-a");

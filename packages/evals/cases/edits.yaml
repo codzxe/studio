@@ -147,6 +147,8 @@
           run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
     - type: javascript          # intent match
       value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # template not chosen — targeted swap only (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
     - type: javascript          # slot contents: exact new headline (§21)
       value: "return JSON.parse(output).plan.slots.headline === 'Roasted this morning'"
     - type: javascript          # §23.2 maxChars rule: copy stays within the 40-char slot budget
@@ -223,6 +225,8 @@
           run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
     - type: javascript          # intent match
       value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # template not chosen — restyle only, no reapply (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
     - type: javascript          # §23.2: every planned colour is a brand token from SNAPSHOT
       value: "const brand = ['#6B4A32', '#F4E7D3', '#D96C3B']; return JSON.parse(output).plan.palette.every(h => brand.includes(h))"
     - type: javascript          # warm shift actually selects the terracotta accent
@@ -299,6 +303,8 @@
           run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
     - type: javascript          # intent match
       value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # template not chosen — parameter restyle only (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
     - type: javascript          # only brand tokens used (§11.1 color_out_of_palette)
       value: "const brand = ['#6B4A32', '#F4E7D3', '#D96C3B']; return JSON.parse(output).plan.palette.every(h => brand.includes(h))"
     - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
@@ -375,6 +381,8 @@
           run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
     - type: javascript          # intent match
       value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # template not chosen — in-place swap only (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
     - type: javascript          # §23.2: asset id EXISTS in SNAPSHOT (asset_202, never invented)
       value: "return JSON.parse(output).plan.assets[0].ref === 'asset_202' && JSON.parse(output).plan.assets[0].slot === 'logo'"
     - type: javascript          # tier cost exact (§5.2: quick = 1 credit)

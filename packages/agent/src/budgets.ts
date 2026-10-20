@@ -184,27 +184,34 @@ export class BudgetTracker {
   /**
    * The §5.2 soft-stop report, or `null` while inside all caps.
    *
-   * A dimension is exceeded once its budget is fully consumed (used ≥ cap): the
-   * loop must check before each expensive operation and stop cleanly at the first
-   * report. Report order is `BUDGET_KINDS` order (deterministic).
+   * A dimension is exceeded once it has consumed its full budget
+   * (`used > 0 && used ≥ cap`) — check before each expensive operation and stop
+   * cleanly at the first report. Zero-cap dimensions (image tiers have no repair
+   * cycles) only report after an illicit unit was actually tracked. Report
+   * order is `BUDGET_KINDS` order (deterministic).
    */
   exceeded(): BudgetExceeded | null {
-    if (this.limits.tokenBudgetIn !== null && this.tokensIn >= this.limits.tokenBudgetIn) {
+    if (this.limits.tokenBudgetIn !== null && this.spent(this.tokensIn, this.limits.tokenBudgetIn)) {
       return this.report('tokens_in', this.tokensIn, this.limits.tokenBudgetIn, 'input tokens');
     }
-    if (this.limits.tokenBudgetOut !== null && this.tokensOut >= this.limits.tokenBudgetOut) {
+    if (this.limits.tokenBudgetOut !== null && this.spent(this.tokensOut, this.limits.tokenBudgetOut)) {
       return this.report('tokens_out', this.tokensOut, this.limits.tokenBudgetOut, 'output tokens');
     }
-    if (this.toolCalls >= this.limits.toolCallCap) {
+    if (this.spent(this.toolCalls, this.limits.toolCallCap)) {
       return this.report('tool_calls', this.toolCalls, this.limits.toolCallCap, 'tool calls');
     }
-    if (this.revisions >= this.limits.revisions) {
+    if (this.spent(this.revisions, this.limits.revisions)) {
       return this.report('revisions', this.revisions, this.limits.revisions, 'repair cycles');
     }
-    if (this.wallClockUsedMs() >= this.limits.wallClockMs) {
+    if (this.spent(this.wallClockUsedMs(), this.limits.wallClockMs)) {
       return this.report('wall_clock', this.wallClockUsedMs(), this.limits.wallClockMs, 'wall-clock time');
     }
     return null;
+  }
+
+  /** True when a tracked dimension has consumed its entire cap. */
+  private spent(used: number, cap: number): boolean {
+    return used > 0 && used >= cap;
   }
 
   private report(kind: BudgetKind, used: number, cap: number, unit: string): BudgetExceeded {

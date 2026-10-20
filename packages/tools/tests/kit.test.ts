@@ -324,6 +324,7 @@ describe("defineTool — compile-time + runtime safety", () => {
       ok: false,
       code: "engine_timeout",
       message: "The tool call ran out of time",
+      hint: "Check the document for partial effects with workspace_snapshot, then retry smaller.",
       retryable: true,
     });
   });
@@ -339,6 +340,7 @@ describe("defineTool — compile-time + runtime safety", () => {
       ok: false,
       code: "internal_error",
       message: "The tool failed unexpectedly",
+      hint: "Retry once; if it repeats, the run should stop cleanly with a partial refund (§14.2).",
       retryable: false,
     });
     expect(JSON.stringify(result)).not.toContain("secret");
@@ -351,6 +353,7 @@ describe("defineTool — compile-time + runtime safety", () => {
       ok: false,
       code: "internal_error",
       message: "The tool returned a malformed result",
+      hint: "This is a tool bug, not a model error; construct results with ok()/err().",
       retryable: false,
     });
   });

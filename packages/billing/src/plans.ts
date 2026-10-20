@@ -21,18 +21,18 @@
 import {
   CREDIT_PACK,
   DAILY_CAP_ALERT_FRACTION,
-  PLAN_ID_SCHEMA,
-  PLAN_IDS,
-  PLAN_LIMITS,
   PLANS,
-  TRIAL_CREDITS,
-  dailySpendCapCredits,
-  err,
-  ok,
+  PLAN_IDS,
+  PLAN_ID_SCHEMA,
+  PLAN_LIMITS,
   type PlanId,
   type PlanLimits,
   type Result,
   type RunTierId,
+  TRIAL_CREDITS,
+  dailySpendCapCredits,
+  err,
+  ok,
 } from "@studio/config";
 import { z } from "zod";
 
@@ -41,14 +41,7 @@ import { creditsForRun } from "./policy.js";
 
 // Re-exported so billing consumers can import the whole money surface from
 // "@studio/billing" alone.
-export {
-  CREDIT_PACK,
-  PLAN_IDS,
-  PLAN_LIMITS,
-  PLANS,
-  TRIAL_CREDITS,
-  dailySpendCapCredits,
-};
+export { CREDIT_PACK, PLAN_IDS, PLAN_LIMITS, PLANS, TRIAL_CREDITS, dailySpendCapCredits };
 export type { PlanId, PlanLimits };
 
 // ---------------------------------------------------------------------------
@@ -110,7 +103,7 @@ export function canRunTier(balance: number, tier: RunTierId): boolean {
 export function seatPlanLimits(planCode: string): Result<PlanLimits> {
   const parsed = PLAN_ID_SCHEMA.safeParse(planCode);
   if (!parsed.success) {
-    return err("validation_failed", `Unknown plan code.`, {
+    return err("validation_failed", "Unknown plan code.", {
       hint: `Expected one of: ${PLAN_IDS.join(", ")}.`,
     });
   }
@@ -129,7 +122,7 @@ export interface DailySpendPolicy {
 export function dailySpendPolicy(planCode: string): Result<DailySpendPolicy> {
   const parsed = PLAN_ID_SCHEMA.safeParse(planCode);
   if (!parsed.success) {
-    return err("validation_failed", `Unknown plan code.`, {
+    return err("validation_failed", "Unknown plan code.", {
       hint: `Expected one of: ${PLAN_IDS.join(", ")}.`,
     });
   }

@@ -274,6 +274,8 @@
           run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
     - type: javascript          # §23.2: ask_user is the FIRST step
       value: "return JSON.parse(output).plan.steps[0].tool === 'ask_user'"
+    - type: javascript          # template chosen when expected: default proposal only (§21)
+      value: "return JSON.parse(output).plan.template === 'instagram-post@3'"
     - type: javascript          # intent match
       value: "return JSON.parse(output).plan.intent === 'create_post'"
     - type: javascript          # tier cost exact (§5.2: quick = 1 credit)

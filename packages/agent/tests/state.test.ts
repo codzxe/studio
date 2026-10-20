@@ -42,9 +42,9 @@ describe('state: §5.1 legal transitions (table-driven)', () => {
     }
   });
 
-  it('totals 27 legal transitions across the machine', () => {
+  it('totals 32 legal transitions across the machine', () => {
     const total = RUN_STATUSES.reduce((sum, from) => sum + ALLOWED_TRANSITIONS[from].length, 0);
-    expect(total).toBe(27);
+    expect(total).toBe(32);
   });
 });
 

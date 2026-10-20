@@ -15,8 +15,8 @@
 import {
   PARTIAL_FAILURE_CHARGE_FRACTION,
   RETRY_GRACE,
-  resolveTierConfig,
   type RunTierId,
+  resolveTierConfig,
 } from "@studio/config";
 
 // ---------------------------------------------------------------------------
@@ -81,7 +81,11 @@ export const REFUND_CAUSES = [
 export type RefundCause = (typeof REFUND_CAUSES)[number];
 
 /** What the ledger owes the customer for this terminal. */
-export const REFUND_POLICIES = ["full_refund", "partial", "none"] as const satisfies readonly string[];
+export const REFUND_POLICIES = [
+  "full_refund",
+  "partial",
+  "none",
+] as const satisfies readonly string[];
 
 export type RefundPolicy = (typeof REFUND_POLICIES)[number];
 

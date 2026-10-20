@@ -1,11 +1,12 @@
 // Policy tests — §5.2 tier costs, §14.2 rules 4-5 refunds, §24.4 retry grace,
 // §14.4 unit-economics guardrails. All pure functions: table-driven.
 
-import { describe, expect, it } from "vitest";
 import type { RunTierId } from "@studio/config";
+import { describe, expect, it } from "vitest";
 
 import {
   RETRY_GRACE,
+  type RefundCause,
   classifyRefund,
   creditsForImages,
   creditsForRun,
@@ -14,7 +15,6 @@ import {
   platformCogsAlertBreached,
   runCostIsOutlier,
   workspaceCogsAlertBreached,
-  type RefundCause,
 } from "../src/index.js";
 
 describe("creditsForRun (§5.2 + §14.4 exact table)", () => {

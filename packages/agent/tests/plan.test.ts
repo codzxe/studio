@@ -101,7 +101,7 @@ describe('plan: §5.7 untrusted output is rejected (table-driven)', () => {
     {
       name: 'bad hex: colour word',
       patch: (p: typeof specPlan) => ({ ...p, palette: [...p.palette, 'blue'] }),
-      issue: /palette\.2/,
+      issue: /palette\.3/,
     },
     {
       name: 'bad hex: malformed literal',
