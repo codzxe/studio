@@ -40,18 +40,18 @@
 // bound: on abort the tool returns engine_timeout, retryable.
 
 import { z } from "zod";
-import { TOOLS } from "../registry.js";
 import {
   MAX_ERROR_MESSAGE_CHARS,
   MAX_HINT_CHARS,
   MAX_SUMMARY_CHARS,
-  MAX_WARNING_CHARS,
   MAX_WARNINGS,
+  MAX_WARNING_CHARS,
   defineTool,
   err,
   ok,
   strictObject,
 } from "../kit.js";
+import { TOOLS } from "../registry.js";
 import type {
   EngineFailure,
   EngineOutcome,
@@ -399,10 +399,7 @@ export interface ExportSummaryParts {
   readonly warnings: readonly string[];
 }
 
-function stringifySummaryParts(
-  parts: ExportSummaryParts,
-  warnings: readonly string[],
-): string {
+function stringifySummaryParts(parts: ExportSummaryParts, warnings: readonly string[]): string {
   const payload: Record<string, string | readonly string[]> = {
     exportId: parts.exportId,
     format: parts.format,
@@ -538,9 +535,7 @@ function clampWarnings(raw: readonly string[] | undefined): string[] {
 
 /** Only non-negative integers reach ok()'s documentRevision validation. */
 function safeDocumentRevision(value: number | undefined): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0
-    ? value
-    : undefined;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -570,8 +565,7 @@ export const exportDocumentTool: Tool<ExportDocumentArgs> = defineTool({
     const events = ectx.exportEvents;
     const waitForExport =
       events !== undefined && typeof events.waitForExport === "function"
-        ? (exportId: string, options?: ExportCallOptions) =>
-            events.waitForExport(exportId, options)
+        ? (exportId: string, options?: ExportCallOptions) => events.waitForExport(exportId, options)
         : undefined;
 
     // §15.1: only model-controlled fields cross this boundary; the worker adds
@@ -606,7 +600,8 @@ export const exportDocumentTool: Tool<ExportDocumentArgs> = defineTool({
       });
       if (awaited.kind === "aborted") {
         return err("engine_timeout", "the export poll was cancelled before the job finished", {
-          hint: "the export job keeps running in the background — re-run export_document " +
+          hint:
+            "the export job keeps running in the background — re-run export_document " +
             "with the same arguments to re-check (re-downloads are idempotent, §10.3)",
           retryable: true,
         });
@@ -622,9 +617,11 @@ export const exportDocumentTool: Tool<ExportDocumentArgs> = defineTool({
         }
         // Bounded wait exhausted while the job still runs: hand back the last
         // known status — the model (or the caller) re-checks by calling again.
-        const stillProcessing = `the export is still processing after ${POLL_MAX_ATTEMPTS} ` +
-          "status checks; re-run export_document with the same arguments to re-check " +
-          "(re-downloads are idempotent, §10.3)";
+        const stillProcessing = [
+          `the export is still processing after ${POLL_MAX_ATTEMPTS} status checks;`,
+          "re-run export_document with the same arguments to re-check",
+          "(re-downloads are idempotent, §10.3)",
+        ].join(" ");
         return ok({
           summary: buildExportSummary({
             exportId,
@@ -659,8 +656,10 @@ export const exportDocumentTool: Tool<ExportDocumentArgs> = defineTool({
 
     const warnings: string[] = clampWarnings(record.warnings);
     if (url === undefined) {
-      warnings.push("the export finished but no download URL was returned; re-run " +
-        "export_document to re-check (re-downloads are idempotent, §10.3)");
+      warnings.push(
+        "the export finished but no download URL was returned; re-run " +
+          "export_document to re-check (re-downloads are idempotent, §10.3)",
+      );
     }
     // §2.3/§10.3 fidelity label: PSD is experimental and never promised perfect.
     // Unreachable through this tool (the schema rejects "psd"); kept for parity

@@ -13,6 +13,11 @@ import {
   EXPORT_FAILED_CODE,
   EXPORT_FORMAT_SCHEMA,
   EXPORT_WAIT_BUDGET_MS,
+  type ExportEventsLike,
+  type ExportFormat,
+  type ExportJobRecord,
+  type ExportJobsLike,
+  type ExportSubmission,
   MAX_EXPORT_URL_CHARS,
   POLL_INTERVAL_MS,
   POLL_MAX_ATTEMPTS,
@@ -26,11 +31,6 @@ import {
   isSafeExportUrl,
   isTerminalExportStatus,
   sleepUntilResolved,
-  type ExportEventsLike,
-  type ExportFormat,
-  type ExportJobRecord,
-  type ExportJobsLike,
-  type ExportSubmission,
 } from "../src/tools/export-document.js";
 import type { EngineOutcome, ToolContext, ToolOk } from "../src/types.js";
 import { abortedSignal, freshSignal, makeFakeContext } from "./fakes.js";
@@ -81,9 +81,7 @@ class FakeExportJobs implements ExportJobsLike {
 class FakeExportEvents implements ExportEventsLike {
   readonly calls: string[] = [];
 
-  constructor(
-    private readonly reply: ExportJobRecord | undefined | "hang" = undefined,
-  ) {}
+  constructor(private readonly reply: ExportJobRecord | undefined | "hang" = undefined) {}
 
   async waitForExport(exportId: string): Promise<ExportJobRecord | undefined> {
     this.calls.push(exportId);
@@ -94,10 +92,12 @@ class FakeExportEvents implements ExportEventsLike {
   }
 }
 
-function makeExportContext(parts: {
-  exports?: ExportJobsLike;
-  exportEvents?: ExportEventsLike;
-} = {}): ToolContext {
+function makeExportContext(
+  parts: {
+    exports?: ExportJobsLike;
+    exportEvents?: ExportEventsLike;
+  } = {},
+): ToolContext {
   return { ...makeFakeContext(), ...parts } as ToolContext;
 }
 
@@ -116,9 +116,7 @@ function scriptedGetExport(
 ): { calls: string[]; getExport: (id: string) => Promise<EngineOutcome<ExportJobRecord>> } {
   const calls: string[] = [];
   let index = 0;
-  const getExport = async (
-    exportId: string,
-  ): Promise<EngineOutcome<ExportJobRecord>> => {
+  const getExport = async (exportId: string): Promise<EngineOutcome<ExportJobRecord>> => {
     calls.push(exportId);
     const outcome = script[index] ?? repeat;
     index += 1;
@@ -165,22 +163,16 @@ describe("export_document — argument schema (§6.1 strict)", () => {
     }
   });
 
-  it.each([
-    ["webp"],
-    ["PNG"],
-    [""],
-    [42],
-    [null],
-    [true],
-    ["psd "],
-    [{ format: "png" }],
-  ])("rejects unknown format %p", (raw) => {
-    const parsed = parseToolArgs(exportDocumentTool, { format: raw });
-    expect(parsed.ok).toBe(false);
-    if (!parsed.ok) {
-      expect(parsed.code).toBe("invalid_args");
-    }
-  });
+  it.each([["webp"], ["PNG"], [""], [42], [null], [true], ["psd "], [{ format: "png" }]])(
+    "rejects unknown format %p",
+    (raw) => {
+      const parsed = parseToolArgs(exportDocumentTool, { format: raw });
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) {
+        expect(parsed.code).toBe("invalid_args");
+      }
+    },
+  );
 
   it.each([0, -1, 8193, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "800", null])(
     "rejects invalid width/height %p",
@@ -251,10 +243,7 @@ describe("deriveExportIdempotencyKey", () => {
   it.each([
     [{ format: "pcraft" }, "exp-pcraft-autoxauto"],
     [{ format: "png" }, "exp-png-autoxauto"],
-    [
-      { format: "jpg", width: 800, height: 600, quality: 90 },
-      "exp-jpg-800x600-q90",
-    ],
+    [{ format: "jpg", width: 800, height: 600, quality: 90 }, "exp-jpg-800x600-q90"],
     [{ format: "png", width: 2048 }, "exp-png-2048xauto"],
     [{ format: "png", quality: 100 }, "exp-png-autoxauto-q100"],
   ])("derives %j → %s", (args, expected) => {
@@ -269,7 +258,9 @@ describe("deriveExportIdempotencyKey", () => {
       quality: 100,
     });
     expect(key).toBe("exp-pcraft-8192x8192-q100");
-    expect(deriveExportIdempotencyKey({ format: "pcraft", width: 8192, height: 8192, quality: 100 })).toBe(key);
+    expect(
+      deriveExportIdempotencyKey({ format: "pcraft", width: 8192, height: 8192, quality: 100 }),
+    ).toBe(key);
     expect(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(key)).toBe(true);
   });
 });
@@ -318,10 +309,7 @@ describe("export_document — delegation", () => {
     });
     const ctx = makeExportContext({ exports: jobs });
     await exportDocumentTool.run(ctx, { format: "png" }, freshSignal());
-    expect(Object.keys(jobs.submissions[0] ?? {}).sort()).toEqual([
-      "format",
-      "idempotencyKey",
-    ]);
+    expect(Object.keys(jobs.submissions[0] ?? {}).sort()).toEqual(["format", "idempotencyKey"]);
   });
 
   it("forwards the executor signal to the enqueue seam", async () => {
@@ -455,11 +443,7 @@ describe("export_document — result envelope", () => {
       },
     });
     const ctx = makeExportContext({ exports: jobs });
-    const result = await exportDocumentTool.run(
-      ctx,
-      { format: "png", quality: 90 },
-      freshSignal(),
-    );
+    const result = await exportDocumentTool.run(ctx, { format: "png", quality: 90 }, freshSignal());
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.warnings).toEqual([warning]);
@@ -1032,9 +1016,7 @@ describe("export_document — waiting composition", () => {
         expect(summary.status).toBe("queued");
         expect(summary.exportId).toBe("exp-000");
         expect(summary.url).toBeUndefined();
-        expect(
-          (result.warnings ?? []).some((w) => w.includes("still processing")),
-        ).toBe(true);
+        expect((result.warnings ?? []).some((w) => w.includes("still processing"))).toBe(true);
         expect(String(result.summary).length).toBeLessThanOrEqual(2000);
       }
     } finally {
@@ -1061,7 +1043,12 @@ describe("export_document — waiting composition", () => {
     vi.useFakeTimers();
     try {
       const jobs = new FakeExportJobs({
-        repeat: { ok: false, code: "storage_error", message: "job rows unreadable", retryable: true },
+        repeat: {
+          ok: false,
+          code: "storage_error",
+          message: "job rows unreadable",
+          retryable: true,
+        },
       });
       const ctx = makeExportContext({ exports: jobs });
       const pending = exportDocumentTool.run(ctx, { format: "png" }, freshSignal());
@@ -1099,13 +1086,7 @@ describe("buildExportSummary (§6.1 small-reply rule)", () => {
       warnings: ["one", "two"],
     });
     const parsed = JSON.parse(summary) as Record<string, unknown>;
-    expect(Object.keys(parsed).sort()).toEqual([
-      "exportId",
-      "format",
-      "status",
-      "url",
-      "warnings",
-    ]);
+    expect(Object.keys(parsed).sort()).toEqual(["exportId", "format", "status", "url", "warnings"]);
   });
 
   it("omits the url and warnings keys when absent", () => {
