@@ -293,7 +293,7 @@ describe("openapi document (W4-O)", () => {
     expect(asRecord(props.retryable, "properties.retryable").type).toBe("boolean");
     expect(asRecord(props.hint, "properties.hint").type).toBe("string");
     expect(asRecord(props.docs_url, "properties.docs_url").type).toBe("string");
-    expect(asArray(props.details, "properties.details")).toBeDefined();
+    expect(asRecord(props.details, "properties.details").type).toBe("array");
     // The nested §13.3 sketch must NOT appear.
     expect(Object.prototype.hasOwnProperty.call(props, "error")).toBe(false);
     expect(envelope.additionalProperties).toBe(false);
