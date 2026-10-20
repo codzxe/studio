@@ -172,7 +172,8 @@ describe("tokenBucket math (limit 5 per 10s → refill 0.5 token/s)", () => {
 
   it("degrades to an unconditional write after exhausting CAS attempts", async () => {
     const clock = makeClock();
-    const limiter = new RateLimiter({ kv: flakyCas(new InMemoryKV(clock.now), 99), now: clock.now });
+    const kv = flakyCas(new InMemoryKV(clock.now), 99);
+    const limiter = new RateLimiter({ kv, now: clock.now });
 
     // Every CAS attempt fails → the limiter still answers and persists state.
     const first = await limiter.tokenBucket("api.test.runs", `org:${ORG_A}`, POLICY);

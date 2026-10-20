@@ -13,7 +13,8 @@
 //                      counter is INJECTED: the runs route supplies a DB count
 //                      (or cache view); this module never touches storage.
 
-import { createMiddleware, type MiddlewareHandler } from "hono";
+import type { MiddlewareHandler } from "hono";
+import { createMiddleware } from "hono/factory";
 import { MAX_UPLOAD_BYTES, planLimits, type PlanId } from "@studio/config";
 import type { AppEnv } from "../types.js";
 import { AppError } from "./error-mapper.js";
@@ -137,14 +138,13 @@ export async function enforceRunCaps(
   const active = Number.isInteger(raw) && raw >= 0 ? raw : 0;
 
   if (active >= cap) {
-    throw new AppError(
-      429,
-      "run_cap_reached",
-      "Workspace is already running the maximum number of concurrent runs for its plan.",
-      {
-        hint: `Your plan allows ${cap} concurrent run${cap === 1 ? "" : "s"}. Wait for a run to finish or upgrade for more.`,
-        retryable: true,
-      },
-    );
+    const runs = cap === 1 ? "run" : "runs";
+    const hint =
+      `Your plan allows ${cap} concurrent ${runs}. ` +
+      "Wait for a run to finish or upgrade for more.";
+    throw new AppError(429, "run_cap_reached", "Workspace is at its concurrent run limit.", {
+      hint,
+      retryable: true,
+    });
   }
 }

@@ -359,11 +359,11 @@ async function createRun(
 async function authed(
   harness: Harness,
   path: string,
-  init: { method: string; token?: string; body?: string } = { method: "GET" },
+  init: { method?: "GET" | "POST"; token?: string; body?: string } = {},
 ): Promise<Response> {
   return harness.app.request(path, {
-    method: init.method,
-    headers: jsonHeaders(init.token ?? TOKEN_A, init.body === undefined ? {} : {}),
+    method: init.method ?? "GET",
+    headers: jsonHeaders(init.token ?? TOKEN_A),
     ...(init.body === undefined ? {} : { body: init.body }),
   });
 }
@@ -599,14 +599,13 @@ describe("POST /v1/runs (§3.3 lifecycle)", () => {
   it("malformed JSON body → 400 validation envelope", async () => {
     const harness = makeHarness();
     await seed(harness, ORG_A, 30);
-    const res = harness.app.request("/v1/runs", {
+    const res = await harness.app.request("/v1/runs", {
       method: "POST",
       headers: jsonHeaders(TOKEN_A, { "idempotency-key": "k" }),
       body: "{not json",
     });
-    const awaited = await res;
-    expect(awaited.status).toBe(400);
-    const body = (await awaited.json()) as Envelope;
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as Envelope;
     expect(body.code).toBe("validation_failed");
   });
 
@@ -835,7 +834,7 @@ describe("auth and tenant guards", () => {
   it("no credentials → 401 typed envelope", async () => {
     const harness = makeHarness();
     await seed(harness, ORG_A, 30);
-    const res = harness.app.request("/v1/runs", {
+    const res = await harness.app.request("/v1/runs", {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": "k" },
       body: JSON.stringify({ documentId: DOC_A, prompt: "x", tier: "quick" }),

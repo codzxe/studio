@@ -24,8 +24,12 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { Logger } from "pino";
-import type { RateLimitDecision, RateLimiter, RateLimitSubject } from "../services/limiter.js";
-import { subjectBucketKey } from "../services/limiter.js";
+import {
+  subjectBucketKey,
+  type RateLimitDecision,
+  type RateLimiter,
+  type RateLimitSubject,
+} from "../services/limiter.js";
 import type { AppEnv } from "../types.js";
 import { AppError } from "./error-mapper.js";
 
@@ -213,10 +217,15 @@ export function rateLimit(
         RATE_LIMIT_HEADERS.reset,
         String(Math.ceil((Date.now() + decision.retryAfterSec * 1000) / 1000)),
       );
-      throw new AppError(429, "rate_limited", "Too many requests — slow down and retry shortly.", {
-        hint: `Limit is ${options.limit} per ${options.windowSec}s. Retry after ${decision.retryAfterSec}s.`,
-        retryable: true,
-      });
+      const hint =
+        `Limit is ${options.limit} per ${options.windowSec}s. ` +
+        `Retry after ${decision.retryAfterSec}s.`;
+      throw new AppError(
+        429,
+        "rate_limited",
+        "Too many requests — slow down and retry shortly.",
+        { hint, retryable: true },
+      );
     }
     await next();
   });

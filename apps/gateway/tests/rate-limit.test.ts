@@ -53,7 +53,6 @@ function makeLimitedApp(limiter: RateLimiter, options: RateLimitOptions): Hono<R
   });
   app.use(rateLimit({ limiter }, options));
   app.post("/v1/things", (c) => c.json({ ok: true }));
-  app.get("/v1/things", (c) => c.json({ ok: true }));
   app.get("/v1/health", (c) => c.json({ ok: true }));
   return app;
 }
@@ -472,6 +471,6 @@ describe("enforceRunCaps (§14.1 concurrent-run caps)", () => {
     expect(body.code).toBe("run_cap_reached");
     expect(body.retryable).toBe(true);
     expect(body.hint).toContain("1 concurrent run");
-    expect(body.message).toContain("maximum number of concurrent runs");
+    expect(body.message).toContain("concurrent run limit");
   });
 });
