@@ -630,10 +630,13 @@ fn bind_instance_variables(
     set_variables(s, |vars| {
         vars.defs.retain(|d| !d.name.starts_with(&prefix));
         vars.data_sets.retain(|d| d.name != set);
-        for (name, layer, kind, value) in &rows {
+        for (name, layer, kind, _) in &rows {
             vars.defs.push(VariableDef { name: name.clone(), layer: *layer, kind: kind.clone() });
-            vars.data_sets.last_mut().map(|d| d.values.push(DataValue { variable: name.clone(), value: value.clone() }));
         }
+        // The instance's values ride ONLY its own data set (pushed below); writing them
+        // into the host document's current last set would corrupt data that is not ours
+        // (the doc contract: "leaving every other variable and data set of the host
+        // document alone").
         vars.data_sets.push(DataSet {
             name: set,
             values: rows
@@ -724,9 +727,13 @@ fn list_core(root: &Path, p: &Value) -> Result<Value> {
                 .flatten()
                 .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
                 .map(|e| e.path())
+                // Cap the collection itself: a runaway components root must not size the
+                // Vec (the vendor's installed-profiles walk caps its collection the same
+                // way). Membership follows the OS listing order, the reply stays sorted.
+                .take(MAX_COMPONENTS)
                 .collect();
             dirs.sort();
-            for dir in dirs.iter().take(MAX_COMPONENTS) {
+            for dir in &dirs {
                 let Some(id) = dir.file_name().and_then(|n| n.to_str()) else { continue };
                 let path = dir.join(MANIFEST_FILE);
                 let readable = std::fs::metadata(&path).map(|m| m.len() <= MAX_MANIFEST_BYTES).unwrap_or(false)
@@ -1030,8 +1037,15 @@ fn diff_layer(
     }
     let (ba, bb) = (crate::transform_cmds::whole_layer_bounds(a), crate::transform_cmds::whole_layer_bounds(b));
     if !ba.is_empty() && !bb.is_empty() {
+        // The instance record comes from the file, so its transform is hostile: a huge
+        // scale/offset maps to a point that saturates at i64::MIN/MAX, where the naive
+        // subtraction overflows and `i64::MIN.abs()` panics. Checked math keeps the
+        // comparison total — an unrepresentable gap counts as moved, never as a crash.
+        let gap = |want: i64, got: i32| {
+            want.checked_sub(i64::from(got)).and_then(i64::checked_abs).is_none_or(|d| d > 1)
+        };
         let (want_x, want_y) = placed.maps(ba.x0, ba.y0);
-        if (want_x - i64::from(bb.x0)).abs() > 1 || (want_y - i64::from(bb.y0)).abs() > 1 {
+        if gap(want_x, bb.x0) || gap(want_y, bb.y0) {
             note("position", "the layer was moved inside the instance".to_string());
         }
     }

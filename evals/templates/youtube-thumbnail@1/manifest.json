@@ -1,0 +1,35 @@
+{
+  "id": "youtube-thumbnail",
+  "version": 1,
+  "name": "YouTube Thumbnail — Bold",
+  "description": "A high-contrast 16:9 video thumbnail with a full-bleed cover photo, a bold bottom-left headline and an optional corner badge.",
+  "tags": ["social", "video", "thumbnail", "wide"],
+  "canvas": { "width": 1280, "height": 720, "background": "#101418" },
+  "slots": {
+    "photo":    { "kind": "image", "layer": "Photo",    "bounds": [0, 0, 1280, 720],
+                  "fit": "cover", "minPixels": [1280, 720], "optional": false },
+    "headline": { "kind": "text",  "layer": "Headline", "bounds": [64, 472, 832, 184],
+                  "font": "display", "weight": "bold", "size": 88, "lineHeight": 1.05,
+                  "maxLines": 2, "maxChars": 30, "align": "left",
+                  "color": "#FFFFFF", "autoFit": { "minSize": 48, "maxSize": 96 } },
+    "badge":    { "kind": "component", "component": "offer-badge@2", "layer": "Badge",
+                  "bounds": [1088, 64, 128, 128], "optional": true,
+                  "vars": { "label": "NEW" } }
+  },
+  "rules": {
+    "safeArea": 64,
+    "minContrast": 4.5,
+    "mustLayers": ["Background", "Photo", "Headline"],
+    "maxTextLayers": 4,
+    "palette": ["#101418", "#FFFFFF", "#E5484D"]
+  },
+  "layerMap": {
+    "Background": { "role": "background", "fill": "#101418" },
+    "Photo":      { "role": "image" },
+    "Headline":   { "role": "headline" },
+    "Badge":      { "role": "component", "component": "offer-badge@2" }
+  },
+  "thumbnail": "thumbnails/youtube-thumbnail@1.png",
+  "license": "public",
+  "author": "studio"
+}

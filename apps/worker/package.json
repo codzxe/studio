@@ -2,9 +2,11 @@
   "name": "@studio/worker", "version": "0.1.0", "private": true, "type": "module",
   "dependencies": {
     "@studio/agent": "workspace:*", "@studio/billing": "workspace:*", "@studio/config": "workspace:*",
-    "@studio/db": "workspace:*", "@studio/engine-client": "workspace:*", "@studio/tools": "workspace:*",
+    "@studio/db": "workspace:*", "@studio/engine-client": "workspace:*", "@studio/storage": "workspace:*",
+    "@studio/tools": "workspace:*",
     "ai": "^4.3.4", "bullmq": "^5.34.0", "ioredis": "^5.4.2", "pino": "^9.6.0", "zod": "^3.24.1"
   },
   "devDependencies": { "@types/node": "^22.10.0" },
-  "scripts": { "typecheck": "tsc --noEmit", "lint": "biome check src", "test": "vitest run" }
+  "scripts": { "typecheck": "tsc --noEmit", "lint": "biome check src", "test": "vitest run",
+    "demo:spine": "node scripts/demo-spine.mjs" }
 }

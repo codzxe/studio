@@ -1,0 +1,64 @@
+{
+  "format": "studio-template-document/1",
+  "template": "presentation-slide@1",
+  "name": "Presentation Slide — Title and Visual",
+  "width": 1920,
+  "height": 1080,
+  "background": "#F6F5F2",
+  "layers": [
+    {
+      "name": "Background",
+      "kind": "Fill",
+      "bounds": [0, 0, 1920, 1080],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#F6F5F2"
+    },
+    {
+      "name": "Visual",
+      "kind": "Pixel",
+      "bounds": [1056, 288, 768, 576],
+      "visible": true,
+      "opacity": 1.0,
+      "placeholder": "content visual placeholder — synthetic gradient PNG (see assets-note.md); replaced by the placed cover image on template.fill, never deleted"
+    },
+    {
+      "name": "Subtitle",
+      "kind": "Type",
+      "bounds": [96, 280, 864, 64],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "Three numbers that moved the plan",
+        "font": "sans",
+        "size": 36,
+        "color": "#52504B",
+        "align": "left"
+      }
+    },
+    {
+      "name": "Title",
+      "kind": "Type",
+      "bounds": [96, 96, 1128, 144],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "Quarterly results",
+        "font": "display",
+        "weight": "bold",
+        "size": 72,
+        "lineHeight": 1.1,
+        "color": "#1A1A1A",
+        "align": "left"
+      }
+    },
+    {
+      "name": "Logo",
+      "kind": "Pixel",
+      "bounds": [96, 920, 160, 48],
+      "visible": true,
+      "opacity": 1.0,
+      "placeholder": "footer logo placeholder — synthetic wordmark gradient PNG (see assets-note.md); optional slot stays present but hidden when unfilled"
+    }
+  ]
+}

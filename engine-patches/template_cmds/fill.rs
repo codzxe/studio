@@ -377,9 +377,12 @@ fn text_value(value: &Value, name: &str) -> Result<String> {
     }
 }
 
-/// A `[x, y]` focal point: two finite numbers within 0..1.
-fn focal_point(value: &Value, name: &str) -> Result<Option<[f64; 2]>> {
-    let Some(Value::Array(a)) = value else { return Ok(None) };
+/// The container's `focalPoint` ([x, y], each within 0..1), when present and well-formed.
+fn focal_point(container: &Value, name: &str) -> Result<Option<[f64; 2]>> {
+    let Some(v) = container.get("focalPoint") else { return Ok(None) };
+    let Some(Value::Array(a)) = v else {
+        return Err(bad(format!("slot `{name}`: focalPoint must be two numbers [x, y] within 0..1")));
+    };
     if a.len() != 2 {
         return Err(bad(format!("slot `{name}`: focalPoint must be two numbers [x, y] within 0..1")));
     }
@@ -444,11 +447,16 @@ fn component_ref(value: &Value, slot: &Slot, name: &str) -> Result<(String, Opti
                 id = vid.to_string();
                 version = ver.parse::<u64>().ok().filter(|n| *n >= 1);
             }
-            None => id = v.clone(),
+            None => {
+                // A bare id override does not inherit the declared component's version.
+                id = v.clone();
+                version = None;
+            }
         },
         Value::Object(o) => {
             if let Some(Value::String(vid)) = o.get("id") {
                 id = vid.clone();
+                version = None;
             }
             if let Some(v) = o.get("version") {
                 version = v.as_u64().filter(|n| *n >= 1);
@@ -512,7 +520,9 @@ fn compile_text_slot(
     }
     let mut text = text;
     if let Some(max) = opt_u64(&slot.raw, "maxChars") {
-        let max = max as usize;
+        // A plain `as usize` would truncate the budget on 32-bit targets (wasm32 is one) and
+        // silently trim to the wrong length; clamped like an upstream index cast.
+        let max = max.min(usize::MAX as u64) as usize;
         let (trimmed, was) = trim_to_chars(&text, max);
         if was {
             let before = text.chars().count();
@@ -600,7 +610,9 @@ fn compile_text_slot(
         max_size,
         line_height,
         max_lines,
-        current_size: current_size.unwrap_or((min_size + max_size) / 2.0),
+        // Overflow-free midpoint of two finite sizes (a plain (min+max)/2 can round to inf
+        // when the manifest declares astronomically large autoFit bounds).
+        current_size: current_size.unwrap_or(min_size + (max_size - min_size) / 2.0),
     })));
     Ok(())
 }
@@ -787,6 +799,10 @@ fn compile_slots(
     slots: &Map<String, Value>,
     key: &str,
 ) -> Result<Compiled> {
+    // An allocation guard before anything walks the request (§7.5 keeps templates ~12 slots).
+    if slots.len() > MAX_SLOTS {
+        return Err(bad(format!("`slots` lists {} entries; at most {MAX_SLOTS} are accepted", slots.len())));
+    }
     // Unknown slot names: one error listing them and the manifest's slots (§7.3).
     let mut unknown: Vec<&str> = Vec::new();
     for name in slots.keys() {
@@ -1086,9 +1102,6 @@ pub(super) fn run(s: &mut Session, p: &Value) -> Result<Value> {
         .get("slots")
         .and_then(Value::as_object)
         .ok_or_else(|| bad("`slots` must be an object of {slotName: value}"))?;
-    if slots.len() > MAX_SLOTS {
-        return Err(bad(format!("`slots` lists {} entries; at most {MAX_SLOTS} are accepted", slots.len())));
-    }
     let applied_state = manifest::active(s).map_err(|e| {
         bad(format!("no template is applied to the active document (run template.apply first): {e}"))
     })?;
@@ -1698,14 +1711,16 @@ mod tests {
 
     #[test]
     fn unknown_component_error_lists_candidates() -> Result<()> {
+        // The pure refusal format; the live guard only consults a registered,
+        // non-journaled `component.list` (component.place still refuses unknown ids at
+        // run time when the pre-check cannot run).
         let e = unknown_component_error("nope", "badge", &["offer-badge", "star-rating"]).to_string();
         assert!(e.contains("unknown component `nope`"), "{e}");
         assert!(e.contains("available components: offer-badge, star-rating"), "{e}");
-        // The live guard passes known ids and skips when the registry is absent or has an
-        // unexpected shape (component.place still refuses unknown ids at run time).
+        // The guard never refuses a known id (the fixture registry serves offer-badge).
         let (mut s, m) = (template_session()?, fixture_manifest()?);
-        let _ = m;
-        assert!(matches!(guard_component(&mut s, "offer-badge", "badge"), Ok(())) || matches!(guard_component(&mut s, "offer-badge", "badge"), Err(_)));
+        let c = compile(&mut s, &m, json!({ "badge": { "vars": { "label": "SALE" } } }))?;
+        assert!(c.applied.contains(&"badge".to_string()), "the known component id passes the guard");
         Ok(())
     }
 
@@ -1761,7 +1776,7 @@ mod tests {
     fn execute(s: &mut Session, c: &Compiled) -> Result<()> {
         let mut warnings = Vec::new();
         let key = crate::extra_cmds::step_key(s, "template.fill");
-        execute_batch(s, c, &key, &mut warnings).map(|_| warnings)
+        execute_batch(s, c, &key, &mut warnings)
     }
 
     #[test]
@@ -1852,15 +1867,23 @@ mod tests {
         let c = compile(&mut s, &m, json!({ "headline": "One step", "bg": "#F4E7D3" }))?;
         let before = doc_state_of(&s)?.0;
         execute(&mut s, &c)?;
-        let st = s.active().ok_or(EngineError::NoDocument)?;
-        assert_eq!(st.history.past_len(), before + 1, "type.edit + type.setStyle coalesce into one step");
-        let entries = st.history.entries();
+        let past = {
+            let st = s.active().ok_or(EngineError::NoDocument)?;
+            st.history.past_len()
+        };
+        assert_eq!(past, before + 1, "type.edit + type.setStyle coalesce into one step");
+        let entries = {
+            let st = s.active().ok_or(EngineError::NoDocument)?;
+            st.history.entries()
+        };
         assert_eq!(entries.last().map(String::as_str), Some("Fill Template"), "{entries:?}");
         // And one undo reverts the whole fill.
-        let (doc, _) = st
-            .history
-            .undo(st.doc.clone())
-            .ok_or(EngineError::Other("nothing to undo".into()))?;
+        let (doc, _) = {
+            let st = s.active_mut().ok_or(EngineError::NoDocument)?;
+            st.history
+                .undo(st.doc.clone())
+                .ok_or(EngineError::Other("nothing to undo".into()))?
+        };
         let undone = doc.walk().iter().find(|(_, _, l)| l.name == "Headline");
         let text = undone
             .and_then(|(_, _, l)| match &l.content {

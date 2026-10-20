@@ -1,0 +1,38 @@
+{
+  "id": "presentation-slide",
+  "version": 1,
+  "name": "Presentation Slide — Title and Visual",
+  "description": "A 16:9 slide with a top title, an optional subtitle, a right-half content visual and a footer logo on a neutral background.",
+  "tags": ["presentation", "slide", "16x9"],
+  "canvas": { "width": 1920, "height": 1080, "background": "#F6F5F2" },
+  "slots": {
+    "title":    { "kind": "text", "layer": "Title",    "bounds": [96, 96, 1128, 144],
+                  "font": "display", "weight": "bold", "size": 72, "lineHeight": 1.1,
+                  "maxLines": 2, "maxChars": 48, "align": "left",
+                  "color": "#1A1A1A", "autoFit": { "minSize": 40, "maxSize": 80 } },
+    "subtitle": { "kind": "text", "layer": "Subtitle", "bounds": [96, 280, 864, 64],
+                  "font": "sans", "size": 36, "maxLines": 1, "maxChars": 80, "color": "#52504B",
+                  "optional": true },
+    "visual":   { "kind": "image", "layer": "Visual",  "bounds": [1056, 288, 768, 576],
+                  "fit": "cover", "minPixels": [768, 576], "focal": [0.5, 0.5], "optional": false },
+    "logo":     { "kind": "image", "layer": "Logo",    "bounds": [96, 920, 160, 48],
+                  "fit": "contain", "optional": true }
+  },
+  "rules": {
+    "safeArea": 96,
+    "minContrast": 4.5,
+    "mustLayers": ["Background", "Title"],
+    "maxTextLayers": 8,
+    "palette": ["#F6F5F2", "#1A1A1A", "#52504B"]
+  },
+  "layerMap": {
+    "Background": { "role": "background", "fill": "#F6F5F2" },
+    "Title":      { "role": "headline" },
+    "Subtitle":   { "role": "supporting-text" },
+    "Visual":     { "role": "image" },
+    "Logo":       { "role": "logo" }
+  },
+  "thumbnail": "thumbnails/presentation-slide@1.png",
+  "license": "public",
+  "author": "studio"
+}

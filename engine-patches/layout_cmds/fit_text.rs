@@ -536,7 +536,7 @@ impl TextMeasurer for EngineTextMeasurer {
         let layout = match photocraft_text::shared().lock() {
             // A poisoned lock only means another thread panicked inside the text engine; the
             // engine itself is intact, so proceed with it (the vendor idiom in type_cmds).
-            Ok(engine) => engine.layout(&probe, self.dpi),
+            Ok(mut engine) => engine.layout(&probe, self.dpi),
             Err(poisoned) => poisoned.into_inner().layout(&probe, self.dpi),
         };
         let width = match layout.line_bounds() {

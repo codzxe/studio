@@ -42,9 +42,10 @@ const MAX_KEY_LENGTH = 1024;
 /**
  * Minimal structural object-storage seam for checkpoint bytes.
  *
- * RECONCILIATION (packages/storage, W2-M): the real S3/R2 client must satisfy this
- * shape — `put(key, data)`, `get(key)` resolving `undefined` for missing objects,
- * idempotent `delete` — or be adapted at the composition root. Do NOT widen this
+ * RECONCILIATION (packages/storage, W2-M): the real S3/R2 client satisfies this
+ * shape via `adaptStudioStorage` (./storage-adapter.ts, W3-M wiring) — it maps
+ * `Storage.get`'s `null` for missing objects to this seam's `undefined` and
+ * supplies the required `PutOptions.contentType` for `put`. Do NOT widen this
  * interface here; keys are plain `/`-separated strings (no leading slash, no `..`).
  * `LocalCheckpointStorage` below is the dev/single-box adapter (compose volume),
  * not the production object store.
@@ -54,6 +55,11 @@ export interface StorageLike {
   get(key: string): Promise<Uint8Array | undefined>;
   delete(key: string): Promise<void>;
 }
+
+// Composition wiring (W3-M): the seam stays injectable — this only re-exports
+// the @studio/storage → StorageLike adapter next to the interface it adapts, so
+// the composition root can pass `createStorageFromEnv(...)` through it.
+export { adaptStudioStorage, type StudioStorage } from "./storage-adapter.js";
 
 /** Filesystem subset `LocalCheckpointStorage` needs; injectable for deterministic tests. */
 export interface FsLike {

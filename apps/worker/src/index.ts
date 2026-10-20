@@ -19,7 +19,6 @@ import {
   RetryableRunFailureError,
   StubRunProcessor,
   type RunJobContext,
-  type RunJobPayload,
   type RunOutcome,
   type RunProcessor,
 } from "./processor.js";
@@ -36,6 +35,7 @@ import {
   runJobPayloadSchema,
   type ExportJobPayload,
   type ImageJobPayload,
+  type RunJobPayload,
 } from "./queues.js";
 
 async function bootstrap(logger: Logger): Promise<void> {
