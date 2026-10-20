@@ -5,9 +5,12 @@
 import { describe, expect, it } from "vitest";
 import { isToolResult, parseToolArgs } from "../src/kit.js";
 import { TOOLS, ToolRegistry } from "../src/registry.js";
-import type { ToolContext } from "../src/types.js";
 import {
   CRITIQUE_PARSE_FAILED_CODE,
+  type CriticModelLike,
+  type CritiqueInput,
+  type CritiqueIssue,
+  type CritiqueModelOutput,
   MAX_CRITIC_ISSUES,
   REPAIR_INSTRUCTION,
   averageScore,
@@ -18,11 +21,8 @@ import {
   stripControlChars,
   visionCritiqueArgsSchema,
   visionCritiqueTool,
-  type CritiqueInput,
-  type CritiqueIssue,
-  type CriticModelLike,
-  type CritiqueModelOutput,
 } from "../src/tools/vision-critique.js";
+import type { ToolContext } from "../src/types.js";
 import { freshSignal, makeFakeContext } from "./fakes.js";
 
 // ---------------------------------------------------------------------------
@@ -38,6 +38,9 @@ const COFFEE_SCORES = {
   brand_fit: 4,
   editability: 5,
 } as const;
+
+/** Markdown code fence, as models wrap JSON despite "Return JSON only". */
+const FENCE = "```";
 
 const coffeeAccept = {
   scores: { ...COFFEE_SCORES },
@@ -244,18 +247,17 @@ describe("parseCritiqueRaw", () => {
   });
 
   it("parses a fenced ```json block", () => {
-    const fenced = "```json\n" + JSON.stringify(coffeeAccept) + "\n```";
+    const fenced = `${FENCE}json\n${JSON.stringify(coffeeAccept)}\n${FENCE}`;
     expect(parseCritiqueRaw(fenced).ok).toBe(true);
   });
 
   it("parses a fence without a language tag", () => {
-    const fenced = "```\n" + JSON.stringify(coffeeAccept) + "\n```";
+    const fenced = `${FENCE}\n${JSON.stringify(coffeeAccept)}\n${FENCE}`;
     expect(parseCritiqueRaw(fenced).ok).toBe(true);
   });
 
   it("extracts JSON embedded in prose (preamble + trailing remark)", () => {
-    const raw =
-      "Sure — here is my review:\n" + JSON.stringify(coffeeAccept) + "\nHope that helps!";
+    const raw = `Sure — here is my review:\n${JSON.stringify(coffeeAccept)}\nHope that helps!`;
     expect(parseCritiqueRaw(raw).ok).toBe(true);
   });
 
@@ -263,11 +265,9 @@ describe("parseCritiqueRaw", () => {
     const payload = {
       scores: allScores(4),
       verdict: "accept",
-      issues: [
-        issue("minor", "bracey", "Headline", "text } with } braces", "no change needed"),
-      ],
+      issues: [issue("minor", "bracey", "Headline", "text } with } braces", "no change needed")],
     };
-    const raw = "Done. " + JSON.stringify(payload) + " Thanks.";
+    const raw = `Done. ${JSON.stringify(payload)} Thanks.`;
     const parsed = parseCritiqueRaw(raw);
     expect(parsed.ok).toBe(true);
     if (parsed.ok) {
@@ -276,9 +276,7 @@ describe("parseCritiqueRaw", () => {
   });
 
   it("defaults an omitted issues array to [] (clean-accept slip)", () => {
-    const parsed = parseCritiqueRaw(
-      JSON.stringify({ scores: allScores(4), verdict: "accept" }),
-    );
+    const parsed = parseCritiqueRaw(JSON.stringify({ scores: allScores(4), verdict: "accept" }));
     expect(parsed.ok).toBe(true);
     if (parsed.ok) {
       expect(parsed.value.issues).toEqual([]);
@@ -286,7 +284,9 @@ describe("parseCritiqueRaw", () => {
   });
 
   it("keeps parse-side headroom beyond 5 issues (truncation is code-enforced)", () => {
-    const six = makeOutput({ issues: [1, 2, 3, 4, 5, 6].map((n) => issue("minor", `i_${n}`, "L")) });
+    const six = makeOutput({
+      issues: [1, 2, 3, 4, 5, 6].map((n) => issue("minor", `i_${n}`, "L")),
+    });
     expect(parseCritiqueRaw(JSON.stringify(six)).ok).toBe(true);
   });
 
@@ -296,11 +296,7 @@ describe("parseCritiqueRaw", () => {
     ["no JSON at all", "I think it looks great!", "not_json"],
     ["unterminated object", '{"verdict":"accept"', "not_json"],
     ["missing scores", JSON.stringify({ verdict: "accept" }), "schema"],
-    [
-      "extra top-level key",
-      JSON.stringify({ ...coffeeAccept, commentary: "nice" }),
-      "schema",
-    ],
+    ["extra top-level key", JSON.stringify({ ...coffeeAccept, commentary: "nice" }), "schema"],
     [
       "score 6",
       JSON.stringify({ ...coffeeAccept, scores: { ...COFFEE_SCORES, hierarchy: 6 } }),
@@ -326,9 +322,33 @@ describe("parseCritiqueRaw", () => {
       }),
       "schema",
     ],
-    ["bad issue code", JSON.stringify({ ...coffeeAccept, verdict: "revise", issues: [issue("major", "Bad Code", "L")] }), "schema"],
-    ["empty layer", JSON.stringify({ ...coffeeAccept, verdict: "revise", issues: [issue("major", "low_contrast", "")] }), "schema"],
-    ["empty observation", JSON.stringify({ ...coffeeAccept, verdict: "revise", issues: [issue("major", "low_contrast", "L", "")] }), "schema"],
+    [
+      "bad issue code",
+      JSON.stringify({
+        ...coffeeAccept,
+        verdict: "revise",
+        issues: [issue("major", "Bad Code", "L")],
+      }),
+      "schema",
+    ],
+    [
+      "empty layer",
+      JSON.stringify({
+        ...coffeeAccept,
+        verdict: "revise",
+        issues: [issue("major", "low_contrast", "")],
+      }),
+      "schema",
+    ],
+    [
+      "empty observation",
+      JSON.stringify({
+        ...coffeeAccept,
+        verdict: "revise",
+        issues: [issue("major", "low_contrast", "L", "")],
+      }),
+      "schema",
+    ],
     [
       "missing fix",
       JSON.stringify({
@@ -380,9 +400,7 @@ describe("enforceCritiqueRules", () => {
   });
 
   it("forces revise when any score ≤ 2 (naming the rubric keys)", () => {
-    const enforced = enforceCritiqueRules(
-      makeOutput({ scores: { ...allScores(4), contrast: 2 } }),
-    );
+    const enforced = enforceCritiqueRules(makeOutput({ scores: { ...allScores(4), contrast: 2 } }));
     expect(enforced.verdict).toBe("revise");
     expect(enforced.warnings).toHaveLength(1);
     expect(enforced.warnings[0]).toContain("contrast");
@@ -397,7 +415,14 @@ describe("enforceCritiqueRules", () => {
   });
 
   it("does not fire the average rule at exactly 3.5 (strict <)", () => {
-    const scores = { hierarchy: 3, balance: 3, contrast: 3, brief_adherence: 4, brand_fit: 4, editability: 4 };
+    const scores = {
+      hierarchy: 3,
+      balance: 3,
+      contrast: 3,
+      brief_adherence: 4,
+      brand_fit: 4,
+      editability: 4,
+    };
     const enforced = enforceCritiqueRules(makeOutput({ scores }));
     expect(enforced.verdict).toBe("accept");
     expect(enforced.warnings).toEqual([]);
@@ -449,13 +474,7 @@ describe("enforceCritiqueRules", () => {
     );
     const enforced = enforceCritiqueRules(makeOutput({ issues }));
     expect(enforced.issues).toHaveLength(MAX_CRITIC_ISSUES);
-    expect(enforced.issues.map((entry) => entry.code)).toEqual([
-      "i_0",
-      "i_1",
-      "i_2",
-      "i_3",
-      "i_4",
-    ]);
+    expect(enforced.issues.map((entry) => entry.code)).toEqual(["i_0", "i_1", "i_2", "i_3", "i_4"]);
     expect(enforced.warnings.some((w) => w.includes("kept the first 5"))).toBe(true);
   });
 
@@ -567,7 +586,7 @@ describe("vision_critique tool", () => {
     expect(calls[0]?.input.palette).toBeUndefined();
   });
 
-  it("repairs unparseable output with one retry carrying \"Return JSON only.\"", async () => {
+  it('repairs unparseable output with one retry carrying "Return JSON only."', async () => {
     const { critic, calls } = makeCritic([
       "Trust me, it looks fine.",
       JSON.stringify(coffeeAccept),
@@ -622,7 +641,10 @@ describe("vision_critique tool", () => {
   });
 
   it("maps a thrown seam error to provider_unhealthy without leaking details", async () => {
-    const { critic } = makeCritic([], { throwsAt: 0, error: new Error("boomed with sk-live-secret") });
+    const { critic } = makeCritic([], {
+      throwsAt: 0,
+      error: new Error("boomed with sk-live-secret"),
+    });
     const { ctx } = makeCtx(critic);
     const result = await runTool(ctx);
     expect(result.ok).toBe(false);

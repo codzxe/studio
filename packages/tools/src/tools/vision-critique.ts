@@ -437,9 +437,7 @@ export function buildCritiqueSummary(enforced: EnforcedCritique): {
   readonly summary: string;
   readonly compacted: boolean;
 } {
-  const shape = (
-    issues: readonly unknown[],
-  ): string =>
+  const shape = (issues: readonly unknown[]): string =>
     JSON.stringify({
       verdict: enforced.verdict,
       scores: enforced.scores,
@@ -621,7 +619,7 @@ export const visionCritiqueTool: Tool<VisionCritiqueArgs> = defineTool({
       parsed = parseCritiqueRaw(second.result.raw);
       if (parsed.ok) {
         warnings.push(
-          "The critic's first reply was not valid JSON; the retry with \"Return JSON only.\" succeeded.",
+          'The critic\'s first reply was not valid JSON; the retry with "Return JSON only." succeeded.',
         );
       }
     }

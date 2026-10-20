@@ -42,10 +42,7 @@
 
 import { z } from "zod";
 import {
-  MAX_ARG_RECORD_ENTRIES,
   MAX_ARG_STRING_CHARS,
-  MAX_ERROR_MESSAGE_CHARS,
-  MAX_HINT_CHARS,
   MAX_SUMMARY_CHARS,
   MAX_WARNINGS,
   MAX_WARNING_CHARS,
@@ -58,13 +55,7 @@ import {
   zIdempotencyKey,
   zLayerRef,
 } from "../kit.js";
-import type {
-  EngineCommandReport,
-  LayerRef as _LayerRef,
-  Tool,
-  ToolErr,
-  ToolErrorCode,
-} from "../types.js";
+import type { EngineCommandReport, Tool, ToolErr, ToolErrorCode } from "../types.js";
 import type { LayerRef } from "../kit.js";
 import {
   COMPONENT_LIST_COMMAND,
@@ -302,12 +293,12 @@ export function readComponentVarSchema(manifest: unknown): ComponentVarSchema | 
     if (name.length === 0 || name.length > 64) continue; // manifest name cap
     names.push(name);
     const probed = probeFields(spec, VARIABLE_SPEC_FIELDS);
-    if (probed.kind !== "text" && probed.kind !== "color" && probed.kind !== "visibility") {
-      continue;
+    const kind: unknown = probed.kind;
+    if (kind === "text" || kind === "color" || kind === "visibility") {
+      const variable: { kind: ComponentVarKind; maxChars?: number } = { kind };
+      if (typeof probed.maxChars === "number") variable.maxChars = probed.maxChars;
+      specs[name] = variable;
     }
-    const variable: { kind: ComponentVarKind; maxChars?: number } = { kind: probed.kind };
-    if (typeof probed.maxChars === "number") variable.maxChars = probed.maxChars;
-    specs[name] = variable;
   }
   return { names, specs };
 }
@@ -472,9 +463,6 @@ export function readPlacedInstance(report: EngineCommandReport): PlacedInstance 
   let warnings = Array.isArray(source.warnings) ? source.warnings : undefined;
   if (instance === undefined && warnings === undefined) {
     const parsed = typeof report.message === "string" ? tryParseObject(report.message) : undefined;
-    if (Array.isArray(parsed?.instance)) {
-      // unreachable shape, kept for parity with the array check below
-    }
     if (parsed !== undefined && "instance" in parsed) instance = parsed.instance;
     if (parsed !== undefined && Array.isArray(parsed.warnings)) warnings = parsed.warnings;
   }
@@ -504,6 +492,8 @@ export interface ComponentPlaceArgs {
   readonly bounds?: PlaceBounds;
   readonly anchor?: ComponentAnchor;
   readonly vars?: Record<string, ComponentVarValue>;
+  /** Accepted for the executor's retry dedupe (§14.2); never engine-forwarded. */
+  readonly idempotencyKey?: string;
 }
 
 const componentPlaceArgs = strictObject({

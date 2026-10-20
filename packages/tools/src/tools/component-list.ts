@@ -38,7 +38,7 @@ import type {
   ToolErr,
   ToolErrorCode,
 } from "../types.js";
-import { capText, fieldOf } from "./template-list.js";
+import { capText } from "./template-list.js";
 
 // ---------------------------------------------------------------------------
 // Contract limits (engine component_cmds.rs caps + §6.1 tool caps)
