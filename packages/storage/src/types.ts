@@ -104,7 +104,7 @@ export function isStorageFailure(value: unknown): value is StorageFailure {
  * `toFailure()` for the plain `{ ok: false, … }` shape (gateway error-mapper).
  */
 export class StorageError extends Error {
-  readonly ok: false = false;
+  readonly ok = false;
   readonly code: StorageErrorCode;
   readonly message: string;
   readonly hint?: string;
@@ -169,13 +169,16 @@ export interface StorageObject {
 /** Lowercase hex SHA-256, 64 characters. */
 export const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 
-const CONTENT_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$/;
+const CONTENT_TYPE_PATTERN =
+  /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$/;
 
-export const PUT_OPTIONS_SCHEMA = z
-  .strictObject({
-    contentType: z.string().regex(CONTENT_TYPE_PATTERN, "contentType must be a MIME type"),
-    contentSha256: z.string().regex(SHA256_HEX_PATTERN, "contentSha256 must be 64-char lowercase hex").optional(),
-  });
+export const PUT_OPTIONS_SCHEMA = z.strictObject({
+  contentType: z.string().regex(CONTENT_TYPE_PATTERN, "contentType must be a MIME type"),
+  contentSha256: z
+    .string()
+    .regex(SHA256_HEX_PATTERN, "contentSha256 must be 64-char lowercase hex")
+    .optional(),
+});
 
 /** Options for put(). `contentType` is required; `contentSha256` is verified when given. */
 export interface PutOptions {
@@ -187,15 +190,14 @@ export interface PutOptions {
 /** Options for sign(). ttlSeconds is capped at 15 min (§15.1: no public buckets, short-lived URLs). */
 export const MAX_SIGN_TTL_SECONDS = 900;
 
-export const SIGN_OPTIONS_SCHEMA = z
-  .strictObject({
-    ttlSeconds: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_SIGN_TTL_SECONDS, "signed URLs live at most 15 minutes (§15.1)"),
-    download: z.boolean().optional(),
-  });
+export const SIGN_OPTIONS_SCHEMA = z.strictObject({
+  ttlSeconds: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_SIGN_TTL_SECONDS, "signed URLs live at most 15 minutes (§15.1)"),
+  download: z.boolean().optional(),
+});
 
 /** Options for sign(): `ttlSeconds` 1..900; `download` forces a Content-Disposition attachment. */
 export interface SignOptions {

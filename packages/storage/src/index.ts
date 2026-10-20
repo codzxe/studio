@@ -21,12 +21,7 @@ import { z } from "zod";
 
 import { LocalFsStorage } from "./drivers/local-fs.js";
 import { S3Storage } from "./drivers/s3.js";
-import {
-  isStorageError,
-  storageFailure,
-  type Storage,
-  type StorageResult,
-} from "./types.js";
+import { type Storage, type StorageResult, isStorageError, storageFailure } from "./types.js";
 
 export * from "./types.js";
 export * from "./keys.js";
@@ -102,7 +97,9 @@ export function createStorageFromEnv(env: StorageEnvInput): StorageResult<Storag
       return storageFailure(
         "storage_config_invalid",
         `STORAGE_DRIVER=local requires ${missing.join(", ")} to be set`,
-        { hint: "local dev storage needs a base dir, a signing secret (≥ 16 random chars) and the public base URL for signed URLs" },
+        {
+          hint: "local dev storage needs a base dir, a signing secret (≥ 16 random chars) and the public base URL for signed URLs",
+        },
       );
     }
     return {
@@ -127,7 +124,9 @@ export function createStorageFromEnv(env: StorageEnvInput): StorageResult<Storag
       return storageFailure(
         "storage_config_invalid",
         `STORAGE_DRIVER=s3 requires ${missing.join(", ")} to be set`,
-        { hint: "S3/R2 object storage needs endpoint, region, bucket and credentials (§3.1; MinIO/Garage are AGPL, §16.5)" },
+        {
+          hint: "S3/R2 object storage needs endpoint, region, bucket and credentials (§3.1; MinIO/Garage are AGPL, §16.5)",
+        },
       );
     }
     try {
@@ -150,12 +149,17 @@ export function createStorageFromEnv(env: StorageEnvInput): StorageResult<Storag
       if (isStorageError(err)) {
         return err.toFailure();
       }
-      return storageFailure("storage_config_invalid", "S3 storage driver could not start with the given configuration");
+      return storageFailure(
+        "storage_config_invalid",
+        "S3 storage driver could not start with the given configuration",
+      );
     }
   }
   return storageFailure(
     "storage_config_invalid",
     `STORAGE_DRIVER must be "local" or "s3"; refusing to guess`,
-    { hint: "no silent default: an unset driver must fail fast rather than quietly using local disk in production" },
+    {
+      hint: "no silent default: an unset driver must fail fast rather than quietly using local disk in production",
+    },
   );
 }

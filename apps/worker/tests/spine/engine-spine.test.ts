@@ -226,14 +226,16 @@ describe.skipIf(!spineReady)("Phase-0 engine spine — mock-engine E2E (§19, §
       const reopened = await rawInspect(spine().client);
       const revisionAtSave = spine().baselineRevision + 3;
       if (reopened.revision !== revisionAtSave) {
-        // The in-flight mock rewrite answers doc.open with a blank session document
-        // instead of rehydrating the saved state; the strict reopen contract resumes the
-        // moment the mock restores it (tests/spine/README.md › Known deviations).
-        test.skip(
-          `mock-engine doc.open does not restore the saved revision yet ` +
-            `(got ${reopened.revision}, expected ${revisionAtSave}); ` +
-            "see tests/spine/README.md › Known deviations",
+        // The committed mock generation answers doc.open with a synthesized session
+        // document instead of rehydrating the saved state (its README › "What is faked");
+        // this canary enforces the full reopen contract only when the mock is capable of
+        // it and skips loudly otherwise (tests/spine/README.md › Known deviations).
+        console.warn(
+          `[spine] skipping the reopen-persistence canary: doc.open did not restore the ` +
+            `saved revision (got ${reopened.revision}, expected ${revisionAtSave}); ` +
+            "see apps/worker/tests/spine/README.md",
         );
+        test.skip();
       }
       expect(reopened.revision).toBe(revisionAtSave);
       expect(reopened.layers).toHaveLength(3);

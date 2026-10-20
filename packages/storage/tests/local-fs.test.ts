@@ -3,7 +3,7 @@
 // Deterministic clocks via the `now` seam; no network.
 
 import { createHash, createHmac } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,11 +11,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   DEFAULT_LOCAL_PUBLIC_BASE_URL,
-  LocalFsStorage,
-  localSignaturePayload,
   LOCAL_SIGNED_URL_PATH,
-  verifyLocalSignedUrlParams,
+  LocalFsStorage,
   type LocalSignedUrlParams,
+  localSignaturePayload,
+  verifyLocalSignedUrlParams,
 } from "../src/drivers/local-fs.js";
 import { assetKey, checkpointKey, previewKey, validateStoragePrefix } from "../src/keys.js";
 import { sha256Hex } from "../src/sha256.js";
@@ -26,7 +26,9 @@ import { expectOk, expectStorageErrorCode } from "./helpers.js";
 async function makeWritableBase(): Promise<string | null> {
   try {
     const dir = await mkdtemp(join(tmpdir(), "studio-storage-"));
-    await writeFile(join(dir, ".probe"), "ok");
+    const probe = join(dir, ".probe");
+    await writeFile(probe, "ok");
+    await rm(probe); // keep the probe out of list() assertions
     return dir;
   } catch {
     return null;
@@ -64,7 +66,9 @@ afterEach(async () => {
 describeFs("LocalFsStorage roundtrips", () => {
   it("put → get returns the same bytes and reports sha256/bytes", async () => {
     const { storage } = newStorage();
-    const key = expectOk(assetKey({ organizationId: ORG, assetId: "ast-1", filename: "photo.png" }));
+    const key = expectOk(
+      assetKey({ organizationId: ORG, assetId: "ast-1", filename: "photo.png" }),
+    );
     createdKeys.push(key);
     const bytes = new TextEncoder().encode("hello world");
     const object = await storage.put(key, bytes, { contentType: "image/png" });
@@ -83,7 +87,9 @@ describeFs("LocalFsStorage roundtrips", () => {
     const { storage } = newStorage();
     const key = expectOk(assetKey({ organizationId: ORG, assetId: "ast-empty" }));
     createdKeys.push(key);
-    const object = await storage.put(key, new Uint8Array(0), { contentType: "application/octet-stream" });
+    const object = await storage.put(key, new Uint8Array(0), {
+      contentType: "application/octet-stream",
+    });
     expect(object.bytes).toBe(0);
     expect(object.sha256).toBe(sha256Hex(new Uint8Array(0)));
     expect(await storage.get(key)).toBeInstanceOf(Uint8Array);
@@ -91,12 +97,17 @@ describeFs("LocalFsStorage roundtrips", () => {
 
   it("put verifies a correct contentSha256 and rejects a mismatch", async () => {
     const { storage } = newStorage();
-    const key = expectOk(previewKey({ organizationId: ORG, documentId: "doc-1", width: 512, revision: 0 }));
+    const key = expectOk(
+      previewKey({ organizationId: ORG, documentId: "doc-1", width: 512, revision: 0 }),
+    );
     createdKeys.push(key);
     const bytes = new TextEncoder().encode("png-bytes");
     await storage.put(key, bytes, { contentType: "image/png", contentSha256: sha256Hex(bytes) });
     const err = await expectStorageErrorCode(
-      storage.put(key, bytes, { contentType: "image/png", contentSha256: sha256Hex(new TextEncoder().encode("other")) }),
+      storage.put(key, bytes, {
+        contentType: "image/png",
+        contentSha256: sha256Hex(new TextEncoder().encode("other")),
+      }),
       "storage_checksum_mismatch",
     );
     expect(err.retryable).toBeUndefined();
@@ -104,7 +115,9 @@ describeFs("LocalFsStorage roundtrips", () => {
 
   it("get resolves null for missing objects", async () => {
     const { storage } = newStorage();
-    const key = expectOk(checkpointKey({ organizationId: ORG, documentId: "doc-1", sessionId: "s-1", revision: 3 }));
+    const key = expectOk(
+      checkpointKey({ organizationId: ORG, documentId: "doc-1", sessionId: "s-1", revision: 3 }),
+    );
     expect(await storage.get(key)).toBeNull();
   });
 
@@ -124,7 +137,10 @@ describeFs("LocalFsStorage roundtrips", () => {
       "/abs/escape.png",
       "assets\\organizations\\org-1\\assets\\a-1",
     ]) {
-      await expectStorageErrorCode(storage.put(key, new Uint8Array(1), { contentType: "image/png" }), "storage_invalid_key");
+      await expectStorageErrorCode(
+        storage.put(key, new Uint8Array(1), { contentType: "image/png" }),
+        "storage_invalid_key",
+      );
       await expectStorageErrorCode(storage.get(key), "storage_invalid_key");
       await expectStorageErrorCode(storage.delete(key), "storage_invalid_key");
     }
@@ -153,7 +169,14 @@ describeFs("LocalFsStorage roundtrips", () => {
       expectOk(assetKey({ organizationId: ORG, assetId: "ast-1", filename: "b.png" })),
       expectOk(assetKey({ organizationId: ORG, assetId: "ast-1", filename: "a.png" })),
       expectOk(previewKey({ organizationId: ORG, documentId: "doc-1", width: 512, revision: 0 })),
-      expectOk(checkpointKey({ organizationId: "org-2", documentId: "doc-2", sessionId: "s-1", revision: 0 })),
+      expectOk(
+        checkpointKey({
+          organizationId: "org-2",
+          documentId: "doc-2",
+          sessionId: "s-1",
+          revision: 0,
+        }),
+      ),
     ];
     createdKeys.push(...keys);
     for (const key of keys) {
@@ -166,23 +189,25 @@ describeFs("LocalFsStorage roundtrips", () => {
       allOrg1.push(key);
     }
     expect(allOrg1).toEqual([
-      `assets/organizations/org-1/assets/ast-1/a.png`,
-      `assets/organizations/org-1/assets/ast-1/b.png`,
+      "assets/organizations/org-1/assets/ast-1/a.png",
+      "assets/organizations/org-1/assets/ast-1/b.png",
     ]);
 
     const whole: string[] = [];
     for await (const key of storage.list("")) {
       whole.push(key);
     }
-    expect(whole).toContain(`renders/organizations/org-1/documents/doc-1/preview-512-0.png`);
-    expect(whole).toContain(`checkpoints/organizations/org-2/documents/doc-2/sessions/s-1/checkpoint-0.pcraft`);
+    expect(whole).toContain("renders/organizations/org-1/documents/doc-1/preview-512-0.png");
+    expect(whole).toContain(
+      "checkpoints/organizations/org-2/documents/doc-2/sessions/s-1/checkpoint-0.pcraft",
+    );
     expect(whole.length).toBe(4);
 
     const partial: string[] = [];
     for await (const key of storage.list("renders/organizations/org-1/docum")) {
       partial.push(key);
     }
-    expect(partial).toEqual([`renders/organizations/org-1/documents/doc-1/preview-512-0.png`]);
+    expect(partial).toEqual(["renders/organizations/org-1/documents/doc-1/preview-512-0.png"]);
 
     const nonexistent: string[] = [];
     for await (const key of storage.list("renders/organizations/org-9/")) {
@@ -207,7 +232,9 @@ describeFs("LocalFsStorage roundtrips", () => {
 describeFs("local signed URLs (dev §15.1 contract)", () => {
   it("sign produces a deterministic HMAC URL with exp = now + ttl*1000", async () => {
     const { storage } = newStorage();
-    const key = expectOk(assetKey({ organizationId: ORG, assetId: "ast-1", filename: "photo.png" }));
+    const key = expectOk(
+      assetKey({ organizationId: ORG, assetId: "ast-1", filename: "photo.png" }),
+    );
     createdKeys.push(key);
     const { url, expiresAt } = await storage.sign(key, { ttlSeconds: 900 });
     expect(expiresAt).toBe(FIXED_NOW.getTime() + 900_000);
@@ -227,7 +254,9 @@ describeFs("local signed URLs (dev §15.1 contract)", () => {
     expect(new URL(url).searchParams.get("dl")).toBe("1");
     // Same key, no dl → different signature (disposition is signed).
     const inline = await storage.sign(key, { ttlSeconds: 60 });
-    expect(new URL(inline.url).searchParams.get("sig")).not.toBe(new URL(url).searchParams.get("sig"));
+    expect(new URL(inline.url).searchParams.get("sig")).not.toBe(
+      new URL(url).searchParams.get("sig"),
+    );
   });
 
   it("sign enforces ttlSeconds ≤ 900 (§15.1)", async () => {
@@ -241,12 +270,18 @@ describeFs("local signed URLs (dev §15.1 contract)", () => {
   it("sign without a secret fails with storage_config_invalid", async () => {
     const storage = new LocalFsStorage(base ?? "/nonexistent", { now: () => FIXED_NOW });
     const key = expectOk(assetKey({ organizationId: ORG, assetId: "ast-1" }));
-    const err = await expectStorageErrorCode(storage.sign(key, { ttlSeconds: 60 }), "storage_config_invalid");
+    const err = await expectStorageErrorCode(
+      storage.sign(key, { ttlSeconds: 60 }),
+      "storage_config_invalid",
+    );
     expect(err.hint).toContain("STORAGE_SIGNING_SECRET");
   });
 
   it("uses the default public base URL when none is configured", async () => {
-    const storage = new LocalFsStorage(base ?? "/nonexistent", { signingSecret: SECRET, now: () => FIXED_NOW });
+    const storage = new LocalFsStorage(base ?? "/nonexistent", {
+      signingSecret: SECRET,
+      now: () => FIXED_NOW,
+    });
     const key = expectOk(assetKey({ organizationId: ORG, assetId: "ast-default" }));
     const { url } = await storage.sign(key, { ttlSeconds: 60 });
     expect(url.startsWith(`${DEFAULT_LOCAL_PUBLIC_BASE_URL}${LOCAL_SIGNED_URL_PATH}?`)).toBe(true);
@@ -254,8 +289,14 @@ describeFs("local signed URLs (dev §15.1 contract)", () => {
 
   it("different secrets produce different signatures (unguessability)", async () => {
     const key = "assets/organizations/org-1/assets/ast-1";
-    const one = new LocalFsStorage(base ?? "/nonexistent", { signingSecret: "secret-one-0123456789", now: () => FIXED_NOW });
-    const two = new LocalFsStorage(base ?? "/nonexistent", { signingSecret: "secret-two-0123456789", now: () => FIXED_NOW });
+    const one = new LocalFsStorage(base ?? "/nonexistent", {
+      signingSecret: "secret-one-0123456789",
+      now: () => FIXED_NOW,
+    });
+    const two = new LocalFsStorage(base ?? "/nonexistent", {
+      signingSecret: "secret-two-0123456789",
+      now: () => FIXED_NOW,
+    });
     const sigOne = new URL((await one.sign(key, { ttlSeconds: 60 })).url).searchParams.get("sig");
     const sigTwo = new URL((await two.sign(key, { ttlSeconds: 60 })).url).searchParams.get("sig");
     expect(sigOne).not.toBe(sigTwo);
@@ -270,7 +311,10 @@ describe("verifyLocalSignedUrlParams (pure — runs even on read-only fs)", () =
   const hmacHex = (secret: string, payload: string): string =>
     createHmac("sha256", secret).update(payload, "utf8").digest("hex");
 
-  const make = (disposition: LocalSignedUrlParams["disposition"], secret = SECRET): LocalSignedUrlParams => {
+  const make = (
+    disposition: LocalSignedUrlParams["disposition"],
+    secret = SECRET,
+  ): LocalSignedUrlParams => {
     const payload = localSignaturePayload({ key, exp, sig: "", disposition });
     return { key, exp, sig: hmacHex(secret, payload), disposition };
   };
@@ -284,14 +328,25 @@ describe("verifyLocalSignedUrlParams (pure — runs even on read-only fs)", () =
   });
 
   it("rejects a wrong secret / tampered key / tampered disposition", () => {
-    expect(verifyLocalSignedUrlParams("wrong-secret-0123456789", make("inline"), FIXED_NOW)).toEqual({
+    expect(
+      verifyLocalSignedUrlParams("wrong-secret-0123456789", make("inline"), FIXED_NOW),
+    ).toEqual({
       ok: false,
       reason: "bad_signature",
     });
-    const tampered = { ...make("inline"), key: "exports/organizations/org-2/documents/doc-1/png-v-1.png" };
-    expect(verifyLocalSignedUrlParams(SECRET, tampered, FIXED_NOW)).toEqual({ ok: false, reason: "bad_signature" });
+    const tampered = {
+      ...make("inline"),
+      key: "exports/organizations/org-2/documents/doc-1/png-v-1.png",
+    };
+    expect(verifyLocalSignedUrlParams(SECRET, tampered, FIXED_NOW)).toEqual({
+      ok: false,
+      reason: "bad_signature",
+    });
     const flipped = { ...make("inline"), disposition: "attachment" as const };
-    expect(verifyLocalSignedUrlParams(SECRET, flipped, FIXED_NOW)).toEqual({ ok: false, reason: "bad_signature" });
+    expect(verifyLocalSignedUrlParams(SECRET, flipped, FIXED_NOW)).toEqual({
+      ok: false,
+      reason: "bad_signature",
+    });
   });
 
   it("reports expired URLs after exp, and never before", () => {
@@ -299,11 +354,15 @@ describe("verifyLocalSignedUrlParams (pure — runs even on read-only fs)", () =
       ok: false,
       reason: "expired",
     });
-    expect(verifyLocalSignedUrlParams(SECRET, make("inline"), new Date(exp - 1))).toEqual({ ok: true });
+    expect(verifyLocalSignedUrlParams(SECRET, make("inline"), new Date(exp - 1))).toEqual({
+      ok: true,
+    });
   });
 
   it("rejects malformed signatures without throwing", () => {
-    expect(verifyLocalSignedUrlParams(SECRET, { ...make("inline"), sig: "nothex" }, FIXED_NOW)).toEqual({
+    expect(
+      verifyLocalSignedUrlParams(SECRET, { ...make("inline"), sig: "nothex" }, FIXED_NOW),
+    ).toEqual({
       ok: false,
       reason: "bad_signature",
     });
@@ -318,6 +377,7 @@ describe("structural seam", () => {
   it("LocalFsStorage satisfies the Storage interface", () => {
     const storage: Storage = new LocalFsStorage(base ?? "/nonexistent", { signingSecret: SECRET });
     expect(typeof storage.put).toBe("function");
-    expect(typeof storage.list[Symbol.asyncIterator]).toBe("function");
+    const iterable: AsyncIterable<string> = storage.list("");
+    expect(typeof iterable[Symbol.asyncIterator]).toBe("function");
   });
 });

@@ -6,8 +6,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  assetKey,
+  type ExportFormat,
+  MAX_KEY_BYTES,
   assertTenant,
+  assetKey,
   checkpointKey,
   documentKey,
   exportKey,
@@ -15,7 +17,6 @@ import {
   isSafeFilename,
   isSafeId,
   isWindowsDeviceName,
-  MAX_KEY_BYTES,
   parseStorageKey,
   previewKey,
   validateStorageKey,
@@ -30,13 +31,54 @@ const GOOD_PREVIEW = "renders/organizations/org-1/documents/doc-9/preview-1024-3
 
 describe("validateStorageKey — builders produce valid keys", () => {
   it.each([
-    ["assetKey without filename", () => assetKey({ organizationId: ORG, assetId: "ast-2" }), "assets/organizations/org-1/assets/ast-2"],
-    ["assetKey with filename", () => assetKey({ organizationId: ORG, assetId: "ast-2", filename: "original-photo.png" }), GOOD_ASSET],
-    ["previewKey", () => previewKey({ organizationId: ORG, documentId: "doc-9", width: 1024, revision: 3 }), GOOD_PREVIEW],
-    ["exportKey", () => exportKey({ organizationId: ORG, documentId: "doc-9", format: "png", versionId: "ver-abc" }), "exports/organizations/org-1/documents/doc-9/png-ver-abc.png"],
-    ["exportKey pcraft", () => exportKey({ organizationId: ORG, documentId: "doc-9", format: "pcraft", versionId: "v-42" }), "exports/organizations/org-1/documents/doc-9/pcraft-v-42.pcraft"],
-    ["documentKey", () => documentKey({ organizationId: ORG, documentId: "doc-9", versionId: "v-42" }), "documents/organizations/org-1/documents/doc-9/v-42.pcraft"],
-    ["checkpointKey", () => checkpointKey({ organizationId: ORG, documentId: "doc-9", sessionId: "s-7", revision: 0 }), "checkpoints/organizations/org-1/documents/doc-9/sessions/s-7/checkpoint-0.pcraft"],
+    [
+      "assetKey without filename",
+      () => assetKey({ organizationId: ORG, assetId: "ast-2" }),
+      "assets/organizations/org-1/assets/ast-2",
+    ],
+    [
+      "assetKey with filename",
+      () => assetKey({ organizationId: ORG, assetId: "ast-2", filename: "original-photo.png" }),
+      GOOD_ASSET,
+    ],
+    [
+      "previewKey",
+      () => previewKey({ organizationId: ORG, documentId: "doc-9", width: 1024, revision: 3 }),
+      GOOD_PREVIEW,
+    ],
+    [
+      "exportKey",
+      () =>
+        exportKey({
+          organizationId: ORG,
+          documentId: "doc-9",
+          format: "png",
+          versionId: "ver-abc",
+        }),
+      "exports/organizations/org-1/documents/doc-9/png-ver-abc.png",
+    ],
+    [
+      "exportKey pcraft",
+      () =>
+        exportKey({
+          organizationId: ORG,
+          documentId: "doc-9",
+          format: "pcraft",
+          versionId: "v-42",
+        }),
+      "exports/organizations/org-1/documents/doc-9/pcraft-v-42.pcraft",
+    ],
+    [
+      "documentKey",
+      () => documentKey({ organizationId: ORG, documentId: "doc-9", versionId: "v-42" }),
+      "documents/organizations/org-1/documents/doc-9/v-42.pcraft",
+    ],
+    [
+      "checkpointKey",
+      () =>
+        checkpointKey({ organizationId: ORG, documentId: "doc-9", sessionId: "s-7", revision: 0 }),
+      "checkpoints/organizations/org-1/documents/doc-9/sessions/s-7/checkpoint-0.pcraft",
+    ],
   ] as const)("%s builds exactly the designed key", (name, build, expected) => {
     const key = expectOk(build());
     expect(key).toBe(expected);
@@ -73,15 +115,39 @@ describe("validateStorageKey — attack table (all rejected, typed, value-free)"
   ] as const)("%s is rejected with storage_invalid_key", (_name, key) => {
     const failure = expectErr(validateStorageKey(key));
     expect(failure.code).toBe("storage_invalid_key");
-    // §13.3: the message never echoes the hostile input.
-    expect(failure.message).not.toContain(key.slice(0, Math.min(key.length, 24)));
+    // §13.3: the message never echoes hostile INPUT segments (layout words are fine).
+    const layoutWords = new Set([
+      "documents",
+      "organizations",
+      "renders",
+      "exports",
+      "checkpoints",
+      "assets",
+    ]);
+    for (const segment of key.split("/")) {
+      if (segment.length >= 5 && !layoutWords.has(segment)) {
+        expect(failure.message).not.toContain(segment);
+      }
+    }
   });
 
   it("rejects keys over the 1024-byte cap but accepts exactly 1024 bytes", () => {
-    const at = `documents/organizations/org-1/documents/${"d".repeat(977)}/v.pcraft`;
+    // Bytes spread across ≤ 128-char segments (both caps must hold at once).
+    const head = "documents/organizations/org-1/documents/";
+    const tail = "/v.pcraft";
+    let pad = MAX_KEY_BYTES - head.length - tail.length;
+    const units: string[] = [];
+    while (pad >= 128) {
+      units.push("d".repeat(127)); // 127 chars + 1 separator
+      pad -= 128;
+    }
+    if (pad > 0) {
+      units.push("d".repeat(pad));
+    }
+    const at = `${head}${units.join("/")}${tail}`;
     expect(Buffer.byteLength(at, "utf8")).toBe(MAX_KEY_BYTES);
     expect(expectOk(validateStorageKey(at))).toBe(at);
-    const over = `documents/organizations/org-1/documents/${"d".repeat(978)}/v.pcraft`;
+    const over = `${head}${units.join("/")}/vw.pcraft`;
     expect(Buffer.byteLength(over, "utf8")).toBe(MAX_KEY_BYTES + 1);
     expect(expectErr(validateStorageKey(over)).code).toBe("storage_invalid_key");
   });
@@ -101,7 +167,18 @@ describe("component predicates", () => {
     for (const good of ["a", "original-photo.png", "v-42.pcraft", "a_b.c-d", "x".repeat(128)]) {
       expect(isSafeFilename(good)).toBe(true);
     }
-    for (const bad of ["", ".", "..", ".hidden", "a..", "a b", "a/b", "CON", "aux.txt", "x".repeat(129)]) {
+    for (const bad of [
+      "",
+      ".",
+      "..",
+      ".hidden",
+      "a..",
+      "a b",
+      "a/b",
+      "CON",
+      "aux.txt",
+      "x".repeat(129),
+    ]) {
       expect(isSafeFilename(bad)).toBe(false);
     }
   });
@@ -154,23 +231,39 @@ describe("tenant extraction + cross-tenant guard (§15.1)", () => {
 describe("parseStorageKey — typed layouts", () => {
   it("round-trips every builder", () => {
     const asset = expectOk(parseStorageKey(GOOD_ASSET));
-    expect(asset).toMatchObject({ kind: "asset", organizationId: "org-1", assetId: "ast-2", filename: "original-photo.png" });
+    expect(asset).toMatchObject({
+      kind: "asset",
+      organizationId: "org-1",
+      assetId: "ast-2",
+      filename: "original-photo.png",
+    });
 
     const bareAsset = expectOk(parseStorageKey("assets/organizations/org-1/assets/ast-2"));
     expect(bareAsset).toMatchObject({ kind: "asset", assetId: "ast-2" });
     expect("filename" in bareAsset && bareAsset.filename !== undefined).toBe(false);
 
     const preview = expectOk(parseStorageKey(GOOD_PREVIEW));
-    expect(preview).toMatchObject({ kind: "preview", documentId: "doc-9", width: 1024, revision: 3 });
+    expect(preview).toMatchObject({
+      kind: "preview",
+      documentId: "doc-9",
+      width: 1024,
+      revision: 3,
+    });
 
-    const exportPng = expectOk(parseStorageKey("exports/organizations/org-1/documents/doc-9/png-ver-abc.png"));
+    const exportPng = expectOk(
+      parseStorageKey("exports/organizations/org-1/documents/doc-9/png-ver-abc.png"),
+    );
     expect(exportPng).toMatchObject({ kind: "export", format: "png", versionId: "ver-abc" });
 
-    const doc = expectOk(parseStorageKey("documents/organizations/org-1/documents/doc-9/v-42.pcraft"));
+    const doc = expectOk(
+      parseStorageKey("documents/organizations/org-1/documents/doc-9/v-42.pcraft"),
+    );
     expect(doc).toMatchObject({ kind: "document", documentId: "doc-9", versionId: "v-42" });
 
     const checkpoint = expectOk(
-      parseStorageKey("checkpoints/organizations/org-1/documents/doc-9/sessions/s-7/checkpoint-12.pcraft"),
+      parseStorageKey(
+        "checkpoints/organizations/org-1/documents/doc-9/sessions/s-7/checkpoint-12.pcraft",
+      ),
     );
     expect(checkpoint).toMatchObject({ kind: "checkpoint", sessionId: "s-7", revision: 12 });
   });
@@ -199,16 +292,58 @@ describe("parseStorageKey — typed layouts", () => {
 describe("builder input validation", () => {
   it.each([
     ["assetKey traversal org", () => assetKey({ organizationId: "..", assetId: "a-1" })],
-    ["assetKey unsafe filename", () => assetKey({ organizationId: ORG, assetId: "a-1", filename: "../evil.png" })],
-    ["previewKey zero width", () => previewKey({ organizationId: ORG, documentId: "d", width: 0, revision: 1 })],
-    ["previewKey fractional width", () => previewKey({ organizationId: ORG, documentId: "d", width: 12.5, revision: 1 })],
-    ["previewKey too wide", () => previewKey({ organizationId: ORG, documentId: "d", width: 8193, revision: 1 })],
-    ["previewKey negative revision", () => previewKey({ organizationId: ORG, documentId: "d", width: 64, revision: -1 })],
-    ["exportKey unknown format", () => exportKey({ organizationId: ORG, documentId: "d", format: "gif", versionId: "v" })],
-    ["exportKey unsafe version id", () => exportKey({ organizationId: ORG, documentId: "d", format: "png", versionId: "v 1" })],
-    ["documentKey empty version id", () => documentKey({ organizationId: ORG, documentId: "d", versionId: "" })],
-    ["checkpointKey unsafe session id", () => checkpointKey({ organizationId: ORG, documentId: "d", sessionId: "s/1", revision: 0 })],
-    ["checkpointKey huge revision", () => checkpointKey({ organizationId: ORG, documentId: "d", sessionId: "s", revision: 2_147_483_648 })],
+    [
+      "assetKey unsafe filename",
+      () => assetKey({ organizationId: ORG, assetId: "a-1", filename: "../evil.png" }),
+    ],
+    [
+      "previewKey zero width",
+      () => previewKey({ organizationId: ORG, documentId: "d", width: 0, revision: 1 }),
+    ],
+    [
+      "previewKey fractional width",
+      () => previewKey({ organizationId: ORG, documentId: "d", width: 12.5, revision: 1 }),
+    ],
+    [
+      "previewKey too wide",
+      () => previewKey({ organizationId: ORG, documentId: "d", width: 8193, revision: 1 }),
+    ],
+    [
+      "previewKey negative revision",
+      () => previewKey({ organizationId: ORG, documentId: "d", width: 64, revision: -1 }),
+    ],
+    [
+      "exportKey unknown format",
+      () =>
+        exportKey({
+          organizationId: ORG,
+          documentId: "d",
+          format: "gif" as ExportFormat,
+          versionId: "v",
+        }),
+    ],
+    [
+      "exportKey unsafe version id",
+      () => exportKey({ organizationId: ORG, documentId: "d", format: "png", versionId: "v 1" }),
+    ],
+    [
+      "documentKey empty version id",
+      () => documentKey({ organizationId: ORG, documentId: "d", versionId: "" }),
+    ],
+    [
+      "checkpointKey unsafe session id",
+      () => checkpointKey({ organizationId: ORG, documentId: "d", sessionId: "s/1", revision: 0 }),
+    ],
+    [
+      "checkpointKey huge revision",
+      () =>
+        checkpointKey({
+          organizationId: ORG,
+          documentId: "d",
+          sessionId: "s",
+          revision: 2_147_483_648,
+        }),
+    ],
   ] as const)("%s fails with storage_invalid_key", (_name, build) => {
     expect(expectErr(build()).code).toBe("storage_invalid_key");
   });
@@ -216,7 +351,13 @@ describe("builder input validation", () => {
 
 describe("validateStoragePrefix", () => {
   it("accepts whole-space, component-boundary and partial-segment prefixes", () => {
-    for (const prefix of ["", "renders", "renders/", "renders/organizations/org-1/documents/doc-9/", "renders/organizations/org-1/docum"]) {
+    for (const prefix of [
+      "",
+      "renders",
+      "renders/",
+      "renders/organizations/org-1/documents/doc-9/",
+      "renders/organizations/org-1/docum",
+    ]) {
       expect(expectOk(validateStoragePrefix(prefix))).toBe(prefix);
     }
   });

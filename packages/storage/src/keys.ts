@@ -20,7 +20,7 @@
 // traversal, alternate separators, absolute paths, control characters,
 // reserved Windows device names, unsafe charsets and length caps all fail.
 
-import { storageFailure, type StorageResult } from "./types.js";
+import { type StorageResult, storageFailure } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -167,7 +167,10 @@ export function validateStorageKey(key: string): StorageResult<string> {
     return storageFailure("storage_invalid_key", "storage key exceeds the 1024-byte cap");
   }
   if (key.startsWith("/") || key.startsWith("\\\\")) {
-    return storageFailure("storage_invalid_key", "storage keys are relative; absolute paths are not allowed");
+    return storageFailure(
+      "storage_invalid_key",
+      "storage keys are relative; absolute paths are not allowed",
+    );
   }
   if (key.endsWith("/")) {
     return storageFailure("storage_invalid_key", "storage keys must not end with a slash");
@@ -179,7 +182,10 @@ export function validateStorageKey(key: string): StorageResult<string> {
     );
   }
   if (hasControlCharacter(key)) {
-    return storageFailure("storage_invalid_key", "control characters are not allowed in storage keys");
+    return storageFailure(
+      "storage_invalid_key",
+      "control characters are not allowed in storage keys",
+    );
   }
   const segments = key.split("/");
   const namespace = segments[0] ?? "";
@@ -203,11 +209,17 @@ export function validateStorageKey(key: string): StorageResult<string> {
   }
   const organizationId = segments[2] ?? "";
   if (!isSafeId(organizationId)) {
-    return storageFailure("storage_invalid_key", "storage key tenant segment is not a safe organization id");
+    return storageFailure(
+      "storage_invalid_key",
+      "storage key tenant segment is not a safe organization id",
+    );
   }
   for (const segment of segments) {
     if (!isSafeFilename(segment)) {
-      return storageFailure("storage_invalid_key", `storage key rejected: ${reasonForSegment(segment)}`);
+      return storageFailure(
+        "storage_invalid_key",
+        `storage key rejected: ${reasonForSegment(segment)}`,
+      );
     }
   }
   return { ok: true, value: key };
@@ -243,7 +255,9 @@ export function assertTenant(key: string, organizationId: string): StorageResult
     return storageFailure(
       "cross_tenant_key",
       "storage key belongs to a different organization; access denied",
-      { hint: "every storage key embeds organizations/<organizationId>; callers must pass the caller's own organization id" },
+      {
+        hint: "every storage key embeds organizations/<organizationId>; callers must pass the caller's own organization id",
+      },
     );
   }
   return { ok: true, value: key };
@@ -265,7 +279,10 @@ export function validateStoragePrefix(prefix: string): StorageResult<string> {
     return storageFailure("storage_invalid_key", "storage prefix exceeds the 1024-byte cap");
   }
   if (prefix.startsWith("/") || prefix.startsWith("\\\\")) {
-    return storageFailure("storage_invalid_key", "storage prefixes are relative; absolute paths are not allowed");
+    return storageFailure(
+      "storage_invalid_key",
+      "storage prefixes are relative; absolute paths are not allowed",
+    );
   }
   if (prefix.includes("\\") || prefix.includes(":")) {
     return storageFailure(
@@ -274,22 +291,34 @@ export function validateStoragePrefix(prefix: string): StorageResult<string> {
     );
   }
   if (hasControlCharacter(prefix)) {
-    return storageFailure("storage_invalid_key", "control characters are not allowed in storage prefixes");
+    return storageFailure(
+      "storage_invalid_key",
+      "control characters are not allowed in storage prefixes",
+    );
   }
   const boundary = prefix.endsWith("/");
   const segments = (boundary ? prefix.slice(0, -1) : prefix).split("/");
   if (segments.some((segment) => segment.length === 0)) {
-    return storageFailure("storage_invalid_key", "empty path segments are not allowed in storage prefixes");
+    return storageFailure(
+      "storage_invalid_key",
+      "empty path segments are not allowed in storage prefixes",
+    );
   }
   const fullSegments = boundary ? segments : segments.slice(0, -1);
-  const lastSegment = boundary ? "" : segments[segments.length - 1] ?? "";
+  const lastSegment = boundary ? "" : (segments[segments.length - 1] ?? "");
   for (const segment of fullSegments) {
     if (!isSafeFilename(segment)) {
-      return storageFailure("storage_invalid_key", `storage prefix rejected: ${reasonForSegment(segment)}`);
+      return storageFailure(
+        "storage_invalid_key",
+        `storage prefix rejected: ${reasonForSegment(segment)}`,
+      );
     }
   }
   if (lastSegment.length > 0 && !isSafeFilename(lastSegment)) {
-    return storageFailure("storage_invalid_key", `storage prefix rejected: ${reasonForSegment(lastSegment)}`);
+    return storageFailure(
+      "storage_invalid_key",
+      `storage prefix rejected: ${reasonForSegment(lastSegment)}`,
+    );
   }
   return { ok: true, value: prefix };
 }
@@ -370,7 +399,12 @@ export function parseStorageKey(key: string): StorageResult<ParsedStorageKey> {
   const namespace = segments[0] as KeyNamespace;
   const organizationId = segments[2] ?? "";
   if (namespace === "assets") {
-    if (segments[1] !== ORGANIZATIONS_SEGMENT || segments[3] !== "assets" || segments.length < 5 || segments.length > 6) {
+    if (
+      segments[1] !== ORGANIZATIONS_SEGMENT ||
+      segments[3] !== "assets" ||
+      segments.length < 5 ||
+      segments.length > 6
+    ) {
       return layoutFailure();
     }
     const assetId = segments[4] ?? "";
@@ -383,9 +417,10 @@ export function parseStorageKey(key: string): StorageResult<ParsedStorageKey> {
     }
     return {
       ok: true,
-      value: filename === undefined
-        ? { kind: "asset", organizationId, assetId }
-        : { kind: "asset", organizationId, assetId, filename },
+      value:
+        filename === undefined
+          ? { kind: "asset", organizationId, assetId }
+          : { kind: "asset", organizationId, assetId, filename },
     };
   }
   if (segments[3] !== DOCUMENTS_SEGMENT) {
@@ -403,7 +438,10 @@ export function parseStorageKey(key: string): StorageResult<ParsedStorageKey> {
       preview.width > MAX_PREVIEW_WIDTH ||
       preview.revision > MAX_REVISION
     ) {
-      return storageFailure("storage_invalid_key", "render segment is not a preview-<width>-<revision>.png layout");
+      return storageFailure(
+        "storage_invalid_key",
+        "render segment is not a preview-<width>-<revision>.png layout",
+      );
     }
     return { ok: true, value: { kind: "preview", organizationId, documentId, ...preview } };
   }
@@ -433,14 +471,13 @@ export function parseStorageKey(key: string): StorageResult<ParsedStorageKey> {
     }
     return { ok: true, value: { kind: "document", organizationId, documentId, versionId } };
   }
-  if (
-    namespace === "checkpoints" &&
-    segments.length === 8 &&
-    segments[5] === SESSIONS_SEGMENT
-  ) {
+  if (namespace === "checkpoints" && segments.length === 8 && segments[5] === SESSIONS_SEGMENT) {
     const sessionId = segments[6] ?? "";
     if (!isSafeId(sessionId)) {
-      return storageFailure("storage_invalid_key", "checkpoint session id segment is not a safe id");
+      return storageFailure(
+        "storage_invalid_key",
+        "checkpoint session id segment is not a safe id",
+      );
     }
     const revision = parseCheckpointFilename(segments[7] ?? "");
     if (revision === null || revision < 0 || revision > MAX_REVISION) {
@@ -449,7 +486,10 @@ export function parseStorageKey(key: string): StorageResult<ParsedStorageKey> {
         "checkpoint segment must be checkpoint-<revision>.pcraft with a revision in 0..2147483647",
       );
     }
-    return { ok: true, value: { kind: "checkpoint", organizationId, documentId, sessionId, revision } };
+    return {
+      ok: true,
+      value: { kind: "checkpoint", organizationId, documentId, sessionId, revision },
+    };
   }
   return layoutFailure();
 }
@@ -467,7 +507,10 @@ function layoutFailure() {
 
 function requireId(field: string, value: string): StorageResult<string> {
   if (!isSafeId(value)) {
-    return storageFailure("storage_invalid_key", `the ${field} argument is not a safe id component`);
+    return storageFailure(
+      "storage_invalid_key",
+      `the ${field} argument is not a safe id component`,
+    );
   }
   return { ok: true, value };
 }
@@ -491,7 +534,10 @@ export function assetKey(input: {
     return validateStorageKey(base);
   }
   if (!isSafeFilename(input.filename)) {
-    return storageFailure("storage_invalid_key", "the filename argument is not a safe filename component");
+    return storageFailure(
+      "storage_invalid_key",
+      "the filename argument is not a safe filename component",
+    );
   }
   return validateStorageKey(`${base}/${input.filename}`);
 }
@@ -512,10 +558,16 @@ export function previewKey(input: {
     }
   }
   if (!Number.isInteger(input.width) || input.width < 1 || input.width > MAX_PREVIEW_WIDTH) {
-    return storageFailure("storage_invalid_key", "the width argument must be an integer between 1 and 4096");
+    return storageFailure(
+      "storage_invalid_key",
+      "the width argument must be an integer between 1 and 4096",
+    );
   }
   if (!Number.isInteger(input.revision) || input.revision < 0 || input.revision > MAX_REVISION) {
-    return storageFailure("storage_invalid_key", "the revision argument must be a non-negative integer");
+    return storageFailure(
+      "storage_invalid_key",
+      "the revision argument must be a non-negative integer",
+    );
   }
   return validateStorageKey(
     `renders/${ORGANIZATIONS_SEGMENT}/${input.organizationId}/${DOCUMENTS_SEGMENT}/${input.documentId}/${previewFilename(input.width, input.revision)}`,
@@ -586,7 +638,10 @@ export function checkpointKey(input: {
     }
   }
   if (!Number.isInteger(input.revision) || input.revision < 0 || input.revision > MAX_REVISION) {
-    return storageFailure("storage_invalid_key", "the revision argument must be a non-negative integer");
+    return storageFailure(
+      "storage_invalid_key",
+      "the revision argument must be a non-negative integer",
+    );
   }
   return validateStorageKey(
     `checkpoints/${ORGANIZATIONS_SEGMENT}/${input.organizationId}/${DOCUMENTS_SEGMENT}/${input.documentId}/${SESSIONS_SEGMENT}/${input.sessionId}/checkpoint-${input.revision}.pcraft`,

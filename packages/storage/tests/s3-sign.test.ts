@@ -9,11 +9,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type S3PresignInput,
+  S3_MAX_PRESIGN_TTL_SECONDS,
   presignS3Get,
   s3ObjectUrl,
   s3RequestHost,
-  S3_MAX_PRESIGN_TTL_SECONDS,
-  type S3PresignInput,
 } from "../src/drivers/sigv4.js";
 import { expectErr, expectOk } from "./helpers.js";
 
@@ -58,14 +58,7 @@ describe("presign vector 1 (AWS docs scenario, botocore-verified)", () => {
 
   const SIGNATURE = "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404";
 
-  const URL =
-    "https://examplebucket.s3.amazonaws.com/test.txt" +
-    "?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
-    "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request" +
-    "&X-Amz-Date=20130524T000000Z" +
-    "&X-Amz-Expires=86400" +
-    "&X-Amz-SignedHeaders=host" +
-    `&X-Amz-Signature=${SIGNATURE}`;
+  const URL = `https://examplebucket.s3.amazonaws.com/test.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20130524T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=${SIGNATURE}`;
 
   it("reproduces the canonical request byte for byte", () => {
     expect(expectOk(presignS3Get(input)).canonicalRequest).toBe(CANONICAL_REQUEST);
@@ -124,8 +117,12 @@ describe("presign vector 2 (path-style + response-content-disposition, botocore-
 
   it("puts X-Amz-Signature after the sorted signed query, disposition last", () => {
     const result = expectOk(presignS3Get(input));
-    expect(result.url.endsWith(`&response-content-disposition=attachment&X-Amz-Signature=${SIGNATURE}`)).toBe(true);
-    expect(result.url.startsWith("http://127.0.0.1:9000/test-bucket/checkpoints/organizations/org-1/")).toBe(true);
+    expect(
+      result.url.endsWith(`&response-content-disposition=attachment&X-Amz-Signature=${SIGNATURE}`),
+    ).toBe(true);
+    expect(
+      result.url.startsWith("http://127.0.0.1:9000/test-bucket/checkpoints/organizations/org-1/"),
+    ).toBe(true);
     expect(result.expiresAt).toBe(AT_2026().getTime() + 900_000);
   });
 });
@@ -159,7 +156,9 @@ describe("presign vector 3 (virtual-host, tenant key, botocore-verified)", () =>
     const result = expectOk(presignS3Get(input));
     expect(result.stringToSign).toBe(STRING_TO_SIGN);
     expect(result.signature).toBe(SIGNATURE);
-    expect(result.url.startsWith("https://assets-bucket.s3.amazonaws.com/exports/organizations/org-42/")).toBe(true);
+    expect(
+      result.url.startsWith("https://assets-bucket.s3.amazonaws.com/exports/organizations/org-42/"),
+    ).toBe(true);
   });
 });
 
@@ -194,15 +193,21 @@ describe("presign shape rules", () => {
     expect(query.indexOf("X-Amz-Credential")).toBeLessThan(query.indexOf("X-Amz-Date"));
     expect(query.indexOf("X-Amz-Date")).toBeLessThan(query.indexOf("X-Amz-Expires"));
     expect(query.indexOf("X-Amz-Expires")).toBeLessThan(query.indexOf("X-Amz-SignedHeaders"));
-    expect(query.indexOf("X-Amz-SignedHeaders")).toBeLessThan(query.indexOf("response-content-disposition"));
+    expect(query.indexOf("X-Amz-SignedHeaders")).toBeLessThan(
+      query.indexOf("response-content-disposition"),
+    );
   });
 
   it("rejects expiry outside 1..604800 seconds", () => {
-    expect(expectErr(presignS3Get({ ...base, expiresInSeconds: 0 })).code).toBe("storage_invalid_ttl");
-    expect(expectErr(presignS3Get({ ...base, expiresInSeconds: S3_MAX_PRESIGN_TTL_SECONDS + 1 })).code).toBe(
+    expect(expectErr(presignS3Get({ ...base, expiresInSeconds: 0 })).code).toBe(
       "storage_invalid_ttl",
     );
-    expect(expectErr(presignS3Get({ ...base, expiresInSeconds: 1.5 })).code).toBe("storage_invalid_ttl");
+    expect(
+      expectErr(presignS3Get({ ...base, expiresInSeconds: S3_MAX_PRESIGN_TTL_SECONDS + 1 })).code,
+    ).toBe("storage_invalid_ttl");
+    expect(expectErr(presignS3Get({ ...base, expiresInSeconds: 1.5 })).code).toBe(
+      "storage_invalid_ttl",
+    );
   });
 
   it("changes the signature when any signed input changes", () => {
@@ -222,12 +227,22 @@ describe("object URL + host building", () => {
   it("virtual-host style puts the bucket in the host", () => {
     expect(
       s3ObjectUrl(
-        { endpoint: "https://s3.us-east-1.amazonaws.com", bucket: "examplebucket", forcePathStyle: false },
+        {
+          endpoint: "https://s3.us-east-1.amazonaws.com",
+          bucket: "examplebucket",
+          forcePathStyle: false,
+        },
         "documents/organizations/org-1/documents/doc-1/v-1.pcraft",
       ),
-    ).toBe("https://examplebucket.s3.us-east-1.amazonaws.com/documents/organizations/org-1/documents/doc-1/v-1.pcraft");
+    ).toBe(
+      "https://examplebucket.s3.us-east-1.amazonaws.com/documents/organizations/org-1/documents/doc-1/v-1.pcraft",
+    );
     expect(
-      s3RequestHost({ endpoint: "https://s3.us-east-1.amazonaws.com", bucket: "examplebucket", forcePathStyle: false }),
+      s3RequestHost({
+        endpoint: "https://s3.us-east-1.amazonaws.com",
+        bucket: "examplebucket",
+        forcePathStyle: false,
+      }),
     ).toBe("examplebucket.s3.us-east-1.amazonaws.com");
   });
 
@@ -237,18 +252,30 @@ describe("object URL + host building", () => {
         { endpoint: "http://127.0.0.1:9000", bucket: "test-bucket", forcePathStyle: true },
         "documents/organizations/org-1/documents/doc-1/v-1.pcraft",
       ),
-    ).toBe("http://127.0.0.1:9000/test-bucket/documents/organizations/org-1/documents/doc-1/v-1.pcraft");
-    expect(s3RequestHost({ endpoint: "http://127.0.0.1:9000", bucket: "test-bucket", forcePathStyle: true })).toBe(
-      "127.0.0.1:9000",
+    ).toBe(
+      "http://127.0.0.1:9000/test-bucket/documents/organizations/org-1/documents/doc-1/v-1.pcraft",
     );
+    expect(
+      s3RequestHost({
+        endpoint: "http://127.0.0.1:9000",
+        bucket: "test-bucket",
+        forcePathStyle: true,
+      }),
+    ).toBe("127.0.0.1:9000");
   });
 
   it("builds the list base without a trailing slash", () => {
-    expect(s3ObjectUrl({ endpoint: "http://127.0.0.1:9000", bucket: "test-bucket", forcePathStyle: true }, "")).toBe(
-      "http://127.0.0.1:9000/test-bucket/",
-    );
     expect(
-      s3ObjectUrl({ endpoint: "https://s3.amazonaws.com", bucket: "examplebucket", forcePathStyle: false }, ""),
+      s3ObjectUrl(
+        { endpoint: "http://127.0.0.1:9000", bucket: "test-bucket", forcePathStyle: true },
+        "",
+      ),
+    ).toBe("http://127.0.0.1:9000/test-bucket/");
+    expect(
+      s3ObjectUrl(
+        { endpoint: "https://s3.amazonaws.com", bucket: "examplebucket", forcePathStyle: false },
+        "",
+      ),
     ).toBe("https://examplebucket.s3.amazonaws.com/");
   });
 });

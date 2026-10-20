@@ -22,7 +22,7 @@
 
 import { createHash, createHmac } from "node:crypto";
 
-import { storageFailure, type StorageResult } from "../types.js";
+import { type StorageResult, storageFailure } from "../types.js";
 
 /** S3 caps presigned URLs at 7 days; the Storage seam caps them at 900 s (§15.1). */
 export const S3_MAX_PRESIGN_TTL_SECONDS = 604800;
@@ -45,7 +45,10 @@ function uriEncode(value: string): string {
 
 /** `2013-05-24T00:00:00.000Z` → `20130524T000000Z` (SigV4 amzDate form, UTC). */
 function toAmzDate(date: Date): string {
-  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  return date
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
 }
 
 export interface S3Addressing {
@@ -95,7 +98,9 @@ export function s3RequestHost(addressing: S3Addressing): string {
 export function s3ObjectUrl(addressing: S3Addressing, key: string): string {
   const endpoint = new URL(addressing.endpoint);
   const base = `${endpoint.protocol}//${s3RequestHost(addressing)}`;
-  const path = addressing.forcePathStyle ? `/${encodePath(`${addressing.bucket}/${key}`)}` : `/${encodePath(key)}`;
+  const path = addressing.forcePathStyle
+    ? `/${encodePath(`${addressing.bucket}/${key}`)}`
+    : `/${encodePath(key)}`;
   return `${base}${path}`;
 }
 
@@ -133,7 +138,9 @@ export function presignS3Get(input: S3PresignInput): StorageResult<PresignedS3Ur
     query.push(["response-content-disposition", "attachment"]);
   }
   query.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  const canonicalQuery = query.map(([name, value]) => `${uriEncode(name)}=${uriEncode(value)}`).join("&");
+  const canonicalQuery = query
+    .map(([name, value]) => `${uriEncode(name)}=${uriEncode(value)}`)
+    .join("&");
 
   const host = s3RequestHost(input);
   const canonicalUri = input.forcePathStyle

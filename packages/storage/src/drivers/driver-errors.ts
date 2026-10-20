@@ -5,12 +5,12 @@
 
 import {
   PUT_OPTIONS_SCHEMA,
-  SIGN_OPTIONS_SCHEMA,
-  StorageError,
-  storageErrorFromFailure,
   type PutOptions,
+  SIGN_OPTIONS_SCHEMA,
   type SignOptions,
+  StorageError,
   type StorageResult,
+  storageErrorFromFailure,
 } from "../types.js";
 
 /** Unwrap a key/prefix validation result or reject with its typed failure. */
@@ -29,10 +29,10 @@ export function prefixError(result: StorageResult<string>): string {
   return result.value;
 }
 
-function summarizeIssues(issues: ReadonlyArray<{ readonly path: ReadonlyArray<unknown>; readonly message: string }>): string {
-  return issues
-    .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-    .join("; ");
+function summarizeIssues(
+  issues: ReadonlyArray<{ readonly path: ReadonlyArray<unknown>; readonly message: string }>,
+): string {
+  return issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ");
 }
 
 /** Parse put() options at the boundary; rejects with storage_invalid_argument. */
@@ -61,7 +61,9 @@ export function signOptionsError(options: unknown): ParsedSignOptions {
     throw new StorageError(
       "storage_invalid_ttl",
       `sign() options failed validation: ${summarizeIssues(parsed.error.issues)}`,
-      { hint: "ttlSeconds must be an integer between 1 and 900 (§15.1: signed URLs live ≤ 15 minutes)" },
+      {
+        hint: "ttlSeconds must be an integer between 1 and 900 (§15.1: signed URLs live ≤ 15 minutes)",
+      },
     );
   }
   return { ttlSeconds: parsed.data.ttlSeconds, download: parsed.data.download === true };
@@ -75,12 +77,8 @@ export function httpStatusError(
   bodySnippet: string | null,
 ): StorageError {
   const detail = s3ErrorCode === null ? "" : ` (S3 error ${s3ErrorCode})`;
-  return new StorageError(
-    "storage_io_error",
-    `${action} failed with HTTP ${status}${detail}`,
-    {
-      hint: bodySnippet === null ? undefined : bodySnippet,
-      retryable: true,
-    },
-  );
+  return new StorageError("storage_io_error", `${action} failed with HTTP ${status}${detail}`, {
+    hint: bodySnippet === null ? undefined : bodySnippet,
+    retryable: true,
+  });
 }

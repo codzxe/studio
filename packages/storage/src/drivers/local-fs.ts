@@ -19,21 +19,21 @@
 // URL itself — signing and verifying are separated like on S3.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
+import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 
-import { keyError, prefixError, putOptionsError, signOptionsError } from "./driver-errors.js";
 import { validateStorageKey, validateStoragePrefix } from "../keys.js";
 import { sha256Hex } from "../sha256.js";
 import {
-  StorageError,
   type PutOptions,
   type SignOptions,
   type SignedUrl,
   type Storage,
+  StorageError,
   type StorageObject,
 } from "../types.js";
+import { keyError, prefixError, putOptionsError, signOptionsError } from "./driver-errors.js";
 
 /** Dev-gateway route that serves local signed URLs (contract above). */
 export const LOCAL_SIGNED_URL_PATH = "/v1/storage/local-object";
@@ -113,13 +113,20 @@ export class LocalFsStorage implements Storage {
 
   constructor(baseDir: string, options: LocalFsStorageOptions = {}) {
     if (typeof baseDir !== "string" || baseDir.trim().length === 0) {
-      throw new StorageError("storage_config_invalid", "local storage driver needs a base directory", {
-        hint: "set STORAGE_LOCAL_DIR to a writable directory",
-      });
+      throw new StorageError(
+        "storage_config_invalid",
+        "local storage driver needs a base directory",
+        {
+          hint: "set STORAGE_LOCAL_DIR to a writable directory",
+        },
+      );
     }
     this.baseDir = resolve(baseDir);
     this.signingSecret = options.signingSecret;
-    this.publicBaseUrl = (options.publicBaseUrl ?? DEFAULT_LOCAL_PUBLIC_BASE_URL).replace(/\/+$/, "");
+    this.publicBaseUrl = (options.publicBaseUrl ?? DEFAULT_LOCAL_PUBLIC_BASE_URL).replace(
+      /\/+$/,
+      "",
+    );
     this.now = options.now ?? (() => new Date());
   }
 
@@ -212,7 +219,10 @@ export class LocalFsStorage implements Storage {
     }
     const exp = this.now().getTime() + parsed.ttlSeconds * 1000;
     const disposition = dispositionOf(parsed.download);
-    const sig = hmacHex(this.signingSecret, localSignaturePayload({ key, exp, sig: "", disposition }));
+    const sig = hmacHex(
+      this.signingSecret,
+      localSignaturePayload({ key, exp, sig: "", disposition }),
+    );
     const query = new URLSearchParams({ key, exp: String(exp), sig });
     if (disposition === "attachment") {
       query.set("dl", "1");
@@ -229,8 +239,16 @@ export class LocalFsStorage implements Storage {
   private resolveObjectPath(key: string): string {
     const target = resolve(this.baseDir, ...key.split("/"));
     const rel = relative(this.baseDir, target);
-    if (rel.length === 0 || rel.startsWith("..") || rel.startsWith(`..${sep}`) || resolve(rel) === rel) {
-      throw new StorageError("storage_invalid_key", "storage key escapes the local storage base directory");
+    if (
+      rel.length === 0 ||
+      rel.startsWith("..") ||
+      rel.startsWith(`..${sep}`) ||
+      resolve(rel) === rel
+    ) {
+      throw new StorageError(
+        "storage_invalid_key",
+        "storage key escapes the local storage base directory",
+      );
     }
     return target;
   }
@@ -243,7 +261,10 @@ export class LocalFsStorage implements Storage {
     const dir = resolve(this.baseDir, ...fullComponents);
     const rel = relative(this.baseDir, dir);
     if (rel.startsWith("..") || resolve(rel) === rel) {
-      throw new StorageError("storage_invalid_key", "storage prefix escapes the local storage base directory");
+      throw new StorageError(
+        "storage_invalid_key",
+        "storage prefix escapes the local storage base directory",
+      );
     }
     return { dir, relativeDir: fullComponents.join("/") };
   }
@@ -254,10 +275,7 @@ export class LocalFsStorage implements Storage {
 }
 
 /** Read one directory, sorted by name; a missing directory lists as empty. */
-async function readSortedEntries(
-  dir: string,
-  action: string,
-): Promise<ReadonlyArray<Dirent>> {
+async function readSortedEntries(dir: string, action: string): Promise<ReadonlyArray<Dirent>> {
   let entries: Dirent[];
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -274,10 +292,14 @@ async function readSortedEntries(
 /** Map a node fs error to a typed storage error without leaking paths. */
 function ioError(action: string, err: unknown): StorageError {
   const code = nodeErrorCode(err);
-  return new StorageError("storage_io_error", `${action} failed${code === null ? "" : ` (node error ${code})`}`, {
-    retryable: true,
-    cause: err,
-  });
+  return new StorageError(
+    "storage_io_error",
+    `${action} failed${code === null ? "" : ` (node error ${code})`}`,
+    {
+      retryable: true,
+      cause: err,
+    },
+  );
 }
 
 function nodeErrorCode(err: unknown): string | null {

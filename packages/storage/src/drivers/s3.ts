@@ -20,19 +20,25 @@
 
 import { z } from "zod";
 
-import { httpStatusError, keyError, prefixError, putOptionsError, signOptionsError } from "./driver-errors.js";
-import { presignS3Get, s3ObjectUrl, type PresignedS3Url } from "./sigv4.js";
 import { validateStorageKey, validateStoragePrefix } from "../keys.js";
 import { sha256Hex } from "../sha256.js";
 import {
-  StorageError,
-  storageErrorFromFailure,
   type PutOptions,
   type SignOptions,
   type SignedUrl,
   type Storage,
+  StorageError,
   type StorageObject,
+  storageErrorFromFailure,
 } from "../types.js";
+import {
+  httpStatusError,
+  keyError,
+  prefixError,
+  putOptionsError,
+  signOptionsError,
+} from "./driver-errors.js";
+import { type PresignedS3Url, presignS3Get, s3ObjectUrl } from "./sigv4.js";
 
 // ---------------------------------------------------------------------------
 // Options (Zod at the boundary; config owners may reuse this schema)
@@ -83,13 +89,18 @@ export interface AwsClientOptions {
   readonly service?: string;
 }
 
+/** Structural stand-in for RequestInfo (not a global under @types/node): url or Request. */
+export type FetchInput = string | Request;
+
 /** Structural surface of aws4fetch's AwsClient: sign(input, init?) → Request. */
 export interface AwsClientLike {
-  sign(input: RequestInfo, init?: RequestInit): Promise<Request>;
+  sign(input: FetchInput, init?: RequestInit): Promise<Request>;
 }
 
 /** Creates a signer; failures must reject (mapped to storage_driver_unavailable). */
-export type AwsClientFactory = (options: AwsClientOptions) => AwsClientLike | Promise<AwsClientLike>;
+export type AwsClientFactory = (
+  options: AwsClientOptions,
+) => AwsClientLike | Promise<AwsClientLike>;
 
 /** Non-literal specifier keeps `aws4fetch` a true optional dependency (TS + bundlers). */
 const AWS4FETCH_SPECIFIER = "aws4fetch";
@@ -209,14 +220,23 @@ export class S3Storage implements Storage {
       forceR2Compat: input.forceR2Compat,
     });
     if (!parsed.success) {
-      const issues = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
-      throw new StorageError("storage_config_invalid", `S3 storage driver config failed validation: ${issues}`);
+      const issues = parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ");
+      throw new StorageError(
+        "storage_config_invalid",
+        `S3 storage driver config failed validation: ${issues}`,
+      );
     }
     const prefix = parsed.data.prefix ?? "";
     if (prefix.length > 0 && !prefix.endsWith("/")) {
-      throw new StorageError("storage_config_invalid", "S3 key prefix must end with `/` (or be empty)", {
-        hint: 'e.g. S3_PREFIX="prod/"',
-      });
+      throw new StorageError(
+        "storage_config_invalid",
+        "S3 key prefix must end with `/` (or be empty)",
+        {
+          hint: 'e.g. S3_PREFIX="prod/"',
+        },
+      );
     }
     if (prefix.length > 0) {
       const prefixCheck = validateStoragePrefix(prefix);
@@ -354,7 +374,7 @@ export class S3Storage implements Storage {
     return `${this.config.prefix}${key}`;
   }
 
-  private fetch(input: RequestInfo): Promise<Response> {
+  private fetch(input: FetchInput): Promise<Response> {
     const fetchImpl = this.config.fetchImpl ?? fetch;
     return fetchImpl(input);
   }
