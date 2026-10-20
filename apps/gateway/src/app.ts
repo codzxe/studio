@@ -4,7 +4,7 @@
 
 import { Hono } from "hono";
 import type { Logger } from "pino";
-import type { GatewayEnv } from "./env.js";
+import type { TransportEnv } from "./env.js";
 import { errorMapper, notFoundHandler } from "./middleware/error-mapper.js";
 import { requestLogger } from "./middleware/logger.js";
 import { requestId } from "./middleware/request-id.js";
@@ -14,7 +14,7 @@ import type { AppEnv } from "./types.js";
 
 export interface AppDeps {
   /** Transport env (parsed once at bootstrap, §4 / ADR-0002). */
-  readonly env: GatewayEnv;
+  readonly env: TransportEnv;
   /** Root pino logger; request-scoped children are derived per request (§22). */
   readonly logger: Logger;
   /** Service version string reported by /v1/health. */

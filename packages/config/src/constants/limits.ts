@@ -2,7 +2,7 @@
 // canvas ceilings, reply budgets. Sources: §2.2 (budgets.rs), §2.3, §3.2/§3.4,
 // §5.1, §14.1 (plan-gated limits), §20.2 (upload caps).
 import { z } from 'zod';
-import { PLAN_IDS, type PlanId } from './pricing.js';
+import type { PlanId } from './pricing.js';
 
 // --- Uploads (§20.2: JPEG/PNG, 25 MB cap, EXIF stripped, 60 MP bomb rejected) ---
 
@@ -111,5 +111,3 @@ export function planLimits(plan: PlanId): PlanLimits {
   }
   return limits;
 }
-
-export const PLAN_IDS_FOR_LIMITS = PLAN_IDS;

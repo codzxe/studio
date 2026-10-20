@@ -275,10 +275,13 @@ export function resolveTierConfig(tier: RunTierId): ResolvedTierBudget {
 }
 
 /** All seven tiers pre-resolved — the worker enforces these as hard caps (§5.2). */
-export const RESOLVED_TIERS: Readonly<Record<RunTierId, ResolvedTierBudget>> =
-  Object.fromEntries(
-    RUN_TIER_IDS.map((tier) => [tier, resolveTierConfig(tier)]),
-  ) as Record<RunTierId, ResolvedTierBudget>;
+export const RESOLVED_TIERS: Readonly<Record<RunTierId, ResolvedTierBudget>> = (() => {
+  const resolved = {} as Record<RunTierId, ResolvedTierBudget>;
+  for (const tier of RUN_TIER_IDS) {
+    resolved[tier] = resolveTierConfig(tier);
+  }
+  return resolved;
+})();
 
 export const RESOLVED_TIER_SCHEMA = z
   .object({

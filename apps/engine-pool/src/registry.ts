@@ -48,7 +48,7 @@ export class SessionRegistry {
 
   get(sessionId: string): EngineSession | undefined {
     const session = this.#sessions.get(sessionId);
-    return session ? freeze({ ...session }) : undefined;
+    return session ? freeze(session) : undefined;
   }
 
   /**
@@ -59,7 +59,7 @@ export class SessionRegistry {
   findForTenant(sessionId: string, organizationId: string): EngineSession | undefined {
     const session = this.#sessions.get(sessionId);
     return session && session.organizationId === organizationId
-      ? freeze({ ...session })
+      ? freeze(session)
       : undefined;
   }
 
@@ -72,7 +72,7 @@ export class SessionRegistry {
       if (!ACTIVE_SESSION_STATES.includes(session.state)) continue;
       if (!match || session.lastActivityAt > match.lastActivityAt) match = session;
     }
-    return match ? freeze({ ...match }) : undefined;
+    return match ? freeze(match) : undefined;
   }
 
   update(sessionId: string, patch: SessionPatch): EngineSession {
@@ -80,13 +80,13 @@ export class SessionRegistry {
     if (!session) throw sessionNotFound();
     const next = freeze({ ...session, ...patch });
     this.#sessions.set(sessionId, next);
-    return freeze({ ...next });
+    return freeze(next);
   }
 
   remove(sessionId: string): EngineSession | undefined {
     const session = this.#sessions.get(sessionId);
     this.#sessions.delete(sessionId);
-    return session ? freeze({ ...session }) : undefined;
+    return session ? freeze(session) : undefined;
   }
 
   size(): number {
@@ -100,7 +100,7 @@ export class SessionRegistry {
         continue;
       }
       if (filter?.states !== undefined && !filter.states.includes(session.state)) continue;
-      sessions.push(freeze({ ...session }));
+      sessions.push(freeze(session));
     }
     return sessions;
   }
@@ -137,6 +137,6 @@ export class SessionRegistry {
       if (now - session.lastActivityAt >= maxIdleMs) candidates.push(session);
     }
     candidates.sort((a, b) => a.lastActivityAt - b.lastActivityAt);
-    return candidates.map((session) => freeze({ ...session }));
+    return candidates.map((session) => freeze(session));
   }
 }

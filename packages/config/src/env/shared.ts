@@ -67,13 +67,10 @@ export const postgresUrl = z
     'must be a PostgreSQL URL starting with postgres:// or postgresql://',
   );
 
-export const valkeyUrl = z
-  .string()
-  .min(1, 'must not be empty')
-  .refine(
-    (value) => /^rediss?:\/\//.test(value),
-    'must be a Valkey/Redis URL starting with redis:// or rediss:// (Valkey, not Redis 7.4+ — §16.5)',
-  );
+export const valkeyUrl = z.string().min(1, 'must not be empty').refine(
+  (value) => /^rediss?:\/\//.test(value),
+  'must be a Valkey/Redis URL (redis:// or rediss://); Valkey only, not Redis 7.4+ (§16.5)',
+);
 
 const digits = z
   .string()

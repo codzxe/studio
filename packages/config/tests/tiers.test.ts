@@ -192,6 +192,7 @@ describe('tiers: table integrity', () => {
 
   it('rejects unknown tier ids', () => {
     expect(RUN_TIER_ID_SCHEMA.safeParse('mega').success).toBe(false);
-    expect(() => resolveTierConfig('mega' as RunTierId)).toThrow();
+    const unknownTier: RunTierId = 'mega' as string as RunTierId;
+    expect(() => resolveTierConfig(unknownTier)).toThrow(/unknown run tier/);
   });
 });

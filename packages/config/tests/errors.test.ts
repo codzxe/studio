@@ -123,7 +123,17 @@ describe('errors: wire envelope (§13.3)', () => {
   });
 
   it('rejects unknown codes and malformed envelopes', () => {
-    expect(ERROR_ENVELOPE_SCHEMA.safeParse({ error: { code: 'nope', message: 'x', retryable: false } }).success).toBe(false);
-    expect(ERROR_ENVELOPE_SCHEMA.safeParse({ code: 'rate_limited', message: 'x', retryable: false }).success).toBe(false);
+    expect(
+      ERROR_ENVELOPE_SCHEMA.safeParse({
+        error: { code: 'nope', message: 'x', retryable: false },
+      }).success,
+    ).toBe(false);
+    expect(
+      ERROR_ENVELOPE_SCHEMA.safeParse({
+        code: 'rate_limited',
+        message: 'x',
+        retryable: false,
+      }).success,
+    ).toBe(false);
   });
 });

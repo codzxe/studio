@@ -96,7 +96,12 @@ export type ConnectionStringCheck =
 export function validateConnectionString(raw: string | null | undefined): ConnectionStringCheck {
   const trimmed = typeof raw === "string" ? raw.trim() : "";
   if (trimmed.length === 0) {
-    return { ok: false, code: "db_url_missing", message: "DATABASE_URL is not set.", hint: URL_HINT };
+    return {
+      ok: false,
+      code: "db_url_missing",
+      message: "DATABASE_URL is not set.",
+      hint: URL_HINT,
+    };
   }
   const parsed = connectionStringSchema.safeParse(trimmed);
   if (parsed.success) {

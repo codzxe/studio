@@ -1,5 +1,6 @@
 {
   "name": "@studio/engine-pool", "version": "0.1.0", "private": true, "type": "module",
   "dependencies": { "@studio/config": "workspace:*", "@studio/db": "workspace:*", "pino": "^9.6.0", "zod": "^3.24.1" },
+  "devDependencies": { "@types/node": "^22.10.0", "vitest": "^2.1.8" },
   "scripts": { "typecheck": "tsc --noEmit", "lint": "biome check src", "test": "vitest run" }
 }

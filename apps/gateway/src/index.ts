@@ -16,11 +16,11 @@ const BIND_HOST = "0.0.0.0";
 const SHUTDOWN_DRAIN_MS = 10_000;
 
 function main(): void {
-  // Fail-fast gate for the FULL env matrix (§4, ADR-0002): parseGatewayEnv is
-  // the W1-B contract in packages/config — a missing/stale REQUIRED secret
-  // throws here, so a misconfigured gateway never boots. NOTE(W1-H): if the
-  // contract lands with a different call shape, this single call is the only
-  // place to adjust.
+  // Fail-fast gate for the FULL env matrix (§4, ADR-0002): parseGatewayEnv
+  // (packages/config — verified W1-B contract: `parseGatewayEnv(env = process.env)`)
+  // throws on a missing/invalid REQUIRED secret, so a misconfigured gateway never
+  // boots. Transport fields (GATEWAY_PORT/LOG_LEVEL/SERVICE_VERSION) are then
+  // projected locally in ./env.ts — see the choice note there.
   try {
     parseGatewayEnv(process.env);
   } catch (error) {

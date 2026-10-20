@@ -98,7 +98,9 @@ export interface ModelProviderHealth {
 }
 
 /** Returns the per-provider configuration map used for tier routing decisions (§5.3). */
-export function modelProviderHealth(env: WorkerEnv): Record<ModelProviderClass, ModelProviderHealth> {
+export function modelProviderHealth(
+  env: WorkerEnv,
+): Record<ModelProviderClass, ModelProviderHealth> {
   const health = {} as Record<ModelProviderClass, ModelProviderHealth>;
   for (const provider of MODEL_PROVIDER_CLASSES) {
     const envKey = MODEL_PROVIDER_ENV_KEYS[provider];

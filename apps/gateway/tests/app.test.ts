@@ -7,7 +7,7 @@ import pino from "pino";
 import { z } from "zod";
 import { buildApp } from "../src/app.js";
 import type { AppDeps } from "../src/app.js";
-import { gatewayEnvSchema } from "../src/env.js";
+import { gatewayTransportSchema } from "../src/env.js";
 import { AppError } from "../src/middleware/error-mapper.js";
 import { stubProbes } from "../src/routes/health.js";
 import type { DeepCheckReport, Probe } from "../src/routes/health.js";
@@ -17,7 +17,7 @@ const logger = pino({ enabled: false });
 
 function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
   return {
-    env: gatewayEnvSchema.parse({}), // defaults: GATEWAY_PORT 8787, LOG_LEVEL info, etc.
+    env: gatewayTransportSchema.parse({}), // defaults: GATEWAY_PORT 8787, LOG_LEVEL info, etc.
     logger,
     version: "0.0.0-test",
     probes: stubProbes(),

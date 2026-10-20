@@ -33,8 +33,9 @@ local runs the same image listens on `0.0.0.0:8787`.
 
 Full matrix: **`.env.example` (ADR-0002)** — parsed once by
 `packages/config`; a missing required secret makes the process refuse to start.
-`src/index.ts` calls `parseGatewayEnv(process.env)` (W1-B contract) as the
-fail-fast gate, then reads its transport fields via a local Zod projection:
+`src/index.ts` calls `parseGatewayEnv(process.env)` (verified W1-B contract:
+`(env = process.env) => GatewayEnv`) as the fail-fast gate, then reads its
+transport fields via a local Zod projection (`src/env.ts`):
 
 | Variable | Default | Purpose |
 |---|---|---|

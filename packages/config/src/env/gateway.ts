@@ -7,6 +7,7 @@ import {
   parseEnvSchema,
   portFromString,
   positiveIntFromString,
+  positiveIntMsFromString,
   postgresUrl,
   requiredString,
   valkeyUrl,
@@ -44,9 +45,10 @@ export const gatewayEnvSchema = z
       .min(32, 'must be at least 32 chars (generate with: openssl rand -base64 32)'),
 
     // Stripe: checkout, customer portal and webhooks live in the gateway (§14.3).
-    STRIPE_SECRET_KEY: z
-      .string()
-      .refine((v) => /^sk_(test|live)_/.test(v), 'must be a Stripe secret key (sk_test_… or sk_live_…)'),
+    STRIPE_SECRET_KEY: z.string().refine(
+      (v) => /^sk_(test|live)_/.test(v),
+      'must be a Stripe secret key (sk_test_… or sk_live_…)',
+    ),
     STRIPE_WEBHOOK_SECRET: z
       .string()
       .refine((v) => /^whsec_/.test(v), 'must be a Stripe webhook secret (whsec_…)'),
@@ -56,18 +58,8 @@ export const gatewayEnvSchema = z
 
     // SSE stream tuning (§13.2: client dedupes by seq, resumes with Last-Event-ID).
     // Policy defaults; override per deployment.
-    SSE_HEARTBEAT_MS: z
-      .string()
-      .regex(/^\d+$/, 'must be a positive integer of milliseconds')
-      .transform(Number)
-      .pipe(z.number().int().min(1))
-      .default(15000),
-    SSE_RETRY_MS: z
-      .string()
-      .regex(/^\d+$/, 'must be a positive integer of milliseconds')
-      .transform(Number)
-      .pipe(z.number().int().min(1))
-      .default(3000),
+    SSE_HEARTBEAT_MS: positiveIntMsFromString.default(15000),
+    SSE_RETRY_MS: positiveIntMsFromString.default(3000),
     SSE_BACKFILL_LIMIT: positiveIntFromString.default(500),
 
     // Engine pool internal URL, used by /v1/health/deep only (§13.1). Optional.
