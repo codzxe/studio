@@ -379,18 +379,22 @@ export class CheckpointManager {
    * finalizing run and a watchdog sweep) are safe and a failure can never block a
    * run's completion — the caller decides whether to retry or recycle.
    */
-  async saveCheckpoint(session: EngineSession, request: CheckpointRequest): Promise<CheckpointOutcome> {
+  async saveCheckpoint(
+    session: EngineSession,
+    request: CheckpointRequest,
+  ): Promise<CheckpointOutcome> {
     const parsed = CHECKPOINT_REQUEST_SCHEMA.safeParse(request);
     if (!parsed.success) {
-      return failure("invalid_checkpoint_request", `Checkpoint request rejected: ${describeIssues(parsed.error.issues)}`);
+      return failure(
+        "invalid_checkpoint_request",
+        `Checkpoint request rejected: ${describeIssues(parsed.error.issues)}`,
+      );
     }
     const documentId = session.documentId;
     if (documentId === undefined) {
-      return failure(
-        "session_not_attached",
-        "Engine session is not attached to a document",
-        { hint: "Attach the session to a document before checkpointing (§3.2)." },
-      );
+      return failure("session_not_attached", "Engine session is not attached to a document", {
+        hint: "Attach the session to a document before checkpointing (§3.2).",
+      });
     }
     const { revision, storageKey, engineSnapshotRef } = parsed.data;
 
@@ -418,9 +422,14 @@ export class CheckpointManager {
         code: "snapshot_read_failed",
         error: String(error),
       });
-      return failure("snapshot_read_failed", "Snapshot file could not be read back from the capability root", {
-        retryable: true,
-      });
+      return failure(
+        "snapshot_read_failed",
+        "Snapshot file could not be read back from the capability root",
+        {
+          hint: "The save succeeded; the read-back raced with a recycle. Retry before recycling.",
+          retryable: true,
+        },
+      );
     }
 
     try {
@@ -431,9 +440,14 @@ export class CheckpointManager {
         code: "storage_write_failed",
         error: String(error),
       });
-      return failure("storage_write_failed", "Checkpoint bytes could not be written to object storage", {
-        retryable: true,
-      });
+      return failure(
+        "storage_write_failed",
+        "Checkpoint bytes could not be written to object storage",
+        {
+          hint: "Object storage may be briefly unavailable; retry the checkpoint at the same revision.",
+          retryable: true,
+        },
+      );
     }
 
     let versionId: string;
@@ -485,11 +499,9 @@ export class CheckpointManager {
   ): Promise<CheckpointOutcome> {
     const documentId = session.documentId;
     if (documentId === undefined) {
-      return failure(
-        "session_not_attached",
-        "Engine session is not attached to a document",
-        { hint: "Only attached sessions are checkpointed on idle (§3.2)." },
-      );
+      return failure("session_not_attached", "Engine session is not attached to a document", {
+        hint: "Only attached sessions are checkpointed on idle (§3.2).",
+      });
     }
     const { revision } = options;
     const snapshotPath =

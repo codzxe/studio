@@ -90,7 +90,9 @@ describe("capabilities: tenant ids are single safe path components", () => {
       expect(result.ok, `${field}=${JSON.stringify(value)}`).toBe(false);
       if (!result.ok) {
         expect(result.code).toBe("path_outside_capability_root");
-        expect(result.message).not.toContain(value);
+        if (value.length > 0) {
+          expect(result.message).not.toContain(value);
+        }
         expect(result.message).toContain(field);
       }
     }

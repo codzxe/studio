@@ -121,9 +121,10 @@ export function isWindowsDeviceName(component: string): boolean {
 }
 
 /**
- * One safe forward-slash path component: non-empty, no `.`/`..`, no trailing
- * dot or space, no control characters (client-side hardening beyond the
- * vendor), no reserved Windows device name.
+ * One safe forward-slash path component: non-empty, no `.`/`..`, no separators
+ * or drive/device/stream prefixes, no trailing dot or space, no control
+ * characters (client-side hardening beyond the vendor), no reserved Windows
+ * device name.
  */
 export function isSafePathComponent(component: string): boolean {
   if (component.length === 0) {
@@ -136,6 +137,12 @@ export function isSafePathComponent(component: string): boolean {
     return false;
   }
   if (/[\u0000-\u001f\u007f]/.test(component)) {
+    return false;
+  }
+  if (component.includes("/") || component.includes("\\") || component.includes(":")) {
+    // Separators and drive/device/stream prefixes are rejected one level up in
+    // validateRelativePath; the predicate stays self-consistent for standalone use
+    // (tenant ids) where no raw-path check runs first.
     return false;
   }
   return !isWindowsDeviceName(component);
@@ -156,6 +163,12 @@ function reasonForComponent(component: string): string {
   }
   if (/[\u0000-\u001f\u007f]/.test(component)) {
     return "control characters are not allowed";
+  }
+  if (component.includes("/") || component.includes("\\")) {
+    return "path separators are not allowed";
+  }
+  if (component.includes(":")) {
+    return "drive, device and stream prefixes are not allowed";
   }
   return "reserved device names are not allowed";
 }
@@ -202,7 +215,7 @@ export function validateRelativePath(raw: string): CapabilityResult<string> {
 
 function stripTrailingSlashes(path: string): string {
   let end = path.length;
-  while (end > 1 && path[end - 1] === "/") {
+  while (end > 0 && path[end - 1] === "/") {
     end -= 1;
   }
   return path.slice(0, end);
@@ -214,14 +227,7 @@ function checkTenantField(field: TenantField, value: string): CapabilityFailure 
   // Tenant ids are interpolated into the root, so they must be single safe
   // components; a hostile id is just traversal with extra steps. Messages name
   // the field, never the value (docs/AGENTS.md: never leak internal ids).
-  if (
-    value.length === 0 ||
-    value.includes("/") ||
-    value.includes("\\") ||
-    value.includes(":") ||
-    value.startsWith("~") ||
-    !isSafePathComponent(value)
-  ) {
+  if (value.startsWith("~") || !isSafePathComponent(value)) {
     return fail(
       "path_outside_capability_root",
       `engine tenant ${field} is not a safe path component; the resolved root would leave the capability base`,

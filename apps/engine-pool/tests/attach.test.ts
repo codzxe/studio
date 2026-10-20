@@ -4,10 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  SessionAttach,
-  decideAttachPlan,
-  executeAttachPlan,
-  replayableEntries,
   type AttachErrorCode,
   type AttachExecutor,
   type AttachOptions,
@@ -20,7 +16,11 @@ import {
   type CheckpointState,
   type EngineCall,
   type EngineClientLike,
+  SessionAttach,
   type WalCommandEntry,
+  decideAttachPlan,
+  executeAttachPlan,
+  replayableEntries,
 } from "../src/attach.js";
 import type { EngineSession } from "../src/types.js";
 
@@ -60,7 +60,10 @@ class FakeProvider implements AttachStateProvider {
   fail = false;
   readonly calls: string[] = [];
 
-  async latestCheckpoint(documentId: string, organizationId: string): Promise<CheckpointState | null> {
+  async latestCheckpoint(
+    documentId: string,
+    organizationId: string,
+  ): Promise<CheckpointState | null> {
     this.calls.push(`cp:${documentId}:${organizationId}`);
     if (this.fail) throw new Error("fake: store down (postgres://secret@internal)");
     return this.checkpoint;
@@ -129,11 +132,7 @@ class FakeStager implements CapabilityStager {
   readonly staged: Array<{ sessionId: string; relativePath: string; bytes: number }> = [];
   fail = false;
 
-  async stage(
-    current: EngineSession,
-    relativePath: string,
-    bytes: Uint8Array,
-  ): Promise<string> {
+  async stage(current: EngineSession, relativePath: string, bytes: Uint8Array): Promise<string> {
     if (this.fail) throw new Error("fake: capability root full (/ws/org-1/read)");
     this.staged.push({ sessionId: current.sessionId, relativePath, bytes: bytes.byteLength });
     return `/staged/${relativePath}`;
@@ -347,7 +346,12 @@ describe("SessionAttach.attachDocument", () => {
 describe("executeAttachPlan (§3.2 attach + §3.4 replay)", () => {
   it("kind fresh creates an empty document and applies nothing", async () => {
     const h = makeAttach();
-    const result = await executeAttachPlan(session(), "doc-1", { kind: "fresh", fromRevision: 0, commandCount: 0 }, deps(h));
+    const result = await executeAttachPlan(
+      session(),
+      "doc-1",
+      { kind: "fresh", fromRevision: 0, commandCount: 0 },
+      deps(h),
+    );
     expect(result).toEqual({ ok: true, kind: "fresh", fromRevision: 0, appliedCommands: 0 });
     expect(h.engine.calls).toEqual([{ method: "doc.new" }]);
   });
@@ -533,11 +537,11 @@ describe("executeAttachPlan (§3.2 attach + §3.4 replay)", () => {
   it("the SessionAttach method wires its constructor seams", async () => {
     const h = makeAttach();
     storeCheckpoint(h, checkpoint(5));
-    const result = await h.attach.executeAttachPlan(
-      session(),
-      "doc-1",
-      { kind: "checkpoint", fromRevision: 5, commandCount: 0 },
-    );
+    const result = await h.attach.executeAttachPlan(session(), "doc-1", {
+      kind: "checkpoint",
+      fromRevision: 5,
+      commandCount: 0,
+    });
     expect(result).toMatchObject({ ok: true, restoredFrom: "cp/rev-5.pcraft" });
   });
 });

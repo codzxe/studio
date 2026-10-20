@@ -8,10 +8,11 @@
 // The model behind the wire is a fake: no pixels, no fonts, no real decode. README.md tables
 // exactly what is faithful and what is invented.
 //
-// This file is plain .mjs with JSDoc types on purpose (see README.md › Why plain JavaScript):
+// This file is plain .mjs with JSDoc types on purpose (README.md › Why plain JavaScript):
 // the mock must run with bare `node` inside integration tests and compose dev, with zero
 // installs and no TypeScript/tsx toolchain in the loop.
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { FaultHooks } from "./faults.mjs";
@@ -61,7 +62,7 @@ export const METHODS = Object.freeze([
   "methods",
 ]);
 
-/** Mock-only methods (never listed by `methods`, documented in README.md). */
+/** Mock-only methods (never listed by `methods`, which stays byte-identical to the vendor). */
 export const MOCK_ONLY_METHODS = Object.freeze(["mock.faults"]);
 
 // ---------------------------------------------------------------------------
@@ -70,7 +71,7 @@ export const MOCK_ONLY_METHODS = Object.freeze(["mock.faults"]);
 // tests and the spine; it never appears on the wire.
 // ---------------------------------------------------------------------------
 
-/** @typedef {"bad_params"|"unknown_command"|"unknown_method"|"no_document"|"no_layer"|"disabled"|"denied"|"path_rejected"|"io"|"not_found"|"budget"|"internal"|"frame_too_large"} FailureCode */
+/** @typedef {"bad_params"|"unknown_command"|"unknown_method"|"no_document"|"no_layer"|"disabled"|"denied"|"path_rejected"|"io"|"not_found"|"budget"|"internal"} FailureCode */
 
 export class EngineFailure extends Error {
   /**
@@ -84,13 +85,15 @@ export class EngineFailure extends Error {
   }
 }
 
+/** AutomationError::BadRequest — a plain message, no command prefix. */
+const plainBad = (message) => new EngineFailure(message, "bad_params");
 /** EngineError::BadParams — "invalid parameters for `cmd`: msg". */
 const bad = (cmd, msg) => new EngineFailure(`invalid parameters for \`${cmd}\`: ${msg}`, "bad_params");
 /** EngineError::UnknownCommand — "unknown command `id`". */
 const unknownCommand = (id) => new EngineFailure(`unknown command \`${id}\``, "unknown_command");
 /** EngineError::Disabled — "command `id` is not available right now: reason". */
-const disabled = (id, reason) => new EngineFailure(`command \`${id}\` is not available right now: ${reason}`, "disabled");
-/** EngineError::NoDocument — "no active document" (doc_index uses "no document open"). */
+const disabled = (id, reason) =>
+  new EngineFailure(`command \`${id}\` is not available right now: ${reason}`, "disabled");
 const noDocument = () => new EngineFailure("no document open", "no_document");
 const notFound = (message) => new EngineFailure(message, "not_found");
 const io = (message) => new EngineFailure(message, "io");
@@ -152,7 +155,7 @@ function zlibStored(raw) {
     const len = Math.min(65535, raw.length - offset);
     const isFinal = offset + len >= raw.length ? 1 : 0;
     const header = Buffer.alloc(5);
-    header[0] = isFinal; // BFINAL + BTYPE(00), rest of the byte is padding
+    header[0] = isFinal; // BFINAL + BTYPE(00); the rest of the byte is padding
     header.writeUInt16LE(len, 1);
     header.writeUInt16LE((~len) & 0xffff, 3);
     blocks.push(header, Buffer.from(raw.subarray(offset, offset + len)));
@@ -226,7 +229,7 @@ function relativePath(raw) {
   return raw;
 }
 
-/** Resolve a request path against a root: absolute paths must name a file beneath it. */
+/** Resolve a request path against the root: absolute paths must name a file beneath it. */
 function resolveWithinRoot(raw, root) {
   if (raw.startsWith("/")) {
     const prefix = root.endsWith("/") ? root : `${root}/`;
@@ -236,6 +239,15 @@ function resolveWithinRoot(raw, root) {
     return path.join(root, relativePath(raw.slice(prefix.length)));
   }
   return path.join(root, relativePath(raw));
+}
+
+/** Map a Node fs error to the Rust ErrorKind name the vendor prints. */
+function ioKind(error) {
+  if (error?.code === "ENOENT") return "NotFound";
+  if (error?.code === "EISDIR") return "IsADirectory";
+  if (error?.code === "ENOTDIR") return "NotADirectory";
+  if (error?.code === "EEXIST") return "AlreadyExists";
+  return "Other";
 }
 
 // ---------------------------------------------------------------------------
@@ -253,9 +265,9 @@ const KIND_NAMES = Object.freeze({
   smart: "Smart Object",
 });
 
-const internalKind = (layer) => layer.kind;
-const kindName = (layer) => KIND_NAMES[internalKind(layer)] ?? layer.kind;
+const kindName = (layer) => KIND_NAMES[layer.kind] ?? layer.kind;
 const article = (layer) => (layer.kind === "adjustment" ? "an" : "a");
+const isGroup = (layer) => layer.kind === "group";
 
 /**
  * @typedef {Object} MockLayer
@@ -269,9 +281,8 @@ const article = (layer) => (layer.kind === "adjustment" ? "an" : "a");
  * @property {string} labelColor
  * @property {boolean} clipped
  * @property {boolean} hasMask
- * @property {Object|null} mask
  * @property {Array<Object>} effects
- * @property {number[]|null} bounds [x, y, w, h] content bounds, null when empty (vendor content_bounds)
+ * @property {number[]|null} bounds [x, y, w, h] content bounds; null when empty (vendor content_bounds)
  * @property {boolean} expanded
  * @property {Array<MockLayer>} children group children, bottom→top like the doc array
  * @property {Object|null} text {text, font, sizePt, color, box?, point?}
@@ -292,7 +303,6 @@ function newLayer(id, name, kind, extra = {}) {
     labelColor: "none",
     clipped: false,
     hasMask: false,
-    mask: null,
     effects: [],
     bounds: null,
     expanded: true,
@@ -303,25 +313,6 @@ function newLayer(id, name, kind, extra = {}) {
     ...extra,
   };
 }
-
-/**
- * @typedef {Object} MockDocument
- * @property {number} id
- * @property {string} name
- * @property {number} width
- * @property {number} height
- * @property {string} mode
- * @property {number} depth
- * @property {number} resolution
- * @property {Array<MockLayer>} layers bottom→top (display order is reversed, as in the vendor)
- * @property {number|null} activeLayer
- * @property {Array<number>} selectedLayers
- * @property {number} revision
- * @property {number} savedRevision
- * @property {string|null} path
- * @property {Array<string>} history undo labels
- * @property {number} layerCounter
- */
 
 // ---------------------------------------------------------------------------
 // Layer-tree helpers
@@ -361,26 +352,10 @@ function siblingsOf(doc, layer) {
       const hit = search(candidate.children);
       if (hit) return hit;
     }
-  };
-  const inRoot = doc.layers.find((candidate) => candidate === layer);
-  if (inRoot) return doc.layers;
-  return search(doc.layers);
-}
-
-/** The parent group of `layer`, or null at the top level. */
-function parentOf(doc, layer) {
-  const search = (arr, parent) => {
-    for (const candidate of arr) {
-      if (candidate === layer) return parent;
-      const hit = search(candidate.children, candidate);
-      if (hit) return hit;
-    }
     return null;
   };
-  return search(doc.layers, null);
+  return search(doc.layers) ?? doc.layers;
 }
-
-const isGroup = (layer) => layer.kind === "group";
 
 /** Layer ids the document has, for the "no such layer" error (lib.rs UnknownLayer). */
 function knownLayers(doc) {
@@ -392,7 +367,11 @@ function noLayer(doc, id) {
   return new EngineFailure(`no such layer ${id}; the document has: ${knownLayers(doc)}`, "no_layer");
 }
 
-/** The given layer, the active layer, or a typed failure. */
+function noLayerByName(doc, name) {
+  return new EngineFailure(`no layer named \`${name}\`; the document has: ${knownLayers(doc)}`, "no_layer");
+}
+
+/** The given layer, the active layer, or a typed failure (commands.rs layer_param). */
 function layerParam(doc, p, cmd) {
   const raw = p.layer;
   if (raw === undefined || raw === null) {
@@ -418,16 +397,7 @@ function nextLayerName(doc, base) {
   }
 }
 
-/** Clamp-store a colour given as "#rrggbb" or [r,g,b(,a)] floats 0..1. */
-function colorParam(cmd, value, fallback) {
-  if (value === undefined || value === null) return fallback;
-  if (typeof value === "string" && /^#([0-9a-fA-F]{6})$/.test(value)) return value.toLowerCase();
-  if (Array.isArray(value) && (value.length === 3 || value.length === 4) && value.every((v) => typeof v === "number" && Number.isFinite(v))) {
-    const [r, g, b] = value.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
-    return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
-  }
-  throw bad(cmd, `\`${Array.isArray(value) || typeof value === "object" ? "color" : "color"}\` must be a colour ("#rrggbb" or [r,g,b,a])`);
-}
+// --- small param helpers ----------------------------------------------------
 
 const BLEND_MODES = new Set([
   "Normal",
@@ -450,11 +420,114 @@ const BLEND_MODES = new Set([
 
 function blendParam(cmd, value, { allowPassThrough = false } = {}) {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "string") throw bad(cmd, `\`blend\` must be a blend mode name, got ${JSON.stringify(value)}`);
+  if (typeof value !== "string") {
+    throw bad(cmd, `\`blend\` must be a blend mode name, got ${JSON.stringify(value)}`);
+  }
   if (value === "Pass Through" && allowPassThrough) return value;
   if (!BLEND_MODES.has(value)) throw bad(cmd, `unknown blend mode \`${value}\``);
   return value;
 }
+
+/** Clamp-store a colour given as "#rrggbb" or [r,g,b(,a)] floats 0..1. */
+function colorParam(cmd, value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "string" && /^#([0-9a-fA-F]{6})$/.test(value)) return value.toLowerCase();
+  if (
+    Array.isArray(value) &&
+    (value.length === 3 || value.length === 4) &&
+    value.every((v) => typeof v === "number" && Number.isFinite(v))
+  ) {
+    const [r, g, b] = value.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
+    return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+  }
+  throw bad(cmd, "`color` must be a colour (\"#rrggbb\" or [r,g,b,a])");
+}
+
+const rgbaToHex = (rgba) => {
+  const [r, g, b] = rgba.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+};
+
+/** A 0..max unit param. Returns `fallback` when absent (commands.rs opacity/fill checks). */
+function boundedUnit(value, max, key, cmd, fallback = undefined) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > max) {
+    const range = max === 1 ? "0..1 (1 = 100 %)" : `0..${max}`;
+    throw bad(cmd, `\`${key}\` must be a number in ${range}, got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+function numberParam(value, key, cmd, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw bad(cmd, `\`${key}\` must be a number, got ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+/** Percent-style param (100 = identity). Returns undefined when absent. */
+function percentParam(value, key, cmd) {
+  if (value === undefined || value === null) return undefined;
+  return numberParam(value, key, cmd, 100) / 100;
+}
+
+/** Approximate type bounds: point text from the baseline anchor, paragraph text = the box. */
+function typeBounds(text) {
+  const size = text.sizePt;
+  if (text.box) {
+    const [x, y, w, h] = text.box;
+    return [Math.round(x), Math.round(y), Math.round(w), Math.round(h)];
+  }
+  const [x, y] = text.point ?? [0, 0];
+  const width = Math.max(1, Math.round(size * 0.6 * [...text.text].length));
+  const ascent = Math.round(size * 0.8);
+  const descent = Math.round(size * 0.25);
+  return [Math.round(x), Math.round(y - ascent), width, ascent + descent];
+}
+
+const cornersOf = (bounds) =>
+  bounds === null ? null : [bounds[0], bounds[1], bounds[0] + bounds[2], bounds[1] + bounds[3]];
+
+/** Layer name default for type.create (vendor: layer_name(&text)). */
+function layerNameFromText(text) {
+  const trimmed = text.trim().replace(/\s+/g, " ");
+  if (trimmed.length === 0) return "Type Layer";
+  return trimmed.length > 64 ? `${trimmed.slice(0, 61)}…` : trimmed;
+}
+
+/** Free Transform: affine from a source rect to a destination quad (three corners solve it). */
+function affineFromRectQuad(rect, quad) {
+  const [x0, y0, x1, y1] = rect;
+  const width = x1 - x0 || 1;
+  const height = y1 - y0 || 1;
+  const [[ax, ay], [bx, by], [cx, cy]] = quad;
+  const ux = (bx - ax) / width;
+  const vx = (cx - ax) / height;
+  const uy = (by - ay) / width;
+  const vy = (cy - ay) / height;
+  return [ux, uy, vx, vy, ax - ux * x0 - vx * y0, ay - uy * x0 - vy * y0];
+}
+
+/** Relative alternative: scale and rotate about the frame's centre, then move. */
+function composeAffine(rect, sx, sy, rotate, dx, dy) {
+  const cx = (rect[0] + rect[2]) / 2;
+  const cy = (rect[1] + rect[3]) / 2;
+  const cos = Math.cos(rotate);
+  const sin = Math.sin(rotate);
+  const a = cos * sx;
+  const b = sin * sx;
+  const c = -sin * sy;
+  const d = cos * sy;
+  return [a, b, c, d, cx - (a * cx + c * cy) + dx, cy - (b * cx + d * cy) + dy];
+}
+
+const sanitize = (name) =>
+  name
+    .replace(/[\\/:*?"<>|\n\r\t]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 64) || "layer";
 
 // ---------------------------------------------------------------------------
 // Command registry — metadata copied verbatim from the vendor spec tables
@@ -478,6 +551,9 @@ const COMMANDS = [];
 /** @type {Map<string, CommandSpec>} */
 const COMMAND_INDEX = new Map();
 
+/** Studio-only command ids (agent checkpoints, template no-ops) — README documents these. */
+export const MOCK_COMMAND_IDS = new Set();
+
 /**
  * @param {CommandSpec} spec
  * @param {Object} [opts]
@@ -489,8 +565,28 @@ function define(spec, opts = {}) {
   if (opts.mockExtension) MOCK_COMMAND_IDS.add(spec.id);
 }
 
-/** Studio-only command ids (agent checkpoints, template no-ops) — README documents these. */
-export const MOCK_COMMAND_IDS = new Set();
+// enablement closures, in the vendor's style (commands.rs has_doc / has_layer)
+
+/** has_doc: "no document open" when nothing is open (mode_cmds.rs). */
+const hasDoc = (engine) => (engine.activeDoc() === null ? "no document open" : undefined);
+/** has_layer: layer_style.rs — needs a document, then an active layer. */
+const hasLayer = (engine) => {
+  const doc = engine.activeDoc();
+  if (!doc) return "no document open";
+  if (doc.activeLayer === null) return "no active layer";
+  return undefined;
+};
+/** has_pixel_or_channel, approximated for the fake: the active layer must hold pixels. */
+const hasPixelLayer = (engine) => {
+  const doc = engine.activeDoc();
+  if (!doc) return "no document open";
+  if (doc.activeLayer === null) return "no active layer";
+  const layer = engine.activeLayer();
+  if (!layer || layer.kind === "group" || layer.kind === "adjustment") {
+    return "the active layer has no pixels";
+  }
+  return undefined;
+};
 
 // --- File -------------------------------------------------------------------
 
@@ -514,13 +610,7 @@ define({
   shortcut: "Shift+F5",
   params:
     '{"contents":"foreground|background|color|contentAware|pattern|history|black|gray|white"="color","color":"#rrggbb|[r,g,b,a]"=foreground (contents=color),"pattern":id|name (contents=pattern),"scale":%=100,"angle":deg,"state":index? (contents=history; default the oldest state),"colorAdaptation":bool=true (contents=contentAware),"mode":"normal|multiply|…"="normal","opacity":0..100=100,"preserveTransparency":bool=false,"target":"pixels"|"mask"|"quickMask"|{"channel":i}?}',
-  enabled: (engine) => {
-    const doc = engine.requireDoc();
-    if (doc.activeLayer === null) return "no active layer";
-    const layer = findLayer(doc, doc.activeLayer);
-    if (!layer || layer.kind === "group" || layer.kind === "adjustment") return "the active layer has no pixels";
-    return undefined;
-  },
+  enabled: hasPixelLayer,
   run: (engine, p) => engine.editFill(p),
 });
 
@@ -531,11 +621,7 @@ define({
   shortcut: null,
   params:
     '{"layer":id?,"rect":[x0,y0,x1,y1]? (source frame; default = layer content ∩ selection),"quad":[[x,y]×4]? (where the frame\'s corners go, clockwise from top-left),"matrix":[a,b,c,d,e,f]? (affine alternative),"scaleX":%?,"scaleY":%?,"rotate":deg?,"dx":px?,"dy":px? (relative alternative: scale and rotate about the frame\'s centre, then move, as a Photoshop action records a Free Transform),"interpolation":"bicubic|bilinear|nearest"="bicubic","target":"pixels"|"mask"|"quickMask"|{"channel":i}=Channels panel target (an unlinked mask, an alpha channel or the Quick Mask transforms alone; a linked mask moves with its layer)}',
-  enabled: (engine) => {
-    const doc = engine.requireDoc();
-    if (doc.activeLayer === null) return "no active layer";
-    return undefined;
-  },
+  enabled: hasLayer,
   run: (engine, p) => engine.editTransform(p),
 });
 
@@ -548,7 +634,7 @@ define({
   shortcut: "Cmd+Shift+N",
   params:
     '{"name":str?,"clipToPrevious":bool=false (Use Previous Layer to Create Clipping Mask; inside a clip group the layer joins it anyway),"color":"none|red|orange|yellow|green|seafoam|blue|indigo|magenta|fuchsia|violet|gray"="none","mode":"Normal|Multiply|…"="Normal","opacity":0..1=1,"fillNeutral":bool=false (fill with the mode\'s neutral color: modes without one are an error),"position":"above|below"="above" (below: the Layers panel\'s Cmd/Ctrl-click; never under the Background)}',
-  enabled: (engine) => (engine.requireDoc() ? undefined : undefined),
+  enabled: hasDoc,
   run: (engine, p) => engine.layerNewLayer(p),
 });
 
@@ -558,7 +644,7 @@ define({
   menu: ["Layer", "New"],
   shortcut: null,
   params: '{"name":str?}',
-  enabled: (engine) => (engine.requireDoc() ? undefined : undefined),
+  enabled: hasDoc,
   run: (engine, p) => engine.layerNewGroup(p),
 });
 
@@ -568,11 +654,7 @@ define({
   menu: ["Layer", "Delete"],
   shortcut: null,
   params: '{"layer":id?} (no layer: every selected layer)',
-  enabled: (engine) => {
-    const doc = engine.requireDoc();
-    if (doc.activeLayer === null) return "no active layer";
-    return undefined;
-  },
+  enabled: hasLayer,
   run: (engine, p) => engine.layerDelete(p),
 });
 
@@ -583,7 +665,7 @@ define({
   shortcut: null,
   params:
     '{"layer":id|str | "name":str,"occurrence":index?,"mode":"replace|toggle|range|add|remove"="replace"} (name occurrence: zero-based document walk order; required for duplicate names; toggle = ⌘-click, range = ⇧-click, remove = deselect it, keeping at least one)',
-  enabled: (engine) => (engine.requireDoc() ? undefined : undefined),
+  enabled: hasDoc,
   run: (engine, p) => engine.layerSelect(p),
 });
 
@@ -594,11 +676,7 @@ define({
   shortcut: null,
   params:
     '{"layer":id?,"layers":[id,…]? (the same change to each, one step: the Layers panel\'s controls with several layers selected),"name":str? (one layer only),"visible":bool?,"opacity":0..1?,"fill":0..1?,"blend":"Multiply|…"?,"clipped":bool?,"locked":bool?,"locks":{"transparency","pixels","position","artboard","all":bool}?,"channels":[bool,…]? (Advanced Blending: which colour channels blend, R G B / C M Y K / L a b)}',
-  enabled: (engine) => {
-    const doc = engine.requireDoc();
-    if (doc.activeLayer === null) return "no active layer";
-    return undefined;
-  },
+  enabled: hasLayer,
   run: (engine, p) => engine.layerSetProps(p),
 });
 
@@ -608,12 +686,8 @@ define({
   menu: ["Layer", "Arrange"],
   shortcut: "Cmd+Shift+]",
   params: '{"layer":id?}',
-  enabled: (engine) => {
-    const doc = engine.requireDoc();
-    if (doc.activeLayer === null) return "no active layer";
-    return undefined;
-  },
-  run: (engine, p) => engine.layerArrange(p, "bringToFront"),
+  enabled: hasLayer,
+  run: (engine, p) => engine.layerArrange(p, "layer.arrange.bringToFront"),
 });
 
 define({
@@ -622,12 +696,8 @@ define({
   menu: ["Layer", "Arrange"],
   shortcut: "Cmd+Shift+[",
   params: '{"layer":id?}',
-  enabled: (engine) => {
-    const doc = engine.requireDoc();
-    if (doc.activeLayer === null) return "no active layer";
-    return undefined;
-  },
-  run: (engine, p) => engine.layerArrange(p, "sendToBack"),
+  enabled: hasLayer,
+  run: (engine, p) => engine.layerArrange(p, "layer.arrange.sendToBack"),
 });
 
 define({
@@ -636,11 +706,7 @@ define({
   menu: ["Layer", "Layer Mask"],
   shortcut: null,
   params: '{"layer":id?} (no layer: every selected layer that can take a mask)',
-  enabled: (engine) => {
-    const doc = engine.requireDoc();
-    if (doc.activeLayer === null) return "no active layer";
-    return undefined;
-  },
+  enabled: hasLayer,
   run: (engine, p) => engine.layerMaskRevealAll(p),
 });
 
@@ -651,11 +717,7 @@ define({
   shortcut: null,
   params:
     '{"color":"#rrggbb","opacity":0..100=75,"blend":str="multiply","angle":deg=120,"useGlobalLight":bool,"distance":px=5,"spread":0..100,"size":px=5,"contour":"Linear|Cone|Cone - Inverted|Cove - Deep|Cove - Shallow|Gaussian|Half Round|Ring|Ring - Double|Rolling Slope - Descending|Rounded Steps|Sawtooth 1"|{"name":str,"points":[[in 0..1,out 0..1],…],"corners":[bool,…]}="Linear","antiAlias":bool,"noise":0..100,"knocksOut":bool,"add":bool,"layer":id}',
-  enabled: (engine) => {
-    const doc = engine.requireDoc();
-    if (doc.activeLayer === null) return "no active layer";
-    return undefined;
-  },
+  enabled: hasLayer,
   run: (engine, p) => engine.layerStyleDropShadow(p),
 });
 
@@ -668,7 +730,7 @@ define({
   shortcut: null,
   params:
     '{"x":px,"y":px (baseline anchor of point text),"text":str,"box":[x,y,w,h]? (paragraph text),"name":str?,"align":"left|center|right|justify…"=?,"orientation":"horizontal|vertical"="horizontal", …character keys: "font","size":pt=12,"color",…}',
-  enabled: (engine) => (engine.requireDoc() ? undefined : undefined),
+  enabled: hasDoc,
   run: (engine, p) => engine.typeCreate(p),
 });
 
@@ -679,7 +741,7 @@ define({
   shortcut: null,
   params:
     '{"layer":id?,"text":str? (replace all, styles kept),"replace":{"start":char,"end":char,"text":str}?,"runs":[{"start":char,"end":char,…character keys}]?,"box":[x,y,w,h]? (to paragraph text),"point":[x,y]? (to point text),"move":[dx,dy]?,"transform":[a,b,c,d,e,f]?,"antialias":"none|sharp|crisp|strong|smooth"?,"name":str?,"kerning":1/1000em|"metrics"|"optical"|"off"? (with "range":[startChar,endChar]?, default all),"kernPair":{"at":caretChar,"by":1/1000em}? (Alt+←/→: the pair before the caret becomes manual, its current kerning + by)}',
-  enabled: (engine) => (engine.requireDoc() ? undefined : undefined),
+  enabled: hasDoc,
   run: (engine, p) => engine.typeEdit(p),
 });
 
@@ -691,7 +753,7 @@ define({
   menu: [],
   shortcut: null,
   params: '{"document":index?}',
-  enabled: (engine) => (engine.requireDoc() ? undefined : undefined),
+  enabled: hasDoc,
   run: (engine, p) => engine.documentInspect(p),
 });
 
@@ -702,7 +764,7 @@ define({
   shortcut: null,
   params:
     '{"document":index?,"flat":bool=false} → {"layers":[{"id","name","kind","visible","bounds":[x,y,w,h]|null,"selected","active","children"?}],"activeLayer":id?} (top-down; groups list their "children", or with "flat" every layer is one row with its "depth" and "parent" group id)',
-  enabled: (engine) => (engine.requireDoc() ? undefined : undefined),
+  enabled: hasDoc,
   run: (engine, p) => engine.layerList(p),
 });
 
@@ -747,7 +809,7 @@ define(
     menu: [],
     shortcut: null,
     params: '{"label":str?} — studio mock extension: marks a rollback checkpoint of the active document (no vendor counterpart)',
-    enabled: (engine) => (engine.requireDoc() ? undefined : undefined),
+    enabled: hasDoc,
     run: (engine, p) => engine.agentBegin(p),
   },
   { mockExtension: true },
@@ -760,7 +822,7 @@ define(
     menu: [],
     shortcut: null,
     params: "{} — studio mock extension: drops the checkpoint begun by agent.begin",
-    enabled: (engine) => (engine.requireDoc() ? undefined : undefined),
+    enabled: hasDoc,
     run: (engine) => engine.agentCommit(),
   },
   { mockExtension: true },
@@ -773,7 +835,7 @@ define(
     menu: [],
     shortcut: null,
     params: "{} — studio mock extension: restores the checkpoint begun by agent.begin",
-    enabled: (engine) => (engine.requireDoc() ? undefined : undefined),
+    enabled: hasDoc,
     run: (engine) => engine.agentRollback(),
   },
   { mockExtension: true },
@@ -836,9 +898,6 @@ function layerJson(doc, layer) {
   }
   if (layer.kind === "type" && layer.text) {
     v.text = { text: layer.text.text, font: layer.text.font, sizePt: layer.text.sizePt };
-  }
-  if (layer.kind === "adjustment") {
-    v.adjustment = { kind: layer.adjustmentKind ?? "brightnessContrast", params: layer.adjustmentParams ?? {} };
   }
   if (layer.kind === "smart") {
     v.smartSource = { kind: "embedded", fileName: layer.fileName ?? "placed.png" };
@@ -931,7 +990,7 @@ export class MockEngine {
     }
     this.root = root;
     this.faults = faults;
-    /** @type {Array<MockDocument>} */
+    /** @type {Array<import("./engine.mjs").MockLayer[]>} */
     this.documents = [];
     /** @type {number|null} */
     this.activeIndex = null;
@@ -941,16 +1000,23 @@ export class MockEngine {
     this.jobs = [];
     this.jobCounter = 0;
     this.docCounter = 0;
-    /** @type {{docIndex: number, state: MockDocument}|null} */
+    /** @type {{docIndex: number, state: Object}|null} */
     this.checkpoint = null;
   }
 
   // --- session plumbing ---------------------------------------------------
 
-  /** The active document or a typed failure ("no active document"). */
+  /** The active document, or null. */
   activeDoc() {
     if (this.activeIndex === null) return null;
     return this.documents[this.activeIndex] ?? null;
+  }
+
+  /** The active layer of the active document, or null. */
+  activeLayer() {
+    const doc = this.activeDoc();
+    if (!doc || doc.activeLayer === null) return null;
+    return findLayer(doc, doc.activeLayer);
   }
 
   /** The active document or the commands' failure ("no document open"). */
@@ -973,7 +1039,7 @@ export class MockEngine {
   /** Push an undo label + bump the revision (the whole "history" the mock keeps). */
   touch(doc, label) {
     doc.revision += 1;
-    if (label !== null) doc.history.push(label);
+    if (label !== null && label !== undefined) doc.history.push(label);
   }
 
   // --- capability-scoped files --------------------------------------------
@@ -983,17 +1049,21 @@ export class MockEngine {
     if (this.root === null) throw denied("read");
     const resolved = resolveWithinRoot(raw, this.root);
     try {
-      return { resolved, bytes: fsReadFile(resolved) };
+      return { resolved, bytes: readFileSync(resolved) };
     } catch (error) {
       throw io(`automation read \`${raw}\` failed (${ioKind(error)}): ${error.message}`);
     }
   }
 
-  writeRoot(raw, bytes) {
+  writeRoot(raw, bytes, { create = true, overwrite = true } = {}) {
     if (this.root === null) throw denied("write");
     const resolved = resolveWithinRoot(raw, this.root);
     try {
-      fsWriteFile(resolved, bytes);
+      if (!overwrite && existsSync(resolved)) {
+        throw Object.assign(new Error("file exists"), { code: "EEXIST" });
+      }
+      if (create) mkdirSync(path.dirname(resolved), { recursive: true });
+      writeFileSync(resolved, bytes);
       return resolved;
     } catch (error) {
       throw io(`automation write \`${raw}\` failed (${ioKind(error)}): ${error.message}`);
@@ -1004,22 +1074,19 @@ export class MockEngine {
 
   /**
    * Dispatch one control request (rpc.rs Headless::handle). Returns the reply `result`
-   * value; failures throw EngineFailure with the exact wire string.
+   * value; failures throw EngineFailure with the exact wire string. Non-object params
+   * behave like `{}` at the method level, exactly as serde_json's `Value::get` does.
    * @param {string} method
    * @param {any} params
    */
   handle(method, params) {
-    const p = params === null || params === undefined ? {} : params;
-    if (typeof p !== "object" || Array.isArray(p)) {
-      throw bad(method, "params must be a JSON object");
-    }
+    const raw = params === null || params === undefined ? {} : params;
+    const p = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {};
     switch (method) {
       case "engine.execute": {
-        const command = typeof p.command === "string" ? p.command : undefined;
-        if (command === undefined) throw bad("engine.execute", "engine.execute needs `command`");
-        const wait = p.wait === undefined || p.wait === null ? true : p.wait;
-        if (typeof wait !== "boolean") throw bad("engine.execute", "`wait` must be true or false");
-        return this.executeCommand(command, p.params ?? null, wait);
+        if (typeof p.command !== "string") throw plainBad("engine.execute needs `command`");
+        const wait = typeof p.wait === "boolean" ? p.wait : true;
+        return this.executeCommand(p.command, p.params === undefined ? null : p.params, wait);
       }
       case "jobs.list":
         return this.executeCommand("jobs.list", {}, true);
@@ -1027,41 +1094,41 @@ export class MockEngine {
         return this.executeCommand("jobs.cancel", p, true);
       case "engine.commands": {
         if (p.filter !== undefined && p.filter !== null && typeof p.filter !== "string") {
-          throw bad("engine.commands", "`filter` must be a string");
+          throw plainBad("`filter` must be a string");
         }
         return this.commandList(typeof p.filter === "string" ? p.filter : null);
       }
       case "session.list":
         return sessionJson(this);
       case "doc.open": {
-        if (typeof p.path !== "string") throw bad("doc.open", "doc.open needs `path`");
+        if (typeof p.path !== "string") throw plainBad("doc.open needs `path`");
         return this.docOpen(p.path);
       }
       case "doc.place": {
-        if (typeof p.path !== "string") throw bad("doc.place", "doc.place needs `path`");
+        if (typeof p.path !== "string") throw plainBad("doc.place needs `path`");
         const opts = { ...p };
         delete opts.path;
         delete opts.index;
         return this.docPlace(this.optionalIndex(p), p.path, opts);
       }
       case "doc.new":
-        return this.executeCommand("file.new", p, true);
+        return this.executeCommand("file.new", raw, true);
       case "doc.save": {
         const filePath = typeof p.path === "string" ? p.path : undefined;
         const format = typeof p.format === "string" ? p.format : undefined;
         return this.docSave(this.optionalIndex(p), filePath, format);
       }
       case "doc.exportLayers": {
-        if (typeof p.dir !== "string") throw bad("doc.exportLayers", "doc.exportLayers needs `dir`");
+        if (typeof p.dir !== "string") throw plainBad("doc.exportLayers needs `dir`");
         return this.docExportLayers(this.optionalIndex(p), p.dir, p);
       }
       case "doc.exportDataSets": {
-        if (typeof p.dir !== "string") throw bad("doc.exportDataSets", "doc.exportDataSets needs `dir`");
+        if (typeof p.dir !== "string") throw plainBad("doc.exportDataSets needs `dir`");
         return this.docExportDataSets(this.optionalIndex(p), p.dir, p);
       }
       case "doc.importDataSets": {
-        if (typeof p.path !== "string") throw bad("doc.importDataSets", "doc.importDataSets needs `path`");
-        return this.docImportDataSets(this.optionalIndex(p), p.path, p);
+        if (typeof p.path !== "string") throw plainBad("doc.importDataSets needs `path`");
+        return this.docImportDataSets(this.optionalIndex(p), p.path);
       }
       case "doc.inspect":
         return documentJson(this.documents[this.docIndex(this.optionalIndex(p))]);
@@ -1069,7 +1136,7 @@ export class MockEngine {
         let maxSide = 1024;
         if (p.maxSide !== undefined && p.maxSide !== null) {
           if (typeof p.maxSide !== "number" || !Number.isInteger(p.maxSide) || p.maxSide < 0 || p.maxSide > 0xffffffff) {
-            throw bad("doc.render", "maxSide must be an unsigned 32-bit integer");
+            throw plainBad("maxSide must be an unsigned 32-bit integer");
           }
           maxSide = p.maxSide;
         }
@@ -1077,7 +1144,7 @@ export class MockEngine {
       }
       case "doc.select": {
         const index = this.optionalIndex(p);
-        if (index === undefined || index === null) throw bad("doc.select", "doc.select needs `index`");
+        if (index === undefined) throw plainBad("doc.select needs `index`");
         return this.docSelect(index);
       }
       case "doc.close":
@@ -1099,7 +1166,7 @@ export class MockEngine {
     const raw = p.index;
     if (raw === undefined || raw === null) return undefined;
     if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
-      throw bad(p.__method ?? "index", "`index` must be a non-negative integer");
+      throw plainBad("`index` must be a non-negative integer");
     }
     return raw;
   }
@@ -1107,8 +1174,9 @@ export class MockEngine {
   // --- engine.execute -----------------------------------------------------
 
   /**
-   * Run one engine command (Session::execute order: params shape → unknown id → enabled → run).
-   * With wait false on a job-capable command, register an immediate-complete job instead.
+   * Run one engine command (Session::execute order: params shape → unknown id → enabled →
+   * run). With wait false on a job-capable command, register an immediate-complete job
+   * instead (rpc.rs command_start → jobs).
    */
   executeCommand(id, params, wait) {
     const p = params === null || params === undefined ? {} : params;
@@ -1148,8 +1216,9 @@ export class MockEngine {
     const needle = filter === null ? null : filter.toLowerCase();
     const entries = COMMANDS.map((spec) => {
       const reason = spec.enabled(this) ?? null;
-      const noDoc = this.activeDoc() === null && /^no (document|active document|open document)/.test(reason ?? "");
-      const entry = {
+      const noDoc =
+        this.activeDoc() === null && /^no (document|active document|open document)/.test(reason ?? "");
+      return {
         id: spec.id,
         label: spec.label,
         menu: [...spec.menu],
@@ -1159,7 +1228,6 @@ export class MockEngine {
         disabledReason: reason,
         needsDocument: noDoc,
       };
-      return entry;
     });
     if (needle === null) return entries;
     return entries.filter((entry) =>
@@ -1171,39 +1239,37 @@ export class MockEngine {
 
   /**
    * Vendor semantics: steps run in order, each step's result is retained, the first error
-   * stops the batch unless stopOnError is false, and the reply budget stops later steps even
-   * then. Earlier steps are NOT rolled back (docs/control-protocol.md › Transport limits).
+   * stops the batch unless stopOnError is false, and the reply budget stops later steps
+   * even then. Earlier steps are NOT rolled back (docs/control-protocol.md › Transport
+   * limits) — the README records where that differs from the studio task sketch.
    */
   batch(p) {
-    if (!Array.isArray(p.steps)) throw bad("batch", "batch needs `steps`");
+    if (!Array.isArray(p.steps)) throw plainBad("batch needs `steps`");
     if (p.steps.length > MAX_BATCH_STEPS) {
-      throw bad("batch", `batch contains ${p.steps.length} steps; maximum is ${MAX_BATCH_STEPS}`);
+      throw plainBad(`batch contains ${p.steps.length} steps; maximum is ${MAX_BATCH_STEPS}`);
     }
-    const stop = p.stopOnError === undefined || p.stopOnError === null ? true : p.stopOnError;
-    if (typeof stop !== "boolean") throw bad("batch", "`stopOnError` must be true or false");
+    const stop = typeof p.stopOnError === "boolean" ? p.stopOnError : true;
     let remaining = MAX_RESPONSE_BYTES - MAX_REQUEST_BYTES - 4096;
     const results = [];
     let failed = 0;
     for (const [i, step] of p.steps.entries()) {
-      if (typeof step !== "object" || step === null || Array.isArray(step)) {
-        throw bad("batch", `step ${i} needs \`command\` or \`method\``);
+      if (typeof step !== "object" || step === null) {
+        throw plainBad(`step ${i} needs \`command\` or \`method\``);
       }
       let result;
-      let failedStep = false;
       if (typeof step.command === "string") {
         result = this.step(() =>
-          this.executeCommand(step.command, step.params ?? null, step.wait === undefined ? true : step.wait),
+          this.executeCommand(step.command, step.params ?? null, typeof step.wait === "boolean" ? step.wait : true),
         );
       } else if (typeof step.method === "string") {
-        if (step.method === "batch") {
-          result = { ok: false, error: "nested batch" };
-        } else {
-          result = this.step(() => this.handle(step.method, step.params ?? null));
-        }
+        result =
+          step.method === "batch"
+            ? { ok: false, error: "nested batch" }
+            : this.step(() => this.handle(step.method, step.params ?? null));
       } else {
-        throw bad("batch", `step ${i} needs \`command\` or \`method\``);
+        throw plainBad(`step ${i} needs \`command\` or \`method\``);
       }
-      failedStep = result.ok !== true;
+      const failedStep = result.ok !== true;
       const charge = Buffer.byteLength(JSON.stringify(result), "utf8");
       if (charge > remaining - 1) {
         failed += 1;
@@ -1250,20 +1316,20 @@ export class MockEngine {
     const mode = MODES[modeKey];
     if (mode === undefined) throw bad("file.new", `unknown colour mode \`${modeKey}\``);
     const depth = p.depth === undefined || p.depth === null ? 8 : p.depth;
-    if (![8, 16, 32].includes(depth)) throw bad("file.new", `\`depth\` must be 8, 16 or 32`);
+    if (![8, 16, 32].includes(depth)) throw bad("file.new", "`depth` must be 8, 16 or 32");
     const background = typeof p.background === "string" ? p.background : "white";
-    const transparent = background === "transparent";
-    if (!transparent && !["white", "black", "backgroundColor"].test)
-      if (!["white", "black", "backgroundColor", ...[]].includes(background) && !/^#([0-9a-fA-F]{6})$/.test(background)) {
-        throw bad("file.new", `unknown background \`${background}\``);
-      }
+    const isHex = /^#([0-9a-fA-F]{6})$/.test(background);
+    if (!["white", "black", "backgroundColor", "transparent"].includes(background) && !isHex) {
+      throw bad("file.new", `unknown background \`${background}\``);
+    }
     const resolution =
       p.resolution === undefined || p.resolution === null
         ? 72
-        : Math.min(30000, Math.max(1, Math.round(Number(p.resolution) || 72)));
+        : Math.min(30000, Math.max(1, Math.round(numberParam(p.resolution, "resolution", "file.new", 72))));
     const name = typeof p.name === "string" && p.name.length > 0 ? p.name : "Untitled";
 
     this.docCounter += 1;
+    /** @type {any} */
     const doc = {
       id: this.docCounter,
       name,
@@ -1281,11 +1347,17 @@ export class MockEngine {
       history: [],
       layerCounter: 0,
     };
-    const base = transparent ? "Layer 1" : "Background";
+    const transparent = background === "transparent";
     doc.layerCounter += 1;
-    const layer = newLayer(doc.layerCounter, base, "pixel", {
+    const layer = newLayer(doc.layerCounter, transparent ? "Layer 1" : "Background", "pixel", {
       bounds: transparent ? null : [0, 0, width, height],
-      fillColor: transparent ? null : background === "black" ? "#000000" : background === "backgroundColor" ? "#ffffff" : /^#([0-9a-fA-F]{6})$/.test(background) ? background.toLowerCase() : "#ffffff",
+      fillColor: transparent
+        ? null
+        : background === "black"
+          ? "#000000"
+          : isHex
+            ? background.toLowerCase()
+            : "#ffffff",
     });
     doc.layers.push(layer);
     doc.activeLayer = layer.id;
@@ -1299,7 +1371,17 @@ export class MockEngine {
 
   editFill(p) {
     const doc = this.requireDoc();
-    const CONTENTS = ["foreground", "background", "color", "contentAware", "pattern", "history", "black", "gray", "white"];
+    const CONTENTS = [
+      "foreground",
+      "background",
+      "color",
+      "contentAware",
+      "pattern",
+      "history",
+      "black",
+      "gray",
+      "white",
+    ];
     const contents = typeof p.contents === "string" ? p.contents : "color";
     if (!CONTENTS.includes(contents)) {
       throw bad("edit.fill", `unknown contents \`${contents}\` (${CONTENTS.join("|")})`);
@@ -1315,11 +1397,7 @@ export class MockEngine {
               ? "#808080"
               : contents === "white"
                 ? "#ffffff"
-                : contents === "color"
-                  ? colorParam("edit.fill", p.color, rgbaToHex(this.foreground))
-                  : contents === "contentAware"
-                    ? "#808080"
-                    : "#ffffff"; // pattern/history: no pixels either way
+                : colorParam("edit.fill", p.color, rgbaToHex(this.foreground));
     const opacity = boundedUnit(p.opacity, 100, "opacity", "edit.fill", 100) / 100;
     if (p.preserveTransparency !== undefined && typeof p.preserveTransparency !== "boolean") {
       throw bad("edit.fill", "`preserveTransparency` must be true or false");
@@ -1327,8 +1405,8 @@ export class MockEngine {
     blendParam("edit.fill", p.mode);
     const layer = layerParam(doc, p, "edit.fill");
     layer.fillColor = color;
+    layer.fillOpacity = Math.min(1, Math.max(0, opacity));
     if (layer.bounds === null) layer.bounds = [0, 0, doc.width, doc.height];
-    layer.opacity = Math.min(1, Math.max(0, opacity)) * layer.opacity > 0 ? layer.opacity : layer.opacity;
     this.touch(doc, "Fill");
     return { contents };
   }
@@ -1338,27 +1416,33 @@ export class MockEngine {
   editTransform(p) {
     const doc = this.requireDoc();
     const layer = layerParam(doc, p, "edit.transform");
-    const rect =
-      Array.isArray(p.rect) && p.rect.length === 4 && p.rect.every((v) => typeof v === "number")
-        ? [...p.rect]
-        : layer.bounds === null
+    let rect;
+    if (p.rect !== undefined && p.rect !== null) {
+      if (!Array.isArray(p.rect) || p.rect.length !== 4 || !p.rect.every((v) => typeof v === "number" && Number.isFinite(v))) {
+        throw bad("edit.transform", "`rect` must be [x0,y0,x1,y1]");
+      }
+      rect = [...p.rect];
+    } else {
+      rect =
+        layer.bounds === null
           ? [0, 0, doc.width, doc.height]
-          : [layer.bounds[0], layer.bounds[1], layer.bounds[0] + layer.bounds[2], layer.bounds[1] + layer.bounds[3]];
+          : cornersOf(layer.bounds);
+    }
     let m;
-    if (Array.isArray(p.matrix)) {
-      if (p.matrix.length !== 6 || !p.matrix.every((v) => typeof v === "number" && Number.isFinite(v))) {
+    if (p.matrix !== undefined && p.matrix !== null) {
+      if (!Array.isArray(p.matrix) || p.matrix.length !== 6 || !p.matrix.every((v) => typeof v === "number" && Number.isFinite(v))) {
         throw bad("edit.transform", "`matrix` must be [a,b,c,d,e,f]");
       }
       m = [...p.matrix];
-    } else if (Array.isArray(p.quad)) {
-      if (p.quad.length !== 4 || !p.quad.every((c) => Array.isArray(c) && c.length === 2)) {
+    } else if (p.quad !== undefined && p.quad !== null) {
+      if (!Array.isArray(p.quad) || p.quad.length !== 4 || !p.quad.every((c) => Array.isArray(c) && c.length === 2 && c.every((v) => typeof v === "number" && Number.isFinite(v)))) {
         throw bad("edit.transform", "`quad` must be four [x,y] corners");
       }
       m = affineFromRectQuad(rect, p.quad);
     } else {
-      const sx = percentParam(p.scaleX, "scaleX", "edit.transform");
-      const sy = percentParam(p.scaleY, "scaleY", "edit.transform");
-      const rotate = numberParam(p.rotate, "rotate", "edit.transform", 0) * (Math.PI / 180);
+      const sx = percentParam(p.scaleX, "scaleX", "edit.transform") ?? 1;
+      const sy = percentParam(p.scaleY, "scaleY", "edit.transform") ?? 1;
+      const rotate = (numberParam(p.rotate, "rotate", "edit.transform", 0) * Math.PI) / 180;
       const dx = numberParam(p.dx, "dx", "edit.transform", 0);
       const dy = numberParam(p.dy, "dy", "edit.transform", 0);
       m = composeAffine(rect, sx, sy, rotate, dx, dy);
@@ -1385,21 +1469,22 @@ export class MockEngine {
 
   layerNewLayer(p) {
     const doc = this.requireDoc();
-    if (p.clipToPrevious !== undefined && typeof p.clipToPrevious !== "boolean") {
+    if (p.clipToPrevious !== undefined && p.clipToPrevious !== null && typeof p.clipToPrevious !== "boolean") {
       throw bad("layer.new.layer", "`clipToPrevious` must be true or false");
     }
-    if (p.fillNeutral !== undefined && typeof p.fillNeutral !== "boolean") {
+    if (p.fillNeutral !== undefined && p.fillNeutral !== null && typeof p.fillNeutral !== "boolean") {
       throw bad("layer.new.layer", "`fillNeutral` must be true or false");
     }
+    if (p.fillNeutral === true) throw bad("layer.new.layer", "Normal has no neutral color to fill with");
     const blend = blendParam("layer.new.layer", p.mode) ?? "Normal";
     const opacity = boundedUnit(p.opacity, 1, "opacity", "layer.new.layer", 1);
     if (p.name !== undefined && p.name !== null && typeof p.name !== "string") {
       throw bad("layer.new.layer", "`name` must be a string");
     }
-    const below = p.position === "below";
     if (p.position !== undefined && p.position !== null && !["above", "below"].includes(p.position)) {
       throw bad("layer.new.layer", "`position` must be above or below");
     }
+    const below = p.position === "below";
     doc.layerCounter += 1;
     const name = typeof p.name === "string" && p.name.length > 0 ? p.name : nextLayerName(doc, "Layer");
     const layer = newLayer(doc.layerCounter, name, "pixel", { blend, opacity });
@@ -1423,9 +1508,12 @@ export class MockEngine {
 
   layerDelete(p) {
     const doc = this.requireDoc();
-    const targets = p.layer === undefined || p.layer === null ? [...doc.selectedLayers] : [layerParam(doc, p, "layer.delete").id];
-    if (targets.length === 0) throw bad("layer.delete", "no layer selected");
-    if (doc.layers.length - targets.length < 1) {
+    const targets =
+      p.layer === undefined || p.layer === null
+        ? [...doc.selectedLayers]
+        : [layerParam(doc, p, "layer.delete").id];
+    if (targets.length === 0) throw internal("no layer to delete");
+    if (doc.layers.length - countNodes(doc, new Set(targets)) < 1) {
       throw internal("a document must keep at least one layer");
     }
     removeLayers(doc, new Set(targets));
@@ -1463,7 +1551,6 @@ export class MockEngine {
     } else if (mode === "remove") {
       if (selected.has(target.id) && selected.size > 1) selected.delete(target.id);
     } else {
-      // range: anchor..target in top-down walk order
       const order = walkTopDown(doc.layers).map((layer) => layer.id);
       const anchor = doc.activeLayer !== null && order.includes(doc.activeLayer) ? doc.activeLayer : target.id;
       const a = order.indexOf(anchor);
@@ -1475,7 +1562,6 @@ export class MockEngine {
     doc.selectedLayers = walkTopDown(doc.layers)
       .map((layer) => layer.id)
       .filter((id) => selected.has(id));
-    this.touch(doc, null); // selection is view state, but revisions are how tests observe
     return { selected: [...doc.selectedLayers] };
   }
 
@@ -1504,6 +1590,9 @@ export class MockEngine {
     if (p.visible !== undefined && p.visible !== null && typeof p.visible !== "boolean") {
       throw bad("layer.setProps", "`visible` must be true or false");
     }
+    if (p.clipped !== undefined && p.clipped !== null && typeof p.clipped !== "boolean") {
+      throw bad("layer.setProps", "`clipped` must be true or false");
+    }
     const opacity = boundedUnit(p.opacity, 1, "opacity", "layer.setProps");
     const fill = boundedUnit(p.fill, 1, "fill", "layer.setProps");
     const blend = blendParam("layer.setProps", p.blend, { allowPassThrough: true });
@@ -1520,20 +1609,20 @@ export class MockEngine {
       if (opacity !== undefined) layer.opacity = opacity;
       if (fill !== undefined) layer.fillOpacity = fill;
       if (blend !== undefined) layer.blend = blend;
+      if (typeof p.clipped === "boolean") layer.clipped = p.clipped;
     }
     this.touch(doc, "Layer Properties");
     return null;
   }
 
-  layerArrange(p, direction) {
+  layerArrange(p, id) {
     const doc = this.requireDoc();
-    const layer = layerParam(doc, p, `layer.arrange.${direction}`);
+    const layer = layerParam(doc, p, id);
     const siblings = siblingsOf(doc, layer);
-    const index = siblings.indexOf(layer);
-    siblings.splice(index, 1);
-    if (direction === "bringToFront") siblings.push(layer);
+    siblings.splice(siblings.indexOf(layer), 1);
+    if (id === "layer.arrange.bringToFront") siblings.push(layer);
     else siblings.unshift(layer);
-    this.touch(doc, direction === "bringToFront" ? "Bring to Front" : "Send to Back");
+    this.touch(doc, id === "layer.arrange.bringToFront" ? "Bring to Front" : "Send to Back");
     return null;
   }
 
@@ -1542,7 +1631,6 @@ export class MockEngine {
     const layer = layerParam(doc, p, "layer.layerMask.revealAll");
     if (isGroup(layer)) throw bad("layer.layerMask.revealAll", "a group cannot take a pixel mask");
     layer.hasMask = true;
-    layer.mask = { enabled: true, density: 100, feather: 0 };
     this.touch(doc, "Add Layer Mask");
     return null;
   }
@@ -1584,25 +1672,28 @@ export class MockEngine {
       }
     }
     if (typeof p.text !== "string") throw bad("type.create", "missing `text`");
-    const size = boundedUnit(p.size, 1296, "size", "type.create", 12);
-    if (size !== undefined && (size < 0.1 || size > 1296)) {
-      throw bad("type.create", "`size` must be a number from 0.1 to 1296 pt");
+    let box = null;
+    if (p.box !== undefined && p.box !== null) {
+      if (!Array.isArray(p.box) || p.box.length !== 4 || !p.box.every((v) => typeof v === "number")) {
+        throw bad("type.create", "`box` must be [x,y,w,h]");
+      }
+      box = [...p.box];
     }
-    const box = p.box === undefined || p.box === null ? null : p.box;
-    if (box !== null && (!Array.isArray(box) || box.length !== 4 || !box.every((v) => typeof v === "number"))) {
-      throw bad("type.create", "`box` must be [x,y,w,h]");
+    let size = 12;
+    if (p.size !== undefined && p.size !== null) {
+      size = numberParam(p.size, "size", "type.create", 12);
+      if (size < 0.1 || size > 1296) throw bad("type.create", "`size` must be a number from 0.1 to 1296 pt");
     }
     const text = {
       text: p.text,
       font: typeof p.font === "string" ? p.font : "Helvetica",
-      sizePt: size ?? 12,
+      sizePt: size,
       color: colorParam("type.create", p.color, "#000000"),
       box,
       point: box === null ? [p.x, p.y] : null,
     };
     doc.layerCounter += 1;
-    const name =
-      typeof p.name === "string" && p.name.length > 0 ? p.name : layerNameFromText(p.text);
+    const name = typeof p.name === "string" && p.name.length > 0 ? p.name : layerNameFromText(p.text);
     const layer = newLayer(doc.layerCounter, name, "type", {
       text,
       bounds: typeBounds(text),
@@ -1616,9 +1707,7 @@ export class MockEngine {
     const doc = this.requireDoc();
     const layer = layerParam(doc, p, "type.edit");
     if (layer.kind !== "type" || !layer.text) {
-      throw internal(
-        `layer ${layer.id} is ${article(layer)} ${kindName(layer)} layer, not a type layer`,
-      );
+      throw internal(`layer ${layer.id} is ${article(layer)} ${kindName(layer)} layer, not a type layer`);
     }
     const text = layer.text;
     if (p.text !== undefined && p.text !== null) {
@@ -1629,8 +1718,8 @@ export class MockEngine {
       if (typeof p.name !== "string") throw bad("type.edit", "`name` must be a string");
       layer.name = p.name;
     }
-    const size = boundedUnit(p.size, 1296, "size", "type.edit");
-    if (size !== undefined) {
+    if (p.size !== undefined && p.size !== null) {
+      const size = numberParam(p.size, "size", "type.edit", text.sizePt);
       if (size < 0.1 || size > 1296) throw bad("type.edit", "`size` must be a number from 0.1 to 1296 pt");
       text.sizePt = size;
     }
@@ -1639,7 +1728,10 @@ export class MockEngine {
       if (typeof p.font !== "string") throw bad("type.edit", "`font` must be a string");
       text.font = p.font;
     }
-    if (Array.isArray(p.box) && p.box.length === 4) text.box = [...p.box];
+    if (Array.isArray(p.box) && p.box.length === 4) {
+      text.box = [...p.box];
+      text.point = null;
+    }
     if (Array.isArray(p.point) && p.point.length === 2) {
       text.point = [...p.point];
       text.box = null;
@@ -1665,14 +1757,8 @@ export class MockEngine {
       layer.bounds = typeBounds(text);
     }
     this.touch(doc, "Edit Type");
-    return {
-      layer: layer.id,
-      text: text.text,
-      sizePt: text.sizePt,
-      font: text.font,
-      color: text.color,
-      bounds: cornersOf(layer.bounds),
-    };
+    // Simplified type info (vendor returns the full layout; README documents the cut).
+    return { layer: layer.id, text: text.text, sizePt: text.sizePt, font: text.font, color: text.color, bounds: cornersOf(layer.bounds) };
   }
 
   // --- inspect commands ----------------------------------------------------
@@ -1689,14 +1775,17 @@ export class MockEngine {
   }
 
   layerList(p) {
-    const doc = this.requireDoc();
+    let doc = this.requireDoc();
     if (p.document !== undefined && p.document !== null) {
       if (typeof p.document !== "number" || !Number.isInteger(p.document)) {
         throw bad("layer.list", "`document` must be an index");
       }
-      throw notFound("layer.list across documents is not modelled by the mock; omit `document`");
+      doc = this.documents[p.document];
+      if (!doc) throw notFound(`no document at index ${p.document}`);
     }
-    const flat = p.flat === true;
+    if (p.flat !== undefined && p.flat !== null && typeof p.flat !== "boolean") {
+      throw bad("layer.list", "`flat` must be true or false");
+    }
     const rows = [];
     const row = (layer) => ({
       id: layer.id,
@@ -1707,7 +1796,7 @@ export class MockEngine {
       selected: doc.selectedLayers.includes(layer.id),
       active: doc.activeLayer === layer.id,
     });
-    if (flat) {
+    if (p.flat === true) {
       const visit = (layers, parent, depth) => {
         for (let i = layers.length - 1; i >= 0; i -= 1) {
           const layer = layers[i];
@@ -1718,15 +1807,16 @@ export class MockEngine {
       visit(doc.layers, null, 0);
     } else {
       const visit = (layers) => {
+        const out = [];
         for (let i = layers.length - 1; i >= 0; i -= 1) {
           const layer = layers[i];
           const entry = row(layer);
           if (isGroup(layer)) entry.children = visit(layer.children);
-          rows.push(entry);
+          out.push(entry);
         }
-        return rowsLocal(visit, layers);
+        return out;
       };
-      visit(doc.layers);
+      rows.push(...visit(doc.layers));
     }
     return { layers: rows, activeLayer: doc.activeLayer };
   }
@@ -1748,7 +1838,6 @@ export class MockEngine {
       delete job.result;
       return { cancelled: 1 };
     }
-    if (job) throw notFound(`no running job ${p.job}`);
     throw notFound(`no running job ${p.job}`);
   }
 
@@ -1784,7 +1873,7 @@ export class MockEngine {
   // --- doc.* file-backed methods ------------------------------------------
 
   docOpen(rawPath) {
-    const { resolved, bytes } = this.readRoot(rawPath);
+    const { bytes } = this.readRoot(rawPath);
     let state;
     try {
       state = JSON.parse(bytes.toString("utf8"));
@@ -1813,8 +1902,8 @@ export class MockEngine {
   docPlace(index, rawPath, opts) {
     this.docIndex(index); // missing/null means the active document
     const doc = this.requireDoc();
-    let bytes = null;
-    let fileName = "placed.png";
+    let bytes;
+    let fileName;
     if (rawPath.startsWith("data:")) {
       // Mock-only extension beyond the vendor's capability-root path: an inline data URL
       // (data:image/png;base64,…) registers the image without touching the filesystem.
@@ -1829,15 +1918,15 @@ export class MockEngine {
       const mime = meta.split(";")[0];
       fileName = mime.startsWith("image/") ? `placed.${mime.slice("image/".length)}` : "placed.png";
     } else {
-      const read = this.readRoot(rawPath);
-      bytes = read.bytes;
+      bytes = this.readRoot(rawPath).bytes;
       fileName = path.posix.basename(rawPath.replace(/\\/g, "/"));
     }
     const dims = pngDimensions(bytes) ?? { width: 64, height: 64 };
-    const scale = typeof opts.scale === "number" && Number.isFinite(opts.scale) ? Math.max(opts.scale, 0.01) : null;
+    const scale = typeof opts.scale === "number" && Number.isFinite(opts.scale) ? opts.scale : null;
     const center = Array.isArray(opts.center) && opts.center.length === 2 ? opts.center : null;
     const fit = opts.fit === true || (scale === null && (dims.width > doc.width || dims.height > doc.height));
-    const factor = scale !== null ? scale / 100 : fit ? Math.min(doc.width / dims.width, doc.height / dims.height) : 1;
+    const factor =
+      scale !== null ? Math.max(scale, 0.01) / 100 : fit ? Math.min(doc.width / dims.width, doc.height / dims.height) : 1;
     const w = dims.width * factor;
     const h = dims.height * factor;
     const cx = center !== null ? center[0] : doc.width / 2;
@@ -1865,26 +1954,33 @@ export class MockEngine {
     if (target === null || target === undefined) {
       throw bad("doc.save", "document has no path; pass `path`");
     }
-    const ext = (format ?? path.posix.extname(target).replace(/^\./, "")).trimStart(".").toLowerCase() || "pcraft";
+    let ext = format ?? path.posix.extname(target).replace(/^\./, "");
+    ext = typeof ext === "string" ? ext.toLowerCase() : "";
+    if (ext === "") ext = "pcraft";
     if (ext === "pcraft") {
+      // A .pcraft save is the mock's whole-document format: plain JSON with a .pcraft
+      // extension (a real one is a directory or zip; README documents the difference).
       const state = serializeDocument(doc);
-      this.writeRoot(target, Buffer.from(JSON.stringify(state, null, 2), "utf8"));
+      this.writeRoot(target, Buffer.from(`${JSON.stringify(state, null, 2)}\n`, "utf8"));
       doc.path = target;
       doc.savedRevision = doc.revision;
       return { path: target, warnings: [] };
     }
     if (ext === "png") {
-      const png = renderPng(doc, 0);
-      this.writeRoot(target, png);
+      // A flat export is a copy: it leaves the document dirty and its path alone (#1547).
+      this.writeRoot(target, renderPng(doc, 0));
       return { path: target, warnings: [] };
     }
-    throw bad("doc.save", `this mock saves .pcraft or .png, not \`.${ext}\` (a flat export is a copy and leaves the document dirty)`);
+    throw bad(
+      "doc.save",
+      `this mock saves .pcraft or .png, not \`.${ext}\` (pass "format" or a recognised extension)`,
+    );
   }
 
   docExportLayers(index, dir, params) {
     this.docIndex(index);
     const doc = this.requireDoc();
-    if (typeof params.prefix !== "undefined" && params.prefix !== null && typeof params.prefix !== "string") {
+    if (params.prefix !== undefined && params.prefix !== null && typeof params.prefix !== "string") {
       throw bad("doc.exportLayers", "`prefix` must be a string");
     }
     const visibleOnly = params.visibleOnly !== false;
@@ -1899,7 +1995,8 @@ export class MockEngine {
       let n = 2;
       while (seen.has(name)) name = `${base}_${n++}.png`;
       seen.add(name);
-      this.writeRoot(`${dir}/${name}`, renderPng(doc, 0));
+      // The write capability refuses to overwrite an existing file (workspace.rs).
+      this.writeRoot(`${dir}/${name}`, renderPng(doc, 0), { overwrite: false });
       files.push(`${dir}/${name}`);
     }
     return { files, count: files.length };
@@ -1908,23 +2005,24 @@ export class MockEngine {
   docExportDataSets(index, dir, params) {
     this.docIndex(index);
     this.requireDoc();
-    // Stub per the task: the data-set variables model is not part of the fake. The dir and
-    // write authority are still validated before answering, like the real method.
-    if (typeof params.naming === "string" && !params.naming.includes("{index}") && params.naming === "{document}") {
-      throw bad("doc.exportDataSets", "naming must include {index} or produce unique names");
+    // Stub per the task: the data-set variable model is not part of the fake. The dir and
+    // write authority are still validated before answering, like the real method, and a
+    // naming that would collide is refused before any file is written, as the command does.
+    if (params.naming === "{document}") {
+      throw bad("doc.exportDataSets", "naming must include {index} (names would collide)");
     }
     return { files: [], count: 0 };
   }
 
-  docImportDataSets(index, rawPath, params) {
+  docImportDataSets(index, rawPath) {
     this.docIndex(index);
-    const delimiter = typeof params.delimiter === "string" && params.delimiter.length > 0 ? params.delimiter : ",";
     const { bytes } = this.readRoot(rawPath);
-    const lines = bytes
+    // Stub per the task: count the data rows of the CSV beneath the read root.
+    const rows = bytes
       .toString("utf8")
       .split(/\r?\n/)
       .filter((line) => line.trim().length > 0);
-    return { imported: Math.max(0, lines.length - 1) };
+    return { imported: Math.max(0, rows.length - 1) };
   }
 
   docRender(index, maxSide, target) {
@@ -1944,8 +2042,8 @@ export class MockEngine {
     if (target === null) {
       return { mime: "image/png", base64: png.toString("base64") };
     }
-    const resolved = this.writeRoot(target, png);
-    return { path: target, bytes: png.length, resolved: relativeOnly(resolved) };
+    this.writeRoot(target, png);
+    return { path: target, bytes: png.length };
   }
 
   docSelect(index) {
@@ -1989,6 +2087,10 @@ function insertAbove(doc, layer, below) {
   doc.selectedLayers = [layer.id];
 }
 
+function countNodes(doc, ids) {
+  return walkTopDown(doc.layers).filter((layer) => ids.has(layer.id)).length;
+}
+
 function removeLayers(doc, ids) {
   const prune = (layers) => {
     const kept = [];
@@ -2009,13 +2111,13 @@ function selectionTarget(doc, p) {
   const raw = p.layer;
   if (raw !== undefined && raw !== null) {
     if (typeof raw === "number") {
-      if (!Number.isInteger(raw)) throw bad("layer.select", `\`layer\` must be a layer id or name`);
+      if (!Number.isInteger(raw) || raw < 0) throw bad("layer.select", "`layer` must be a layer id or name");
       const layer = findLayer(doc, raw);
       if (!layer) throw noLayer(doc, raw);
       return layer;
     }
     if (typeof raw === "string") return layerByName(doc, raw, p.occurrence);
-    throw bad("layer.select", `\`layer\` must be a layer id or name`);
+    throw bad("layer.select", "`layer` must be a layer id or name");
   }
   if (typeof p.name === "string") return layerByName(doc, p.name, p.occurrence);
   throw bad("layer.select", "missing `layer` or `name`");
@@ -2027,109 +2129,19 @@ function layerByName(doc, name, occurrence) {
   if (matches.length > 1 && (occurrence === undefined || occurrence === null)) {
     throw bad("layer.select", `layer name \`${name}\` is ambiguous; pass \`occurrence\``);
   }
-  const index =
-    occurrence === undefined || occurrence === null
-      ? 0
-      : (typeof occurrence === "number" && Number.isInteger(occurrence) ? occurrence : null);
-  if (index === null) throw bad("layer.select", "`occurrence` must be a non-negative integer");
+  let index = 0;
+  if (occurrence !== undefined && occurrence !== null) {
+    if (typeof occurrence !== "number" || !Number.isInteger(occurrence) || occurrence < 0) {
+      throw bad("layer.select", "`occurrence` must be a non-negative integer");
+    }
+    index = occurrence;
+  }
   const layer = matches[index];
   if (!layer) throw noLayerByName(doc, name);
   return layer;
 }
 
-function noLayerByName(doc, name) {
-  return new EngineFailure(`no layer named \`${name}\`; the document has: ${knownLayers(doc)}`, "no_layer");
-}
-
-const rgbaToHex = (rgba) => {
-  const [r, g, b] = rgba.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
-};
-
-/** Percent-style param: 50 = 50 %. Returns undefined when absent. */
-function percentParam(value, key, cmd) {
-  if (value === undefined || value === null) return undefined;
-  const n = numberParam(value, key, cmd, 100);
-  return n / 100;
-}
-
-function numberParam(value, key, cmd, fallback) {
-  if (value === undefined || value === null) return fallback;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw bad(cmd, `\`${key}\` must be a number`);
-  }
-  return value;
-}
-
-/** A 0..`max` unit param (opacity as 0..1, percents as 0..100). Undefined when absent. */
-function boundedUnit(value, max, key, cmd, fallback = undefined) {
-  if (value === undefined || value === null) return fallback;
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > max) {
-    throw bad(cmd, `\`${key}\` must be a number in 0..${max === 1 ? "1 (1 = 100 %)" : max}, got ${JSON.stringify(value)}`);
-  }
-  return value;
-}
-
-/** Approximate type bounds: point text from the baseline anchor, paragraph text = the box. */
-function typeBounds(text) {
-  const size = text.sizePt;
-  if (text.box) {
-    const [x, y, w, h] = text.box;
-    return [Math.round(x), Math.round(y), Math.round(w), Math.round(h)];
-  }
-  const [x, y] = text.point ?? [0, 0];
-  const width = Math.max(1, Math.round(size * 0.6 * [...text.text].length));
-  const ascent = Math.round(size * 0.8);
-  const descent = Math.round(size * 0.25);
-  return [Math.round(x), Math.round(y - ascent), width, Math.round(ascent + descent)];
-}
-
-const cornersOf = (bounds) =>
-  bounds === null ? null : [bounds[0], bounds[1], bounds[0] + bounds[2], bounds[1] + bounds[3]];
-
-/** Layer name default for type.create (vendor: layer_name(&text)). */
-function layerNameFromText(text) {
-  const trimmed = text.trim().replace(/\s+/g, " ");
-  if (trimmed.length === 0) return "Type Layer";
-  return trimmed.length > 64 ? `${trimmed.slice(0, 61)}…` : trimmed;
-}
-
-/** Free Transform: affine from a source rect to a destination quad (first 3 corners solve it). */
-function affineFromRectQuad(rect, quad) {
-  const [x0, y0, x1, y1] = rect;
-  const width = x1 - x0 || 1;
-  const height = y1 - y0 || 1;
-  const [[ax, ay], [bx, by], [cx, cy]] = quad;
-  // local coords: u = (x-x0)/width, v = (y-y0)/height; solve a 2x3 system with corner A at origin.
-  const ux = (bx - ax) / width;
-  const vx = (cx - ax) / height;
-  const uy = (by - ay) / width;
-  const vy = (cy - ay) / height;
-  return [ux, uy, vx, vy, ax - ux * x0 - vx * y0, ay - uy * x0 - vy * y0];
-}
-
-/** Relative alternative: scale and rotate about the frame's centre, then move. */
-function composeAffine(rect, sx, sy, rotate, dx, dy) {
-  const cx = (rect[0] + rect[2]) / 2;
-  const cy = (rect[1] + rect[3]) / 2;
-  const cos = Math.cos(rotate);
-  const sin = Math.sin(rotate);
-  // affine = translate(c) · rotate · scale · translate(-c) · translate(d)
-  const a = cos * sx;
-  const b = sin * sx;
-  const c = -sin * sy;
-  const d = cos * sy;
-  return [a, b, c, d, cx - (a * cx + c * cy) + dx, cy - (b * cx + d * cy) + dy];
-}
-
-const sanitize = (name) =>
-  name
-    .replace(/[\\/:*?"<>|\n\r\t]/g, "_")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 64) || "layer";
-
-// --- mock .pcraft state (plain JSON, README documents the format) -----------
+// --- mock .pcraft state (plain JSON; README documents the format) ------------
 
 function serializeDocument(doc) {
   return {
@@ -2141,7 +2153,6 @@ function serializeDocument(doc) {
     depth: doc.depth,
     resolution: doc.resolution,
     revision: doc.revision,
-    savedRevision: doc.revision,
     activeLayer: doc.activeLayer,
     selectedLayers: [...doc.selectedLayers],
     layers: doc.layers.map(serializeLayer),
@@ -2181,9 +2192,9 @@ function hydrateDocument(state, id) {
     activeLayer: typeof state.activeLayer === "number" ? state.activeLayer : null,
     selectedLayers: Array.isArray(state.selectedLayers) ? state.selectedLayers : [],
     revision: typeof state.revision === "number" ? state.revision : 0,
-    savedRevision: typeof state.savedRevision === "number" ? state.savedRevision : 0,
+    savedRevision: typeof state.revision === "number" ? state.revision : 0,
     path: null,
-    history: Array.isArray(state.history) ? state.history : [],
+    history: [],
     layerCounter: 0,
   };
   const ids = walkTopDown(doc.layers).map((layer) => layer.id);
@@ -2213,11 +2224,11 @@ function hydrateLayer(state) {
   return layer;
 }
 
-// --- the fake render --------------------------------------------------------
+// --- the fake render ---------------------------------------------------------
 
 /**
  * Render the document as the uniform gray PNG (README › The fake render). Previews never
- * upscale: a document smaller than maxSide renders at full size.
+ * upscale: a document whose longest edge fits maxSide renders at full size.
  */
 function renderPng(doc, maxSide) {
   let width = doc.width;
@@ -2231,40 +2242,4 @@ function renderPng(doc, maxSide) {
     }
   }
   return grayPng(width, height);
-}
-
-// --- fs shims (kept tiny; root paths are already validated) -----------------
-
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-
-function ensureParent(resolved) {
-  mkdirSync(path.dirname(resolved), { recursive: true });
-}
-
-function fsReadFile(resolved) {
-  return readFileSync(resolved);
-}
-
-function fsWriteFile(resolved, bytes) {
-  ensureParent(resolved);
-  writeFileSync(resolved, bytes);
-}
-
-/** Map a Node fs error to the Rust ErrorKind name the vendor prints. */
-function ioKind(error) {
-  if (error?.code === "ENOENT") return "NotFound";
-  if (error?.code === "EISDIR") return "IsADirectory";
-  if (error?.code === "ENOTDIR") return "NotADirectory";
-  if (error?.code === "EEXIST") return "AlreadyExists";
-  return "Other";
-}
-
-/** @param {string} resolved absolute path */
-function relativeOnly(resolved) {
-  return resolved;
-}
-
-// layerList helper (kept outside the class; the tree walker above composes rows)
-function rowsLocal(visit, layers) {
-  return undefined;
 }

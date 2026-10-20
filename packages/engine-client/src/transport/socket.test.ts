@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { FramedMessage } from "./frame.js";
-import { buildAuthFrame, encodeFrame, MAX_REPLY_BYTES } from "./frame.js";
+import { buildAuthFrame, MAX_REPLY_BYTES } from "./frame.js";
 import {
   connectionDroppedMidCall,
   isTransportError,
@@ -74,12 +74,11 @@ async function connectedSocket(host = "127.0.0.1") {
 
 describe("connect()", () => {
   it("opens and reports the factory's clock + timeout contract", async () => {
-    const { socket, fake, factoryOptions } = makeSocket(new FakeLowLevelSocket());
+    const { socket, factoryOptions } = makeSocket(new FakeLowLevelSocket());
     await socket.connect();
     expect(socket.isOpen()).toBe(true);
     expect(factoryOptions()?.connectTimeoutMs).toBe(30_000); // SERVER_IO_TIMEOUT_MS default
     expect(factoryOptions()?.clock).toBeInstanceOf(FakeClock);
-    void fake;
   });
 
   it("refuses a second connect()", async () => {
@@ -249,9 +248,10 @@ describe("reply byte ceiling (§Transport limits: 8 MiB incl. newline)", () => {
     const { socket, fake } = await connectedSocket();
     const frames = captureFrames(socket);
     const errors = captureErrors(socket);
-    const overhead = encodeFrame({ kind: "reply", id: 1, result: "" }).length - 2; // chars around the payload
-    const exact = `{"id":1,"ok":true,"result":"${"x".repeat(MAX_REPLY_BYTES - overhead - 1)}"}\n`;
-    expect(exact.length).toBe(MAX_REPLY_BYTES);
+    const prefix = '{"id":1,"ok":true,"result":"';
+    const suffix = '"}\n';
+    const exact = `${prefix}${"x".repeat(MAX_REPLY_BYTES - prefix.length - suffix.length)}${suffix}`;
+    expect(exact.length).toBe(MAX_REPLY_BYTES); // includes the newline (§Transport limits)
     fake.receive(bytes(exact));
     expect(frames.length).toBe(1);
     expect(errors.length).toBe(0);
@@ -283,17 +283,19 @@ describe("stream errors and close", () => {
     const socket = new NodeNetSocket({
       endpoint: { host: "127.0.0.1", port: 7878 },
       clock: new FakeClock(),
-      socketFactory: async () =>
-        ({
-          write: (_chunk: string | Uint8Array, callback?: (error?: unknown) => void) => {
-            callback?.(new Error("write EPIPE"));
-            return true;
-          },
-          destroy(): void {},
-          on(): unknown {
-            return undefined;
-          },
-        }) as FakeLowLevelSocket,
+      socketFactory: async () => ({
+        write(
+          _chunk: string | Uint8Array,
+          callback?: (error?: unknown) => void,
+        ): boolean {
+          callback?.(new Error("write EPIPE"));
+          return true;
+        },
+        destroy(): void {},
+        on(_event: string, _listener: (...args: unknown[]) => void): unknown {
+          return undefined;
+        },
+      }),
     });
     await socket.connect();
     await expect(

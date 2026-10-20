@@ -7,14 +7,14 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_HEALTH_THRESHOLDS,
   HealthMonitor,
-  classifyHealthProbe,
-  createLivenessRecorder,
-  resolveHealthThresholds,
   type HealthProbeClient,
   type HealthProbeOutcome,
   type HealthThresholds,
   type LivenessRecorder,
   type SessionHealthStatus,
+  classifyHealthProbe,
+  createLivenessRecorder,
+  resolveHealthThresholds,
 } from "../src/health.js";
 import { SessionRegistry } from "../src/registry.js";
 import type { EngineSession } from "../src/types.js";
@@ -34,11 +34,16 @@ const session = (sessionId: string): EngineSession => ({
   state: "attached",
 });
 
-type Role = "ok" | "slow" | "hang" | "reject";
+type Role = "ok" | "slow" | "delay" | "hang" | "reject";
 
 class ScriptedProbeClient implements HealthProbeClient {
   readonly probed: string[] = [];
   readonly script: Record<string, Role> = {};
+  /** Latency the "slow" role simulates (clock ticks), for tests with tight bands. */
+  slowAdvanceMs = DEFAULT_HEALTH_THRESHOLDS.slowMs + 200;
+  /** Real ms the "delay" role sleeps — for concurrent sweeps where a shared manual
+   * clock would smear one session's latency into every in-flight probe. */
+  delayMs = 15;
   readonly #clock: ManualClock | undefined;
 
   constructor(clock?: ManualClock) {
@@ -54,8 +59,14 @@ class ScriptedProbeClient implements HealthProbeClient {
     if (role === "hang") {
       return await new Promise<never>(() => undefined);
     }
+    if (role === "delay") {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, this.delayMs);
+      });
+      return ["methods"];
+    }
     if (role === "slow") {
-      this.#clock?.advance(DEFAULT_HEALTH_THRESHOLDS.slowMs + 200);
+      this.#clock?.advance(this.slowAdvanceMs);
     }
     return ["methods", "doc.save", "batch"];
   }
@@ -75,7 +86,9 @@ interface LogSink {
   readonly warns: Array<{ message: string; data?: Record<string, unknown> }>;
 }
 
-const logger = (): { warn: (message: string, data?: Record<string, unknown>) => void } & LogSink => {
+const logger = (): {
+  warn: (message: string, data?: Record<string, unknown>) => void;
+} & LogSink => {
   const warns: Array<{ message: string; data?: Record<string, unknown> }> = [];
   return {
     warns,
@@ -97,7 +110,11 @@ interface ClassifyRow {
 
 const classifyRows: readonly ClassifyRow[] = [
   { name: "instant reply is healthy", outcome: { ok: true, latencyMs: 0 }, expected: "healthy" },
-  { name: "just under slow is healthy", outcome: { ok: true, latencyMs: 999 }, expected: "healthy" },
+  {
+    name: "just under slow is healthy",
+    outcome: { ok: true, latencyMs: 999 },
+    expected: "healthy",
+  },
   {
     name: "at the slow threshold is slow",
     outcome: { ok: true, latencyMs: DEFAULT_HEALTH_THRESHOLDS.slowMs },
@@ -113,7 +130,11 @@ const classifyRows: readonly ClassifyRow[] = [
     outcome: { ok: true, latencyMs: DEFAULT_HEALTH_THRESHOLDS.deadMs },
     expected: "dead",
   },
-  { name: "pathologically slow reply is dead", outcome: { ok: true, latencyMs: 9_999 }, expected: "dead" },
+  {
+    name: "pathologically slow reply is dead",
+    outcome: { ok: true, latencyMs: 9_999 },
+    expected: "dead",
+  },
   { name: "timeout is dead", outcome: { ok: false, reason: "timeout" }, expected: "dead" },
   { name: "error is dead", outcome: { ok: false, reason: "error" }, expected: "dead" },
 ];
@@ -146,7 +167,9 @@ describe("resolveHealthThresholds", () => {
     ["deadMs cannot precede slowMs", { deadMs: 100 }],
     ["probe window cannot precede deadMs", { probeTimeoutMs: 2_000 }],
   ])("fails fast when %s", (_name, partial) => {
-    expect(() => resolveHealthThresholds(partial)).toThrow(/0 < slowMs <= deadMs <= probeTimeoutMs/);
+    expect(() => resolveHealthThresholds(partial)).toThrow(
+      /0 < slowMs <= deadMs <= probeTimeoutMs/,
+    );
   });
 });
 
@@ -237,7 +260,7 @@ describe("HealthMonitor.probe (methods roundtrip, §Appendix B)", () => {
     client.script["s-1"] = "hang";
     const monitor = new HealthMonitor({
       client,
-      thresholds: { probeTimeoutMs: 10 },
+      thresholds: { slowMs: 1, deadMs: 2, probeTimeoutMs: 10 },
     });
 
     const report = await monitor.probe(session("s-1"));
@@ -296,18 +319,19 @@ describe("HealthMonitor.probe (methods roundtrip, §Appendix B)", () => {
 
 describe("HealthMonitor.sweep (watchdog feed)", () => {
   it("probes concurrently and aggregates per status for the watchdog", async () => {
-    const clock = new ManualClock(0);
-    const client = new ScriptedProbeClient(clock);
+    // No injected clock: concurrent probes share a clock, and a manual one would
+    // smear one session's latency into the others. The "delay" role sleeps briefly
+    // in real time instead (tiny window, like the drain-grace tests in pool.test.ts).
+    const client = new ScriptedProbeClient();
     client.script["s-ok"] = "ok";
-    client.script["s-slow"] = "slow";
+    client.script["s-slow"] = "delay";
     client.script["s-reject"] = "reject";
     client.script["s-hang"] = "hang";
     const liveness = new RecordingLiveness();
     const monitor = new HealthMonitor({
       client,
       liveness,
-      clock: clock.now,
-      thresholds: { probeTimeoutMs: 10 },
+      thresholds: { slowMs: 1, deadMs: 20, probeTimeoutMs: 25 },
     });
 
     const sweep = await monitor.sweep([

@@ -11,7 +11,7 @@
 // every client connection then authenticates with it (the `client_token` role).
 // Clients never silently generate credentials: `resolveEngineToken` fails closed.
 import { randomBytes } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, type Stats } from "node:fs/promises";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -200,7 +200,7 @@ export async function resolveEngineToken(auth: EngineAuth): Promise<AuthResult<s
 }
 
 async function readTokenFile(path: string): Promise<AuthResult<string>> {
-  let info;
+  let info: Stats;
   try {
     info = await stat(path);
   } catch {

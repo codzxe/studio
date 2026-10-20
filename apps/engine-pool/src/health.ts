@@ -145,7 +145,7 @@ export interface HealthMonitorOptions {
   readonly deadline?: (ms: number) => Promise<"timeout">;
   /** Optional structured logger (§22); defaults to a silent sink, like the pool. */
   readonly logger?: { warn(message: string, data?: Record<string, unknown>): void };
-};
+}
 
 const defaultDeadline = (ms: number): Promise<"timeout"> =>
   new Promise((resolve) => {
@@ -183,9 +183,7 @@ export class HealthMonitor {
       outcome = await Promise.race([
         this.#client
           .methods(session)
-          .then(
-            (): HealthProbeOutcome => ({ ok: true, latencyMs: this.#clock() - startedAt }),
-          ),
+          .then((): HealthProbeOutcome => ({ ok: true, latencyMs: this.#clock() - startedAt })),
         this.#deadline(this.#thresholds.probeTimeoutMs).then(
           (): HealthProbeOutcome => ({ ok: false, reason: "timeout" }),
         ),

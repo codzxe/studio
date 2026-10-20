@@ -6,11 +6,6 @@ import { describe, expect, it } from "vitest";
 import {
   CHECKPOINT_ACTOR,
   CheckpointManager,
-  LocalCheckpointStorage,
-  checkpointVersionLabel,
-  defaultCheckpointStorageKey,
-  defaultSnapshotPath,
-  splitStorageKey,
   type CheckpointManagerOptions,
   type CheckpointRequest,
   type CheckpointStore,
@@ -18,7 +13,12 @@ import {
   type DocSaveResult,
   type EngineDocumentIo,
   type FsLike,
+  LocalCheckpointStorage,
   type StorageLike,
+  checkpointVersionLabel,
+  defaultCheckpointStorageKey,
+  defaultSnapshotPath,
+  splitStorageKey,
 } from "../src/checkpoint.js";
 import { DEFAULT_IDLE_TIMEOUT_MS } from "../src/constants.js";
 import type { EngineSession } from "../src/types.js";
@@ -256,15 +256,24 @@ describe("CheckpointManager.saveCheckpoint (§3.3 step 6)", () => {
     { name: "empty storage key", value: { ...request(), storageKey: "" } },
     {
       name: "absolute snapshot path",
-      value: { ...request(), engineSnapshotRef: { kind: "doc.save", path: "/etc/passwd", savedAt: 0 } },
+      value: {
+        ...request(),
+        engineSnapshotRef: { kind: "doc.save", path: "/etc/passwd", savedAt: 0 },
+      },
     },
     {
       name: "escaping snapshot path",
-      value: { ...request(), engineSnapshotRef: { kind: "doc.save", path: "../rev-1.pcraft", savedAt: 0 } },
+      value: {
+        ...request(),
+        engineSnapshotRef: { kind: "doc.save", path: "../rev-1.pcraft", savedAt: 0 },
+      },
     },
     {
       name: "unknown snapshot kind",
-      value: { ...request(), engineSnapshotRef: { kind: "doc.snapshot", path: "ok.pcraft", savedAt: 0 } },
+      value: {
+        ...request(),
+        engineSnapshotRef: { kind: "doc.snapshot", path: "ok.pcraft", savedAt: 0 },
+      },
     },
     { name: "unknown request field", value: { ...request(), extra: true } },
   ])("rejects $name before touching the engine", async ({ value }) => {
@@ -309,7 +318,7 @@ describe("CheckpointManager.isIdleDue (§3.4 idle timeout)", () => {
   it("honors a custom timeout and the injected clock", () => {
     const h = makeManager({ idleTimeoutMs: 1_000 });
     expect(h.manager.isIdleDue(session({ lastActivityAt: h.clock.now() - 999 }))).toBe(false);
-    h.clock.advance(1);
+    h.clock.advance(1_000);
     expect(h.manager.isIdleDue(session({ lastActivityAt: 1_000_000 }))).toBe(true);
   });
 });
@@ -328,9 +337,7 @@ describe("CheckpointManager.saveIdleCheckpoint (§3.2 idle-timeout flow)", () =>
     const outcome = await h.manager.saveIdleCheckpoint(idleSession, { revision: 7 });
     expect(outcome).toMatchObject({ ok: true, revision: 7 });
     expect(h.engine.savedPaths).toEqual([defaultSnapshotPath("s-1", 7)]);
-    expect([...h.storage.files.keys()]).toEqual([
-      defaultCheckpointStorageKey("org-1", "doc-1", 7),
-    ]);
+    expect([...h.storage.files.keys()]).toEqual([defaultCheckpointStorageKey("org-1", "doc-1", 7)]);
     const row = h.store.rows.at(0);
     if (!row) throw new Error("expected a version row");
     expect(row.revision).toBe(7);
@@ -349,7 +356,8 @@ describe("CheckpointManager.saveIdleCheckpoint (§3.2 idle-timeout flow)", () =>
 
   it("prefers explicit overrides, then injected policies, over the defaults", async () => {
     const h = makeManager({
-      storageKeyFor: ({ organizationId, revision }) => `policy/${organizationId}/r${revision}.pcraft`,
+      storageKeyFor: ({ organizationId, revision }) =>
+        `policy/${organizationId}/r${revision}.pcraft`,
       snapshotPathFor: (attached, revision) => `policy/${attached.sessionId}/r${revision}.pcraft`,
     });
     const explicit = await h.manager.saveIdleCheckpoint(session(), {

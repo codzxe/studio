@@ -86,7 +86,12 @@ export interface AttachStateProvider {
 /** Result of one engine call: a §4-shaped envelope, never a throw at the seam. */
 export type EngineCall =
   | { readonly ok: true }
-  | { readonly ok: false; readonly code: string; readonly message: string; readonly retryable?: boolean };
+  | {
+      readonly ok: false;
+      readonly code: string;
+      readonly message: string;
+      readonly retryable?: boolean;
+    };
 
 /** One transactional batch step — the `batch { steps: [{ command, params }] }` shape. */
 export interface BatchStep {
@@ -185,9 +190,7 @@ const describeIssues = (issues: readonly z.ZodIssue[]): string => {
 
 const STRATEGIES = ["checkpoint", "replay", "fresh"] as const;
 
-export const ATTACH_OPTIONS_SCHEMA = z
-  .object({ strategy: z.enum(STRATEGIES).optional() })
-  .strict();
+export const ATTACH_OPTIONS_SCHEMA = z.object({ strategy: z.enum(STRATEGIES).optional() }).strict();
 export const ATTACH_PLAN_SCHEMA = z
   .object({
     kind: z.enum(STRATEGIES),
@@ -208,9 +211,7 @@ const DOCUMENT_ID_SCHEMA = z.string().min(1).max(128);
 export const replayableEntries = (
   entries: readonly WalCommandEntry[],
 ): readonly WalCommandEntry[] =>
-  entries
-    .filter((entry) => entry.result !== null)
-    .sort((a, b) => a.seq - b.seq);
+  entries.filter((entry) => entry.result !== null).sort((a, b) => a.seq - b.seq);
 
 /**
  * The §3.4 decision, pure over (checkpoint, WAL slice after the checkpoint base).
@@ -303,7 +304,11 @@ const readState = async (
   documentId: string,
   organizationId: string,
 ): Promise<
-  | { readonly ok: true; readonly checkpoint: CheckpointState | null; readonly entries: readonly WalCommandEntry[] }
+  | {
+      readonly ok: true;
+      readonly checkpoint: CheckpointState | null;
+      readonly entries: readonly WalCommandEntry[];
+    }
   | AttachFailure
 > => {
   let checkpoint: CheckpointState | null;
@@ -334,9 +339,13 @@ const restoreFromCheckpoint = async (
   if (!state.ok) return state;
   const { checkpoint } = state;
   if (checkpoint === null) {
-    return failure("strategy_unavailable", "Checkpoint disappeared between planning and execution", {
-      retryable: true,
-    });
+    return failure(
+      "strategy_unavailable",
+      "Checkpoint disappeared between planning and execution",
+      {
+        retryable: true,
+      },
+    );
   }
   let bytes: Uint8Array | undefined;
   try {
@@ -357,9 +366,13 @@ const restoreFromCheckpoint = async (
   try {
     stagedPath = await deps.stager.stage(session, relativePath, bytes);
   } catch {
-    return failure("engine_attach_failed", "Checkpoint could not be staged into the capability root", {
-      retryable: true,
-    });
+    return failure(
+      "engine_attach_failed",
+      "Checkpoint could not be staged into the capability root",
+      {
+        retryable: true,
+      },
+    );
   }
   const openFailure = await callEngine(
     () => deps.engine.openDocument(session, stagedPath),
@@ -390,7 +403,10 @@ export async function executeAttachPlan(
     );
   }
   if (!DOCUMENT_ID_SCHEMA.safeParse(documentId).success) {
-    return failure("invalid_attach_request", "Attach request rejected: documentId must be a non-empty id");
+    return failure(
+      "invalid_attach_request",
+      "Attach request rejected: documentId must be a non-empty id",
+    );
   }
   const { kind, fromRevision } = parsedPlan.data;
 
@@ -472,7 +488,10 @@ export class SessionAttach {
     options?: AttachOptions,
   ): Promise<AttachPlanOutcome> {
     if (!DOCUMENT_ID_SCHEMA.safeParse(documentId).success) {
-      return failure("invalid_attach_request", "Attach request rejected: documentId must be a non-empty id");
+      return failure(
+        "invalid_attach_request",
+        "Attach request rejected: documentId must be a non-empty id",
+      );
     }
     const parsedOptions = ATTACH_OPTIONS_SCHEMA.safeParse(options ?? {});
     if (!parsedOptions.success) {
