@@ -503,7 +503,11 @@ impl TextMeasurer for EngineTextMeasurer {
     fn measure(&self, text: &str, font: &FontRef, size: f64, max_width: f64) -> TextMetrics {
         let px_per_pt = self.px_per_pt();
         let hostile = || TextMetrics { width: METRIC_CEILING, lines: 1, line_height: METRIC_CEILING };
-        if !size.is_finite() || size <= 0.0 || !max_width.is_finite() || !(1.0..=MAX_BOX_PX).contains(&max_width) {
+        // The size cap also keeps the `size as f32` below from overflowing to inf for a
+        // hostile engine-internal caller (the engine's own limit, TYPE_SIZE_MAX_PT, is far
+        // below it): garbage yields the ceiling metrics, never a probe the text engine chokes on.
+        if !size.is_finite() || size <= 0.0 || size > MAX_BOX_PX
+            || !max_width.is_finite() || !(1.0..=MAX_BOX_PX).contains(&max_width) {
             return hostile();
         }
         let text = crate::type_cmds::norm_text(text);

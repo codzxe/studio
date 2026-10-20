@@ -1,0 +1,18 @@
+{
+  "id": "price-tag",
+  "version": 1,
+  "name": "Price Tag",
+  "author": "studio",
+  "description": "Tag plate with a punched hole, a large price line and a quieter currency line.",
+  "tags": ["pricing", "promo", "badge"],
+  "defaultSize": { "width": 200, "height": 120 },
+  "variables": {
+    "price":     { "kind": "text", "default": "24.00", "maxChars": 10 },
+    "currency":  { "kind": "text", "default": "$", "maxChars": 3 },
+    "bg":        { "kind": "color", "default": "#FFF7EE" },
+    "textColor": { "kind": "color", "default": "#3B2A20" }
+  },
+  "anchors": { "topLeft": [0, 0], "topRight": [1, 0], "bottomRight": [1, 1] },
+  "comps": ["default", "light", "dark"],
+  "license": "public"
+}

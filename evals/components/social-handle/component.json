@@ -1,0 +1,17 @@
+{
+  "id": "social-handle",
+  "version": 1,
+  "name": "Social Handle",
+  "author": "studio",
+  "description": "Social handle line with an optional leading dot icon — the classic footer or profile row.",
+  "tags": ["social", "brand", "handle"],
+  "defaultSize": { "width": 280, "height": 48 },
+  "variables": {
+    "handle":   { "kind": "text", "default": "@acme.coffee", "maxChars": 30 },
+    "color":    { "kind": "color", "default": "#3B2A20" },
+    "showIcon":  { "kind": "visibility", "default": true }
+  },
+  "anchors": { "left": [0, 0.5], "center": [0.5, 0.5], "right": [1, 0.5] },
+  "comps": ["default", "light", "dark"],
+  "license": "public"
+}

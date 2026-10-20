@@ -1,10 +1,29 @@
 # commands-registry.patch.txt — the ONE existing-file edit (spec §2.3)
 #
-# Registers the four SaaS engine modules at the ADR-0001 pin
+# Registers the four Wave-3 engine modules at the ADR-0001 pin
 # (872748fb5b2a53e09dd4e385e31968d985c0515b):
 #
 #   crates/engine/src/lib.rs      +4 lines  (alphabetical `pub mod` slots)
 #   crates/engine/src/commands.rs +4 lines  (end of the v.extend registration list)
+#
+# Every hunk quotes exactly 3 lines of context before and after its insertion, so the
+# anchors are unambiguous at the pin and `git apply --check` is the rot detector.
+#
+# Submodule specs merges (fill_specs / document_diff): three of the four modules are
+# directories of more than one authored file (template fill/validate/fill_specs, layout
+# fit_text/fit_specs/layout_apply, agent document_diff). A sibling file with its own
+# `pub fn specs()` is merged ONE of the two sanctioned ways (commands-registry.patch.md,
+# "Submodule specs merges"):
+#   (a) the parent module's `specs()` chains it (layout_cmds.rs merges
+#       `fit_specs::specs()` — nothing extra in this patch), or
+#   (b) it is registered at this same site, e.g. when W3-B/W3-G land:
+#         v.extend(crate::template_cmds::fill_specs::specs());
+#         v.extend(crate::agent_cmds::document_diff::specs());
+#       i.e. registration calls `template_cmds::specs()` concatenated with
+#       `fill_specs::specs()` (and `agent_cmds::specs()` with `document_diff::specs()`).
+# engine-patches/scripts/apply-engine-patches.sh refuses to apply until every sibling
+# with a `specs()` is registered one of those two ways — a command that exists as a
+# file but never reaches the registry is a silent failure, and the script makes it loud.
 #
 # Applied only by engine-patches/scripts/apply-engine-patches.sh
 # (git apply --check, then git apply). Never hand-apply or hand-edit vendor/*.
@@ -13,12 +32,14 @@
 diff --git a/crates/engine/src/lib.rs b/crates/engine/src/lib.rs
 --- a/crates/engine/src/lib.rs
 +++ b/crates/engine/src/lib.rs
-@@ -12,4 +12,5 @@
+@@ -11,6 +11,7 @@
+ pub mod actions_edit_cmds;
  pub mod adjust_cmds;
  pub mod adjust_params;
 +pub mod agent_cmds;
  pub mod align_cmds;
  mod allocation;
+ pub mod analysis_cmds;
 @@ -29,6 +30,7 @@
  pub mod color_cmds;
  pub mod color_to_alpha_cmds;

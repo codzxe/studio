@@ -1,0 +1,66 @@
+{
+  "component": "price-tag",
+  "version": 1,
+  "master": "price-tag@1.pcraft",
+  "designSize": { "width": 200, "height": 120 },
+  "group": "Price Tag",
+  "layers": [
+    {
+      "name": "Tag plate",
+      "kind": "shape",
+      "shape": "roundedRect",
+      "radius": 16,
+      "bounds": [0, 0, 200, 120],
+      "fill": "#FFF7EE",
+      "defaultVisible": true,
+      "binds": { "bg": "fill colour" }
+    },
+    {
+      "name": "Tag hole",
+      "kind": "shape",
+      "shape": "ellipse",
+      "bounds": [12, 12, 18, 18],
+      "fill": "#6B5748",
+      "defaultVisible": true,
+      "binds": {},
+      "note": "Punched hole, fixed muted ink; comps restyle it so it reads as a hole on every plate colour."
+    },
+    {
+      "name": "Price",
+      "kind": "text",
+      "bounds": [36, 36, 128, 40],
+      "font": "display",
+      "weight": "bold",
+      "size": 36,
+      "lineHeight": 1.05,
+      "align": "start",
+      "color": "#3B2A20",
+      "defaultVisible": true,
+      "binds": { "price": "textReplacement", "textColor": "type colour" }
+    },
+    {
+      "name": "Currency",
+      "kind": "text",
+      "bounds": [36, 82, 128, 26],
+      "font": "sans",
+      "size": 20,
+      "lineHeight": 1.2,
+      "align": "start",
+      "color": "#6B5748",
+      "defaultVisible": true,
+      "binds": { "currency": "textReplacement" },
+      "note": "Quiet fixed tint (deliberately secondary to the price); textColor drives the price line only — one variable binds one layer (component_cmds.rs remapped_bindings)."
+    }
+  ],
+  "bindings": {
+    "price":     { "layer": "Price", "as": "textReplacement" },
+    "currency":  { "layer": "Currency", "as": "textReplacement" },
+    "bg":        { "layer": "Tag plate", "as": "fill colour" },
+    "textColor": { "layer": "Price", "as": "type colour" }
+  },
+  "comps": {
+    "default": "Cream plate #FFF7EE, ink price #3B2A20, muted currency and hole #6B5748.",
+    "light": "Paper plate #F4E7D3, ink price, muted currency #6B5748.",
+    "dark": "Ink plate #3B2A20, cream price #FFF7EE, muted currency #6B5748."
+  }
+}

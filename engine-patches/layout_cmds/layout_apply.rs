@@ -418,7 +418,6 @@ impl LayoutNode {
 
     fn sizing(&self) -> &Sizing {
         match &self.kind {
-            NodeKind::Stack(n) | NodeKind::Row(n) if false => unreachable_sizing(n),
             NodeKind::Stack(n) => &n.sizing,
             NodeKind::Row(n) => &n.sizing,
             NodeKind::Grid(n) => &n.sizing,
@@ -435,7 +434,6 @@ impl LayoutNode {
     fn layer_ref(&self) -> Option<&Value> {
         match &self.kind {
             NodeKind::Spacer(_) => None,
-            NodeKind::Stack(n) | NodeKind::Row(n) if false => unreachable_layer(n),
             NodeKind::Stack(n) => n.layer.as_ref(),
             NodeKind::Row(n) => n.layer.as_ref(),
             NodeKind::Grid(n) => n.layer.as_ref(),
@@ -494,7 +492,6 @@ impl LayoutNode {
 
     fn align_or(&self, default: Align) -> Align {
         match &self.kind {
-            NodeKind::Stack(n) | NodeKind::Row(n) | NodeKind::Grid(n) if false => default,
             NodeKind::Stack(n) => n.align.unwrap_or(default),
             NodeKind::Row(n) => n.align.unwrap_or(default),
             NodeKind::Grid(n) => n.align.unwrap_or(default),
@@ -556,16 +553,9 @@ impl LayoutNode {
     }
 }
 
-// The two `if false` arms above keep the or-patterns type-checkable across the distinct serde
-// struct types; they can never run (their guards are literally false). Their bodies exist only
-// so the shared arm binds — spell them out instead of clever macro tricks.
-fn unreachable_sizing(_: &StackNode) -> &Sizing {
-    static NEVER: Sizing = Sizing { width: None, height: None, grow: None, hug: None, percent: None, aspect: None, min_width: None, max_width: None, min_height: None, max_height: None };
-    &NEVER
-}
-fn unreachable_layer(_: &StackNode) -> Option<&Value> {
-    None
-}
+// Note: or-patterns across the distinct serde struct kinds (`Stack(n) | Row(n)`) do not
+// type-check — a binding must have one type in every alternative — so each kind gets its own
+// arm in the accessors above.
 
 // ---------- parsing (strict: unknown keys list the valid ones) ----------
 
@@ -668,7 +658,9 @@ fn parse_within(w: &Value) -> Result<Within> {
             let g = || bad("`within` must be [x, y, w, h] with finite numbers");
             let mut r = [0.0; 4];
             for (i, slot) in r.iter_mut().enumerate() {
-                *slot = finite_px(a.get(i).ok_or_else(g)? as Option<&Value>, "within")?;
+                // `Some(..)` keeps finite_px's Option-taking signature; a bare `as Option<&Value>`
+                // cast would not compile (invalid non-primitive cast).
+                *slot = finite_px(Some(a.get(i).ok_or_else(g)?), "within")?;
             }
             if r[2] < 0.0 || r[3] < 0.0 {
                 return Err(bad("`within` width and height must be ≥ 0"));
@@ -743,10 +735,6 @@ fn parse_node(v: &Value, parent: ParentKind, depth: usize, nodes: &mut usize) ->
     };
 
     // Kind-specific validation (§9.5 limits) before the tree goes near the solver.
-    match &node {
-        NodeKind::Stack(n) | NodeKind::Row(n) | NodeKind::Grid(n) if false => {}
-        _ => {}
-    }
     let sizing = match &node {
         NodeKind::Stack(n) => &n.sizing,
         NodeKind::Row(n) => &n.sizing,

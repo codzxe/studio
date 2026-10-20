@@ -1,0 +1,18 @@
+{
+  "id": "logo-lockup",
+  "version": 1,
+  "name": "Logo Lockup",
+  "author": "studio",
+  "description": "Horizontal brand lockup: geometric mark, name and optional tagline, with an optional knockout halo for dark hosts.",
+  "tags": ["brand", "logo"],
+  "defaultSize": { "width": 320, "height": 96 },
+  "variables": {
+    "name":    { "kind": "text", "default": "Acme Coffee", "maxChars": 32 },
+    "tagline": { "kind": "text", "default": "", "maxChars": 48 },
+    "color":   { "kind": "color", "default": "#D96C3B" },
+    "onDark":  { "kind": "visibility", "default": false }
+  },
+  "anchors": { "left": [0, 0.5], "center": [0.5, 0.5], "topRight": [1, 0], "bottomRight": [1, 1] },
+  "comps": ["default", "light", "dark"],
+  "license": "public"
+}
