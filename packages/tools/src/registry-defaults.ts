@@ -11,12 +11,12 @@
 // production run managers pass `{ includeEcho: false }` to pin the registry to
 // exactly the §6 surface.
 //
-// §6 rows whose Wave-5 tool files had NOT landed at assembly time (checked by
-// ls before this file was written): `component_place`, `variant_create`, plus
-// `brief_to_plan` (model-orchestrated; the planner wave owns its implementation).
-// When a tool file lands, add ONE import + ONE `defaultTools()` entry here and
-// extend the pinned name list in tests/registry-defaults.test.ts — `allowedNames`
-// already accepts every §6 name, so no other change is required.
+// §6 rows without a shipped tool file at assembly time: `brief_to_plan` only
+// (model-orchestrated; the planner wave owns its implementation — it is NOT a
+// tools-package file). When a tool file lands, add ONE import + ONE
+// `defaultTools()` entry here and extend the pinned name list in
+// tests/registry-defaults.test.ts — `allowedNames` already accepts every §6
+// name, so no other change is required.
 //
 // Seam reconciliation note (task W5-R): `types.ts` (owned by W1-O) keeps
 // `ToolContext` minimal on purpose. The seams flagged by siblings are all
@@ -32,11 +32,12 @@
 
 import { echoTool } from "./example/echo.js";
 import { ToolError } from "./kit.js";
-import { TOOLS, ToolRegistry, type ToolListing } from "./registry.js";
+import { TOOLS, type ToolListing, ToolRegistry } from "./registry.js";
 import { askUserTool } from "./tools/ask-user.js";
 import { assetPlaceTool } from "./tools/asset-place.js";
 import { assetSearchTool } from "./tools/asset-search.js";
 import { componentListTool } from "./tools/component-list.js";
+import { componentPlaceTool } from "./tools/component-place.js";
 import { componentSetVarsTool } from "./tools/component-set-vars.js";
 import { exportDocumentTool } from "./tools/export-document.js";
 import { imageGenerateTool } from "./tools/image-generate.js";
@@ -50,6 +51,7 @@ import { templateInspect } from "./tools/template-inspect.js";
 import { templateList } from "./tools/template-list.js";
 import { textSet } from "./tools/text-set.js";
 import { validateDocument } from "./tools/validate-document.js";
+import { variantCreateTool } from "./tools/variant-create.js";
 import { visionCritiqueTool } from "./tools/vision-critique.js";
 import { workspaceSnapshot } from "./tools/workspace-snapshot.js";
 import type { AnyTool } from "./types.js";
@@ -90,12 +92,14 @@ function defaultTools(includeEcho: boolean): readonly AnyTool[] {
     layerOpsTool, // §6 row 9
     styleApplyTool, // §6 row 10
     layoutApplyTool, // §6 row 11
-    componentListTool, // §6 row 12 (list half; component_place still pending)
+    componentListTool, // §6 row 12 (list half)
+    componentPlaceTool, // §6 row 12 (place half)
     componentSetVarsTool, // §6 row 13
     renderPreviewTool, // §6 row 14
     validateDocument, // §6 row 15
     visionCritiqueTool, // §6 row 16
-    exportDocumentTool, // §6 row 18 (variant_create still pending)
+    variantCreateTool, // §6 row 17
+    exportDocumentTool, // §6 row 18
     askUserTool, // §6 model-orchestrated row (client-side affordance)
   ];
   return includeEcho ? [...tools, echoTool] : tools;
@@ -111,9 +115,7 @@ function defaultTools(includeEcho: boolean): readonly AnyTool[] {
  * order, duplicate-name detection ACTIVE — a rejected registration throws
  * `ToolError` instead of shipping a half-built registry.
  */
-export function buildDefaultToolRegistry(
-  options: DefaultToolRegistryOptions = {},
-): ToolRegistry {
+export function buildDefaultToolRegistry(options: DefaultToolRegistryOptions = {}): ToolRegistry {
   const includeEcho = options.includeEcho ?? true;
   const registry = new ToolRegistry({
     allowedNames: includeEcho ? [...Object.values(TOOLS), echoTool.name] : Object.values(TOOLS),

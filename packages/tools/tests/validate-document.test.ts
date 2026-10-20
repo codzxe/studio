@@ -15,7 +15,7 @@ import {
   BODY_CONTRAST,
   DEFAULT_MAX_TEXT_LAYERS,
   DEFAULT_SAFE_AREA_PX,
-  GENERIC_RULES,
+  type GENERIC_RULES,
   MAX_ISSUES,
   TEMPLATE_ARM_SUPPLEMENT_RULES,
   TEMPLATE_VALIDATE_COMMAND,
@@ -47,7 +47,6 @@ import type {
   EngineFailure,
   EngineLayerSummary,
   EngineLike,
-  EngineOutcome,
   TemplateCatalogLike,
   TemplateManifest,
   ToolContext,
@@ -132,14 +131,16 @@ interface EngineSpy extends EngineLike {
   batchCount(): number;
 }
 
-function makeEngine(options: {
-  snapshot?: Partial<EngineDocumentSnapshot>;
-  rows?: readonly EngineLayerSummary[];
-  listFailure?: EngineFailure;
-  inspectFailure?: EngineFailure;
-  executeReport?: EngineCommandReport;
-  executeFailure?: EngineFailure;
-} = {}): EngineSpy {
+function makeEngine(
+  options: {
+    snapshot?: Partial<EngineDocumentSnapshot>;
+    rows?: readonly EngineLayerSummary[];
+    listFailure?: EngineFailure;
+    inspectFailure?: EngineFailure;
+    executeReport?: EngineCommandReport;
+    executeFailure?: EngineFailure;
+  } = {},
+): EngineSpy {
   const executed: { id: string; params: Record<string, unknown> }[] = [];
   let batches = 0;
   const snapshot: EngineDocumentSnapshot = {
@@ -155,19 +156,22 @@ function makeEngine(options: {
       batches += 1;
       return { ok: true, value: { revision: 7, outcomes: [] } };
     },
-    async execute(cmd: EngineCommand): EngineOutcome<EngineCommandReport> {
+    async execute(cmd: EngineCommand) {
       executed.push({ id: cmd.id, params: { ...cmd.params } });
       if (options.executeFailure !== undefined) return options.executeFailure;
       return { ok: true, value: options.executeReport ?? { revision: 9 } };
     },
     async render() {
-      return { ok: true, value: { image: new Uint8Array(), widthPx: 64, heightPx: 64 } };
+      return {
+        ok: true,
+        value: { image: new Uint8Array(), widthPx: 64, heightPx: 64 },
+      };
     },
-    async inspect(): EngineOutcome<EngineDocumentSnapshot> {
+    async inspect() {
       if (options.inspectFailure !== undefined) return options.inspectFailure;
       return { ok: true, value: snapshot };
     },
-    async listLayers(): EngineOutcome<readonly EngineLayerSummary[]> {
+    async listLayers() {
       if (options.listFailure !== undefined) return options.listFailure;
       return { ok: true, value: options.rows ?? snapshot.layers };
     },
@@ -179,7 +183,7 @@ function makeEngine(options: {
 function reportWith(payload: unknown, message?: string): EngineCommandReport {
   const report: Record<string, unknown> = { revision: 9, result: payload };
   if (message !== undefined) report.message = message;
-  return report as EngineCommandReport;
+  return report as unknown as EngineCommandReport;
 }
 
 function catalogWith(...manifests: TemplateManifest[]): TemplateCatalogLike {
@@ -241,7 +245,10 @@ describe("validate_document: argument schema (§6.1)", () => {
   it("accepts a document id and an optional template pin", () => {
     expect(parseToolArgs(validateDocument, { documentId: DOC_ID }).ok).toBe(true);
     expect(
-      parseToolArgs(validateDocument, { documentId: DOC_ID, template: "instagram-post@3" }).ok,
+      parseToolArgs(validateDocument, {
+        documentId: DOC_ID,
+        template: "instagram-post@3",
+      }).ok,
     ).toBe(true);
   });
 
@@ -315,34 +322,36 @@ describe("validate_document: geometry helpers", () => {
     expect(DEFAULT_MAX_TEXT_LAYERS).toBe(12);
   });
 
-  it.each([
+  type Box4 = readonly [number, number, number, number];
+
+  const intersectCases: readonly (readonly [string, Box4, boolean])[] = [
     ["fully on", [0, 0, 100, 100], true],
     ["fully right of canvas", [1200, 0, 100, 100], false],
     ["fully above canvas", [0, -200, 100, 100], false],
     ["partial bleed", [-20, 0, 1100, 700], true],
     ["touching the right edge (zero overlap)", [1080, 0, 100, 100], false],
-  ])("intersectsCanvas %s", (_label, b, expected) => {
-    expect(
-      intersectsCanvas({ x: b[0], y: b[1], width: b[2], height: b[3] }, CANVAS, CANVAS),
-    ).toBe(expected);
+  ];
+
+  it.each(intersectCases)("intersectsCanvas %s", (_label, b, expected) => {
+    expect(intersectsCanvas({ x: b[0], y: b[1], width: b[2], height: b[3] }, CANVAS, CANVAS)).toBe(
+      expected,
+    );
   });
 
   it("intersectsCanvas refuses NaN geometry (a violation, never a crash)", () => {
-    expect(
-      intersectsCanvas(
-        { x: Number.NaN, y: 0, width: 10, height: 10 },
-        CANVAS,
-        CANVAS,
-      ),
-    ).toBe(false);
+    expect(intersectsCanvas({ x: Number.NaN, y: 0, width: 10, height: 10 }, CANVAS, CANVAS)).toBe(
+      false,
+    );
   });
 
-  it.each([
+  const safeCases: readonly (readonly [string, Box4, boolean])[] = [
     ["inside the margin", [48, 48, 984, 984], true],
     ["half a px past the margin", [48, 48, 984, 984.5], false],
     ["left edge intrudes", [10, 100, 200, 50], false],
     ["bottom intrudes", [100, 100, 200, 980], false],
-  ])("withinSafeArea %s", (_label, b, expected) => {
+  ];
+
+  it.each(safeCases)("withinSafeArea %s", (_label, b, expected) => {
     expect(
       withinSafeArea(
         { x: b[0], y: b[1], width: b[2], height: b[3] },
@@ -353,11 +362,13 @@ describe("validate_document: geometry helpers", () => {
     ).toBe(expected);
   });
 
-  it.each([
+  const fitsCases: readonly (readonly [string, Box4, Box4, boolean])[] = [
     ["inside (render rounding tolerance)", [72, 732, 936, 176], [72, 732, 936, 176.3], true],
     ["overflowing the bottom", [72, 732, 936, 200], [72, 732, 936, 176], false],
     ["outside the left", [70, 732, 936, 176], [72, 732, 936, 176], false],
-  ])("fitsIn %s", (_label, inner, outer, expected) => {
+  ];
+
+  it.each(fitsCases)("fitsIn %s", (_label, inner, outer, expected) => {
     expect(
       fitsIn(
         { x: inner[0], y: inner[1], width: inner[2], height: inner[3] },
@@ -390,8 +401,14 @@ describe("validate_document: geometry helpers", () => {
 describe("validate_document: rule table", () => {
   it("in_bounds: a layer fully outside the canvas is a blocker; partial bleed is not", () => {
     const issues = lint([
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" }),
-      row("Stray", "Pixel", { bounds: [1200, -50, 100, 100], smartObject: true }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#F4E7D3",
+      }),
+      row("Stray", "Pixel", {
+        bounds: [1200, -50, 100, 100],
+        smartObject: true,
+      }),
       row("Photo", "Pixel", { bounds: [-20, 0, 1100, 700], smartObject: true }),
     ]).issues;
     const issue = one(issues, "in_bounds");
@@ -415,7 +432,10 @@ describe("validate_document: rule table", () => {
 
   it("safe_area: essential text inside the 48 px margin is a major; full-bleed photos are exempt", () => {
     const issues = lint([
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#F4E7D3",
+      }),
       row("Photo", "Pixel", { bounds: [0, 0, 1080, 700], smartObject: true }),
       textRow("CTA", { bounds: [10, 100, 200, 50] }),
       row("Logo", "Pixel", { bounds: [0, 1040, 120, 40], smartObject: true }),
@@ -434,7 +454,10 @@ describe("validate_document: rule table", () => {
 
   it("contrast: white text on #909090 is a 3.2:1 blocker", () => {
     const issues = lint([
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#909090" }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#909090",
+      }),
       textRow("Body", { color: "#FFFFFF", sizePt: 12 }),
     ]).issues;
     const issue = one(issues, "contrast");
@@ -447,13 +470,19 @@ describe("validate_document: rule table", () => {
 
   it("contrast: 4.54:1 (#767676 on white) passes; 4.48:1 (#777777) is a blocker", () => {
     const pass = lint([
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#FFFFFF" }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#FFFFFF",
+      }),
       textRow("Body", { color: "#767676", sizePt: 12 }),
     ]).issues;
     expect(codes(pass)).not.toContain("contrast");
 
     const fail = lint([
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#FFFFFF" }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#FFFFFF",
+      }),
       textRow("Body", { color: "#777777", sizePt: 12 }),
     ]).issues;
     expect(one(fail, "contrast").level).toBe("blocker");
@@ -461,9 +490,16 @@ describe("validate_document: rule table", () => {
 
   it("contrast: large display text only needs 3:1 (§11.1)", () => {
     const issues = lint([
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#909090" }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#909090",
+      }),
       textRow("Headline", { color: "#FFFFFF", sizePt: 96 }),
-      textRow("Body", { color: "#FFFFFF", sizePt: 12, bounds: [72, 900, 400, 60] }),
+      textRow("Body", {
+        color: "#FFFFFF",
+        sizePt: 12,
+        bounds: [72, 900, 400, 60],
+      }),
     ]).issues;
     const flagged = issues.filter((issue) => issue.code === "contrast");
     expect(flagged.length).toBe(1);
@@ -473,7 +509,10 @@ describe("validate_document: rule table", () => {
 
   it("contrast: hidden text is skipped", () => {
     const issues = lint([
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#909090" }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#909090",
+      }),
       textRow("Draft", { color: "#FFFFFF", sizePt: 12, visible: false }),
     ]).issues;
     expect(codes(issues)).not.toContain("contrast");
@@ -482,7 +521,11 @@ describe("validate_document: rule table", () => {
   it("contrast: no readable background degrades to a note, never a guess", () => {
     const pass = lint([
       row("Photo", "Pixel", { bounds: [0, 0, 1080, 700], smartObject: true }),
-      textRow("Body", { color: "#FFFFFF", sizePt: 12, bounds: [72, 900, 400, 60] }),
+      textRow("Body", {
+        color: "#FFFFFF",
+        sizePt: 12,
+        bounds: [72, 900, 400, 60],
+      }),
     ]);
     expect(codes(pass.issues)).not.toContain("contrast");
     expect(pass.notes).toContainEqual(expect.stringContaining("no readable background colour"));
@@ -490,7 +533,10 @@ describe("validate_document: rule table", () => {
 
   it("contrast: text rows without a colour probe degrade to a note", () => {
     const pass = lint([
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#F4E7D3",
+      }),
       textRow("Body", { font: "Inter" }),
     ]);
     expect(codes(pass.issues)).not.toContain("contrast");
@@ -499,8 +545,14 @@ describe("validate_document: rule table", () => {
 
   it("effectiveBackground prefers the visible layer named Background; hidden fills never win", () => {
     const { flat } = flattenRows([
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" }),
-      row("Panel", "Fill", { bounds: [0, 700, 1080, 380], fillColor: "#909090" }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#F4E7D3",
+      }),
+      row("Panel", "Fill", {
+        bounds: [0, 700, 1080, 380],
+        fillColor: "#909090",
+      }),
       row("Hidden Fill", "Fill", {
         bounds: [0, 0, 1080, 1080],
         fillColor: "#123456",
@@ -512,7 +564,10 @@ describe("validate_document: rule table", () => {
 
   it("text_overflow: bounds beyond the declared box are a blocker with exact px", () => {
     const issues = lint([
-      textRow("Headline", { bounds: [72, 732, 936, 200], box: [72, 732, 936, 176] }),
+      textRow("Headline", {
+        bounds: [72, 732, 936, 200],
+        box: [72, 732, 936, 176],
+      }),
     ]).issues;
     const issue = one(issues, "text_overflow");
     expect(issue.level).toBe("blocker");
@@ -522,7 +577,10 @@ describe("validate_document: rule table", () => {
 
   it("text_overflow: within the 0.5 px render tolerance passes", () => {
     const issues = lint([
-      textRow("Headline", { bounds: [72, 732, 936, 176.3], box: [72, 732, 936, 176] }),
+      textRow("Headline", {
+        bounds: [72, 732, 936, 176.3],
+        box: [72, 732, 936, 176],
+      }),
     ]).issues;
     expect(codes(issues)).not.toContain("text_overflow");
   });
@@ -539,7 +597,11 @@ describe("validate_document: rule table", () => {
   it("missing_font: matching is case/whitespace-insensitive; unreadable fonts degrade", () => {
     const pass = lint([
       textRow("Headline", { font: "  inter ", sizePt: 96 }),
-      textRow("Subhead", { font: "Display Bold", sizePt: 36, bounds: [72, 900, 400, 60] }),
+      textRow("Subhead", {
+        font: "Display Bold",
+        sizePt: 36,
+        bounds: [72, 900, 400, 60],
+      }),
     ]);
     expect(codes(pass.issues)).not.toContain("missing_font");
 
@@ -571,7 +633,10 @@ describe("validate_document: rule table", () => {
 
   it("editability: a baked-text flag on an image is a blocker (§10.1 text stays text)", () => {
     const issues = lint([
-      row("Photo", "Smart Object", { bounds: [0, 0, 1080, 700], bakedText: true }),
+      row("Photo", "Smart Object", {
+        bounds: [0, 0, 1080, 700],
+        bakedText: true,
+      }),
     ]).issues;
     const issue = one(issues, "editability");
     expect(issue.level).toBe("blocker");
@@ -637,7 +702,11 @@ describe("validate_document: rule table", () => {
   it("z_order: an explicit zIndex probe overrides listing order", () => {
     const issues = lint([
       textRow("Caption", { bounds: [100, 600, 300, 40], zIndex: 0 }),
-      row("Photo", "Pixel", { bounds: [0, 0, 1080, 700], smartObject: true, zIndex: 5 }),
+      row("Photo", "Pixel", {
+        bounds: [0, 0, 1080, 700],
+        smartObject: true,
+        zIndex: 5,
+      }),
     ]).issues;
     expect(one(issues, "z_order").layer).toBe("Caption");
   });
@@ -646,7 +715,10 @@ describe("validate_document: rule table", () => {
     const rows: EngineLayerSummary[] = [];
     for (let i = 0; i < DEFAULT_MAX_TEXT_LAYERS + 1; i += 1) {
       rows.push(
-        textRow(`Copy ${i}`, { visible: i % 2 === 0, bounds: [100, 100 + i * 40, 200, 30] }),
+        textRow(`Copy ${i}`, {
+          visible: i % 2 === 0,
+          bounds: [100, 100 + i * 40, 200, 30],
+        }),
       );
     }
     const issues = lint(rows).issues;
@@ -662,7 +734,11 @@ describe("validate_document: rule table", () => {
   it("empty_layers: 0-size bounds, zero opacity and single-unnamed-child groups are minors", () => {
     const issues = lint([
       row("Dust", "Pixel", { bounds: [10, 10, 0, 0], smartObject: true }),
-      row("Ghost", "Pixel", { bounds: [0, 0, 100, 100], opacity: 0, smartObject: true }),
+      row("Ghost", "Pixel", {
+        bounds: [0, 0, 100, 100],
+        opacity: 0,
+        smartObject: true,
+      }),
       row("Brand", "Group", { childCount: 1 }),
     ]).issues;
     const flagged = issues.filter((issue) => issue.code === "empty_layers");
@@ -721,7 +797,11 @@ describe("validate_document: row projection", () => {
   });
 
   it("skips rows without a usable id (counted, never guessed)", () => {
-    const junk = { name: "Nope", kind: "Pixel", visible: true } as EngineLayerSummary;
+    const junk = {
+      name: "Nope",
+      kind: "Pixel",
+      visible: true,
+    } as EngineLayerSummary;
     const { flat, skipped } = flattenRows([junk, row("Fine", "Pixel", {})]);
     expect(flat.map((r) => r.name)).toEqual(["Fine"]);
     expect(skipped).toBe(1);
@@ -737,7 +817,10 @@ describe("validate_document: row projection", () => {
 
   it("accepts both bounds shapes and normalizes percent opacity", () => {
     const { flat } = flattenRows([
-      row("A", "Pixel", { bounds: { x: 1, y: 2, width: 3, height: 4 }, opacity: 50 }),
+      row("A", "Pixel", {
+        bounds: { x: 1, y: 2, width: 3, height: 4 },
+        opacity: 50,
+      }),
       row("B", "Pixel", { bounds: [5, 6, 7, 8], opacity: 0.5 }),
     ]);
     expect(flat[0]?.bounds).toEqual({ x: 1, y: 2, width: 3, height: 4 });
@@ -747,7 +830,12 @@ describe("validate_document: row projection", () => {
 
   it("toRow-style probes: the row object's `text` carries font/sizePt/colour", () => {
     const { flat } = flattenRows([
-      textRow("Headline", { font: "Inter", sizePt: 96, color: "#3B2A20", box: [72, 732, 936, 176] }),
+      textRow("Headline", {
+        font: "Inter",
+        sizePt: 96,
+        color: "#3B2A20",
+        box: [72, 732, 936, 176],
+      }),
     ]);
     expect(flat[0]?.font).toBe("Inter");
     expect(flat[0]?.sizePt).toBe(96);
@@ -761,9 +849,24 @@ describe("validate_document: row projection", () => {
 // ---------------------------------------------------------------------------
 
 describe("validate_document: report shaping", () => {
-  const blocker: ValidationIssue = { level: "blocker", code: "contrast", message: "m", fix: "f" };
-  const major: ValidationIssue = { level: "major", code: "safe_area", message: "m", fix: "f" };
-  const minor: ValidationIssue = { level: "minor", code: "naming", message: "m", fix: "f" };
+  const blocker: ValidationIssue = {
+    level: "blocker",
+    code: "contrast",
+    message: "m",
+    fix: "f",
+  };
+  const major: ValidationIssue = {
+    level: "major",
+    code: "safe_area",
+    message: "m",
+    fix: "f",
+  };
+  const minor: ValidationIssue = {
+    level: "minor",
+    code: "naming",
+    message: "m",
+    fix: "f",
+  };
 
   function many(n: number, level: "blocker" | "major" | "minor" = "minor"): ValidationIssue[] {
     return Array.from({ length: n }, (_, i) => ({
@@ -832,7 +935,13 @@ describe("validate_document: report shaping", () => {
       ok: boolean;
       template: string;
       issueCounts: { blocker: number };
-      issues: { level: string; code: string; layer?: string; message: string; fix: string }[];
+      issues: {
+        level: string;
+        code: string;
+        layer?: string;
+        message: string;
+        fix: string;
+      }[];
     };
     expect(parsed.ok).toBe(false);
     expect(parsed.template).toBe("instagram-post@3");
@@ -852,8 +961,19 @@ describe("validate_document: readValidateReport (engine reply)", () => {
       reportWith({
         ok: false,
         issues: [
-          { level: "blocker", code: "contrast", layer: "Headline", message: "too low", fix: "darken" },
-          { level: "minor", code: "naming", message: "machine name", fix: "rename" },
+          {
+            level: "blocker",
+            code: "contrast",
+            layer: "Headline",
+            message: "too low",
+            fix: "darken",
+          },
+          {
+            level: "minor",
+            code: "naming",
+            message: "machine name",
+            fix: "rename",
+          },
         ],
         truncated: true,
       }),
@@ -866,9 +986,12 @@ describe("validate_document: readValidateReport (engine reply)", () => {
 
   it("falls back to JSON serialized in `message`", () => {
     const reply = readValidateReport(
-      reportWith(undefined, JSON.stringify({
-        issues: [{ level: "major", code: "safe_area", message: "m", fix: "f" }],
-      })),
+      reportWith(
+        undefined,
+        JSON.stringify({
+          issues: [{ level: "major", code: "safe_area", message: "m", fix: "f" }],
+        }),
+      ),
     );
     expect(reply?.issues[0]?.level).toBe("major");
   });
@@ -914,7 +1037,10 @@ describe("validate_document: tool (generic arm)", () => {
         font: "Inter",
       }),
       row("Photo", "Smart Object", { bounds: [0, 0, 1080, 700] }),
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#F4E7D3",
+      }),
     ];
     const engine = makeEngine({ rows });
     const { ctx } = makeContext({ engine });
@@ -993,7 +1119,10 @@ describe("validate_document: tool (generic arm)", () => {
 
   it("listLayers failure falls back to document.inspect rows with a warning", async () => {
     const rows = [
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" }),
+      row("Background", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#F4E7D3",
+      }),
     ];
     const engine = makeEngine({
       rows,
@@ -1008,7 +1137,11 @@ describe("validate_document: tool (generic arm)", () => {
 
   it("an inspect failure maps to the typed envelope with the retry table", async () => {
     const engine = makeEngine({
-      inspectFailure: { ok: false, code: "engine_unavailable", message: "no session" },
+      inspectFailure: {
+        ok: false,
+        code: "engine_unavailable",
+        message: "no session",
+      },
     });
     const { ctx } = makeContext({ engine });
     const result = await validateDocument.run(ctx, { documentId: DOC_ID }, freshSignal());
@@ -1072,7 +1205,11 @@ describe("validate_document: tool (generic arm)", () => {
 describe("validate_document: tool (template-bound delegation)", () => {
   const LOCAL_ROWS = [
     row("Layer 9", "Group", { childCount: 2 }), // machine name: the ENGINE owns naming
-    textRow("Headline", { bounds: [72, 732, 936, 176], font: "Comic Sans", sizePt: 96 }),
+    textRow("Headline", {
+      bounds: [72, 732, 936, 176],
+      font: "Comic Sans",
+      sizePt: 96,
+    }),
     row("Photo", "Pixel", { bounds: [0, 0, 1080, 700] }), // local editability applies
   ];
 
@@ -1092,7 +1229,10 @@ describe("validate_document: tool (template-bound delegation)", () => {
   };
 
   it("delegates to engine template.validate and adds only the local supplement", async () => {
-    const engine = makeEngine({ rows: LOCAL_ROWS, executeReport: reportWith(ENGINE_REPLY) });
+    const engine = makeEngine({
+      rows: LOCAL_ROWS,
+      executeReport: reportWith(ENGINE_REPLY),
+    });
     const { ctx } = makeContext({ engine });
     const result = await validateDocument.run(
       ctx,
@@ -1102,7 +1242,9 @@ describe("validate_document: tool (template-bound delegation)", () => {
     if (!result.ok) throw new Error("expected ok");
     expect(engine.executed.length).toBe(1);
     expect(engine.executed[0]?.id).toBe(TEMPLATE_VALIDATE_COMMAND);
-    expect(engine.executed[0]?.params).toEqual({ template: "instagram-post@3" });
+    expect(engine.executed[0]?.params).toEqual({
+      template: "instagram-post@3",
+    });
     const parsed = JSON.parse(result.summary) as {
       ok: boolean;
       template: string;
@@ -1163,7 +1305,10 @@ describe("validate_document: tool (template-bound delegation)", () => {
   });
 
   it("a payload-less reply is an internal_error, never a fabricated pass", async () => {
-    const engine = makeEngine({ rows: LOCAL_ROWS, executeReport: { revision: 9 } });
+    const engine = makeEngine({
+      rows: LOCAL_ROWS,
+      executeReport: { revision: 9 },
+    });
     const { ctx } = makeContext({ engine });
     const result = await validateDocument.run(
       ctx,
@@ -1184,7 +1329,13 @@ describe("validate_document: tool (template-bound delegation)", () => {
         ok: true,
         issues: [
           { level: "fatal", code: "mystery", message: "m", fix: "f" },
-          { level: "minor", code: "naming", layer: "Layer 9", message: "machine name", fix: "rename" },
+          {
+            level: "minor",
+            code: "naming",
+            layer: "Layer 9",
+            message: "machine name",
+            fix: "rename",
+          },
         ],
         truncated: true,
       }),
@@ -1222,7 +1373,9 @@ describe("validate_document: registry", () => {
   it("registers on the pinned §6 surface under TOOLS.validate_document", () => {
     expect(validateDocument.name).toBe(TOOLS.validate_document);
     const registry = new ToolRegistry({ allowedNames: Object.values(TOOLS) });
-    expect(registry.register(validateDocument as AnyTool)).toStrictEqual({ ok: true });
+    expect(registry.register(validateDocument as AnyTool)).toStrictEqual({
+      ok: true,
+    });
     const lookup = registry.get(TOOLS.validate_document);
     expect(lookup.ok).toBe(true);
     expect(registry.list().map((listing) => listing.name)).toContain("validate_document");

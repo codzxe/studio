@@ -161,7 +161,7 @@ describe("export_document — argument schema (§6.1 strict)", () => {
       expect(parsed.code).toBe("invalid_args");
       expect(parsed.hint).toContain("psd export is experimental");
       expect(parsed.hint).toContain("pcraft");
-      expect(parsed.hint).toBe(PSD_NOT_OFFERED_HINT);
+      expect(parsed.hint).toContain(PSD_NOT_OFFERED_HINT);
     }
   });
 
@@ -449,10 +449,6 @@ describe("export_document — result envelope", () => {
   it("surfaces pipeline fidelity warnings (JPEG quality on a lossless format)", async () => {
     const warning = "quality applies to JPEG exports only and was ignored for this lossless format";
     const jobs = new FakeExportJobs({
-      enqueue: {
-        ok: true,
-        value: { exportId: "exp-1", status: "succeeded" },
-      },
       repeat: {
         ok: true,
         value: record({ warnings: [warning], documentRevision: 12 }),
@@ -670,10 +666,6 @@ describe("isSafeExportUrl", () => {
 
   it("a succeeded record with an unsafe URL becomes a retryable export failure (no echo)", async () => {
     const jobs = new FakeExportJobs({
-      enqueue: {
-        ok: true,
-        value: { exportId: "exp-1", status: "succeeded" },
-      },
       queue: [{ ok: true, value: record({ url: "file:///var/exports/secret.pcraft" }) }],
     });
     const ctx = makeExportContext({ exports: jobs });

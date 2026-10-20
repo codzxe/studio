@@ -832,20 +832,37 @@ export const variantCreateTool: Tool<VariantCreateArgs> = defineTool({
             );
           }
         }
-        const batch = await dispatch(
+        // comps_cmds.rs apply → {comp, missingLayers}: layers deleted since
+        // the capture are skipped by the engine — a warning, never a failure.
+        // §5.2: charge the single mutating command before dispatching.
+        if (!ctx.budgets.charge({ commands: 1 })) {
+          return budgetStopErr();
+        }
+        const batch = await runBatch(
           ctx,
           [{ id: VARIANT_CREATE_COMMANDS.compApply, params: { comp: args.name } }],
           "apply the layer comp",
-          { applied: [args.name], warnings },
           signal,
         );
-        // comps_cmds.rs apply → {comp, missingLayers}: layers deleted since
-        // the capture are skipped; that is a warning, not a failure.
-        if (batch.ok) {
-          const outcome = batchResultOutcome(ctx, args.name);
-          void outcome; // replaced below by the explicit read
+        if (!batch.ok) {
+          return batch;
         }
-        return batch;
+        const outcome = batch.report.outcomes.at(0);
+        if (outcome !== undefined) {
+          const payload = commandPayload(outcome as unknown as EngineCommandReport);
+          const missing = isRec(payload) ? readEngineId(payload.missingLayers) : undefined;
+          if (missing !== undefined && missing > 0) {
+            pushWarning(
+              warnings,
+              `comp ${quote(args.name)} references ${missing} deleted layer(s); those recorded states were skipped on apply`,
+            );
+          }
+        }
+        return ok({
+          summary: buildSummary({ applied: [args.name], warnings }),
+          documentRevision: batch.report.revision,
+          warnings: warnings.length > 0 ? capWarnings(warnings) : undefined,
+        });
       }
 
       // ---------------------------------------------------------------------
@@ -989,7 +1006,7 @@ export const variantCreateTool: Tool<VariantCreateArgs> = defineTool({
               colliding.push(name);
             }
             if (size.width === inspect.value.widthPx && size.height === inspect.value.heightPx) {
-              skipped.push(name);
+              skipped.push(`${size.width}x${size.height}`);
               continue;
             }
             if (resized) {
@@ -1009,13 +1026,11 @@ export const variantCreateTool: Tool<VariantCreateArgs> = defineTool({
           if (colliding.length > 0) {
             return compCollisionErr(colliding);
           }
-          if (skipped.length > 0) {
-            for (const name of skipped) {
-              pushWarning(
-                warnings,
-                `size ${name.slice(VARIANT_COMP_BASE.length + VARIANT_SEPARATOR.length)} equals the current canvas — the baseline comp ${quote(baselineName)} already captures it`,
-              );
-            }
+          for (const size of skipped) {
+            pushWarning(
+              warnings,
+              `size ${size} equals the current canvas — the baseline comp ${quote(baselineName)} already captures it`,
+            );
           }
         } else {
           // fromCurrent=false: every size derives from the LAST APPLIED

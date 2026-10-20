@@ -46,16 +46,8 @@
 // Read-only: no budget charge, no idempotency key, freely retryable (§6).
 
 import { z } from "zod";
-import {
-  MAX_SUMMARY_CHARS,
-  defineTool,
-  err,
-  ok,
-  strictObject,
-  zTemplateRef,
-} from "../kit.js";
+import { MAX_SUMMARY_CHARS, defineTool, err, ok, strictObject, zTemplateRef } from "../kit.js";
 import { TOOLS } from "../registry.js";
-import { commandPayload } from "./workspace-snapshot.js";
 import type {
   EngineCommandReport,
   EngineFailure,
@@ -63,6 +55,7 @@ import type {
   Tool,
   ToolErr,
 } from "../types.js";
+import { commandPayload } from "./workspace-snapshot.js";
 
 // ---------------------------------------------------------------------------
 // Args (§6.1 strict schema)
@@ -173,12 +166,12 @@ export function hexToRgb(hex: string): [number, number, number] | undefined {
   if (typeof hex !== "string" || !HEX_RE.test(hex)) return undefined;
   const digits = hex.slice(1);
   if (digits.length === 3) {
-    return digits.split("").map((d) => parseInt(d + d, 16)) as [number, number, number];
+    return digits.split("").map((d) => Number.parseInt(d + d, 16)) as [number, number, number];
   }
   return [
-    parseInt(digits.slice(0, 2), 16),
-    parseInt(digits.slice(2, 4), 16),
-    parseInt(digits.slice(4, 6), 16),
+    Number.parseInt(digits.slice(0, 2), 16),
+    Number.parseInt(digits.slice(2, 4), 16),
+    Number.parseInt(digits.slice(4, 6), 16),
   ];
 }
 
@@ -193,7 +186,7 @@ export function relativeLuminance(hex: string): number {
   if (rgb === undefined) return Number.NaN;
   const channel = (v: number) => {
     const c = v / 255;
-    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
   };
   return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
 }
@@ -241,8 +234,12 @@ export function intersectsCanvas(b: Box, canvasW: number, canvasH: number): bool
 export function withinSafeArea(b: Box, canvasW: number, canvasH: number, safe: number): boolean {
   if (!finiteBox(b) || !Number.isFinite(canvasW) || !Number.isFinite(canvasH)) return false;
   if (!Number.isFinite(safe) || safe < 0) return false;
-  return b.x >= safe && b.y >= safe && b.x + b.width <= canvasW - safe &&
-    b.y + b.height <= canvasH - safe;
+  return (
+    b.x >= safe &&
+    b.y >= safe &&
+    b.x + b.width <= canvasW - safe &&
+    b.y + b.height <= canvasH - safe
+  );
 }
 
 /** Render-rounded containment (validate.rs `fits_in`): `inner` sits inside `outer`. */
@@ -524,12 +521,24 @@ class Collector {
   readonly issues: ValidationIssue[] = [];
   readonly notes: string[] = [];
 
-  push(level: IssueLevel, code: string, layer: string | undefined, message: string, fix: string): void {
+  push(
+    level: IssueLevel,
+    code: string,
+    layer: string | undefined,
+    message: string,
+    fix: string,
+  ): void {
     const messageClipped = clip(message, MESSAGE_CAP);
     const fixClipped = clip(fix, FIX_CAP);
     const issue: ValidationIssue =
       layer !== undefined && layer.length > 0
-        ? { level, code, layer: clip(layer, NAME_CAP), message: messageClipped, fix: fixClipped }
+        ? {
+            level,
+            code,
+            layer: clip(layer, NAME_CAP),
+            message: messageClipped,
+            fix: fixClipped,
+          }
         : { level, code, message: messageClipped, fix: fixClipped };
     this.issues.push(issue);
   }
@@ -568,7 +577,9 @@ function normalizeFont(value: string): string {
 
 function isEssential(row: Row): boolean {
   if (isTextKind(row.kind)) return true;
-  return isImageKind(row.kind) && (BRAND_ROLE_NAMES as readonly string[]).includes(baseName(row.name));
+  return (
+    isImageKind(row.kind) && (BRAND_ROLE_NAMES as readonly string[]).includes(baseName(row.name))
+  );
 }
 
 function checkInBounds(out: Collector, input: RuleInput, rows: readonly Row[]): void {
@@ -809,7 +820,9 @@ function checkNaming(out: Collector, _input: RuleInput, rows: readonly Row[]): v
   }
 }
 
-const RULES: Readonly<Record<RuleId, (out: Collector, input: RuleInput, rows: readonly Row[]) => void>> = {
+const RULES: Readonly<
+  Record<RuleId, (out: Collector, input: RuleInput, rows: readonly Row[]) => void>
+> = {
   in_bounds: checkInBounds,
   safe_area: checkSafeArea,
   contrast: checkContrast,
@@ -874,7 +887,13 @@ export function capIssues(issues: readonly ValidationIssue[]): {
 }
 
 function issueRow(issue: ValidationIssue): Rec {
-  const row: { level: string; code: string; layer?: string; message: string; fix: string } = {
+  const row: {
+    level: string;
+    code: string;
+    layer?: string;
+    message: string;
+    fix: string;
+  } = {
     level: issue.level,
     code: issue.code,
     message: issue.message,
@@ -887,7 +906,10 @@ function issueRow(issue: ValidationIssue): Rec {
 /** §6.1 compact-reply rule is the hard ceiling: shed from the tail (minors first).
  * The candidate mirrors `renderSummary`'s exact shape, suffix included, so a
  * "fits" verdict here is a fits verdict there (worst case `truncated:false`). */
-function fitToBudget(prefix: string, issues: readonly ValidationIssue[]): {
+function fitToBudget(
+  prefix: string,
+  issues: readonly ValidationIssue[],
+): {
   readonly kept: readonly ValidationIssue[];
   readonly truncated: boolean;
 } {
@@ -913,10 +935,13 @@ export interface ValidationReport {
 }
 
 /** Counts over EVERY issue; the visible list is the capped, budget-fitted tail. */
-export function buildReport(issues: readonly ValidationIssue[], options: {
-  readonly template?: string;
-  readonly extraWarnings?: readonly string[];
-} = {}): ValidationReport {
+export function buildReport(
+  issues: readonly ValidationIssue[],
+  options: {
+    readonly template?: string;
+    readonly extraWarnings?: readonly string[];
+  } = {},
+): ValidationReport {
   const sorted = sortIssues(issues);
   const counts = countIssues(sorted);
   const capped = capIssues(sorted);
@@ -924,7 +949,8 @@ export function buildReport(issues: readonly ValidationIssue[], options: {
     `"ok":${counts.blocker === 0}`,
     `"issueCounts":{"blocker":${counts.blocker},"major":${counts.major},"minor":${counts.minor}}`,
   ];
-  if (options.template !== undefined) prefixParts.push(`"template":${JSON.stringify(options.template)}`);
+  if (options.template !== undefined)
+    prefixParts.push(`"template":${JSON.stringify(options.template)}`);
   const fit = fitToBudget(`{${prefixParts.join(",")},"issues":`, capped.kept);
   const truncated = capped.truncated || fit.truncated;
   const warnings = [...(options.extraWarnings ?? [])];
@@ -953,7 +979,8 @@ export function renderSummary(report: ValidationReport): string {
     `"ok":${report.ok}`,
     `"issueCounts":{"blocker":${report.issueCounts.blocker},"major":${report.issueCounts.major},"minor":${report.issueCounts.minor}}`,
   ];
-  if (report.template !== undefined) prefixParts.push(`"template":${JSON.stringify(report.template)}`);
+  if (report.template !== undefined)
+    prefixParts.push(`"template":${JSON.stringify(report.template)}`);
   prefixParts.push(`"issues":${JSON.stringify(report.issues.map(issueRow))}`);
   prefixParts.push(`"truncated":${report.truncated}`);
   return `{${prefixParts.join(",")}}`;
@@ -997,6 +1024,7 @@ export function readValidateReport(report: EngineCommandReport): EngineValidateR
       dropped += 1;
       continue;
     }
+    const layer = readString(r?.layer, NAME_CAP);
     const issue: ValidationIssue =
       layer !== undefined ? { level, code, message, fix, layer } : { level, code, message, fix };
     issues.push(issue);
@@ -1114,7 +1142,8 @@ export const validateDocument: Tool<ValidateDocumentArgs> = defineTool({
       );
       if (!executed.ok) {
         return err(executed.code, clip(executed.message, 300), {
-          hint: executed.hint ?? "The template-bound validation pass failed engine-side; retry once.",
+          hint:
+            executed.hint ?? "The template-bound validation pass failed engine-side; retry once.",
           retryable: retryableFor(executed.code, executed.retryable),
         });
       }
@@ -1142,7 +1171,10 @@ export const validateDocument: Tool<ValidateDocumentArgs> = defineTool({
       warnings.push(...local.notes);
     }
 
-    const report = buildReport(issues, { template: templatePin, extraWarnings: warnings });
+    const report = buildReport(issues, {
+      template: templatePin,
+      extraWarnings: warnings,
+    });
 
     // Breadcrumbs only — counts, never user content (§22).
     ctx.logger.debug("validate_document finished", {
@@ -1153,9 +1185,7 @@ export const validateDocument: Tool<ValidateDocumentArgs> = defineTool({
     });
 
     const revision =
-      Number.isInteger(snapshot.revision) && snapshot.revision >= 0
-        ? snapshot.revision
-        : undefined;
+      Number.isInteger(snapshot.revision) && snapshot.revision >= 0 ? snapshot.revision : undefined;
     return ok({
       summary: renderSummary(report),
       warnings: report.warnings.length > 0 ? report.warnings : undefined,

@@ -14,6 +14,10 @@
 //                       → TEMPLATE_LIST_* / COMPONENT_LIST_* variants
 //   - ResolvedTarget     → ResolvedTarget (asset_place, the shared mechanics)
 //                          + ImageGenerateResolvedTarget (image_generate)
+//   - ComponentVarKind / ComponentVarValue / ComponentVariableSpec / VarsValidation
+//                       → unaliased from component_set_vars (the §6 row 13 vars
+//                          owner) + ComponentPlaceVarKind/VarValue/VarSpec/
+//                          VarsValidation aliases from component_place
 //
 // Context-seam note (no types-ext.ts, deliberately): the seams missing from
 // `ToolContext` (types.ts, owned by W1-O) are declared LOCALLY where they are
@@ -102,6 +106,43 @@ export {
   engineFailureErr,
   readComponentList,
 } from "./tools/component-list.js";
+
+// component_place — §6 row 12 (place half). Its ComponentVar* / VarsValidation
+// shapes collide with component-set-vars' and ride as ComponentPlace* aliases.
+export {
+  ANCHOR_FRACTIONS,
+  COMPONENT_ANCHORS,
+  COMPONENT_INSPECT_COMMAND,
+  COMPONENT_PLACE_COMMAND,
+  ComponentAnchor,
+  ComponentPlaceArgs,
+  ComponentVarKind as ComponentPlaceVarKind,
+  ComponentVarSchema,
+  ComponentVarValue as ComponentPlaceVarValue,
+  ComponentVariableSpec as ComponentPlaceVarSpec,
+  VarsValidation as ComponentPlaceVarsValidation,
+  MAX_COMPONENT_ID_CHARS,
+  MAX_COMPONENT_VERSION,
+  MAX_ORIGIN_PX,
+  MAX_PLACE_VARS,
+  MAX_TARGET_PIXELS,
+  MAX_TARGET_SIDE,
+  PlaceBounds,
+  PlacedInstance,
+  UNKNOWN_COMPONENT_CODE,
+  UNKNOWN_COMPONENT_VARS_CODE,
+  anchorAdjustedBounds,
+  componentPlaceTool,
+  parseComponentRef,
+  readComponentVarSchema,
+  readInspectedManifest,
+  readPlacedInstance,
+  unknownComponentErr,
+  unknownComponentVarsErr,
+  validateComponentVars,
+  zComponentRef,
+  zPlaceBounds,
+} from "./tools/component-place.js";
 
 // component_set_vars — the worker must assemble ComponentSetVarsContext
 // (componentRegistry + engine instance bookkeeping) for this tool to run.
@@ -399,6 +440,41 @@ export {
   validateDocument,
   withinSafeArea,
 } from "./tools/validate-document.js";
+
+// variant_create — §6 row 17: layer comps, data sets, size + language variants.
+export {
+  CompListing,
+  CompRow,
+  DataSetRow,
+  DataSetValueRow,
+  FixedVariantName,
+  LAYOUT_REPLAY_WARNING,
+  MAX_COMP_NAME_CHARS,
+  MAX_DATA_SET_NAME_CHARS,
+  MAX_DATA_SET_VALUES,
+  MAX_LANGUAGES,
+  MAX_LANG_CHARS,
+  MAX_SIZES,
+  MAX_SIZE_PX,
+  MAX_SLOTS_PER_LANGUAGE,
+  MIN_SIZE_PX,
+  VARIANT_COMP_BASE,
+  VARIANT_CREATE_COMMANDS,
+  VARIANT_SEPARATOR,
+  VariableDefRow,
+  VariablesListing,
+  VariantCreateArgs,
+  VariantSummaryFacts,
+  buildDataSetValues,
+  buildSummary,
+  coerceVisibilityValue,
+  compNameForLanguage,
+  compNameForSize,
+  fixVariantName,
+  readCompListing,
+  readVariablesListing,
+  variantCreateTool,
+} from "./tools/variant-create.js";
 
 // vision_critique — the worker must assemble VisionCritiqueContext
 // (criticModel seam, §23.3) for this tool to run.

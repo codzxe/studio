@@ -647,10 +647,14 @@ export const exportDocumentTool: Tool<ExportDocumentArgs> = defineTool({
     const url = record.url;
     if (url !== undefined && !isSafeExportUrl(url)) {
       // §6.1: never echo the rejected URL; signed export URLs are absolute http(s).
-      return err(EXPORT_FAILED_CODE, "the export finished but the download URL was invalid", {
-        hint: "retry export_document — the artifact is stored and re-signing is idempotent (§10.3)",
-        retryable: true,
-      });
+      return err(
+        EXPORT_FAILED_CODE,
+        "the export finished but the download URL was not a valid absolute http(s) URL",
+        {
+          hint: "retry export_document — the artifact is stored and re-signing is idempotent (§10.3)",
+          retryable: true,
+        },
+      );
     }
 
     const warnings: string[] = clampWarnings(record.warnings);

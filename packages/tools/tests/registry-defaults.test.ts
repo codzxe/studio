@@ -4,13 +4,14 @@
 // the same registry path, and the src/index.ts barrel re-exports everything.
 //
 // The pinned list below covers every tool file in src/tools/ at assembly time
-// (13 §6 rows + ask_user) plus the `echo` reference tool. §6 rows whose Wave-5
-// files have not landed yet are pinned as PENDING_S6_ROWS: when a sibling tool
-// file lands, add it to registry-defaults.ts AND extend EXPECTED_DEFAULT_TOOLS
-// here — these tests make the gap explicit instead of silently absent.
+// (the full §6 engine-backed surface + ask_user) plus the `echo` reference
+// tool. The only §6 row still unimplemented is `brief_to_plan` (model-
+// orchestrated; the planner wave owns it — pinned as PENDING_S6_ROWS so the
+// gap stays explicit). When a new tool file lands, add it to
+// registry-defaults.ts AND extend EXPECTED_DEFAULT_TOOLS here.
 
-import { z } from "zod";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { echoTool } from "../src/example/echo.js";
 import * as barrel from "../src/index.js";
 import { isToolName, parseToolArgs } from "../src/kit.js";
@@ -31,6 +32,7 @@ import {
 import { assetPlaceTool } from "../src/tools/asset-place.js";
 import { assetSearchTool } from "../src/tools/asset-search.js";
 import { componentListTool } from "../src/tools/component-list.js";
+import { componentPlaceTool } from "../src/tools/component-place.js";
 import { componentSetVarsTool } from "../src/tools/component-set-vars.js";
 import { exportDocumentTool } from "../src/tools/export-document.js";
 import { imageGenerateTool } from "../src/tools/image-generate.js";
@@ -44,6 +46,7 @@ import { templateInspect } from "../src/tools/template-inspect.js";
 import { templateList } from "../src/tools/template-list.js";
 import { textSet } from "../src/tools/text-set.js";
 import { validateDocument } from "../src/tools/validate-document.js";
+import { variantCreateTool } from "../src/tools/variant-create.js";
 import { visionCritiqueTool } from "../src/tools/vision-critique.js";
 import { workspaceSnapshot } from "../src/tools/workspace-snapshot.js";
 import type { AnyTool } from "../src/types.js";
@@ -64,10 +67,12 @@ const EXPECTED_DEFAULT_TOOLS: readonly string[] = [
   "style_apply",
   "layout_apply",
   "component_list",
+  "component_place",
   "component_set_vars",
   "render_preview",
   "validate_document",
   "vision_critique",
+  "variant_create",
   "export_document",
   "ask_user",
   "echo",
@@ -76,8 +81,6 @@ const EXPECTED_DEFAULT_TOOLS: readonly string[] = [
 /** §6 surface rows with NO shipped tool file yet — the explicit W5 gap. */
 const PENDING_S6_ROWS: readonly string[] = [
   "brief_to_plan", // model-orchestrated; the planner wave owns its implementation
-  "component_place",
-  "variant_create",
 ];
 
 /** name → exported tool const, proving EVERY tool file found is registered. */
@@ -95,10 +98,12 @@ const TOOL_CONSTS: readonly (readonly [string, AnyTool])[] = [
   ["style_apply", styleApplyTool],
   ["layout_apply", layoutApplyTool],
   ["component_list", componentListTool],
+  ["component_place", componentPlaceTool],
   ["component_set_vars", componentSetVarsTool],
   ["render_preview", renderPreviewTool],
   ["validate_document", validateDocument],
   ["vision_critique", visionCritiqueTool],
+  ["variant_create", variantCreateTool],
   ["export_document", exportDocumentTool],
   ["ask_user", askUserTool],
   ["echo", echoTool],
@@ -158,9 +163,7 @@ describe("buildDefaultToolRegistry — the shipped default registry", () => {
 
   it("TOOLS_DEFAULT is a frozen dispatch map keyed by tool name", () => {
     expect(Object.isFrozen(TOOLS_DEFAULT)).toBe(true);
-    expect(Object.keys(TOOLS_DEFAULT).sort()).toEqual(
-      [...DEFAULT_TOOL_NAMES].sort(),
-    );
+    expect(Object.keys(TOOLS_DEFAULT).sort()).toEqual([...DEFAULT_TOOL_NAMES].sort());
   });
 
   it("includeEcho:false pins production registries to exactly the §6 surface", () => {
@@ -186,9 +189,7 @@ describe("buildDefaultToolRegistry — the shipped default registry", () => {
 describe("DEFAULT_TOOL_MANIFEST — planner context (§6.1)", () => {
   it("carries name + description ONLY — never schemas or run functions", () => {
     expect(Object.isFrozen(DEFAULT_TOOL_MANIFEST)).toBe(true);
-    expect(DEFAULT_TOOL_MANIFEST.map((entry) => entry.name)).toEqual([
-      ...DEFAULT_TOOL_NAMES,
-    ]);
+    expect(DEFAULT_TOOL_MANIFEST.map((entry) => entry.name)).toEqual([...DEFAULT_TOOL_NAMES]);
     for (const entry of DEFAULT_TOOL_MANIFEST) {
       expect(Object.keys(entry).sort()).toEqual(["description", "name"]);
       expect(typeof entry.description).toBe("string");
@@ -276,9 +277,7 @@ describe("ask_user — registered and runnable as a client-side affordance", () 
       parseAskUserSummary('{"awaitingUser":false,"question":"Q?","options":["a"]}'),
     ).toBeUndefined();
     expect(
-      parseAskUserSummary(
-        '{"awaitingUser":true,"question":"Q?","options":["a","b","c","d","e"]}',
-      ),
+      parseAskUserSummary('{"awaitingUser":true,"question":"Q?","options":["a","b","c","d","e"]}'),
     ).toBeUndefined();
   });
 });
@@ -311,6 +310,16 @@ describe("src/index.ts barrel — re-exports the full assembly", () => {
     expect(exportedNames).toContain("COMPONENT_LIST_MAX_TAG_CHARS");
     expect(exportedNames).not.toContain("MAX_LIST_CARDS");
     expect(exportedNames).not.toContain("MAX_TAG_CHARS");
+    // ComponentVarKind/VarValue/VarSpec + VarsValidation (component-set-vars
+    // keeps the unaliased names — §6 row 13 owns the vars surface — while
+    // component-place's copies ride as ComponentPlace* aliases)
+    expect(exportedNames).toContain("ComponentVarKind");
+    expect(exportedNames).toContain("ComponentVarValue");
+    expect(exportedNames).toContain("ComponentVariableSpec");
+    expect(exportedNames).toContain("VarsValidation");
+    expect(exportedNames).toContain("ComponentPlaceVarKind");
+    expect(exportedNames).toContain("ComponentPlaceVarSpec");
+    expect(exportedNames).toContain("ComponentPlaceVarsValidation");
     // ResolvedTarget (asset-place keeps the name; image-generate is aliased)
     expect(exportedNames).toContain("ResolvedTarget");
     expect(exportedNames).toContain("ImageGenerateResolvedTarget");
