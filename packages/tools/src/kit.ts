@@ -220,7 +220,7 @@ export function isToolResult(value: unknown): value is ToolResult {
 }
 
 // ---------------------------------------------------------------------------
-defineTool: compile-time generics + a runtime safety boundary
+// defineTool: compile-time generics + a runtime safety boundary
 // ---------------------------------------------------------------------------
 
 /** What `defineTool` accepts; `TArgs` is inferred from the schema's output type. */

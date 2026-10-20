@@ -1,6 +1,6 @@
 import * as LabelPrimitive from "@radix-ui/react-label";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn";
+import { cn } from "../lib/cn.js";
 
 /**
  * Label — Radix Label styled (§16.3).

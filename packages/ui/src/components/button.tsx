@@ -1,7 +1,7 @@
 import { Slot } from "@radix-ui/react-slot";
 import { type VariantProps, cva } from "class-variance-authority";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn";
+import { cn } from "../lib/cn.js";
 
 /**
  * Button — accessible action primitive (§16.3 shadcn pattern, styles fully owned here).
@@ -43,9 +43,7 @@ export const buttonVariants = cva(
   },
 );
 
-export interface ButtonProps
-  extends ComponentProps<"button">,
-    VariantProps<typeof buttonVariants> {
+export interface ButtonProps extends ComponentProps<"button">, VariantProps<typeof buttonVariants> {
   /**
    * Render the child element instead of a `<button>` (e.g. `<a>`, router `<Link>`).
    * Classes and a11y props are merged onto the child via Radix Slot (single child only).
@@ -53,14 +51,7 @@ export interface ButtonProps
   asChild?: boolean;
 }
 
-export function Button({
-  className,
-  variant,
-  size,
-  asChild = false,
-  type,
-  ...props
-}: ButtonProps) {
+export function Button({ className, variant, size, asChild = false, type, ...props }: ButtonProps) {
   const Comp = asChild ? Slot : "button";
   return (
     <Comp

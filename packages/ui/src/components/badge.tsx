@@ -1,6 +1,6 @@
 import { type VariantProps, cva } from "class-variance-authority";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn";
+import { cn } from "../lib/cn.js";
 
 /**
  * Badge — status pill. Variants `running` / `succeeded` / `warning` / `failed` map to the
@@ -30,9 +30,7 @@ export const badgeVariants = cva(
 
 export type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>["variant"]>;
 
-export interface BadgeProps
-  extends ComponentProps<"span">,
-    VariantProps<typeof badgeVariants> {}
+export interface BadgeProps extends ComponentProps<"span">, VariantProps<typeof badgeVariants> {}
 
 export function Badge({ className, variant, children, ...props }: BadgeProps) {
   return (

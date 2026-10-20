@@ -1,12 +1,10 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { STATUS_BADGE_VARIANT, statusBadgeVariant } from "../src/components/badge.js";
 
-const tokensCss = readFileSync(
-  fileURLToPath(new URL("../src/tokens.css", import.meta.url)),
-  "utf8",
-);
+// vitest runs with cwd = package root (jsdom rewrites import.meta.url, so use cwd)
+const tokensCss = readFileSync(join(process.cwd(), "src", "tokens.css"), "utf8");
 
 describe("tokens.css", () => {
   it("parses: braces are balanced and declarations are well-formed", () => {

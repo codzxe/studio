@@ -1,0 +1,195 @@
+# =============================================================================
+# packages/evals/cases/failures.yaml — golden briefs: failure paths and budget
+# discipline. §21 requires the suite to pin the money/rollback contract, not only
+# happy paths: these cases keep the ledger honest (§14.2) and the budget honest
+# (§5.2 "exceeding a budget is a feature, not an error").
+# =============================================================================
+
+# ── §24.4 seed: provider failure + refund contract ─────────────────────────────
+- id: refund-image-provider-failure
+  description: >-
+    §24.4 — image provider 500s on all retries mid-run: the worker fails the step after
+    budget, rolls the document back to the pre-run checkpoint (§5.6), releases the
+    credit reservation and reports run.failed{code:"image_provider_error",
+    retryable:true}. NOTHING is charged (§14.2: provider-caused failures never bill)
+    and the §24.4 policy constant retry_grace: 1 grants one free retry. The plan
+    itself stays valid — the failure is a run-level outcome, asserted here on the run
+    half of the envelope.
+  vars:
+    brief: "Replace the background photo with a freshly generated warm lifestyle shot of the latte bar."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 30 }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components: []
+    plan:
+      intent: edit_layers
+      template: null            # targeted swap on an existing doc — no reapply
+      assets:
+        - { ref: 'imagegen:latte-bar-hero', slot: photo, fit: cover }  # to-be-generated image (§24.4 path)
+      slots: {}
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: {}
+      steps:
+        - tool: image.generate
+          args: { prompt: "warm lifestyle photo of a coffee bar, morning light, shallow depth of field", size: 1024 }
+        - { tool: doc.place, args: { asset: 'imagegen:latte-bar-hero', layer: Photo, fit: cover } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', asset_resolution]
+      model_tier: standard
+      notes_for_user: "Generating a replacement background; keeps everything else untouched."
+    run:
+      status: failed
+      credits_charged: 0        # §14.2/§24.4: reservation released, nothing billed
+      tool_calls: 1             # died on the first image.generate after retries
+      revisions: 0
+      code: image_provider_error
+      retryable: true           # UI offers one-click retry (§24.4)
+      retry_grace: 1            # §24.4 policy constant: first provider-caused retry is free
+      validator: null           # run never reached render/validate
+      layers: [Background, Photo, Headline, Subhead]  # pre-run tree after rollback
+      undo_entries: 0
+      rolled_back: true         # §5.6 agent.rollback to the pre-run checkpoint
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema): the plan is well-formed even though the run failed
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # §24.4: failure code + retryability on the wire
+      value: "return JSON.parse(output).run.status === 'failed' && JSON.parse(output).run.code === 'image_provider_error' && JSON.parse(output).run.retryable === true"
+    - type: javascript          # tier cost exact (§5.2): 0 charged — refund contract, reservation released
+      value: "return JSON.parse(output).run.credits_charged === 0 && JSON.parse(output).run.reservation_released === true"
+    - type: javascript          # §24.4 policy constant: one free retry for provider-caused failures
+      value: "return JSON.parse(output).run.retry_grace === 1"
+    - type: javascript          # §5.6: whole run rolled back to the pre-run checkpoint
+      value: "return JSON.parse(output).run.rolled_back === true"
+    - type: javascript          # max tool calls respected even on the failure path (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present (§11.1 asset_resolution for the new photo)
+      value: "return ['in_bounds', 'asset_resolution'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator never ran — no render happened before the failure
+      value: "return JSON.parse(output).run.validator === null"
+
+# ── invented seed: budget-cap discipline at the complex tier (§5.2) ────────────
+- id: budget-cap-complex-carousel
+  description: >-
+    Invented seed: a heavy 6-slide carousel brief on the complex tier (5 credits,
+    24 tool calls — §5.2). The golden run stays inside every cap: tool_calls 22 of 24,
+    steps 14 of 24, zero repair revisions, and the one generated image is billed inside
+    the same run (image tier is priced into the plan, §5.2 row "Image generation").
+    Exceeding a budget would stop cleanly (§5.2), not error — this seed proves the plan
+    fits the budget with headroom.
+  vars:
+    brief: "Design a 6-slide launch carousel: cover, problem, solution, three feature slides, pricing CTA. Brand palette, one generated hero image on the cover, icon bullets on feature slides."
+    snapshot:
+      canvas: { w: 1080, h: 1350 }
+      layers: []
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B', '#3B2A20']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates:
+        - id: carousel-launch@1
+          tags: [carousel, launch, social]
+          canvas: { w: 1080, h: 1350 }
+          slides: 6
+          slots:
+            cover_headline: { kind: text, maxChars: 40 }
+            problem_headline: { kind: text, maxChars: 40 }
+            solution_headline: { kind: text, maxChars: 40 }
+            feature_1_headline: { kind: text, maxChars: 40 }
+            feature_2_headline: { kind: text, maxChars: 40 }
+            feature_3_headline: { kind: text, maxChars: 40 }
+            cta_headline: { kind: text, maxChars: 30 }
+            cover_photo: { kind: image, minPixels: 1024 }
+      components:
+        - { id: icon-bullet@1, vars: [icon, text] }
+        - { id: divider@1, vars: [color, thickness] }
+    budget: "complex — 5 credits, 200k/12k tokens in/out, 24 tool calls, 2 revisions, 10 min wall clock (§5.2)"
+    plan:
+      intent: create_post
+      template: carousel-launch@1
+      assets:
+        - { ref: 'imagegen:launch-hero', slot: cover_photo, fit: cover }
+      slots:
+        cover_headline: "Launch day is here"
+        problem_headline: "Ads eat your afternoon"
+        solution_headline: "One brief, every asset"
+        feature_1_headline: "Templates that fit your brand"
+        feature_2_headline: "Editable, layered results"
+        feature_3_headline: "Exports in one click"
+        cta_headline: "Start with 30 credits"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B', '#3B2A20']
+      typography:
+        cover_headline: { font: display-serif, weight: bold, size: 96 }
+        cta_headline: { font: brand-sans, weight: bold, size: 64 }
+      steps:
+        - tool: image.generate
+          args: { prompt: "abstract warm hero image, terracotta and cream, soft light", size: 1024 }
+        - { tool: template.apply, args: { id: carousel-launch@1 } }
+        - { tool: doc.place, args: { asset: 'imagegen:launch-hero', layer: Photo, fit: cover } }
+        - { tool: type.edit, args: { layer: Headline, size: 96 } }
+        - { tool: type.edit, args: { layer: Subhead, size: 48 } }
+        - { tool: type.edit, args: { layer: Feature1, size: 40 } }
+        - { tool: type.edit, args: { layer: Feature2, size: 40 } }
+        - { tool: type.edit, args: { layer: Feature3, size: 40 } }
+        - { tool: type.edit, args: { layer: CTA, size: 64 } }
+        - { tool: component.place, args: { id: icon-bullet@1, vars: { icon: check, text: 'Brand palette' } } }
+        - { tool: component.place, args: { id: icon-bullet@1, vars: { icon: layers, text: 'Editable layers' } } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, asset_resolution, min_font_size]
+      model_tier: complex
+      notes_for_user: "Built the 6-slide carousel on carousel-launch@1 with a generated cover image; 22 of 24 tool calls used."
+    run:
+      status: succeeded
+      credits_charged: 5        # §5.2 complex tier — one run, image priced in
+      tool_calls: 22            # §5.2 hard cap 24 — inside budget with headroom
+      revisions: 0              # validator clean on first pass; no repair cycles
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 2 }
+      layers: [Background, Photo, Headline, Subhead, Feature1, Feature2, Feature3, CTA]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template chosen when expected: carousel matches the brief (§23.2)
+      value: "return JSON.parse(output).plan.template === 'carousel-launch@1'"
+    - type: javascript          # tier cost exact (§5.2: complex = 5 credits)
+      value: "return JSON.parse(output).run.credits_charged === 5"
+    - type: javascript          # max tool calls respected (§5.2: complex cap = 24) — the budget assertion
+      value: "return JSON.parse(output).run.tool_calls <= 24 && JSON.parse(output).plan.steps.length <= 24"
+    - type: javascript          # repairs priced in, none needed (§11.3)
+      value: "return JSON.parse(output).run.revisions <= 2"
+    - type: javascript          # expected checks present (incl. §11.1 min_font_size + asset_resolution)
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'asset_resolution', 'min_font_size'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok, zero blockers/majors
+      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0 && v.majors === 0"
+    - type: contains            # slot contents: the seven copy slots ride the plan (§21)
+      value: "One brief, every asset"

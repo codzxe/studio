@@ -1,6 +1,6 @@
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn";
+import { cn } from "../lib/cn.js";
 
 /**
  * Tooltip — Radix Tooltip wrapper (§16.3).
@@ -15,8 +15,7 @@ export const TooltipProvider = TooltipPrimitive.Provider;
 export const Tooltip = TooltipPrimitive.Root;
 export const TooltipTrigger = TooltipPrimitive.Trigger;
 
-export interface TooltipContentProps
-  extends ComponentProps<typeof TooltipPrimitive.Content> {}
+export interface TooltipContentProps extends ComponentProps<typeof TooltipPrimitive.Content> {}
 
 export function TooltipContent({
   className,

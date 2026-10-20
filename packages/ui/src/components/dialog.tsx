@@ -1,7 +1,7 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn";
+import { cn } from "../lib/cn.js";
 
 /**
  * Dialog — Radix Dialog wrapper (§16.3 accessible primitives, styles owned here).
@@ -73,29 +73,20 @@ export function DialogContent({
 
 export function DialogHeader({ className, ...props }: ComponentProps<"div">) {
   return (
-    <div
-      className={cn("flex flex-col gap-1.5 text-left sm:text-left", className)}
-      {...props}
-    />
+    <div className={cn("flex flex-col gap-1.5 text-left sm:text-left", className)} {...props} />
   );
 }
 
 export function DialogFooter({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
-      className={cn(
-        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-0",
-        className,
-      )}
+      className={cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-0", className)}
       {...props}
     />
   );
 }
 
-export function DialogTitle({
-  className,
-  ...props
-}: ComponentProps<typeof DialogPrimitive.Title>) {
+export function DialogTitle({ className, ...props }: ComponentProps<typeof DialogPrimitive.Title>) {
   return (
     <DialogPrimitive.Title
       className={cn("text-lg font-semibold leading-none tracking-tight", className)}

@@ -1,14 +1,14 @@
 import { ChevronsLeft, ChevronsRight } from "lucide-react";
 import {
+  type ComponentProps,
+  type KeyboardEvent,
+  type ReactNode,
   createContext,
   useContext,
   useId,
   useState,
-  type ComponentProps,
-  type KeyboardEvent,
-  type ReactNode,
 } from "react";
-import { cn } from "../lib/cn";
+import { cn } from "../lib/cn.js";
 
 /**
  * Panel — collapsible side panel, the editor layout's building block (layers, chat,
@@ -102,8 +102,9 @@ export function Panel({
   );
 }
 
-export interface PanelHeaderProps extends ComponentProps<"header"> {
-  /** Panel title — used for the collapse toggle's accessible name and the region label. */
+export interface PanelHeaderProps extends Omit<ComponentProps<"header">, "title"> {
+  /** Panel title — used for the collapse toggle's accessible name and the region label.
+   *  (Replaces the native `title` tooltip attribute — the visible header is richer.) */
   title: ReactNode;
   /** Right-aligned action area (buttons, menus). */
   actions?: ReactNode;
@@ -116,10 +117,7 @@ export function PanelHeader({ title, actions, className, ...props }: PanelHeader
 
   return (
     <header
-      className={cn(
-        "flex h-10 shrink-0 items-center gap-1 border-b border-border px-2",
-        className,
-      )}
+      className={cn("flex h-10 shrink-0 items-center gap-1 border-b border-border px-2", className)}
       {...props}
     >
       <button
@@ -150,21 +148,21 @@ export function PanelHeader({ title, actions, className, ...props }: PanelHeader
   );
 }
 
-export function PanelContent({ className, children, ...props }: ComponentProps<"div">) {
+export function PanelContent({ className, children, ...props }: ComponentProps<"section">) {
   const { collapsed, contentId, headerTitleId } = usePanelContext("PanelContent");
   if (collapsed) {
     return null; // collapsed rails drop content from the a11y tree — no hidden focus traps
   }
   return (
-    <div
+    // <section aria-labelledby=…> carries an implicit role="region" — biome useSemanticElements
+    <section
       id={contentId}
-      role="region"
       aria-labelledby={headerTitleId}
       className={cn("flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2", className)}
       {...props}
     >
       {children}
-    </div>
+    </section>
   );
 }
 

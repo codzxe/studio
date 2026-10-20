@@ -8,9 +8,12 @@
 # Dependencies declared "MIT" in licenses.overrides.json (validated by
 # scripts/check-licenses.mjs, `pnpm check:licenses`):
 #   @biomejs/biome, @hono/node-server, @hono/zod-validator, @radix-ui/react-dialog,
-#   @radix-ui/react-tabs, @tanstack/react-query, better-auth, bullmq,
-#   class-variance-authority, clsx, hono, ioredis, next, pino, postgres, promptfoo,
-#   react, react-dom, stripe, tailwindcss, turbo, vitest, zod, zustand,
+#   @radix-ui/react-label, @radix-ui/react-slot, @radix-ui/react-tabs,
+#   @radix-ui/react-tooltip, @tailwindcss/postcss, @tanstack/react-query,
+#   @testing-library/dom, @testing-library/jest-dom, @testing-library/react,
+#   @testing-library/user-event, better-auth, bullmq, class-variance-authority,
+#   clsx, hono, ioredis, jsdom, next, pino, postgres, promptfoo, react, react-dom,
+#   stripe, tailwind-merge, tailwindcss, turbo, vitest, zod, zustand,
 #   @types/node, @types/react, @types/react-dom
 # Also one of the two license options of the vendored editor engine (MIT OR
 # Apache-2.0, at the recipient's option — see LICENSE-APACHE-2.0), and the

@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { cn } from "../lib/cn";
+import { cn } from "../lib/cn.js";
 
 /**
  * Skeleton — loading placeholder.
@@ -18,7 +18,11 @@ export function Skeleton({ className, shimmer = false, ...props }: SkeletonProps
   return (
     <div
       aria-hidden="true"
-      className={cn(shimmer ? "ui-shimmer animate-none" : "animate-pulse", "rounded-md bg-muted", className)}
+      className={cn(
+        shimmer ? "ui-shimmer animate-none" : "animate-pulse",
+        "rounded-md bg-muted",
+        className,
+      )}
       {...props}
     />
   );

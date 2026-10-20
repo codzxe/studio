@@ -5,7 +5,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/**/*.test.{ts,tsx}"],
-    // .tsx suites rely on the automatic JSX runtime (matches tsconfig `jsx: react-jsx`)
-    esbuild: { jsx: "automatic" },
+    // JSX transform is driven by the package tsconfig (`jsx: react-jsx`), which the
+    // Vite/esbuild pipeline picks up automatically.
   },
 });

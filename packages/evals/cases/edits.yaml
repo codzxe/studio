@@ -1,0 +1,483 @@
+# =============================================================================
+# packages/evals/cases/edits.yaml — golden briefs: edit_layers intents (§5.5).
+# Chat-edit cases are quick tier (§5.2: 1 credit, 6 tool calls) — a targeted edit
+# must never become a regeneration (§23.5 classifier policy).
+# =============================================================================
+
+# ── §24.2 seed (verbatim) ─────────────────────────────────────────────────────
+- id: chat-edit-subhead-badge
+  description: >-
+    §24.2 verbatim — chat edit on the §24.1 document: classifier maps to restyle +
+    add_component targeting Subhead; subhead 36 -> 30pt, offer-badge@2 placed top-right
+    with label "20% OFF"; quick tier = 1 credit (§5.2/§24.2); undo restores both
+    changes in ONE step (§1.5-10).
+  vars:
+    brief: "Make the subhead smaller and add a 20% OFF badge."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 36 }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components:
+        - { id: offer-badge@2, vars: [label] }
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null            # targeted edit — no template reapply (§23.5)
+      assets: []
+      slots: {}
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: { subhead: { font: brand-sans, size: 30 } }
+      steps:
+        - { tool: type.edit, args: { layer: Subhead, size: 30 } }
+        - { tool: component.place, args: { id: offer-badge@2, vars: { label: '20% OFF' } } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5']
+      model_tier: quick
+      notes_for_user: "Subhead down to 30pt and a 20% OFF badge added top-right; both undoable in one step."
+    run:
+      status: succeeded
+      credits_charged: 1        # §5.2 quick tier; §24.2 "charge 1 credit"
+      tool_calls: 5
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, Badge]  # 1 changed + 1 added layer (§24.2)
+      undo_entries: 1           # §24.2: undo restores both in one step
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # targeted edit: no template chosen / no reapply (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # §24.2 trace: Subhead 36 -> 30pt
+      value: "return JSON.parse(output).plan.steps[0].args.size === 30 && JSON.parse(output).plan.steps[0].args.layer === 'Subhead'"
+    - type: javascript          # §24.2: offer-badge@2 with label var "20% OFF"
+      value: "return JSON.parse(output).plan.steps[1].tool === 'component.place' && JSON.parse(output).plan.steps[1].args.vars.label === '20% OFF'"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1): ok, no blockers
+      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0 && v.majors === 0"
+    - type: javascript          # layer names: Badge added, role naming kept (§23.1 rule 5)
+      value: "return JSON.parse(output).run.layers.includes('Badge') && JSON.parse(output).run.layers.includes('Subhead')"
+    - type: javascript          # one transaction per run (§1.5-10, §24.2 one-step undo)
+      value: "return JSON.parse(output).run.undo_entries === 1"
+    - type: contains            # slot content: badge label copy (§24.2)
+      value: "20% OFF"
+
+# ── invented seed: quick text swap (§11.4 edit family) ─────────────────────────
+- id: quick-swap-headline
+  description: >-
+    Invented seed ("swap the headline", §11.4 edit family): single targeted text edit,
+    exactly one mutating tool call + render/validate/commit; quick tier = 1 credit.
+    Copy fits the slot maxChars budget (20 of 40 chars, §23.2 maxChars rule).
+  vars:
+    brief: "Swap the headline to 'Roasted this morning'."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 30 }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components: []
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null
+      assets: []
+      slots:
+        headline: "Roasted this morning"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: { headline: { font: display-serif, weight: bold, size: 88 } }
+      steps:
+        - { tool: type.edit, args: { layer: Headline, text: 'Roasted this morning' } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest]
+      model_tier: quick
+      notes_for_user: "Swapped the headline copy; everything else untouched."
+    run:
+      status: succeeded
+      credits_charged: 1
+      tool_calls: 4
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # slot contents: exact new headline (§21)
+      value: "return JSON.parse(output).plan.slots.headline === 'Roasted this morning'"
+    - type: javascript          # §23.2 maxChars rule: copy stays within the 40-char slot budget
+      value: "return JSON.parse(output).plan.slots.headline.length <= 40"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # expected checks present
+      value: "return ['contrast>=4.5', 'headline_largest'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok, no blockers
+      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+    - type: contains            # layer names: Headline retargeted, role naming kept
+      value: "Headline"
+
+# ── invented seed: palette warm-up (§19 Phase 2 chat-edit family) ───────────────
+- id: palette-warm-up
+  description: >-
+    Invented seed ("make it warmer", §11.4/§19 Phase 2 chat-edit family): restyle within
+    brand tokens only — warm terracotta/cream/brown trio from SNAPSHOT, never invented
+    colours (§23.2 rules, §11.1 color_out_of_palette); quick tier = 1 credit.
+  vars:
+    brief: "Make the whole thing warmer and cozier — more autumn, less clinical."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, fill: '#EDEDEA', opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812 }
+        - { name: Headline, kind: text, fill: '#202020', size: 88 }
+        - { name: Subhead, kind: text, fill: '#4A4A4A', size: 30 }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']   # brand tokens (warm trio)
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components: []
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null
+      assets: []
+      slots: {}
+      palette: ['#D96C3B', '#F4E7D3', '#6B4A32']   # warm brand tokens only
+      typography: {}
+      steps:
+        - { tool: style.apply, args: { layer: Background, fill: '#F4E7D3' } }
+        - { tool: style.apply, args: { layer: Headline, fill: '#6B4A32' } }
+        - { tool: style.apply, args: { layer: Subhead, fill: '#D96C3B' } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5']
+      model_tier: quick
+      notes_for_user: "Shifted background/headline/subhead onto the warm brand trio; layout untouched."
+    run:
+      status: succeeded
+      credits_charged: 1
+      tool_calls: 6             # exactly at the quick cap (§5.2) — inside budget
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # §23.2: every planned colour is a brand token from SNAPSHOT
+      value: "const brand = ['#6B4A32', '#F4E7D3', '#D96C3B']; return JSON.parse(output).plan.palette.every(h => brand.includes(h))"
+    - type: javascript          # warm shift actually selects the terracotta accent
+      value: "return JSON.parse(output).plan.palette.includes('#D96C3B')"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # expected checks present (contrast guards the recolour)
+      value: "return ['in_bounds', 'contrast>=4.5'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok after warm shift
+      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+
+# ── invented seed: recolor + style cleanup (§11.1 color_out_of_palette) ────────
+- id: recolor-brand-tokens
+  description: >-
+    Invented seed: recolor badge + headline to brand terracotta and remove the headline
+    drop shadow — restyle via parameter changes only (§11.3 repair policy style:
+    prefer parameter changes over structural ones); quick tier = 1 credit; the
+    off-brand red badge is pulled back inside the palette.
+  vars:
+    brief: "Recolor the badge and the headline to brand terracotta, and drop the drop shadow from the headline."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812 }
+        - { name: Headline, kind: text, fill: '#202020', size: 88, dropShadow: subtle }
+        - { name: Subhead, kind: text, fill: '#4A4A4A', size: 30 }
+        - { name: Badge, kind: component, fill: '#E02D2D' }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components: []
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null
+      assets: []
+      slots: {}
+      palette: ['#D96C3B', '#6B4A32', '#F4E7D3']
+      typography: {}
+      steps:
+        - { tool: style.apply, args: { layer: Badge, fill: '#D96C3B' } }
+        - { tool: style.apply, args: { layer: Headline, fill: '#D96C3B' } }
+        - { tool: style.apply, args: { layer: Headline, dropShadow: none } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5']
+      model_tier: quick
+      notes_for_user: "Badge and headline now brand terracotta; drop shadow removed."
+    run:
+      status: succeeded
+      credits_charged: 1
+      tool_calls: 6             # at the quick cap — inside budget (§5.2)
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }  # color_out_of_palette cleared
+      layers: [Background, Photo, Headline, Subhead, Badge]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # only brand tokens used (§11.1 color_out_of_palette)
+      value: "const brand = ['#6B4A32', '#F4E7D3', '#D96C3B']; return JSON.parse(output).plan.palette.every(h => brand.includes(h))"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok, no blockers after recolour
+      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+    - type: contains            # layer names: Badge + Headline retargeted by role (§23.1 rule 5)
+      value: "Badge"
+
+# ── invented seed: logo swap (asset-id discipline, §23.2) ──────────────────────
+- id: logo-swap
+  description: >-
+    Invented seed: swap in the newly uploaded logo (asset_202) at the same spot/size.
+    The planner may only reference asset ids present in SNAPSHOT (§23.2), must keep the
+    role name "Logo" (§23.1 rule 5), and must not touch anything else; quick tier.
+  vars:
+    brief: "Swap in the new logo asset on this layout — same spot, same size."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Logo, kind: smart_object, asset: asset_201 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 30 }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+      assets:
+        - { id: asset_201, name: 'logo-old.png', kind: logo }
+        - { id: asset_202, name: 'logo-new.png', kind: logo }
+    catalog:
+      templates: []
+      components: []
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null
+      assets:
+        - { ref: asset_202, slot: logo, fit: contain }
+      slots: {}
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: {}
+      steps:
+        - { tool: doc.place, args: { asset: asset_202, layer: Logo, replace: true } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', asset_resolution]
+      model_tier: quick
+      notes_for_user: "Swapped the logo smart object in place; size and position preserved."
+    run:
+      status: succeeded
+      credits_charged: 1
+      tool_calls: 4
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Logo, Headline, Subhead]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # §23.2: asset id EXISTS in SNAPSHOT (asset_202, never invented)
+      value: "return JSON.parse(output).plan.assets[0].ref === 'asset_202' && JSON.parse(output).plan.assets[0].slot === 'logo'"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # expected checks present (placed image meets slot minPixels, §11.1)
+      value: "return ['in_bounds', 'asset_resolution'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok after the swap
+      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+    - type: contains            # layer names: Logo keeps its role name (§23.1 rule 5)
+      value: "Logo"
+
+# ── invented seed: template swap with reapply (§5.5 edit_layers + template) ────
+- id: template-swap-flyer
+  description: >-
+    Invented seed: rebuild the promo on the event-flyer layout, keeping copy and
+    colours. Template reapply is heavier than a quick edit, so the planner routes it to
+    the standard tier (2 credits, §5.2). Copy slots are preserved verbatim; the two new
+    flyer slots (date/venue) get reasonable fills and the planner states the assumption
+    (§23.1 rule 10 / §5.5 notes_for_user).
+  vars:
+    brief: "Rebuild this promo on the event-flyer layout for the street fair — keep the copy and the colors."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 30 }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+      assets:
+        - { id: asset_812, name: 'latte-hero.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: event-flyer@3
+          tags: [flyer, event, portrait]
+          canvas: { w: 1080, h: 1350 }
+          slots:
+            headline: { kind: text, maxChars: 40 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+            date: { kind: text, maxChars: 24 }
+            venue: { kind: text, maxChars: 30 }
+      components: []
+    plan:
+      intent: edit_layers
+      template: event-flyer@3   # reapply requested by the brief (§5.5 template field)
+      assets:
+        - { ref: asset_812, slot: photo, fit: cover }
+      slots:
+        headline: "Fresh roasted, every morning"
+        subhead: "Open 7–5 · Main St"
+        date: "Sat 9–5"
+        venue: "Main Street"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: { headline: { font: display-serif, weight: bold } }
+      steps:
+        - { tool: template.apply, args: { id: event-flyer@3 } }
+        - { tool: template.fill, args: { keepExistingCopy: true } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area]
+      model_tier: standard
+      notes_for_user: "Kept your copy and palette; filled date and venue from the shop hours — adjust if wrong."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier (template reapply + refill)
+      tool_calls: 7
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, Date, Venue]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # template chosen when expected: flyer picked for the reapply
+      value: "return JSON.parse(output).plan.template === 'event-flyer@3'"
+    - type: javascript          # §5.5: assumption stated to the user (date/venue invented)
+      value: "return JSON.parse(output).plan.notes_for_user.length > 0"
+    - type: javascript          # slot contents: original copy preserved verbatim (§21)
+      value: "return JSON.parse(output).plan.slots.headline === 'Fresh roasted, every morning' && JSON.parse(output).plan.slots.subhead === 'Open 7–5 · Main St'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok, no blockers after reapply
+      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+    - type: contains            # layer names: flyer slot layers use role names (§23.1 rule 5)
+      value: "Venue"

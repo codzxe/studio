@@ -5,5 +5,6 @@
     "@studio/config": "workspace:*", "@studio/db": "workspace:*",
     "@studio/engine-client": "workspace:*", "zod": "^3.24.1"
   },
+  "devDependencies": { "@types/node": "^22.10.0", "vitest": "^2.1.8" },
   "scripts": { "typecheck": "tsc --noEmit", "lint": "biome check src", "test": "vitest run" }
 }

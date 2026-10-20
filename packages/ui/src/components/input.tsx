@@ -1,6 +1,6 @@
 import { type VariantProps, cva } from "class-variance-authority";
-import { useId, type ComponentProps } from "react";
-import { cn } from "../lib/cn";
+import { type ComponentProps, useId } from "react";
+import { cn } from "../lib/cn.js";
 
 /**
  * Input — styled text input (§16.3 shadcn pattern).
@@ -26,8 +26,11 @@ export const inputVariants = cva(
 );
 
 export interface InputProps
-  extends ComponentProps<"input">,
+  extends Omit<ComponentProps<"input">, "size">,
     VariantProps<typeof inputVariants> {}
+
+// `size` is the cva variant (sm/md) — the native input's numeric `size` attribute is
+// replaced by CSS sizing in this kit (Omit above resolves the prop collision).
 
 export function Input({ className, size, type = "text", ...props }: InputProps) {
   return <input type={type} className={cn(inputVariants({ size }), className)} {...props} />;

@@ -1,7 +1,7 @@
 // @studio/ui — presentational base kit (§16.3 shadcn/ui pattern, token-themed).
 // Styles live in `./tokens.css` (import it once in the app via `@studio/ui/tokens.css`).
 
-export { cn } from "./lib/cn";
+export { cn } from "./lib/cn.js";
 
 export {
   Button,
@@ -29,7 +29,13 @@ export {
   DialogTrigger,
   type DialogContentProps,
 } from "./components/dialog.js";
-export { Input, inputVariants, useFieldIds, type FieldIds, type InputProps } from "./components/input.js";
+export {
+  Input,
+  inputVariants,
+  useFieldIds,
+  type FieldIds,
+  type InputProps,
+} from "./components/input.js";
 export { Label } from "./components/label.js";
 export {
   Panel,

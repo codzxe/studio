@@ -134,7 +134,7 @@ export interface RequestOptions<T> {
    * you rely on ("Zod at every boundary"); without it the parsed JSON is
    * returned with an unchecked `as T` cast.
    */
-  schema?: z.ZodType<T>;
+  schema?: z.ZodType<T, z.ZodTypeDef, unknown>;
   headers?: Record<string, string>;
   /** §13: mutating calls carry an `Idempotency-Key` (auto-generated UUID). */
   idempotencyKey?: string;
@@ -299,6 +299,13 @@ export class SseParser {
 
   /** Dispatch a pending (unterminated) block at end-of-stream, if any. */
   flush(): SseMessage[] {
+    if (this.buffer !== "") {
+      // The final partial line counts as terminated; a lone trailing CR is
+      // an unterminated CRLF, so it ends the line instead.
+      const line = this.buffer.endsWith("\r") ? this.buffer.slice(0, -1) : this.buffer;
+      this.buffer = "";
+      this.processLine(line);
+    }
     const message = this.dispatch();
     return message === null ? [] : [message];
   }
@@ -482,13 +489,14 @@ interface SseTransport {
  * a drifting gateway can never wedge the stream (seq still advances).
  */
 export class RunEventStream {
+  private readonly transport: SseTransport;
+  private readonly options: RunEventStreamOptions;
   private lastSeq: number | null;
   private durableId: string | null = null;
 
-  constructor(
-    private readonly transport: SseTransport,
-    private readonly options: RunEventStreamOptions,
-  ) {
+  constructor(transport: SseTransport, options: RunEventStreamOptions) {
+    this.transport = transport;
+    this.options = options;
     this.lastSeq = options.lastSeq ?? null;
   }
 

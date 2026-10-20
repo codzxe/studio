@@ -1,0 +1,168 @@
+# =============================================================================
+# @studio/evals — promptfoo suite configuration
+#
+# Spec refs:
+#   §11.4 Evals are CI for prompts: golden briefs asserting plan validity, validator
+#          results, layer names, slot contents, tier cost; block merge on regression.
+#   §21    "Evals" row — promptfoo, 50+ golden briefs at launch (this Wave-1 scaffold
+#          seeds 15 and grows to 50 before the Phase 2 gate). Test data is synthetic.
+#   §19    Phase 2 exit gate: eval suite >= 50 briefs with >= 85% pass. The 0.85
+#          suite pass-rate is enforced by scripts/eval-gate.mjs (exit 1 below gate).
+#   §1.5-6 Customer content must never flow through free/training LLM tiers: the
+#          deterministic mocked provider below is the CI default; real-model runs are
+#          opt-in with paid API keys only (§5.3 allowlist), never free tiers, never
+#          OpenRouter in production.
+#
+# The canonical planner/executor/critic prompts land in packages/agent/prompts in
+# Wave 6; prompts/ here holds the promptfoo-facing starter mirrors (§23.1–§23.3).
+# =============================================================================
+
+description: "studio agent evals — golden briefs over the {plan, run} envelope contract (§5.5, §5.2)"
+
+# Prompt under test: the planner starter (§23.2). The executor and critic starter
+# prompts live alongside in prompts/ and join the suite when the agent runtime does
+# (W6 executor, W7 critic + render-similarity) — see packages/evals/README.md.
+prompts:
+  - prompts/planner.system.txt
+
+providers:
+  # CI default — deterministic mocked planner: answers each brief with the case's
+  # golden {plan, run} fixtures, so the full assertion surface (schema, intent, tier
+  # credits, validator verdicts, tool-call caps) runs with zero model calls, zero cost
+  # and no engine process (§21: deterministic tests; §1.5-6: no free-tier surface).
+  # TODO(W6): replace with the real AI-SDK planner provider from packages/agent (§5.3).
+  - file://providers/mock-planner.mjs
+
+  # ── Optional real-model wiring (local only; NEVER free tiers, §1.5-6) ──────────
+  # Examples (override the provider on the CLI; do not commit keys anywhere):
+  #   ANTHROPIC_API_KEY=... pnpm --filter @studio/evals eval -- \
+  #     --providers anthropic:claude-sonnet-5-5 --no-cache
+  #   GOOGLE_VERTEX_* (paid Vertex AI only, §5.3): use the AI SDK provider id wired
+  #     in Wave 6. Gemini FREE tier is FORBIDDEN for eval content that mirrors
+  #     customer data (§1.5 constraint 6) — synthetic fixtures keep even local runs
+  #     safe, but the rule is enforced by policy regardless.
+  # Real-model outputs must go through the same {plan, run} envelope wrapper (the
+  # runtime produces `run`), or the assertions below will not parse them.
+
+# Shared defaults for every golden brief. Per-test keys merge over these.
+defaultTest:
+  vars:
+    # RULES input (§23.2): validator checks + brand tokens the planner must respect.
+    rules: |
+      Validator checks (§11.1): in_bounds, text_overflow, contrast>=4.5 body / >=3
+      display, headline_largest, safe_area, min_font_size, asset_resolution,
+      missing_font, empty_layers, naming (role names only, never "Layer N"),
+      color_out_of_palette, z_order, overlap_text, aspect, editability (no
+      flattening — §1.5 constraint 3), destructive_run.
+      Brand tokens: use the workspace palette and fonts from SNAPSHOT; colours
+      outside the palette are flagged (color_out_of_palette).
+    # BUDGET input (§23.2): standard tier by default (§5.2); cases on quick or
+    # complex tiers override this var.
+    budget: "standard — 2 credits, 80k/5k tokens in/out, 12 tool calls, 2 revisions, 5 min wall clock (§5.2)"
+  assert:
+    # plan_valid (schema §5.5/§23.2): every provider output must be the {plan, run}
+    # envelope; `plan` is the full §5.5 contract, `run` is the run-outcome envelope
+    # (§5.1/§11.1/§24 traces) that carries tier-cost and budget assertions. Each case
+    # additionally asserts a compact envelope check inline (see cases/*.yaml) so
+    # plan_valid holds even if defaultTest merging ever changes upstream.
+    - type: is-json
+      validate:
+        $schema: http://json-schema.org/draft-07/schema#
+        type: object
+        required: [plan, run]
+        additionalProperties: false
+        properties:
+          plan:
+            type: object
+            required: [intent, template, assets, slots, palette, typography, steps, checks, model_tier, notes_for_user]
+            additionalProperties: false
+            properties:
+              intent: { enum: [create_post, edit_layers, resize, variant, export] }
+              template:
+                anyOf:
+                  - { type: string, pattern: '^[a-z0-9][a-z0-9-]*@\d+$' }
+                  - { type: 'null' }
+              assets:
+                type: array
+                items:
+                  type: object
+                  required: [ref, slot]
+                  additionalProperties: false
+                  properties:
+                    ref: { type: string, minLength: 1 }
+                    slot: { type: string, minLength: 1 }
+                    fit: { enum: [cover, contain, fill] }
+                    focal:
+                      type: object
+                      required: [x, y]
+                      additionalProperties: false
+                      properties:
+                        x: { type: number, minimum: 0, maximum: 1 }
+                        y: { type: number, minimum: 0, maximum: 1 }
+              slots: { type: object, additionalProperties: { type: string } }
+              palette:
+                type: array
+                minItems: 1
+                items: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+              typography: { type: object }
+              steps:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  required: [tool, args]
+                  additionalProperties: false
+                  properties:
+                    tool: { type: string, pattern: '^[a-z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)*$' }
+                    args: { type: object }
+              checks:
+                type: array
+                minItems: 1
+                items: { type: string }
+              model_tier: { enum: [quick, standard, complex] }
+              notes_for_user: { type: string, maxLength: 300 }
+          run:
+            type: object
+            required: [status, credits_charged, tool_calls, revisions, validator, layers, undo_entries, rolled_back, reservation_released]
+            additionalProperties: false
+            properties:
+              status: { enum: [succeeded, succeeded_with_warnings, failed] }
+              credits_charged: { type: number, minimum: 0, maximum: 20 }
+              tool_calls: { type: integer, minimum: 0, maximum: 24 }
+              revisions: { type: integer, minimum: 0, maximum: 3 }
+              code: { anyOf: [{ type: string }, { type: 'null' }] }
+              retryable: { anyOf: [{ type: boolean }, { type: 'null' }] }
+              retry_grace: { type: integer, minimum: 0 }
+              validator:
+                anyOf:
+                  - { type: 'null' }
+                  - type: object
+                    required: [ok, blockers, majors, minors]
+                    additionalProperties: false
+                    properties:
+                      ok: { type: boolean }
+                      blockers: { type: integer, minimum: 0 }
+                      majors: { type: integer, minimum: 0 }
+                      minors: { type: integer, minimum: 0 }
+              layers: { type: array, items: { type: string } }
+              undo_entries: { type: integer, minimum: 0, maximum: 1 }
+              rolled_back: { type: boolean }
+              reservation_released: { type: boolean }
+    # TODO(W7) render similarity (§11.4): add a perceptual-distance assertion
+    # (SSIM/DISTS threshold, not pixel equality) against golden renders under
+    # evals/fixtures/renders/<template-slug>@<version>/<case-id>.png once the engine
+    # renders headlessly in CI. Deliberately no fuzzy image assertions in Wave 1.
+
+# Golden briefs. 15 cases today (§24.1–§24.4 verbatim seeds + 11 invented across
+# intents); grows to 50+ before the §19 Phase 2 exit gate. One prompt per case, so
+# results map 1:1 to cases for the eval-gate pass-rate math.
+tests:
+  - cases/creates.yaml      # §24.1 coffee promo (template path), §24.3 freeform card, clarify + injection policy seeds
+  - cases/edits.yaml        # §24.2 chat edit (quick tier) + quick-edit intent coverage
+  - cases/operations.yaml   # resize / variant / export intents (§5.5 enum)
+  - cases/failures.yaml     # §24.4 provider failure + refund; §5.2 budget-cap discipline
+
+evaluate:
+  # 2-CPU box (AGENTS.md): the mocked provider is instant, but keep concurrency low
+  # so many agents/CI jobs can coexist. Real-model runs should lower this further.
+  maxConcurrency: 4

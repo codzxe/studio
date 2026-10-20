@@ -1,5 +1,16 @@
 {
-  "name": "@studio/evals", "version": "0.1.0", "private": true, "type": "module",
-  "devDependencies": { "promptfoo": "^0.103.0" },
-  "scripts": { "typecheck": "tsc --noEmit", "eval": "promptfoo eval" }
+  "name": "@studio/evals",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Golden-brief eval suite (promptfoo) — spec §11.4/§21: CI for prompts, ≥85% suite pass-rate gate per §19",
+  "scripts": {
+    "eval": "promptfoo eval --config promptfoo.config.yaml",
+    "eval:ci": "promptfoo eval --config promptfoo.config.yaml --no-cache --output results/eval.json && node scripts/eval-gate.mjs results/eval.json 0.85",
+    "eval:view": "promptfoo view",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "promptfoo": "^0.103.0"
+  }
 }

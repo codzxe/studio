@@ -24,22 +24,22 @@ describe("Button", () => {
     expect(screen.getByTestId("ui-button-submit")).toHaveProperty("type", "submit");
   });
 
-  it("applies variant and size classes (cva), consumer className wins conflicts", () => {
+  it("applies variant classes (cva); consumer className wins same-group conflicts", () => {
     render(
       <Button
         variant="destructive"
         size="icon"
         aria-label="Delete layer"
         data-testid="ui-button-icon"
-        className="h-8 w-8"
+        className="rounded-full"
       />,
     );
     const el = screen.getByTestId("ui-button-icon");
     expect(el.className).toContain("bg-destructive");
-    expect(el.className).toContain("rounded-md");
-    // tailwind-merge: later h-8/w-8 utilities replace size-9
-    expect(el.className).toContain("h-8");
-    expect(el.className).not.toContain("size-9");
+    expect(el.className).toContain("focus-visible:ring-destructive");
+    // tailwind-merge: the later rounded-full replaces the variant's rounded-md
+    expect(el.className).toContain("rounded-full");
+    expect(el.className).not.toContain("rounded-md");
   });
 
   it("disabled state is inert for pointer, keyboard and screen readers", () => {

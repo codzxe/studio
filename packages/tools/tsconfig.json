@@ -1,5 +1,8 @@
 {
     "extends": "../../tsconfig.base.json",
-    "compilerOptions": { "rootDir": "src", "outDir": "dist", "jsx": "preserve" },
+    // No explicit rootDir: tests/ sits next to src/ and tsc would otherwise report
+    // TS6059 ("file is not under rootDir") while typechecking (same call as the
+    // worker and engine-pool packages).
+    "compilerOptions": { "outDir": "dist", "jsx": "preserve" },
     "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"]
   }

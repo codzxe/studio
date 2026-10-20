@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
 import { userEvent } from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
 import { Badge, statusBadgeVariant } from "../src/components/badge.js";
 import { Panel, PanelContent, PanelHeader } from "../src/components/panel.js";
 
