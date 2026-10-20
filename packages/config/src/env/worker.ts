@@ -15,7 +15,7 @@ import {
 /**
  * Model provider classes per §5.3 (one env key per class; never a single vendor).
  * All keys are OPTIONAL: the worker must boot without any provider so it can
-// still serve queue housekeeping; routing then reports the provider as
+ * still serve queue housekeeping; routing then reports the provider as
  * unconfigured (health flag) and refuses runs whose tier needs that class.
  */
 export const MODEL_PROVIDER_CLASSES = [
@@ -38,7 +38,7 @@ export const MODEL_PROVIDER_ENV_KEYS = {
 
 export const modelProviderKeySchema = z
   .string()
-  .min(8, 'API key looks too short to be real')
+  .min(8, 'looks too short to be a real API key')
   .optional();
 
 export const workerEnvSchema = z
@@ -81,8 +81,8 @@ export const workerEnvSchema = z
 
     // Observability (§22) — all optional.
     OTEL_EXPORTER_OTLP_ENDPOINT: httpUrl.optional(),
-    LANGFUSE_PUBLIC_KEY: z.string().min(8).optional(),
-    LANGFUSE_SECRET_KEY: z.string().min(8).optional(),
+    LANGFUSE_PUBLIC_KEY: z.string().min(8, 'looks too short to be a real key').optional(),
+    LANGFUSE_SECRET_KEY: z.string().min(8, 'looks too short to be a real key').optional(),
     GLITCHTIP_DSN: httpUrl.optional(),
   })
   .strict();

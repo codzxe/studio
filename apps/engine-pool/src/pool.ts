@@ -18,44 +18,17 @@ import {
 } from "./errors.js";
 import { SessionRegistry } from "./registry.js";
 import type {
-  EngineEventMap,
   EnginePoolOptions,
   EngineProcess,
   EngineSession,
   EngineSessionState,
-  PlanLimitsProvider,
   PoolEvent,
   PoolSnapshot,
   SessionSpec,
-  Spawner,
   StopSignal,
+  WatchdogReport,
   WatchdogStopFailure,
 } from "./types.js";
-
-export interface EnginePoolOptions {
-  /** Process factory; the only place real engines can enter the system. */
-  readonly spawner: Spawner;
-  /** Plan caps per organization (§3.2: a tenant may have at most N concurrent sessions). */
-  readonly limits: PlanLimitsProvider;
-  /** Idle timeout; defaults to the spec's 15 minutes (§3.4). */
-  readonly idleTimeoutMs?: number;
-  /** Grace window for a graceful stop before the watchdog marks a failure. */
-  readonly drainGraceMs?: number;
-  /** Injectable clock (epoch ms) for deterministic tests. */
-  readonly clock?: () => number;
-  /** Injectable id factory (defaults to crypto.randomUUID). */
-  readonly newSessionId?: () => string;
-  /** Injectable token factory (defaults to crypto.randomBytes(32) hex — §3.2 256-bit). */
-  readonly newToken?: () => string;
-  /** Optional loopback port allocator; absent → the spawner picks the stdio transport. */
-  readonly allocatePort?: () => number | undefined;
-  /** Extra env merged into every spawn (e.g. CRAFT_FONTS_DIR). */
-  readonly env?: Readonly<Record<string, string>>;
-  /** Observability hook (§22); observer errors are swallowed. */
-  readonly onSessionEvent?: (event: PoolEvent) => void;
-}
-
-const NO_PROCESS: unique symbol = Symbol("no-process");
 
 export class EnginePool {
   readonly #options: EnginePoolOptions;
@@ -65,6 +38,7 @@ export class EnginePool {
   readonly #pendingByOrg = new Map<string, number>();
   readonly #idleTimeoutMs: number;
   readonly #drainGraceMs: number;
+  readonly #logger: { warn(message: string, data?: Record<string, unknown>): void };
   #drained = false;
 
   constructor(options: EnginePoolOptions) {
@@ -72,6 +46,7 @@ export class EnginePool {
     this.#registry = new SessionRegistry({ clock: options.clock });
     this.#idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.#drainGraceMs = options.drainGraceMs ?? DEFAULT_DRAIN_GRACE_MS;
+    this.#logger = options.logger ?? { warn: (): void => undefined };
   }
 
   /**
@@ -128,19 +103,16 @@ export class EnginePool {
       });
     }
     if (session.documentId !== undefined && session.documentId !== documentId) {
-      throw sessionNotFound({ hint: "Session is bound to another document; allocate a new session." });
+      throw sessionNotFound({
+        hint: "Session is bound to another document; allocate a new session.",
+      });
     }
     const updated = this.#registry.update(sessionId, {
       documentId,
       state: "attached",
       lastActivityAt: this.#now(),
     });
-    this.#emit({
-      type: "session_attached",
-      sessionId,
-      organizationId,
-      documentId,
-    });
+    this.#emit({ type: "session_attached", sessionId, organizationId, documentId });
     return updated;
   }
 
@@ -163,9 +135,8 @@ export class EnginePool {
 
   /** Graceful release: drain, stop the process, forget the session. */
   async release(sessionId: string, options?: { signal?: StopSignal }): Promise<void> {
-    const session = this.#registry.get(sessionId);
-    if (!session) throw sessionNotFound();
-    // Draining first, then drop the bookkeeping so the exit event is expected.
+    if (!this.#registry.get(sessionId)) throw sessionNotFound();
+    // Draining first, then drop the bookkeeping, so the exit event is expected.
     this.#registry.update(sessionId, { state: "draining" });
     this.#registry.remove(sessionId);
     const process = this.#processes.get(sessionId);
@@ -177,20 +148,19 @@ export class EnginePool {
   }
 
   /**
-   * One watchdog sweep (§3.2 memory/CPU watchdog, idle timeout):
+   * One watchdog sweep (§3.2 idle timeout + crash restart):
    * 1. stop + recycle sessions idle past the timeout (§3.4 per-session idle 15 min);
    * 2. report sessions marked crashed by their exit hooks (worker replays, §3.4);
    * 3. mark sessions that ignore SIGTERM past the grace window as crashed.
    */
-  async watchdogTick(): Promise<import("./types.js").WatchdogReport> {
-    const now = this.#now();
+  async watchdogTick(): Promise<WatchdogReport> {
     const all = this.#registry.list();
     const crashed = all
       .filter((session) => session.state === "crashed")
       .map((session) => session.sessionId);
     const evictable = this.#registry.evictionCandidates({
       maxIdleMs: this.#idleTimeoutMs,
-      now,
+      now: this.#now(),
     });
     const evicted: string[] = [];
     const stopFailures: WatchdogStopFailure[] = [];
@@ -209,10 +179,7 @@ export class EnginePool {
           // replay from the checkpoint after Wave 2's SIGKILL escalation (§3.4).
           this.#registry.update(session.sessionId, { state: "crashed" });
           this.#emit({ type: "session_crashed", sessionId: session.sessionId });
-          stopFailures.push({
-            sessionId: session.sessionId,
-            envelope: toEnvelope(error),
-          });
+          stopFailures.push({ sessionId: session.sessionId, envelope: toEnvelope(error) });
         }
       }),
     );
@@ -231,8 +198,12 @@ export class EnginePool {
         this.#processes.delete(session.sessionId);
         try {
           if (process) await this.#stopWithGrace(process, "SIGTERM");
-        } catch {
+        } catch (error) {
           // Shutdown must proceed regardless; Wave 2 adds SIGKILL escalation.
+          this.#logger.warn("engine-pool: stop failed during drain", {
+            sessionId: session.sessionId,
+            error: String(error),
+          });
         }
       }),
     );
@@ -266,8 +237,7 @@ export class EnginePool {
   async #spawnSession(spec: SessionSpec): Promise<EngineSession> {
     const sessionId = this.#options.newSessionId?.() ?? randomUUID();
     // §3.2: unique random token, regenerated per process — 256-bit, 64 hex chars.
-    const token =
-      this.#options.newToken?.() ?? randomBytes(TOKEN_BYTES).toString("hex");
+    const token = this.#options.newToken?.() ?? randomBytes(TOKEN_BYTES).toString("hex");
     const request = {
       sessionId,
       organizationId: spec.organizationId,
@@ -309,11 +279,7 @@ export class EnginePool {
       await this.#bestEffortStop(process);
       throw error;
     }
-    this.#emit({
-      type: "session_allocated",
-      sessionId,
-      organizationId: spec.organizationId,
-    });
+    this.#emit({ type: "session_allocated", sessionId, organizationId: spec.organizationId });
     return { ...session };
   }
 
@@ -334,15 +300,15 @@ export class EnginePool {
   /** Graceful stop bounded by a timeout; rejects with watchdog_timeout past the grace. */
   async #stopWithGrace(process: EngineProcess, signal: StopSignal): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const grace = new Promise<typeof NO_PROCESS>((resolve) => {
-      timer = setTimeout(() => resolve(NO_PROCESS), this.#drainGraceMs);
+    const grace = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), this.#drainGraceMs);
     });
     try {
       const outcome = await Promise.race([
         process.stop(signal).then(() => "stopped" as const),
         grace,
       ]);
-      if (outcome === NO_PROCESS) throw watchdogTimeout(this.#drainGraceMs);
+      if (outcome === "timeout") throw watchdogTimeout(this.#drainGraceMs);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
@@ -351,8 +317,9 @@ export class EnginePool {
   async #bestEffortStop(process: EngineProcess): Promise<void> {
     try {
       await this.#stopWithGrace(process, "SIGTERM");
-    } catch {
+    } catch (error) {
       // Registration failed; we only tried to avoid leaking a live process.
+      this.#logger.warn("engine-pool: best-effort stop failed", { error: String(error) });
     }
   }
 
@@ -361,10 +328,16 @@ export class EnginePool {
   }
 
   #emit(event: PoolEvent): void {
+    const observer = this.#options.onSessionEvent;
+    if (observer === undefined) return;
     try {
-      this.#options.onSessionEvent?.(event);
-    } catch {
-      // Observer errors must never affect pool state (§22).
+      observer(event);
+    } catch (error) {
+      // §22: an observer must never be able to break the pool.
+      this.#logger.warn("engine-pool: session-event observer failed", {
+        type: event.type,
+        error: String(error),
+      });
     }
   }
 }

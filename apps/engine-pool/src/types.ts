@@ -106,6 +106,34 @@ export interface PlanLimitsProvider {
   getLimits(organizationId: string): PlanLimits;
 }
 
+/** Everything the pool needs at construction; every dependency is injectable. */
+export interface EnginePoolOptions {
+  /** Process factory; the only place real engines can enter the system. */
+  readonly spawner: Spawner;
+  /** Plan caps per organization (§3.2: a tenant may have at most N concurrent sessions). */
+  readonly limits: PlanLimitsProvider;
+  /** Idle timeout; defaults to the spec's 15 minutes (§3.4 per-session idle). */
+  readonly idleTimeoutMs?: number;
+  /** Grace window for a graceful stop before the watchdog records a failure. */
+  readonly drainGraceMs?: number;
+  /** Injectable clock (epoch ms) for deterministic tests. */
+  readonly clock?: () => number;
+  /** Injectable id factory (defaults to crypto.randomUUID). */
+  readonly newSessionId?: () => string;
+  /** Injectable token factory (defaults to crypto.randomBytes(32) hex — §3.2 256-bit). */
+  readonly newToken?: () => string;
+  /** Optional loopback port allocator; absent → the spawner picks the stdio transport. */
+  readonly allocatePort?: () => number | undefined;
+  /** Extra env merged into every spawn (e.g. CRAFT_FONTS_DIR). */
+  readonly env?: Readonly<Record<string, string>>;
+  /** Observability hook (§22); observer errors never affect pool state. */
+  readonly onSessionEvent?: (event: PoolEvent) => void;
+  /** Optional structured logger (§22); defaults to a silent sink. Wire pino in Wave 2. */
+  readonly logger?: {
+    warn(message: string, data?: Record<string, unknown>): void;
+  };
+}
+
 /** Observability hook (§22); observer errors never affect pool state. */
 export type PoolEvent =
   | { readonly type: "session_allocated"; readonly sessionId: string; readonly organizationId: string }
