@@ -37,8 +37,8 @@
 import { z } from "zod";
 import {
   MAX_SUMMARY_CHARS,
-  MAX_WARNING_CHARS,
   MAX_WARNINGS,
+  MAX_WARNING_CHARS,
   defineTool,
   err,
   ok,
@@ -133,9 +133,7 @@ function readBool(value: unknown): boolean | undefined {
 
 /** Integer counter (childCount, slotCount, missing layers…). */
 function readCount(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0
-    ? value
-    : undefined;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 /**
@@ -474,12 +472,15 @@ export function compactVariables(
  */
 export function compactComps(payload: unknown, warnings: string[]): SnapshotComps | undefined {
   const record = asRecord(payload);
-  if (record === undefined) return undefined;
-  const rawComps = Array.isArray(record.comps)
-    ? record.comps
-    : Array.isArray(record.layerComps)
-      ? record.layerComps
-      : [];
+  // Two vendor shapes, both read defensively: comps_cmds.rs wraps the rows in
+  // `{comps:[…], lastApplied}`; inspect.rs sends a bare array of `{id,name}`.
+  const rawComps: readonly unknown[] = Array.isArray(payload)
+    ? payload
+    : record !== undefined && Array.isArray(record.comps)
+      ? record.comps
+      : record !== undefined && Array.isArray(record.layerComps)
+        ? record.layerComps
+        : [];
   const comps: { id: string; name: string }[] = [];
   for (const raw of rawComps) {
     const row = asRecord(raw);
@@ -495,7 +496,8 @@ export function compactComps(payload: unknown, warnings: string[]): SnapshotComp
     warnings.push(`comps limited to first ${kept.length} of ${comps.length} (id order)`);
   }
   if (kept.length === 0) return undefined;
-  const lastApplied = readId(record.lastApplied ?? record.lastAppliedComp);
+  const lastApplied =
+    record !== undefined ? readId(record.lastApplied ?? record.lastAppliedComp) : undefined;
   return lastApplied === undefined ? { comps: kept } : { comps: kept, lastApplied };
 }
 
@@ -511,7 +513,7 @@ export function compactRuns(rows: readonly unknown[], warnings: string[]): reado
     const date =
       row.createdAt instanceof Date
         ? clip(row.createdAt.toISOString(), 30)
-        : readString(row.createdAt, 30) ?? readString(row.updatedAt, 30);
+        : (readString(row.createdAt, 30) ?? readString(row.updatedAt, 30));
     runs.push(date === undefined ? { id, status } : { id, status, createdAt: date });
   }
   // Newest first; stable id tiebreak (§5.4 stable ordering).
@@ -657,7 +659,7 @@ function assemble(
   }
   if (keep.has("palette") && (sections.palette?.length ?? 0) > 0) {
     const palette: Record<string, string> = {};
-    for (const entry of sections.palette) palette[entry.token] = entry.value;
+    for (const entry of sections.palette ?? []) palette[entry.token] = entry.value;
     out.palette = palette;
   }
   if (keep.has("fonts") && (sections.fonts?.length ?? 0) > 0) out.fonts = sections.fonts;
@@ -699,9 +701,7 @@ export function summarizeSnapshot(
   budgetChars: number = SNAPSHOT_SUMMARY_BUDGET_CHARS,
 ): SnapshotSummary {
   const budget =
-    Number.isInteger(budgetChars) && budgetChars > 0
-      ? budgetChars
-      : SNAPSHOT_SUMMARY_BUDGET_CHARS;
+    Number.isInteger(budgetChars) && budgetChars > 0 ? budgetChars : SNAPSHOT_SUMMARY_BUDGET_CHARS;
   const warnings: string[] = [...sections.buildWarnings];
   const keep = new Set<Section>([
     "layers",
@@ -969,9 +969,7 @@ export const workspaceSnapshot: Tool<WorkspaceSnapshotArgs> = defineTool({
     });
 
     const revision =
-      Number.isInteger(snapshot.revision) && snapshot.revision >= 0
-        ? snapshot.revision
-        : undefined;
+      Number.isInteger(snapshot.revision) && snapshot.revision >= 0 ? snapshot.revision : undefined;
     return ok({
       summary,
       warnings: summaryWarnings.length > 0 ? summaryWarnings : undefined,

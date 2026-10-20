@@ -30,8 +30,8 @@ import { z } from "zod";
 import {
   MAX_ERROR_MESSAGE_CHARS,
   MAX_HINT_CHARS,
-  MAX_WARNING_CHARS,
   MAX_WARNINGS,
+  MAX_WARNING_CHARS,
   cappedArray,
   cappedString,
   defineTool,
@@ -101,7 +101,7 @@ function finiteRange(minimum: number, maximum: number, what: string) {
     .refine((value) => Number.isFinite(value), { message: `${what} ${FINITE_MESSAGE}` });
 }
 
-/** A finite px dimension, 0..LAYOUT_MAX_PX (width/height/min*/max*/spacer size). */
+/** A finite px dimension, 0..LAYOUT_MAX_PX (width/height/min/max/spacer size). */
 const zDimension = finiteRange(0, LAYOUT_MAX_PX, "this dimension");
 /** A signed finite coordinate, |v| ≤ LAYOUT_MAX_PX (x, y, dx, dy, within-rect sides). */
 const zCoordinate = z
@@ -124,11 +124,9 @@ const zColumns = finiteRange(1, LAYOUT_MAX_COLUMNS, "`columns`").refine(
 );
 /** §9.2 sizing: `true` = weight 1, `false`/0 = does not grow, numbers ≥ 0. */
 const zGrow = z.union([z.boolean(), finiteRange(0, LAYOUT_MAX_GROW, "`grow`")]);
-const zPercent = z
-  .number()
-  .refine((value) => Number.isFinite(value) && value > 0 && value <= 100, {
-    message: "`percent` is a share of the parent's main axis (1–100)",
-  });
+const zPercent = z.number().refine((value) => Number.isFinite(value) && value > 0 && value <= 100, {
+  message: "`percent` is a share of the parent's main axis (1–100)",
+});
 const zAspect = z
   .number()
   .refine((value) => Number.isFinite(value) && value > 0 && value <= LAYOUT_MAX_GROW, {
@@ -138,11 +136,9 @@ const zAspect = z
 /** `padding`: one side (all four) or CSS order [t, r, b, l] with 1, 2 or 4 sides. */
 const zSides = z.union([
   zSide,
-  z
-    .array(zSide)
-    .refine((sides) => sides.length === 1 || sides.length === 2 || sides.length === 4, {
-      message: "`padding` must be one number or an array of 2 or 4 numbers",
-    }),
+  z.array(zSide).refine((sides) => sides.length === 1 || sides.length === 2 || sides.length === 4, {
+    message: "`padding` must be one number or an array of 2 or 4 numbers",
+  }),
 ]);
 
 /** `layer`: the engine's raw id-or-name value (resolve_layer: u64 or non-empty name). */
@@ -155,8 +151,7 @@ const zWithin = z.union([
     .array(zCoordinate)
     .length(4)
     .refine(
-      (rect) =>
-        rect[2] !== undefined && rect[3] !== undefined && rect[2] >= 0 && rect[3] >= 0,
+      (rect) => rect[2] !== undefined && rect[3] !== undefined && rect[2] >= 0 && rect[3] >= 0,
       { message: "`within` width and height must be ≥ 0" },
     ),
 ]);
@@ -578,10 +573,10 @@ export const layoutApplyArgsSchema = strictObject({
     coordinateSpace: z.enum(["document", "parent"]).optional(),
     safeArea: zSafeArea.optional(),
   }).optional(),
-}).superRefine((args, addIssue) => {
+}).superRefine((args, ctx) => {
   const violation = findLayoutTreeCapsViolation(args.root);
   if (violation !== undefined) {
-    addIssue({ code: z.ZodIssueCode.custom, path: ["root"], message: violation });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["root"], message: violation });
   }
 });
 
