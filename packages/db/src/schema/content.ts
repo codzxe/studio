@@ -54,9 +54,7 @@ export type TemplateSource = (typeof TEMPLATE_SOURCES)[number];
 export const documents = pgTable(
   "documents",
   {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()::text`),
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     // §12.2 tenant root — cascades so the GDPR purge removes tenant content wholesale.
     organizationId: text("organization_id")
       .notNull()
@@ -89,9 +87,7 @@ export const documents = pgTable(
 export const documentVersions = pgTable(
   "document_versions",
   {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()::text`),
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     documentId: text("document_id")
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
@@ -121,9 +117,7 @@ export const documentVersions = pgTable(
 export const commands = pgTable(
   "commands",
   {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()::text`),
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     documentId: text("document_id")
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
@@ -134,10 +128,7 @@ export const commands = pgTable(
     runId: text("run_id"),
     seq: integer("seq").notNull(),
     commandName: text("command_name").notNull(),
-    params: jsonb("params")
-      .$type<Record<string, unknown>>()
-      .notNull()
-      .default({}),
+    params: jsonb("params").$type<Record<string, unknown>>().notNull().default({}),
     // Null when the command failed before producing a result; failures are audited
     // via agent_steps, they are never replayed.
     result: jsonb("result").$type<Record<string, unknown>>(),
@@ -162,9 +153,7 @@ export const commands = pgTable(
 export const assets = pgTable(
   "assets",
   {
-    id: text("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()::text`),
+    id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
@@ -191,9 +180,7 @@ export const assets = pgTable(
  * Comment bodies are user content — data, never instructions (§5.7).
  */
 export const comments = pgTable("comments", {
-  id: text("id")
-    .primaryKey()
-    .default(sql`gen_random_uuid()::text`),
+  id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
   organizationId: text("organization_id")
     .notNull()
     .references(() => organization.id, { onDelete: "cascade" }),
@@ -215,9 +202,7 @@ export const comments = pgTable("comments", {
  * carry `organization_id` null; workspace rows cascade with their organization.
  */
 export const workspaceTemplates = pgTable("workspace_templates", {
-  id: text("id")
-    .primaryKey()
-    .default(sql`gen_random_uuid()::text`),
+  id: text("id").primaryKey().default(sql`gen_random_uuid()::text`),
   organizationId: text("organization_id").references(() => organization.id, {
     onDelete: "cascade",
   }),
