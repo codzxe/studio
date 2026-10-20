@@ -21,6 +21,7 @@ import { describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { gatewayTransportSchema } from "../src/env.js";
 import {
+  creditRoutes,
   mountCreditsRoutes,
   SUMMARY_WINDOW_DAYS,
   type BillingSummaryLike,
@@ -51,7 +52,6 @@ import {
   type UsageQueryInput,
   type UsageQueryLike,
 } from "../src/services/usage.js";
-import { creditRoutes } from "../src/routes/credits.js";
 
 // --- fixtures -------------------------------------------------------------------
 
@@ -217,6 +217,17 @@ interface SeedRunEvent {
   readonly tokensOut?: number;
 }
 
+/** A run event after seed-time defaulting — every numeric field required. */
+interface SeededRunEvent {
+  readonly organizationId: string;
+  readonly at: Date;
+  readonly status: string;
+  readonly tier: string;
+  readonly costMicroUsd: number;
+  readonly tokensIn: number;
+  readonly tokensOut: number;
+}
+
 /**
  * UsageQueryLike fake: mirrors the production GROUP BY semantics — org + the
  * half-open [from, to) range, then (UTC day, kind) / (UTC day, status, tier)
@@ -225,7 +236,7 @@ interface SeedRunEvent {
  */
 class FakeUsageQueries implements UsageQueryLike {
   readonly #ledger: SeedLedgerEvent[] = [];
-  readonly #runs: SeedRunEvent[] = [];
+  readonly #runs: SeededRunEvent[] = [];
 
   seedLedger(event: SeedLedgerEvent): void {
     this.#ledger.push({ ...event });
@@ -240,10 +251,10 @@ class FakeUsageQueries implements UsageQueryLike {
     });
   }
 
-  #inRange(
-    events: readonly { readonly organizationId: string; readonly at: Date }[],
+  #inRange<T extends { readonly organizationId: string; readonly at: Date }>(
+    events: readonly T[],
     query: UsageQueryInput,
-  ): readonly { readonly organizationId: string; readonly at: Date }[] {
+  ): readonly T[] {
     return events.filter(
       (event) =>
         event.organizationId === query.organizationId &&
@@ -278,9 +289,9 @@ class FakeUsageQueries implements UsageQueryLike {
         status: event.status,
         tier: event.tier,
         runCount: (current?.runCount ?? 0) + 1,
-        costMicroUsd: (current?.costMicroUsd ?? 0) + (event.costMicroUsd ?? 0),
-        tokensIn: (current?.tokensIn ?? 0) + (event.tokensIn ?? 0),
-        tokensOut: (current?.tokensOut ?? 0) + (event.tokensOut ?? 0),
+        costMicroUsd: (current?.costMicroUsd ?? 0) + event.costMicroUsd,
+        tokensIn: (current?.tokensIn ?? 0) + event.tokensIn,
+        tokensOut: (current?.tokensOut ?? 0) + event.tokensOut,
       });
     }
     return [...groups.values()].sort((left, right) => (left.day < right.day ? -1 : 1));
@@ -359,7 +370,7 @@ async function creditsBody(res: Response): Promise<CreditsBody> {
 
 const T0 = Date.parse("2025-07-01T10:00:00.000Z");
 
-/** Seeds `count` rows for an org, one per second, plus a foreign-org decoy. */
+/** Seeds `count` rows for an org, one per second, newest last. */
 function seedLedgerSeries(
   ledger: FakeLedger,
   organizationId: string,
@@ -374,12 +385,6 @@ function seedLedgerSeries(
       createdAt: new Date(T0 + i * 1000),
     });
   }
-  ledger.seed({
-    organizationId: ORG_B,
-    kind,
-    delta: -999,
-    createdAt: new Date(T0 - 1000),
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -634,7 +639,14 @@ describe("GET /v1/credits", () => {
 
   it("cursor-pages newest-first with a strict descending order", async () => {
     const harness = makeHarness();
-    seedLedgerSeries(harness.ledger, ORG_A, 5); // rows at T0..T0+4s + org B decoy
+    seedLedgerSeries(harness.ledger, ORG_A, 5); // rows at T0..T0+4s
+    // A foreign-org decoy with a distinctive delta: it must NEVER appear.
+    harness.ledger.seed({
+      organizationId: ORG_B,
+      kind: "adjustment",
+      delta: -999,
+      createdAt: new Date(T0 - 1000),
+    });
 
     // Page 1 (limit 2): the two newest rows.
     const page1 = await creditsBody(await get(harness, "/v1/credits?limit=2"));
@@ -667,9 +679,9 @@ describe("GET /v1/credits", () => {
     const all = [...page1.ledger.rows, ...page2.ledger.rows, ...page3.ledger.rows];
     expect(new Set(all.map((row) => row.id)).size).toBe(5);
     for (let i = 1; i < all.length; i += 1) {
-      const older = all[i - 1];
-      const newer = all[i];
-      expect(older && newer && older.created_at >= newer.created_at).toBe(true);
+      const previous = all[i - 1];
+      const current = all[i];
+      expect(previous && current && previous.created_at >= current.created_at).toBe(true);
     }
     // The org B decoy never appears.
     expect(all.some((row) => row.delta === -999)).toBe(false);
