@@ -125,10 +125,13 @@ briefs; more failure paths). Copy an existing case file, keep the assertion cate
 This scaffold was authored offline (no installs on agent boxes, per AGENTS.md). Three
 promptfoo behaviors should be confirmed on the first CI run and hardened if needed:
 
-1. **`javascript` assertion style** — values are written in return-style form
-   (`return JSON.parse(output)…`). If the pin treats values as bare expressions
-   (docs' table example `output.length > 10 ? 1.0 : 0.0`), strip the leading `return `
-   across `cases/` (mechanical sed) — nothing else changes.
+1. **`javascript` assertion style** — every value is a single `return (<expression>)`
+   statement (multi-value checks use an inline IIFE, e.g.
+   `return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)`).
+   If the pin treats values as bare expressions (docs' table example
+   `output.length > 10 ? 1.0 : 0.0`), strip the leading `return ` across `cases/`
+   (`sed -i 's/\\breturn (/(/' cases/*.yaml`) — the remaining IIFE is a valid
+   expression, so nothing else changes.
 2. **Provider loading** — `file://providers/mock-planner.mjs` with a named `callApi`
    export plus a default object. If the pin expects a different export shape, adjust
    the export in that one file.

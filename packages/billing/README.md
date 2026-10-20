@@ -7,6 +7,10 @@ and the `@studio/config` constants.** There is no database code here — all sta
 goes through the `LedgerStore` seam, so the Drizzle-backed repo layer can land
 in a later wave without touching this package's semantics.
 
+> Status (W1-N, wave 1): domain complete — 90/90 table-driven tests green,
+> tsc strict clean, biome clean. Stripe webhooks (§14.3) and the Postgres
+> `LedgerStore` implementation are deliberately out of scope here.
+
 ## §14.2 deduction rules — the exact contract
 
 | # | Rule (spec) | Implementation |
