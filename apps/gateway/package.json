@@ -5,7 +5,7 @@
     "@studio/billing": "workspace:*", "@studio/config": "workspace:*", "@studio/db": "workspace:*",
     "@studio/storage": "workspace:*",
     "@hono/node-server": "^1.13.0", "better-auth": "^1.1.20", "drizzle-orm": "^0.38.3", "hono": "^4.6.14",
-    "@hono/zod-validator": "^0.4.2", "ioredis": "^5.4.2", "pino": "^9.6.0", "zod": "^3.24.1"
+    "@hono/zod-validator": "^0.9.1", "ioredis": "^5.4.2", "pino": "^9.6.0", "zod": "^3.24.1"
   },
   "optionalDependencies": { "stripe": "^17.5.0" },
   "devDependencies": { "@types/node": "^22.10.0", "vitest": "^2.1.8" },
