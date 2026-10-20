@@ -631,8 +631,9 @@ describe("layer_ops — §10.1 group-before-multiply warnings", () => {
   });
 
   it("create_group relists to name the new group's id", async () => {
-    const trees = [TREE, [...TREE, layer("12", "Brand", "Group")]];
-    const { result } = await runOk({ op: "create_group", name: "Brand" }, { trees });
+    // No parent → no pre-batch listing, so the first (and only) tree IS the post-batch one.
+    const after = [...TREE, layer("12", "Brand", "Group")];
+    const { result } = await runOk({ op: "create_group", name: "Brand" }, { trees: [after] });
     if (result.ok) {
       expect(result.summary).toContain('Created group "Brand"');
       expect(result.summary).toContain("(id 12)");

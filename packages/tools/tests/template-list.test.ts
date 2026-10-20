@@ -108,8 +108,21 @@ const YT: RawManifest = {
   tags: ["video", "thumbnail"],
   canvas: { width: 1280, height: 720 },
   slots: {
-    title: { kind: "text", layer: "Title", bounds: [0, 0, 1280, 200], font: "display", size: 120, maxChars: 48 },
-    face: { kind: "image", layer: "Face", bounds: [0, 200, 1280, 520], fit: "cover", optional: true },
+    title: {
+      kind: "text",
+      layer: "Title",
+      bounds: [0, 0, 1280, 200],
+      font: "display",
+      size: 120,
+      maxChars: 48,
+    },
+    face: {
+      kind: "image",
+      layer: "Face",
+      bounds: [0, 200, 1280, 520],
+      fit: "cover",
+      optional: true,
+    },
   },
   rules: { safeArea: 32, palette: ["#111111", "#FFD400"] },
   layerMap: { Title: { role: "headline" }, Face: { role: "image" } },
@@ -126,7 +139,14 @@ const SLIDE: RawManifest = {
   tags: ["deck", "slide"],
   canvas: { width: 1920, height: 1080 },
   slots: {
-    heading: { kind: "text", layer: "Heading", bounds: [64, 64, 1792, 200], font: "sans", size: 72, maxChars: 80 },
+    heading: {
+      kind: "text",
+      layer: "Heading",
+      bounds: [64, 64, 1792, 200],
+      font: "sans",
+      size: 72,
+      maxChars: 80,
+    },
   },
   layerMap: { Heading: "heading-layer-id" },
   thumbnail: "thumbnails/slide@1.png",
@@ -154,7 +174,15 @@ const JUNK: RawManifest = {
   version: 1,
   name: "Junk",
   slots: {
-    head: { kind: "text", layer: "Head", bounds: "not-a-tuple", font: "display", size: Number.NaN, maxChars: 42, color: "nope" },
+    head: {
+      kind: "text",
+      layer: "Head",
+      bounds: "not-a-tuple",
+      font: "display",
+      size: Number.NaN,
+      maxChars: 42,
+      color: "nope",
+    },
   },
   rules: { safeArea: 12, palette: ["#FF0000", "not-a-color", "#00FF00"] },
   layerMap: { Head: { role: "headline", evil: { deep: true } } },
@@ -243,7 +271,7 @@ describe("template_list schema (§6.1 strict)", () => {
       { tags: [] },
       { tags: "social" },
       { tags: [""] },
-      { tags: Array<string>(MAX_LIST_TAGS + 1).fill("x") },
+      { tags: Array.from({ length: MAX_LIST_TAGS + 1 }, () => "x") },
       { tags: ["x".repeat(65)] },
       { query: "x".repeat(121) },
       { query: "" },
@@ -263,7 +291,7 @@ describe("template_list schema (§6.1 strict)", () => {
     }
   });
 
-  it("is registered on the §6 surface with a snake_case name", () => {
+  it("is registered on the §6 surface with snake_case names", () => {
     expect(templateList.name).toBe("template_list");
     expect(templateInspect.name).toBe("template_inspect");
   });
@@ -275,14 +303,15 @@ describe("template_list schema (§6.1 strict)", () => {
 
 describe("template_list card view (§7.4)", () => {
   it("lists compact cards — id, name, version, tags, canvas, slot names", async () => {
-    const result = await runList(fakeTemplates(BASE), {});
-    const rows = cards(result);
+    const rows = cards(await runList(fakeTemplates(BASE), {}));
     expect(rows.map((card) => card.id)).toEqual([
       "instagram-post",
       "presentation-slide",
       "youtube-thumbnail",
     ]);
-    expect(rows[0]).toEqual({
+    const first = rows[0];
+    if (first === undefined) throw new Error("expected the first card");
+    expect(first).toEqual({
       id: "instagram-post",
       name: "Instagram Post — Promo",
       version: "3",
@@ -290,7 +319,7 @@ describe("template_list card view (§7.4)", () => {
       canvas: { width: 1080, height: 1080 },
       slots: ["photo", "headline", "subhead", "badge", "logo"],
     });
-    expect(Object.keys(rows[0])).toEqual(["id", "name", "version", "tags", "canvas", "slots"]);
+    expect(Object.keys(first)).toEqual(["id", "name", "version", "tags", "canvas", "slots"]);
   });
 
   it("is a CARD view: no bounds, rules, layerMap, thumbnail, author or license", async () => {
@@ -308,10 +337,12 @@ describe("template_list card view (§7.4)", () => {
     expect(rows).toEqual([
       { id: "minimal-seam", name: "minimal-seam", version: "7", tags: [], slots: ["headline"] },
     ]);
-    expect(Object.keys(rows[0])).toEqual(["id", "name", "version", "tags", "slots"]);
+    const first = rows[0];
+    if (first === undefined) throw new Error("expected the first card");
+    expect(Object.keys(first)).toEqual(["id", "name", "version", "tags", "slots"]);
   });
 
-  it("tags+query filter table (engine list_from semantics)", async () => {
+  it("filters tags+query with the engine's list_from semantics", async () => {
     const table: readonly {
       args: Record<string, unknown>;
       ids: readonly string[];
@@ -340,7 +371,9 @@ describe("template_list card view (§7.4)", () => {
     const result = await runList(fakeTemplates(BASE), { tags: ["bogus", "social"] });
     expect(cards(result)).toEqual([]);
     expect(warningText(result)).toMatch(/unknown tag\(s\): bogus/);
-    expect(warningText(result)).toMatch(/available tags: deck, promo, slide, social, square, thumbnail, video/);
+    expect(warningText(result)).toMatch(
+      /available tags: deck, promo, slide, social, square, thumbnail, video/,
+    );
   });
 
   it("keeps versions sorted per id (id, then numeric version)", async () => {
@@ -380,7 +413,10 @@ describe("template_list compact reply (§6.1)", () => {
       tags: ["bulk"],
       canvas: { width: 100, height: 100 },
       slots: Object.fromEntries(
-        Array.from({ length: 12 }, (_, j) => [`slot-with-a-very-long-name-${String(j).padStart(2, "0")}`, { kind: "text" }]),
+        Array.from({ length: 12 }, (_, j) => [
+          `slot-with-a-very-long-name-${String(j).padStart(2, "0")}`,
+          { kind: "text" },
+        ]),
       ),
     }));
     const result = await runList(fakeTemplates(fat), {});
@@ -410,7 +446,14 @@ describe("template_list compact reply (§6.1)", () => {
 
 describe("template_inspect schema + pin parsing", () => {
   it("requires a strict id@version pin (zTemplateRef)", async () => {
-    for (const args of [{}, { template: "instagram-post" }, { template: "@3" }, { template: "" }, { template: "instagram-post@3", extra: 1 }]) {
+    const bad: readonly unknown[] = [
+      {},
+      { template: "instagram-post" },
+      { template: "@3" },
+      { template: "" },
+      { template: "instagram-post@3", extra: 1 },
+    ];
+    for (const args of bad) {
       const result = await runInspect(fakeTemplates(BASE), args);
       expect(result, JSON.stringify(args)).toMatchObject({ ok: false, code: "invalid_args" });
     }
@@ -456,23 +499,21 @@ describe("template_inspect manifest view (§6 row 3)", () => {
       align: "left",
       autoFit: { minSize: 56, maxSize: 110 },
     });
-    expect(slots.badge).toMatchObject({ kind: "component", component: "offer-badge@2", optional: true });
-    expect(slots.photo).toMatchObject({ kind: "image", fit: "cover", optional: false });
-    expect(v.rules).toMatchObject({
-      safeArea: 48,
-      minContrast: 4.5,
-      maxTextLayers: 6,
-      palette: ["#F4E7D3", "#3B2A20", "#D96C3B"],
-    });
-    expect((v.rules as Record<string, unknown>).mustLayers).toEqual(["Background", "Photo", "Headline"]);
-    expect((v.layerMap as Record<string, Record<string, unknown>>).Photo).toMatchObject({
-      role: "image",
-      mask: "rounded",
-    });
-    expect((v.layerMap as Record<string, Record<string, unknown>>).Badge).toEqual({
-      role: "component",
+    expect(slots.badge).toMatchObject({
+      kind: "component",
       component: "offer-badge@2",
+      optional: true,
     });
+    expect(slots.photo).toMatchObject({ kind: "image", fit: "cover", optional: false });
+    const rules = v.rules as Record<string, unknown>;
+    expect(rules.safeArea).toBe(48);
+    expect(rules.minContrast).toBe(4.5);
+    expect(rules.mustLayers).toEqual(["Background", "Photo", "Headline"]);
+    expect(rules.maxTextLayers).toBe(6);
+    expect(rules.palette).toEqual(["#F4E7D3", "#3B2A20", "#D96C3B"]);
+    const layerMap = v.layerMap as Record<string, Record<string, unknown>>;
+    expect(layerMap.Photo).toMatchObject({ role: "image", mask: "rounded" });
+    expect(layerMap.Badge).toEqual({ role: "component", component: "offer-badge@2" });
     expect(v.thumbnail).toBe("instagram-post@3.png");
   });
 
@@ -488,8 +529,7 @@ describe("template_inspect manifest view (§6 row 3)", () => {
 
   it("truncates thumbnail URLs to a basename — no signed queries or paths", async () => {
     const result = await runInspect(fakeTemplates([JUNK]), { template: "junk@1" });
-    const v = view(result);
-    expect(v.thumbnail).toBe("junk.png");
+    expect(view(result).thumbnail).toBe("junk.png");
     if (!result.ok) throw new Error("expected an ok result");
     expect(result.summary).not.toContain("SEKRIT");
     expect(result.summary).not.toContain("cdn.example.com");
@@ -511,11 +551,12 @@ describe("template_inspect manifest view (§6 row 3)", () => {
 
   it("drops invalid §7.2 fields instead of echoing them (§6.1)", async () => {
     const result = await runInspect(fakeTemplates([JUNK]), { template: "junk@1" });
-    const slots = view(result).slots as Record<string, Record<string, unknown>>;
-    expect(slots.head).toEqual({ kind: "text", layer: "Head", maxChars: 42 });
-    const rules = view(result).rules as Record<string, unknown>;
+    const v = view(result);
+    const slots = v.slots as Record<string, Record<string, unknown>>;
+    expect(slots.head).toEqual({ kind: "text", layer: "Head", font: "display", maxChars: 42 });
+    const rules = v.rules as Record<string, unknown>;
     expect(rules.palette).toEqual(["#FF0000", "#00FF00"]);
-    const layerMap = view(result).layerMap as Record<string, Record<string, unknown>>;
+    const layerMap = v.layerMap as Record<string, Record<string, unknown>>;
     expect(layerMap.Head).toEqual({ role: "headline" });
   });
 
@@ -547,7 +588,7 @@ describe("template_inspect unknown id (§6.1 hint)", () => {
     const result = await runInspect(fakeTemplates(BASE), { template: "instagram-post@99" });
     expect(result).toMatchObject({ ok: false, code: "not_found" });
     if (!result.ok) {
-      expect(result.message).toContain('no version 99');
+      expect(result.message).toContain("no version 99");
       expect(result.message).toContain("instagram-post");
       expect(result.hint).toContain("versions of instagram-post: 3");
     }
@@ -559,12 +600,14 @@ describe("template_inspect unknown id (§6.1 hint)", () => {
   it("inspects the pinned version, not the newest", async () => {
     const legacy = { ...IG, version: 2, name: "Instagram Post — Legacy" };
     const result = await runInspect(fakeTemplates([IG, legacy]), { template: "instagram-post@2" });
-    expect(view(result).template).toBe("instagram-post@2");
-    expect(view(result).name).toBe("Instagram Post — Legacy");
+    const v = view(result);
+    expect(v.template).toBe("instagram-post@2");
+    expect(v.name).toBe("Instagram Post — Legacy");
   });
 
   it("hints at an empty catalog", async () => {
     const result = await runInspect(fakeTemplates([]), { template: "anything@1" });
+    expect(result).toMatchObject({ ok: false, code: "not_found" });
     if (!result.ok) expect(result.hint).toContain("the template catalog is empty");
   });
 });
@@ -584,7 +627,14 @@ describe("template_inspect compact-reply ladder", () => {
       slots: Object.fromEntries(
         Array.from({ length: 14 }, (_, i) => [
           `slot-${String(i).padStart(2, "0")}`,
-          { kind: "text", layer: `L${i}`, bounds: [0, i, 100, 50], font: "sans", size: 40, maxChars: 60 },
+          {
+            kind: "text",
+            layer: `L${i}`,
+            bounds: [0, i, 100, 50],
+            font: "sans",
+            size: 40,
+            maxChars: 60,
+          },
         ]),
       ),
       rules: { palette: ["#123456"] },
