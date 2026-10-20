@@ -21,10 +21,10 @@
  * storage are injected seams; unit tests run on fakes only.
  */
 
+import { PLAN_ID_SCHEMA, type PlanId, planLimits } from "@studio/config";
 import { z } from "zod";
-import { PLAN_ID_SCHEMA, planLimits, type PlanId } from "@studio/config";
+import { type ObjectStorage, type SignedObjectUrl, errorText, isPng } from "./preview.js";
 import { EXPORT_FORMATS, type ExportFormat } from "./queues.js";
-import { errorText, isPng, type ObjectStorage, type SignedObjectUrl } from "./preview.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -253,9 +253,13 @@ export function checkExportMegapixels(
   subject = "canvas",
 ): ExportOutcome<CanvasBudgetCheck> {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) {
-    return exportFailure("invalid_export_request", `${subject} dimensions must be positive integers`, {
-      retryable: false,
-    });
+    return exportFailure(
+      "invalid_export_request",
+      `${subject} dimensions must be positive integers`,
+      {
+        retryable: false,
+      },
+    );
   }
   const limits = planLimits(plan);
   const ceilingPixels = limits.maxCanvasMegapixels * 1_000_000; // §14.1 decimal MP
@@ -314,10 +318,16 @@ export async function processExportJob(
 ): Promise<ExportOutcome<ExportResult>> {
   const parsed = exportJobRequestSchema.safeParse(ctx.payload);
   if (!parsed.success) {
-    return exportFailure("invalid_export_request", "the export job payload failed schema validation", {
-      hint: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
-      retryable: false,
-    });
+    return exportFailure(
+      "invalid_export_request",
+      "the export job payload failed schema validation",
+      {
+        hint: parsed.error.issues
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; "),
+        retryable: false,
+      },
+    );
   }
   const request = parsed.data;
 
@@ -340,10 +350,14 @@ export async function processExportJob(
   try {
     canvas = await deps.engine.inspectDocument();
   } catch (error) {
-    return exportFailure("export_engine_failed", "the engine document could not be inspected before export", {
-      retryable: true,
-      data: errorText(error),
-    });
+    return exportFailure(
+      "export_engine_failed",
+      "the engine document could not be inspected before export",
+      {
+        retryable: true,
+        data: errorText(error),
+      },
+    );
   }
 
   const canvasCheck = checkExportMegapixels(canvas.width, canvas.height, request.plan);
@@ -408,9 +422,13 @@ export async function processExportJob(
     });
   }
   if (request.format === "jpg" && !isJpeg(bytes)) {
-    return exportFailure("invalid_export_bytes", "the JPEG export did not carry the JPEG signature", {
-      retryable: false,
-    });
+    return exportFailure(
+      "invalid_export_bytes",
+      "the JPEG export did not carry the JPEG signature",
+      {
+        retryable: false,
+      },
+    );
   }
   // `.pcraft` is the engine's own layered format — no client-side magic to check.
 

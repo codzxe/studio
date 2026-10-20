@@ -19,8 +19,12 @@
  * pipeline with the engine pool session and the @studio/storage adapter.
  */
 
+import {
+  AGENT_OBSERVE_PREVIEW_PX,
+  ENGINE_PNG_MAX_BYTES,
+  ENGINE_PREVIEW_MAX_PX,
+} from "@studio/config";
 import { z } from "zod";
-import { AGENT_OBSERVE_PREVIEW_PX, ENGINE_PNG_MAX_BYTES, ENGINE_PREVIEW_MAX_PX } from "@studio/config";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -373,12 +377,16 @@ export class PreviewPipeline {
   ): Promise<PreviewOutcome<PreviewUrlResult>> {
     const parsed = renderPreviewRequestSchema.safeParse(request);
     if (!parsed.success) {
-      return previewFailure("invalid_preview_request", "the preview request failed schema validation", {
-        hint: parsed.error.issues
-          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-          .join("; "),
-        retryable: false,
-      });
+      return previewFailure(
+        "invalid_preview_request",
+        "the preview request failed schema validation",
+        {
+          hint: parsed.error.issues
+            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+            .join("; "),
+          retryable: false,
+        },
+      );
     }
     const clamped = clampPreviewWidth(parsed.data.width, parsed.data.purpose);
     if (!clamped.ok) {

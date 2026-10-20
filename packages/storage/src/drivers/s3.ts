@@ -181,16 +181,33 @@ function s3ErrorFromXml(xml: string): { code: string | null; message: string | n
 
 const LIST_PAGE_SIZE = 1000;
 
+interface ResolvedS3Config {
+  readonly endpoint: string;
+  readonly region: string;
+  readonly bucket: string;
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly prefix: string;
+  readonly forceR2Compat: boolean;
+  readonly now: (() => Date) | undefined;
+  readonly signerFactory: AwsClientFactory | undefined;
+  readonly fetchImpl: typeof fetch | undefined;
+}
+
 export class S3Storage implements Storage {
-  private readonly options: Required<Pick<S3StorageOptions, "endpoint" | "region" | "bucket" | "accessKeyId" | "secretAccessKey">> &
-    Pick<S3StorageOptions, "now" | "signerFactory" | "fetchImpl"> & {
-      readonly prefix: string;
-      readonly forceR2Compat: boolean;
-    };
+  private readonly config: ResolvedS3Config;
   private signerPromise: Promise<AwsClientLike> | null = null;
 
   constructor(input: S3StorageOptions) {
-    const parsed = S3_STORAGE_OPTIONS_SCHEMA.safeParse(input);
+    const parsed = S3_STORAGE_OPTIONS_SCHEMA.safeParse({
+      endpoint: input.endpoint,
+      region: input.region,
+      bucket: input.bucket,
+      accessKeyId: input.accessKeyId,
+      secretAccessKey: input.secretAccessKey,
+      prefix: input.prefix,
+      forceR2Compat: input.forceR2Compat,
+    });
     if (!parsed.success) {
       const issues = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
       throw new StorageError("storage_config_invalid", `S3 storage driver config failed validation: ${issues}`);
@@ -204,14 +221,12 @@ export class S3Storage implements Storage {
     if (prefix.length > 0) {
       const prefixCheck = validateStoragePrefix(prefix);
       if (!prefixCheck.ok) {
-        throw new StorageError(
-          "storage_config_invalid",
-          "S3 key prefix is not a safe key prefix",
-          { hint: "prefix segments use alphanumerics, `.`, `_`, `-` only" },
-        );
+        throw new StorageError("storage_config_invalid", "S3 key prefix is not a safe key prefix", {
+          hint: "prefix segments use alphanumerics, `.`, `_`, `-` only",
+        });
       }
     }
-    this.options = {
+    this.config = {
       ...parsed.data,
       prefix,
       forceR2Compat: parsed.data.forceR2Compat === true,
@@ -265,7 +280,8 @@ export class S3Storage implements Storage {
 
   async *list(prefix: string): AsyncIterable<string> {
     const validated = prefixError(validateStoragePrefix(prefix));
-    const physicalPrefix = `${this.options.prefix}${validated}`;
+    const physicalPrefix = `${this.config.prefix}${validated}`;
+    const listBase = s3ObjectUrl(this.addressing(), "").replace(/\/$/, "");
     let continuationToken: string | null = null;
     do {
       const query = new URLSearchParams({
@@ -276,7 +292,7 @@ export class S3Storage implements Storage {
       if (continuationToken !== null) {
         query.set("continuation-token", continuationToken);
       }
-      const url = `${s3ObjectUrl(this.addressing(), "/")}?${query.toString()}`;
+      const url = `${listBase}?${query.toString()}`;
       const signed = await this.signedRequest("GET", url);
       const response = await this.fetch(signed);
       if (!response.ok) {
@@ -284,37 +300,22 @@ export class S3Storage implements Storage {
       }
       const page = parseListObjectsXml(await response.text());
       for (const physicalKey of page.keys) {
-        if (!physicalKey.startsWith(this.options.prefix)) {
+        if (!physicalKey.startsWith(this.config.prefix)) {
           continue; // outside our prefix namespace — not ours to yield
         }
-        const logical = physicalKey.slice(this.options.prefix.length);
+        const logical = physicalKey.slice(this.config.prefix.length);
         if (logical.startsWith(validated)) {
           yield logical;
         }
       }
+      // Truncated without a token (or a malformed page): stop rather than loop forever.
       continuationToken = page.isTruncated ? page.nextContinuationToken : null;
     } while (continuationToken !== null);
   }
 
   async sign(key: string, options: SignOptions): Promise<SignedUrl> {
-    const validated = keyError(validateStorageKey(key));
-    const parsed = signOptionsError(options);
-    const presigned = presignS3Get({
-      endpoint: this.options.endpoint,
-      region: this.options.region,
-      bucket: this.options.bucket,
-      key: this.physicalKey(validated),
-      accessKeyId: this.options.accessKeyId,
-      secretAccessKey: this.options.secretAccessKey,
-      expiresInSeconds: parsed.ttlSeconds,
-      download: parsed.download,
-      forcePathStyle: this.options.forceR2Compat,
-      now: this.options.now,
-    });
-    if (!presigned.ok) {
-      throw storageErrorFromFailure(presigned);
-    }
-    return { url: presigned.value.url, expiresAt: presigned.value.expiresAt };
+    const detail = await this.presignDetail(key, options);
+    return { url: detail.url, expiresAt: detail.expiresAt };
   }
 
   /** The full presign detail (tests/debugging); not part of the Storage seam. */
@@ -322,16 +323,16 @@ export class S3Storage implements Storage {
     const validated = keyError(validateStorageKey(key));
     const parsed = signOptionsError(options);
     const presigned = presignS3Get({
-      endpoint: this.options.endpoint,
-      region: this.options.region,
-      bucket: this.options.bucket,
+      endpoint: this.config.endpoint,
+      region: this.config.region,
+      bucket: this.config.bucket,
       key: this.physicalKey(validated),
-      accessKeyId: this.options.accessKeyId,
-      secretAccessKey: this.options.secretAccessKey,
+      accessKeyId: this.config.accessKeyId,
+      secretAccessKey: this.config.secretAccessKey,
       expiresInSeconds: parsed.ttlSeconds,
       download: parsed.download,
-      forcePathStyle: this.options.forceR2Compat,
-      now: this.options.now,
+      forcePathStyle: this.config.forceR2Compat,
+      now: this.config.now,
     });
     if (!presigned.ok) {
       throw storageErrorFromFailure(presigned);
@@ -343,18 +344,18 @@ export class S3Storage implements Storage {
 
   private addressing() {
     return {
-      endpoint: this.options.endpoint,
-      bucket: this.options.bucket,
-      forcePathStyle: this.options.forceR2Compat,
+      endpoint: this.config.endpoint,
+      bucket: this.config.bucket,
+      forcePathStyle: this.config.forceR2Compat,
     };
   }
 
   private physicalKey(key: string): string {
-    return `${this.options.prefix}${key}`;
+    return `${this.config.prefix}${key}`;
   }
 
   private fetch(input: RequestInfo): Promise<Response> {
-    const fetchImpl = this.options.fetchImpl ?? fetch;
+    const fetchImpl = this.config.fetchImpl ?? fetch;
     return fetchImpl(input);
   }
 
@@ -380,23 +381,39 @@ export class S3Storage implements Storage {
 
   /** Lazily create (and cache) the header signer; failures are never cached. */
   private loadSigner(): Promise<AwsClientLike> {
-    const factory = this.options.signerFactory ?? defaultAwsClientFactory;
-    const attempt = this.signerPromise ?? Promise.resolve()
-      .then(() => factory({ accessKeyId: this.options.accessKeyId, secretAccessKey: this.options.secretAccessKey, region: this.options.region, service: "s3" }))
-      .then((client) => client)
-      .catch((err: unknown) => {
-        if (this.signerPromise === null) {
-          throw err; // a newer attempt superseded us; let it win
+    if (this.signerPromise === null) {
+      const factory = this.config.signerFactory ?? defaultAwsClientFactory;
+      const attempt = (async () => {
+        try {
+          return await factory({
+            accessKeyId: this.config.accessKeyId,
+            secretAccessKey: this.config.secretAccessKey,
+            region: this.config.region,
+            service: "s3",
+          });
+        } catch (err) {
+          if (err instanceof StorageError) {
+            throw err;
+          }
+          throw new StorageError(
+            "storage_driver_unavailable",
+            "the S3 storage driver could not initialize its request signer",
+            {
+              hint: "install aws4fetch@^1.0.20 (pnpm add aws4fetch) or set STORAGE_DRIVER=local",
+              retryable: false,
+              cause: err,
+            },
+          );
         }
-        throw err;
+      })();
+      this.signerPromise = attempt;
+      // Do not cache a failed load — a later call can retry (install, transient).
+      attempt.catch(() => {
+        if (this.signerPromise === attempt) {
+          this.signerPromise = null;
+        }
       });
-    this.signerPromise = attempt;
-    this.signerPromise = attempt.catch((err: unknown) => {
-      if (this.signerPromise === attempt) {
-        this.signerPromise = null; // do not cache a failed load
-      }
-      throw err;
-    });
+    }
     return this.signerPromise;
   }
 

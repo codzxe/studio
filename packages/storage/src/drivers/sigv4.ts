@@ -93,8 +93,8 @@ export function s3RequestHost(addressing: S3Addressing): string {
 
 /** Object URL without query string (the URL presigning starts from). */
 export function s3ObjectUrl(addressing: S3Addressing, key: string): string {
-  const url = new URL(addressing.endpoint);
-  const base = `${url.protocol}//${url.host}`.replace(/\/+$/, "");
+  const endpoint = new URL(addressing.endpoint);
+  const base = `${endpoint.protocol}//${s3RequestHost(addressing)}`;
   const path = addressing.forcePathStyle ? `/${encodePath(`${addressing.bucket}/${key}`)}` : `/${encodePath(key)}`;
   return `${base}${path}`;
 }
@@ -159,7 +159,7 @@ export function presignS3Get(input: S3PresignInput): StorageResult<PresignedS3Ur
   const signature = createHmac("sha256", signingKey).update(stringToSign, "utf8").digest("hex");
 
   const base = new URL(input.endpoint);
-  const url = `${base.protocol}//${base.host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+  const url = `${base.protocol}//${s3RequestHost(input)}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
   return {
     ok: true,
     value: {

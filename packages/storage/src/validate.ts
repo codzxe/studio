@@ -22,14 +22,14 @@
 //   retryable }` (AGENTS.md style). Nothing throws on malformed input; only a
 //   caller passing nonsensical limit numbers (a programmer error) throws.
 
-import { createHash } from 'node:crypto';
+import { createHash } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 /** Media types this module can recognise by magic bytes. */
-export type ImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
+export type ImageMime = "image/png" | "image/jpeg" | "image/webp";
 
 /**
  * Stable error codes for the upload path (§13.3 add-only style).
@@ -37,11 +37,11 @@ export type ImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
  * codes; the envelope shape is structurally identical to its `Failure`.
  */
 export type UploadErrorCode =
-  | 'unsupported_media_type'
-  | 'upload_too_large'
-  | 'resolution_exceeds_ceiling'
-  | 'file_corrupt'
-  | 'polyglot_detected';
+  | "unsupported_media_type"
+  | "upload_too_large"
+  | "resolution_exceeds_ceiling"
+  | "file_corrupt"
+  | "polyglot_detected";
 
 /** Typed failure envelope. Upload rejections are never retryable. */
 export interface UploadFailure {
@@ -96,7 +96,7 @@ export interface ByteRange {
 
 /** A segment the strip plan removes (marker name + half-open range). */
 export interface RemovedSegment {
-  readonly marker: 'APP1' | 'APP2' | 'COM';
+  readonly marker: "APP1" | "APP2" | "COM";
   readonly start: number;
   readonly end: number;
 }
@@ -127,8 +127,8 @@ export const DEFAULT_MAX_UPLOAD_MEGAPIXELS = 60;
 // Internal failure helpers
 // ---------------------------------------------------------------------------
 
-const HINT_REEXPORT = 'Re-export the image and try again.';
-const HINT_SUPPORTED = 'Only JPEG and PNG images are accepted.';
+const HINT_REEXPORT = "Re-export the image and try again.";
+const HINT_SUPPORTED = "Only JPEG and PNG images are accepted.";
 
 function fail(code: UploadErrorCode, message: string, hint?: string): UploadFailure {
   const failure: {
@@ -145,14 +145,14 @@ function fail(code: UploadErrorCode, message: string, hint?: string): UploadFail
 }
 
 function corrupt(message: string): UploadFailure {
-  return fail('file_corrupt', message, HINT_REEXPORT);
+  return fail("file_corrupt", message, HINT_REEXPORT);
 }
 
 function polyglot(): UploadFailure {
   return fail(
-    'polyglot_detected',
-    'File contains more than one image format (polyglot).',
-    'Upload a plain single-format JPEG or PNG.',
+    "polyglot_detected",
+    "File contains more than one image format (polyglot).",
+    "Upload a plain single-format JPEG or PNG.",
   );
 }
 
@@ -239,21 +239,21 @@ function isWebpSignature(b: ByteReader, at: number): boolean {
   );
 }
 
-type MagicHit = 'png' | 'jpeg' | 'webp';
+type MagicHit = "png" | "jpeg" | "webp";
 
 /**
  * Strong signatures only (PNG sig, RIFF…WEBP — both ≥ 8 bytes, collision-safe
  * across the whole 25 MB cap). Used on the entire buffer where compressed
  * payload lives. Never returns early on a weak JPEG hit.
  */
-function scanStrongMagic(b: ByteReader, from: number): 'png' | 'webp' | null {
+function scanStrongMagic(b: ByteReader, from: number): "png" | "webp" | null {
   for (let i = from; i + 8 <= b.length; i++) {
     const v = b.u8(i);
     if (v === 0x89 && isPngSignature(b, i)) {
-      return 'png';
+      return "png";
     }
     if (v === 0x52 && isWebpSignature(b, i)) {
-      return 'webp';
+      return "webp";
     }
   }
   return null;
@@ -264,16 +264,17 @@ function scanStrongMagic(b: ByteReader, from: number): 'png' | 'webp' | null {
  * region that must be empty (PNG post-IEND trailing bytes).
  */
 function scanAnyMagic(b: ByteReader, from: number): MagicHit | null {
-  for (let i = from; i + 3 < b.length; i++) {
+  // Need i, i+1, i+2 readable → i + 3 <= length (a bare 3-byte SOI tail counts).
+  for (let i = from; i + 3 <= b.length; i++) {
     const v = b.u8(i);
     if (v === 0x89 && isPngSignature(b, i)) {
-      return 'png';
+      return "png";
     }
     if (v === 0xff && b.u8(i + 1) === 0xd8 && b.u8(i + 2) === 0xff) {
-      return 'jpeg';
+      return "jpeg";
     }
     if (v === 0x52 && isWebpSignature(b, i)) {
-      return 'webp';
+      return "webp";
     }
   }
   return null;
@@ -310,18 +311,18 @@ function crc32Range(bytes: Uint8Array, start: number, end: number): number {
 export function sniffMime(bytes: Uint8Array): SniffResult {
   const b = new ByteReader(bytes);
   if (isPngSignature(b, 0)) {
-    return { ok: true, mime: 'image/png' };
+    return { ok: true, mime: "image/png" };
   }
   if (isJpegSoi(b, 0)) {
-    return { ok: true, mime: 'image/jpeg' };
+    return { ok: true, mime: "image/jpeg" };
   }
   if (isWebpSignature(b, 0)) {
-    return { ok: true, mime: 'image/webp' };
+    return { ok: true, mime: "image/webp" };
   }
   return fail(
-    'unsupported_media_type',
-    'Unsupported file type.',
-    'Magic bytes must match PNG, JPEG or WebP.',
+    "unsupported_media_type",
+    "Unsupported file type.",
+    "Magic bytes must match PNG, JPEG or WebP.",
   );
 }
 
@@ -338,30 +339,29 @@ export function sniffMime(bytes: Uint8Array): SniffResult {
 export function pngDimensions(bytes: Uint8Array): DimensionResult {
   const b = new ByteReader(bytes);
   if (!isPngSignature(b, 0)) {
-    return corrupt('PNG signature missing.');
+    return corrupt("PNG signature missing.");
   }
   // Signature(8) + length(4) + "IHDR"(4) + data(13) + crc(4) = 33 bytes minimum.
   if (!b.has(8, 25)) {
-    return corrupt('PNG is truncated (IHDR chunk incomplete).');
+    return corrupt("PNG is truncated (IHDR chunk incomplete).");
   }
   const ihdrLength = b.u32be(8);
   if (ihdrLength !== 13) {
     return corrupt(`PNG IHDR length is ${ihdrLength}; expected 13.`);
   }
-  const isIhdr =
-    b.u8(12) === 0x49 && b.u8(13) === 0x48 && b.u8(14) === 0x44 && b.u8(15) === 0x52;
+  const isIhdr = b.u8(12) === 0x49 && b.u8(13) === 0x48 && b.u8(14) === 0x44 && b.u8(15) === 0x52;
   if (!isIhdr) {
-    return corrupt('PNG first chunk must be IHDR.');
+    return corrupt("PNG first chunk must be IHDR.");
   }
   const width = b.u32be(16);
   const height = b.u32be(20);
   if (width === 0 || height === 0) {
-    return corrupt('PNG width or height is zero.');
+    return corrupt("PNG width or height is zero.");
   }
   const storedCrc = b.u32be(29);
   const computedCrc = crc32Range(b.raw, 12, 29);
   if (storedCrc !== computedCrc) {
-    return corrupt('PNG IHDR CRC does not match.');
+    return corrupt("PNG IHDR CRC does not match.");
   }
   return { ok: true, width, height, megapixels: megapixelsOf(width, height) };
 }
@@ -392,29 +392,29 @@ interface JpegSegment {
   readonly end: number;
 }
 
-type JpegProblem = 'truncated' | 'bad_marker' | 'bad_length' | 'second_soi' | 'second_sof';
+type JpegProblem = "truncated" | "bad_marker" | "bad_length" | "second_soi" | "second_sof";
 
 interface JpegHeader {
   readonly segments: readonly JpegSegment[];
   readonly sof: { readonly height: number; readonly width: number } | null;
   /** Where header parsing stopped (SOS/EOI = well-formed end of the header). */
-  readonly stop: { readonly kind: 'sos' | 'eoi' | 'eof' | 'desync'; readonly at: number };
+  readonly stop: { readonly kind: "sos" | "eoi" | "eof" | "desync"; readonly at: number };
   /** First structural problem, if any (fatal for parsing). */
   readonly problem: JpegProblem | null;
 }
 
 function problemMessage(problem: JpegProblem): string {
   switch (problem) {
-    case 'truncated':
-      return 'JPEG is truncated.';
-    case 'bad_marker':
-      return 'JPEG marker structure is invalid.';
-    case 'bad_length':
-      return 'JPEG segment length is invalid.';
-    case 'second_soi':
-      return 'JPEG contains a second SOI marker (double header).';
-    case 'second_sof':
-      return 'JPEG contains multiple SOF markers (conflicting dimensions).';
+    case "truncated":
+      return "JPEG is truncated.";
+    case "bad_marker":
+      return "JPEG marker structure is invalid.";
+    case "bad_length":
+      return "JPEG segment length is invalid.";
+    case "second_soi":
+      return "JPEG contains a second SOI marker (double header).";
+    case "second_sof":
+      return "JPEG contains multiple SOF markers (conflicting dimensions).";
   }
 }
 
@@ -435,8 +435,8 @@ function walkJpegHeader(b: ByteReader): JpegHeader {
       return {
         segments,
         sof,
-        stop: { kind: outOfBytes ? 'eof' : 'desync', at: pos },
-        problem: outOfBytes ? 'truncated' : 'bad_marker',
+        stop: { kind: outOfBytes ? "eof" : "desync", at: pos },
+        problem: outOfBytes ? "truncated" : "bad_marker",
       };
     }
     let codeAt = pos;
@@ -444,41 +444,41 @@ function walkJpegHeader(b: ByteReader): JpegHeader {
       codeAt++; // skip fill bytes
     }
     if (!b.has(codeAt, 1)) {
-      return { segments, sof, stop: { kind: 'eof', at: pos }, problem: 'truncated' };
+      return { segments, sof, stop: { kind: "eof", at: pos }, problem: "truncated" };
     }
     const code = b.u8(codeAt);
     if (code === MARKER_SOI) {
-      return { segments, sof, stop: { kind: 'desync', at: pos }, problem: 'second_soi' };
+      return { segments, sof, stop: { kind: "desync", at: pos }, problem: "second_soi" };
     }
     if (code === MARKER_EOI) {
-      return { segments, sof, stop: { kind: 'eoi', at: pos }, problem: null };
+      return { segments, sof, stop: { kind: "eoi", at: pos }, problem: null };
     }
     if (code === MARKER_SOS) {
-      return { segments, sof, stop: { kind: 'sos', at: pos }, problem: null };
+      return { segments, sof, stop: { kind: "sos", at: pos }, problem: null };
     }
     if (code === 0x01 || (code >= 0xd0 && code <= 0xd7)) {
       // TEM / RST markers have no length and are illegal before SOS.
-      return { segments, sof, stop: { kind: 'desync', at: pos }, problem: 'bad_marker' };
+      return { segments, sof, stop: { kind: "desync", at: pos }, problem: "bad_marker" };
     }
     if (!b.has(codeAt + 1, 2)) {
-      return { segments, sof, stop: { kind: 'eof', at: pos }, problem: 'truncated' };
+      return { segments, sof, stop: { kind: "eof", at: pos }, problem: "truncated" };
     }
     const length = b.u16be(codeAt + 1);
     if (length < 2) {
-      return { segments, sof, stop: { kind: 'desync', at: pos }, problem: 'bad_length' };
+      return { segments, sof, stop: { kind: "desync", at: pos }, problem: "bad_length" };
     }
     const end = codeAt + 1 + length;
     if (end > b.length) {
-      return { segments, sof, stop: { kind: 'eof', at: pos }, problem: 'truncated' };
+      return { segments, sof, stop: { kind: "eof", at: pos }, problem: "truncated" };
     }
     const segment: JpegSegment = { code, start: pos, codeAt, payloadAt: codeAt + 3, end };
     if (code === MARKER_SOF0 || code === MARKER_SOF2) {
       if (sof !== null) {
-        return { segments, sof, stop: { kind: 'desync', at: pos }, problem: 'second_sof' };
+        return { segments, sof, stop: { kind: "desync", at: pos }, problem: "second_sof" };
       }
       // Lf(2) P(1) Y(2) X(2) — need precision + height + width readable.
       if (length < 8 || !b.has(codeAt + 3, 5)) {
-        return { segments, sof, stop: { kind: 'desync', at: pos }, problem: 'bad_length' };
+        return { segments, sof, stop: { kind: "desync", at: pos }, problem: "bad_length" };
       }
       sof = { height: b.u16be(codeAt + 4), width: b.u16be(codeAt + 6) };
     }
@@ -499,7 +499,7 @@ function walkJpegHeader(b: ByteReader): JpegHeader {
 export function jpegDimensions(bytes: Uint8Array): DimensionResult {
   const b = new ByteReader(bytes);
   if (!b.has(0, 2) || b.u8(0) !== 0xff || b.u8(1) !== 0xd8) {
-    return corrupt('JPEG SOI marker missing.');
+    return corrupt("JPEG SOI marker missing.");
   }
   const header = walkJpegHeader(b);
   if (header.problem !== null) {
@@ -507,10 +507,10 @@ export function jpegDimensions(bytes: Uint8Array): DimensionResult {
   }
   const frame = header.sof;
   if (frame === null) {
-    return corrupt('JPEG has no SOF0/SOF2 frame marker.');
+    return corrupt("JPEG has no SOF0/SOF2 frame marker.");
   }
   if (frame.height === 0 || frame.width === 0) {
-    return corrupt('JPEG width or height is zero.');
+    return corrupt("JPEG width or height is zero.");
   }
   return {
     ok: true,
@@ -534,13 +534,13 @@ export function dimensions(bytes: Uint8Array): DimensionResult {
   if (!sniffed.ok) {
     return sniffed;
   }
-  if (sniffed.mime === 'image/png') {
+  if (sniffed.mime === "image/png") {
     return pngDimensions(bytes);
   }
-  if (sniffed.mime === 'image/jpeg') {
+  if (sniffed.mime === "image/jpeg") {
     return jpegDimensions(bytes);
   }
-  return fail('unsupported_media_type', 'WebP dimension parsing is not supported.', HINT_SUPPORTED);
+  return fail("unsupported_media_type", "WebP dimension parsing is not supported.", HINT_SUPPORTED);
 }
 
 // ---------------------------------------------------------------------------
@@ -609,14 +609,14 @@ export function hasExif(bytes: Uint8Array): boolean {
 // ---------------------------------------------------------------------------
 
 /** Marker label for a removed segment (only APP1/APP2/COM are ever dropped). */
-function removedMarker(code: number): RemovedSegment['marker'] {
+function removedMarker(code: number): RemovedSegment["marker"] {
   if (code === MARKER_APP1) {
-    return 'APP1';
+    return "APP1";
   }
   if (code === MARKER_APP2) {
-    return 'APP2';
+    return "APP2";
   }
-  return 'COM';
+  return "COM";
 }
 
 /**
@@ -642,7 +642,7 @@ export function stripExifPlan(bytes: Uint8Array): StripExifResult {
   }
   const header = walkJpegHeader(b);
   if (header.problem !== null) {
-    return fail('file_corrupt', problemMessage(header.problem), HINT_REEXPORT);
+    return fail("file_corrupt", problemMessage(header.problem), HINT_REEXPORT);
   }
   const keep: ByteRange[] = [];
   const removed: RemovedSegment[] = [];
@@ -682,29 +682,29 @@ function pngTailCheck(b: ByteReader): UploadFailure | null {
   let pos = 8;
   for (;;) {
     if (!b.has(pos, 8)) {
-      return corrupt('PNG is truncated before IEND.');
+      return corrupt("PNG is truncated before IEND.");
     }
     const length = b.u32be(pos);
     const typeIs = (t0: number, t1: number, t2: number, t3: number): boolean =>
       b.u8(pos + 4) === t0 && b.u8(pos + 5) === t1 && b.u8(pos + 6) === t2 && b.u8(pos + 7) === t3;
     if (typeIs(0x49, 0x48, 0x44, 0x52) && pos !== 8) {
-      return corrupt('PNG contains a duplicate IHDR chunk.');
+      return corrupt("PNG contains a duplicate IHDR chunk.");
     }
     // 4 length + 4 type + data + 4 crc must fit inside the file.
     const end = pos + 12 + length;
     if (end > b.length) {
-      return corrupt('PNG chunk exceeds the file length.');
+      return corrupt("PNG chunk exceeds the file length.");
     }
     if (typeIs(0x49, 0x45, 0x4e, 0x44)) {
       if (length !== 0) {
-        return corrupt('PNG IEND chunk is invalid.');
+        return corrupt("PNG IEND chunk is invalid.");
       }
       if (end < b.length) {
         // The trailing region must be empty; any image magic there = polyglot.
         if (scanAnyMagic(b, end) !== null) {
           return polyglot();
         }
-        return corrupt('PNG has trailing data after IEND.');
+        return corrupt("PNG has trailing data after IEND.");
       }
       return null;
     }
@@ -735,10 +735,10 @@ export function validateUpload(bytes: Uint8Array, limits: UploadLimits = {}): Up
   const positiveFinite = (n: number): boolean => Number.isFinite(n) && n > 0;
   if (!positiveFinite(maxBytes) || !positiveFinite(maxMegapixels)) {
     // Programmer error (limits come from config, not user input): fail loudly.
-    throw new Error('[storage/validate] limits must be positive finite numbers');
+    throw new Error("[storage/validate] limits must be positive finite numbers");
   }
   if (planCeiling !== undefined && !positiveFinite(planCeiling)) {
-    throw new Error('[storage/validate] planCeiling must be a positive finite number');
+    throw new Error("[storage/validate] planCeiling must be a positive finite number");
   }
 
   const b = new ByteReader(bytes);
@@ -746,7 +746,7 @@ export function validateUpload(bytes: Uint8Array, limits: UploadLimits = {}): Up
   // 1. Size cap first — cheapest, and it stops all scans before they start.
   if (b.length > maxBytes) {
     return fail(
-      'upload_too_large',
+      "upload_too_large",
       `File is ${b.length} bytes; the upload cap is ${maxBytes} bytes.`,
       `max ${maxBytes} bytes`,
     );
@@ -758,9 +758,9 @@ export function validateUpload(bytes: Uint8Array, limits: UploadLimits = {}): Up
     return sniffed;
   }
   const { mime } = sniffed;
-  if (mime === 'image/webp') {
+  if (mime === "image/webp") {
     // Recognised on the wire, but §20.2's upload surface is JPEG/PNG only.
-    return fail('unsupported_media_type', 'Unsupported upload type: image/webp.', HINT_SUPPORTED);
+    return fail("unsupported_media_type", "Unsupported upload type: image/webp.", HINT_SUPPORTED);
   }
 
   // 3. Polyglot scan for strong signatures (PNG sig, RIFF…WEBP — collision-safe
@@ -772,7 +772,7 @@ export function validateUpload(bytes: Uint8Array, limits: UploadLimits = {}): Up
   }
 
   // 4. Header dimensions (never pixels).
-  const parsed = mime === 'image/png' ? pngDimensions(bytes) : jpegDimensions(bytes);
+  const parsed = mime === "image/png" ? pngDimensions(bytes) : jpegDimensions(bytes);
   if (!parsed.ok) {
     return parsed;
   }
@@ -783,11 +783,11 @@ export function validateUpload(bytes: Uint8Array, limits: UploadLimits = {}): Up
     const detail =
       `Image is ${parsed.width}×${parsed.height} ` +
       `(${fmtMp(parsed.megapixels)} megapixels); the cap is ${ceiling} megapixels.`;
-    return fail('resolution_exceeds_ceiling', detail, `max ${ceiling} MP per image`);
+    return fail("resolution_exceeds_ceiling", detail, `max ${ceiling} MP per image`);
   }
 
   // 6. PNG structural tail: IEND termination, no duplicate IHDR, no trailing file.
-  if (mime === 'image/png') {
+  if (mime === "image/png") {
     const tail = pngTailCheck(b);
     if (tail !== null) {
       return tail;
@@ -810,5 +810,5 @@ export function validateUpload(bytes: Uint8Array, limits: UploadLimits = {}): Up
 /** SHA-256 of the bytes as lowercase hex (64 chars). Used for asset dedupe and
  * integrity records; never a secret. */
 export function checksum(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
+  return createHash("sha256").update(bytes).digest("hex");
 }

@@ -402,6 +402,7 @@ class Subscriber implements RunEventSubscription {
   #backfillActive = true;
   #terminalSeq: number | null = null;
   #ended = false;
+  #lastEnd: StreamEnd | null = null;
   #lastDeliveredSeq: number;
   #dropped = 0;
   #needsResync = false;
@@ -466,6 +467,13 @@ class Subscriber implements RunEventSubscription {
     return first === undefined ? null : first.seq;
   }
 
+  /** @internal — Last-Event-ID sanity clamp, before any delivery happens. */
+  clampCheckpoint(maxSeq: number): void {
+    if (maxSeq < this.#lastDeliveredSeq) {
+      this.#lastDeliveredSeq = maxSeq;
+    }
+  }
+
   /** Live-buffered events flush in seq order once backfill completes. */
   flushPending(): void {
     this.#backfillActive = false;
@@ -509,6 +517,10 @@ class Subscriber implements RunEventSubscription {
   }
 
   onEnd(callback: (end: StreamEnd) => void): () => void {
+    if (this.#ended && this.#lastEnd !== null) {
+      callback(this.#lastEnd); // stream already ended — replay once, no double-fire
+      return () => undefined;
+    }
     this.#endListeners.add(callback);
     return () => {
       this.#endListeners.delete(callback);
@@ -534,6 +546,7 @@ class Subscriber implements RunEventSubscription {
       waiter({ done: true, value: undefined });
     }
     const end: StreamEnd = { reason, failure, lastDeliveredSeq: this.#lastDeliveredSeq };
+    this.#lastEnd = end;
     for (const listener of [...this.#endListeners]) {
       try {
         listener(end); // listener errors never propagate into the bus
@@ -564,10 +577,15 @@ class Subscriber implements RunEventSubscription {
    * oldest events go first — the newest keep flowing so a reconnecting client
    * has a fresh Last-Event-ID checkpoint to resume from. The durable store
    * makes the loss recoverable (client reconnects with Last-Event-ID).
+   *
+   * The live `pending` buffer is shed BEFORE queued history while backfill is
+   * still running: shed live seqs sit above the backfill cursor and get
+   * re-fetched (healed) by later pages, whereas shed queued history is gone
+   * (the cursor already passed it) and only recoverable via client resync.
    */
   #shedOverflow(): void {
     while (this.#queue.length + this.#pending.length > this.#queueCap) {
-      const oldest = this.#queue.length > 0 ? this.#queue.shift() : this.#pending.shift();
+      const oldest = this.#pending.length > 0 ? this.#pending.shift() : this.#queue.shift();
       if (oldest === undefined) {
         break;
       }
@@ -870,6 +888,12 @@ export class RunEventBus {
     }
   }
 
+  /** Best-effort max-seq probe for the §13.2 clamp; `null` on any failure. */
+  async #loadMaxSeqBestEffort(runId: string): Promise<number | null> {
+    const loaded = await this.#loadMaxSeq(runId);
+    return loaded.ok ? loaded.seq : null;
+  }
+
   #fanOut(event: CorrelatedRunEvent): void {
     const state = this.#runs.get(event.runId);
     if (state === undefined) {
@@ -896,9 +920,19 @@ export class RunEventBus {
    *    and healed;
    *  - once pages exhaust, the buffered live events flush in seq order.
    */
-  async #backfill(subscriber: Subscriber, fromSeq: number): Promise<void> {
+  async #backfill(subscriber: Subscriber, requestedFromSeq: number): Promise<void> {
+    const fromSeq = Math.max(0, requestedFromSeq);
     let cursor = fromSeq;
     try {
+      // §13.2 sanity clamp: a Last-Event-ID AHEAD of the durable tail (stale
+      // client, pruned history) would otherwise swallow every future seq
+      // (all <= the claimed checkpoint). Best-effort read: on store failure we
+      // proceed unclamped and let the page reads surface the error.
+      const tail = await this.#loadMaxSeqBestEffort(subscriber.runId);
+      if (tail !== null) {
+        subscriber.clampCheckpoint(Math.min(fromSeq, tail));
+        cursor = Math.min(cursor, tail);
+      }
       for (let page = 0; page < this.#maxBackfillPages; page += 1) {
         const rows = [...(await this.#store.sinceSeq(subscriber.runId, cursor, this.#backfillPageLimit))].sort(
           (a, b) => a.seq - b.seq,

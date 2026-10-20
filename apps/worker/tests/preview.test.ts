@@ -7,40 +7,42 @@
  * validation, 6 MiB budget rejection, key construction, signed-URL ttl ≤ 900,
  * the psd experimental error, and the pcraft/png export happy paths.
  */
-import { describe, expect, it } from "vitest";
 import { ENGINE_PNG_MAX_BYTES } from "@studio/config";
+import { describe, expect, it } from "vitest";
 import {
-  PREVIEW_URL_TTL_SECONDS,
-  PreviewPipeline,
-  clampPreviewWidth,
-  decodeBase64,
-  isPng,
-  makePreviewKey,
   type ObjectStorage,
+  PREVIEW_URL_TTL_SECONDS,
   type PreviewEngine,
+  PreviewPipeline,
   type PreviewRenderInput,
   type PreviewRenderReply,
   type RenderPreviewRequest,
   type SignedObjectUrl,
+  clampPreviewWidth,
+  decodeBase64,
+  isPng,
+  makePreviewKey,
 } from "../src/preview.js";
 import {
   EXPORT_URL_TTL_SECONDS,
-  checkExportMegapixels,
-  isJpeg,
-  makeExportStorageKey,
-  processExportJob,
   type EngineDocumentSummary,
   type EngineSaveInput,
   type EngineSaveResult,
   type ExportEngine,
   type ExportJobContext,
+  checkExportMegapixels,
+  isJpeg,
+  makeExportStorageKey,
+  processExportJob,
 } from "../src/render-jobs.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures + helpers
 // ---------------------------------------------------------------------------
 
-const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
+const PNG_BYTES = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+]);
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0xff, 0xd9]);
 const PCRAFT_BYTES = new Uint8Array([0x50, 0x43, 0x52, 0x46, 0x01, 0x02, 0x03]);
 const ORGANIZATION_ID = "org_01";
@@ -171,7 +173,11 @@ const previewRequest = (overrides: Partial<RenderPreviewRequest> = {}): RenderPr
   ...overrides,
 });
 
-const exportCtx = (payload: unknown): ExportJobContext => ({ jobId: "job_01", payload, attempt: 1 });
+const exportCtx = (payload: unknown): ExportJobContext => ({
+  jobId: "job_01",
+  payload,
+  attempt: 1,
+});
 
 const exportPayload = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   organizationId: ORGANIZATION_ID,
@@ -274,7 +280,12 @@ describe("storage key construction", () => {
   });
 
   it("builds the per-format export keys", () => {
-    const base = { organizationId: ORGANIZATION_ID, documentId: DOCUMENT_ID, revision: REVISION, idempotencyKey: IDEMPOTENCY_KEY };
+    const base = {
+      organizationId: ORGANIZATION_ID,
+      documentId: DOCUMENT_ID,
+      revision: REVISION,
+      idempotencyKey: IDEMPOTENCY_KEY,
+    };
     expect(makeExportStorageKey({ ...base, format: "pcraft" })).toBe(
       "documents/organizations/org_01/documents/doc_02/export-exp_9f2a-r7.pcraft",
     );
@@ -296,7 +307,12 @@ describe("storage key construction", () => {
       }),
     ).toThrow();
     expect(() =>
-      makePreviewKey({ organizationId: ORGANIZATION_ID, documentId: DOCUMENT_ID, width: -1, revision: REVISION }),
+      makePreviewKey({
+        organizationId: ORGANIZATION_ID,
+        documentId: DOCUMENT_ID,
+        width: -1,
+        revision: REVISION,
+      }),
     ).toThrow();
     expect(() =>
       makeExportStorageKey({
@@ -368,9 +384,13 @@ describe("PreviewPipeline.renderPreview", () => {
   it("rejects a non-PNG mime and undecodable base64", async () => {
     const { pipeline, engine } = makePipeline();
     engine.renderReply = { mime: "image/jpeg", base64: toBase64(PNG_BYTES) };
-    expect(failureOf(await pipeline.renderPreview(engine, previewRequest())).code).toBe("invalid_png");
+    expect(failureOf(await pipeline.renderPreview(engine, previewRequest())).code).toBe(
+      "invalid_png",
+    );
     engine.renderReply = { mime: "image/png", base64: "AB!C" };
-    expect(failureOf(await pipeline.renderPreview(engine, previewRequest())).code).toBe("invalid_png");
+    expect(failureOf(await pipeline.renderPreview(engine, previewRequest())).code).toBe(
+      "invalid_png",
+    );
   });
 
   it("rejects a fake 6 MiB PNG above the 5 MiB engine budget (§2.2)", async () => {
@@ -423,7 +443,9 @@ describe("PreviewPipeline.renderPreview", () => {
 
     const { pipeline: pipeline2, storage: storage2 } = makePipeline();
     storage2.signError = new Error("kms down");
-    const signFailure = failureOf(await pipeline2.renderPreview(new FakeEngine(), previewRequest()));
+    const signFailure = failureOf(
+      await pipeline2.renderPreview(new FakeEngine(), previewRequest()),
+    );
     expect(signFailure.code).toBe("preview_sign_failed");
     expect(storage2.putCalls.length).toBe(1); // bytes were stored before signing failed
   });
@@ -436,7 +458,9 @@ describe("PreviewPipeline.renderPreview", () => {
 describe("processExportJob", () => {
   it("refuses psd with the typed experimental error (§2.3)", async () => {
     const { deps, engine } = makeExportDeps();
-    const failure = failureOf(await processExportJob(deps, exportCtx(exportPayload({ format: "psd" }))));
+    const failure = failureOf(
+      await processExportJob(deps, exportCtx(exportPayload({ format: "psd" }))),
+    );
     expect(failure.code).toBe("experimental_psd");
     expect(failure.retryable).toBe(false);
     expect(failure.hint ?? "").toMatch(/fidelity report/);
@@ -447,7 +471,9 @@ describe("processExportJob", () => {
     const { deps, engine, storage } = makeExportDeps();
     engine.savedBytes = PCRAFT_BYTES;
     engine.saveWarnings = ["written as pcraft v1"];
-    const result = unwrap(await processExportJob(deps, exportCtx(exportPayload({ format: "pcraft" }))));
+    const result = unwrap(
+      await processExportJob(deps, exportCtx(exportPayload({ format: "pcraft" }))),
+    );
 
     expect(result.format).toBe("pcraft");
     const key = "documents/organizations/org_01/documents/doc_02/export-exp_9f2a-r7.pcraft";
@@ -598,8 +624,20 @@ describe("checkExportMegapixels", () => {
   }[] = [
     { width: 1920, height: 1080, plan: "starter", ok: true }, // 2.07 MP ≤ 32
     { width: 5600, height: 5600, plan: "starter", ok: true }, // 31.36 MP
-    { width: 5800, height: 5800, plan: "starter", ok: false, failureCode: "canvas_exceeds_plan_limit" }, // 33.64 MP
-    { width: 9000, height: 8000, plan: "starter", ok: false, failureCode: "canvas_exceeds_plan_limit" }, // 72 MP
+    {
+      width: 5800,
+      height: 5800,
+      plan: "starter",
+      ok: false,
+      failureCode: "canvas_exceeds_plan_limit",
+    }, // 33.64 MP
+    {
+      width: 9000,
+      height: 8000,
+      plan: "starter",
+      ok: false,
+      failureCode: "canvas_exceeds_plan_limit",
+    }, // 72 MP
     { width: 9000, height: 8000, plan: "pro", ok: false, failureCode: "canvas_exceeds_plan_limit" }, // 72 MP > 64
     { width: 9000, height: 8000, plan: "business", ok: true }, // 72 MP ≤ 128
     { width: 0, height: 10, plan: "starter", ok: false, failureCode: "invalid_export_request" },
