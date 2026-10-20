@@ -294,7 +294,7 @@ export const componentListTool: Tool<ComponentListArgs> = defineTool({
     });
     return ok({
       summary: summaryJson,
-      warnings: warnings.length === 0 ? warnings.slice(0, MAX_WARNINGS) : warnings.slice(0, MAX_WARNINGS),
+      warnings: warnings.length > 0 ? warnings.slice(0, MAX_WARNINGS) : undefined,
     });
   },
 });

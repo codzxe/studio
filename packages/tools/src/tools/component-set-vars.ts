@@ -43,12 +43,12 @@
 import { z } from "zod";
 import {
   type LayerRef,
+  MAX_ARG_STRING_CHARS,
   MAX_ERROR_MESSAGE_CHARS,
   MAX_HINT_CHARS,
   MAX_SUMMARY_CHARS,
   MAX_WARNINGS,
   MAX_WARNING_CHARS,
-  MAX_ARG_STRING_CHARS,
   ToolError,
   cappedRecord,
   cappedString,
@@ -255,10 +255,14 @@ function textMaxChars(spec: ComponentVariableSpec): number {
 
 function kindMismatchErr(name: string, expected: string, got: ComponentVarValue): ToolErr {
   const gotDesc = typeof got === "boolean" ? "a boolean" : "a string";
-  return err("validation_failed", `variable "${truncateStr(name, 80)}" expects ${expected}, got ${gotDesc}`, {
-    hint: "component variables are schema-checked against the component's manifest (§8.4); component_inspect lists each variable's kind.",
-    retryable: false,
-  });
+  return err(
+    "validation_failed",
+    `variable "${truncateStr(name, 80)}" expects ${expected}, got ${gotDesc}`,
+    {
+      hint: "component variables are schema-checked against the component's manifest (§8.4); component_inspect lists each variable's kind.",
+      retryable: false,
+    },
+  );
 }
 
 function colorKindErr(name: string, value: ComponentVarValue): ToolErr {
@@ -573,10 +577,14 @@ function notComponentInstanceErr(
     instances.length > 0
       ? `placed component instances: ${shown.join(", ")}${extra}`
       : "the document has no placed component instances; component_place creates one";
-  return err("not_found", `Layer "${truncateStr(layer.name, 80)}" (id ${layer.layerId}) is not a component instance`, {
-    hint: clip(hint, MAX_HINT_CHARS),
-    retryable: false,
-  });
+  return err(
+    "not_found",
+    `Layer "${truncateStr(layer.name, 80)}" (id ${layer.layerId}) is not a component instance`,
+    {
+      hint: clip(hint, MAX_HINT_CHARS),
+      retryable: false,
+    },
+  );
 }
 
 /** EngineFailure → ToolErr passthrough (engine text is data §5.7; caps enforced by err()). */
@@ -677,7 +685,9 @@ export const componentSetVarsTool: Tool<ComponentSetVarsArgs> = defineTool({
       if (update.ok) {
         reapplyApplied = true;
         documentRevision = update.value.revision;
-        reapplyLines.push(...reapplyWarningsFor(readUpdateInstanceReport(update.value), record.component));
+        reapplyLines.push(
+          ...reapplyWarningsFor(readUpdateInstanceReport(update.value), record.component),
+        );
       } else {
         const reason =
           update.message.trim().length > 0
@@ -689,10 +699,7 @@ export const componentSetVarsTool: Tool<ComponentSetVarsArgs> = defineTool({
       }
     }
 
-    const merged = [
-      ...setVarsReport.warnings.map(renderComponentWarning),
-      ...reapplyLines,
-    ];
+    const merged = [...setVarsReport.warnings.map(renderComponentWarning), ...reapplyLines];
     const warnings = capWarnings(merged);
     ctx.logger.debug("component_set_vars applied", {
       instance: resolved.layer.layerId,

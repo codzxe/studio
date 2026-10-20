@@ -30,10 +30,13 @@ import {
 } from "../src/tools/ask-user.js";
 import { assetPlaceTool } from "../src/tools/asset-place.js";
 import { assetSearchTool } from "../src/tools/asset-search.js";
+import { componentListTool } from "../src/tools/component-list.js";
 import { componentSetVarsTool } from "../src/tools/component-set-vars.js";
+import { exportDocumentTool } from "../src/tools/export-document.js";
 import { imageGenerateTool } from "../src/tools/image-generate.js";
 import { layerOpsTool } from "../src/tools/layer-ops.js";
 import { layoutApplyTool } from "../src/tools/layout-apply.js";
+import { renderPreviewTool } from "../src/tools/render-preview.js";
 import { styleApplyTool } from "../src/tools/style-apply.js";
 import { templateApplyTool } from "../src/tools/template-apply.js";
 import { templateFillTool } from "../src/tools/template-fill.js";
@@ -60,9 +63,12 @@ const EXPECTED_DEFAULT_TOOLS: readonly string[] = [
   "layer_ops",
   "style_apply",
   "layout_apply",
+  "component_list",
   "component_set_vars",
+  "render_preview",
   "validate_document",
   "vision_critique",
+  "export_document",
   "ask_user",
   "echo",
 ];
@@ -70,11 +76,8 @@ const EXPECTED_DEFAULT_TOOLS: readonly string[] = [
 /** §6 surface rows with NO shipped tool file yet — the explicit W5 gap. */
 const PENDING_S6_ROWS: readonly string[] = [
   "brief_to_plan", // model-orchestrated; the planner wave owns its implementation
-  "component_list",
   "component_place",
-  "render_preview",
   "variant_create",
-  "export_document",
 ];
 
 /** name → exported tool const, proving EVERY tool file found is registered. */
@@ -91,9 +94,12 @@ const TOOL_CONSTS: readonly (readonly [string, AnyTool])[] = [
   ["layer_ops", layerOpsTool],
   ["style_apply", styleApplyTool],
   ["layout_apply", layoutApplyTool],
+  ["component_list", componentListTool],
   ["component_set_vars", componentSetVarsTool],
+  ["render_preview", renderPreviewTool],
   ["validate_document", validateDocument],
   ["vision_critique", visionCritiqueTool],
+  ["export_document", exportDocumentTool],
   ["ask_user", askUserTool],
   ["echo", echoTool],
 ];
@@ -287,16 +293,24 @@ describe("src/index.ts barrel — re-exports the full assembly", () => {
     expect(barrel.layerOpsTool).toBe(layerOpsTool);
   });
 
-  it("disambiguates the three cross-file name collisions under aliases", () => {
+  it("disambiguates the cross-file name collisions under aliases", () => {
     const exportedNames = Object.keys(barrel);
     // ENGINE_PATCH_HINT (template-apply + layout-apply)
     expect(exportedNames).toContain("TEMPLATE_APPLY_ENGINE_PATCH_HINT");
     expect(exportedNames).toContain("LAYOUT_APPLY_ENGINE_PATCH_HINT");
     expect(exportedNames).not.toContain("ENGINE_PATCH_HINT");
-    // MAX_QUERY_CHARS (asset-search + template-list)
+    // MAX_QUERY_CHARS (asset-search + template-list + component-list)
     expect(exportedNames).toContain("ASSET_SEARCH_MAX_QUERY_CHARS");
     expect(exportedNames).toContain("TEMPLATE_LIST_MAX_QUERY_CHARS");
+    expect(exportedNames).toContain("COMPONENT_LIST_MAX_QUERY_CHARS");
     expect(exportedNames).not.toContain("MAX_QUERY_CHARS");
+    // MAX_LIST_* / MAX_SHOWN_PINS / MAX_TAG_CHARS (template-list + component-list)
+    expect(exportedNames).toContain("TEMPLATE_LIST_MAX_LIST_CARDS");
+    expect(exportedNames).toContain("COMPONENT_LIST_MAX_LIST_CARDS");
+    expect(exportedNames).toContain("TEMPLATE_LIST_MAX_TAG_CHARS");
+    expect(exportedNames).toContain("COMPONENT_LIST_MAX_TAG_CHARS");
+    expect(exportedNames).not.toContain("MAX_LIST_CARDS");
+    expect(exportedNames).not.toContain("MAX_TAG_CHARS");
     // ResolvedTarget (asset-place keeps the name; image-generate is aliased)
     expect(exportedNames).toContain("ResolvedTarget");
     expect(exportedNames).toContain("ImageGenerateResolvedTarget");

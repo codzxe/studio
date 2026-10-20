@@ -4,21 +4,27 @@
 //
 // Assembled by W5-R. Re-exports the kit, the contract types, the registry,
 // the default registry assembly, and EVERY export of every tool file — the
-// one place downstream waves import from. Three symbol names are exported by
-// two sibling files each; those export under prefixed aliases so nothing is
-// silently dropped by a star-export collision:
+// one place downstream waves import from. Symbols exported by two sibling
+// files each ride under prefixed aliases so nothing is silently dropped by a
+// star-export collision:
 //   - ENGINE_PATCH_HINT  → TEMPLATE_APPLY_ENGINE_PATCH_HINT / LAYOUT_APPLY_ENGINE_PATCH_HINT
 //   - MAX_QUERY_CHARS    → ASSET_SEARCH_MAX_QUERY_CHARS / TEMPLATE_LIST_MAX_QUERY_CHARS
+//                          / COMPONENT_LIST_MAX_QUERY_CHARS
+//   - MAX_LIST_CARDS / MAX_LIST_TAGS / MAX_SHOWN_PINS / MAX_TAG_CHARS
+//                       → TEMPLATE_LIST_* / COMPONENT_LIST_* variants
 //   - ResolvedTarget     → ResolvedTarget (asset_place, the shared mechanics)
 //                          + ImageGenerateResolvedTarget (image_generate)
 //
 // Context-seam note (no types-ext.ts, deliberately): the seams missing from
 // `ToolContext` (types.ts, owned by W1-O) are declared LOCALLY where they are
 // needed — `ImageGenerateContext extends ToolContext` with `CreditSpender`,
-// `ImageProviderLike`, `GeneratedImageSinkLike` in tools/image-generate.ts —
-// following the package's minimal-seam policy. Late-landing tools
-// (render_preview, vision_critique, export_document, component_*) should do
-// the same until a wave widens ToolContext itself.
+// `ImageProviderLike`, `GeneratedImageSinkLike` in tools/image-generate.ts;
+// `RenderPreviewContext` + `PreviewSinkLike` (render-preview.ts);
+// `VisionCritiqueContext` + `CriticModelLike` (vision-critique.ts);
+// `ExportToolContext` + `ExportJobsLike`/`ExportEventsLike` (export-document.ts);
+// `ComponentSetVarsContext` + `ComponentRegistryLike` (component-set-vars.ts)
+// — following the package's minimal-seam policy. component_place and
+// variant_create should do the same when they land.
 
 import type { AnyTool } from "./types.js";
 
@@ -79,6 +85,24 @@ export {
   toAssetRow,
 } from "./tools/asset-search.js";
 
+// component_list — §6 row 12 (list half).
+export {
+  COMPONENT_LIST_COMMAND,
+  ComponentCardView,
+  ComponentListArgs,
+  ComponentListReply,
+  ComponentListRow,
+  MAX_LIST_CARDS as COMPONENT_LIST_MAX_LIST_CARDS,
+  MAX_LIST_TAGS as COMPONENT_LIST_MAX_LIST_TAGS,
+  MAX_QUERY_CHARS as COMPONENT_LIST_MAX_QUERY_CHARS,
+  MAX_SHOWN_PINS as COMPONENT_LIST_MAX_SHOWN_PINS,
+  MAX_TAG_CHARS as COMPONENT_LIST_MAX_TAG_CHARS,
+  candidatePins,
+  componentListTool,
+  engineFailureErr,
+  readComponentList,
+} from "./tools/component-list.js";
+
 // component_set_vars — the worker must assemble ComponentSetVarsContext
 // (componentRegistry + engine instance bookkeeping) for this tool to run.
 export {
@@ -106,6 +130,41 @@ export {
   summarizeSetVars,
   validateVarsAgainstManifest,
 } from "./tools/component-set-vars.js";
+
+// export_document — the worker must assemble ExportToolContext (exportJobs +
+// exportEvents seams, §13 exports endpoint) for this tool to run.
+export {
+  AwaitExportDeps,
+  AwaitExportOptions,
+  AwaitedExport,
+  EXPORT_FAILED_CODE,
+  EXPORT_FORMAT_SCHEMA,
+  EXPORT_WAIT_BUDGET_MS,
+  ExportCallOptions,
+  ExportDocumentArgs,
+  ExportEventsLike,
+  ExportFormat,
+  ExportJobHandle,
+  ExportJobRecord,
+  ExportJobStatus,
+  ExportJobsLike,
+  ExportSubmission,
+  ExportSummaryParts,
+  ExportToolContext,
+  MAX_EXPORT_URL_CHARS,
+  POLL_INTERVAL_MS,
+  POLL_MAX_ATTEMPTS,
+  PSD_EXPERIMENTAL_WARNING,
+  PSD_NOT_OFFERED_HINT,
+  buildExportSummary,
+  deriveExportIdempotencyKey,
+  exportDocumentArgsSchema,
+  exportDocumentTool,
+  exportPipelineErr,
+  isSafeExportUrl,
+  isTerminalExportStatus,
+  sleepUntilResolved,
+} from "./tools/export-document.js";
 
 // image_generate — the worker must assemble ImageGenerateContext (credits,
 // imageProvider, generatedImages) for this tool to run (§5.2, §5.3, §14.2).
@@ -198,6 +257,29 @@ export {
   parseLayoutApplyReport,
 } from "./tools/layout-apply.js";
 
+// render_preview — the worker must assemble RenderPreviewContext (previewSink
+// seam: persist the PNG, return a signed/root-relative URL) for this to run.
+export {
+  AGENT_PREVIEW_CEILING_PX,
+  ClampedRenderWidth,
+  ENGINE_HARD_PREVIEW_CEILING_PX,
+  PREVIEW_RENDER_TIMEOUT_MS,
+  PREVIEW_WIDTHS,
+  PngFailureReason,
+  PreviewPutMeta,
+  PreviewSinkLike,
+  PreviewSinkPut,
+  PreviewWidth,
+  RenderPreviewArgs,
+  RenderPreviewContext,
+  buildPreviewSummary,
+  clampRenderWidth,
+  isEngineWriteRootPath,
+  isSafePreviewUrlValue,
+  renderPreviewArgsSchema,
+  renderPreviewTool,
+} from "./tools/render-preview.js";
+
 export {
   LayerStyleSpec,
   MAX_ADJ_PARAM_KEYS,
@@ -255,11 +337,11 @@ export {
 
 export {
   CanvasSize,
-  MAX_LIST_CARDS,
-  MAX_LIST_TAGS,
+  MAX_LIST_CARDS as TEMPLATE_LIST_MAX_LIST_CARDS,
+  MAX_LIST_TAGS as TEMPLATE_LIST_MAX_LIST_TAGS,
   MAX_QUERY_CHARS as TEMPLATE_LIST_MAX_QUERY_CHARS,
-  MAX_SHOWN_PINS,
-  MAX_TAG_CHARS,
+  MAX_SHOWN_PINS as TEMPLATE_LIST_MAX_SHOWN_PINS,
+  MAX_TAG_CHARS as TEMPLATE_LIST_MAX_TAG_CHARS,
   TemplateCardView,
   TemplateListArgs,
   byIdThenVersion,

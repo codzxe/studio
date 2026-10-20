@@ -230,10 +230,11 @@ function finiteBox(b: Box): boolean {
   return [b.x, b.y, b.width, b.height].every((v) => Number.isFinite(v));
 }
 
-/** §11.1 `in_bounds`: the box has any overlap with the canvas (nothing fully outside). */
+/** §11.1 `in_bounds`: the box has real overlap with the canvas (a zero-width
+ * touch at an edge is NOT an intersection — nothing renders there). */
 export function intersectsCanvas(b: Box, canvasW: number, canvasH: number): boolean {
   if (!finiteBox(b) || !Number.isFinite(canvasW) || !Number.isFinite(canvasH)) return false;
-  return !(b.x > canvasW || b.y > canvasH || b.x + b.width < 0 || b.y + b.height < 0);
+  return !(b.x >= canvasW || b.y >= canvasH || b.x + b.width <= 0 || b.y + b.height <= 0);
 }
 
 /** §11.1 `safe_area`: the box keeps `safe` px clear of every canvas edge. */

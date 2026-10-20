@@ -155,8 +155,11 @@ export function isHttpPreviewUrl(value: string): boolean {
     return false;
   }
   // §15.3: no control characters ever enter a model-facing URL.
-  if (/[\u0000-\u001F\u007F]/.test(value)) {
-    return false;
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code <= 0x1f || code === 0x7f) {
+      return false;
+    }
   }
   let parsed: URL;
   try {
@@ -484,12 +487,46 @@ export function buildCritiqueSummary(enforced: EnforcedCritique): {
 // §15.3 output safety for model-facing strings
 // ---------------------------------------------------------------------------
 
-const CONTROL_CHARS_RE =
-  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\uFEFF]/g;
+/** §15.3: forbidden code points in model-facing strings (C0/C1 controls, zero
+ * width + bidi marks). Newlines and tabs stay legitimate structure. */
+const STRIPPED_CODE_RANGES: readonly (readonly [number, number])[] = [
+  [0x0000, 0x0008], // C0 controls before LF
+  [0x000b, 0x000c], // vertical tab + form feed
+  [0x000e, 0x001f], // C0 tail (keeps \n 0x0a and \t 0x09)
+  [0x007f, 0x009f], // DEL + C1 controls
+  [0x200b, 0x200f], // zero width + LRM/RLM marks
+  [0x202a, 0x202e], // bidi embedding overrides (Trojan Source)
+  [0xfeff, 0xfeff], // BOM / zero-width no-break space
+];
+
+function isStrippableCode(code: number): boolean {
+  for (const [low, high] of STRIPPED_CODE_RANGES) {
+    if (code >= low && code <= high) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /** §15.3: strip control characters (keep newlines/tabs), normalise CRLF→LF. */
 export function stripControlChars(raw: string): string {
-  return raw.replace(/\r\n?/g, "\n").replace(CONTROL_CHARS_RE, "").trim();
+  let out = "";
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i] ?? "";
+    if (ch === "\r") {
+      // CRLF → LF; a lone CR is a newline too (normalise instead of strip).
+      if (raw[i + 1] === "\n") {
+        continue; // drop the CR, the next iteration keeps the LF
+      }
+      out += "\n";
+      continue;
+    }
+    const code = ch.codePointAt(0) ?? 0;
+    if (!isStrippableCode(code)) {
+      out += ch;
+    }
+  }
+  return out.trim();
 }
 
 // ---------------------------------------------------------------------------

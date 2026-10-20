@@ -11,6 +11,10 @@ import { TOOLS, ToolRegistry } from "../src/registry.js";
 import {
   COMPONENT_SET_VARS_COMMAND,
   COMPONENT_UPDATE_INSTANCE_COMMAND,
+  type ComponentInstanceRecord,
+  type ComponentManifestLike,
+  type ComponentRegistryLike,
+  type ComponentVarValue,
   MAX_COMPONENT_VARS,
   componentSetVarsTool,
   engineInstanceRef,
@@ -20,10 +24,6 @@ import {
   renderUserChange,
   summarizeSetVars,
   validateVarsAgainstManifest,
-  type ComponentInstanceRecord,
-  type ComponentManifestLike,
-  type ComponentRegistryLike,
-  type ComponentVarValue,
 } from "../src/tools/component-set-vars.js";
 import type {
   BudgetTracker,
@@ -38,7 +38,11 @@ import type {
 import { freshSignal, makeFakeContext } from "./fakes.js";
 
 const success = <T>(value: T): EngineOutcome<T> => ({ ok: true, value });
-const failure = (code: EngineFailure["code"], message: string, extra: Partial<EngineFailure> = {}): EngineFailure => ({
+const failure = (
+  code: EngineFailure["code"],
+  message: string,
+  extra: Partial<EngineFailure> = {},
+): EngineFailure => ({
   ok: false,
   code,
   message,
@@ -159,7 +163,10 @@ interface Setup {
 
 function setup(
   plan: EnginePlan = {},
-  options: RegistryOptions & { readonly noComponents?: boolean; readonly allowCharge?: boolean } = {},
+  options: RegistryOptions & {
+    readonly noComponents?: boolean;
+    readonly allowCharge?: boolean;
+  } = {},
 ): Setup {
   const { engine, calls } = recordingEngine(plan);
   const charges: Array<{ commands?: number; renderPx?: number }> = [];
@@ -194,7 +201,11 @@ describe("component_set_vars: happy path", () => {
   it("overrides variables on the instance, by layer id", async () => {
     const signal = freshSignal();
     const { ctx, calls, charges } = setup();
-    const result = await run(ctx, { instance: { layerId: "14" }, vars: { label: "SPRING", showRibbon: true } }, signal);
+    const result = await run(
+      ctx,
+      { instance: { layerId: "14" }, vars: { label: "SPRING", showRibbon: true } },
+      signal,
+    );
 
     expect(result.ok).toBe(true);
     expect(calls).toHaveLength(1);
@@ -256,7 +267,10 @@ describe("component_set_vars: happy path", () => {
         revision: 42,
         vars: { label: "SPRING" },
         warnings: [
-          { variable: "bg", warning: "the layer this variable drives is no longer in the instance" },
+          {
+            variable: "bg",
+            warning: "the layer this variable drives is no longer in the instance",
+          },
           { warning: "variable `old` is dropped: the new version removed it" },
         ],
       } as EngineCommandReport),
@@ -449,7 +463,11 @@ describe("component_set_vars: §8.4 var validation table (pure)", () => {
     it(testCase.name, () => {
       const manifest = testCase.vars.count !== undefined ? STAR_RATING : OFFER_BADGE;
       const outcome = validateVarsAgainstManifest(manifest, testCase.vars);
-      if (testCase.code === undefined && testCase.message === undefined && testCase.hint === undefined) {
+      if (
+        testCase.code === undefined &&
+        testCase.message === undefined &&
+        testCase.hint === undefined
+      ) {
         expect(outcome.ok).toBe(true);
       } else {
         expect(outcome.ok).toBe(false);
@@ -474,7 +492,7 @@ describe("component_set_vars: §8.4 var validation table (pure)", () => {
     const drifted: ComponentManifestLike = {
       id: "drift",
       version: 1,
-      variables: { weird: { kind: "number" as never, default: 1 } },
+      variables: { weird: { kind: "number" as never } },
     };
     const outcome = validateVarsAgainstManifest(drifted, { weird: 1 as never });
     expect(outcome.ok).toBe(false);
@@ -581,7 +599,9 @@ describe("component_set_vars: reapply opt-in (§8.4)", () => {
       expect(result.warnings).toContain(
         "[user change] Badge: moved outside the declared variables",
       );
-      expect(result.warnings).toContain("variable `ribbonText` is dropped: the new version removed it");
+      expect(result.warnings).toContain(
+        "variable `ribbonText` is dropped: the new version removed it",
+      );
     }
   });
 
@@ -663,7 +683,9 @@ describe("component_set_vars: reapply opt-in (§8.4)", () => {
 
 describe("component_set_vars: entry cap and strict schema", () => {
   const manyVars = (count: number): Record<string, string> =>
-    Object.fromEntries(Array.from({ length: count }, (_, index) => [`v${String(index).padStart(2, "0")}`, "x"]));
+    Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [`v${String(index).padStart(2, "0")}`, "x"]),
+    );
 
   it("accepts exactly 20 entries", async () => {
     const { ctx, calls } = setup(
@@ -716,16 +738,25 @@ describe("component_set_vars: entry cap and strict schema", () => {
     ["missing instance", { vars: { label: "MINE" } }],
     ["missing vars", { instance: { layerId: "14" } }],
     ["empty vars", { instance: { layerId: "14" }, vars: {} }],
-    ["idempotencyKey is not part of this tool's pinned shape", {
-      instance: { layerId: "14" },
-      vars: { label: "MINE" },
-      idempotencyKey: "key-12345",
-    }],
+    [
+      "idempotencyKey is not part of this tool's pinned shape",
+      {
+        instance: { layerId: "14" },
+        vars: { label: "MINE" },
+        idempotencyKey: "key-12345",
+      },
+    ],
     ["unknown property", { instance: { layerId: "14" }, vars: { label: "MINE" }, extra: 1 }],
-    ["instance with both id and name", { instance: { layerId: "14", layerName: "x" }, vars: { label: "MINE" } }],
+    [
+      "instance with both id and name",
+      { instance: { layerId: "14", layerName: "x" }, vars: { label: "MINE" } },
+    ],
     ["instance with neither id nor name", { instance: {}, vars: { label: "MINE" } }],
     ["instance as a bare string", { instance: "14", vars: { label: "MINE" } }],
-    ["reapply as a string", { instance: { layerId: "14" }, vars: { label: "MINE" }, reapply: "yes" }],
+    [
+      "reapply as a string",
+      { instance: { layerId: "14" }, vars: { label: "MINE" }, reapply: "yes" },
+    ],
     ["reapply as a number", { instance: { layerId: "14" }, vars: { label: "MINE" }, reapply: 1 }],
     ["numeric var value", { instance: { layerId: "14" }, vars: { label: 12 } }],
     ["null var value", { instance: { layerId: "14" }, vars: { label: null } }],
@@ -807,15 +838,22 @@ describe("component_set_vars: tenant and compactness (§6.1)", () => {
   });
 
   it("keeps the summary under 2000 chars for 20 maximal variable names", async () => {
+    const longNames = Object.fromEntries(
+      Array.from({ length: 20 }, (_, index) => [`${"n".repeat(62)}${index}`, "x"]),
+    );
+    const manifest: ComponentManifestLike = {
+      id: "long-names",
+      version: 1,
+      variables: Object.fromEntries(
+        Object.keys(longNames).map((name) => [name, { kind: "text", default: "x" }]),
+      ),
+    };
     const { ctx } = setup(
       {},
       {
-        instances: [{ layerId: "40", component: "many-vars", version: 1 }],
-        manifests: [MANY_COMPONENT],
+        instances: [{ layerId: "40", component: "long-names", version: 1 }],
+        manifests: [manifest],
       },
-    );
-    const longNames = Object.fromEntries(
-      Array.from({ length: 20 }, (_, index) => [`${"n".repeat(63)}${index}`, "x"]),
     );
     const result = await run(ctx, { instance: { layerId: "40" }, vars: longNames });
     expect(result.ok).toBe(true);
@@ -943,7 +981,13 @@ describe("component_set_vars: pure helper tables", () => {
   });
 
   it("readSetVarsReport reads structural fields, then message JSON, then degrades", () => {
-    expect(readSetVarsReport({ revision: 1, vars: { label: "MINE" }, warnings: ["w"] })).toStrictEqual({
+    expect(
+      readSetVarsReport({
+        revision: 1,
+        vars: { label: "MINE" },
+        warnings: ["w"],
+      } as EngineCommandReport),
+    ).toStrictEqual({
       vars: { label: "MINE" },
       warnings: ["w"],
     });
@@ -990,18 +1034,22 @@ describe("component_set_vars: pure helper tables", () => {
   });
 
   it("renderUserChange handles both engine shapes and strings", () => {
-    expect(renderUserChange({ layer: "Ribbon", aspect: "name", detail: 'renamed from "Ribbon"' })).toBe(
-      'Ribbon: name: renamed from "Ribbon"',
-    );
-    expect(renderUserChange({ layer: "Ribbon", change: "moved outside the declared variables" })).toBe(
-      "Ribbon: moved outside the declared variables",
-    );
+    expect(
+      renderUserChange({ layer: "Ribbon", aspect: "name", detail: 'renamed from "Ribbon"' }),
+    ).toBe('Ribbon: name: renamed from "Ribbon"');
+    expect(
+      renderUserChange({ layer: "Ribbon", change: "moved outside the declared variables" }),
+    ).toBe("Ribbon: moved outside the declared variables");
     expect(renderUserChange("moved")).toBe("moved");
     expect(renderUserChange({})).toBe("(unrenderable user change)");
   });
 
   it("summarizeSetVars emits the pinned JSON and fits the 2000-char budget", () => {
-    const small = summarizeSetVars({ instance: "14", updated: ["label", "showRibbon"], reapplyApplied: true });
+    const small = summarizeSetVars({
+      instance: "14",
+      updated: ["label", "showRibbon"],
+      reapplyApplied: true,
+    });
     expect(JSON.parse(small)).toStrictEqual({
       instance: "14",
       updated: ["label", "showRibbon"],

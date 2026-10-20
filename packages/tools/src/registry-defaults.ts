@@ -12,21 +12,22 @@
 // exactly the §6 surface.
 //
 // §6 rows whose Wave-5 tool files had NOT landed at assembly time (checked by
-// ls before this file was written): `component_list`, `component_place`,
-// `render_preview`, `variant_create`, `export_document`, plus `brief_to_plan`
-// (model-orchestrated; the planner wave owns its implementation). When a tool
-// file lands, add ONE import + ONE `defaultTools()` entry here and extend the
-// pinned name list in tests/registry-defaults.test.ts — `allowedNames` already
-// accepts every §6 name, so no other change is required.
+// ls before this file was written): `component_place`, `variant_create`, plus
+// `brief_to_plan` (model-orchestrated; the planner wave owns its implementation).
+// When a tool file lands, add ONE import + ONE `defaultTools()` entry here and
+// extend the pinned name list in tests/registry-defaults.test.ts — `allowedNames`
+// already accepts every §6 name, so no other change is required.
 //
 // Seam reconciliation note (task W5-R): `types.ts` (owned by W1-O) keeps
 // `ToolContext` minimal on purpose. The seams flagged by siblings are all
 // declared LOCALLY in the tool files that need them — `ImageGenerateContext`
 // (credits / imageProvider / generatedImages, tools/image-generate.ts),
 // `ComponentSetVarsContext` + `ComponentRegistryLike` (component-set-vars.ts),
-// `VisionCritiqueContext` + `CriticModelLike` (vision-critique.ts) — so NO
-// types-ext.ts augmentation is needed; render_preview/export_document and
-// friends should follow the same local-seam pattern until a wave widens
+// `RenderPreviewContext` + `PreviewSinkLike` (render-preview.ts),
+// `VisionCritiqueContext` + `CriticModelLike` (vision-critique.ts),
+// `ExportToolContext` + `ExportJobsLike` / `ExportEventsLike`
+// (export-document.ts) — so NO types-ext.ts augmentation is needed; later
+// tools should follow the same local-seam pattern until a wave widens
 // `ToolContext`.
 
 import { echoTool } from "./example/echo.js";
@@ -35,10 +36,13 @@ import { TOOLS, ToolRegistry, type ToolListing } from "./registry.js";
 import { askUserTool } from "./tools/ask-user.js";
 import { assetPlaceTool } from "./tools/asset-place.js";
 import { assetSearchTool } from "./tools/asset-search.js";
+import { componentListTool } from "./tools/component-list.js";
 import { componentSetVarsTool } from "./tools/component-set-vars.js";
+import { exportDocumentTool } from "./tools/export-document.js";
 import { imageGenerateTool } from "./tools/image-generate.js";
 import { layerOpsTool } from "./tools/layer-ops.js";
 import { layoutApplyTool } from "./tools/layout-apply.js";
+import { renderPreviewTool } from "./tools/render-preview.js";
 import { styleApplyTool } from "./tools/style-apply.js";
 import { templateApplyTool } from "./tools/template-apply.js";
 import { templateFillTool } from "./tools/template-fill.js";
@@ -86,9 +90,12 @@ function defaultTools(includeEcho: boolean): readonly AnyTool[] {
     layerOpsTool, // §6 row 9
     styleApplyTool, // §6 row 10
     layoutApplyTool, // §6 row 11
+    componentListTool, // §6 row 12 (list half; component_place still pending)
     componentSetVarsTool, // §6 row 13
+    renderPreviewTool, // §6 row 14
     validateDocument, // §6 row 15
     visionCritiqueTool, // §6 row 16
+    exportDocumentTool, // §6 row 18 (variant_create still pending)
     askUserTool, // §6 model-orchestrated row (client-side affordance)
   ];
   return includeEcho ? [...tools, echoTool] : tools;
