@@ -132,7 +132,7 @@ function currentEnv(): ProcessEnv {
  * §4 fail fast; a missing URL must never be defaulted.
  */
 export function readDatabaseUrl(env: ProcessEnv = currentEnv()): string {
-  const check = validateConnectionString(env["DATABASE_URL"]);
+  const check = validateConnectionString(env.DATABASE_URL);
   if (!check.ok) {
     throw new DbConfigError(check.code, check.message, check.hint);
   }
@@ -155,8 +155,11 @@ export type CreateDbOptions = z.input<typeof poolOptionsSchema>;
  * Create a Drizzle database on a lazy postgres-js pool — no connection is made
  * until the first query, so this is safe to call from tests. Throws
  * DbConfigError when the connection string or options are unusable (§4).
+ *
+ * Return type is inferred (not annotated `: Db`) on purpose: `Db` is defined as
+ * `ReturnType<typeof createDb>`, so an annotation would be circular (TS2456).
  */
-export function createDb(connectionString: string, options: CreateDbOptions = {}): Db {
+export function createDb(connectionString: string, options: CreateDbOptions = {}) {
   const check = validateConnectionString(connectionString);
   if (!check.ok) {
     throw new DbConfigError(check.code, check.message, check.hint);

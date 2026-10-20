@@ -62,10 +62,10 @@ node --env-file=../../.env --experimental-strip-types scripts/seed.ts
 
 Idempotent and forward-only: creates the demo user (`demo@studio.test`), the
 "Demo Studio" organization + owner membership, the 30-credit trial grant ledger
-entry (§14.1), a demo project, two synthetic assets and a demo document with its
-first version — skipping anything already present. Never run against
-production. Table names follow §12.1 with the org-is-workspace mapping of
-`src/schema/auth.ts`; the script header documents every assumption.
+entry (§14.1), two synthetic assets and a demo document with its first version —
+skipping anything already present. Never run against production. Table/column
+names are verified against the landed `src/schema/*` files (not just spec §12.1
+abbreviations); the script header documents every assumption.
 
 ## Migrations
 

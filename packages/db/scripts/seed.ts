@@ -2,19 +2,20 @@
  * scripts/seed.ts — idempotent demo seed for local/staging Postgres.
  *
  * Owner: W1-G (docs/AGENTS.md). Spec anchors:
- *   §12.1  table shapes seeded below (abbreviated columns)
+ *   §12.1  content/billing table shapes (as actually landed in src/schema/*)
  *   §14.1  trial = one-time 30-credit grant, no card required
- *   §14.2  ledger entries are append-only and idempotent by idempotency_key
- *   §12.2  ledger + cached balance change in one transaction (here: one seed tx)
+ *   §14.2  ledger entries are append-only; unique(idempotency_key, kind)
+ *   §12.2  ledger writes are transactional; balance_after derives from the sum
  *
- * Creates (skips anything that already exists — safe to re-run):
+ * Creates (skips anything that already exists — safe to re-run), one transaction:
  *   1. demo user "Demo User" <demo@studio.test>            (table "user")
  *   2. demo organization "Demo Studio" (slug demo-studio)  (table "organization")
  *   3. owner membership row                                 (table "member")
- *   4. +30 credit trial grant ledger entry                  (table "credit_ledger")
- *   5. demo project "Demo Project"                          (table "projects")
- *   6. two synthetic assets (sha256 placeholders, no bytes)
- *   7. demo document "Demo Flyer" + its first version row
+ *   4. +30 credit trial grant ledger entry                  (table "credit_ledger",
+ *      kind "grant", idempotency_key seed:trial-grant:demo-studio)
+ *   5. two synthetic assets (sha256 checksum placeholders, no bytes)  (table "assets")
+ *   6. demo document "Demo Flyer" + its first version row  (tables "documents",
+ *      "document_versions"; revision 1, current_revision advanced to 1)
  *
  * Run it from packages/db (Node >= 22.6; no tsx/drizzle-kit needed):
  *   node --env-file=../../.env --experimental-strip-types scripts/seed.ts
@@ -24,11 +25,11 @@
  * deliberately standalone (bare specifiers only); the canonical connection-string
  * validator lives in src/client.ts and this copy stays in sync with it.
  *
- * Table/column names follow spec §12.1 with the repo's org-is-workspace
- * mapping — src/schema/auth.ts names the tenant root `organization`, and
- * src/schema/runs.ts uses `organization_id` as the tenant column. The
- * content/billing schema files (other build agents) are expected to follow the
- * same §12.1 names; if one drifts, adjust the SQL below and the worklog note.
+ * Column names below were verified against the landed schema files (auth.ts,
+ * billing.ts, content.ts, runs.ts) rather than the abbreviated §12.1 table —
+ * e.g. the ledger uses `kind`/`created_by` (not reason/user_id), assets use
+ * `checksum`/`storage_key`/`origin`, and there is no projects table: documents
+ * hang off the organization directly (content.ts).
  */
 import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -39,16 +40,16 @@ const DEMO_USER_NAME = "Demo User";
 const DEMO_USER_EMAIL = "demo@studio.test";
 const DEMO_ORG_NAME = "Demo Studio";
 const DEMO_ORG_SLUG = "demo-studio";
-const DEMO_PROJECT_NAME = "Demo Project";
 const DEMO_DOC_NAME = "Demo Flyer";
 /** §14.1 — trial is a one-time 30-credit grant. */
 const TRIAL_CREDITS = 30;
 /** §14.2 — every ledger write carries an idempotency key; duplicates are rejected. */
 const TRIAL_GRANT_KEY = "seed:trial-grant:demo-studio";
-const ASSET_S3_KEY = (index: number): string => `seed/${DEMO_ORG_SLUG}/demo-asset-${index}.png`;
-const DOC_PCRAFT_KEY = `seed/${DEMO_ORG_SLUG}/demo-flyer.pcraft`;
-const VERSION_CHECKPOINT_KEY = `seed/${DEMO_ORG_SLUG}/demo-flyer-r1.pcraft`;
-const VERSION_THUMBNAIL_KEY = `seed/${DEMO_ORG_SLUG}/demo-flyer-r1.png`;
+const ASSET_STORAGE_KEY = (index: number): string =>
+  `seed/${DEMO_ORG_SLUG}/demo-asset-${index}.png`;
+const VERSION_STORAGE_KEY = `seed/${DEMO_ORG_SLUG}/demo-flyer-r1.pcraft`;
+const DEMO_DOC_WIDTH_PX = 1080;
+const DEMO_DOC_HEIGHT_PX = 1080;
 
 // --- env (minimal local zod check; mirrors src/client.ts) --------------------
 const EXAMPLE_URL = "postgres://studio:changeme@localhost:5432/studio";
@@ -67,7 +68,6 @@ function hostOf(value: string): string | undefined {
 const urlSchema = z
   .string()
   .trim()
-  .min(1, "DATABASE_URL is not set")
   .refine((value) => /^postgres(?:ql)?:\/\//i.test(value), {
     message: "DATABASE_URL must start with postgres:// or postgresql://",
   })
@@ -75,15 +75,26 @@ const urlSchema = z
     message: `DATABASE_URL must include a host, e.g. ${EXAMPLE_URL}`,
   });
 
+/** Print the failure + hint and stop the process — CLI fail fast (§4). */
+function abortWith(reason: string): never {
+  // biome-ignore lint/suspicious/noConsole: CLI script — stderr is its product
+  console.error(`seed: ${reason}`);
+  // biome-ignore lint/suspicious/noConsole: CLI script — stderr is its product
+  console.error(`seed: hint: export DATABASE_URL or run with --env-file (example: ${EXAMPLE_URL})`);
+  process.exit(1);
+}
+
 function readUrlOrAbort(): string {
-  const parsed = urlSchema.safeParse(process.env.DATABASE_URL);
+  const raw = process.env.DATABASE_URL;
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  if (trimmed === "") {
+    abortWith("DATABASE_URL is not set");
+  }
+  const parsed = urlSchema.safeParse(trimmed);
   if (parsed.success) {
     return parsed.data;
   }
-  // biome-ignore lint/suspicious/noConsole: CLI script — stderr is its product
-  console.error(`seed: ${parsed.error.issues[0]?.message ?? "DATABASE_URL is unusable"}`);
-  console.error(`seed: hint: export DATABASE_URL or run with --env-file (example: ${EXAMPLE_URL})`);
-  process.exit(1);
+  abortWith(parsed.error.issues[0]?.message ?? "DATABASE_URL is unusable");
 }
 
 // --- seed --------------------------------------------------------------------
@@ -157,81 +168,79 @@ async function main(): Promise<void> {
         action: memberInsert.length > 0 ? "created" : "skipped (already present)",
       });
 
-      // 4. trial credit grant (§14.1) — append-only ledger, idempotent by key.
+      // 4. trial credit grant (§14.1) — append-only ledger (billing.ts), with
+      //    balance_after derived from the ledger sum (§12.2), not hardcoded:
+      //    prior entries + 30, so the row stays consistent even on a re-seed of
+      //    an organization that already had ledger activity. Idempotent via
+      //    unique(idempotency_key, kind) (§14.2 rule 6).
       const ledgerInsert = await tx<{ id: string }[]>`
         insert into "credit_ledger"
-          ("organization_id", "user_id", "delta", "reason", "idempotency_key", "balance_after")
-        values (${orgId}, ${userId}, ${TRIAL_CREDITS}, "grant", ${TRIAL_GRANT_KEY}, ${TRIAL_CREDITS})
-        on conflict ("idempotency_key") do nothing
+          ("organization_id", "delta", "kind", "idempotency_key", "balance_after",
+           "created_by", "note")
+        values (
+          ${orgId},
+          ${TRIAL_CREDITS},
+          "grant",
+          ${TRIAL_GRANT_KEY},
+          ${TRIAL_CREDITS} + (
+            select coalesce(sum("delta"), 0) from "credit_ledger"
+            where "organization_id" = ${orgId}
+          ),
+          ${userId},
+          "Demo trial grant (seed)"
+        )
+        on conflict ("idempotency_key", "kind") do nothing
         returning "id"
       `;
       steps.push({
-        entity: `trial grant (+${TRIAL_CREDITS} credits, reason "grant")`,
+        entity: `trial grant (+${TRIAL_CREDITS} credits, kind "grant")`,
         action: ledgerInsert.length > 0 ? "created" : "skipped (already present)",
       });
 
-      // 5. demo project — no unique key pinned in §12.1, so pre-check by name.
-      const projectExisting = await tx<{ id: string }[]>`
-        select "id" from "projects"
-        where "organization_id" = ${orgId} and "name" = ${DEMO_PROJECT_NAME}
-        limit 1
-      `;
-      let projectId = projectExisting[0]?.id;
-      const projectExisted = projectId !== undefined;
-      if (projectId === undefined) {
-        const inserted = await tx<{ id: string }[]>`
-          insert into "projects" ("organization_id", "name")
-          values (${orgId}, ${DEMO_PROJECT_NAME})
-          returning "id"
-        `;
-        projectId = inserted[0]?.id;
-      }
-      if (projectId === undefined) {
-        throw new Error("demo project insert returned no id");
-      }
-      steps.push({
-        entity: `project ${DEMO_PROJECT_NAME}`,
-        action: projectExisted ? "skipped (already present)" : "created",
-      });
-
-      // 6. two synthetic assets — sha256 placeholders (§12.1 dedupe key).
+      // 5. two synthetic assets — sha256 checksum placeholders (§12.1 dedupe key;
+      //    dedupe is enforced by the service layer, so pre-check reads here).
       for (const index of [1, 2]) {
-        const sha256 = createHash("sha256")
+        const checksum = createHash("sha256")
           .update(`studio-seed:${DEMO_ORG_SLUG}:demo-asset-${index}`)
           .digest("hex");
-        const filename = `demo-asset-${index}.png`;
+        const storageKey = ASSET_STORAGE_KEY(index);
         const assetExisting = await tx<{ id: string }[]>`
           select "id" from "assets"
-          where "organization_id" = ${orgId} and "sha256" = ${sha256}
+          where "organization_id" = ${orgId} and "checksum" = ${checksum}
           limit 1
         `;
         if (assetExisting.length > 0) {
-          steps.push({ entity: `asset ${filename}`, action: "skipped (already present)" });
+          steps.push({
+            entity: `asset ${storageKey}`,
+            action: "skipped (already present)",
+          });
           continue;
         }
         await tx`
           insert into "assets"
-            ("organization_id", "kind", "filename", "mime", "bytes", "width", "height", "sha256", "s3_key", "meta")
+            ("organization_id", "uploader_id", "kind", "storage_key", "checksum",
+             "bytes", "width_px", "height_px", "mime", "origin")
           values (
             ${orgId},
-            "generated",
-            ${filename},
-            "image/png",
+            ${userId},
+            "image",
+            ${storageKey},
+            ${checksum},
             0,
             1024,
             1024,
-            ${sha256},
-            ${ASSET_S3_KEY(index)},
-            ${JSON.stringify({ seed: true, synthetic: true })}
+            "image/png",
+            "generated"
           )
         `;
-        steps.push({ entity: `asset ${filename}`, action: "created" });
+        steps.push({ entity: `asset ${storageKey}`, action: "created" });
       }
 
-      // 7. demo document + first version (§12.1 documents/document_versions).
+      // 6. demo document + first version (content.ts: documents hang off the
+      //    organization directly — there is no projects table).
       const docExisting = await tx<{ id: string }[]>`
         select "id" from "documents"
-        where "project_id" = ${projectId} and "name" = ${DEMO_DOC_NAME}
+        where "organization_id" = ${orgId} and "name" = ${DEMO_DOC_NAME}
         limit 1
       `;
       let docId = docExisting[0]?.id;
@@ -239,14 +248,13 @@ async function main(): Promise<void> {
       if (docId === undefined) {
         const inserted = await tx<{ id: string }[]>`
           insert into "documents"
-            ("organization_id", "project_id", "name", "canvas", "size_bytes", "pcraft_key")
+            ("organization_id", "name", "width_px", "height_px", "created_by")
           values (
             ${orgId},
-            ${projectId},
             ${DEMO_DOC_NAME},
-            ${JSON.stringify({ seed: true })},
-            0,
-            ${DOC_PCRAFT_KEY}
+            ${DEMO_DOC_WIDTH_PX},
+            ${DEMO_DOC_HEIGHT_PX},
+            ${userId}
           )
           returning "id"
         `;
@@ -267,28 +275,22 @@ async function main(): Promise<void> {
       `;
       const versionExisted = versionExisting.length > 0;
       if (!versionExisted) {
+        // checkpoint_ref stays null: the seed version carries no engine
+        // snapshot; replay would build purely from the command log (§5.6).
         const versionInsert = await tx<{ id: string }[]>`
           insert into "document_versions"
-            ("document_id", "label", "created_by", "command_log", "checkpoint_key", "thumbnail_key", "revision")
-          values (
-            ${docId},
-            "Seed checkpoint",
-            ${userId},
-            ${JSON.stringify([])},
-            ${VERSION_CHECKPOINT_KEY},
-            ${VERSION_THUMBNAIL_KEY},
-            1
-          )
+            ("document_id", "organization_id", "label", "revision", "storage_key", "created_by")
+          values (${docId}, ${orgId}, "Seed checkpoint", 1, ${VERSION_STORAGE_KEY}, ${userId})
           returning "id"
         `;
         const versionId = versionInsert[0]?.id;
         if (versionId !== undefined) {
-          // Point the current-document row at its first version. Forward-only:
-          // the guard never rewrites a pointer a later version has already set.
+          // Advance the document's monotonic counter to its first version.
+          // Forward-only: the guard never rewrites a counter past this seed.
           await tx`
             update "documents"
-            set "latest_version_id" = ${versionId}, "updated_at" = now()
-            where "id" = ${docId} and "latest_version_id" is null
+            set "current_revision" = 1, "updated_at" = now()
+            where "id" = ${docId} and "current_revision" = 0
           `;
         }
       }
@@ -309,6 +311,7 @@ async function main(): Promise<void> {
     // biome-ignore lint/suspicious/noConsole: CLI script — stderr is its product
     console.error(`seed: aborted — ${message}`);
     if (/does not exist/i.test(message)) {
+      // biome-ignore lint/suspicious/noConsole: CLI script — stderr is its product
       console.error(
         "seed: hint: a table from the expected schema is missing — apply migrations first" +
           " (pnpm db:migrate in packages/db; see packages/db/migrations/README.md)",
