@@ -73,6 +73,27 @@ The script refuses to run if `git -C vendor/photocraft rev-parse HEAD` does not 
 the ADR-0001 pin. See `registration/commands-registry.patch.md` for what the patch
 contains and how Wave 3 validates it.
 
+### Submodule `specs()` merges (the multi-file modules)
+
+A sibling file with commands registers through exactly ONE `specs()` — never two, never
+none; the applier's pre-flight (step 2) enforces both directions.
+
+- **`template_cmds/`** (Wave 3's only four-file module): `template_cmds.rs` (W3-A) owns
+  the catalog (`template.list`/`inspect`/`apply`) and its `specs()` stays catalog-only.
+  W3-B's `fill.rs` (`template.fill`) and `validate.rs` (`template.validate`) register
+  through **`fill_specs.rs`'s single `specs()`** — the registration for both commands
+  lives in one line, and W3-A's file needs no edit from W3-B for the commands
+  themselves. Upstream, `crates/engine/src/template_cmds.rs` declares
+  `mod manifest; mod fill; mod validate; mod fill_specs;` and the registration is EITHER
+  `v.extend(fill_specs::specs());` chained in `template_cmds::specs()` OR the added line
+  `v.extend(crate::template_cmds::fill_specs::specs());` in
+  `registration/commands-registry.patch.txt` (the two sanctioned shapes; cf. its §
+  "Submodule specs merges"). Until that declaration + line land, the pre-flight
+  correctly refuses — the siblings are present but undeclared, and an undeclared file
+  would sit in the copy as dead code with its commands silently unregistered.
+- **`agent_cmds/`**: `agent_cmds.rs::specs()` + `document_diff.rs::specs()` (W3-G) follow
+  the same two-shape rule.
+
 ## The editor's golden rules (upstream AGENTS.md, summarized)
 
 Every module authored here must obey the upstream repo's rules — these are merge

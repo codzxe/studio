@@ -49,7 +49,8 @@
 //! and the math below still checks `is_finite()` before use (NaN is a violation, never a
 //! panic); no recursion of its own — the document walk is the engine's depth-bounded
 //! `walk()`; the reply is capped ([`MAX_ISSUES`]) so a hostile document cannot size it
-//! (§2.2 reply budgets). Bad params are `Err` before anything reads disk or state.
+//! (§2.2 reply budgets). Params are validated before anything reads env or state, and a
+//! document with no layers is a typed `Err` (the panic-hunt table's row).
 
 use std::path::Path;
 
@@ -80,7 +81,7 @@ const NAME_CAP: usize = 64;
 const LARGE_TEXT_PT: f64 = 18.0;
 const BODY_CONTRAST: f64 = 4.5;
 const LARGE_CONTRAST: f64 = 3.0;
-/// Render rounding tolerance for slot-bounds comparisons, in canvas px.
+/// Render-rounding tolerance for the slot-bounds compare, in canvas px.
 const BOUNDS_EPS_PX: f64 = 0.5;
 /// Float slack on the contrast compare, so a ratio that lands exactly on the threshold
 /// passes (§11.1 says "≥").
@@ -198,7 +199,8 @@ fn color_rgb8(c: &Color) -> [u8; 3] {
 fn within_safe_area(b: [f64; 4], canvas: [f64; 2], safe: f64) -> bool {
     let (x, y, w, h) = (b[0], b[1], b[2], b[3]);
     let (cw, ch) = (canvas[0], canvas[1]);
-    if ![x, y, w, h, cw, ch, safe].iter().all(|v| v.is_finite()) || safe < 0.0 {
+    let numbers = [x, y, w, h, cw, ch, safe];
+    if !(numbers.iter().all(|v| v.is_finite()) && safe >= 0.0) {
         return false;
     }
     x >= safe && y >= safe && x + w <= cw - safe && y + h <= ch - safe
@@ -296,7 +298,7 @@ fn check_must_layers(out: &mut Issues, doc: &Document, m: &TemplateManifest) {
             out.push(
                 BLOCKER,
                 "missing_must_layer",
-                Some(name),
+                Some(name.as_str()),
                 format!(
                     "rules.mustLayers requires a layer named \"{}\", which the document does not have",
                     short(name)
@@ -333,8 +335,8 @@ fn check_slot_layers(out: &mut Issues, doc: &Document, m: &TemplateManifest) {
 }
 
 /// `slot_bounds` (major): a slot's layer sits inside its declared `[x, y, w, h]` when it
-/// has measurable pixels (un-rasterized text has none; its declared box carries the
-/// safe-area check instead, and this one catches a fill or a move that escaped).
+/// has measurable pixels — a fill or a move that escaped the slot. Un-rasterized text
+/// has none, and its declared box carries the safe-area check instead.
 fn check_slot_bounds(out: &mut Issues, doc: &Document, m: &TemplateManifest) {
     for (name, slot) in &m.slots {
         let Some(declared) = slot_bounds(slot) else { continue };
@@ -346,7 +348,7 @@ fn check_slot_bounds(out: &mut Issues, doc: &Document, m: &TemplateManifest) {
             out.push(
                 MAJOR,
                 "slot_bounds",
-                Some(&l.name),
+                Some(l.name.as_str()),
                 format!(
                     "slot `{}`'s layer \"{}\" sits at [{:.0}, {:.0}, {:.0}, {:.0}], outside its declared bounds [{:.0}, {:.0}, {:.0}, {:.0}]",
                     short(name),
@@ -395,7 +397,7 @@ fn essential_slot(m: &TemplateManifest, slot: &Slot) -> bool {
 /// `safe_area` (major): essential content keeps `rules.safeArea` px clear of the canvas
 /// edges. A slot's box is its layer's computed bounds when it has pixels (the real
 /// position after a fill or a move), else its declared box (the design intent — checked
-/// whether or not the slot is filled, since an unfilled optional is still shown when the
+/// whether or not the slot is filled, since an unfilled optional still shows when the
 /// user switches it on). Visible text no slot covers is checked too, when it has pixels.
 fn check_safe_area(out: &mut Issues, doc: &Document, m: &TemplateManifest) {
     let Some(safe) = m.rules.safe_area.filter(|s| s.is_finite() && *s >= 0.0) else { return };
@@ -415,7 +417,7 @@ fn check_safe_area(out: &mut Issues, doc: &Document, m: &TemplateManifest) {
             out.push(
                 MAJOR,
                 "safe_area",
-                Some(&l.name),
+                Some(l.name.as_str()),
                 format!(
                     "slot `{}`'s content \"{}\" at [{:.0}, {:.0}, {:.0}, {:.0}] reaches inside the {:.0} px safe-area margin of the {:.0}×{:.0} canvas",
                     short(name),
@@ -443,7 +445,7 @@ fn check_safe_area(out: &mut Issues, doc: &Document, m: &TemplateManifest) {
             out.push(
                 MAJOR,
                 "safe_area",
-                Some(&l.name),
+                Some(l.name.as_str()),
                 format!(
                     "the text layer \"{}\" at [{:.0}, {:.0}, {:.0}, {:.0}] reaches inside the {:.0} px safe-area margin of the {:.0}×{:.0} canvas",
                     short(&l.name),
@@ -492,7 +494,7 @@ fn check_contrast(out: &mut Issues, doc: &Document, m: &TemplateManifest) {
             out.push(
                 BLOCKER,
                 "contrast",
-                Some(&l.name),
+                Some(l.name.as_str()),
                 format!(
                     "the text on \"{}\" contrasts {:.1}:1 against the declared background, below the required {:.1}:1",
                     short(&l.name),
@@ -548,7 +550,7 @@ fn check_palette(out: &mut Issues, doc: &Document, m: &TemplateManifest) {
             out.push(
                 MINOR,
                 "color_out_of_palette",
-                Some(&l.name),
+                Some(l.name.as_str()),
                 format!(
                     "the colour of \"{}\" is not one of the template's {} palette colours",
                     short(&l.name),
@@ -560,15 +562,15 @@ fn check_palette(out: &mut Issues, doc: &Document, m: &TemplateManifest) {
     }
 }
 
-/// `naming` (minor), manifest half: the `layerMap`'s own names follow their roles'
-/// §10.2 patterns. A warning, never a blocker — roles are design metadata.
+/// `naming` (minor), manifest half: the `layerMap`'s own names follow their roles' §10.2
+/// patterns. A warning, never a blocker — roles are design metadata.
 fn check_role_naming(out: &mut Issues, m: &TemplateManifest) {
     for (name, role) in &m.layer_map {
         if !role_name_ok(&role.role, name) {
             out.push(
                 MINOR,
                 "naming",
-                Some(name),
+                Some(name.as_str()),
                 format!(
                     "a layer with the \"{}\" role should be named like {} (§10.2), but the manifest names it \"{}\"",
                     short(&role.role),
@@ -597,7 +599,7 @@ fn check_machine_names(out: &mut Issues, doc: &Document) {
             out.push(
                 MINOR,
                 "naming",
-                Some(&l.name),
+                Some(l.name.as_str()),
                 format!("\"{}\" is a machine-generated name", short(&l.name)),
                 "rename it after its role (§10.2: Background, Photo — <subject>, Headline, CTA)".into(),
             );
@@ -609,8 +611,8 @@ fn check_machine_names(out: &mut Issues, doc: &Document) {
 
 /// The whole pass in one fixed order: the manifest's rules first (mustLayers, slot
 /// layers, slot bounds, safe area, contrast, maxTextLayers, palette, role names), then
-/// the manifest-independent machine-name check. Pure — no session, no disk; the issues
-/// and the `truncated` flag are the reply's `issues` and `truncated`.
+/// the manifest-independent machine-name check. Pure — no session, no disk; the tuple is
+/// the reply's `issues` and `truncated`.
 fn check(doc: &Document, manifest: Option<&TemplateManifest>) -> (Vec<Value>, bool) {
     let mut out = Issues::default();
     if let Some(m) = manifest {
@@ -687,9 +689,8 @@ pub(crate) fn validate_from(
 }
 
 /// The `template.validate` command (§7.4): parse the params, then [`validate_from`] with
-/// the configured catalog. Params are validated before anything reads env or state, and
-/// at least one of `template`/`document` is required — there is nothing to validate
-/// otherwise.
+/// the configured catalog. At least one of `template`/`document` is required — there is
+/// nothing to validate otherwise.
 pub(super) fn run(s: &mut Session, p: &Value) -> Result<Value> {
     let template = match p.get("template") {
         None | Some(Value::Null) => None,
@@ -722,9 +723,9 @@ mod tests {
     use photocraft_color::{ColorMode, SampleType};
     use photocraft_doc::{Size, TextLayer};
 
-    /// The §7.2 manifest, verbatim (the same one `manifest.rs`'s and `template_cmds.rs`'s
-    /// tests parse — including its own gap: the subhead colour is not in the palette,
-    /// which the pass must report as exactly one minor).
+    /// The §7.2 manifest, verbatim — the same one `manifest.rs`'s and `template_cmds.rs`'s
+    /// tests parse, including its own gap: the subhead colour is not in the palette,
+    /// which the pass must report as exactly one minor.
     fn manifest_value() -> Value {
         json!({
             "id": "instagram-post", "version": 3, "name": "Instagram Post — Promo",
@@ -766,7 +767,7 @@ mod tests {
         })
     }
 
-    /// The manifest with `edits` applied (a table row per test), parsed and validated.
+    /// The manifest with `edits` applied (one table row per test), parsed and validated.
     fn manifest_with(edits: impl FnOnce(&mut Value)) -> std::result::Result<TemplateManifest, Box<dyn std::error::Error>> {
         let mut v = manifest_value();
         edits(&mut v);
@@ -774,28 +775,38 @@ mod tests {
     }
 
     /// A document colour from a hex, the way the engine's own parsers build one.
-    fn hex_color(hex: &str) -> Color {
-        let [r, g, b, a] = parse_hex(hex).ok_or("bad hex").map_err(|e: &str| e.to_string()).ok().unwrap_or(Color::BLACK);
-        Color::rgba(r, g, b, a)
+    fn hex_color(hex: &str) -> std::result::Result<Color, Box<dyn std::error::Error>> {
+        let [r, g, b, a] = parse_hex(hex).ok_or_else(|| format!("{hex:?} is not #rrggbb"))?;
+        Ok(Color::rgba(r, g, b, a))
     }
 
     /// The §7.2 template document: the manifest's slots and mustLayers by name, with the
-    /// declared colours on its text layers (what the catalog fixture ships as the .pcraft).
-    fn template_doc() -> Document {
+    /// declared colours on its text layers (what the catalog fixture ships as .pcraft).
+    fn template_doc() -> std::result::Result<Document, Box<dyn std::error::Error>> {
         let mut doc = Document::new("Instagram Post", Size::new(1080, 1080), ColorMode::Rgb, SampleType::U8);
-        doc.layers.push(Layer::new("Background", LayerContent::Fill(Fill::Solid(hex_color("#F4E7D3")))));
+        doc.layers.push(Layer::new("Background", LayerContent::Fill(Fill::Solid(hex_color("#F4E7D3")?))));
         doc.layers.push(Layer::raster("Photo", doc.pixel_format()));
         doc.layers.push(Layer::new(
             "Headline",
-            LayerContent::Text(TextLayer { text: "Old headline".into(), size_pt: 96.0, color: hex_color("#3B2A20"), ..Default::default() }),
+            LayerContent::Text(TextLayer {
+                text: "Old headline".into(),
+                size_pt: 96.0,
+                color: hex_color("#3B2A20")?,
+                ..Default::default()
+            }),
         ));
         doc.layers.push(Layer::new(
             "Subhead",
-            LayerContent::Text(TextLayer { text: "Old sub".into(), size_pt: 36.0, color: hex_color("#6B5748"), ..Default::default() }),
+            LayerContent::Text(TextLayer {
+                text: "Old sub".into(),
+                size_pt: 36.0,
+                color: hex_color("#6B5748")?,
+                ..Default::default()
+            }),
         ));
         doc.layers.push(Layer::raster("Badge", doc.pixel_format()));
         doc.layers.push(Layer::raster("Logo", doc.pixel_format()));
-        doc
+        Ok(doc)
     }
 
     /// The error of `r`, or the test fails with `why` (an `Err` result — no `unwrap` here).
@@ -809,20 +820,29 @@ mod tests {
         }
     }
 
-    /// The rows of a pass's reply tuple with a given code (levels are asserted per test).
+    /// The rows of a pass with a given code.
     fn coded(issues: &[Value], code: &str) -> Vec<&Value> {
         issues.iter().filter(|i| i.get("code").and_then(Value::as_str) == Some(code)).collect()
     }
 
-    /// Every issue row carries §7.4's shape: level, code, message, fix — and a layer name
-    /// exactly when the check knows one.
+    /// `ok` for a pass's rows (§11.1: no blocker, no major).
+    fn passes(issues: &[Value]) -> bool {
+        issues
+            .iter()
+            .all(|i| i.get("level").and_then(Value::as_str).is_none_or(|l| l == MINOR))
+    }
+
+    /// Every issue row carries §7.4's shape: level, code, message, fix — a layer name
+    /// exactly when the check knows one, and a snake_case code.
     fn shape_is_held(issues: &[Value]) {
         for i in issues {
             for key in ["level", "code", "message", "fix"] {
                 assert!(i.get(key).and_then(Value::as_str).is_some(), "{key} missing in {i}");
             }
-            let level = i.get("level").and_then(Value::as_str).ok_or("level").map_err(|e: &str| e.to_string()).ok();
-            assert!(matches!(level, Some("blocker") | Some("major") | Some("minor")), "{i}");
+            assert!(
+                matches!(i.get("level").and_then(Value::as_str), Some("blocker") | Some("major") | Some("minor")),
+                "{i}"
+            );
             if let Some(code) = i.get("code").and_then(Value::as_str) {
                 assert!(
                     code.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
@@ -835,38 +855,37 @@ mod tests {
     // ---------- the math tables ----------
 
     #[test]
-    fn contrast_ratio_table() {
+    fn contrast_ratio_table() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let hx = |h: &str| hex_rgb(h).ok_or_else(|| format!("{h:?} is not a hex"));
         let near = |a: f64, b: f64| (a - b).abs() < 0.01;
-        // WCAG's own reference pairs, then the fixture's.
-        assert!(near(contrast_ratio([0.0; 3], [1.0; 3]), 21.0));
-        assert!(near(contrast_ratio([1.0; 3], [1.0; 3]), 1.0));
-        assert!(near(contrast_ratio(hex_rgb("#767676").ok_or("h").map_err(|_: &str| "".to_string()).ok().unwrap_or([0.0; 3]), [1.0, 1.0, 1.0]), 4.54), "the famous 4.54:1 gray");
-        assert!(near(contrast_ratio(hex_rgb("#777777").ok_or("h").map_err(|_: &str| "".to_string()).ok().unwrap_or([0.0; 3]), [1.0, 1.0, 1.0]), 4.48), "just under 4.5:1");
-        // The fixture: headline and subhead on the cream background.
-        let bg = hex_rgb("#F4E7D3").ok_or("h").map_err(|_: &str| "".to_string()).ok().unwrap_or([0.0; 3]);
-        assert!(near(contrast_ratio(hex_rgb("#3B2A20").ok_or("h").map_err(|_: &str| "".to_string()).ok().unwrap_or([0.0; 3]), bg), 11.19));
-        assert!(near(contrast_ratio(hex_rgb("#6B5748").ok_or("h").map_err(|_: &str| "".to_string()).ok().unwrap_or([0.0; 3]), bg), 5.59));
+        // WCAG's own reference pairs first.
+        assert!(near(contrast_ratio([0.0; 3], [1.0, 1.0, 1.0]), 21.0));
+        assert!(near(contrast_ratio([1.0; 3], [1.0, 1.0, 1.0]), 1.0));
+        assert!(near(contrast_ratio(hx("#767676")?, [1.0, 1.0, 1.0]), 4.54), "the famous 4.54:1 gray");
+        assert!(near(contrast_ratio(hx("#777777")?, [1.0, 1.0, 1.0]), 4.48), "just under 4.5:1");
+        // The fixture's pairs on the cream background.
+        let bg = hx("#F4E7D3")?;
+        assert!(near(contrast_ratio(hx("#3B2A20")?, bg), 11.19));
+        assert!(near(contrast_ratio(hx("#6B5748")?, bg), 5.59));
         // Order never matters.
-        let (a, b) = (hex_rgb("#3B2A20").ok_or("h").map_err(|_: &str| "".to_string()).ok().unwrap_or([0.0; 3]), bg);
-        assert!((contrast_ratio(a, b) - contrast_ratio(b, a)).abs() < 1e-12);
-        // Hostile numbers: NaN channels are black, never a panic or NaN.
+        assert!((contrast_ratio(hx("#3B2A20")?, bg) - contrast_ratio(bg, hx("#3B2A20")?)).abs() < 1e-12);
+        // Hostile numbers: NaN channels read as black, never a panic or a NaN.
         assert_eq!(relative_luminance([f64::NAN, f64::INFINITY, 0.0]), 0.0);
         assert!(near(contrast_ratio([f64::NAN; 3], [f64::NAN; 3]), 1.0));
         assert!(near(relative_luminance([1.0, 1.0, 1.0]), 1.0));
-        assert!(near(relative_luminance(hex_rgb("#F4E7D3").ok_or("h").map_err(|_: &str| "".to_string()).ok().unwrap_or([0.0; 3])), 0.8109));
+        assert!(near(relative_luminance(bg), 0.8109));
+        Ok(())
     }
 
     #[test]
     fn hex_rgb_parses_the_registry_spellings() -> std::result::Result<(), Box<dyn std::error::Error>> {
         assert_eq!(hex_rgb("#F4E7D3").ok_or("6-digit hex")?, [244.0 / 255.0, 231.0 / 255.0, 211.0 / 255.0]);
-        assert_eq!(hex_rgb("#3B2A2080").ok_or("8-digit hex")?, hex_rgb("#3B2A20").ok_or("alpha ignored")?);
-        for junk in ["", "#", "#F4E", "#GGGGGG", "F4E7D3", "#F4E7D", 0] {
-            let _ = junk; // (table rows are strings; the numbers come as JSON below)
-        }
-        for junk in ["", "#", "#F4E", "#GGGGGG", "F4E7D3"] {
+        // An alpha channel is accepted and ignored by the ratio math.
+        assert_eq!(hex_rgb("#3B2A2080").ok_or("8-digit hex")?, hex_rgb("#3B2A20").ok_or("no alpha")?);
+        for junk in ["", "#", "#F4E", "#GGGGGG", "#F4E7D", "#F4E7D33"] {
             assert!(hex_rgb(junk).is_none(), "{junk:?} parsed");
         }
-        // The 8-bit quantisation is the same as Color::to_rgba8's.
+        // The 8-bit quantisation matches Color::to_rgba8's, so palette hexes compare equal.
         assert_eq!(hex_rgb8("#F4E7D3").ok_or("quantize")?, color_rgb8(&Color::rgb(244.0 / 255.0, 231.0 / 255.0, 211.0 / 255.0)));
         Ok(())
     }
@@ -874,12 +893,11 @@ mod tests {
     #[test]
     fn safe_area_table() {
         let canvas = [1080.0, 1080.0];
-        // Well inside.
-        assert!(within_safe_area([72.0, 732.0, 936.0, 176.0], canvas, 48.0));
-        // Full-bleed photos and backgrounds are outside — the caller decides what is
-        // essential; the math itself just says where the box is.
+        assert!(within_safe_area([72.0, 732.0, 936.0, 176.0], canvas, 48.0), "well inside");
+        // Full-bleed art is outside — the caller decides what is essential; the math only
+        // says where the box is.
         assert!(!within_safe_area([0.0, 0.0, 1080.0, 700.0], canvas, 48.0));
-        // Each edge, exactly at and just past the margin.
+        // Exactly at the margin passes; just past each edge fails.
         assert!(within_safe_area([48.0, 48.0, 984.0, 984.0], canvas, 48.0));
         assert!(!within_safe_area([47.9, 48.0, 984.0, 984.0], canvas, 48.0));
         assert!(!within_safe_area([48.0, 47.9, 984.0, 984.0], canvas, 48.0));
@@ -888,8 +906,8 @@ mod tests {
         // A zero margin disables the rule.
         assert!(within_safe_area([0.0, 0.0, 1080.0, 1080.0], canvas, 0.0));
         // Hostile numbers are violations, never panics.
-        for box_ in [[f64::NAN, 0.0, 10.0, 10.0], [0.0, f64::INFINITY, 10.0, 10.0], [0.0, 0.0, f64::NAN, 10.0], [0.0, 0.0, 10.0, 1e999]] {
-            assert!(!within_safe_area(box_, canvas, 48.0), "{box_:?} passed");
+        for b in [[f64::NAN, 0.0, 10.0, 10.0], [0.0, f64::INFINITY, 10.0, 10.0], [0.0, 0.0, f64::NAN, 10.0], [0.0, 0.0, 10.0, 1e999]] {
+            assert!(!within_safe_area(b, canvas, 48.0), "{b:?} passed");
         }
         assert!(!within_safe_area([0.0, 0.0, 100.0, 100.0], [f64::NAN, 1080.0], 48.0));
         assert!(!within_safe_area([0.0, 0.0, 100.0, 100.0], canvas, -1.0));
@@ -909,18 +927,20 @@ mod tests {
 
     #[test]
     fn machine_name_table() {
-        for bad in ["Layer 1", "Layer 27", "Group 3", "Shape 12", "Layer 0"] {
-            assert!(is_machine_name(bad), "{bad:?} is not flagged");
+        for machine in ["Layer 1", "Layer 27", "Group 3", "Shape 12", "Layer 0"] {
+            assert!(is_machine_name(machine), "{machine:?} is not flagged");
         }
-        for fine in ["Layer", "Layer X", "Layer 12a", "Layer 12 3", "layer 3", "LAYER 3", "Layer 3 ", "Background", "Photo — Latte", "Headline — es", "Offer Badge — 20%", "🔥🔥", "Layer ③"] {
+        for fine in
+            ["Layer", "Layer X", "Layer 12a", "Layer 12 3", "layer 3", "LAYER 3", "Layer 3 ", "Background", "Photo — Latte", "Headline — es", "Offer Badge — 20%", "🔥🔥", "Layer ③"]
+        {
             assert!(!is_machine_name(fine), "{fine:?} is flagged");
         }
     }
 
     #[test]
     fn role_name_table() {
-        // §10.2's rows: the role's own name, its variant form, and a violation.
-        for (role, fine, also_fine) in [
+        // §10.2's rows: the role's own name, its variant form…
+        for (role, fine, variant) in [
             ("background", "Background", "Background — Dark"),
             ("image", "Photo", "Photo — Latte"),
             ("headline", "Headline", "Headline — es"),
@@ -930,12 +950,13 @@ mod tests {
             ("cta", "CTA", "CTA — Weekend"),
             ("logo", "Logo", "Logo — Mono"),
             ("badge", "Badge", "Badge — 20%"),
-            ("watermark", "Watermark", "Watermark"),
+            ("watermark", "Watermark", "Watermark — Light"),
             ("component", "Offer Badge", "Offer Badge — 20%"),
         ] {
             assert!(role_name_ok(role, fine), "{role}: {fine:?} flagged");
-            assert!(role_name_ok(role, also_fine), "{role}: {also_fine:?} flagged");
+            assert!(role_name_ok(role, variant), "{role}: {variant:?} flagged");
         }
+        // …and the violations.
         for (role, off) in [
             ("background", "Bg"),
             ("image", "Photograph"),
@@ -953,10 +974,9 @@ mod tests {
     }
 
     #[test]
-    fn role_examples_are_words_not_placeholders() {
+    fn role_examples_name_a_pattern() {
         for role in ["background", "image", "headline", "supporting-text", "logo", "component", "mood-board"] {
-            let e = role_example(role);
-            assert!(!e.is_empty(), "{role}");
+            assert!(!role_example(role).is_empty(), "{role}");
         }
     }
 
@@ -966,24 +986,24 @@ mod tests {
     fn the_spec_example_validates_with_only_its_own_palette_gap()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let m = manifest_with(|_| {})?;
-        let (issues, truncated) = check(&template_doc(), Some(&m));
+        let (issues, truncated) = check(&template_doc()?, Some(&m));
         shape_is_held(&issues);
         assert!(!truncated, "{issues:?}");
         // The §7.2 example's subhead colour is not in its own palette: exactly one minor.
-        assert_eq!(coded(&issues, "color_out_of_palette").len(), 1, "{issues:?}");
-        assert_eq!(coded(&issues, "color_out_of_palette")[0].get("layer").and_then(Value::as_str), Some("Subhead"));
+        let off = coded(&issues, "color_out_of_palette");
+        assert_eq!(off.len(), 1, "{issues:?}");
+        assert_eq!(off[0].get("layer").and_then(Value::as_str), Some("Subhead"));
         for code in ["missing_must_layer", "slot_layer_missing", "slot_bounds", "safe_area", "contrast", "max_text_layers", "naming"] {
             assert!(coded(&issues, code).is_empty(), "{code} fired on the clean fixture: {issues:?}");
         }
-        // Minors never flip ok (§11.1).
-        assert!(Issues { rows: issues.clone(), truncated }.passes(), "{issues:?}");
+        assert!(passes(&issues), "minors never flip ok: {issues:?}");
         Ok(())
     }
 
     #[test]
     fn a_missing_must_layer_is_a_blocker() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let m = manifest_with(|_| {})?;
-        let mut doc = template_doc();
+        let mut doc = template_doc()?;
         doc.layers.retain(|l| l.name != "Headline"); // a mustLayers name and a slot target
         let (issues, _) = check(&doc, Some(&m));
         shape_is_held(&issues);
@@ -991,17 +1011,16 @@ mod tests {
         assert_eq!(missing.len(), 1, "{issues:?}");
         assert_eq!(missing[0].get("level").and_then(Value::as_str), Some("blocker"));
         assert_eq!(missing[0].get("layer").and_then(Value::as_str), Some("Headline"));
-        // The same removal also loses the slot's layer and its contrast pair — both major
-        // and blocker codes stay out of the mustLayers row's turf.
-        assert!(coded(&issues, "slot_layer_missing").len() == 1, "{issues:?}");
-        assert!(!Issues { rows: issues.clone(), truncated: false }.passes());
+        // The same removal also loses the slot's layer — a major, in its own row.
+        assert_eq!(coded(&issues, "slot_layer_missing").len(), 1, "{issues:?}");
+        assert!(!passes(&issues), "{issues:?}");
         Ok(())
     }
 
     #[test]
     fn a_missing_slot_layer_is_a_major_even_when_optional() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let m = manifest_with(|_| {})?;
-        let mut doc = template_doc();
+        let mut doc = template_doc()?;
         doc.layers.retain(|l| l.name != "Logo"); // optional image slot, brand role
         let (issues, _) = check(&doc, Some(&m));
         let missing = coded(&issues, "slot_layer_missing");
@@ -1009,13 +1028,14 @@ mod tests {
         assert_eq!(missing[0].get("level").and_then(Value::as_str), Some("major"));
         assert_eq!(missing[0].get("layer").and_then(Value::as_str), Some("Logo"));
         assert!(missing[0].get("message").and_then(Value::as_str).is_some_and(|s| s.contains("optional")), "{missing:?}");
-        // Its safe-area row is gone with it (nothing to place), and nothing else fired.
+        // Its safe-area row is gone with it (nothing to place).
         assert!(coded(&issues, "safe_area").is_empty(), "{issues:?}");
         Ok(())
     }
 
     #[test]
-    fn slot_bounds_compare_computed_bounds_to_the_declared_box() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    fn slot_bounds_compare_computed_bounds_to_the_declared_box()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
         let m = manifest_with(|_| {})?;
         // Real pixels via the engine's own commands: a filled raster is a Photo that
         // escaped its [0, 0, 1080, 700] slot.
@@ -1030,7 +1050,10 @@ mod tests {
         assert_eq!(escaped.len(), 1, "{issues:?}");
         assert_eq!(escaped[0].get("level").and_then(Value::as_str), Some("major"));
         assert_eq!(escaped[0].get("layer").and_then(Value::as_str), Some("Photo"));
-        assert!(escaped[0].get("message").and_then(Value::as_str).is_some_and(|s| s.contains("1080") && s.contains("700")), "{escaped:?}");
+        assert!(
+            escaped[0].get("message").and_then(Value::as_str).is_some_and(|s| s.contains("1080") && s.contains("700")),
+            "{escaped:?}"
+        );
         Ok(())
     }
 
@@ -1038,22 +1061,23 @@ mod tests {
     fn essential_content_reaching_the_margin_is_a_major() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // The headline starts 8 px from the edge — inside the 48 px margin.
         let m = manifest_with(|v| v["slots"]["headline"]["bounds"] = json!([8, 732, 936, 176]))?;
-        let (issues, _) = check(&template_doc(), Some(&m));
+        let (issues, _) = check(&template_doc()?, Some(&m));
         let area = coded(&issues, "safe_area");
         assert_eq!(area.len(), 1, "{issues:?}");
         assert_eq!(area[0].get("level").and_then(Value::as_str), Some("major"));
         assert_eq!(area[0].get("layer").and_then(Value::as_str), Some("Headline"));
         assert!(area[0].get("message").and_then(Value::as_str).is_some_and(|s| s.contains("48")), "{area:?}");
         // The full-bleed photo is not essential: no safe-area row for it.
-        assert!(!Issues { rows: issues, truncated: false }.passes());
+        assert!(!passes(&issues), "{issues:?}");
         Ok(())
     }
 
     #[test]
     fn brand_role_images_are_essential_but_photos_bleed() -> std::result::Result<(), Box<dyn std::error::Error>> {
-        // The logo slot (role logo) sits 8 px high; the photo's full-bleed box stays unflagged.
+        // The logo slot (role logo) sits 8 px from the edge; the photo's full-bleed box
+        // stays unflagged.
         let m = manifest_with(|v| v["slots"]["logo"]["bounds"] = json!([8, 984, 120, 40]))?;
-        let (issues, _) = check(&template_doc(), Some(&m));
+        let (issues, _) = check(&template_doc()?, Some(&m));
         let area = coded(&issues, "safe_area");
         assert_eq!(area.len(), 1, "{issues:?}");
         assert_eq!(area[0].get("layer").and_then(Value::as_str), Some("Logo"), "{issues:?}");
@@ -1063,33 +1087,56 @@ mod tests {
     #[test]
     fn low_contrast_text_is_a_blocker_and_size_and_rules_move_the_threshold()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
-        // #777777 on #F4E7D3 is ~3.5:1 — below §11.1's 4.5:1 body ratio at 14 pt, fine as
-        // large display text (≥ 18 pt, 3:1), and fine under a declared minContrast of 3.
-        let mut doc = template_doc();
-        let sub = doc.layers.iter_mut().find(|l| l.name == "Subhead").ok_or("no Subhead")?;
-        match &mut sub.content {
-            LayerContent::Text(t) => t.color = hex_color("#777777"),
-            _ => return Err("Subhead is not text".into()),
+        // #777777 on #F4E7D3 is ~3.7:1 — below §11.1's 4.5:1 at 14 pt, fine as large
+        // display text (≥ 18 pt, 3:1), and fine under a declared minContrast of 3.
+        let mut body = template_doc()?;
+        {
+            let sub = body.layers.iter_mut().find(|l| l.name == "Subhead").ok_or("no Subhead")?;
+            match &mut sub.content {
+                LayerContent::Text(t) => {
+                    t.color = hex_color("#777777")?;
+                    t.size_pt = 14.0;
+                }
+                _ => return Err("Subhead is not text".into()),
+            }
         }
-        let body = check(&doc, Some(&manifest_with(|v| v["rules"]["minContrast"] = Value::Null)?));
-        assert_eq!(coded(&body.0, "contrast").len(), 1, "{:?}", body.0);
-        assert_eq!(coded(&body.0, "contrast")[0].get("level").and_then(Value::as_str), Some("blocker"));
+        let m = manifest_with(|v| v["rules"]["minContrast"] = Value::Null)?;
+        let (issues, _) = check(&body, Some(&m));
+        let contrast = coded(&issues, "contrast");
+        assert_eq!(contrast.len(), 1, "{issues:?}");
+        assert_eq!(contrast[0].get("level").and_then(Value::as_str), Some("blocker"));
+        assert_eq!(contrast[0].get("layer").and_then(Value::as_str), Some("Subhead"));
+        assert!(
+            contrast[0].get("message").and_then(Value::as_str).is_some_and(|s| s.contains("4.5:1")),
+            "{contrast:?}"
+        );
 
-        let large = {
-            let mut doc = doc.clone();
-            let sub = doc.layers.iter_mut().find(|l| l.name == "Subhead").ok_or("no Subhead")?;
+        // Large display text: the same colour passes at 24 pt.
+        let mut large = body.clone();
+        {
+            let sub = large.layers.iter_mut().find(|l| l.name == "Subhead").ok_or("no Subhead")?;
             match &mut sub.content {
                 LayerContent::Text(t) => t.size_pt = 24.0,
                 _ => return Err("Subhead is not text".into()),
             }
-            doc
-        };
-        let relaxed = check(&large, Some(&manifest_with(|v| v["rules"]["minContrast"] = json!(3.0))?));
-        assert!(coded(&relaxed.0, "contrast").is_empty(), "{:?}", relaxed.0);
+        }
+        let (issues, _) = check(&large, Some(&m));
+        assert!(coded(&issues, "contrast").is_empty(), "{issues:?}");
 
-        // A declared minContrast of 6 makes even the compliant headline fail (11.2:1).
-        let strict = check(&template_doc(), Some(&manifest_with(|v| v["rules"]["minContrast"] = json!(6.0))?));
-        assert_eq!(coded(&strict.0, "contrast").len(), 2, "both text layers: {:?}", strict.0);
+        // A declared minContrast of 3 passes it at any size.
+        let relaxed = manifest_with(|v| v["rules"]["minContrast"] = json!(3.0))?;
+        let (issues, _) = check(&body, Some(&relaxed));
+        assert!(coded(&issues, "contrast").is_empty(), "{issues:?}");
+
+        // A declared minContrast of 12 outranks both compliant pairs (11.2:1, 5.6:1).
+        let strict = manifest_with(|v| v["rules"]["minContrast"] = json!(12.0))?;
+        let (issues, _) = check(&template_doc()?, Some(&strict));
+        let contrast = coded(&issues, "contrast");
+        assert_eq!(contrast.len(), 2, "both text layers: {issues:?}");
+        assert!(
+            contrast.iter().all(|i| i.get("level").and_then(Value::as_str) == Some("blocker")),
+            "{contrast:?}"
+        );
         Ok(())
     }
 
@@ -1099,11 +1146,13 @@ mod tests {
             v["canvas"]["background"] = Value::Null;
             v["layerMap"]["Background"]["fill"] = Value::Null;
         })?;
-        let mut doc = template_doc();
-        let sub = doc.layers.iter_mut().find(|l| l.name == "Subhead").ok_or("no Subhead")?;
-        match &mut sub.content {
-            LayerContent::Text(t) => t.color = hex_color("#777777"),
-            _ => return Err("Subhead is not text".into()),
+        let mut doc = template_doc()?;
+        {
+            let sub = doc.layers.iter_mut().find(|l| l.name == "Subhead").ok_or("no Subhead")?;
+            match &mut sub.content {
+                LayerContent::Text(t) => t.color = hex_color("#777777")?,
+                _ => return Err("Subhead is not text".into()),
+            }
         }
         let (issues, _) = check(&doc, Some(&m));
         assert!(coded(&issues, "contrast").is_empty(), "{issues:?}");
@@ -1113,48 +1162,89 @@ mod tests {
     #[test]
     fn max_text_layers_counts_hidden_placeholders_too() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let m = manifest_with(|v| v["rules"]["maxTextLayers"] = json!(3))?;
-        let mut doc = template_doc();
+        let mut doc = template_doc()?;
         for i in 0..2 {
+            // §7.3: optional slots stay present but hidden — the cap is the design budget.
             let mut extra = Layer::new(format!("Caption — {i}"), LayerContent::Text(TextLayer::default()));
-            extra.visible = false; // §7.3: optional slots stay present but hidden
+            extra.visible = false;
             doc.layers.push(extra);
         }
         let (issues, _) = check(&doc, Some(&m));
         let cap = coded(&issues, "max_text_layers");
         assert_eq!(cap.len(), 1, "{issues:?}");
         assert_eq!(cap[0].get("level").and_then(Value::as_str), Some("major"));
-        assert!(cap[0].get("message").and_then(Value::as_str).is_some_and(|s| s.contains("4 text layers") && s.contains("3")), "{cap:?}");
+        assert!(
+            cap[0].get("message").and_then(Value::as_str).is_some_and(|s| s.contains("4 text layers") && s.contains("3")),
+            "{cap:?}"
+        );
         assert!(cap[0].get("layer").is_none(), "{cap:?}");
         Ok(())
     }
 
     #[test]
-    fn off_palette_solids_are_minor_never_ok_flipping() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    fn off_palette_solids_are_minor_and_never_flip_ok() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let m = manifest_with(|_| {})?;
-        let mut doc = template_doc();
-        doc.layers.push(Layer::new("Accent", LayerContent::Fill(Fill::Solid(hex_color("#77FFE0")))));
+        let mut doc = template_doc()?;
+        doc.layers.push(Layer::new("Accent", LayerContent::Fill(Fill::Solid(hex_color("#77FFE0")?))));
         let (issues, _) = check(&doc, Some(&m));
         let off = coded(&issues, "color_out_of_palette");
         assert_eq!(off.len(), 2, "Subhead + Accent: {issues:?}");
         assert!(off.iter().all(|i| i.get("level").and_then(Value::as_str) == Some("minor")), "{issues:?}");
-        assert!(Issues { rows: issues, truncated: false }.passes(), "minors never flip ok");
+        assert!(passes(&issues), "minors never flip ok");
         Ok(())
     }
 
     #[test]
     fn machine_names_and_role_warnings_are_minor_naming_rows()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
-        // The manifest renames its headline layer "Title": the layerMap role disagrees
-        // with §10.2's pattern. The document carries a machine-named stray.
+        // The manifest names its headline layer "Title": the headline role's §10.2
+        // pattern disagrees. The document also carries a machine-named stray.
         let m = manifest_with(|v| {
-            v["layerMap"].as_object_mut().ok_or("no layerMap").map_err(|e: &str| e.to_string())?.ok().insert — the map moves; see the doc
+            if let Some(map) = v["layerMap"].as_object_mut() {
+                if let Some(entry) = map.get_mut("Headline") {
+                    let entry = entry.clone();
+                    map.insert("Title".into(), entry);
+                    map.remove("Headline");
+                }
+            }
         })?;
+        let mut doc = template_doc()?;
+        doc.layers.push(Layer::raster("Group 3", doc.pixel_format()));
+        let (issues, _) = check(&doc, Some(&m));
+        shape_is_held(&issues);
+        let naming = coded(&issues, "naming");
+        assert_eq!(naming.len(), 2, "{issues:?}");
+        assert!(naming.iter().all(|i| i.get("level").and_then(Value::as_str) == Some("minor")), "{issues:?}");
+        assert!(naming.iter().any(|i| i.get("layer").and_then(Value::as_str) == Some("Title")), "{issues:?}");
+        assert!(naming.iter().any(|i| i.get("layer").and_then(Value::as_str) == Some("Group 3")), "{issues:?}");
+        // The headline slot still resolves (it targets layer "Headline", which the
+        // document has) — only the layerMap's naming disagrees.
+        assert!(coded(&issues, "slot_layer_missing").is_empty(), "{issues:?}");
+        assert!(passes(&issues), "warnings never flip ok");
+        Ok(())
+    }
+
+    #[test]
+    fn empty_names_are_naming_rows_that_point_at_the_id() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut doc = template_doc()?;
+        doc.layers.push(Layer::raster("   ", doc.pixel_format()));
+        let (issues, _) = check(&doc, None);
+        let naming = coded(&issues, "naming");
+        assert_eq!(naming.len(), 1, "{issues:?}");
+        // The row has no name to point at, so it names the layer by its id instead.
+        assert!(naming[0].get("layer").is_none(), "{naming:?}");
+        assert!(
+            naming[0].get("message").and_then(Value::as_str).is_some_and(|s| s.contains("no name") && s.contains("layer ")),
+            "{naming:?}"
+        );
         Ok(())
     }
 
     #[test]
     fn deep_groups_walk_without_hanging() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let mut doc = Document::new("deep", Size::new(64, 64), ColorMode::Rgb, SampleType::U8);
+        // Engine-legal depth (MAX_GROUP_DEPTH): the pass never recurses on its own, and
+        // the engine's walk is bounded — this must return, not hang.
         let mut group = Layer::group("Outer", vec![Layer::raster("Layer 1", doc.pixel_format())]);
         for _ in 1..photocraft_doc::MAX_GROUP_DEPTH {
             group = Layer::group("Outer", vec![group]);
@@ -1177,6 +1267,26 @@ mod tests {
         assert!(truncated);
     }
 
+    #[test]
+    fn hidden_layers_skip_the_render_checks_but_count_as_design()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let m = manifest_with(|_| {})?;
+        let mut doc = template_doc()?;
+        {
+            let sub = doc.layers.iter_mut().find(|l| l.name == "Subhead").ok_or("no Subhead")?;
+            sub.visible = false;
+            match &mut sub.content {
+                // Off-palette AND low-contrast — but hidden text is not rendered.
+                LayerContent::Text(t) => t.color = hex_color("#77FFE0")?,
+                _ => return Err("Subhead is not text".into()),
+            }
+        }
+        let (issues, _) = check(&doc, Some(&m));
+        assert!(coded(&issues, "contrast").is_empty(), "hidden text is not rendered: {issues:?}");
+        assert!(coded(&issues, "color_out_of_palette").is_empty(), "{issues:?}");
+        Ok(())
+    }
+
     // ---------- the command (params first, then the disk) ----------
 
     #[test]
@@ -1185,7 +1295,7 @@ mod tests {
         // Nothing to validate: both arms absent (the panic-hunt table's first row).
         let e = must_err(run(&mut s, &json!({})), "validated nothing")?;
         assert!(e.to_string().contains("template") && e.to_string().contains("document"), "{e}");
-        // Wrong shapes for both arms.
+        // Wrong shapes and bad pins for both arms.
         for p in [
             json!({ "template": 42 }),
             json!({ "template": [] }),
@@ -1225,7 +1335,10 @@ mod tests {
         assert_eq!(issues[0].get("code").and_then(Value::as_str), Some("naming"));
         // An index that is not open is a typed error listing what is.
         let e = must_err(run(&mut s, &json!({ "document": i + 5 })), "validated a closed document")?;
-        assert!(e.to_string().contains(&format!("document {}", i + 5)) && e.to_string().contains("1 open document"), "{e}");
+        assert!(
+            e.to_string().contains(&format!("document {}", i + 5)) && e.to_string().contains("1 open document"),
+            "{e}"
+        );
         Ok(())
     }
 
@@ -1238,34 +1351,17 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn hidden_layers_skip_the_render_checks_but_count_as_design()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let m = manifest_with(|_| {})?;
-        let mut doc = template_doc();
-        let sub = doc.layers.iter_mut().find(|l| l.name == "Subhead").ok_or("no Subhead")?;
-        sub.visible = false;
-        match &mut sub.content {
-            LayerContent::Text(t) => t.color = hex_color("#77FFE0"), // off-palette AND low-contrast
-            _ => return Err("Subhead is not text".into()),
-        }
-        let (issues, _) = check(&doc, Some(&m));
-        assert!(coded(&issues, "contrast").is_empty(), "hidden text is not rendered: {issues:?}");
-        assert!(coded(&issues, "color_out_of_palette").is_empty(), "{issues:?}");
-        Ok(())
-    }
-
     // ---------- the catalog arms (files on disk) ----------
 
-    /// A catalog directory holding the §7.2 example at @3 (and a v2 without its photo
-    /// layer), as the engine reads one: `<stem>.json` + `<stem>.pcraft` pairs.
+    /// A catalog directory holding the §7.2 example at @3, as the engine reads one:
+    /// `<stem>.json` + `<stem>.pcraft` pairs.
     #[cfg(not(target_arch = "wasm32"))]
     fn fixture_dir() -> std::result::Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         std::fs::write(dir.path().join("instagram-post.json"), manifest_value().to_string().as_bytes())?;
         std::fs::write(
             dir.path().join("instagram-post.pcraft"),
-            &photocraft_format::save_to_bytes(&template_doc(), &Default::default())?,
+            &photocraft_format::save_to_bytes(&template_doc()?, &Default::default())?,
         )?;
         Ok(dir)
     }
@@ -1281,6 +1377,7 @@ mod tests {
         assert!(r.get("document").is_some_and(Value::is_null), "{r}");
         let issues = r.get("issues").and_then(Value::as_array).ok_or("no issues")?;
         assert_eq!(coded(issues, "color_out_of_palette").len(), 1, "{issues:?}"); // the §7.2 palette gap
+        assert!(coded(issues, "contrast").is_empty(), "{issues:?}"); // colours survive the round trip
         Ok(())
     }
 
@@ -1296,12 +1393,12 @@ mod tests {
         assert_eq!(r.get("document").and_then(Value::as_u64), Some(i as u64));
         let issues = r.get("issues").and_then(Value::as_array).ok_or("no issues")?;
         shape_is_held(issues);
-        // The scratch document has none of the template's layers: three blockers (§7.2's
-        // mustLayers) plus the slot layers, and ok is false.
+        // The scratch document has none of the template's layers: the mustLayers
+        // blockers, the slot layers, and the stray's machine name — and ok is false.
         assert_eq!(coded(issues, "missing_must_layer").len(), 3, "{issues:?}");
         assert!(coded(issues, "slot_layer_missing").len() >= 4, "{issues:?}");
+        assert_eq!(coded(issues, "naming").len(), 1, "{issues:?}");
         assert_eq!(r.get("ok").and_then(Value::as_bool), Some(false));
-        assert!(coded(issues, "naming").len() == 1, "{issues:?}");
         Ok(())
     }
 
@@ -1323,7 +1420,10 @@ mod tests {
         assert!(e.to_string().contains("no version 99"), "{e}");
         // A manifest without its .pcraft explains itself (the catalog's own refusal).
         let lost = tempfile::tempdir()?;
-        std::fs::write(lost.path().join("lost.json"), json!({ "id": "lost", "version": 1, "name": "Lost", "canvas": { "width": 8, "height": 8 } }).to_string().as_bytes())?;
+        std::fs::write(
+            lost.path().join("lost.json"),
+            json!({ "id": "lost", "version": 1, "name": "Lost", "canvas": { "width": 8, "height": 8 } }).to_string().as_bytes(),
+        )?;
         let e = must_err(
             validate_from(&mut s, Some(lost.path()), Some(("lost".into(), None)), None),
             "linted a manifest without a document",
@@ -1337,23 +1437,22 @@ mod tests {
 
     /// The whole command path, driven through `Session::execute` in a child process (the
     /// directory is process-wide configuration, so the env var is set there — the same
-    /// pattern `template_cmds.rs`'s list test uses).
+    /// pattern `template_cmds.rs`'s list test uses; the command id resolves only in the
+    /// patched clone, where the registration patch has landed).
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn validate_serves_the_configured_directory() -> std::result::Result<(), Box<dyn std::error::Error>> {
         const CHILD: &str = "PHOTOCRAFT_TEST_VALIDATE_CHILD";
         const TEST: &str = "template_cmds::validate::tests::validate_serves_the_configured_directory";
         if std::env::var_os(CHILD).is_some() {
-            let dir = std::env::var_os("PHOTOCRAFT_TEMPLATES_DIR")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .ok_or("the child was spawned without a templates directory")?;
+            if std::env::var_os("PHOTOCRAFT_TEMPLATES_DIR").filter(|v| !v.is_empty()).is_none() {
+                return Err("the child was spawned without a templates directory".into());
+            }
             let mut s = Session::new();
             let r = s.execute("template.validate", json!({ "template": "instagram-post@3" }))?;
             assert_eq!(r.get("ok").and_then(Value::as_bool), Some(true), "the fixture lints clean: {r}");
             assert_eq!(r.get("template").and_then(Value::as_str), Some("instagram-post@3"));
             assert!(s.journal.is_empty(), "a query must not journal: {:?}", s.journal);
-            let _ = dir; // (read through the env by the command itself)
             return Ok(());
         }
         let dir = fixture_dir()?;
