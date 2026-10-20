@@ -36,6 +36,8 @@
 //! `document.diff` — the companion command of this surface, in `document_diff.rs` — shares
 //! [`Transaction`] and [`open_transaction`] from here.
 
+pub mod document_diff;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
