@@ -149,7 +149,7 @@ export function unknownComponentVarsErr(
 }
 
 /** The 9-point anchor would push the component frame off the canvas top/left. */
-function offCanvasErr(anchor: string, placed: readonly number[]): ToolErr {
+function offCanvasErr(anchor: string, placed: PlaceBounds): ToolErr {
   const fmt = (value: number): string => String(Number(value.toFixed(2)));
   return err(
     "validation_failed",
