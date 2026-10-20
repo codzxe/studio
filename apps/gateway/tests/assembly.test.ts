@@ -381,15 +381,17 @@ describe("assembly: every mounted path answers (401 without auth / 200 with)", (
     expect(body.assets).toEqual([]);
 
     // A real 1×1 PNG through the REAL validate gates (magic bytes, §20.2).
-    const png = Uint8Array.from(
-      atob(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-      ),
-      (char) => char.charCodeAt(0),
-    );
+    const PNG_1X1_B64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlE" +
+      "QVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const png = Uint8Array.from(atob(PNG_1X1_B64), (char) => char.charCodeAt(0));
     const form = new FormData();
     form.append("file", new File([png], "px.png", { type: "image/png" }));
-    const uploaded = await app.request("/v1/uploads", { method: "POST", headers: authed, body: form });
+    const uploaded = await app.request("/v1/uploads", {
+      method: "POST",
+      headers: authed,
+      body: form,
+    });
     expect(uploaded.status).toBe(201);
     const uploadBody = await json(uploaded);
     expect(uploadBody.ok).toBe(true);
@@ -400,7 +402,11 @@ describe("assembly: every mounted path answers (401 without auth / 200 with)", (
     const { app } = makeHarness();
     const form = new FormData();
     form.append("file", new File([new Uint8Array([1, 2, 3])], "x.png", { type: "image/png" }));
-    const res = await app.request("/v1/uploads", { method: "POST", headers: viewerAuthed, body: form });
+    const res = await app.request("/v1/uploads", {
+      method: "POST",
+      headers: viewerAuthed,
+      body: form,
+    });
     expect(res.status).toBe(403);
     expect((await json(res)).code).toBe("forbidden");
   });
@@ -491,9 +497,8 @@ describe("assembly: default wiring (createDefaultDeps, §4 fail-fast)", () => {
 
     const spec = await app.request("/v1/openapi.json");
     expect(spec.status).toBe(200);
-    expect(Object.keys(((await spec.json()) as { paths: Record<string, unknown> }).paths)).toContain(
-      "/runs/{id}/events",
-    );
+    const specBody = (await spec.json()) as { paths: Record<string, unknown> };
+    expect(Object.keys(specBody.paths)).toContain("/runs/{id}/events");
   });
 
   it("fails fast on an unusable storage driver (§4, no silent default)", () => {
