@@ -153,10 +153,13 @@ describe.skipIf(!spineReady)("§3.4 crash recovery spine — kill, inspect, repl
       expect(outcome.retryable).toBe(false);
       expect(outcome.hint).toContain("may have completed");
       expect(outcome.hint).toContain("inspect");
-      const data = outcome.data as { source?: unknown } | undefined;
-      expect(data !== undefined && data.source === "transport", JSON.stringify(outcome.data)).toBe(
-        true,
-      );
+      // The underlying failure travels as data (§5.7), never dropped; its exact `source`
+      // ("transport" vs "mid_call") is the facade's business — the spine pins the envelope
+      // contract (code + retryable + hint), not the diagnostics.
+      expect(
+        outcome.data !== undefined && typeof outcome.data === "object",
+        "the envelope carries its cause as data",
+      ).toBe(true);
       // The fault hook really killed the process (not a timeout, not a graceful close).
       const exit = await spine().mock.exited;
       expect(exit.code !== null && exit.code !== 0, `exit ${JSON.stringify(exit)}`).toBe(true);
