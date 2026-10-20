@@ -109,10 +109,7 @@ export function connectionRefused(
  * auth deadline is (retry on a fresh connection). mayHaveCompleted is always false: the
  * `auth` frame has no document side effects.
  */
-export function authRejected(
-  message: string,
-  options: TransportErrorOptions = {},
-): TransportError {
+export function authRejected(message: string, options: TransportErrorOptions = {}): TransportError {
   return new TransportError("auth_rejected", message, {
     retryable: options.retryable ?? false,
     mayHaveCompleted: false,
@@ -142,10 +139,7 @@ export function connectionDroppedMidCall(
  * The client call timeout elapsed with no reply. mayHaveCompleted defaults true: the
  * command was dispatched and may still be running (doc §Methods, the 60 s "no reply" case).
  */
-export function replyTimeout(
-  message: string,
-  options: TransportErrorOptions = {},
-): TransportError {
+export function replyTimeout(message: string, options: TransportErrorOptions = {}): TransportError {
   return new TransportError("reply_timeout", message, {
     retryable: options.retryable ?? false,
     mayHaveCompleted: options.mayHaveCompleted ?? true,

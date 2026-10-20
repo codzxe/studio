@@ -4,14 +4,6 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { FramedMessage, RequestId } from "./frame.js";
-import {
-  AUTH_DEADLINE_MS,
-  AUTH_FRAME_ID,
-  DEFAULT_CALL_TIMEOUT_MS,
-  MAX_CONNECTIONS_PER_LISTENER,
-} from "./frame.js";
-import { connectionDroppedMidCall, connectionRefused, isTransportError, TransportError } from "./errors.js";
 import {
   ConnectionBudget,
   ProtocolConnection,
@@ -19,6 +11,19 @@ import {
   type SocketFactory,
   type WireReply,
 } from "./connection.js";
+import {
+  type TransportError,
+  connectionDroppedMidCall,
+  connectionRefused,
+  isTransportError,
+} from "./errors.js";
+import type { FramedMessage, RequestId } from "./frame.js";
+import {
+  AUTH_DEADLINE_MS,
+  AUTH_FRAME_ID,
+  DEFAULT_CALL_TIMEOUT_MS,
+  MAX_CONNECTIONS_PER_LISTENER,
+} from "./frame.js";
 import { FakeClock, FakeSocket, TEST_TOKEN } from "./testing.js";
 
 const AUTH_OK_REPLY: FramedMessage = {
@@ -41,9 +46,7 @@ interface Harness {
   current(): FakeSocket;
 }
 
-function makeConnection(
-  options: Partial<ProtocolConnectionOptions> = {},
-): Harness {
+function makeConnection(options: Partial<ProtocolConnectionOptions> = {}): Harness {
   const clock = new FakeClock();
   const sockets: FakeSocket[] = [];
   const factory: SocketFactory = () => {

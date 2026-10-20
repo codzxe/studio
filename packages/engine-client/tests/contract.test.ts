@@ -36,27 +36,10 @@ import {
   sessionListResultSchema,
 } from "./protocol-schemas.js";
 import { EngineTransportError, JsonLinesTransport } from "./reference-transport.js";
+import { type Exchange, loadReply } from "./fixtures.js";
 
 /** 64-hex token shape from docs/control-protocol.md (the auth-ok fixture's synthetic value). */
 const TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-/** One recorded-style exchange file under fixtures/replies/. */
-interface Exchange {
-  $comment?: string | string[];
-  request: Record<string, unknown>;
-  reply: Record<string, unknown>;
-  reply_oversized?: Record<string, unknown>;
-}
-
-/**
- * Fixture loader. The specifier is a template literal so `tsc` (no resolveJsonModule in
- * tsconfig.base.json) does not check the JSON module specifier; vitest/vite imports the
- * parsed file natively (dynamic-import variables are supported with a static prefix).
- */
-async function loadReply(name: string): Promise<Exchange> {
-  const mod = (await import(`../fixtures/replies/${name}.json`)) as { default: Exchange };
-  return mod.default;
-}
 
 /** Fixtures whose reply correlates with the request by id (error-transport replies id:null). */
 const CORRELATABLE_FIXTURES = [

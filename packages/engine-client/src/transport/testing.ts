@@ -4,11 +4,11 @@
 // can drive the same seams without re-implementing fakes. Everything here is in-memory and
 // deterministic: no real sockets, no real timers (AGENTS.md: tests <5 s, no network).
 
+import { TransportError } from "./errors.js";
 import type { FramedMessage } from "./frame.js";
 import { encodeFrame } from "./frame.js";
 import type { Clock } from "./socket.js";
 import type { TransportSocket } from "./socket.js";
-import { TransportError } from "./errors.js";
 
 /** The 64-hex test token rpc.rs's own tests use; a public fixture, never a secret. */
 export const TEST_TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -58,7 +58,12 @@ export class FakeClock implements Clock {
       let due: ScheduledTask | null = null;
       let dueKey = -1;
       for (const [key, task] of this.tasks) {
-        if (task.runAtMs <= until && (due === null || task.runAtMs < due.runAtMs || (task.runAtMs === due.runAtMs && task.order < due.order))) {
+        if (
+          task.runAtMs <= until &&
+          (due === null ||
+            task.runAtMs < due.runAtMs ||
+            (task.runAtMs === due.runAtMs && task.order < due.order))
+        ) {
           due = task;
           dueKey = key;
         }
@@ -117,10 +122,7 @@ export class FakeSocket implements TransportSocket {
 
   async send(frame: FramedMessage): Promise<void> {
     if (!this.open) {
-      throw new TransportError(
-        "protocol_violation",
-        "FakeSocket.send on a closed socket",
-      );
+      throw new TransportError("protocol_violation", "FakeSocket.send on a closed socket");
     }
     this.sentFrames.push(frame);
     this.sentLines.push(encodeFrame(frame));

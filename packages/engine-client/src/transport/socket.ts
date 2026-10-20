@@ -16,17 +16,17 @@
 // structural surface (this package does not declare @types/node; tighten if a future owner
 // adds it).
 
-import type { FramedMessage } from "./frame.js";
-import { decodeFrame, encodeFrame, MAX_REPLY_BYTES, SERVER_IO_TIMEOUT_MS } from "./frame.js";
 import {
+  MAY_HAVE_COMPLETED_HINT,
+  type TransportError,
   connectionDroppedMidCall,
   connectionRefused,
   frameTooLarge,
   isTransportError,
-  MAY_HAVE_COMPLETED_HINT,
   protocolViolation,
-  TransportError,
 } from "./errors.js";
+import type { FramedMessage } from "./frame.js";
+import { MAX_REPLY_BYTES, SERVER_IO_TIMEOUT_MS, decodeFrame, encodeFrame } from "./frame.js";
 
 // ---------------------------------------------------------------------------
 // Clock seam (injectable timers keep unit tests deterministic, AGENTS.md).
@@ -228,8 +228,7 @@ interface TextDecoderLike {
 }
 
 function createTextDecoder(): TextDecoderLike {
-  const ctor = (globalThis as unknown as { TextDecoder?: new () => TextDecoderLike })
-    .TextDecoder;
+  const ctor = (globalThis as unknown as { TextDecoder?: new () => TextDecoderLike }).TextDecoder;
   if (ctor === undefined) {
     throw protocolViolation("TextDecoder is unavailable; UTF-8 frame decoding needs it");
   }

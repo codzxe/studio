@@ -22,29 +22,29 @@
 // reconnect). Retry policy, call_read and error→envelope mapping belong to the client layer
 // (retry/errors/client.ts owner); token acquisition belongs to auth.ts.
 
-import type { Clock, TransportSocket } from "./socket.js";
-import { SYSTEM_CLOCK } from "./socket.js";
+import { z } from "zod";
+import {
+  MAY_HAVE_COMPLETED_HINT,
+  type TransportError,
+  authRejected,
+  connectionDroppedMidCall,
+  connectionRefused,
+  isTransportError,
+  protocolViolation,
+  replyTimeout,
+} from "./errors.js";
 import type { FramedMessage, JsonObject, JsonValue, RequestId } from "./frame.js";
 import {
   AUTH_DEADLINE_MS,
   AUTH_FRAME_ID,
   DEFAULT_CALL_TIMEOUT_MS,
+  MAX_CONNECTIONS_PER_LISTENER,
   buildAuthFrame,
   isValidControlToken,
-  MAX_CONNECTIONS_PER_LISTENER,
   matchReplyId,
 } from "./frame.js";
-import {
-  authRejected,
-  connectionDroppedMidCall,
-  connectionRefused,
-  isTransportError,
-  MAY_HAVE_COMPLETED_HINT,
-  protocolViolation,
-  replyTimeout,
-  TransportError,
-} from "./errors.js";
-import { z } from "zod";
+import type { Clock, TransportSocket } from "./socket.js";
+import { SYSTEM_CLOCK } from "./socket.js";
 
 /** new → authenticating → ready → dropped. */
 export type ConnectionState = "new" | "authenticating" | "ready" | "dropped";
@@ -58,7 +58,9 @@ export type SocketFactory = () => TransportSocket;
  * delivered, dispatched and answered; the client layer maps the error string to its typed
  * catalog. Transport failures throw TransportError instead.
  */
-export type WireReply = { readonly ok: true; readonly result: JsonValue } | { readonly ok: false; readonly wireError: string };
+export type WireReply =
+  | { readonly ok: true; readonly result: JsonValue }
+  | { readonly ok: false; readonly wireError: string };
 
 /** security.rs authentication_reply: {"ok":true,"result":{"authenticated":true}}. */
 const AUTH_RESULT_SCHEMA = z.object({ authenticated: z.literal(true) });
@@ -150,9 +152,7 @@ export class ProtocolConnection {
     // Fail fast on a malformed token: the engine rejects anything but 64 hex characters
     // (security.rs validate_token), and a late auth_rejected hides the real problem.
     if (!isValidControlToken(options.token)) {
-      throw protocolViolation(
-        "control token must contain exactly 64 hexadecimal characters",
-      );
+      throw protocolViolation("control token must contain exactly 64 hexadecimal characters");
     }
     this.socketFactory = socketFactory;
     this.token = options.token;
@@ -374,12 +374,7 @@ export class ProtocolConnection {
     // §MCP bridge: "reply lines whose `id` does not match the request are skipped."
     this.skippedFrameCount += 1;
     this.onSkippedFrame?.(frame, call?.id ?? null);
-    if (
-      call !== null &&
-      frame.kind === "error" &&
-      frame.id === null &&
-      this.pendingCall === call
-    ) {
+    if (call !== null && frame.kind === "error" && frame.id === null && this.pendingCall === call) {
       // rpc.rs writes id:null error replies only for requests it could not bound or parse
       // (oversized / non-UTF-8 lines) — pre-dispatch rejections. This client never sends
       // such lines (encodeFrame enforces the 1 MiB ceiling), so one arriving mid-call means
@@ -443,9 +438,7 @@ export class ProtocolConnection {
     if (call !== null) {
       this.settleCall(call, this.midCallDrop("the connection closed mid-call"));
     }
-    this.rejectPendingAuth(
-      connectionRefused("the connection closed during authentication"),
-    );
+    this.rejectPendingAuth(connectionRefused("the connection closed during authentication"));
     this.dropConnection();
   };
 
@@ -486,14 +479,9 @@ export class ProtocolConnection {
   }
 
   private callTimedOut(pending: PendingCall): TransportError {
-    return replyTimeout(
-      `no reply for "${pending.method}" within ${this.callTimeoutMs}ms`,
-      {
-        hint:
-          "The client call timeout (55 s) is strictly below the engine's 60 s reply deadline, so this error — not a late engine reply — is what callers see. The command may have been dispatched and may still apply. " +
-          MAY_HAVE_COMPLETED_HINT,
-      },
-    );
+    return replyTimeout(`no reply for "${pending.method}" within ${this.callTimeoutMs}ms`, {
+      hint: `The client call timeout (55 s) is strictly below the engine's 60 s reply deadline, so this error — not a late engine reply — is what callers see. The command may have been dispatched and may still apply. ${MAY_HAVE_COMPLETED_HINT}`,
+    });
   }
 
   private sendFailed(error: unknown): TransportError {

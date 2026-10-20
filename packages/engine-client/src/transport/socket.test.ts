@@ -4,15 +4,15 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { FramedMessage } from "./frame.js";
-import { buildAuthFrame, MAX_REPLY_BYTES } from "./frame.js";
 import {
+  TransportError,
   connectionDroppedMidCall,
   isTransportError,
   protocolViolation,
-  TransportError,
 } from "./errors.js";
-import { NodeNetSocket, StdioTransport, type LowLevelConnectOptions } from "./socket.js";
+import type { FramedMessage } from "./frame.js";
+import { MAX_REPLY_BYTES, buildAuthFrame } from "./frame.js";
+import { type LowLevelConnectOptions, NodeNetSocket, StdioTransport } from "./socket.js";
 import type { LowLevelSocketFactory } from "./socket.js";
 import { FakeClock, FakeLowLevelSocket, TEST_TOKEN } from "./testing.js";
 
@@ -172,7 +172,12 @@ describe("send()", () => {
   it("rejects a >1 MiB request line BEFORE writing (§Transport limits)", async () => {
     const { socket, fake } = await connectedSocket();
     await expect(
-      socket.send({ kind: "request", id: 1, method: "doc.render", params: { blob: "x".repeat(1 << 20) } }),
+      socket.send({
+        kind: "request",
+        id: 1,
+        method: "doc.render",
+        params: { blob: "x".repeat(1 << 20) },
+      }),
     ).rejects.toMatchObject({ code: "frame_too_large" });
     expect(fake.written.length).toBe(0); // nothing went on the wire
   });
@@ -303,10 +308,7 @@ describe("stream errors and close", () => {
       endpoint: { host: "127.0.0.1", port: 7878 },
       clock: new FakeClock(),
       socketFactory: async () => ({
-        write(
-          _chunk: string | Uint8Array,
-          callback?: (error?: unknown) => void,
-        ): boolean {
+        write(_chunk: string | Uint8Array, callback?: (error?: unknown) => void): boolean {
           callback?.(new Error("write EPIPE"));
           return true;
         },

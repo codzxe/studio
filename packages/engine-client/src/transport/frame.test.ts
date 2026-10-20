@@ -3,28 +3,28 @@
 
 import { describe, expect, it } from "vitest";
 
+import { isTransportError } from "./errors.js";
 import {
   AUTH_DEADLINE_MS,
   AUTH_FRAME_ID,
   AUTH_METHOD,
-  buildAuthFrame,
-  decodeFrame,
   DEFAULT_CALL_TIMEOUT_MS,
   DEFAULT_IDLE_RECONNECT_MS,
-  encodeFrame,
-  isNotificationFrame,
-  isValidControlToken,
-  matchReplyId,
+  type FramedMessage,
   MAX_BATCH_STEPS,
   MAX_CONNECTIONS_PER_LISTENER,
   MAX_REPLY_BYTES,
   MAX_REQUEST_BYTES,
   SERVER_IO_TIMEOUT_MS,
   SERVER_REPLY_DEADLINE_MS,
+  buildAuthFrame,
+  decodeFrame,
+  encodeFrame,
+  isNotificationFrame,
+  isValidControlToken,
+  matchReplyId,
   utf8ByteLength,
-  type FramedMessage,
 } from "./frame.js";
-import { isTransportError } from "./errors.js";
 import { TEST_TOKEN, TEST_TOKEN_UPPER } from "./testing.js";
 
 function expectTransportError(fn: () => unknown, code: string): void {
@@ -104,7 +104,12 @@ describe("encodeFrame — byte-exact wire lines", () => {
       '{"id":2,"method":"doc.inspect"}\n',
     );
     expect(
-      encodeFrame({ kind: "request", id: 3, method: "engine.execute", params: { command: "filter.blur.gaussianBlur", params: { radius: 3 } } }),
+      encodeFrame({
+        kind: "request",
+        id: 3,
+        method: "engine.execute",
+        params: { command: "filter.blur.gaussianBlur", params: { radius: 3 } },
+      }),
     ).toBe(
       '{"id":3,"method":"engine.execute","params":{"command":"filter.blur.gaussianBlur","params":{"radius":3}}}\n',
     );
@@ -203,15 +208,27 @@ describe("utf8ByteLength (pure)", () => {
 
 describe("decodeFrame — doc- and rpc.rs-derived lines", () => {
   it.each([
-    ["auth request line", `{"id":"auth","method":"auth","params":{"token":"${TEST_TOKEN}"}}`, "auth"],
+    [
+      "auth request line",
+      `{"id":"auth","method":"auth","params":{"token":"${TEST_TOKEN}"}}`,
+      "auth",
+    ],
     ["request without params", '{"id":1,"method":"doc.inspect"}', "request"],
     ["request with null params", '{"id":1,"method":"doc.inspect","params":null}', "request"],
     ["success reply", '{"id":1,"ok":true,"result":{"authenticated":true}}', "reply"],
     ["bare-array success reply", '{"id":3,"ok":true,"result":[1,2]}', "reply"],
     ["null-result reply", '{"id":4,"ok":true,"result":null}', "reply"],
     ["error reply", '{"id":2,"ok":false,"error":"unknown tool `foo`"}', "error"],
-    ["id:null pre-dispatch error", '{"id":null,"ok":false,"error":"request is not valid UTF-8"}', "error"],
-    ["already-authenticated error", '{"id":"auth","ok":false,"error":"already authenticated"}', "error"],
+    [
+      "id:null pre-dispatch error",
+      '{"id":null,"ok":false,"error":"request is not valid UTF-8"}',
+      "error",
+    ],
+    [
+      "already-authenticated error",
+      '{"id":"auth","ok":false,"error":"already authenticated"}',
+      "error",
+    ],
     ["notification-shaped line", '{"method":"server.hi","params":{}}', "notification"],
   ])("decodes %s", (_name, line, expectedKind) => {
     const frame = decodeFrame(line);
@@ -256,7 +273,10 @@ describe("decodeFrame — doc- and rpc.rs-derived lines", () => {
   });
 
   it("rejects a line over the 8 MiB reply ceiling with frame_too_large", () => {
-    expectTransportError(() => decodeFrame(`{"id":1,"ok":true,"result":"${"z".repeat(MAX_REPLY_BYTES)}"}`), "frame_too_large");
+    expectTransportError(
+      () => decodeFrame(`{"id":1,"ok":true,"result":"${"z".repeat(MAX_REPLY_BYTES)}"}`),
+      "frame_too_large",
+    );
   });
 });
 

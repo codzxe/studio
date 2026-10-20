@@ -82,7 +82,13 @@ export const CALL_TIMEOUT_BELOW_SERVER_DEADLINE: boolean =
 // JSON value types + Zod schemas (AGENTS.md: Zod at every boundary; the wire is one).
 // ---------------------------------------------------------------------------
 
-export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
 
 /**
@@ -165,12 +171,14 @@ const requestLineSchema = z
     method: z.string(),
     params: paramsSchema.nullish(),
   })
-  .transform((v): RequestFrame => ({
-    kind: "request",
-    id: v.id,
-    method: v.method,
-    params: v.params ?? null,
-  }));
+  .transform(
+    (v): RequestFrame => ({
+      kind: "request",
+      id: v.id,
+      method: v.method,
+      params: v.params ?? null,
+    }),
+  );
 
 const replyLineSchema = z
   .object({ id: idSchema, ok: z.literal(true), result: jsonValueSchema })
@@ -182,11 +190,13 @@ const errorLineSchema = z
 
 const notificationLineSchema = z
   .object({ method: z.string(), params: paramsSchema.nullish() })
-  .transform((v): NotificationFrame => ({
-    kind: "notification",
-    method: v.method,
-    params: v.params ?? null,
-  }));
+  .transform(
+    (v): NotificationFrame => ({
+      kind: "notification",
+      method: v.method,
+      params: v.params ?? null,
+    }),
+  );
 
 // ---------------------------------------------------------------------------
 // Guards + helpers.
