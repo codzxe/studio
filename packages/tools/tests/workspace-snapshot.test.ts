@@ -507,7 +507,7 @@ describe("workspace_snapshot compaction (§5.4)", () => {
   it("logs count-only breadcrumbs (§22)", async () => {
     const { ctx, debugs } = happyFixture();
     await runTool(ctx);
-    const last = debugs[debugs.length - 1] ?? ["", {}];
+    const last: [string, unknown] = debugs[debugs.length - 1] ?? ["", {}];
     expect(last[0]).toBe("workspace_snapshot assembled");
     const fields = last[1] as Record<string, unknown>;
     for (const key of Object.keys(fields)) {
@@ -708,12 +708,12 @@ describe("workspace_snapshot error mapping (§6.1)", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(layersOf(result.summary).map((row) => row.id)).toEqual(["1", "2", "3"]);
-    expect(result.warnings?.some((w) => w.includes("layer.list unavailable (engine_timeout)"))).toBe(
-      true,
-    );
+    expect(
+      result.warnings?.some((w) => w.includes("layer.list unavailable (engine_timeout)")),
+    ).toBe(true);
   });
 
-  it("degrades variables.list and layerComp.list failures to warnings + inspect fallback", async () => {
+  it("degrades variables/comps command failures to warnings + inspect fallback", async () => {
     const engine = makeEngine({
       execute: async () => engineFailure("engine_unavailable", "session detached"),
     });
@@ -756,7 +756,7 @@ describe("workspace_snapshot error mapping (§6.1)", () => {
     expect(warnings.some((w) => w.includes("layer comps unavailable"))).toBe(true);
   });
 
-  it("falls back to the inspect rows when execute carries no payload (minimal adapter)", async () => {
+  it("falls back to the inspect rows when execute carries no payload", async () => {
     const result = await runTool(makeCtx({ engine: makeEngine() }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;

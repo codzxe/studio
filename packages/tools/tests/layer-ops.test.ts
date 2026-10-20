@@ -90,7 +90,10 @@ function makeRecordingEngine(options: FakeEngineOptions = {}) {
       ok: true,
       value: { image: new Uint8Array(), widthPx: 64, heightPx: 64 },
     }),
-    inspect: async () => ({ ok: true, value: { revision: 7, widthPx: 800, heightPx: 600, layers: [] } }),
+    inspect: async () => ({
+      ok: true,
+      value: { revision: 7, widthPx: 800, heightPx: 600, layers: [] },
+    }),
     listLayers: async () => {
       listCalls += 1;
       if (
@@ -361,8 +364,8 @@ describe("layer_ops — group bounds (2–50 refs)", () => {
   });
 
   it("accepts 2 and 50 refs", () => {
-    expect(parseOk({ op: "group", layers: manyRefs(2) }).ok).toBe(true);
-    expect(parseOk({ op: "group", layers: manyRefs(50) }).ok).toBe(true);
+    expect(parseOk({ op: "group", layers: manyRefs(2) }).op).toBe("group");
+    expect(parseOk({ op: "group", layers: manyRefs(50) }).op).toBe("group");
   });
 
   it("rejects an empty align list", () => {
@@ -562,7 +565,7 @@ describe("layer_ops — §6.1 layer refs", () => {
 describe("layer_ops — opacity range (0–1, engine fractions)", () => {
   it("accepts 0, fractions and 1 at the parse boundary", () => {
     for (const opacity of [0, 0.25, 0.5, 1]) {
-      expect(parseOk({ op: "set_props", layer: { layerId: "1" }, opacity }).ok).toBe(true);
+      expect(parseOk({ op: "set_props", layer: { layerId: "1" }, opacity }).op).toBe("set_props");
     }
   });
 
@@ -693,12 +696,15 @@ describe("layer_ops — engine failures mapped to typed envelopes", () => {
   });
 
   it("codes outside the tool catalog degrade to engine_unavailable", async () => {
+    // A facade-internal code (not in the tool catalog) crossed the seam — the
+    // mapping must degrade, not throw. Cast: the seam contract says this cannot
+    // happen, the test proves the tool survives it anyway.
     const failure = {
       ok: false,
       code: "engine_command_failed",
       message: "the engine rejected a command mid-batch",
       retryable: false,
-    } as EngineFailure;
+    } as unknown as EngineFailure;
     const { result } = await runTool({ op: "duplicate", layer: { layerId: "2" } }, {
       trees: [TREE],
       batchFailure: failure,
@@ -711,10 +717,10 @@ describe("layer_ops — engine failures mapped to typed envelopes", () => {
   });
 
   it("a failed command in the report is a rolled-back edit, not a partial one", async () => {
-    const { result } = await runTool({ op: "group", layers: [{ layerId: "1" }, { layerId: "2" }] }, {
-      trees: [TREE],
-      commandFailure: true,
-    });
+    const { result } = await runTool(
+      { op: "group", layers: [{ layerId: "1" }, { layerId: "2" }] },
+      { trees: [TREE], commandFailure: true },
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("internal_error");
@@ -727,7 +733,7 @@ describe("layer_ops — engine failures mapped to typed envelopes", () => {
       { op: "group", layers: [{ layerId: "1" }, { layerId: "2" }], name: "Content" },
       {
         trees: [TREE],
-        listFailure: { ok: false, code: "engine_timeout", message: "listing timed out", retryable: true },
+        listFailure: { ok: false, code: "engine_timeout", message: "timed out", retryable: true },
         failListFromCall: 1,
       },
     );

@@ -444,17 +444,8 @@ export const assetPlaceTool: Tool<AssetPlaceArgs> = defineTool({
     "Place a workspace image asset into a layer or template slot with cover, contain or fill fit, focal framing and smart-object placement.",
   args: assetPlaceArgs,
   async run(ctx, args, signal) {
-    // 1. Layer tree first: target resolution and the post-batch diff both need it.
-    const preLayers = await ctx.engine.listLayers();
-    if (!preLayers.ok) {
-      return engineErr(preLayers);
-    }
-    const target = await resolveTarget(ctx, args.target, preLayers.value);
-    if (isErr(target)) {
-      return target;
-    }
-
-    // 2. Asset: an unknown id lists candidates; tenancy and capability-root paths are guarded.
+    // 1. Resolve the asset (W5-E flow): unknown ids list candidates; tenancy and
+    //    capability-root paths are guarded before any engine call.
     const asset = await ctx.assets.get(args.asset_id);
     if (asset === undefined) {
       const candidates = await ctx.assets.search("", { limit: 5 });
@@ -485,6 +476,16 @@ export const assetPlaceTool: Tool<AssetPlaceArgs> = defineTool({
           retryable: false,
         },
       );
+    }
+
+    // 2. Resolve the target: the layer tree feeds both this and the post-batch diff.
+    const preLayers = await ctx.engine.listLayers();
+    if (!preLayers.ok) {
+      return engineErr(preLayers);
+    }
+    const target = await resolveTarget(ctx, args.target, preLayers.value);
+    if (isErr(target)) {
+      return target;
     }
 
     // 3. Fit/focal math (§7.3): recorded dimensions make it exact; unknown dims place at 100%.

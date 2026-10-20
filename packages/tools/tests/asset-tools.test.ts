@@ -604,7 +604,7 @@ describe("asset_place", () => {
     const transform = state.batches[0]?.[1];
     expect(transform?.id).toBe("edit.transform");
     expect(transform?.params?.scaleX).toBeCloseTo((100 / 600) * 100, 10);
-    expect(transform?.params?.scaleY).toBeCloseTo((100 / 800) * 100, 10);
+    expect(transform?.params?.scaleY).toBeCloseTo((100 / 600) * 100, 10);
     const payload = JSON.parse(result.summary) as { placed: { scalePercent: number } };
     expect(payload.placed.scalePercent).toBe(17);
   });
@@ -739,16 +739,24 @@ describe("asset_place schema (§6.1 strict)", () => {
 describe("compactAssetTable trim", () => {
   it("drops rows (never fields) until the summary fits", () => {
     const rows = Array.from({ length: 40 }, (_, i) => ({
-      id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`,
       name: "a-really-long-asset-filename.png",
       width: 4000,
       height: 3000,
       kind: "image",
-    })).map((row) => toAssetRow(asset(row)));
+    }));
     const { summary, shown } = compactAssetTable(rows);
     expect(summary.length).toBeLessThanOrEqual(MAX_SUMMARY_CHARS);
     expect(shown).toBeLessThan(40);
+    expect(shown).toBeGreaterThan(1);
     const payload = JSON.parse(summary) as { assets: { id: string; name: string }[] };
     expect(payload.assets[0]?.id).toBe(rows[0]?.id);
+  });
+
+  it("toAssetRow truncates display names but never ids", () => {
+    const row = toAssetRow(asset({ filename: `${"x".repeat(60)}.png` }));
+    expect(row.name.length).toBeLessThanOrEqual(40);
+    expect(row.name.endsWith("...")).toBe(true);
+    expect(row.id).toBe(ASSET_ID);
   });
 });

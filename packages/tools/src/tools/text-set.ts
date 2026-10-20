@@ -263,22 +263,24 @@ const editArgsSchema = strictObject({
  * refine — `z.discriminatedUnion` only takes plain objects) forces an edit to change
  * something; a no-op rewrite would be a silent success otherwise.
  */
-export const textSetArgs = z.union([createArgsSchema, editArgsSchema]).superRefine((value, issue) => {
-  if (
-    value.mode === "edit" &&
-    value.text === undefined &&
-    value.size === undefined &&
-    value.color === undefined &&
-    value.align === undefined &&
-    value.font === undefined
-  ) {
-    issue.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: [],
-      message: "an edit needs at least one change: text, size, color, align or font",
-    });
-  }
-});
+export const textSetArgs = z
+  .union([createArgsSchema, editArgsSchema])
+  .superRefine((value, issue) => {
+    if (
+      value.mode === "edit" &&
+      value.text === undefined &&
+      value.size === undefined &&
+      value.color === undefined &&
+      value.align === undefined &&
+      value.font === undefined
+    ) {
+      issue.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [],
+        message: "an edit needs at least one change: text, size, color, align or font",
+      });
+    }
+  });
 
 export type TextSetArgs = z.infer<typeof textSetArgs>;
 type CreateArgs = z.infer<typeof createArgsSchema>;
@@ -312,7 +314,9 @@ const FIT_TEXT_RESULT_SCHEMA = z
     overflowPx: z.number().finite().optional(),
     overflowChars: z.number().int().nonnegative().optional(),
     warnings: z
-      .array(z.union([z.string(), z.object({ code: z.string(), message: z.string() }).passthrough()]))
+      .array(
+        z.union([z.string(), z.object({ code: z.string(), message: z.string() }).passthrough()]),
+      )
       .optional(),
   })
   .passthrough();
@@ -356,7 +360,8 @@ function buildSummary(facts: TextSetFacts): string {
 }
 
 function pushWarning(warnings: string[], warning: string): void {
-  const text = warning.length > MAX_WARNING_CHARS ? `${warning.slice(0, MAX_WARNING_CHARS - 1)}…` : warning;
+  const text =
+    warning.length > MAX_WARNING_CHARS ? `${warning.slice(0, MAX_WARNING_CHARS - 1)}…` : warning;
   warnings.push(text);
 }
 
@@ -468,13 +473,18 @@ async function findLayerIdByName(ctx: ToolContext, name: string): Promise<number
   return match === undefined ? null : engineId(match.layerId);
 }
 
-const sizeLabel = (size: number | undefined): string => (size === undefined ? "engine-default" : `${size}pt`);
+const sizeLabel = (size: number | undefined): string =>
+  size === undefined ? "engine-default" : `${size}pt`;
 
 // ---------------------------------------------------------------------------
 // Create flow: type.create → layout.fitText (§9.3, engine patch preferred)
 // ---------------------------------------------------------------------------
 
-async function createText(ctx: ToolContext, args: CreateArgs, signal: AbortSignal): Promise<ToolResult> {
+async function createText(
+  ctx: ToolContext,
+  args: CreateArgs,
+  signal: AbortSignal,
+): Promise<ToolResult> {
   const name = args.name;
   if (isMachineLayerName(name)) {
     return err("validation_failed", `Name "${name}" is a machine-generated layer name`, {
@@ -513,11 +523,18 @@ async function createText(ctx: ToolContext, args: CreateArgs, signal: AbortSigna
   if (args.align !== undefined) {
     createParams.align = args.align;
   }
-  ctx.logger.debug("text_set create", { name, size: args.size, hasColor: args.color !== undefined });
+  ctx.logger.debug("text_set create", {
+    name,
+    size: args.size,
+    hasColor: args.color !== undefined,
+  });
   if (!ctx.budgets.charge({ commands: 1 })) {
     return budgetExhaustedErr();
   }
-  const created = await ctx.engine.execute({ id: CMD_TYPE_CREATE, params: createParams }, { signal });
+  const created = await ctx.engine.execute(
+    { id: CMD_TYPE_CREATE, params: createParams },
+    { signal },
+  );
   if (!created.ok) {
     return err(created.code, created.message, { hint: created.hint, retryable: created.retryable });
   }
@@ -575,7 +592,10 @@ async function createText(ctx: ToolContext, args: CreateArgs, signal: AbortSigna
         layerId = fitData.layer;
       }
       for (const warning of fitData.warnings ?? []) {
-        pushWarning(warnings, typeof warning === "string" ? warning : `${warning.code}: ${warning.message}`);
+        pushWarning(
+          warnings,
+          typeof warning === "string" ? warning : `${warning.code}: ${warning.message}`,
+        );
       }
       if (fitData.overflow) {
         // §9.3 step 4: the engine wrote nothing; the created layer keeps its requested
@@ -605,7 +625,11 @@ async function createText(ctx: ToolContext, args: CreateArgs, signal: AbortSigna
 // Edit flow: type.edit (+ type.setStyle for align), one transactional batch (§6.2)
 // ---------------------------------------------------------------------------
 
-async function editText(ctx: ToolContext, args: EditArgs, signal: AbortSignal): Promise<ToolResult> {
+async function editText(
+  ctx: ToolContext,
+  args: EditArgs,
+  signal: AbortSignal,
+): Promise<ToolResult> {
   const ref = args.layer;
   // Best-effort pre-resolution (§6.1: name ambiguity is an error with candidates listed);
   // when the tree is unreadable the engine stays authoritative and resolves the ref itself.
@@ -624,12 +648,20 @@ async function editText(ctx: ToolContext, args: EditArgs, signal: AbortSignal): 
     layerId = engineId(match.layerId);
     layerName = match.name;
     // Layer kinds read "Type" for text layers (vendor lib.rs `kind_name`; `layer.list`
-    // rows expose it as `kind`). Only refuse when the tree positively says otherwise.
-    if (typeof match.kind === "string" && match.kind.length > 0 && match.kind.toLowerCase() !== "type") {
-      return err("validation_failed", `Layer "${match.name}" is a ${match.kind} layer, not a text layer`, {
-        hint: 'text_set rewrites type layers only; create new text with mode "create" (§6 row 8).',
-        retryable: false,
-      });
+    // exposes it as `kind`). Only refuse when the tree positively says otherwise.
+    const isText =
+      typeof match.kind !== "string" ||
+      match.kind.length === 0 ||
+      match.kind.toLowerCase() === "type";
+    if (!isText) {
+      return err(
+        "validation_failed",
+        `Layer "${match.name}" is a ${match.kind} layer, not a text layer`,
+        {
+          hint: 'text_set rewrites type layers only; create new text with mode "create" (§6 row 8).',
+          retryable: false,
+        },
+      );
     }
   }
   if (args.font !== undefined && !ctx.workspace.brandTokens.fonts.includes(args.font)) {
@@ -723,6 +755,9 @@ export const textSet: Tool<TextSetArgs> = defineTool({
     "Text stays editable text; machine names are rejected and overflow is reported, never clipped.",
   args: textSetArgs,
   async run(ctx, args, signal) {
-    return args.mode === "create" ? await createText(ctx, args, signal) : await editText(ctx, args, signal);
+    if (args.mode === "create") {
+      return await createText(ctx, args, signal);
+    }
+    return await editText(ctx, args, signal);
   },
 });

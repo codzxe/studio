@@ -3,34 +3,40 @@
 //
 // Generate a raster image (draft/final) from a prompt and place it as a
 // smart-object layer named "Photo — Generated" (§10.2). Flow (§6 row 7):
-//   charge credits → external image API (injected provider) → PNG validation
-//   → persist inside the workspace capability root → `doc.place`
-//   → rename → `layer.smartObjects.convertToSmartObject` (§6 row 7 chain).
+//   charge credits (§5.2: draft 1 / final 2) → external image API (injected
+//   provider seam; §5.3 routing happens in the WORKER, never here) → PNG magic
+//   validation → persist inside the workspace capability root → the SAME place
+//   mechanics as asset_place (W5-E, §6 row 6): `doc.place` at the box centre →
+//   `edit.transform` for the cover fit → rename → `layer.smartObjects.
+//   convertToSmartObject` (best effort — doc.place already embeds a smart
+//   object, so a refusal is a warning, never a failure).
 //
-// Seam notes (types.ts ctx is minimal by design; this tool's extra seams are
-// declared here and wired by the agent runtime/worker — see worklog):
-//   - `CreditSpender`: types.ts `ctx.budgets` (BudgetTracker) has NO
-//     `spendCredits(amount, reason)` member; this file declares the credit
-//     seam the §14.2 ledger worker conforms to. Reported for types.ts adoption.
-//   - `ImageProviderLike`: the worker wires the §5.3 model router — drafts →
-//     `imageDrafts` (Flux 2 Schnell), finals → `imageFinals` (Gemini 3 Pro
-//     Image / GPT Image 1.5 HD). Routing NEVER happens inside the tool, and
-//     the provider must use paid API keys only (§1.5 constraint 6: customer
-//     content never flows through free LLM tiers).
-//   - `GeneratedImageSinkLike`: `doc.place` reads files by capability-scoped
-//     path (§3.2, §15.1), so the worker persists the returned bytes inside the
-//     workspace root and hands back the engine-visible path.
+// Seams declared HERE because types.ts keeps ctx minimal (see worklog):
+//   - `CreditSpender` (`ctx.credits`): types.ts `ctx.budgets` (BudgetTracker)
+//     has NO `spendCredits(amount, reason)` member — the §14.2 ledger worker
+//     conforms to the seam declared in this file. Reported for types.ts.
+//   - `ImageProviderLike` (`ctx.imageProvider`): the worker wires §5.3 —
+//     drafts → Flux 2 Schnell (`imageDrafts`), finals → Gemini 3 Pro Image
+//     (`imageFinals`). Paid endpoints only (§1.5-6: customer content never
+//     flows through free LLM tiers). §15.3: the provider sees workspace data
+//     NO further than the prompt string — never document contents, layer
+//     data, brand tokens, or tenant ids.
+//   - `GeneratedImageSinkLike` (`ctx.generatedImages`): doc.place reads files
+//     by capability-scoped path only (§3.2, §15.1), so the worker persists the
+//     returned bytes inside the workspace root and hands back the path.
 //
-// Budget: 1 tool call per image tier run (§5.2); the executor enforces the
-// tool-call cap, the tool charges the command meter via `ctx.budgets`.
+// Budget: 1 tool call per image-tier run (§5.2, executor-enforced); the tool
+// charges the command meter once, for exactly what it batches.
 
 import { ENGINE_PNG_MAX_BYTES } from "@studio/config";
 import { z } from "zod";
 import {
   ToolError,
+  ambiguousLayerErr,
   cappedString,
   defineTool,
   err,
+  layerNotFoundErr,
   ok,
   strictObject,
   zIdempotencyKey,
@@ -38,15 +44,20 @@ import {
 } from "../kit.js";
 import { TOOLS } from "../registry.js";
 import type {
-  EngineBounds,
   EngineCommand,
   EngineLayerSummary,
   EngineOutcome,
-  TemplateManifest,
   Tool,
   ToolContext,
   ToolErr,
 } from "../types.js";
+import {
+  UPSCALE_ERR_FACTOR,
+  UPSCALE_WARN_FACTOR,
+  computeFit,
+  zBounds,
+  type FitPlan,
+} from "./asset-place.js";
 
 // ---------------------------------------------------------------------------
 // Constants (§5.2 credit table, §10.2 naming, task prompt cap)
@@ -61,6 +72,11 @@ export const GENERATED_PHOTO_LAYER_NAME = "Photo — Generated";
 /** Task cap: prompts are ≤ 1500 chars (and sanitized below, §15.3). */
 export const MAX_PROMPT_CHARS = 1500;
 
+const PLACE_COMMAND = "doc.place";
+const TRANSFORM_COMMAND = "edit.transform";
+const RENAME_COMMAND = "layer.setProps";
+const SMART_OBJECT_COMMAND = "layer.smartObjects.convertToSmartObject";
+
 // ---------------------------------------------------------------------------
 // Argument schema (§6.1: strict, capped; §6.2 shape)
 // ---------------------------------------------------------------------------
@@ -71,33 +87,17 @@ export type ImageSize = z.output<typeof IMAGE_SIZE_SCHEMA>;
 export const IMAGE_QUALITY_SCHEMA = z.enum(["draft", "final"]);
 export type ImageQuality = z.output<typeof IMAGE_QUALITY_SCHEMA>;
 
-const zTargetBounds = strictObject({
-  x: z.number().finite(),
-  y: z.number().finite(),
-  width: z.number().finite().min(1),
-  height: z.number().finite().min(1),
-});
-
-function atMostOneAnchor(target: {
-  slot?: unknown;
-  layer?: unknown;
-  bounds?: unknown;
-}): boolean {
-  const anchors = [target.slot, target.layer, target.bounds].filter(
-    (value) => value !== undefined,
-  );
-  return anchors.length <= 1;
-}
-
+// Same target semantics as asset_place (W5-E): slot XOR layer; explicit bounds
+// may override either; none of the three places above the active layer.
 const zTarget = strictObject({
-  /** Template slot name; resolved through the applied template's layer map. */
-  slot: cappedString(100, 1).optional(),
-  /** Existing layer to place over (id or name; §6.1 XOR enforced by zLayerRef). */
+  /** Template slot name; resolved through the catalog's image-slot layer maps (§7.2). */
+  slot: cappedString(120, 1).optional(),
+  /** layer_id or layer_name — the kit's §6.1 reference. */
   layer: zLayerRef.optional(),
-  /** Explicit rectangle; the image is cover-fitted into it. */
-  bounds: zTargetBounds.optional(),
-}).refine(atMostOneAnchor, {
-  message: "target: provide at most one of slot, layer or bounds; none = place above the active layer",
+  /** Explicit [x, y, w, h] destination box; overrides the target layer's bounds. */
+  bounds: zBounds.optional(),
+}).refine((target) => !(target.slot !== undefined && target.layer !== undefined), {
+  message: "target: pass either slot or layer, not both",
 });
 
 export const imageGenerateArgsSchema = strictObject({
@@ -123,12 +123,10 @@ export interface ImageProviderResult {
 
 /**
  * The external image API seam (§6 row 7). The WORKER wires this per §5.3 via
- * the model router — drafts: Flux 2 Schnell (`imageDrafts`), finals: Gemini 3
- * Pro Image (`imageFinals`) — never inside the tool. Paid endpoints only
- * (§1.5-6). §15.3: the provider sees workspace data NO further than the
- * prompt string handed to `generate`; it never receives document contents,
- * layer data, brand tokens, or tenant identifiers, and `store: false` /
- * no-training settings are the implementation's responsibility.
+ * the model router — drafts: Flux 2 Schnell, finals: Gemini 3 Pro Image —
+ * never inside the tool. Paid API keys only (§1.5-6). §15.3: the provider
+ * receives workspace data no further than the prompt string handed to
+ * `generate`; `store: false` / no-training settings are the worker's duty.
  */
 export interface ImageProviderLike {
   generate(
@@ -151,7 +149,7 @@ export interface CreditSpender {
 
 /**
  * Persists generated bytes inside the run's workspace capability root and
- * returns the engine-visible path for `doc.place` (§3.2, §15.1 — `doc.place`
+ * returns the engine-visible path for `doc.place` (§3.2, §15.1 — doc.place
  * only reads beneath its read root, so bytes cannot go straight to the engine).
  */
 export interface GeneratedImageSinkLike {
@@ -160,15 +158,13 @@ export interface GeneratedImageSinkLike {
 
 /**
  * The context the worker must assemble for `image_generate`: the base
- * `ToolContext` plus the three seams above and (when the run's document came
- * from `template_apply`) the applied template ref, so `target.slot` resolves.
+ * `ToolContext` plus the three seams above (slot targets resolve through the
+ * existing `ctx.templates` catalog seam, exactly like asset_place).
  */
 export interface ImageGenerateContext extends ToolContext {
   readonly credits: CreditSpender;
   readonly imageProvider: ImageProviderLike;
   readonly generatedImages: GeneratedImageSinkLike;
-  /** `id@version` of the template applied to the active document, if any (§7.2). */
-  readonly appliedTemplateRef?: string;
 }
 
 function isImageGenerateContext(value: ToolContext): value is ImageGenerateContext {
@@ -264,23 +260,25 @@ export function validatePng(bytes: Uint8Array, maxBytes: number = ENGINE_PNG_MAX
   return { ok: true, widthPx, heightPx };
 }
 
-/** `doc.place` placement params for cover-fitting an image into a rect (§7.3 default fit). */
-export interface PlacementSpec {
-  readonly scalePercent?: number;
-  readonly center?: readonly [number, number];
-}
-
-/** Cover fit: the image fills the rect, centred, aspect preserved (crop-style). */
-export function coverPlacement(
-  rect: EngineBounds,
-  widthPx: number,
-  heightPx: number,
-): PlacementSpec {
-  const scale = Math.max(rect.width / widthPx, rect.height / heightPx);
-  return {
-    scalePercent: Math.round(scale * 100 * 100) / 100,
-    center: [rect.x + rect.width / 2, rect.y + rect.height / 2],
-  };
+/**
+ * The sink path must be a plain workspace-relative key: no absolute paths,
+ * URL schemes, traversal or control characters — nothing that could steer
+ * doc.place outside the run's capability root (§3.2, §15.1, §6.1).
+ */
+export function isPlaceableGeneratedPath(path: string): boolean {
+  if (path.length === 0 || path.length > 1024 || path.startsWith("/")) {
+    return false;
+  }
+  if (path.includes("\\") || path.includes("..") || path.includes(":")) {
+    return false;
+  }
+  for (let i = 0; i < path.length; i += 1) {
+    const code = path.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** The single layer `doc.place` added; undefined when the tree diff is not exactly one. */
@@ -297,157 +295,195 @@ function shortName(value: string): string {
   return value.length <= 80 ? value : `${value.slice(0, 77)}...`;
 }
 
-/** Where the generated image goes, resolved before any engine command runs. */
+// ---------------------------------------------------------------------------
+// Target resolution (same semantics as asset_place, W5-E)
+// ---------------------------------------------------------------------------
+
+interface Box {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/** Where the generated image goes: a destination box + a §6.1 summary fragment. */
 export interface ResolvedTarget {
-  /** Select this layer first so `doc.place` lands directly above it. */
-  readonly aboveLayerId?: string;
-  /** Omitted for the default target → natural size above the active layer. */
-  readonly placement?: PlacementSpec;
-  /** §6.1 small-reply fragment describing the anchor. */
+  readonly box: Box | undefined;
   readonly summaryAnchor: string;
 }
 
-function findLayer(
-  tree: readonly EngineLayerSummary[],
-  idOrName: string,
-): { layer: EngineLayerSummary } | { ambiguous: readonly EngineLayerSummary[] } | undefined {
-  const byId = tree.find((layer) => layer.layerId === idOrName);
-  if (byId !== undefined) {
-    return { layer: byId };
+function layerBoundsBox(layer: EngineLayerSummary): Box | undefined {
+  const bounds = layer.bounds;
+  if (
+    bounds === undefined ||
+    !Number.isFinite(bounds.x) ||
+    !Number.isFinite(bounds.y) ||
+    !Number.isFinite(bounds.width) ||
+    !Number.isFinite(bounds.height) ||
+    bounds.width <= 0 ||
+    bounds.height <= 0
+  ) {
+    return undefined;
   }
-  const byName = tree.filter((layer) => layer.name === idOrName);
-  if (byName.length === 1) {
-    return { layer: byName[0] };
-  }
-  return byName.length > 1 ? { ambiguous: byName } : undefined;
+  return { x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height };
 }
 
-function layerRefString(ref: { readonly layerId?: string; readonly layerName?: string }): string {
-  return ref.layerId !== undefined ? ref.layerId : (ref.layerName ?? "");
+function isErr(value: unknown): value is ToolErr {
+  return (value as { ok?: unknown }).ok === false;
 }
 
-function resolveLayerRect(
-  tree: readonly EngineLayerSummary[],
-  idOrName: string,
-): { rect: EngineBounds; layer: EngineLayerSummary } | ToolErr {
-  const found = findLayer(tree, idOrName);
-  if (found === undefined) {
-    return err("layer_not_found", "No layer matched this reference", {
-      hint: `Check the layer tree with workspace_snapshot; got "${shortName(idOrName)}"`,
-      retryable: false,
-    });
+/** layer_id or layer_name against the live tree; §6.1 errors from the kit. */
+function resolveLayer(
+  ref: { readonly layerId?: string; readonly layerName?: string },
+  layers: readonly EngineLayerSummary[],
+): EngineLayerSummary | ToolErr {
+  const id = ref.layerId;
+  if (id !== undefined) {
+    const found = layers.find((layer) => layer.layerId === id);
+    return found === undefined ? layerNotFoundErr(id) : found;
   }
-  if ("ambiguous" in found) {
-    return err(
-      "ambiguous_layer",
-      `Layer name "${shortName(idOrName)}" matches ${found.ambiguous.length} layers`,
-      {
-        hint: `Address one by layer_id instead. Candidates: ${found.ambiguous
-          .slice(0, 10)
-          .map((layer) => layer.layerId)
-          .join(", ")}`,
-        retryable: false,
-      },
-    );
+  const name = ref.layerName ?? "";
+  const matches = layers.filter((layer) => layer.name === name);
+  const [first] = matches;
+  if (first === undefined) {
+    return layerNotFoundErr(name);
   }
-  const { layer } = found;
-  if (layer.bounds === undefined) {
-    return err("validation_failed", "The target layer has no pixel bounds to place into", {
-      hint: "Groups and empty layers have no bounds; pass target.bounds or pick a pixel layer.",
-      retryable: false,
-    });
+  if (matches.length > 1) {
+    return ambiguousLayerErr(name, matches.map((layer) => `${layer.name} (${layer.layerId})`));
   }
-  return { rect: layer.bounds, layer };
+  return first;
 }
 
-async function resolveSlotTarget(
-  ictx: ImageGenerateContext,
+/**
+ * Slot → layer through the template catalog, mirroring asset_place (W5-E):
+ * every manifest defining this IMAGE slot contributes a candidate layer ref;
+ * refs resolve against the live tree and dedupe by layer id — exactly one
+ * survivor wins. Generated photos go into image slots only (§7.2).
+ */
+async function resolveImageSlot(
+  ctx: ToolContext,
   slot: string,
-  tree: readonly EngineLayerSummary[],
-): Promise<{ rect: EngineBounds; layer: EngineLayerSummary } | ToolErr> {
-  const templateRef = ictx.appliedTemplateRef;
-  if (templateRef === undefined) {
-    return err(
-      "unknown_slots",
-      "The run's document has no known applied template for slot targets",
-      {
-        hint: 'Pass target.layer or target.bounds instead of target.slot, or apply a template first (§7).',
-        retryable: false,
-      },
-    );
+  layers: readonly EngineLayerSummary[],
+): Promise<EngineLayerSummary | ToolErr> {
+  const summaries = await ctx.templates.list();
+  const candidateRefs: string[] = [];
+  const imageSlots = new Set<string>();
+  let nonImageKind: string | undefined;
+  for (const summary of summaries) {
+    const manifest = await ctx.templates.get(`${summary.id}@${summary.version}`);
+    if (manifest === undefined) {
+      continue;
+    }
+    for (const [name, spec] of Object.entries(manifest.slots)) {
+      if (spec.kind === "image") {
+        imageSlots.add(name);
+      }
+    }
+    const spec = manifest.slots[slot];
+    if (spec === undefined) {
+      continue;
+    }
+    if (spec.kind !== "image") {
+      nonImageKind = spec.kind;
+      continue;
+    }
+    const mapped = manifest.layerMap?.[slot];
+    if (typeof mapped === "string" && mapped.length > 0) {
+      candidateRefs.push(mapped);
+    }
   }
-  const manifest: TemplateManifest | undefined = await ictx.templates.get(templateRef);
-  if (manifest === undefined) {
-    return err("not_found", "The applied template manifest is unavailable", {
-      hint: `The template catalog has no "${shortName(templateRef)}"; pass target.layer or target.bounds instead.`,
+  if (candidateRefs.length === 0) {
+    if (nonImageKind !== undefined) {
+      return err("invalid_slots", `Slot "${shortName(slot)}" is a ${nonImageKind} slot, not an image slot`, {
+        hint: "Generated images place into image slots only; inspect the template with template_inspect.",
+        retryable: false,
+      });
+    }
+    const known = [...imageSlots].sort().slice(0, 10).join(", ");
+    return err("unknown_slots", `No template in the catalog defines an image slot "${shortName(slot)}"`, {
+      hint:
+        known.length > 0
+          ? `Image slots: ${known}`
+          : "No image slots are defined in the catalog; pass target.layer or target.bounds instead.",
       retryable: false,
     });
   }
-  const mapped = manifest.layerMap?.[slot];
-  if (mapped === undefined) {
-    const known = Object.keys(manifest.layerMap ?? {});
-    return err(
-      "unknown_slots",
-      `Slot "${shortName(slot)}" has no layer mapping in the applied template`,
-      {
-        hint:
-          known.length > 0
-            ? `Mapped slots: ${known.slice(0, 10).join(", ")}${known.length > 10 ? ` (+${known.length - 10} more)` : ""}`
-            : "The manifest has no layer map; pass target.layer or target.bounds instead.",
-        retryable: false,
-      },
-    );
+  const resolved = new Map<string, EngineLayerSummary>();
+  for (const ref of candidateRefs) {
+    let candidate = layers.find((layer) => layer.layerId === ref);
+    if (candidate === undefined) {
+      const byName = layers.filter((layer) => layer.name === ref);
+      if (byName.length === 1) {
+        candidate = byName[0];
+      }
+    }
+    if (candidate !== undefined) {
+      resolved.set(candidate.layerId, candidate);
+    }
   }
-  return resolveLayerRect(tree, mapped);
+  if (resolved.size === 0) {
+    return err("layer_not_found", `The layers mapped to slot "${shortName(slot)}" are not in this document`, {
+      hint: "Apply the template first, or address a layer directly with target.layer.",
+      retryable: false,
+    });
+  }
+  if (resolved.size > 1) {
+    const candidates = [...resolved.entries()]
+      .map(([id, layer]) => `${layer.name} (${id})`)
+      .slice(0, 10);
+    return err("ambiguous_layer", `Slot "${shortName(slot)}" resolves to ${resolved.size} different layers`, {
+      hint: `Address one directly with target.layer.layerId. Candidates: ${candidates.join(", ")}`,
+      retryable: false,
+    });
+  }
+  const [winner] = [...resolved.values()];
+  return winner === undefined ? layerNotFoundErr(slot) : winner;
 }
 
-/** Resolves `target` against the layer tree; failures are values, never throws. */
+/**
+ * Resolves `target` to a destination box (§7.3): explicit bounds beat the
+ * slot/layer's own bounds; no anchor at all places above the active layer at
+ * natural size. Failures are values, never throws.
+ */
 export async function resolveTarget(
-  ictx: ImageGenerateContext,
+  ctx: ToolContext,
   target: ImageGenerateArgs["target"],
-  tree: readonly EngineLayerSummary[],
-  imageWidthPx: number,
-  imageHeightPx: number,
-): Promise<{ readonly ok: true; readonly target: ResolvedTarget } | ToolErr> {
-  if (target.bounds !== undefined) {
-    return {
-      ok: true,
-      target: {
-        placement: coverPlacement(target.bounds, imageWidthPx, imageHeightPx),
-        summaryAnchor: "at the given bounds",
-      },
-    };
-  }
+  layers: readonly EngineLayerSummary[],
+): Promise<ResolvedTarget | ToolErr> {
+  let anchor: EngineLayerSummary | undefined;
+  let summaryAnchor: string;
   if (target.slot !== undefined) {
-    const slotLayer = await resolveSlotTarget(ictx, target.slot, tree);
-    if (!("rect" in slotLayer)) {
+    const slotLayer = await resolveImageSlot(ctx, target.slot, layers);
+    if (isErr(slotLayer)) {
       return slotLayer;
     }
-    return {
-      ok: true,
-      target: {
-        aboveLayerId: slotLayer.layer.layerId,
-        placement: coverPlacement(slotLayer.rect, imageWidthPx, imageHeightPx),
-        summaryAnchor: `into slot "${shortName(target.slot)}" (over layer "${shortName(slotLayer.layer.name)}")`,
-      },
-    };
-  }
-  if (target.layer !== undefined) {
-    const idOrName = layerRefString(target.layer);
-    const resolved = resolveLayerRect(tree, idOrName);
-    if (!("rect" in resolved)) {
-      return resolved;
+    anchor = slotLayer;
+    summaryAnchor = `into slot "${shortName(target.slot)}"`;
+  } else if (target.layer !== undefined) {
+    const layer = resolveLayer(target.layer, layers);
+    if (isErr(layer)) {
+      return layer;
     }
-    return {
-      ok: true,
-      target: {
-        aboveLayerId: resolved.layer.layerId,
-        placement: coverPlacement(resolved.rect, imageWidthPx, imageHeightPx),
-        summaryAnchor: `over layer "${shortName(resolved.layer.name)}"`,
-      },
-    };
+    anchor = layer;
+    summaryAnchor = `over layer "${shortName(layer.name)}"`;
+  } else {
+    summaryAnchor = "above the active layer";
   }
-  return { ok: true, target: { summaryAnchor: "above the active layer" } };
+  if (target.bounds !== undefined) {
+    const [x, y, w, h] = target.bounds;
+    return { box: { x, y, w, h }, summaryAnchor };
+  }
+  if (anchor === undefined) {
+    return { box: undefined, summaryAnchor };
+  }
+  const box = layerBoundsBox(anchor);
+  if (box === undefined) {
+    return err("validation_failed", `Target layer "${anchor.name}" reports no usable bounds`, {
+      hint: "Pass target.bounds [x, y, w, h] explicitly (§7.3 image-slot bounds).",
+      retryable: false,
+    });
+  }
+  return { box, summaryAnchor };
 }
 
 // ---------------------------------------------------------------------------
@@ -545,59 +581,120 @@ export const imageGenerateTool: Tool<ImageGenerateArgs> = defineTool({
         retryable: stored.retryable,
       });
     }
-
-    const before = await ictx.engine.listLayers();
-    if (!before.ok) {
-      return err(before.code, before.message, { hint: before.hint, retryable: before.retryable });
-    }
-
-    const resolution = await resolveTarget(
-      ictx,
-      args.target,
-      before.value,
-      check.widthPx,
-      check.heightPx,
-    );
-    if (!resolution.ok) {
-      return resolution;
-    }
-    const resolved = resolution.target;
-
-    const placeParams: Record<string, unknown> = { path: stored.value.path };
-    if (resolved.placement?.scalePercent !== undefined) {
-      placeParams.scale = resolved.placement.scalePercent;
-    }
-    if (resolved.placement?.center !== undefined) {
-      placeParams.center = [...resolved.placement.center];
-    }
-    const batchA: EngineCommand[] = [];
-    if (resolved.aboveLayerId !== undefined) {
-      batchA.push({
-        id: "layer.select",
-        params: { layer: resolved.aboveLayerId, mode: "replace" },
+    if (!isPlaceableGeneratedPath(stored.value.path)) {
+      ictx.logger.error("image_generate: sink returned a non-placeable path");
+      return err("internal_error", "The generated image was stored outside the workspace scope", {
+        hint: "The sink must return a workspace-relative key; absolute paths never reach the engine (§15.1).",
+        retryable: false,
       });
     }
-    batchA.push({ id: "doc.place", params: placeParams });
 
-    if (!ictx.budgets.charge({ commands: batchA.length })) {
+    // 1. Layer tree first: target resolution and the post-batch diff both need it.
+    const preLayers = await ictx.engine.listLayers();
+    if (!preLayers.ok) {
+      return err(preLayers.code, preLayers.message, {
+        hint: preLayers.hint,
+        retryable: preLayers.retryable,
+      });
+    }
+    const resolved = await resolveTarget(ictx, args.target, preLayers.value);
+    if (isErr(resolved)) {
+      return resolved;
+    }
+
+    // 2. Cover-fit plan (§7.3 default fit) whenever a destination box exists.
+    const warnings: string[] = [];
+    const plan: FitPlan | undefined =
+      resolved.box === undefined
+        ? undefined
+        : computeFit({
+            boxX: resolved.box.x,
+            boxY: resolved.box.y,
+            boxW: resolved.box.w,
+            boxH: resolved.box.h,
+            assetW: check.widthPx,
+            assetH: check.heightPx,
+            fit: "cover",
+            focalX: 0.5,
+            focalY: 0.5,
+          });
+    if (plan !== undefined) {
+      const worst = Math.max(plan.scaleX, plan.scaleY);
+      // §7.3 upscale caps, same thresholds as asset_place: >125% warns, >200%
+      // is a hard error the model can act on (re-run at a larger size).
+      if (worst > UPSCALE_ERR_FACTOR) {
+        return err(
+          "validation_failed",
+          `Placing the generated image needs ${plan.scalePercent}% — beyond the 200% upscale cap (§7.3)`,
+          {
+            hint: "Re-run image_generate with a larger size, or target a smaller bounds box.",
+            retryable: false,
+          },
+        );
+      }
+      if (worst > UPSCALE_WARN_FACTOR) {
+        warnings.push(
+          `Generated image upscaled to ${plan.scalePercent}% of natural size (above the 125% advisory, §7.3); a larger size would stay sharper.`,
+        );
+      }
+    }
+
+    // 3. Charge the command meter once, for exactly what will be batched
+    // (§5.2): place + transform? + rename + smart-object conversion.
+    const commands: EngineCommand[] = [
+      {
+        id: PLACE_COMMAND,
+        params: {
+          path: stored.value.path,
+          // 100% pins natural size (place-time implicit fit is off); the box
+          // centre anchors the layer; smartObject:true pins the smart-object
+          // embedding exactly like asset_place (W5-E, file_cmds.rs).
+          scale: 100,
+          smartObject: true,
+          ...(plan !== undefined
+            ? { center: [plan.placeCenterX, plan.placeCenterY] }
+            : {}),
+        },
+      },
+    ];
+    if (plan !== undefined && !plan.isIdentity) {
+      commands.push({
+        id: TRANSFORM_COMMAND,
+        // No `layer`: doc.place made the placed layer active (file_cmds.rs).
+        params: {
+          scaleX: plan.scaleX * 100,
+          scaleY: plan.scaleY * 100,
+          dx: plan.dx,
+          dy: plan.dy,
+        },
+      });
+    }
+    const totalCommands = commands.length + 2; // + rename + convertToSmartObject
+    if (!ictx.budgets.charge({ commands: totalCommands })) {
       return err("budget_exceeded", "The run's mutating-command budget is exhausted", {
         hint: "Stop cleanly here; the worker settles at most a partial charge (§5.2).",
         retryable: false,
       });
     }
-    const placed = await ictx.engine.batch(batchA, { transaction: true, signal });
+    const placed = await ictx.engine.batch(commands, { transaction: true, signal });
     if (!placed.ok) {
       return err(placed.code, placed.message, {
         hint: placed.hint,
         retryable: placed.retryable,
       });
     }
+    let revision = placed.value.revision;
 
-    const after = await ictx.engine.listLayers();
-    if (!after.ok) {
-      return err(after.code, after.message, { hint: after.hint, retryable: after.retryable });
+    // 4. Confirm the placed layer by tree diff (the seam returns no command
+    //    results); §10.2 naming needs the id, so a failed diff is a hard stop.
+    const postLayers = await ictx.engine.listLayers();
+    if (!postLayers.ok) {
+      return err(postLayers.code, postLayers.message, {
+        hint: postLayers.hint,
+        retryable: postLayers.retryable,
+      });
     }
-    const placedLayerId = diffNewLayerId(before.value, after.value);
+    const placedLayerId = diffNewLayerId(preLayers.value, postLayers.value);
     if (placedLayerId === undefined) {
       return err("internal_error", "The placed layer could not be identified after placement", {
         hint: "The document changed unexpectedly; render a preview and retry once.",
@@ -605,51 +702,40 @@ export const imageGenerateTool: Tool<ImageGenerateArgs> = defineTool({
       });
     }
 
-    // §10.2 naming (validator-enforced): "Photo — Generated".
-    if (!ictx.budgets.charge({ commands: 1 })) {
-      return err("budget_exceeded", "The run's mutating-command budget is exhausted", {
-        hint: "The image is placed but unnamed; stop cleanly and let the worker settle (§5.2).",
-        retryable: false,
-      });
-    }
-    const renameCmd: EngineCommand = {
-      id: "layer.setProps",
-      params: { layer: placedLayerId, name: GENERATED_PHOTO_LAYER_NAME },
-    };
-    const renamed = await ictx.engine.batch([renameCmd], { transaction: true, signal });
+    // 5. §10.2 naming (validator-enforced): "Photo — Generated".
+    const renamed = await ictx.engine.batch(
+      [
+        {
+          id: RENAME_COMMAND,
+          params: { layer: placedLayerId, name: GENERATED_PHOTO_LAYER_NAME },
+        },
+      ],
+      { transaction: true, signal },
+    );
     if (!renamed.ok) {
       return err(renamed.code, renamed.message, {
         hint: renamed.hint,
         retryable: renamed.retryable,
       });
     }
+    revision = renamed.value.revision;
 
-    const warnings: string[] = [];
-    let revision = renamed.value.revision;
-
-    // §6 row 7 chain: the explicit smart-object conversion. doc.place already
-    // embeds as a smart object (control-protocol), so a refusal here is a
-    // warning, never a failure — reported outside the rename transaction so a
-    // provider/protocol quirk cannot roll the placement back.
-    if (!ictx.budgets.charge({ commands: 1 })) {
-      warnings.push(
-        "The explicit smart-object conversion was skipped: the command budget ran out (§5.2).",
-      );
+    // 6. §6 row 7 chain: the explicit smart-object conversion, best effort
+    // (asset_place pattern): doc.place already embeds a smart object, so a
+    // refusal is the expected no-op — a warning, never a failure.
+    const converted = await ictx.engine.execute(
+      { id: SMART_OBJECT_COMMAND, params: { layer: placedLayerId } },
+      { signal },
+    );
+    if (converted.ok) {
+      revision = converted.value.revision;
     } else {
-      const convert = await ictx.engine.execute(
-        { id: "layer.smartObjects.convertToSmartObject", params: { layer: placedLayerId } },
-        { signal },
+      ictx.logger.warn("image_generate: explicit convertToSmartObject refused", {
+        layerId: placedLayerId,
+      });
+      warnings.push(
+        'Smart-object conversion did not apply; doc.place already placed the image as a smart object (§6 row 7).',
       );
-      if (!convert.ok) {
-        ictx.logger.warn("image_generate: explicit convertToSmartObject refused", {
-          layerId: placedLayerId,
-        });
-        warnings.push(
-          'The explicit smart-object conversion was skipped; doc.place already placed the image as a smart object (§6 row 7).',
-        );
-      } else {
-        revision = convert.value.revision;
-      }
     }
 
     const requested = parseRequestedSize(args.size);

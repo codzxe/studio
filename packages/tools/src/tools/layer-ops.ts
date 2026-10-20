@@ -384,9 +384,14 @@ function engineFailureErr(failure: EngineFailure, verb: string): ToolErr {
   });
 }
 
-async function readTree(ctx: ToolContext): Promise<readonly EngineLayerSummary[] | ToolErr> {
+async function readTree(
+  ctx: ToolContext,
+): Promise<{ readonly ok: true; readonly layers: readonly EngineLayerSummary[] } | ToolErr> {
   const listing = await ctx.engine.listLayers();
-  return listing.ok ? listing.value : engineFailureErr(listing, "read the layer tree");
+  if (!listing.ok) {
+    return engineFailureErr(listing, "read the layer tree");
+  }
+  return { ok: true, layers: listing.value };
 }
 
 /** Post-batch relist; advisory only — a failure here never fails the mutation. */
@@ -437,12 +442,15 @@ export const layerOpsTool: Tool<LayerOpsArgs> = defineTool({
   async run(ctx, args, signal): Promise<ToolResult> {
     ctx.logger.debug("layer_ops invoked", { op: args.op });
     // Resolve against the tree first (§6.1); a parentless create_group needs no refs.
-    const tree: readonly EngineLayerSummary[] | ToolErr =
-      args.op === "create_group" && args.parent === undefined ? [] : await readTree(ctx);
-    if (!Array.isArray(tree)) {
-      return tree;
+    const skipTree = args.op === "create_group" && args.parent === undefined;
+    let before: readonly EngineLayerSummary[] = [];
+    if (!skipTree) {
+      const tree = await readTree(ctx);
+      if (!tree.ok) {
+        return tree;
+      }
+      before = tree.layers;
     }
-    const before = tree;
     switch (args.op) {
       case "create_group": {
         const { name, parent } = args;
@@ -639,7 +647,8 @@ export const layerOpsTool: Tool<LayerOpsArgs> = defineTool({
           warnings.push("the engine auto-named the group — rename it to a §10.2 role name such as Content or Brand");
         }
         const after = name === undefined ? undefined : await readTreeAfter(ctx);
-        const groupId = after === undefined ? undefined : findGroupId(after, name);
+        const groupId =
+          name === undefined || after === undefined ? undefined : findGroupId(after, name);
         const into = name === undefined ? "" : ` into ${quote(name)}`;
         const idPart = groupId === undefined ? "" : ` (id ${groupId})`;
         const count = members.layers.length;

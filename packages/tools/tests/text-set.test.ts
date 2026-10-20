@@ -11,6 +11,7 @@ import {
   textSetArgs,
   toEngineColor,
 } from "../src/tools/text-set.js";
+import type { TextSetArgs } from "../src/tools/text-set.js";
 import type {
   EngineCommand,
   EngineCommandOutcome,
@@ -94,7 +95,10 @@ const textLayer = (id: string, name: string, kind = "Type"): EngineLayerSummary 
 const happyCreateHandler: Handler = (cmd) => {
   switch (cmd.id) {
     case "type.create":
-      return { ok: true, value: { revision: 10, result: { layer: 7, bounds: [72, 732, 972, 176] } } };
+      return {
+        ok: true,
+        value: { revision: 10, result: { layer: 7, bounds: [72, 732, 972, 176] } },
+      };
     case "layout.fitText":
       return {
         ok: true,
@@ -120,8 +124,8 @@ const mutatingCalls = (calls: readonly RecordedCall[]): readonly RecordedCall[] 
   calls.filter((c) => c.kind === "execute" || c.kind === "batch");
 
 /** Runs text_set and fails the test with the error envelope when it does not succeed. */
-async function runOk(ctx: ToolContext, args: unknown, signal = freshSignal()) {
-  const result = await textSet.run(ctx, args as never, signal);
+async function runOk(ctx: ToolContext, args: TextSetArgs, signal = freshSignal()) {
+  const result = await textSet.run(ctx, args, signal);
   if (!result.ok) {
     throw new Error(`expected ok, got ${result.code}: ${result.message}`);
   }
@@ -129,8 +133,8 @@ async function runOk(ctx: ToolContext, args: unknown, signal = freshSignal()) {
 }
 
 /** Runs text_set and fails the test when it unexpectedly succeeds. */
-async function runErr(ctx: ToolContext, args: unknown) {
-  const result = await textSet.run(ctx, args as never, freshSignal());
+async function runErr(ctx: ToolContext, args: TextSetArgs) {
+  const result = await textSet.run(ctx, args, freshSignal());
   if (result.ok) {
     throw new Error(`expected an error, got ok: ${result.summary}`);
   }
@@ -153,7 +157,7 @@ const createArgs = {
 // ---------------------------------------------------------------------------
 
 describe("text_set create", () => {
-  it("creates via type.create, then fits via layout.fitText and reports the fitted facts", async () => {
+  it("creates via type.create then fits via layout.fitText, reporting the fit facts", async () => {
     const signal = freshSignal();
     const { engine, calls } = makeEngine(happyCreateHandler, []);
     const ctx = makeFakeContext({ engine });
@@ -191,7 +195,7 @@ describe("text_set create", () => {
     expect(fit?.options?.signal).toBe(signal);
   });
 
-  it("omits size/maxSize when no size was requested (the engine fits at the layer's own size)", async () => {
+  it("omits size/maxSize when none was requested (engine fits the layer's own size)", async () => {
     const { engine, calls } = makeEngine(happyCreateHandler, []);
     const ctx = makeFakeContext({ engine });
 
@@ -221,7 +225,7 @@ describe("text_set create", () => {
     expect(fit?.cmd?.params).toEqual({ layer: 7, bounds: [8, 8, 120, 32], minSize: 12 });
   });
 
-  it("never asks the engine for a size below the requested one (caption minSize follows the request)", async () => {
+  it("never fits below a requested caption size (minSize follows the request)", async () => {
     const { engine, calls } = makeEngine(happyCreateHandler, []);
     const ctx = makeFakeContext({ engine });
 
@@ -381,7 +385,11 @@ describe("text_set edit", () => {
     const { engine, calls } = makeEngine(happyCreateHandler, [textLayer("3", "Headline")]);
     const ctx = makeFakeContext({ engine });
 
-    const result = await runOk(ctx, { mode: "edit", layer: { layerName: "Headline" }, text: "Fresh words" }, signal);
+    const result = await runOk(
+      ctx,
+      { mode: "edit", layer: { layerName: "Headline" }, text: "Fresh words" },
+      signal,
+    );
     expect(JSON.parse(result.summary)).toEqual({
       layerId: 3,
       name: "Headline",
@@ -451,7 +459,11 @@ describe("text_set edit", () => {
     ]);
     const ctx = makeFakeContext({ engine });
 
-    const failure = await runErr(ctx, { mode: "edit", layer: { layerName: "Headline" }, text: "x" });
+    const failure = await runErr(ctx, {
+      mode: "edit",
+      layer: { layerName: "Headline" },
+      text: "x",
+    });
     expect(failure.code).toBe("ambiguous_layer");
     expect(failure.message).toContain("2 layers");
     expect(failure.hint).toContain("3");
@@ -533,7 +545,17 @@ describe("§10.2 name validation tables", () => {
   });
 
   it("flags the machine-name family §10.1 forbids", () => {
-    for (const name of ["Layer", "Layer 3", "layer 1", "Group 12", "Artboard 2", "Layer 1 copy", "Copy", "copy 2"]) {
+    const machines = [
+      "Layer",
+      "Layer 3",
+      "layer 1",
+      "Group 12",
+      "Artboard 2",
+      "Layer 1 copy",
+      "Copy",
+      "copy 2",
+    ];
+    for (const name of machines) {
       expect(isMachineLayerName(name), name).toBe(true);
       expect(isRoleLayerName(name), name).toBe(false);
     }
@@ -590,9 +612,18 @@ describe("text_set schema", () => {
 
   it("rejects every malformed variant", () => {
     const cases: readonly [string, Record<string, unknown>][] = [
-      ["unknown key", { ...baseCreate, colour: "#fff" }],
-      ["create-only name on edit", { mode: "edit", layer: { layerName: "Headline" }, name: "New", text: "x" }],
-      ["create without font", { mode: "create", name: "Headline", text: "Hi", bounds: [1, 2, 100, 50] }],
+      [
+        "unknown key",
+        { ...baseCreate, colour: "#fff" },
+      ],
+      [
+        "create-only name on edit",
+        { mode: "edit", layer: { layerName: "Headline" }, name: "New", text: "x" },
+      ],
+      [
+        "create without font",
+        { mode: "create", name: "Headline", text: "Hi", bounds: [1, 2, 100, 50] },
+      ],
       ["create without bounds", { mode: "create", name: "Headline", text: "Hi", font: "Inter" }],
       ["zero-width bounds", { ...baseCreate, bounds: [1, 2, 0, 50] }],
       ["box wider than the engine limit", { ...baseCreate, bounds: [1, 2, 1_000_001, 50] }],
@@ -602,7 +633,10 @@ describe("text_set schema", () => {
       ["size above the cap", { ...baseCreate, size: 1201 }],
       ["size below the floor", { ...baseCreate, size: 2 }],
       ["unknown align", { ...baseCreate, align: "middle" }],
-      ["layer ref with both keys", { mode: "edit", layer: { layerId: "3", layerName: "Headline" }, text: "x" }],
+      [
+        "layer ref with both keys",
+        { mode: "edit", layer: { layerId: "3", layerName: "Headline" }, text: "x" },
+      ],
       ["edit with no change", { mode: "edit", layer: { layerName: "Headline" } }],
       ["unknown mode", { mode: "upsert", layer: { layerName: "Headline" }, text: "x" }],
       ["short idempotency key", { ...baseCreate, idempotencyKey: "abc" }],
@@ -617,7 +651,9 @@ describe("text_set schema", () => {
     expect(
       textSetArgs.safeParse({ ...baseCreate, idempotencyKey: "run-12345-abc" }).success,
     ).toBe(true);
-    expect(textSetArgs.safeParse({ mode: "edit", layer: { layerId: "3" }, size: 24 }).success).toBe(true);
+    expect(
+      textSetArgs.safeParse({ mode: "edit", layer: { layerId: "3" }, size: 24 }).success,
+    ).toBe(true);
   });
 
   it("surfaces schema failures as invalid_args envelopes via parseToolArgs", () => {

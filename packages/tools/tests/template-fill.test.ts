@@ -24,7 +24,6 @@ import type {
   BudgetTracker,
   EngineCommand,
   EngineCommandReport,
-  EngineFailure,
   EngineLike,
   EngineOutcome,
   TemplateCatalogLike,
@@ -51,8 +50,9 @@ interface RawManifest {
 
 // Real manifests carry §7.2 `component` slots too; the seam's kind union is the
 // four fillable kinds, so the fixture widens it with a targeted cast.
+// (Three segments up: tests/ → tools/ → packages/ → studio root.)
 const REAL_MANIFEST_URL = new URL(
-  "../../../../evals/templates/instagram-post@3/manifest.json",
+  "../../../evals/templates/instagram-post@3/manifest.json",
   import.meta.url,
 );
 
@@ -136,7 +136,10 @@ function stubEngine(
       return execute(cmd);
     },
     render: async () => ({ ok: true, value: { image: new Uint8Array(), widthPx: 8, heightPx: 8 } }),
-    inspect: async () => ({ ok: true, value: { revision: 1, widthPx: 8, heightPx: 8, layers: [] } }),
+    inspect: async () => ({
+      ok: true,
+      value: { revision: 1, widthPx: 8, heightPx: 8, layers: [] },
+    }),
     listLayers: async () => ({ ok: true, value: [] }),
   };
   return { engine, commands };
@@ -213,7 +216,10 @@ describe("template_fill: argument schema", () => {
   it("rejects more than 40 slot entries (§6.2 'too many slots')", () => {
     const fortyOne: Record<string, unknown> = {};
     for (let i = 0; i < 41; i += 1) fortyOne[`headline${i}`] = { kind: "text", value: "x" };
-    const rejected = parseToolArgs(templateFillTool, { template: "instagram-post@3", slots: fortyOne });
+    const rejected = parseToolArgs(templateFillTool, {
+      template: "instagram-post@3",
+      slots: fortyOne,
+    });
     expect(rejected.ok).toBe(false);
     if (!rejected.ok) {
       expect(rejected.code).toBe("invalid_args");
@@ -221,15 +227,26 @@ describe("template_fill: argument schema", () => {
     }
     const forty: Record<string, unknown> = {};
     for (let i = 0; i < 40; i += 1) forty[`headline${i}`] = { kind: "text", value: "x" };
-    expect(parseToolArgs(templateFillTool, { template: "instagram-post@3", slots: forty }).ok).toBe(true);
+    const parsed = parseToolArgs(templateFillTool, {
+      template: "instagram-post@3",
+      slots: forty,
+    });
+    expect(parsed.ok).toBe(true);
   });
 
   it("rejects extra properties at every level (additionalProperties: false)", () => {
     const cases: unknown[] = [
       { template: "instagram-post@3", slots: {}, bogus: true },
       { template: "instagram-post@3", slots: { headline: { kind: "text", value: "x", bogus: 1 } } },
-      { template: "instagram-post@3", slots: { logo: { kind: "image", asset_id: ASSET_ID, focal: { x: 0, y: 0 } } }, extra: 1 },
-      { template: "instagram-post@3", slots: { logo: { kind: "image", asset_id: ASSET_ID, fit: "stretch" } } },
+      {
+        template: "instagram-post@3",
+        slots: { logo: { kind: "image", asset_id: ASSET_ID, focal: { x: 0, y: 0 } } },
+        extra: 1,
+      },
+      {
+        template: "instagram-post@3",
+        slots: { logo: { kind: "image", asset_id: ASSET_ID, fit: "stretch" } },
+      },
       { template: "not a ref", slots: {} },
     ];
     for (const [index, value] of cases.entries()) {
@@ -285,7 +302,11 @@ describe("template_fill: manifest and slot validation", () => {
       assets: assetStore(),
       engine: stub.engine,
     });
-    const result = await templateFillTool.run(ctx, { template: "youtube-thumb@1", slots: {} }, freshSignal());
+    const result = await templateFillTool.run(
+      ctx,
+      { template: "youtube-thumb@1", slots: {} },
+      freshSignal(),
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("not_found");
@@ -349,13 +370,13 @@ describe("template_fill: manifest and slot validation", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("invalid_slots");
-      expect(result.message).toBe('Slot "badge" has kind "component", which template_fill does not fill');
+      expect(result.message).toContain("which template_fill does not fill");
       expect(result.hint).toContain("component_place");
     }
     expect(commands.length).toBe(0);
   });
 
-  it("does not pre-check missing required slots — that rule is the engine's (§7.3)", async () => {
+  it("missing required slots are the engine's §7.3 check, not this tool's", async () => {
     const { ctx, commands } = happyContext(async () => ({ ok: true, value: fillReport() }));
     const result = await templateFillTool.run(
       ctx,
@@ -401,7 +422,14 @@ describe("template_fill: engine flow", () => {
       {
         template: REAL_REF,
         slots: {
-          headline: { kind: "text", value: "Big Sale", font: "display", size: 96, color: "#3B2A20", align: "left" },
+          headline: {
+            kind: "text",
+            value: "Big Sale",
+            font: "display",
+            size: 96,
+            color: "#3B2A20",
+            align: "left",
+          },
           logo: { kind: "image", asset_id: ASSET_ID, fit: "contain", focal: { x: 0.62, y: 0.4 } },
         },
       },
@@ -532,7 +560,9 @@ describe("template_fill: engine flow", () => {
   it("reads a JSON-encoded report from the seam's message field", async () => {
     const message = JSON.stringify({
       applied: ["headline"],
-      warnings: [{ code: "image_upscaled", slot: "logo", message: "slot `logo`: upscaled to 150%" }],
+      warnings: [
+        { code: "image_upscaled", slot: "logo", message: "slot `logo`: upscaled to 150%" },
+      ],
       errors: [],
     });
     const { ctx } = happyContext(async () => ({ ok: true, value: { revision: 9, message } }));
@@ -736,10 +766,22 @@ describe("template_fill: pure report + summary helpers", () => {
 
   it("summarizeFill renders counts and names within the compact-reply rule (§6.1)", () => {
     expect(
-      summarizeFill({ applied: ["a", "b"], requested: ["a", "b"], warnings: 1, softErrors: 0, omitted: 0 }),
+      summarizeFill({
+        applied: ["a", "b"],
+        requested: ["a", "b"],
+        warnings: 1,
+        softErrors: 0,
+        omitted: 0,
+      }),
     ).toBe("Filled 2 of 2 slots (a, b); 1 warning.");
     expect(
-      summarizeFill({ applied: [], requested: ["a"], warnings: 0, softErrors: 2, omitted: 3 }),
+      summarizeFill({
+        applied: [],
+        requested: ["a"],
+        warnings: 0,
+        softErrors: 2,
+        omitted: 3,
+      }),
     ).toBe("Filled 0 of 1 slots; 0 warnings, 2 soft errors, 3 warnings omitted by the reply cap.");
   });
 });

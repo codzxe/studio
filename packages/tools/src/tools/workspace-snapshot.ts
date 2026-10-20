@@ -385,7 +385,9 @@ export function compactPalette(
   entries.sort((a, b) => compareStrings(a.token, b.token));
   const kept = entries.slice(0, MAX_PALETTE_TOKENS);
   if (entries.length > kept.length) {
-    warnings.push(`palette limited to first ${kept.length} of ${entries.length} tokens (name order)`);
+    warnings.push(
+      `palette limited to first ${kept.length} of ${entries.length} tokens (name order)`,
+    );
   }
   return kept;
 }
@@ -435,7 +437,9 @@ export function compactVariables(
   defs.sort((a, b) => compareStrings(a.name, b.name) || compareLayerIds(a.layer, b.layer));
   const keptDefs = defs.slice(0, MAX_VARIABLE_DEFS);
   if (defs.length > keptDefs.length) {
-    warnings.push(`variables limited to first ${keptDefs.length} of ${defs.length} defs (name order)`);
+    warnings.push(
+      `variables limited to first ${keptDefs.length} of ${defs.length} defs (name order)`,
+    );
   }
   const dataSets: string[] = [];
   if (Array.isArray(record.dataSets)) {
@@ -448,7 +452,9 @@ export function compactVariables(
   dataSets.sort(compareStrings);
   const keptSets = dataSets.slice(0, MAX_DATA_SET_NAMES);
   if (dataSets.length > keptSets.length) {
-    warnings.push(`data sets limited to first ${keptSets.length} of ${dataSets.length} (name order)`);
+    warnings.push(
+      `data sets limited to first ${keptSets.length} of ${dataSets.length} (name order)`,
+    );
   }
   if (keptDefs.length === 0 && keptSets.length === 0) return undefined;
   const activeRaw = record.active;
@@ -634,7 +640,11 @@ function sectionEmpty(sections: SnapshotSections, section: Section): boolean {
 }
 
 /** Serializes the kept sections in canonical key order (deterministic JSON). */
-function assemble(sections: SnapshotSections, keep: ReadonlySet<Section>, layerLimit: number): string {
+function assemble(
+  sections: SnapshotSections,
+  keep: ReadonlySet<Section>,
+  layerLimit: number,
+): string {
   const out: Record<string, unknown> = {
     canvas: { widthPx: sections.canvas.widthPx, heightPx: sections.canvas.heightPx },
   };

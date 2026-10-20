@@ -6,15 +6,16 @@
 //
 //   - The args schema mirrors the engine's serde node model EXACTLY — field names,
 //     enums and ranges come from engine-patches/layout_cmds/layout_apply.rs
-//     (StackNode/RowNode/…/DividerNode + Sizing, snake-free camelCase keys) and
+//     (StackNode/RowNode/…/DividerNode + the flattened Sizing struct) and
 //     engine-patches/docs/commands.md §`layout.apply`. A tree the tool accepts is a
 //     tree the engine accepts; a tree the engine rejects is rejected here first,
 //     as an actionable `invalid_args` (§6.1) instead of a raw engine bad_params.
 //   - The model never emits raw coordinates: `x`/`y` exist ONLY on children of an
 //     `absolute` node (required there), `dx`/`dy` only on `center` children (§9.2).
 //   - Tool-side caps are tighter than the engine's (§9.5): depth ≤ 32 (engine 64),
-//     ≤ 256 nodes (engine 4096), ≤ 200 children per container (kit §6.1 array
-//     ceiling; the engine allows 512). Breaching either is "layout too complex".
+//     ≤ 256 nodes (engine 4096), ≤ 200 children per container (the kit's §6.1
+//     array ceiling; the engine allows 512). Breaching either is "layout too
+//     complex" — reported through the schema, so the boundary owns it.
 //   - §9.5 finite law: every numeric is checked for NaN/±Infinity before the engine
 //     is called (JSON `1e999` arrives as Infinity and dies here).
 //
@@ -57,9 +58,9 @@ export const LAYOUT_MAX_DEPTH = 32;
 /** Tool-level node-count cap (the engine allows 4096, §9.5). */
 export const LAYOUT_MAX_NODES = 256;
 /**
- * Children per container: the kit's §6.1 array ceiling (engine allows 512). A tree
- * with one 201-child container still fits 256 nodes, but the model should compose
-//  groups instead — the cap keeps every array argument model-scale.
+ * Children per container: the kit's §6.1 array ceiling (the engine allows 512).
+ * A tree with one 201-child container still fits 256 nodes, but the model should
+ * compose groups instead — the cap keeps every array argument model-scale.
  */
 export const LAYOUT_MAX_CHILDREN_PER_NODE = 200;
 /** §9.5: gaps 0–256 px. */
@@ -72,7 +73,7 @@ export const LAYOUT_MAX_COLUMNS = 24;
 export const LAYOUT_MAX_PX = 1_048_576;
 /** Grow weights and aspect ratios are capped (engine MAX_GROW). */
 export const LAYOUT_MAX_GROW = 1_000_000;
-/** Tool cap for `options.safeArea` (§6 row 11 brief; the engine would allow 2048). */
+/** Tool cap for `options.safeArea` (§6 row 11; the engine would allow 2048). */
 export const LAYOUT_MAX_SAFE_AREA_PX = 512;
 /** How many moved-layer examples the compact summary keeps (§6.1 small replies). */
 export const MAX_MOVED_EXAMPLES = 3;
@@ -91,7 +92,7 @@ export const LAYOUT_APPLY_COMMAND_ID = "layout.apply";
 
 const FINITE_MESSAGE = "must be a finite number (NaN and ±Infinity are rejected, §9.5)";
 
-/** z.number() admits NaN and (through min/max gaps) ±Infinity — the refine closes it. */
+/** z.number() alone admits NaN and ±Infinity through min/max gaps — the refine closes it. */
 function finiteRange(minimum: number, maximum: number, what: string) {
   return z
     .number()
@@ -100,7 +101,7 @@ function finiteRange(minimum: number, maximum: number, what: string) {
     .refine((value) => Number.isFinite(value), { message: `${what} ${FINITE_MESSAGE}` });
 }
 
-/** A finite px dimension, 0..LAYOUT_MAX_PX (width/height/min*/max*/size). */
+/** A finite px dimension, 0..LAYOUT_MAX_PX (width/height/min*/max*/spacer size). */
 const zDimension = finiteRange(0, LAYOUT_MAX_PX, "this dimension");
 /** A signed finite coordinate, |v| ≤ LAYOUT_MAX_PX (x, y, dx, dy, within-rect sides). */
 const zCoordinate = z
@@ -108,7 +109,7 @@ const zCoordinate = z
   .refine((value) => Number.isFinite(value) && Math.abs(value) <= LAYOUT_MAX_PX, {
     message: `coordinates must be finite and within ±${LAYOUT_MAX_PX} px (§9.5)`,
   });
-/** Any finite number (result-box sides from the engine; validation only). */
+/** Any finite number (engine-result box sides; validation only). */
 const zFiniteNumber = z
   .number()
   .refine((value) => Number.isFinite(value), { message: `numbers ${FINITE_MESSAGE}` });
@@ -116,9 +117,11 @@ const zFiniteNumber = z
 const zGap = finiteRange(0, LAYOUT_MAX_GAP_PX, "`gap`");
 const zSide = finiteRange(0, LAYOUT_MAX_SIDE_PX, "each `padding` side");
 const zSafeArea = finiteRange(0, LAYOUT_MAX_SAFE_AREA_PX, "`options.safeArea`");
-/** Whole columns 1–24 (§9.5); 2.0 is fine, 2.5 and NaN are not. */
-const zColumns = finiteRange(1, LAYOUT_MAX_COLUMNS, "`columns`")
-  .refine((value) => Number.isInteger(value), { message: "`columns` must be a whole number" });
+/** Whole columns 1–24 (§9.5): 2.0 is fine, 2.5 and NaN are not. */
+const zColumns = finiteRange(1, LAYOUT_MAX_COLUMNS, "`columns`").refine(
+  (value) => Number.isInteger(value),
+  { message: "`columns` must be a whole number" },
+);
 /** §9.2 sizing: `true` = weight 1, `false`/0 = does not grow, numbers ≥ 0. */
 const zGrow = z.union([z.boolean(), finiteRange(0, LAYOUT_MAX_GROW, "`grow`")]);
 const zPercent = z
@@ -177,7 +180,7 @@ const zDirection = z.enum(["vertical", "horizontal"]);
 const zFlowDir = z.enum(["ltr", "rtl"]);
 const zFit = z.enum(["contain", "cover", "fill"]);
 
-/** §9.2 sizing keys every node accepts (engine Sizing struct, camelCase serde). */
+/** §9.2 sizing keys every node accepts (the engine's flattened Sizing struct). */
 const zSizingFields = {
   width: zDimension.optional(),
   height: zDimension.optional(),
@@ -193,8 +196,8 @@ const zSizingFields = {
 
 // ---------------------------------------------------------------------------
 // Node value types — the hand-written mirror of the engine's serde structs.
-// Field names and optionality mirror layout_apply.rs exactly; the flow-union
-// annotation on `flowChildNode` is checked against these at compile time.
+// Field names and optionality mirror layout_apply.rs exactly; each union's
+// z.ZodType<…> annotation is compile-time checked against these types.
 // ---------------------------------------------------------------------------
 
 export type LayoutNodeKind =
@@ -324,33 +327,42 @@ export type LayoutNode =
   | ComponentNode
   | DividerNode;
 
+/** A node under an `absolute` parent: same shape, plus required x/y (§9.2). */
+export type LayoutAbsoluteChild = LayoutNode & { readonly x: number; readonly y: number };
+/** A node under a `center` parent: same shape, plus optional dx/dy offsets (§9.2). */
+export type LayoutCenterChild = LayoutNode & { readonly dx?: number; readonly dy?: number };
+
 // ---------------------------------------------------------------------------
 // The recursive node schema — one strictObject per §9.2 kind, discriminated on
-// `type`, three child contexts (flow / absolute / center) exactly like the
-// engine's keys_for(): `x`/`y` only under `absolute`, `dx`/`dy` only under
-// `center`, neither anywhere else (§9.2 — the model never emits raw coordinates).
+// `type`, three child contexts exactly like the engine's keys_for(): `x`/`y`
+// only under `absolute` (required), `dx`/`dy` only under `center` (optional),
+// neither anywhere else (§9.2 — the model never emits raw coordinates).
 // ---------------------------------------------------------------------------
 
 let flowUnionCache: z.ZodType<LayoutNode> | undefined;
+let absoluteUnionCache: z.ZodType<LayoutAbsoluteChild> | undefined;
+let centerUnionCache: z.ZodType<LayoutCenterChild> | undefined;
 
-/** The root / flow-child union (self-referential via z.lazy — the standard closure). */
 const flowChildNode: z.ZodType<LayoutNode> = z.lazy(
-  () => (flowUnionCache ??= z.discriminatedUnion("type", [
-    stackFlowVariant,
-    rowFlowVariant,
-    gridFlowVariant,
-    absoluteFlowVariant,
-    centerFlowVariant,
-    spacerFlowVariant,
-    textFlowVariant,
-    imageFlowVariant,
-    componentFlowVariant,
-    dividerFlowVariant,
-  ])),
+  () => (flowUnionCache ??= buildFlowUnion()),
+);
+const absoluteChildNode: z.ZodType<LayoutAbsoluteChild> = z.lazy(
+  () => (absoluteUnionCache ??= buildAbsoluteUnion()),
+);
+const centerChildNode: z.ZodType<LayoutCenterChild> = z.lazy(
+  () => (centerUnionCache ??= buildCenterUnion()),
 );
 
 const flowChildren = () =>
   cappedArray(LAYOUT_MAX_CHILDREN_PER_NODE, flowChildNode).min(1, {
+    message: "`children` needs at least one node (§9.2)",
+  });
+const absoluteChildren = () =>
+  cappedArray(LAYOUT_MAX_CHILDREN_PER_NODE, absoluteChildNode).min(1, {
+    message: "`children` needs at least one node (§9.2)",
+  });
+const centerChildren = () =>
+  cappedArray(LAYOUT_MAX_CHILDREN_PER_NODE, centerChildNode).min(1, {
     message: "`children` needs at least one node (§9.2)",
   });
 
@@ -392,6 +404,8 @@ const gridFlowVariant = z.strictObject({
   anchor: zAnchor.optional(),
   children: flowChildren(),
 });
+// An `absolute` node's children are absolute-context (x/y required); a `center`
+// node's children are center-context (dx/dy optional) — the engine's ParentKind.
 const absoluteFlowVariant = z.strictObject({
   type: z.literal("absolute"),
   ...zSizingFields,
@@ -400,9 +414,7 @@ const absoluteFlowVariant = z.strictObject({
   padding: zSides.optional(),
   dir: zFlowDir.optional(),
   anchor: zAnchor.optional(),
-  children: cappedArray(LAYOUT_MAX_CHILDREN_PER_NODE, absoluteChildNode).min(1, {
-    message: "`children` needs at least one node (§9.2)",
-  }),
+  children: absoluteChildren(),
 });
 const centerFlowVariant = z.strictObject({
   type: z.literal("center"),
@@ -412,9 +424,7 @@ const centerFlowVariant = z.strictObject({
   padding: zSides.optional(),
   dir: zFlowDir.optional(),
   anchor: zAnchor.optional(),
-  children: cappedArray(LAYOUT_MAX_CHILDREN_PER_NODE, centerChildNode).min(1, {
-    message: "`children` needs at least one node (§9.2)",
-  }),
+  children: centerChildren(),
 });
 const spacerFlowVariant = z.strictObject({
   type: z.literal("spacer"),
@@ -449,38 +459,59 @@ const dividerFlowVariant = z.strictObject({
   size: zDimension.optional(),
 });
 
-/** Absolute children: every kind gains required x/y (a container child's OWN
- *  children stay flow children, exactly like the engine's ParentKind walk). */
-const absoluteChildNode = z.discriminatedUnion("type", [
-  stackFlowVariant.extend({ x: zCoordinate, y: zCoordinate }),
-  rowFlowVariant.extend({ x: zCoordinate, y: zCoordinate }),
-  gridFlowVariant.extend({ x: zCoordinate, y: zCoordinate }),
-  absoluteFlowVariant.extend({ x: zCoordinate, y: zCoordinate }),
-  centerFlowVariant.extend({ x: zCoordinate, y: zCoordinate }),
-  spacerFlowVariant.extend({ x: zCoordinate, y: zCoordinate }),
-  textFlowVariant.extend({ x: zCoordinate, y: zCoordinate }),
-  imageFlowVariant.extend({ x: zCoordinate, y: zCoordinate }),
-  componentFlowVariant.extend({ x: zCoordinate, y: zCoordinate }),
-  dividerFlowVariant.extend({ x: zCoordinate, y: zCoordinate }),
-]);
+function buildFlowUnion() {
+  return z.discriminatedUnion("type", [
+    stackFlowVariant,
+    rowFlowVariant,
+    gridFlowVariant,
+    absoluteFlowVariant,
+    centerFlowVariant,
+    spacerFlowVariant,
+    textFlowVariant,
+    imageFlowVariant,
+    componentFlowVariant,
+    dividerFlowVariant,
+  ]);
+}
 
-/** Center children: optional dx/dy offsets, mirroring the engine's opt_finite_px. */
-const centerChildNode = z.discriminatedUnion("type", [
-  stackFlowVariant.extend({ dx: zCoordinate.optional(), dy: zCoordinate.optional() }),
-  rowFlowVariant.extend({ dx: zCoordinate.optional(), dy: zCoordinate.optional() }),
-  gridFlowVariant.extend({ dx: zCoordinate.optional(), dy: zCoordinate.optional() }),
-  absoluteFlowVariant.extend({ dx: zCoordinate.optional(), dy: zCoordinate.optional() }),
-  centerFlowVariant.extend({ dx: zCoordinate.optional(), dy: zCoordinate.optional() }),
-  spacerFlowVariant.extend({ dx: zCoordinate.optional(), dy: zCoordinate.optional() }),
-  textFlowVariant.extend({ dx: zCoordinate.optional(), dy: zCoordinate.optional() }),
-  imageFlowVariant.extend({ dx: zCoordinate.optional(), dy: zCoordinate.optional() }),
-  componentFlowVariant.extend({ dx: zCoordinate.optional(), dy: zCoordinate.optional() }),
-  dividerFlowVariant.extend({ dx: zCoordinate.optional(), dy: zCoordinate.optional() }),
-]);
+/** Every kind as an absolute child: + required x/y (a container child's own
+ *  children stay in their kind's context, exactly like the engine's ParentKind). */
+function buildAbsoluteUnion() {
+  const xy = { x: zCoordinate, y: zCoordinate };
+  return z.discriminatedUnion("type", [
+    stackFlowVariant.extend(xy),
+    rowFlowVariant.extend(xy),
+    gridFlowVariant.extend(xy),
+    absoluteFlowVariant.extend(xy),
+    centerFlowVariant.extend(xy),
+    spacerFlowVariant.extend(xy),
+    textFlowVariant.extend(xy),
+    imageFlowVariant.extend(xy),
+    componentFlowVariant.extend(xy),
+    dividerFlowVariant.extend(xy),
+  ]);
+}
+
+/** Every kind as a center child: + optional dx/dy (engine opt_finite_px → 0). */
+function buildCenterUnion() {
+  const dxdy = { dx: zCoordinate.optional(), dy: zCoordinate.optional() };
+  return z.discriminatedUnion("type", [
+    stackFlowVariant.extend(dxdy),
+    rowFlowVariant.extend(dxdy),
+    gridFlowVariant.extend(dxdy),
+    absoluteFlowVariant.extend(dxdy),
+    centerFlowVariant.extend(dxdy),
+    spacerFlowVariant.extend(dxdy),
+    textFlowVariant.extend(dxdy),
+    imageFlowVariant.extend(dxdy),
+    componentFlowVariant.extend(dxdy),
+    dividerFlowVariant.extend(dxdy),
+  ]);
+}
 
 // ---------------------------------------------------------------------------
-// Depth / node-count caps — the iterative walker (§9.5: bounded, never a
-// recursion-depth surprise; deterministic first-violation reporting).
+// Depth / node-count caps — the iterative walker (bounded, deterministic
+// first-violation reporting; §9.5's engine caps stay the backstop).
 // ---------------------------------------------------------------------------
 
 interface WalkFrame {
@@ -526,7 +557,7 @@ export function findLayoutTreeCapsViolation(root: unknown): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Args schema (§6.1 strict; mutating tool ⇒ idempotency key, per the kit README)
+// Args schema (§6.1 strict; a mutating tool carries an idempotency key — kit README)
 // ---------------------------------------------------------------------------
 
 export const layoutApplyArgsSchema = strictObject({
@@ -560,7 +591,11 @@ export const LAYOUT_APPLY_RESULT_SCHEMA = z.object({
   warnings: z.array(z.string()),
 });
 
-export type LayoutMovedLayer = { readonly layer: number; readonly from: number[]; readonly to: number[] };
+export interface LayoutMovedLayer {
+  readonly layer: number;
+  readonly from: number[];
+  readonly to: number[];
+}
 export type LayoutApplyOutcome = z.infer<typeof LAYOUT_APPLY_RESULT_SCHEMA>;
 
 /**
@@ -651,7 +686,10 @@ export function compactLayoutApplyReply(
 // catalog (engine-client errors.ts); missing-command cases get the patch hint.
 // ---------------------------------------------------------------------------
 
-const PATCHABLE_CODES: ReadonlySet<string> = new Set(["missing_required_commands", "unknown_command"]);
+const PATCHABLE_CODES: ReadonlySet<string> = new Set([
+  "missing_required_commands",
+  "unknown_command",
+]);
 
 /** Facade codes (engine-client) → nearest §13.3 catalog code. Mirrors the fleet's
  *  mapping (template-apply / style-apply) so every tool fails the same way. */
@@ -671,7 +709,8 @@ export function mapLayoutEngineFailure(failure: EngineFailure): ToolErr {
   const rawCode: string = failure.code;
   if (
     PATCHABLE_CODES.has(rawCode) ||
-    (failure.message.includes("unknown command") && failure.message.includes(LAYOUT_APPLY_COMMAND_ID))
+    (failure.message.includes("unknown command") &&
+      failure.message.includes(LAYOUT_APPLY_COMMAND_ID))
   ) {
     return err("engine_unavailable", "This engine build cannot serve declarative layout", {
       hint: ENGINE_PATCH_HINT,
@@ -701,7 +740,7 @@ export const layoutApplyTool = defineTool({
   args: layoutApplyArgsSchema,
   async run(ctx, args, signal) {
     // §9.4: one command, `{ root, options }` — transactional inside the engine
-    // (any invalid child ⇒ nothing moves, §9.5). `options` always present: an
+    // (any invalid child ⇒ nothing moves, §9.5). `options` is always present: an
     // empty object means the engine's defaults (document space, no safe area).
     const command: EngineCommand = {
       id: LAYOUT_APPLY_COMMAND_ID,
