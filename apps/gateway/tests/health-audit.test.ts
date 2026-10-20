@@ -18,20 +18,6 @@
 import type { NewAuditLog } from "@studio/db";
 import { describe, expect, it } from "vitest";
 import {
-  AUDIT_DROPPED,
-  AUDIT_REDACTED,
-  AUDIT_TRUNCATED,
-  AuditService,
-  type AuditExportRow,
-  type AuditPageOptions,
-  type AuditRow,
-  type AuditStoreLike,
-  decodeCursor,
-  encodeCursor,
-  redactMetadata
-} from "../src/services/audit.js";
-import { InMemoryKV, type KVLike } from "../src/services/limiter.js";
-import {
   buildProbes,
   dbProbe,
   enginePoolProbe,
@@ -53,6 +39,20 @@ import {
   type ProviderHealthSnapshot,
   type StorageLike
 } from "../src/routes/health.js";
+import {
+  AUDIT_DROPPED,
+  AUDIT_REDACTED,
+  AUDIT_TRUNCATED,
+  AuditService,
+  type AuditExportRow,
+  type AuditPageOptions,
+  type AuditRow,
+  type AuditStoreLike,
+  decodeCursor,
+  encodeCursor,
+  redactMetadata
+} from "../src/services/audit.js";
+import { InMemoryKV, type KVLike } from "../src/services/limiter.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures: deep-health fakes
@@ -315,6 +315,10 @@ describe("GET /v1/health/deep — pass/fail table (§13.1)", () => {
     readonly degraded: string[];
   }
 
+  const unconfiguredProviders = providers([
+    { provider: "anthropic", configured: false, circuit: "unknown" }
+  ]);
+
   const table: readonly Row[] = [
     {
       name: "all five real probes healthy → 200, nothing failed or degraded",
@@ -398,7 +402,7 @@ describe("GET /v1/health/deep — pass/fail table (§13.1)", () => {
     },
     {
       name: "providers: no configured provider → 503",
-      probes: () => [providersProbe(providers([{ provider: "anthropic", configured: false, circuit: "unknown" }]))],
+      probes: () => [providersProbe(unconfiguredProviders)],
       status: 503,
       ok: false,
       failed: ["model_providers"],
@@ -582,78 +586,87 @@ describe("buildProbes feature flags + stubProbes (§13.1)", () => {
 // ---------------------------------------------------------------------------
 
 describe("redactMetadata (§15.3 — never store raw prompts)", () => {
-  const table: readonly { readonly name: string; readonly input: unknown; readonly expected: Record<string, unknown> }[] =
-    [
-      {
-        name: "prompt keys never survive",
-        input: { prompt: "make a poster", user_prompt: "x", systemPrompt: "y" },
-        expected: { prompt: AUDIT_REDACTED, user_prompt: AUDIT_REDACTED, systemPrompt: AUDIT_REDACTED }
-      },
-      {
-        name: "secret / content / image keys never survive",
-        input: {
-          api_key: "sk-1",
-          Authorization: "Bearer t",
-          password: "p",
-          sessionToken: "t",
-          requestBody: "{}",
-          text: "hello",
-          imageUrl: "http://x/y.png"
-        },
-        expected: {
-          api_key: AUDIT_REDACTED,
-          Authorization: AUDIT_REDACTED,
-          password: AUDIT_REDACTED,
-          sessionToken: AUDIT_REDACTED,
-          requestBody: AUDIT_REDACTED,
-          text: AUDIT_REDACTED,
-          imageUrl: AUDIT_REDACTED
-        }
-      },
-      {
-        name: "safe context survives",
-        input: { tier: "standard", idempotencyKey: "idem-1", count: 3, flag: true },
-        expected: { tier: "standard", idempotencyKey: "idem-1", count: 3, flag: true }
-      },
-      {
-        name: "nested denied keys",
-        input: { layer: { text: "Headline", opacity: 0.5 }, messages: [{ role: "user" }] },
-        expected: { layer: { text: AUDIT_REDACTED, opacity: 0.5 }, messages: AUDIT_REDACTED }
-      },
-      {
-        name: "long strings truncated",
-        input: { note: "a".repeat(600) },
-        expected: { note: "a".repeat(512) + AUDIT_TRUNCATED }
-      },
-      {
-        name: "control characters stripped",
-        input: { note: "a\u0000b\u0007c" },
-        expected: { note: "abc" }
-      },
-      {
-        name: "raw string metadata dropped entirely (could be a prompt)",
-        input: "just a string",
-        expected: {}
-      },
-      { name: "array metadata dropped entirely", input: ["a", "b"], expected: {} },
-      { name: "null metadata", input: null, expected: {} },
-      { name: "undefined metadata", input: undefined, expected: {} },
-      {
-        name: "exotic values dropped",
-        input: { when: new Date(0), map: new Map() },
-        expected: { when: AUDIT_DROPPED, map: AUDIT_DROPPED }
-      },
-      { name: "NaN dropped", input: { n: Number.NaN }, expected: { n: AUDIT_DROPPED } },
-      {
-        name: "values beyond maxDepth dropped",
-        input: { a: { b: { c: { d: { e: "x" } } } } },
-        expected: { a: { b: { c: { d: { e: AUDIT_DROPPED } } } } }
-      },
-      {
-        name: "array items are walked",
-        input: { tags: ["a", "b", "c"] },
-        expected: { tags: ["a", "b", "c"] }
+  interface RedactRow {
+    readonly name: string;
+    readonly input: unknown;
+    readonly expected: Record<string, unknown>;
+  }
+
+  const table: readonly RedactRow[] = [
+    {
+      name: "prompt keys never survive",
+      input: { prompt: "make a poster", user_prompt: "x", systemPrompt: "y" },
+      expected: {
+        prompt: AUDIT_REDACTED,
+        user_prompt: AUDIT_REDACTED,
+        systemPrompt: AUDIT_REDACTED
       }
+    },
+    {
+      name: "secret / content / image keys never survive",
+      input: {
+        api_key: "sk-1",
+        Authorization: "Bearer t",
+        password: "p",
+        sessionToken: "t",
+        requestBody: "{}",
+        text: "hello",
+        imageUrl: "http://x/y.png"
+      },
+      expected: {
+        api_key: AUDIT_REDACTED,
+        Authorization: AUDIT_REDACTED,
+        password: AUDIT_REDACTED,
+        sessionToken: AUDIT_REDACTED,
+        requestBody: AUDIT_REDACTED,
+        text: AUDIT_REDACTED,
+        imageUrl: AUDIT_REDACTED
+      }
+    },
+    {
+      name: "safe context survives",
+      input: { tier: "standard", idempotencyKey: "idem-1", count: 3, flag: true },
+      expected: { tier: "standard", idempotencyKey: "idem-1", count: 3, flag: true }
+    },
+    {
+      name: "nested denied keys",
+      input: { layer: { text: "Headline", opacity: 0.5 }, messages: [{ role: "user" }] },
+      expected: { layer: { text: AUDIT_REDACTED, opacity: 0.5 }, messages: AUDIT_REDACTED }
+    },
+    {
+      name: "long strings truncated",
+      input: { note: "a".repeat(600) },
+      expected: { note: "a".repeat(512) + AUDIT_TRUNCATED }
+    },
+    {
+      name: "control characters stripped",
+      input: { note: "a\u0000b\u0007c" },
+      expected: { note: "abc" }
+    },
+    {
+      name: "raw string metadata dropped entirely (could be a prompt)",
+      input: "just a string",
+      expected: {}
+    },
+    { name: "array metadata dropped entirely", input: ["a", "b"], expected: {} },
+    { name: "null metadata", input: null, expected: {} },
+    { name: "undefined metadata", input: undefined, expected: {} },
+    {
+      name: "exotic values dropped",
+      input: { when: new Date(0), map: new Map() },
+      expected: { when: AUDIT_DROPPED, map: AUDIT_DROPPED }
+    },
+    { name: "NaN dropped", input: { n: Number.NaN }, expected: { n: AUDIT_DROPPED } },
+    {
+      name: "values beyond maxDepth dropped",
+      input: { a: { b: { c: { d: { e: "x" } } } } },
+      expected: { a: { b: { c: { d: { e: AUDIT_DROPPED } } } } }
+    },
+    {
+      name: "array items are walked",
+      input: { tags: ["a", "b", "c"] },
+      expected: { tags: ["a", "b", "c"] }
+    }
     ];
 
   for (const row of table) {
@@ -714,7 +727,7 @@ describe("AuditService.append (§22)", () => {
     expect(row.createdAt.getTime()).toBe(T0);
   });
 
-  it("is a plain append — repeating the same event writes two rows (no idempotency)", async () => {
+  it("is a plain append — repeating the same event writes two rows", async () => {
     const { svc, store } = makeAudit();
     await svc.append("role.changed", { organizationId: "org-a", target: "member:user-2" });
     await svc.append("role.changed", { organizationId: "org-a", target: "member:user-2" });

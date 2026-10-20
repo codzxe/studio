@@ -964,7 +964,7 @@ export interface CatalogDeps {
 export interface RegisterTemplateInput {
   readonly caller: CatalogCaller;
   readonly workspaceId: string;
-  /** The validated RAW body manifest (extras preserved for the jsonb column). */
+  /** The validated body manifest (strict schema — extras were a 422, not kept). */
   readonly manifest: TemplateManifest;
 }
 

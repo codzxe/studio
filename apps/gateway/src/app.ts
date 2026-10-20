@@ -4,18 +4,20 @@
 // here is injectable and testable via `app.request()`. This file OWNS:
 //   - the middleware order (§13.3 envelopes, §22 correlation, §1.5 rate limits),
 //   - mounting every landed /v1 route group through its OWN documented wire
-//     pattern (factory or const+middleware — whichever export exists),
-//   - the adapters that bridge the one W4-B AuthProvider to each sibling's
+//     pattern — defensive import shape: each sibling shipped either a deps
+//     factory or a const router (+middleware/setter); buildApp calls whichever
+//     export exists so a renamed factory never silently unmounts a group,
+//   - the adapters that bridge the ONE W4-B AuthProvider onto each sibling's
 //     auth seam (workspaces UserResolver, documents PrincipalResolver, runs
 //     AuthLike, SSE RunEventsAuthLike, uploads context variable),
-//   - `createDefaultDeps(env)` — the production DI graph, every seam
+//   - `createDefaultDeps(env)` — the production DI graph; every seam is
 //     overridable for tests (docs/AGENTS.md "everything injectable").
 //
-// SIBLING FILES ARE READ-ONLY for this module: routes/, services/, middleware/,
-// auth/, authz/ export their own seams; only src/app.ts + src/types.ts are owned
-// by the wiring wave (task W4-R).
+// Sibling files are READ-ONLY for this module: routes/, services/, middleware/,
+// auth/, authz/ export their own seams; the wiring wave owns only src/app.ts +
+// src/types.ts (task W4-R).
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { RunEventBus } from "@studio/agent";
 import { err, ok, type GatewayEnv, type PlanId, type Result } from "@studio/config";
@@ -32,17 +34,27 @@ import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { Logger } from "pino";
 import { createAuthResolvers } from "./auth/api-keys.js";
-import { createDefaultAuthProvider, extractBearerToken, requireAuth, type AuthProvider, type SessionContext } from "./middleware/auth-context.js";
+import {
+  createDefaultAuthProvider,
+  extractBearerToken,
+  requireAuth,
+  type AuthProvider,
+  type SessionContext,
+} from "./middleware/auth-context.js";
 import { requestContext, type RequestContext } from "./middleware/request-context.js";
 import { uploadCap } from "./middleware/caps.js";
 import { rateLimit, type RateLimitOptions } from "./middleware/rate-limit.js";
 import { AppError, errorMapper, notFoundHandler } from "./middleware/error-mapper.js";
 import { requestLogger } from "./middleware/logger.js";
 import { requestId } from "./middleware/request-id.js";
-import { createAssetsService, DEFAULT_UPLOAD_LIMITS, type AssetsService } from "./services/assets.js";
-import { drizzleDocumentsStore, type TemplateCatalogLike } from "./services/documents.js";
+import {
+  createAssetsService,
+  DEFAULT_UPLOAD_LIMITS,
+  type AssetsService,
+} from "./services/assets.js";
+import { drizzleDocumentsStore, type TemplateManifestLike } from "./services/documents.js";
 import { DrizzleEventStore } from "./services/event-store.js";
-import { InMemoryKV, RateLimiter } from "./services/limiter.js";
+import { InMemoryKV, RateLimiter, type KVLike } from "./services/limiter.js";
 import {
   billingFromLedger,
   drizzleRunsStore,
@@ -50,20 +62,19 @@ import {
   type EnqueueLike,
   type EventBusLike,
 } from "./services/runs.js";
-import { createDrizzleAudit, createLedgerBilling, createWorkspaceDb } from "./services/workspaces.js";
-import { registerRoutes } from "./routes/index.js";
-import { withDocumentDeps, documentDepsMiddleware, documentRoutes, type DocumentRoutesDeps, type PrincipalResolver } from "./routes/documents.js";
-import { createWorkspaceAuth, inviteRoutes, workspaceRoutes, type WorkspaceAuth, type WorkspaceRoutesDeps } from "./routes/workspaces.js";
-import { mountRunRoutes, runsServices, runRoutes, type RunsDeps } from "./routes/runs.js";
 import {
-  createRunEventRoutes,
-  runEventRoutes as runEventRoutesConst,
-  wireRunEventRoutes,
-  type RunEventsAuthLike,
-  type RunEventsDeps,
-  type RunLookupLike,
-} from "./routes/runs-events.js";
-import { uploadRoutes, type UploadsDeps } from "./routes/uploads.js";
+  createDrizzleAudit,
+  createLedgerBilling,
+  createWorkspaceDb,
+} from "./services/workspaces.js";
+import { registerRoutes } from "./routes/index.js";
+import type { Probe } from "./routes/health.js";
+import { createWorkspaceAuth } from "./routes/workspaces.js";
+import type { DocumentRoutesDeps, PrincipalResolver } from "./routes/documents.js";
+import type { RunsDeps } from "./routes/runs.js";
+import type { RunEventsAuthLike, RunEventsDeps, RunLookupLike } from "./routes/runs-events.js";
+import type { UploadsDeps } from "./routes/uploads.js";
+import type { WorkspaceAuth, WorkspaceRoutesDeps } from "./routes/workspaces.js";
 import type { TransportEnv } from "./env.js";
 import type {
   AppEnv,
@@ -71,14 +82,22 @@ import type {
   GatewayDeps,
   SessionResolver,
   StripeLike,
-  TemplateCatalogLike as GatewayCatalogSeam,
 } from "./types.js";
+
+// Route modules as namespaces — the defensive-import seam: every mount below
+// resolves its router through these at runtime (factory OR const), so mounting
+// survives either wire pattern the sibling waves shipped.
+import * as workspacesRoutesModule from "./routes/workspaces.js";
+import * as documentsRoutesModule from "./routes/documents.js";
+import * as runsRoutesModule from "./routes/runs.js";
+import * as runEventsRoutesModule from "./routes/runs-events.js";
+import * as uploadsRoutesModule from "./routes/uploads.js";
 
 // ---------------------------------------------------------------------------
 // Rate-limit presets (§1.5 rule 5, §15.2 "rate limits per IP/user/workspace")
 // ---------------------------------------------------------------------------
 
-/** The three standard policies buildApp mounts (numbers from the W4-R task). */
+/** The three standard policies buildApp mounts (numbers per the W4-R task). */
 export const RATE_LIMIT_PRESETS = {
   /** Global: 100 events/min per client IP — the unauthenticated floor. */
   global: { scope: "api.v1.global", limit: 100, windowSec: 60, keyBy: "ip" },
@@ -95,9 +114,9 @@ export const RATE_LIMIT_PRESETS = {
 /**
  * Everything buildApp accepts. The W1-H fields (env/logger/version/probes/
  * startedAt/mount) are REQUIRED and unchanged — every sibling test boots on
- * them. Each GatewayDeps seam (src/types.ts) is optional here; a route group
- * mounts only when ALL of its seams are present (or its pre-baked group deps
- * below are passed, which tests use to fake the service layer per group).
+ * exactly them. Each GatewayDeps seam (src/types.ts) is optional here: a route
+ * group mounts only when all of ITS seams are present, or when its pre-baked
+ * group deps below are passed (tests fake the service layer per group).
  */
 export interface AppDeps extends Partial<GatewayDeps> {
   /** Transport env (parsed once at bootstrap, §4 / ADR-0002). */
@@ -107,7 +126,7 @@ export interface AppDeps extends Partial<GatewayDeps> {
   /** Service version string reported by /v1/health and /v1/openapi.json. */
   readonly version: string;
   /** Dependency probes for GET /v1/health/deep (§13.1) — required (W1-H). */
-  readonly probes: readonly import("./routes/health.js").Probe[];
+  readonly probes: readonly Probe[];
   /** Epoch ms uptime anchor — injected so tests are deterministic. */
   readonly startedAt: number;
   /**
@@ -117,8 +136,8 @@ export interface AppDeps extends Partial<GatewayDeps> {
    */
   readonly mount?: (app: Hono<AppEnv>) => void;
 
-  // -- pre-baked per-group deps (tests / partial wiring): mounted as-is and
-  //    preferred over the adapter-built deps from the seams above. --
+  // Pre-baked per-group deps (tests / partial wiring): mounted as-is, and
+  // preferred over the adapter-built deps from the GatewayDeps seams.
   readonly workspacesDeps?: WorkspaceRoutesDeps;
   readonly documentsDeps?: DocumentRoutesDeps;
   readonly runsDeps?: RunsDeps;
@@ -134,28 +153,66 @@ type FullEnv = AppEnv & {
   };
 };
 
-/** Uploads' injected context variable, declared locally (single cast below). */
+/** The uploads router's injected context variable (single cast below). */
 type UploadsMountEnv = {
   Variables: AppEnv["Variables"] & { uploadsDeps: UploadsDeps | undefined };
 };
 
 // ---------------------------------------------------------------------------
+// Defensive import shape — resolve routers from whichever export exists
+// ---------------------------------------------------------------------------
+
+/** Runtime view of a route module: factories and/or const routers. */
+type RouteModuleShape = Record<string, unknown>;
+
+function shape(module: object): RouteModuleShape {
+  return module as unknown as RouteModuleShape;
+}
+
+/** The `<name>(deps)` factory if the module exports one. */
+function factoryOf(
+  module: RouteModuleShape,
+  name: string,
+): ((deps: unknown) => Hono<AppEnv>) | undefined {
+  const candidate = module[name];
+  return typeof candidate === "function"
+    ? (candidate as (deps: unknown) => Hono<AppEnv>)
+    : undefined;
+}
+
+/** The exported const router, if the module ships one. */
+function routerOf(module: RouteModuleShape, name: string): Hono<AppEnv> | undefined {
+  const candidate = module[name];
+  return candidate instanceof Hono ? (candidate as Hono<AppEnv>) : undefined;
+}
+
+/** A named export of any other callable shape (middleware/setter helpers). */
+function helperOf(module: RouteModuleShape, name: string): unknown {
+  const candidate = module[name];
+  return typeof candidate === "function" ? candidate : undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Session resolution — ONE resolution per request, shared by every adapter
 // ---------------------------------------------------------------------------
 
-/** Memoized session resolution over the injected AuthProvider (per request). */
-export interface SessionResolver {
+/**
+ * Memoized per-request session resolution over the injected AuthProvider.
+ * (Named `RequestSessionResolver` to stay distinct from the engine-session
+ * SessionResolver seam in src/types.ts.)
+ */
+export interface RequestSessionResolver {
   resolve(request: Request): Promise<SessionContext | null>;
 }
 
 /**
- * Wraps a W4-B AuthProvider with a per-request WeakMap so the auth'd rate-limit
- * priming, each group's adapter and the uploads gate resolve the caller at most
- * once per request. Resolution order mirrors requireAuth: bearer API key first,
- * then cookie session; a provider resolving `undefined` is treated as "no
- * session" (fail closed, W4-B contract).
+ * Wraps a W4-B AuthProvider with a per-request WeakMap so the rate-limit
+ * priming, each group's auth adapter and the uploads gate resolve the caller
+ * at most once per request. Resolution order mirrors requireAuth: bearer API
+ * key first, then cookie session; a provider resolving `undefined` is treated
+ * as "no session" (fail closed, W4-B contract).
  */
-export function makeSessionResolver(provider: AuthProvider): SessionResolver {
+export function makeSessionResolver(provider: AuthProvider): RequestSessionResolver {
   const memo = new WeakMap<Request, SessionContext | null>();
   const resolveOnce = async (request: Request): Promise<SessionContext | null> => {
     let session: SessionContext | null = null;
@@ -183,10 +240,10 @@ export function makeSessionResolver(provider: AuthProvider): SessionResolver {
 /**
  * Session-priming middleware for org-keyed rate-limit buckets (§15.2): resolves
  * the caller and annotates `c.auth` WITHOUT rejecting — auth stays lazy per
- * route (each group owns its 401), so unauthenticated surfaces still get their
- * own typed envelopes while the limiter can key by workspace when present.
+ * route (each group owns its 401), and unauthenticated requests simply degrade
+ * to IP buckets inside the limiter.
  */
-function primeSession(resolver: SessionResolver): MiddlewareHandler<AppEnv> {
+function primeSession(resolver: RequestSessionResolver): MiddlewareHandler<AppEnv> {
   return createMiddleware<AppEnv>(async (c, next) => {
     const session = await resolver.resolve(c.req.raw);
     if (session !== null) {
@@ -199,14 +256,15 @@ function primeSession(resolver: SessionResolver): MiddlewareHandler<AppEnv> {
 /** Injects the uploads service + limits context variable (routes/uploads.ts). */
 function uploadsContext(deps: UploadsDeps): MiddlewareHandler<AppEnv> {
   return createMiddleware<AppEnv>(async (c, next) => {
-    // Single local cast: the variable belongs to the uploads router's env.
+    // Single local cast: the variable belongs to the uploads router's env
+    // (fleet precedent: routes/runs.ts runsServices).
     (c as unknown as Context<UploadsMountEnv>).set("uploadsDeps", deps);
     await next();
   });
 }
 
 // ---------------------------------------------------------------------------
-// Auth adapters — the one AuthProvider bridged onto every sibling seam
+// Auth adapters — the ONE AuthProvider bridged onto every sibling seam
 // ---------------------------------------------------------------------------
 
 /** All four per-group auth adapters built from one provider (+ plan lookup). */
@@ -224,7 +282,7 @@ export interface SessionAuthAdapters {
 /**
  * Bridge the single W4-B AuthProvider onto each sibling's auth seam. Tests use
  * this to wire fake providers through the REAL mount paths; buildApp calls the
- * individual adapters below with its shared memoized resolver.
+ * individual adapters with its shared memoized resolver.
  */
 export function sessionAuthAdapters(
   provider: AuthProvider,
@@ -240,7 +298,7 @@ export function sessionAuthAdapters(
 }
 
 /** W4-E seam: createWorkspaceAuth over the provider (userId-only context). */
-function workspacesAuth(resolver: SessionResolver): WorkspaceAuth {
+function workspacesAuth(resolver: RequestSessionResolver): WorkspaceAuth {
   return createWorkspaceAuth(async (c) => {
     const session = await resolver.resolve(c.req.raw);
     return session === null ? null : { userId: session.userId };
@@ -249,7 +307,7 @@ function workspacesAuth(resolver: SessionResolver): WorkspaceAuth {
 
 /** W4-F seam: PrincipalResolver — session + §14.1 plan, catalog 401 on miss. */
 function documentsPrincipal(
-  resolver: SessionResolver,
+  resolver: RequestSessionResolver,
   resolvePlan: (organizationId: string) => Promise<PlanId>,
 ): PrincipalResolver {
   return {
@@ -269,7 +327,7 @@ function documentsPrincipal(
 }
 
 /** W4-G seam: AuthLike — Result<RunCaller>, catalog `unauthorized` on miss. */
-function runsAuth(resolver: SessionResolver): AuthLike {
+function runsAuth(resolver: RequestSessionResolver): AuthLike {
   return {
     async authenticate(request) {
       const session = await resolver.resolve(request);
@@ -282,13 +340,13 @@ function runsAuth(resolver: SessionResolver): AuthLike {
 }
 
 // ---------------------------------------------------------------------------
-// Bus / run-lookup adapters (drizzle seams the SSE + runs groups need)
+// Bus / run-lookup / plan adapters (drizzle seams the groups need)
 // ---------------------------------------------------------------------------
 
 /**
- * Run existence + tenant root for the SSE gate (§15.1: the lookup is by run id
- * alone; the ROUTE compares the org, so foreign and missing runs stay the same
- * 404). A 5-line drizzle adapter over @studio/db — the store layer is W4-G's.
+ * Run existence + tenant root for the SSE gate (§15.1: lookup by run id alone;
+ * the ROUTE compares the org, so foreign and missing runs stay the same 404).
+ * A five-line drizzle adapter over @studio/db — the store layer is W4-G's.
  */
 export function drizzleRunLookup(db: Db): RunLookupLike {
   return {
@@ -305,10 +363,10 @@ export function drizzleRunLookup(db: Db): RunLookupLike {
 }
 
 /**
- * W4-G EventBusLike over the real @studio/agent bus: `run.cancelled`
- * publishes flow through the same durable store the SSE stream backfills
- * from. Bus failure codes map onto the §13.3 catalog (organization_mismatch
- * → forbidden, transport/persist failures → storage_error).
+ * W4-G EventBusLike over the real @studio/agent bus: `run.cancelled` publishes
+ * flow through the same durable store the SSE stream backfills from. Bus
+ * failure codes map onto the §13.3 catalog (organization_mismatch → forbidden,
+ * persist/transport failures → storage_error).
  */
 export function runCancelEvents(bus: RunEventBus): EventBusLike {
   return {
@@ -322,7 +380,7 @@ export function runCancelEvents(bus: RunEventBus): EventBusLike {
       if (!published.ok) {
         const code = published.code === "organization_mismatch" ? "forbidden" : "storage_error";
         return err(code, "The run cancellation event could not be published.", {
-          hint: "The durable event store rejected the append; the cancel is retried on the next sync.",
+          hint: "The durable event store rejected the append; it is retried on the next sync.",
           retryable: published.retryable ?? true,
         });
       }
@@ -344,23 +402,27 @@ export function drizzlePlanResolver(db: Db): (organizationId: string) => Promise
       .innerJoin(plansTable, eq(subscriptions.planId, plansTable.id))
       .where(eq(subscriptions.organizationId, organizationId))
       .limit(1);
-    const raw = rows[0]?.code;
-    return typeof raw === "string" && raw === "starter" || raw === "pro" || raw === "business"
-      ? raw
-      : "starter";
+    const code: unknown = rows[0]?.code;
+    return code === "pro" || code === "business" ? code : "starter";
   };
 }
 
 // ---------------------------------------------------------------------------
-// Default implementations (documented on GatewayDeps, src/types.ts)
+// Default implementations (each default is documented on GatewayDeps)
 // ---------------------------------------------------------------------------
 
 /** Money path stays CLOSED until the billing repo wave ships the drizzle store. */
 function ledgerUnavailable(): never {
-  throw new AppError(503, "service_unavailable", "The credit ledger is not wired in this deployment.", {
-    hint: "Inject the drizzle credit-ledger repository via GatewayDeps.ledger (billing repo wave, §14.2).",
-    retryable: true,
-  });
+  throw new AppError(
+    503,
+    "service_unavailable",
+    "The credit ledger is not wired in this deployment.",
+    {
+      hint: "Inject the drizzle credit-ledger repository via GatewayDeps.ledger " +
+        "(billing repo wave, §14.2).",
+      retryable: true,
+    },
+  );
 }
 
 /** Fail-closed LedgerStore default (§14.2): every method answers a typed 503. */
@@ -379,46 +441,48 @@ export class UnavailableLedgerStore implements LedgerStore {
 /**
  * BullMQ producer seam default: the queue producer lives in the worker
  * (apps/worker/src/queues.ts). Until bootstrap injects it, run creates fail
- * LOUD with the same envelope W4-G maps for queue outages (run marked failed,
- * reservation released) — never silently dropped.
+ * LOUD with the envelope W4-G maps for queue outages (run marked failed,
+ * reservation released) — never a silent drop.
  */
 export class UnavailableEnqueue implements EnqueueLike {
   async enqueue(): Promise<Result<{ readonly jobId: string }>> {
     return err("engine_unavailable", "The run queue producer is not wired in this process.", {
-      hint: "Bootstrap must inject the BullMQ EnqueueLike adapter over the shared Valkey (apps/worker/src/queues.ts).",
+      hint: "Bootstrap must inject the BullMQ EnqueueLike adapter over the shared " +
+        "Valkey (apps/worker/src/queues.ts).",
       retryable: true,
     });
   }
 }
 
-/** Template-catalog default: services/catalog.ts does not exist yet (§7 wave). */
-export class EmptyTemplateCatalog implements GatewayCatalogSeam {
-  async get(): Promise<TemplateManifestLikeLocal | undefined> {
-    return undefined; // every template ref answers "not found" until the catalog lands
+/**
+ * Template-catalog default: services/catalog.ts does not exist yet (§7 wave),
+ * so every template ref resolves "not found" — document creation works without
+ * templateId and the §5.5 ref validation fails closed.
+ */
+export class EmptyTemplateCatalog {
+  async get(): Promise<TemplateManifestLike | undefined> {
+    return undefined;
   }
 }
-type TemplateManifestLikeLocal = { readonly id: string; readonly version: string };
 
 /** Stripe default (§14.3): typed not-configured failures, never pretend-success. */
 export class NoopStripe implements StripeLike {
   readonly configured = false;
-  async createCheckoutSession(): Promise<Result<{ readonly url: string }>> {
+  private fail(): Result<never> {
     return err("internal_error", "Stripe billing is not configured in this deployment.", {
-      hint: "Set STRIPE_SECRET_KEY and inject a real StripeLike adapter (billing-routes wave, §14.3).",
+      hint: "Set STRIPE_SECRET_KEY and inject a real StripeLike adapter " +
+        "(billing-routes wave, §14.3).",
       retryable: false,
     });
   }
-  async createPortalSession(): Promise<Result<{ readonly url: string }>> {
-    return err("internal_error", "Stripe billing is not configured in this deployment.", {
-      hint: "Set STRIPE_SECRET_KEY and inject a real StripeLike adapter (billing-routes wave, §14.3).",
-      retryable: false,
-    });
+  createCheckoutSession(): Promise<Result<{ readonly url: string }>> {
+    return Promise.resolve(this.fail() as Result<{ readonly url: string }>);
   }
-  async constructWebhookEvent(): Promise<Result<unknown>> {
-    return err("internal_error", "Stripe billing is not configured in this deployment.", {
-      hint: "Set STRIPE_WEBHOOK_SECRET and inject a real StripeLike adapter (billing-routes wave, §14.3).",
-      retryable: false,
-    });
+  createPortalSession(): Promise<Result<{ readonly url: string }>> {
+    return Promise.resolve(this.fail() as Result<{ readonly url: string }>);
+  }
+  constructWebhookEvent(): Promise<Result<unknown>> {
+    return Promise.resolve(this.fail());
   }
 }
 
@@ -446,7 +510,8 @@ function openApiDocument(
       title: "Studio Gateway API",
       version,
       summary:
-        "REST + SSE surface (spec §13.1). Placeholder document generated from the mounted route groups; the API-contract wave owns the authoritative schema.",
+        "REST + SSE surface (spec §13.1). Placeholder generated from the mounted " +
+        "route groups; the API-contract wave owns the authoritative schema.",
     },
     servers: [{ url: "/v1" }],
     paths,
@@ -463,23 +528,24 @@ function op(summary: string): { readonly summary: string } {
 
 /**
  * Build the Hono app. Middleware order is load-bearing (§13.3, §22):
- *   1. errorMapper    — outermost: even request-id/logger failures get a typed
- *                       envelope (never a stack trace, §13.3).
- *   2. requestId     — adopt/generate + echo X-Request-Id (§22).
- *   3. requestLogger — per-request pino child (requestId bound).
- *   4. requestContext — §22 org/user ids re-bound onto that child + `reqCtx`.
- *                       MUST follow requestLogger (it children `c.get("logger")`).
- *   5. rate limits   — global 100/min per IP (health probes skipped); then,
- *                       per authenticated group, a session-prime + 600/min
- *                       org-keyed preset, with a tighter 20/min org+ip preset
- *                       on POST /v1/uploads (§1.5 rule 5, §15.2).
- *   6. auth          — LAZY per route group: each group keeps its own 401
- *                       (never a global auth wall); the uploads group mounts
- *                       W4-B `requireAuth` (code `unauthenticated` — see the
- *                       reconciliation note in src/types.ts).
+ *   1. errorMapper     — outermost: even request-id/logger failures get a typed
+ *                        envelope (never a stack trace, §13.3).
+ *   2. requestId       — adopt/generate + echo X-Request-Id (§22).
+ *   3. requestLogger   — per-request pino child (requestId bound).
+ *   4. requestContext  — §22 org/user ids re-bound onto that child + `reqCtx`.
+ *                        MUST follow requestLogger (it children c.get("logger")).
+ *   5. rate limits     — global 100/min per IP (health probes skipped); then,
+ *                        per authenticated group, session-priming + the
+ *                        600/min org-keyed preset, plus a tighter 20/min
+ *                        org+ip preset on POST /v1/uploads (§1.5 rule 5, §15.2).
+ *   6. auth            — LAZY per route group: each group keeps its own 401
+ *                        (never a global auth wall). The uploads group mounts
+ *                        W4-B `requireAuth` (401 code `unauthenticated` — see
+ *                        the reconciliation note in src/types.ts).
  * Then the deps.mount hook (test routes win), the /v1 group mounts, the W1-H
- * registry (health + typed 501 catch-all LAST), and the 404 envelope for
- * everything else.
+ * registry (health + typed 501 catch-all LAST), and the typed 404 for
+ * everything else. Bootstrap/shutdown (src/index.ts, graceful drain) is
+ * unchanged by this wave.
  */
 export function buildApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -499,8 +565,17 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
     deps.mount(app);
   }
 
-  // --- resolve the route groups (pre-baked deps override the seam-built) ----
+  // --- resolve the group deps (pre-baked overrides win over seam-built) -----
   const resolver = deps.auth !== undefined ? makeSessionResolver(deps.auth) : undefined;
+  const workspaces = deps.workspacesDeps ?? buildWorkspacesDeps(deps, resolver);
+  const documents = deps.documentsDeps ?? buildDocumentsDeps(deps, resolver);
+  const runs = deps.runsDeps ?? buildRunsDeps(deps, resolver);
+  const runEvents = deps.runEventsDeps ?? buildRunEventsDeps(deps, resolver);
+  const uploads = deps.uploadsDeps ?? buildUploadsDeps(deps);
+  const uploadsMounted = deps.auth !== undefined; // router gates itself; store may 503
+
+  // --- the /v1 sub-app ------------------------------------------------------
+  const v1 = new Hono<AppEnv>();
   const openapiPaths: Record<string, OpenApiOperations> = {
     "/health": { get: op("Liveness") },
     "/health/deep": { get: op("Dependency checks") },
@@ -508,25 +583,25 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
   };
   const authedPrefixes = new Set<string>();
 
-  const workspaces = deps.workspacesDeps ?? buildWorkspacesDeps(deps, resolver);
-  const documents = deps.documentsDeps ?? buildDocumentsDeps(deps, resolver);
-  const runs = deps.runsDeps ?? buildRunsDeps(deps, resolver);
-  const runEvents = deps.runEventsDeps ?? buildRunEventsDeps(deps, resolver);
-  const uploads = deps.uploadsDeps ?? buildUploadsDeps(deps);
-
-  // --- the /v1 sub-app ------------------------------------------------------
-  const v1 = new Hono<AppEnv>();
-
   if (workspaces !== undefined) {
     authedPrefixes.add("/workspaces");
     authedPrefixes.add("/invites");
     openapiPaths["/workspaces"] = { get: op("List my workspaces"), post: op("Create a workspace") };
-    openapiPaths["/workspaces/{id}"] = { get: op("Read workspace"), patch: op("Rename / brand tokens") };
+    openapiPaths["/workspaces/{id}"] = {
+      get: op("Read workspace"),
+      patch: op("Rename / brand tokens"),
+    };
     openapiPaths["/workspaces/{id}/members"] = { get: op("List members") };
     openapiPaths["/workspaces/{id}/members/{userId}"] = { delete: op("Remove member") };
-    openapiPaths["/workspaces/{id}/invites"] = { get: op("List invites"), post: op("Create invite") };
+    openapiPaths["/workspaces/{id}/invites"] = {
+      get: op("List invites"),
+      post: op("Create invite"),
+    };
     openapiPaths["/workspaces/{id}/invites/{inviteId}"] = { delete: op("Cancel invite") };
-    openapiPaths["/invites/{token}"] = { get: op("View invite"), delete: op("Cancel invite by token") };
+    openapiPaths["/invites/{token}"] = {
+      get: op("View invite"),
+      delete: op("Cancel invite by token"),
+    };
     openapiPaths["/invites/{token}/accept"] = { post: op("Accept invite") };
   }
   if (documents !== undefined) {
@@ -538,7 +613,9 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
       delete: op("Archive (soft delete)"),
     };
     openapiPaths["/documents/{id}/versions"] = { get: op("Version timeline") };
-    openapiPaths["/documents/{id}/versions/{versionId}/restore"] = { post: op("Restore as new version") };
+    openapiPaths["/documents/{id}/versions/{versionId}/restore"] = {
+      post: op("Restore as new version"),
+    };
   }
   if (runs !== undefined || runEvents !== undefined) {
     authedPrefixes.add("/runs");
@@ -551,7 +628,6 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
   if (runEvents !== undefined) {
     openapiPaths["/runs/{id}/events"] = { get: op("SSE run-event stream (§13.2)") };
   }
-  const uploadsMounted = deps.auth !== undefined;
   if (uploadsMounted) {
     authedPrefixes.add("/uploads");
     authedPrefixes.add("/assets");
@@ -560,8 +636,8 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
     openapiPaths["/assets/{id}"] = { get: op("Asset + signed URL"), delete: op("Delete asset") };
   }
 
-  // Session-prime + org-keyed preset for the authenticated groups (§15.2):
-  // unauthenticated requests degrade to IP buckets inside the middleware —
+  // Session-prime + the org-keyed preset for authenticated groups (§15.2).
+  // Unauthenticated requests degrade to IP buckets inside the middleware —
   // never a single global bucket one tenant could exhaust for everyone.
   if (resolver !== undefined && deps.limiter !== undefined) {
     const prime = primeSession(resolver);
@@ -576,45 +652,93 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
 
   v1.get("/openapi.json", (c) => c.json(openApiDocument(deps.version, openapiPaths)));
 
-  // --- group mounts — each router's OWN documented wire pattern --------------
+  // --- group mounts: defensive import shape (factory OR const, per module) --
+  const wsMod = shape(workspacesRoutesModule);
   if (workspaces !== undefined) {
-    // W4-E pattern: two factory routers (invites pinned at /v1/invites, §13.1).
-    v1.route("/workspaces", workspaceRoutes(workspaces));
-    v1.route("/invites", inviteRoutes(workspaces));
+    const workspacesFactory = factoryOf(wsMod, "workspaceRoutes");
+    if (workspacesFactory !== undefined) {
+      v1.route("/workspaces", workspacesFactory(workspaces));
+      const inviteFactory = factoryOf(wsMod, "inviteRoutes");
+      if (inviteFactory !== undefined) {
+        v1.route("/invites", inviteFactory(workspaces));
+      }
+    }
   }
+
   if (documents !== undefined) {
-    // W4-F pattern: the blessed `withDocumentDeps(deps)` wrapper.
-    v1.route("/documents", withDocumentDeps(documents));
+    const docsMod = shape(documentsRoutesModule);
+    const withDeps = factoryOf(docsMod, "withDocumentDeps");
+    const router =
+      withDeps !== undefined
+        ? withDeps(documents)
+        : documentsFallbackRouter(docsMod, documents);
+    if (router !== undefined) {
+      v1.route("/documents", router);
+    }
   }
+
   if (runs !== undefined) {
-    // W4-G pattern: the one-call wiring helper (path relative to /v1).
-    mountRunRoutes(v1, runs, { path: "/runs" });
+    const runsMod = shape(runsRoutesModule);
+    const mount = helperOf(runsMod, "mountRunRoutes");
+    if (mount !== undefined) {
+      (mount as (app: Hono<AppEnv>, deps: RunsDeps, options?: { readonly path?: string }) => void)(
+        v1,
+        runs,
+        { path: "/runs" },
+      );
+    } else {
+      const router = routerOf(runsMod, "runRoutes");
+      const inject = helperOf(runsMod, "runsServices");
+      if (router !== undefined && inject !== undefined) {
+        const middleware = (inject as (deps: RunsDeps) => MiddlewareHandler<AppEnv>)(runs);
+        v1.use("/runs", middleware);
+        v1.use("/runs/*", middleware);
+        v1.route("/runs", router);
+      }
+    }
   }
+
   if (runEvents !== undefined) {
-    // W4-H pattern: deps factory mounted at the /v1 root (internal /runs/:id/events).
-    v1.route("/", createRunEventRoutes(runEvents));
+    const eventsMod = shape(runEventsRoutesModule);
+    const factory = factoryOf(eventsMod, "createRunEventRoutes");
+    if (factory !== undefined) {
+      v1.route("/", factory(runEvents));
+    } else {
+      const router = routerOf(eventsMod, "runEventRoutes");
+      const wire = helperOf(eventsMod, "wireRunEventRoutes");
+      if (router !== undefined && wire !== undefined) {
+        (wire as (deps: RunEventsDeps | null) => void)(runEvents);
+        v1.route("/", router);
+      }
+    }
   }
+
   if (uploadsMounted) {
-    if (deps.limiter !== undefined) {
-      // §20.2: reject on the declared Content-Length before anything is read.
-      v1.use("/uploads", uploadCap());
+    const uploadsMod = shape(uploadsRoutesModule);
+    const uploadsRouter = routerOf(uploadsMod, "uploadRoutes");
+    if (uploadsRouter !== undefined) {
+      if (deps.limiter !== undefined) {
+        // §20.2: reject on the declared Content-Length before anything is read.
+        v1.use("/uploads", uploadCap());
+      }
+      // Lazy per-route auth (§13): the uploads router consumes the `auth`
+      // context variable, so the W4-B gate mounts here — 401 `unauthenticated`.
+      const authGate =
+        requireAuth<FullEnv>(deps.auth as AuthProvider) as unknown as MiddlewareHandler<AppEnv>;
+      v1.use("/uploads", authGate);
+      v1.use("/assets", authGate);
+      v1.use("/assets/*", authGate);
+      if (deps.limiter !== undefined) {
+        v1.use("/uploads", rateLimit({ limiter: deps.limiter }, RATE_LIMIT_PRESETS.uploads));
+      }
+      if (uploads !== undefined) {
+        const inject = uploadsContext(uploads);
+        v1.use("/uploads", inject);
+        v1.use("/assets", inject);
+        v1.use("/assets/*", inject);
+      }
+      v1.route("/", uploadsRouter);
     }
-    // Lazy per-route auth (§13): the uploads router consumes the `auth`
-    // context variable, so the W4-B gate mounts here — 401 `unauthenticated`.
-    v1.use("/uploads", requireAuth<FullEnv>() as unknown as MiddlewareHandler<AppEnv>);
-    v1.use("/assets", requireAuth<FullEnv>() as unknown as MiddlewareHandler<AppEnv>);
-    v1.use("/assets/*", requireAuth<FullEnv>() as unknown as MiddlewareHandler<AppEnv>);
-    if (deps.limiter !== undefined) {
-      v1.use("/uploads", rateLimit({ limiter: deps.limiter }, RATE_LIMIT_PRESETS.uploads));
-    }
-    if (uploads !== undefined) {
-      v1.use("/uploads", uploadsContext(uploads));
-      v1.use("/assets", uploadsContext(uploads));
-      v1.use("/assets/*", uploadsContext(uploads));
-    }
-    // W4-I pattern: bare const router mounted at the /v1 root; its guards
-    // answer a typed 503 until the AssetsStore seam is injected (repo wave).
-    v1.route("/", uploadRoutes);
   }
 
   app.route("/v1", v1);
@@ -628,13 +752,30 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
   return app;
 }
 
+/** W4-F fallback mount: documentDepsMiddleware + the exported const router. */
+function documentsFallbackRouter(
+  mod: RouteModuleShape,
+  deps: DocumentRoutesDeps,
+): Hono<AppEnv> | undefined {
+  const router = routerOf(mod, "documentRoutes");
+  const middlewareFactory = helperOf(mod, "documentDepsMiddleware");
+  if (router === undefined || middlewareFactory === undefined) {
+    return undefined;
+  }
+  const middleware = (middlewareFactory as (deps: unknown) => MiddlewareHandler<AppEnv>)(deps);
+  const sub = new Hono<AppEnv>();
+  sub.use(middleware);
+  sub.route("/", router);
+  return sub;
+}
+
 // ---------------------------------------------------------------------------
-// Per-group deps built from the GatewayDeps seams (adapter layer)
+// Per-group deps built from the GatewayDeps seams (the adapter layer)
 // ---------------------------------------------------------------------------
 
 function buildWorkspacesDeps(
   deps: AppDeps,
-  resolver: SessionResolver | undefined,
+  resolver: RequestSessionResolver | undefined,
 ): WorkspaceRoutesDeps | undefined {
   if (
     resolver === undefined ||
@@ -642,7 +783,7 @@ function buildWorkspacesDeps(
     deps.ledger === undefined ||
     deps.audit === undefined
   ) {
-    return undefined; // group stays unmounted; /v1 catch-all answers the typed 501
+    return undefined; // group stays unmounted; the /v1 catch-all answers 501
   }
   return {
     db: createWorkspaceDb(deps.db),
@@ -656,7 +797,7 @@ function buildWorkspacesDeps(
 
 function buildDocumentsDeps(
   deps: AppDeps,
-  resolver: SessionResolver | undefined,
+  resolver: RequestSessionResolver | undefined,
 ): DocumentRoutesDeps | undefined {
   if (
     resolver === undefined ||
@@ -677,7 +818,10 @@ function buildDocumentsDeps(
   };
 }
 
-function buildRunsDeps(deps: AppDeps, resolver: SessionResolver | undefined): RunsDeps | undefined {
+function buildRunsDeps(
+  deps: AppDeps,
+  resolver: RequestSessionResolver | undefined,
+): RunsDeps | undefined {
   if (
     resolver === undefined ||
     deps.db === undefined ||
@@ -698,7 +842,7 @@ function buildRunsDeps(deps: AppDeps, resolver: SessionResolver | undefined): Ru
 
 function buildRunEventsDeps(
   deps: AppDeps,
-  resolver: SessionResolver | undefined,
+  resolver: RequestSessionResolver | undefined,
 ): RunEventsDeps | undefined {
   if (resolver === undefined || deps.db === undefined || deps.bus === undefined) {
     return undefined;
@@ -713,7 +857,7 @@ function buildRunEventsDeps(
 
 function buildUploadsDeps(deps: AppDeps): UploadsDeps | undefined {
   if (deps.storage === undefined || deps.assets === undefined) {
-    return undefined; // router mounts, its requireDeps guard answers the typed 503
+    return undefined; // router mounts; its requireDeps guard answers the typed 503
   }
   const service: AssetsService = createAssetsService({
     store: deps.assets,
@@ -737,17 +881,17 @@ export interface CreateDefaultDepsOptions {
    * the raw env source; when omitted the parsed GatewayEnv is used as-is.
    */
   readonly storageEnv?: StorageEnvInput;
-  /** Per-seam overrides applied LAST — tests inject fakes here. */
+  /** Per-seam overrides applied LAST — tests inject their fakes here. */
   readonly overrides?: Partial<GatewayDeps>;
 }
 
 /**
  * The production dependency graph from a parsed @studio/config GatewayEnv.
- * Fail-fast (§4): an unusable DATABASE_URL or storage config throws before
- * any request is served. Defaults + their owning waves are documented on
- * GatewayDeps (src/types.ts); nothing here touches process.env — the parsed
- * env is the only input, and `getAuthServer()` resolves the rest lazily on
- * first session/API-key resolution.
+ * Fail-fast (§4): an unusable DATABASE_URL or storage config throws before any
+ * request is served. Defaults + their owning waves are documented on
+ * GatewayDeps (src/types.ts). Nothing here reads process.env — the parsed env
+ * is the only input; the auth resolvers reach Better Auth lazily on first
+ * session/API-key resolution (auth/server.ts singletons).
  */
 export function createDefaultDeps(
   env: GatewayEnv,
@@ -757,8 +901,7 @@ export function createDefaultDeps(
   const db = overrides.db ?? createDb(env.DATABASE_URL);
   const kv = overrides.kv ?? new InMemoryKV();
   const storage =
-    overrides.storage ??
-    defaultStorage(options.storageEnv ?? (env as unknown as StorageEnvInput));
+    overrides.storage ?? defaultStorage(options.storageEnv ?? (env as unknown as StorageEnvInput));
   const engineSessions = overrides.engineSessions ?? new NotWiredSessionResolver();
   const bus = overrides.bus ?? new RunEventBus({ store: new DrizzleEventStore(db) });
   return {
@@ -799,15 +942,15 @@ function defaultStorage(env: StorageEnvInput): Storage {
 /** Real dependency probes for /v1/health/deep (§13.1) over the default seams. */
 function defaultProbes(
   db: Db,
-  kv: import("./services/limiter.js").KVLike,
+  kv: KVLike,
   storage: Storage,
   engineSessions: SessionResolver,
-): readonly import("./routes/health.js").Probe[] {
+): readonly Probe[] {
   return [
     {
       name: "db",
       check: async () => {
-        await db.execute("select 1");
+        await db.execute(sql`select 1`);
         return { ok: true };
       },
     },
@@ -815,7 +958,10 @@ function defaultProbes(
       name: "valkey",
       check: async () => {
         await kv.get("__gateway_health_probe__"); // KV seam reachable
-        return { ok: true, detail: "kv seam reachable (InMemoryKV until the Valkey adapter lands)" };
+        return {
+          ok: true,
+          detail: "kv seam reachable (InMemoryKV until the Valkey adapter lands)",
+        };
       },
     },
     {
@@ -839,16 +985,3 @@ function defaultProbes(
     },
   ];
 }
-
-// Keep the defensive-import contract visible for the contract wave: siblings
-// shipped BOTH factory and const router patterns; buildApp prefers each
-// module's documented wire function (called above) and falls back to the
-// const+middleware shape only if the factory is absent. The fallbacks are
-// exercised by the assembly suite through the real exports, so they cannot
-// rot while both patterns exist.
-void documentDepsMiddleware;
-void documentRoutes;
-void runsServices;
-void runRoutes;
-void runEventRoutesConst;
-void wireRunEventRoutes;

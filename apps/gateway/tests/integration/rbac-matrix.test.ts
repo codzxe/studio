@@ -26,7 +26,7 @@
 import { describe, expect, it } from "vitest";
 import { createResourceGuard, ForbiddenError } from "../../src/authz/guard.js";
 import type { GuardContext, GuardLogger } from "../../src/authz/guard.js";
-import { ALL_PERMISSIONS, can, PERMISSIONS, type Role } from "../../src/authz/roles.js";
+import { ALL_PERMISSIONS, can, PERMISSIONS, type Permission, type Role } from "../../src/authz/roles.js";
 import {
   bearerHeaders,
   buildGateway,
@@ -317,11 +317,9 @@ describe("§15.2 effective-grants narrowing through the runs guard", () => {
 // ADR-0003 matrix cells (pure can() + guard.assertCan) — the billing row pinned
 // ---------------------------------------------------------------------------
 
-interface SilentLogger extends GuardLogger {}
-
-class NullLogger implements SilentLogger {
+class NullLogger implements GuardLogger {
   warn(): void {
-    // assertions only — logging is covered in cross-tenant.test.ts
+    // assertions only — denial logging is covered in cross-tenant.test.ts
   }
 
   error(): void {
@@ -329,7 +327,7 @@ class NullLogger implements SilentLogger {
   }
 }
 
-const MATRIX_CELLS: readonly { role: Role; permission: string; expected: boolean }[] = [
+const MATRIX_CELLS: readonly { role: Role; permission: Permission; expected: boolean }[] = [
   { role: "viewer", permission: "documents:read", expected: true },
   { role: "viewer", permission: "comments:create", expected: true },
   { role: "viewer", permission: "runs:create", expected: false },
@@ -356,7 +354,7 @@ const MATRIX_CELLS: readonly { role: Role; permission: string; expected: boolean
 
 describe("ADR-0003 matrix cells (§15.2)", () => {
   it.each(MATRIX_CELLS)("$role × $permission → $expected", ({ role, permission, expected }) => {
-    expect(can(role, permission as Parameters<typeof can>[1])).toBe(expected);
+    expect(can(role, permission)).toBe(expected);
   });
 
   it("the guard enforces the same cells with typed 403s", () => {
@@ -370,15 +368,13 @@ describe("ADR-0003 matrix cells (§15.2)", () => {
 
     // Denied cells throw the typed RBAC error.
     for (const cell of MATRIX_CELLS.filter((row) => !row.expected)) {
-      expect(() =>
-        guard.assertCan(cell.role, cell.permission as Parameters<typeof can>[1], context(cell.role)),
-      ).toThrow(ForbiddenError);
+      expect(() => guard.assertCan(cell.role, cell.permission, context(cell.role))).toThrow(
+        ForbiddenError,
+      );
     }
     // Granted cells pass silently.
     for (const cell of MATRIX_CELLS.filter((row) => row.expected)) {
-      expect(() =>
-        guard.assertCan(cell.role, cell.permission as Parameters<typeof can>[1], context(cell.role)),
-      ).not.toThrow();
+      expect(() => guard.assertCan(cell.role, cell.permission, context(cell.role))).not.toThrow();
     }
   });
 });

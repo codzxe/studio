@@ -648,7 +648,11 @@ export function createManualCommandExecutor(deps: ManualCommandDeps): ManualComm
   const allowlist = new Set(deps.allowlist);
 
   /** §22 warn helper — denials are correlated but never leak values. */
-  function warn(ctx: CommandExecutionContext, event: string, fields: Record<string, unknown>): void {
+  function warn(
+    ctx: CommandExecutionContext,
+    event: string,
+    fields: Record<string, unknown>,
+  ): void {
     ctx.logger?.warn({ request_id: ctx.requestId, ...fields }, event);
   }
 
@@ -721,10 +725,11 @@ export function createManualCommandExecutor(deps: ManualCommandDeps): ManualComm
     const parsed = STORED_OUTCOME_SCHEMA.safeParse(stored);
     if (!parsed.success) {
       warn(ctx, "idempotency_record_unreadable", { workspace_id: ctx.organizationId });
-      return catalogFailure("internal_error", "The recorded idempotent outcome could not be read.", {
-        hint: "Retry with a fresh idempotency key (§3.4).",
-        retryable: false,
-      });
+      return catalogFailure(
+        "internal_error",
+        "The recorded idempotent outcome could not be read.",
+        { hint: "Retry with a fresh idempotency key (§3.4).", retryable: false },
+      );
     }
     const outcome = parsed.data;
     if (!outcome.ok) {

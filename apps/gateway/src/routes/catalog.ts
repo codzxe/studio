@@ -224,12 +224,22 @@ async function chargeOrgBucket(
  * Resolution order: authenticate (typed 401/403, runs.ts requireCaller
  * semantics) → charge the org token bucket (when a limiter is wired) →
  * handler. The rate limiter FAILS OPEN on a KV outage (W4-D posture).
+ *
+ * IDEMPOTENT: the mount registers this middleware on both the exact prefix
+ * and its `/*` sub-path (Hono's wildcard may match the bare path too), so the
+ * first run's caller/deps variables short-circuit any duplicate registration.
+ * Without the guard, auth and the org bucket would be charged twice per GET.
  */
 export function catalogMiddleware(
   deps: CatalogDeps,
   policy: CatalogRateLimitPolicy,
 ): MiddlewareHandler<AppEnv> {
   return createMiddleware<AppEnv>(async (c, next) => {
+    const env = c as unknown as Context<CatalogEnv>;
+    if (env.get("catalogCaller") !== undefined) {
+      await next(); // already ran for this request (exact + /* both matched)
+      return;
+    }
     const result = await deps.auth.authenticate(c.req.raw);
     if (isFailure(result)) {
       throw new AppError(result.code === "forbidden" ? 403 : 401, result.code, result.message, {
@@ -238,7 +248,6 @@ export function catalogMiddleware(
       });
     }
     const caller = result.value;
-    const env = c as unknown as Context<CatalogEnv>;
     env.set("catalogServices", deps);
     env.set("catalogCaller", caller);
     await chargeOrgBucket(c, deps, caller, policy);
