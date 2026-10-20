@@ -24,9 +24,12 @@ const specPlan = {
   notes_for_user: 'Reused the brand palette; headline shortened to fit two lines.',
 };
 
-/** Deep, prototype-free clone so table cases cannot leak into each other. */
+/**
+ * Deep, prototype-free clone so table cases cannot leak into each other.
+ * JSON round-trip (not structuredClone) — the package has no @types/node yet.
+ */
 function clone<T>(value: T): T {
-  return structuredClone(value);
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 describe('plan: §5.5 happy path', () => {

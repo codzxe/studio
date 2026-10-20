@@ -192,6 +192,6 @@
     - type: javascript          # expected checks present (incl. §11.1 min_font_size + asset_resolution)
       value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'asset_resolution', 'min_font_size'].every(c => JSON.parse(output).plan.checks.includes(c))"
     - type: javascript          # validator results: ok, zero blockers/majors
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0 && v.majors === 0"
+      value: "return ((v) => v.ok === true && v.blockers === 0 && v.majors === 0)(JSON.parse(output).run.validator)"
     - type: contains            # slot contents: the seven copy slots ride the plan (§21)
       value: "One brief, every asset"

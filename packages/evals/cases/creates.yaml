@@ -98,7 +98,7 @@
     - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
       value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
     - type: javascript          # validator results (§11.1/§24.1): ok, 0 blockers, exactly 1 minor
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0 && v.majors === 0 && v.minors === 1"
+      value: "return ((v) => v.ok === true && v.blockers === 0 && v.majors === 0 && v.minors === 1)(JSON.parse(output).run.validator)"
     - type: javascript          # slot contents (§21): verbatim §24.1 copy
       value: "return JSON.parse(output).plan.slots.headline === 'Fresh roasted, every morning' && JSON.parse(output).plan.slots.subhead === 'Open 7–5 · Main St'"
     - type: javascript          # asset from SNAPSHOT only, slotted to photo (§23.2)
@@ -203,7 +203,7 @@
     - type: javascript          # max tool calls respected (§5.2: complex cap = 24)
       value: "return JSON.parse(output).run.tool_calls <= 24 && JSON.parse(output).plan.steps.length <= 24"
     - type: javascript          # validator results: ok, zero blockers (§24.3)
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
     - type: javascript          # §24.3 typography: 120pt serif headline
       value: "return JSON.parse(output).plan.typography.headline.size === 120"
     - type: javascript          # layer names: named role layers incl. the divider (§23.1 rule 5)

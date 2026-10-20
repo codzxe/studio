@@ -177,7 +177,10 @@ export interface EngineLike {
     cmds: readonly EngineCommand[],
     options?: EngineBatchOptions,
   ): Promise<EngineOutcome<EngineBatchReport>>;
-  execute(cmd: EngineCommand, options?: EngineCallOptions): Promise<EngineOutcome<EngineCommandReport>>;
+  execute(
+    cmd: EngineCommand,
+    options?: EngineCallOptions,
+  ): Promise<EngineOutcome<EngineCommandReport>>;
   render(options: EngineRenderOptions): Promise<EngineOutcome<EngineRenderReport>>;
   /** `document.inspect` — the agent's "read the file", cached per revision (§6.3). */
   inspect(): Promise<EngineOutcome<EngineDocumentSnapshot>>;
@@ -249,7 +252,9 @@ export interface TemplateCatalogLike {
   /** Cached manifest lookup by `id@version` (§6.2). */
   get(templateRef: string): Promise<TemplateManifest | undefined>;
   /** Paged/tagged listing for `template_list` (§6 row 2). */
-  list(options?: { readonly tag?: string; readonly limit?: number }): Promise<readonly TemplateSummary[]>;
+  list(options?: { readonly tag?: string; readonly limit?: number }): Promise<
+    readonly TemplateSummary[]
+  >;
 }
 
 // ---------------------------------------------------------------------------

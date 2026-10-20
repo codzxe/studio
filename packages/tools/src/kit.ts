@@ -10,8 +10,8 @@
 
 import { z } from "zod";
 import {
-  TOOL_ERROR_CODE_SCHEMA,
   type AnyTool,
+  TOOL_ERROR_CODE_SCHEMA,
   type Tool,
   type ToolContext,
   type ToolErr,
@@ -118,7 +118,10 @@ export function ok(input: ToolOkInput): ToolOk {
   } = { ok: true, summary };
   if (input.documentRevision !== undefined) {
     if (!Number.isInteger(input.documentRevision) || input.documentRevision < 0) {
-      throw new ToolError("invalid_tool_result", "ok(): documentRevision must be a non-negative integer");
+      throw new ToolError(
+        "invalid_tool_result",
+        "ok(): documentRevision must be a non-negative integer",
+      );
     }
     result.documentRevision = input.documentRevision;
   }
@@ -130,7 +133,11 @@ export function ok(input: ToolOkInput): ToolOk {
       );
     }
     for (const warning of input.warnings) {
-      if (typeof warning !== "string" || warning.length === 0 || warning.length > MAX_WARNING_CHARS) {
+      if (
+        typeof warning !== "string" ||
+        warning.length === 0 ||
+        warning.length > MAX_WARNING_CHARS
+      ) {
         throw new ToolError(
           "invalid_tool_result",
           `ok(): each warning is a non-empty string of ≤ ${MAX_WARNING_CHARS} chars`,
@@ -141,9 +148,13 @@ export function ok(input: ToolOkInput): ToolOk {
   }
   if (input.previewUrl !== undefined) {
     if (typeof input.previewUrl !== "string" || !isSafePreviewUrl(input.previewUrl)) {
-      throw new ToolError("invalid_tool_result", "ok(): previewUrl must be http(s)://… or root-relative /…", {
-        hint: "Never emit filesystem paths, other tenants' URLs, or non-http schemes (§6.1).",
-      });
+      throw new ToolError(
+        "invalid_tool_result",
+        "ok(): previewUrl must be http(s)://… or root-relative /…",
+        {
+          hint: "Never emit filesystem paths, other tenants' URLs, or non-http schemes (§6.1).",
+        },
+      );
     }
     result.previewUrl = input.previewUrl;
   }
@@ -161,7 +172,10 @@ export function err(code: ToolErrorCode, message: string, options: ToolErrOption
     throw new ToolError("invalid_tool_result", "err(): message must be a non-empty string");
   }
   if (message.length > MAX_ERROR_MESSAGE_CHARS) {
-    throw new ToolError("invalid_tool_result", `err(): message exceeds ${MAX_ERROR_MESSAGE_CHARS} chars`);
+    throw new ToolError(
+      "invalid_tool_result",
+      `err(): message exceeds ${MAX_ERROR_MESSAGE_CHARS} chars`,
+    );
   }
   const envelope: {
     ok: false;
@@ -171,10 +185,18 @@ export function err(code: ToolErrorCode, message: string, options: ToolErrOption
     retryable?: boolean;
   } = { ok: false, code, message };
   if (options.hint !== undefined) {
-    if (typeof options.hint !== "string" || options.hint.length === 0 || options.hint.length > MAX_HINT_CHARS) {
-      throw new ToolError("invalid_tool_result", `err(): hint is a non-empty string of ≤ ${MAX_HINT_CHARS} chars`, {
-        hint: "Actionable hints fix the argument, e.g. shorten to 40 chars or reduce size to 72pt (§6.1).",
-      });
+    if (
+      typeof options.hint !== "string" ||
+      options.hint.length === 0 ||
+      options.hint.length > MAX_HINT_CHARS
+    ) {
+      throw new ToolError(
+        "invalid_tool_result",
+        `err(): hint is a non-empty string of ≤ ${MAX_HINT_CHARS} chars`,
+        {
+          hint: "Actionable hints fix the argument, e.g. shorten to 40 chars or reduce size to 72pt (§6.1).",
+        },
+      );
     }
     envelope.hint = options.hint;
   }
@@ -233,9 +255,13 @@ export interface ToolDefinition<TArgs> {
 
 function assertCap(max: number, ceiling: number, what: string): void {
   if (!Number.isInteger(max) || max < 1 || max > ceiling) {
-    throw new ToolError("internal_error", `${what} cap must be an integer between 1 and ${ceiling}`, {
-      hint: "§6.1: every string/array/record argument is capped — pick a limit.",
-    });
+    throw new ToolError(
+      "internal_error",
+      `${what} cap must be an integer between 1 and ${ceiling}`,
+      {
+        hint: "§6.1: every string/array/record argument is capped — pick a limit.",
+      },
+    );
   }
 }
 
@@ -300,12 +326,19 @@ export function defineTool<TArgs>(definition: ToolDefinition<TArgs>): Tool<TArgs
   assertValidToolName(definition.name);
   assertValidDescription(definition.description);
   if (definition.args == null || !(definition.args instanceof z.ZodType)) {
-    throw new ToolError("internal_error", `defineTool("${definition.name}"): args must be a Zod schema`, {
-      hint: "Build it with strictObject + the kit's capped helpers (§6.1).",
-    });
+    throw new ToolError(
+      "internal_error",
+      `defineTool("${definition.name}"): args must be a Zod schema`,
+      {
+        hint: "Build it with strictObject + the kit's capped helpers (§6.1).",
+      },
+    );
   }
   if (typeof definition.run !== "function") {
-    throw new ToolError("internal_error", `defineTool("${definition.name}"): run must be a function`);
+    throw new ToolError(
+      "internal_error",
+      `defineTool("${definition.name}"): run must be a function`,
+    );
   }
   const inner = definition.run;
   const wrapped = async (
@@ -390,11 +423,9 @@ export function cappedRecord<V extends z.ZodTypeAny>(
   valueSchema: V,
 ): z.ZodType<Record<string, z.output<V>>, z.ZodTypeDef, Record<string, z.input<V>>> {
   assertCap(max, MAX_ARG_RECORD_ENTRIES, "cappedRecord");
-  return z
-    .record(z.string(), valueSchema)
-    .refine((entries) => Object.keys(entries).length <= max, {
-      message: `too many entries (max ${max})`,
-    });
+  return z.record(z.string(), valueSchema).refine((entries) => Object.keys(entries).length <= max, {
+    message: `too many entries (max ${max})`,
+  });
 }
 
 // Colour values (§6.1): #RGB, #RRGGBB, rgb(), rgba(), hsl(), hsla().
@@ -449,10 +480,14 @@ export type LayerRef = z.infer<typeof zLayerRef>;
 export function ambiguousLayerErr(layerName: string, candidates: readonly string[]): ToolErr {
   const shown = candidates.slice(0, 10).join(", ");
   const extra = candidates.length > 10 ? ` (+${candidates.length - 10} more)` : "";
-  return err("ambiguous_layer", `Layer name "${truncate(layerName, 200)}" matches ${candidates.length} layers`, {
-    hint: `Address one by layer_id instead. Candidates: ${shown}${extra}`,
-    retryable: false,
-  });
+  return err(
+    "ambiguous_layer",
+    `Layer name "${truncate(layerName, 200)}" matches ${candidates.length} layers`,
+    {
+      hint: `Address one by layer_id instead. Candidates: ${shown}${extra}`,
+      retryable: false,
+    },
+  );
 }
 
 /** §6.1: the reference resolved to nothing. */

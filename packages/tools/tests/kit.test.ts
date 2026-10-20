@@ -1,13 +1,14 @@
 // kit.test.ts — pure-logic contract enforcement: schemas, envelopes, defineTool boundary.
 
-import { z } from "zod";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { echoTool } from "../src/example/echo.js";
 import {
   MAX_ARG_RECORD_ENTRIES,
   MAX_ARG_STRING_CHARS,
   MAX_HINT_CHARS,
   MAX_SUMMARY_CHARS,
+  type ToolDefinition,
   ToolError,
   ambiguousLayerErr,
   cappedArray,
@@ -26,9 +27,15 @@ import {
   zIdempotencyKey,
   zLayerRef,
   zTemplateRef,
-  type ToolDefinition,
 } from "../src/kit.js";
-import type { AnyTool, Tool, ToolContext, ToolErr, ToolErrorCode, ToolResult } from "../src/types.js";
+import type {
+  AnyTool,
+  Tool,
+  ToolContext,
+  ToolErr,
+  ToolErrorCode,
+  ToolResult,
+} from "../src/types.js";
 import { abortedSignal, freshSignal, makeFakeContext } from "./fakes.js";
 
 const goodDescription = "A tool used only by unit tests to verify the kit contract.";
@@ -176,10 +183,20 @@ describe("§6.1 ok()/err() constructors", () => {
   });
 
   it("ok() rejects unsafe preview urls — no file paths, no traversal (§6.1)", () => {
-    for (const url of ["/ok.png", "https://cdn.example.test/r.png", "http://cdn.example.test/r.png"]) {
+    for (const url of [
+      "/ok.png",
+      "https://cdn.example.test/r.png",
+      "http://cdn.example.test/r.png",
+    ]) {
       expect(ok({ summary: "s", previewUrl: url }).previewUrl).toBe(url);
     }
-    for (const url of ["file:///etc/passwd", "../escape.png", "ftp://x/y", "relative/path", "C:\\x"]) {
+    for (const url of [
+      "file:///etc/passwd",
+      "../escape.png",
+      "ftp://x/y",
+      "relative/path",
+      "C:\\x",
+    ]) {
       expect(() => ok({ summary: "s", previewUrl: url })).toThrow(ToolError);
     }
   });
@@ -220,7 +237,10 @@ describe("§6.1 ok()/err() constructors", () => {
     expect(ambiguous.hint).toContain("layer_id");
     expect(ambiguous.hint).toContain("l_1, l_2, l_3");
 
-    const many = ambiguousLayerErr("Bg", Array.from({ length: 12 }, (_, i) => `l_${i}`));
+    const many = ambiguousLayerErr(
+      "Bg",
+      Array.from({ length: 12 }, (_, i) => `l_${i}`),
+    );
     expect(many.hint).toContain("(+2 more)");
     expect((many.hint ?? "").length).toBeLessThanOrEqual(MAX_HINT_CHARS);
 
@@ -423,7 +443,11 @@ describe("parseToolArgs — the executor's boundary (§6.1 strict schemas)", () 
 
 describe("echo — the full-contract reference tool (§6.2)", () => {
   it("succeeds with a compact summary and no warnings for short messages", async () => {
-    const result = await echoTool.run(makeFakeContext(), { message: "Hello, studio", mode: "ok" }, freshSignal());
+    const result = await echoTool.run(
+      makeFakeContext(),
+      { message: "Hello, studio", mode: "ok" },
+      freshSignal(),
+    );
     expect(result).toEqual({ ok: true, summary: "Hello, studio" });
   });
 
@@ -437,7 +461,11 @@ describe("echo — the full-contract reference tool (§6.2)", () => {
   });
 
   it("fails with an actionable envelope in fail mode", async () => {
-    const result = await echoTool.run(makeFakeContext(), { message: "Hello", mode: "fail" }, freshSignal());
+    const result = await echoTool.run(
+      makeFakeContext(),
+      { message: "Hello", mode: "fail" },
+      freshSignal(),
+    );
     expect(result).toEqual({
       ok: false,
       code: "validation_failed",

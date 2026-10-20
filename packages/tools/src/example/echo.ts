@@ -23,7 +23,8 @@ export interface EchoArgs {
 
 export const echoTool: Tool<EchoArgs> = defineTool({
   name: "echo",
-  description: "Echoes a short message back with a timestamp. Reference example for the tool contract (§6.2).",
+  description:
+    "Echoes a short message back with a timestamp. Reference example for the tool contract (§6.2).",
   args: strictObject({
     message: cappedString(200),
     color: zColor.optional(),
@@ -38,7 +39,10 @@ export const echoTool: Tool<EchoArgs> = defineTool({
       });
     }
     // ctx.logger for structured breadcrumbs only — never tokens or paths (§22).
-    ctx.logger.debug("echo invoked", { characters: args.message.length, hasColor: args.color !== undefined });
+    ctx.logger.debug("echo invoked", {
+      characters: args.message.length,
+      hasColor: args.color !== undefined,
+    });
     return ok({
       // §6.1 small reply: what changed and what's next — not an engine dump.
       summary: args.color === undefined ? args.message : `${args.message} (${args.color})`,

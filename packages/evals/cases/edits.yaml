@@ -79,7 +79,7 @@
     - type: javascript          # expected checks present
       value: "return ['in_bounds', 'contrast>=4.5'].every(c => JSON.parse(output).plan.checks.includes(c))"
     - type: javascript          # validator results (§11.1): ok, no blockers
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0 && v.majors === 0"
+      value: "return ((v) => v.ok === true && v.blockers === 0 && v.majors === 0)(JSON.parse(output).run.validator)"
     - type: javascript          # layer names: Badge added, role naming kept (§23.1 rule 5)
       value: "return JSON.parse(output).run.layers.includes('Badge') && JSON.parse(output).run.layers.includes('Subhead')"
     - type: javascript          # one transaction per run (§1.5-10, §24.2 one-step undo)
@@ -160,7 +160,7 @@
     - type: javascript          # expected checks present
       value: "return ['contrast>=4.5', 'headline_largest'].every(c => JSON.parse(output).plan.checks.includes(c))"
     - type: javascript          # validator results: ok, no blockers
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
     - type: contains            # layer names: Headline retargeted, role naming kept
       value: "Headline"
 
@@ -228,7 +228,7 @@
     - type: javascript          # template not chosen — restyle only, no reapply (§23.5)
       value: "return JSON.parse(output).plan.template === null"
     - type: javascript          # §23.2: every planned colour is a brand token from SNAPSHOT
-      value: "const brand = ['#6B4A32', '#F4E7D3', '#D96C3B']; return JSON.parse(output).plan.palette.every(h => brand.includes(h))"
+      value: "return ((brand) => JSON.parse(output).plan.palette.every(h => brand.includes(h)))(['#6B4A32', '#F4E7D3', '#D96C3B'])"
     - type: javascript          # warm shift actually selects the terracotta accent
       value: "return JSON.parse(output).plan.palette.includes('#D96C3B')"
     - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
@@ -238,7 +238,7 @@
     - type: javascript          # expected checks present (contrast guards the recolour)
       value: "return ['in_bounds', 'contrast>=4.5'].every(c => JSON.parse(output).plan.checks.includes(c))"
     - type: javascript          # validator results: ok after warm shift
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
 
 # ── invented seed: recolor + style cleanup (§11.1 color_out_of_palette) ────────
 - id: recolor-brand-tokens
@@ -306,7 +306,7 @@
     - type: javascript          # template not chosen — parameter restyle only (§23.5)
       value: "return JSON.parse(output).plan.template === null"
     - type: javascript          # only brand tokens used (§11.1 color_out_of_palette)
-      value: "const brand = ['#6B4A32', '#F4E7D3', '#D96C3B']; return JSON.parse(output).plan.palette.every(h => brand.includes(h))"
+      value: "return ((brand) => JSON.parse(output).plan.palette.every(h => brand.includes(h)))(['#6B4A32', '#F4E7D3', '#D96C3B'])"
     - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
       value: "return JSON.parse(output).run.credits_charged === 1"
     - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
@@ -314,7 +314,7 @@
     - type: javascript          # expected checks present
       value: "return ['in_bounds', 'contrast>=4.5'].every(c => JSON.parse(output).plan.checks.includes(c))"
     - type: javascript          # validator results: ok, no blockers after recolour
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
     - type: contains            # layer names: Badge + Headline retargeted by role (§23.1 rule 5)
       value: "Badge"
 
@@ -392,7 +392,7 @@
     - type: javascript          # expected checks present (placed image meets slot minPixels, §11.1)
       value: "return ['in_bounds', 'asset_resolution'].every(c => JSON.parse(output).plan.checks.includes(c))"
     - type: javascript          # validator results: ok after the swap
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
     - type: contains            # layer names: Logo keeps its role name (§23.1 rule 5)
       value: "Logo"
 
@@ -486,6 +486,6 @@
     - type: javascript          # expected checks present
       value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
     - type: javascript          # validator results: ok, no blockers after reapply
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
     - type: contains            # layer names: flyer slot layers use role names (§23.1 rule 5)
       value: "Venue"

@@ -85,7 +85,7 @@
     - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
       value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
     - type: javascript          # validator results: ok at the new aspect
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
     - type: contains            # slot contents carried over verbatim (§21)
       value: "Fresh roasted, every morning"
 
@@ -162,7 +162,7 @@
     - type: javascript          # template chosen when expected: base template reused (§21)
       value: "return JSON.parse(output).plan.template === 'instagram-post@3'"
     - type: javascript          # exactly the three requested presets (§19 Phase 2)
-      value: "const s = JSON.parse(output).plan.steps[0].args.presets; return s.length === 3"
+      value: "return ((s) => s.length === 3)(JSON.parse(output).plan.steps[0].args.presets)"
     - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
       value: "return JSON.parse(output).run.credits_charged === 2"
     - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
@@ -170,7 +170,7 @@
     - type: javascript          # expected checks present: aspect guards every variant (§11.1)
       value: "return ['in_bounds', 'aspect', 'contrast>=4.5'].every(c => JSON.parse(output).plan.checks.includes(c))"
     - type: javascript          # validator results: ok across variants
-      value: "const v = JSON.parse(output).run.validator; return v.ok === true && v.blockers === 0"
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
 
 # ── invented seed: export (§5.5 export intent; §1.5-3 export exception) ─────────
 - id: export-bundle-png-pcraft
