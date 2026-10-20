@@ -1,0 +1,148 @@
+{
+  "$comment": [
+    "Recorded-style fixture (hand-crafted, not machine-recorded).",
+    "engine.commands reply — a BARE JSON array of command objects, no {\"commands\": …} wrapper",
+    "(docs/control-protocol.md › Command list replies; rpc.rs :: command_list_replies_are_documented_array_of_objects).",
+    "Each element carries exactly id/label/menu/shortcut/params/enabled/disabledReason/needsDocument",
+    "(plus an optional string `keywords` on commands that have them, e.g. select.rect #5060).",
+    "disabledReason is null exactly when enabled is true. needsDocument is true only when the command",
+    "is off because no document is open (#3664) — plan around needsDocument, not enabled alone.",
+    "This 12-command excerpt is a session with NO document open, so document-bound commands are",
+    "disabled with needsDocument true. Every id, label, menu, shortcut and params doc below was",
+    "verified against vendor/photocraft/crates/engine/src/commands.rs (registry) at the pinned",
+    "engine revision; tests/drift-check.test.ts alarms when a required id disappears upstream.",
+    "The full registry is much larger; the reply is filtered to this excerpt for fixture size."
+  ],
+  "request": {
+    "id": 6,
+    "method": "engine.commands",
+    "params": {}
+  },
+  "reply": {
+    "id": 6,
+    "ok": true,
+    "result": [
+      {
+        "id": "file.new",
+        "label": "New…",
+        "menu": ["File"],
+        "shortcut": "Cmd+N",
+        "params": "{\"width\":1..300000=1920,\"height\":1..300000=1080 (pixel counts are rounded),\"mode\":\"rgb|gray|grayscale|cmyk|lab\"=\"rgb\",\"depth\":8|16|32=8,\"background\":\"white|black|backgroundColor|transparent|#rrggbb\"=\"white\",\"backgroundColor\":[r,g,b]? (0..1; defaults to toolbox colour),\"resolution\":1..30000=72 (ppi),\"name\":str}",
+        "enabled": true,
+        "disabledReason": null,
+        "needsDocument": false
+      },
+      {
+        "id": "edit.undo",
+        "label": "Undo",
+        "menu": ["Edit"],
+        "shortcut": "Cmd+Z",
+        "params": "{}",
+        "enabled": false,
+        "disabledReason": "nothing to undo",
+        "needsDocument": false
+      },
+      {
+        "id": "edit.fill",
+        "label": "Fill…",
+        "menu": ["Edit"],
+        "shortcut": "Shift+F5",
+        "params": "{\"contents\":\"foreground|background|color|contentAware|pattern|history|black|gray|white\"=\"color\",\"color\":\"#rrggbb|[r,g,b,a]\"=foreground (contents=color),\"pattern\":id|name (contents=pattern),\"scale\":%=100,\"angle\":deg,\"state\":index? (contents=history; default the oldest state),\"colorAdaptation\":bool=true (contents=contentAware),\"mode\":\"normal|multiply|…\"=\"normal\",\"opacity\":0..100=100,\"preserveTransparency\":bool=false,\"target\":\"pixels\"|\"mask\"|\"quickMask\"|{\"channel\":i}?}",
+        "enabled": false,
+        "disabledReason": "no document open",
+        "needsDocument": true
+      },
+      {
+        "id": "select.rect",
+        "label": "Rectangular Selection",
+        "menu": [],
+        "shortcut": null,
+        "params": "{\"x\":i32,\"y\":i32,\"width\":u32,\"height\":u32,\"mode\":\"replace|add|subtract|intersect\"=\"replace\",\"ellipse\":bool=false,\"line\":\"row|column\"?,\"antiAlias\":bool=true,\"feather\":px=0}",
+        "enabled": false,
+        "disabledReason": "no document open",
+        "needsDocument": true,
+        "keywords": "Rectangular Marquee, Elliptical Marquee (\"ellipse\":true), ellipse, oval, circle, Single Row/Column Marquee (\"line\")"
+      },
+      {
+        "id": "layer.new.layer",
+        "label": "Layer…",
+        "menu": ["Layer", "New"],
+        "shortcut": "Cmd+Shift+N",
+        "params": "{\"name\":str?,\"clipToPrevious\":bool=false (Use Previous Layer to Create Clipping Mask; inside a clip group the layer joins it anyway),\"color\":\"none|red|orange|yellow|green|seafoam|blue|indigo|magenta|fuchsia|violet|gray\"=\"none\",\"mode\":\"Normal|Multiply|…\"=\"Normal\",\"opacity\":0..1=1,\"fillNeutral\":bool=false (fill with the mode's neutral color: modes without one are an error),\"position\":\"above|below\"=\"above\" (below: the Layers panel's Cmd/Ctrl-click; never under the Background)}",
+        "enabled": false,
+        "disabledReason": "no document open",
+        "needsDocument": true
+      },
+      {
+        "id": "layer.new.group",
+        "label": "Group…",
+        "menu": ["Layer", "New"],
+        "shortcut": null,
+        "params": "{\"name\":str?}",
+        "enabled": false,
+        "disabledReason": "no document open",
+        "needsDocument": true
+      },
+      {
+        "id": "layer.select",
+        "label": "Select Layer",
+        "menu": [],
+        "shortcut": null,
+        "params": "{\"layer\":id|str | \"name\":str,\"occurrence\":index?,\"mode\":\"replace|toggle|range|add|remove\"=\"replace\"} (name occurrence: zero-based document walk order; required for duplicate names; toggle = ⌘-click, range = ⇧-click, remove = deselect it, keeping at least one)",
+        "enabled": false,
+        "disabledReason": "no document open",
+        "needsDocument": true
+      },
+      {
+        "id": "layer.setProps",
+        "label": "Layer Properties",
+        "menu": [],
+        "shortcut": null,
+        "params": "{\"layer\":id?,\"layers\":[id,…]? (the same change to each, one step: the Layers panel's controls with several layers selected),\"name\":str? (one layer only),\"visible\":bool?,\"opacity\":0..1?,\"fill\":0..1?,\"blend\":\"Multiply|…\"?,\"clipped\":bool?,\"locked\":bool?,\"locks\":{\"transparency\",\"pixels\",\"position\",\"artboard\",\"all\":bool}?,\"channels\":[bool,…]? (Advanced Blending: which colour channels blend, R G B / C M Y K / L a b)}",
+        "enabled": false,
+        "disabledReason": "no document open",
+        "needsDocument": true
+      },
+      {
+        "id": "layer.layerMask.revealAll",
+        "label": "Reveal All",
+        "menu": ["Layer", "Layer Mask"],
+        "shortcut": null,
+        "params": "{\"layer\":id?} (no layer: every selected layer that can take a mask)",
+        "enabled": false,
+        "disabledReason": "no document open",
+        "needsDocument": true
+      },
+      {
+        "id": "type.create",
+        "label": "New Type Layer",
+        "menu": ["Layer", "New"],
+        "shortcut": null,
+        "params": "{\"x\":px,\"y\":px (baseline anchor of point text),\"text\":str,\"box\":[x,y,w,h]? (paragraph text),\"name\":str?,\"align\":\"left|center|right|justify…\"?,\"orientation\":\"horizontal|vertical\"=\"horizontal\", …character keys: \"font\",\"size\":pt=12,\"color\",…}",
+        "enabled": false,
+        "disabledReason": "no document open",
+        "needsDocument": true
+      },
+      {
+        "id": "paint.stroke",
+        "label": "Brush Stroke",
+        "menu": [],
+        "shortcut": null,
+        "params": "{\"points\":[[x,y,pressure?,tiltX?,tiltY?,rotation?,timeMs?,wheel?],…],\"brush\":{…BrushSettings}?,\"preset\":name?,\"size\":0.5..5000 px?,\"hardness\":0..1?,\"opacity\":0..1?,\"flow\":0..1?,\"spacing\":0..10?,\"color\":\"#rrggbb\"?=foreground,\"mode\":\"normal|multiply|screen|…|clear (erases with this brush)\"=\"normal\",\"erase\":bool?,\"smoothing\":0..1?,\"zoom\":number=1,\"seed\":u64?,\"target\":\"pixels\"|\"mask\"|\"quickMask\"|{\"channel\":i}=Channels panel target}",
+        "enabled": false,
+        "disabledReason": "no document open",
+        "needsDocument": true
+      },
+      {
+        "id": "filter.blur.gaussianBlur",
+        "label": "Gaussian Blur…",
+        "menu": ["Filter", "Blur"],
+        "shortcut": null,
+        "params": "{\"radius\":0.1..1000=1}",
+        "enabled": false,
+        "disabledReason": "no document open",
+        "needsDocument": true
+      }
+    ]
+  }
+}

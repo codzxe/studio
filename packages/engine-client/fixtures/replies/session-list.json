@@ -1,0 +1,35 @@
+{
+  "$comment": [
+    "Recorded-style fixture (hand-crafted, not machine-recorded).",
+    "session.list reply — vendor/photocraft/crates/engine/src/inspect.rs :: session():",
+    "{\"active\": index|null, \"documents\": [{index,name,path,width,height,dirty,revision}],",
+    " \"foreground\": Color, \"background\": Color}.",
+    "Color serializes as {mode,c[4],alpha} (vendor/photocraft/crates/color/src/lib.rs).",
+    "This is the session-id half of the correlation story: methods take `index` (missing/null = active document)."
+  ],
+  "request": {
+    "id": 2,
+    "method": "session.list",
+    "params": {}
+  },
+  "reply": {
+    "id": 2,
+    "ok": true,
+    "result": {
+      "active": 0,
+      "documents": [
+        {
+          "index": 0,
+          "name": "Ad square",
+          "path": null,
+          "width": 1080,
+          "height": 1080,
+          "dirty": false,
+          "revision": 1
+        }
+      ],
+      "foreground": { "mode": "Rgb", "c": [0.0, 0.0, 0.0, 0.0], "alpha": 1.0 },
+      "background": { "mode": "Rgb", "c": [1.0, 1.0, 1.0, 0.0], "alpha": 1.0 }
+    }
+  }
+}

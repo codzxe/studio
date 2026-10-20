@@ -1,0 +1,12 @@
+{
+  "name": "@studio/mock-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Protocol-faithful in-process fake of the headless control server (JSON lines over loopback TCP) for integration tests and compose dev. Zero runtime dependencies: Node stdlib only, runs with bare `node`.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test tests/"
+  }
+}

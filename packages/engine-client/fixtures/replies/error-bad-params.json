@@ -1,0 +1,24 @@
+{
+  "$comment": [
+    "Recorded-style fixture (hand-crafted, not machine-recorded).",
+    "Bad parameters are a typed error reply, never a crash (§1.5-4; rpc.rs :: handle returns",
+    "AutomationError and respond() turns it into {id, ok:false, error}).",
+    "Error text shape pinned to photocraft_engine::EngineError::BadParams Display:",
+    "\"invalid parameters for `{cmd}`: {msg}\" — filter param rules live in",
+    "crates/engine/src/filters/validation.rs (\"`radius` must be a number in 0.1..1000\").",
+    "A bad request leaves the document unchanged (rpc.rs :: execute_reports_invalid_filter_parameters_without_changing_history)."
+  ],
+  "request": {
+    "id": 8,
+    "method": "engine.execute",
+    "params": {
+      "command": "filter.blur.gaussianBlur",
+      "params": { "radius": "big" }
+    }
+  },
+  "reply": {
+    "id": 8,
+    "ok": false,
+    "error": "invalid parameters for `filter.blur.gaussianBlur`: `radius` must be a number in 0.1..1000"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$comment": [
+    "Recorded-style fixture (hand-crafted, not machine-recorded).",
+    "doc.render with `path` — rpc.rs \"doc.render\" path arm writes the PNG beneath the automation",
+    "write root and replies Ok(json!({\"path\": path, \"bytes\": png.len()})); `bytes` is the PNG byte count.",
+    "`maxSide: 0` still means full size (fails when the longest edge exceeds the 2048 preview ceiling)."
+  ],
+  "request": {
+    "id": 5,
+    "method": "doc.render",
+    "params": { "maxSide": 0, "path": "runs/42/preview.png" }
+  },
+  "reply": {
+    "id": 5,
+    "ok": true,
+    "result": { "path": "runs/42/preview.png", "bytes": 1337 }
+  }
+}

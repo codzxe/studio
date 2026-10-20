@@ -1,0 +1,28 @@
+{
+  "$comment": [
+    "Recorded-style fixture (hand-crafted, not machine-recorded).",
+    "doc.new forwards its params to the engine command file.new",
+    "(vendor/photocraft/crates/automation/src/rpc.rs :: handle \"doc.new\" => self.command_run(\"file.new\", p)).",
+    "The result is file.new's: {\"document\": index} — the new document's index in the session list,",
+    "not an opaque id (vendor/photocraft/crates/engine/src/commands.rs \"file.new\" run arm: Ok(json!({\"document\": i}))).",
+    "Session id shapes: a document is addressed by its session index (doc.select/doc.close/session.list),",
+    "a layer is addressed by a u64 LayerId, and document revisions are u64 counters."
+  ],
+  "request": {
+    "id": 1,
+    "method": "doc.new",
+    "params": {
+      "width": 1080,
+      "height": 1080,
+      "mode": "rgb",
+      "depth": 8,
+      "background": "white",
+      "name": "Ad square"
+    }
+  },
+  "reply": {
+    "id": 1,
+    "ok": true,
+    "result": { "document": 0 }
+  }
+}
