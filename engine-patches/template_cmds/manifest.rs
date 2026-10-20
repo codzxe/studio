@@ -349,7 +349,7 @@ impl TemplateManifest {
         if self.id.is_empty() || self.id.len() > MAX_ID {
             return Err(format!("\"id\" must be 1..={MAX_ID} characters, got {:?}", self.id));
         }
-        if self.id.bytes().any(|b| !b.is_ascii_lowercase_digit_hyphen()) {
+        if self.id.bytes().any(|b| !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')) {
             return Err(format!(
                 "\"id\" must be a slug of lowercase letters, digits and hyphens, got {:?}",
                 self.id
@@ -585,16 +585,6 @@ pub(crate) fn pin(id: &str, version: u64) -> String {
     format!("{id}@{version}")
 }
 
-/// A manifest id's allowed bytes: `a-z`, `0-9`, `-`.
-trait SlugByte {
-    fn is_ascii_lowercase_digit_hyphen(self) -> bool;
-}
-impl SlugByte for u8 {
-    fn is_ascii_lowercase_digit_hyphen(self) -> bool {
-        self.is_ascii_lowercase() || self.is_ascii_digit() || self == b'-'
-    }
-}
-
 // ---------- tests ----------
 
 #[cfg(test)]
@@ -647,6 +637,17 @@ mod tests {
 
     fn parse(v: &Value) -> Result<TemplateManifest, ManifestError> {
         TemplateManifest::from_value(v).map_err(|e| e.at("example.json"))
+    }
+
+    /// The error of `r`, or the test fails with `why` (an `Err` result — no `unwrap` here).
+    fn must_err<T: std::fmt::Debug, E: std::fmt::Debug>(
+        r: std::result::Result<T, E>,
+        why: impl std::fmt::Display,
+    ) -> std::result::Result<E, Box<dyn std::error::Error>> {
+        match r {
+            Err(e) => Ok(e),
+            Ok(v) => Err(format!("{why}: expected Err, got Ok({v:?})").into()),
+        }
     }
 
     #[test]
@@ -708,27 +709,29 @@ mod tests {
 
     #[test]
     fn rejects_unknown_fields_and_kinds() -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let e = parse(&json!({"id": "a", "version": 1, "name": "A", "canvas": {"width": 1, "height": 1}, "surprise": true})).unwrap_err_or("parsed an unknown field")?;
+        let bad = json!({"id": "a", "version": 1, "name": "A", "canvas": {"width": 1, "height": 1}, "surprise": true});
+        let e = must_err(parse(&bad), "parsed an unknown field")?;
         assert!(e.to_string().contains("unknown field"), "{e}");
         let mut v = example()?;
         v["slots"]["headline"]["kind"] = json!("sound");
-        let e = parse(&v).unwrap_err_or("parsed an unknown kind")?;
+        let e = must_err(parse(&v), "parsed an unknown kind")?;
         assert!(e.to_string().contains("unknown variant"), "{e}");
         let mut v = example()?;
         v["slots"]["headline"]["kerning"] = json!(true);
-        let e = parse(&v).unwrap_err_or("parsed an unknown slot field")?;
+        let e = must_err(parse(&v), "parsed an unknown slot field")?;
         assert!(e.to_string().contains("unknown field"), "{e}");
         Ok(())
     }
 
     #[test]
     fn rejects_missing_and_empty_identity() -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let e = parse(&json!({"version": 1, "name": "A", "canvas": {"width": 1, "height": 1}})).unwrap_err_or("parsed without an id")?;
+        let no_id = json!({"version": 1, "name": "A", "canvas": {"width": 1, "height": 1}});
+        let e = must_err(parse(&no_id), "parsed without an id")?;
         assert!(e.to_string().contains("missing field"), "{e}");
         for id in ["", "Instagram Post", "-promo", "promo-", "promo@2", "prom/o", "ünicode"] {
             let mut v = example()?;
             v["id"] = json!(id);
-            let e = parse(&v).unwrap_err_or(format!("parsed id {id:?}"))?;
+            let e = must_err(parse(&v), format!("parsed id {id:?}"))?;
             assert!(e.to_string().contains("\"id\""), "{id}: {e}");
         }
         let mut v = example()?;
@@ -746,7 +749,7 @@ mod tests {
             let mut v = example()?;
             v["canvas"]["width"] = json!(w);
             v["canvas"]["height"] = json!(h);
-            let e = parse(&v).unwrap_err_or(format!("parsed canvas {w}×{h}"))?;
+            let e = must_err(parse(&v), format!("parsed canvas {w}×{h}"))?;
             assert!(e.to_string().contains("\"canvas\""), "{w}×{h}: {e}");
         }
         let mut v = example()?;
@@ -760,12 +763,15 @@ mod tests {
         // 1e999 parses as infinity, not as an error; the manifest refuses it.
         let raw = r#"{"id":"a","version":1,"name":"A","canvas":{"width":8,"height":8},
             "slots":{"t":{"kind":"text","layer":"L","bounds":[1e999,0,10,10],"font":"sans","size":12}}}"#;
-        let e = TemplateManifest::from_value(&serde_json::from_str::<Value>(raw)?).unwrap_err_or("parsed infinite bounds")?;
+        let e = must_err(
+            TemplateManifest::from_value(&serde_json::from_str::<Value>(raw)?),
+            "parsed infinite bounds",
+        )?;
         assert!(e.to_string().contains("finite"), "{e}");
         for bounds in [json!([-1e7 - 1.0, 0, 10, 10]), json!([0, 0, -1.0, 10]), json!([0, 0, 1e7 + 1.0, 10])] {
             let mut v = example()?;
-            v["slots"]["headline"]["bounds"] = bounds;
-            let e = parse(&v).unwrap_err_or(format!("parsed bounds {bounds}"))?;
+            v["slots"]["headline"]["bounds"] = bounds.clone();
+            let e = must_err(parse(&v), format!("parsed bounds {bounds}"))?;
             assert!(e.to_string().contains("bounds"), "{bounds}: {e}");
         }
         let mut v = example()?;
@@ -807,7 +813,7 @@ mod tests {
         v["rules"]["mustLayers"] = json!([""]);
         assert!(parse(&v).is_err_and(|e| e.to_string().contains("mustLayers")));
         let mut v = example()?;
-        v["layerMap"]["Photo"]["component"] = json!("offer badge@2");
+        v["layerMap"]["Photo"]["component"] = json!("a/b@2");
         assert!(parse(&v).is_err_and(|e| e.to_string().contains("component")));
         let mut v = example()?;
         v["license"] = json!("MIT");
@@ -831,10 +837,11 @@ mod tests {
     }
 
     #[test]
-    fn from_slice_reports_json_errors_with_the_path() {
-        let e = TemplateManifest::from_slice(b"{").map_err(|e| e.at("t.json")).unwrap_err_or("parsed broken bytes");
+    fn from_slice_reports_json_errors_with_the_path() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let e = must_err(TemplateManifest::from_slice(b"{").map_err(|e| e.at("t.json")), "parsed broken bytes")?;
         assert!(e.to_string().starts_with("t.json: "), "{e}");
         assert!(e.to_string().contains("not valid JSON"), "{e}");
+        Ok(())
     }
 
     #[test]

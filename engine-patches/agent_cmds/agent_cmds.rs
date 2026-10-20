@@ -14,9 +14,11 @@
 //!   #4530), so a checkpointed run cannot balloon memory unseen.
 //! - `agent.commit` folds every undo state above that checkpoint into the current step —
 //!   `History::purge_last`, the fold `History::set_current_label` documents — and renames the
-//!   step after the run: the next undo restores the checkpoint. When history no longer holds
-//!   the checkpoint state (the history budget dropped it, or the run undid past it), the
-//!   snapshot is recorded as the run's single undo state (`History::record`).
+//!   step after the run: the next undo restores the checkpoint. (The per-command `"coalesce"`
+//!   key of `Session::execute` cannot group a run: consecutive edits share it only while no
+//!   other edit, undo or redo intervenes, and a run is many different commands.) When history
+//!   no longer holds the checkpoint state (the history budget dropped it, or the run undid
+//!   past it), the snapshot is recorded as the run's single undo state (`History::record`).
 //! - `agent.rollback` returns to the checkpoint the way `history.selectState` moves (#2966):
 //!   the history steps itself, the reached state becomes current once (one revision bump, one
 //!   damage rect), and the skipped states — the run — are dropped (`History::clear_redo`), so
