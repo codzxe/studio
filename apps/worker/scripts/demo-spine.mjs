@@ -29,8 +29,8 @@
 // Exit codes: 0 spine ok; 1 engine/spine failure; 2 mock-engine not found.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -260,7 +260,8 @@ async function main() {
 
   const externalPort = Number.parseInt(process.env.MOCK_ENGINE_PORT ?? "", 10);
   const externalToken = process.env.MOCK_ENGINE_TOKEN ?? "";
-  const external = Number.isInteger(externalPort) && externalPort > 0 && externalToken.length === 64;
+  const external =
+    Number.isInteger(externalPort) && externalPort > 0 && externalToken.length === 64;
 
   let port = externalPort;
   let token = externalToken;
@@ -300,7 +301,9 @@ async function main() {
     const created = await step("doc.new 1080×1080 (Coffee Promo)", () =>
       client.call("doc.new", { width: 1080, height: 1080, name: "Coffee Promo" }),
     );
-    const baseline = await step("doc.inspect (fresh document)", () => client.call("doc.inspect", null));
+    const baseline = await step("doc.inspect (fresh document)", () =>
+      client.call("doc.inspect", null),
+    );
 
     const batch = await step(
       "batch: layer.new.layer Background → type.create Headline → edit.fill",
@@ -319,6 +322,9 @@ async function main() {
     for (const [index, result] of (batch.results ?? []).entries()) {
       log(`     · step ${index} ${result.ok === true ? "ok" : `FAILED: ${result.error}`}`);
     }
+    const edited = await step("doc.inspect (edited document)", () =>
+      client.call("doc.inspect", null),
+    );
 
     const render = await step("doc.render {maxSide:512} (inline PNG preview)", () =>
       client.call("doc.render", { maxSide: 512 }),
@@ -328,7 +334,12 @@ async function main() {
     }
     const png = Buffer.from(render.base64, "base64");
     const magic = [png[0], png[1], png[2], png[3]];
-    if (magic[0] !== PNG_MAGIC[0] || magic[1] !== PNG_MAGIC[1] || magic[2] !== PNG_MAGIC[2] || magic[3] !== PNG_MAGIC[3]) {
+    if (
+      magic[0] !== PNG_MAGIC[0] ||
+      magic[1] !== PNG_MAGIC[1] ||
+      magic[2] !== PNG_MAGIC[2] ||
+      magic[3] !== PNG_MAGIC[3]
+    ) {
       throw new Error(`doc.render did not return a PNG (magic ${summarize(magic)})`);
     }
     log(`     PNG magic 89 50 4E 47 verified (${png.length} bytes)`);
@@ -339,19 +350,29 @@ async function main() {
     const opened = await step(`doc.open ${SAVE_PATH} (reopen)`, () =>
       client.call("doc.open", { path: SAVE_PATH }),
     );
-    const inspect = await step("doc.inspect (reopened document)", () => client.call("doc.inspect", null));
+    const inspect = await step("doc.inspect (reopened document)", () =>
+      client.call("doc.inspect", null),
+    );
 
     const layers = Array.isArray(inspect.layers)
       ? inspect.layers.map((layer) => (layer && layer.name ? String(layer.name) : "?"))
       : [];
-    const revisionBefore = typeof baseline.revision === "number" ? baseline.revision : "?";
-    const revisionAfter = typeof inspect.revision === "number" ? inspect.revision : "?";
+    const editedLayers = Array.isArray(edited.layers)
+      ? edited.layers.map((layer) => (layer && layer.name ? String(layer.name) : "?"))
+      : [];
+    const revisionOf = (value) => (typeof value.revision === "number" ? value.revision : "?");
     log("");
     log("spine summary");
     log(`  document index ....... ${summarize(created.document ?? opened.document)}`);
-    log(`  revision ............. ${revisionBefore} → ${revisionAfter}`);
-    log(`  layers (top-down) .... ${summarize(layers)}`);
-    log(`  saved ................ ${saved.path} (mock reports ${summarize(saved.bytes ?? "n/a")} bytes)`);
+    log(
+      `  revision ............. fresh ${revisionOf(baseline)} → edited ${revisionOf(edited)} → ` +
+        `reopened ${revisionOf(inspect)}`,
+    );
+    log(`  layers (top-down) .... edited ${summarize(editedLayers)}`);
+    log(`  layers (top-down) .... reopened ${summarize(layers)}`);
+    log(
+      `  saved ................ ${saved.path} (mock reports ${summarize(saved.bytes ?? "n/a")} bytes)`,
+    );
     if (root !== null) {
       log(`  artifacts kept in .... ${path.join(root, SAVE_PATH.split("/")[0])}`);
     } else {

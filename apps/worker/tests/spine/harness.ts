@@ -1,42 +1,44 @@
 // apps/worker/tests/spine/harness.ts — shared fixtures for the Phase-0 spine suites.
 //
-// Spawns apps/mock-engine (the W2-F fake of `photocraft-cli serve`) as a REAL child
-// process and connects the EngineClient facade to it over loopback TCP: the §19 Phase-0
-// spine ("prove the spine end-to-end with zero product polish") and the §21 Integration
-// row ("create doc, run batch, render, save, reopen, inspect. Failed-command handling"),
-// plus the §3.4 crash-recovery story at process level (recovery-spine.test.ts).
+// Spawns apps/mock-engine (the W2-F protocol-faithful fake of `photocraft-cli serve`)
+// as a REAL child process and connects the REAL @studio/engine-client facade to it
+// over loopback TCP: docs/BUILD_PROMPT.md §19 Phase 0 ("prove the spine end-to-end
+// with zero product polish") and §21's Integration row ("create doc, run batch,
+// render, save, reopen, inspect. Failed-command handling"), plus the §3.4
+// crash-recovery story at process level (recovery-spine.test.ts).
 //
-// The harness targets the mock's CONTRACT, never its implementation: two generations of
-// apps/mock-engine have lived in this repo while the spine was authored (a rich
-// .pcraft-persisting revision and a slimmer rewrite), so every seam is feature-tolerant:
+// Everything targets the mock's pinned CONTRACT (apps/mock-engine/README.md),
+// never its implementation:
 //   - spawn contract: `node apps/mock-engine/src/index.mjs`, MOCK_ENGINE_PORT=0
-//     (ephemeral), MOCK_ENGINE_TOKEN=<64 hex> — the env vars W2-F's README pins;
-//   - the bound port is announced either as a stdout JSON line
-//     {"mockEngine":"listening","port":N} or a stderr line "listening on 127.0.0.1:N" —
-//     both formats are accepted;
-//   - filesystem roots: MOCK_ENGINE_ROOT and MOCK_ENGINE_WRITE_ROOT are both pointed at
-//     the same temp directory (each generation reads its own, ignores the other's);
-//   - crash faults: MOCK_ENGINE_FAULTS='{"crashOnCommand":<id>}' (rich revision, fires on
-//     that command id, including inside batches) and MOCK_FAULT="crash-on-command"
-//     (rewrite, fires before any engine.execute dispatch) are armed together, so a
-//     standalone engine.execute of the target command crashes deterministically under
-//     either convention.
+//     (ephemeral), MOCK_ENGINE_TOKEN=<64 hex>, MOCK_ENGINE_WRITE_ROOT=<temp dir>;
+//   - the bound port is announced on stderr as "listening on 127.0.0.1:<port>"
+//     (a stdout JSON line {"mockEngine":"listening","port":N} is also accepted —
+//     it costs ~20 lines and survives a mock rewrite);
+//   - crash contract: MOCK_FAULT=crash-on-command kills the child with exit code 86
+//     BEFORE the engine.execute reply is written. Faults fire on `engine.execute`
+//     dispatch only — the `batch` method executes its steps inside the process
+//     without re-entering dispatch — so with the fault armed, batched checkpoints
+//     stay safe while a standalone engine.execute is the deterministic kill
+//     (recovery-spine.test.ts).
 //
-// The EngineClient is loaded dynamically — the @studio/engine-client barrel first, the
-// concrete facade module as fallback — because src/index.ts and one client.ts import were
-// still landing from W2-D at authoring time. If neither resolves, the suites skip (see
-// README.md › CI notes). Once the barrel is final, swap the loader for a plain import.
+// The EngineClient is imported statically: the barrel
+// (packages/engine-client/src/index.ts) and the package main landed with W2-D2, the
+// workspace dep is declared in apps/worker/package.json, and tsconfig.base.json maps
+// `@studio/engine-client` for typecheck. The only skip-guard the suites need is the
+// mock-engine entry (describe.skipIf — engine-spine.test.ts / README › CI notes).
 //
 // Style: TS strict, ESM, .js extensions; no `any`, no non-null assertions.
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { EngineClient } from "@studio/engine-client";
+import type { EngineOutcome, LineSocket } from "@studio/engine-client";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -44,6 +46,8 @@ import { fileURLToPath } from "node:url";
 
 /** The first four bytes of every PNG stream (RFC 2083): 89 50 4E 47. */
 export const PNG_MAGIC_BYTES = [0x89, 0x50, 0x4e, 0x47] as const;
+/** The same magic as a hex string, for byte-exact comparisons: 89504e47. */
+export const PNG_MAGIC_HEX = "89504e47";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)); // apps/worker/tests/spine
 const MOCK_ENGINE_ENTRY = path.resolve(HERE, "../../../mock-engine/src/index.mjs");
@@ -56,136 +60,16 @@ export function mockEngineEntry(): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Structural mirrors of the EngineClient surface (packages/engine-client/src/client.ts)
+// EngineClient wiring (packages/engine-client/src/client.ts)
 // ---------------------------------------------------------------------------
 
-/** The net-like JSON-lines socket seam the facade accepts (`connect` option). */
-export interface LineSocketLike {
-  write(chunk: string): boolean;
-  on(event: "data", listener: (chunk: string) => void): unknown;
-  on(event: "close", listener: (hadError: boolean) => void): unknown;
-  on(event: "error", listener: (error: Error) => void): unknown;
-  connect?(): unknown;
-  destroy?(error?: Error): void;
-}
-
-/** Result envelope per AGENTS.md: { ok:false, code, message, hint, retryable }. */
-export type SpineOutcome<T> =
-  | { readonly ok: true; readonly result: T }
-  | {
-      readonly ok: false;
-      readonly code: string;
-      readonly message: string;
-      readonly hint: string;
-      readonly retryable: boolean;
-      readonly data?: unknown;
-    };
-
-export interface SpineDocNewInput {
-  readonly width?: number;
-  readonly height?: number;
-  readonly name?: string;
-}
-
-export type SpineBatchStep = {
-  readonly command: string;
-  readonly params?: Record<string, unknown> | null;
-};
-
-export interface SpineBatchInput {
-  readonly steps: readonly SpineBatchStep[];
-  readonly stopOnError?: boolean;
-}
-
-export type SpineBatchStepOutcome =
-  | { readonly ok: true; readonly result: unknown }
-  | { readonly ok: false; readonly error: string };
-
-export interface SpineBatchResult {
-  readonly completed: number;
-  readonly failed: number;
-  readonly results: readonly SpineBatchStepOutcome[];
-}
-
-export type SpineRenderResult =
-  | { readonly mime: "image/png"; readonly base64: string }
-  | { readonly path: string; readonly bytes: number };
-
-export interface SpineEngineClientOptions {
-  readonly connect: () => LineSocketLike;
-  readonly auth: string;
-  readonly timeouts?: {
-    readonly readMs?: number;
-    readonly renderMs?: number;
-    readonly connectMs?: number;
-  };
-  readonly backoff?: {
-    readonly baseMs?: number;
-    readonly capMs?: number;
-    readonly jitter?: number;
-  };
-}
-
-/** Only the facade members the spine drives; open/inspect go through `call` (README). */
-export interface SpineEngineClient {
-  newDocument(input?: SpineDocNewInput): Promise<SpineOutcome<{ readonly document: number }>>;
-  runBatch(input: SpineBatchInput): Promise<SpineOutcome<SpineBatchResult>>;
-  renderDocument(input?: { readonly maxSide?: number }): Promise<SpineOutcome<SpineRenderResult>>;
-  saveDocument(input: { readonly path: string }): Promise<
-    SpineOutcome<{ readonly path: string; readonly warnings: readonly string[] }>
-  >;
-  executeCommand(
-    input: { readonly command: string; readonly params?: Record<string, unknown> | null },
-    options?: { readonly kind?: "read" | "mutate" },
-  ): Promise<SpineOutcome<unknown>>;
-  call(
-    method: string,
-    params: unknown,
-    options: { readonly kind: "read" | "mutate" },
-  ): Promise<SpineOutcome<unknown>>;
-  close(): Promise<void>;
-}
-
-export type SpineEngineClientCtor = new (options: SpineEngineClientOptions) => SpineEngineClient;
-
-// ---------------------------------------------------------------------------
-// EngineClient loader (barrel first, concrete module as fallback)
-// ---------------------------------------------------------------------------
-
-// Typed as plain `readonly string[]` on purpose: a literal union would let tsc resolve
-// the specifiers statically and fail on the in-flight barrel (TS2307 in this file).
-const ENGINE_CLIENT_CANDIDATES: readonly string[] = [
-  "@studio/engine-client",
-  "../../../packages/engine-client/src/client.js",
-];
-
-export async function loadEngineClient(): Promise<SpineEngineClientCtor | null> {
-  for (const candidate of ENGINE_CLIENT_CANDIDATES) {
-    try {
-      const mod = (await import(/* @vite-ignore */ candidate)) as Record<string, unknown>;
-      const ctor = mod.EngineClient;
-      if (typeof ctor === "function") {
-        return ctor as SpineEngineClientCtor;
-      }
-    } catch {
-      // Not resolvable yet (barrel or a client.ts import still landing from W2-D):
-      // try the next candidate; the caller skips the suite when all fail.
-    }
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Client construction
-// ---------------------------------------------------------------------------
-
-/** Fast-failing §3.4 timeouts so a stuck engine fails the suite in seconds, not minutes. */
-export function makeEngineClient(
-  ctor: SpineEngineClientCtor,
-  port: number,
-  token: string,
-): SpineEngineClient {
-  return new ctor({
+/**
+ * A client against the spawned mock: inline 64-hex token (auth.ts), the net-socket
+ * seam (`connect`), and fast-failing §3.4 budgets so a stuck engine fails the suite
+ * in seconds, not minutes.
+ */
+export function makeEngineClient(port: number, token: string): EngineClient {
+  return new EngineClient({
     auth: token,
     connect: () => connectLineSocket(port),
     timeouts: { readMs: 4_000, renderMs: 8_000, connectMs: 3_000 },
@@ -194,44 +78,61 @@ export function makeEngineClient(
 }
 
 /**
- * A net.Socket adapted to the facade's JSON-lines seam: Buffers arrive as utf-8 strings
- * and the socket's own connect() method stays hidden (the connection is initiated by
- * net.connect; the facade must not re-call connect()).
+ * A net.Socket adapted to the facade's JSON-lines `LineSocket` seam: Buffers arrive
+ * as utf-8 strings; the socket's own connect() is deliberately NOT exposed — the
+ * TCP connection is initiated by net.connect here, and the facade must not re-call
+ * connect() on an already-connecting socket.
  */
-export function connectLineSocket(port: number): LineSocketLike {
+function lineSocketOn(socket: net.Socket) {
+  // Overloads mirror client.ts LineSocket exactly, so the adapter needs no cast.
+  function on(event: "data", listener: (chunk: string) => void): unknown;
+  function on(event: "close", listener: (hadError: boolean) => void): unknown;
+  function on(event: "error", listener: (error: Error) => void): unknown;
+  function on(event: string, listener: (...args: unknown[]) => void): unknown {
+    if (event === "data") {
+      socket.on("data", (chunk: Buffer) => listener(chunk.toString("utf8")));
+    } else if (event === "close") {
+      socket.on("close", (hadError: boolean) => listener(hadError));
+    } else {
+      socket.on("error", (error: Error) => listener(error));
+    }
+    return socket;
+  }
+  return on;
+}
+
+export function connectLineSocket(port: number): LineSocket {
   const socket = net.connect({ host: "127.0.0.1", port });
   socket.setNoDelay(true);
-  const wire = {
+  return {
     write: (chunk: string): boolean => socket.write(chunk, "utf8"),
-    on: (event: "data" | "close" | "error", listener: (...args: never[]) => void): unknown => {
-      if (event === "data") {
-        socket.on("data", (chunk: Buffer) => (listener as (chunk: string) => void)(chunk.toString("utf8")));
-      } else if (event === "close") {
-        socket.on("close", (hadError: boolean) => (listener as (hadError: boolean) => void)(hadError));
-      } else {
-        socket.on("error", (error: Error) => (listener as (error: Error) => void)(error));
-      }
-      return socket;
-    },
+    on: lineSocketOn(socket),
     destroy: (error?: Error): void => {
       socket.destroy(error);
     },
   };
-  return wire as LineSocketLike;
 }
 
 /** Unwraps an ok outcome; failures throw with the envelope's code/message/hint. */
-export function unwrapOutcome<T>(outcome: SpineOutcome<T>): T {
+export function unwrapOutcome<T>(outcome: EngineOutcome<T>): T {
   if (!outcome.ok) {
-    throw new Error(`engine call failed (${outcome.code}): ${outcome.message} — ${outcome.hint}`);
+    const hint = outcome.hint === undefined ? "" : ` — ${outcome.hint}`;
+    throw new Error(`engine call failed (${outcome.code}): ${outcome.message}${hint}`);
   }
   return outcome.result;
 }
 
 // ---------------------------------------------------------------------------
-// doc.inspect narrowing (the raw `call` surface — both mock generations answer it)
+// doc.inspect narrowing (the raw `call` surface — tolerant to mock reply drift)
 // ---------------------------------------------------------------------------
 
+/**
+ * The doc.inspect fields the spine asserts on. doc.inspect is driven through the
+ * facade's raw `call()` on purpose: the wrappers validate replies against strict
+ * method schemas (methods/document.ts), and the mock's reply predates some of those
+ * shapes — the spine pins BEHAVIOUR here, schema parity is W2-E's contract-test
+ * territory (packages/engine-client/tests).
+ */
 export interface SpineInspectLike {
   readonly revision: number;
   readonly name: string;
@@ -264,7 +165,10 @@ export function asInspectLike(value: unknown): SpineInspectLike | null {
 }
 
 /** doc.inspect of the active document via the facade's raw `call` (schema-drift tolerant). */
-export async function rawInspect(client: SpineEngineClient, index?: number): Promise<SpineInspectLike> {
+export async function rawInspect(
+  client: EngineClient,
+  index?: number,
+): Promise<SpineInspectLike> {
   const outcome = await client.call("doc.inspect", index === undefined ? null : { index }, {
     kind: "read",
   });
@@ -324,9 +228,9 @@ export interface MockEngineHandle {
   readonly port: number;
   readonly token: string;
   readonly root: string;
-  /** Recent stderr lines (fail-fast messages, fault logs) for diagnostics. */
+  /** Recent stderr lines (listening/token/fault logs) kept for diagnostics. */
   readonly stderr: readonly string[];
-  /** Resolves when the process exits; a fault crash reports a non-zero `code`. */
+  /** Resolves when the process exits; the crash fault reports a non-zero `code`. */
   readonly exited: Promise<{ readonly code: number | null; readonly signal: string | null }>;
   stop(): Promise<void>;
 }
@@ -334,16 +238,18 @@ export interface MockEngineHandle {
 export interface SpawnMockEngineOptions {
   readonly root: string;
   /**
-   * Arm the crash fault so a standalone engine.execute of this command kills the
-   * process before its reply (both mock fault conventions are armed — see header).
+   * Arm MOCK_FAULT=crash-on-command: the child dies with exit code 86 before the
+   * reply of its FIRST engine.execute dispatch (see header — batches stay safe).
    */
-  readonly crashOnCommand?: string;
+  readonly crashOnExecute?: boolean;
 }
 
 export async function spawnMockEngine(options: SpawnMockEngineOptions): Promise<MockEngineHandle> {
   const entry = mockEngineEntry();
   if (entry === null) {
-    throw new Error("apps/mock-engine/src/index.mjs is missing; the spine guard should have skipped");
+    throw new Error(
+      "apps/mock-engine/src/index.mjs is missing; the spine guard should have skipped",
+    );
   }
   const token = randomBytes(32).toString("hex"); // 64 hex chars — security.rs TOKEN_BYTES
   const env: Record<string, string | undefined> = {
@@ -353,8 +259,7 @@ export async function spawnMockEngine(options: SpawnMockEngineOptions): Promise<
     MOCK_ENGINE_ROOT: options.root,
     MOCK_ENGINE_WRITE_ROOT: options.root,
   };
-  if (options.crashOnCommand !== undefined) {
-    env.MOCK_ENGINE_FAULTS = JSON.stringify({ crashOnCommand: options.crashOnCommand });
+  if (options.crashOnExecute === true) {
     env.MOCK_FAULT = "crash-on-command";
   }
   const child = spawn(process.execPath, [entry], {
@@ -369,7 +274,7 @@ export async function spawnMockEngine(options: SpawnMockEngineOptions): Promise<
   return { child, port, token, root: options.root, stderr, exited, stop: makeStop(child, exited) };
 }
 
-/** Accepts both announcement formats (stdout JSON line, stderr "listening on …" line). */
+/** Accepts both announcement formats (stderr "listening on …" line, stdout JSON line). */
 function waitForAnnouncedPort(child: ChildProcess, stderr: string[]): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     let stdoutBuffer = "";
@@ -434,7 +339,7 @@ function waitForAnnouncedPort(child: ChildProcess, stderr: string[]): Promise<nu
   });
 }
 
-/** {"mockEngine":"listening","port":N} — the JSON announcement generation. */
+/** {"mockEngine":"listening","port":N} — the JSON announcement alternative. */
 function portFromAnnouncement(line: string): number | null {
   try {
     const parsed: unknown = JSON.parse(line);
