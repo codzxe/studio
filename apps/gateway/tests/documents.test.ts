@@ -505,8 +505,9 @@ describe("validateCanvasMegapixels (§14.1 plan ceiling + §2.2 engine gate)", (
   });
 
   it("enforces the plan ladder (64 MP on pro, 128 MP on business)", () => {
-    expect(validateCanvasMegapixels(8001, 8000, "pro").ok).toBe(false); // 64.008 MP
-    expect(validateCanvasMegapixels(11548, 11548, "business").ok).toBe(true); // 133.3 MP ≤ 128 MP? no:
+    expect(validateCanvasMegapixels(8001, 8000, "pro").ok).toBe(false); // 64.008 MP > pro
+    expect(validateCanvasMegapixels(11313, 11313, "business").ok).toBe(true); // 127.98 MP
+    expect(validateCanvasMegapixels(11548, 11548, "business").ok).toBe(false); // 133.36 MP > 128 MP
   });
 
   it("rejects above the §2.2 engine ceiling even within the business plan", () => {

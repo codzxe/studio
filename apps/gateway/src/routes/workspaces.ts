@@ -40,8 +40,6 @@ import {
   assertCan,
   createWorkspaceService,
   type CallContext,
-  type InviteRole,
-  type WorkspaceAction,
   type WorkspaceServiceDeps
 } from "../services/workspaces.js";
 import type { AppEnv } from "../types.js";

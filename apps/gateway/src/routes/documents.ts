@@ -265,7 +265,10 @@ export async function assertDocAccess(
   });
 }
 
-async function parseBody<S extends z.ZodTypeAny>(c: Context<DocumentsEnv>, schema: S) {
+async function parseBody<S extends z.ZodType<unknown, z.ZodTypeDef, unknown>>(
+  c: Context<DocumentsEnv>,
+  schema: S,
+): Promise<z.output<S>> {
   let raw: unknown;
   try {
     raw = await c.req.json();
@@ -281,7 +284,10 @@ async function parseBody<S extends z.ZodTypeAny>(c: Context<DocumentsEnv>, schem
   return parsed.data;
 }
 
-function parseQuery<S extends z.ZodTypeAny>(c: Context<DocumentsEnv>, schema: S) {
+function parseQuery<S extends z.ZodType<unknown, z.ZodTypeDef, unknown>>(
+  c: Context<DocumentsEnv>,
+  schema: S,
+): z.output<S> {
   const parsed = schema.safeParse(c.req.query());
   if (!parsed.success) {
     throw parsed.error;

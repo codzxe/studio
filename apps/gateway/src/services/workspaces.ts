@@ -32,13 +32,11 @@
 // (newId defaults to randomUUID) so audit appends stay valid for the flows it
 // owns; user ids from other auth flows must be uuid-shaped to be auditable.
 
-import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
-import { auditLog, invitation, member, organization } from "@studio/db";
-import type { Db } from "@studio/db";
-import { trialGrant } from "@studio/billing";
-import type { LedgerStore, TrialGrantOutcome } from "@studio/billing";
+import { trialGrant, type LedgerStore, type TrialGrantOutcome } from "@studio/billing";
+import { auditLog, invitation, member, organization, type Db } from "@studio/db";
 import type { Result } from "@studio/config";
+import { and, eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { AppError } from "../middleware/error-mapper.js";
 
 // ---------------------------------------------------------------------------

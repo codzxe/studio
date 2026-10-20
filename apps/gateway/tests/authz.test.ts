@@ -397,6 +397,20 @@ describe("assertTenant", () => {
     expect(entries[0]?.fields.resource_organization_id).toBe("org-doc-foreign");
   });
 
+  it("fail closed on runtime garbage: undefined ids never equal a tenant (§15.1)", () => {
+    const { guard } = makeGuard();
+    const ctx = makeSession();
+    const undefinedId = undefined as unknown as string;
+    expect(() => guard.assertTenant({ organizationId: undefinedId }, ctx)).toThrowError(
+      CrossTenantDeniedError
+    );
+    expect(() => guard.assertDocAccess(undefinedId, ctx)).toThrowError(CrossTenantDeniedError);
+    const badCtx = makeSession({ organizationId: undefinedId });
+    expect(() => guard.assertTenant({ organizationId: "org-1" }, badCtx)).toThrowError(
+      CrossTenantDeniedError
+    );
+  });
+
   it("never masks a denial as 404/not_found (distinct typed code)", () => {
     const { guard } = makeGuard();
     const error = catchTypedError<AppError>(() =>
