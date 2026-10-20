@@ -17,24 +17,30 @@
 // NOTE: provider ids align with @studio/config `ModelProviderClass` ('gemini' |
 // 'anthropic' | 'openai' | 'deepseek' | 'flux'; env keys GEMINI/ANTHROPIC/…),
 // NOT the 'vertex' naming from the task sketch — one provider taxonomy repo-wide.
-import type { ModelProviderClass, RunTierId } from '@studio/config';
+import type { ModelProviderClass, RunTierId } from "@studio/config";
 
 /**
  * Routing classes — the §5.2 tier "Model class" column (rows 1–5): the five
  * interactive tiers. Distinct from @studio/config `MODEL_CLASSES`, which names
  * model families (sonnet/opus/flux/…): premium ≡ sonnet-class, max ≡ opus-class.
  */
-export const MODEL_CLASS_IDS = ['economy', 'default', 'default_plus', 'premium', 'max'] as const;
+export const MODEL_CLASS_IDS = ["economy", "default", "default_plus", "premium", "max"] as const;
 
 export type ModelClass = (typeof MODEL_CLASS_IDS)[number];
 
 /** Provider ids — identical strings to @studio/config `ModelProviderClass`. */
-export const MODEL_PROVIDER_IDS = ['gemini', 'anthropic', 'openai', 'deepseek', 'flux'] as const;
+export const MODEL_PROVIDER_IDS = ["gemini", "anthropic", "openai", "deepseek", "flux"] as const;
 
 export type ModelProviderId = ModelProviderClass;
 
 /** The five §5.3 roles. */
-export const MODEL_ROUTE_ROLES = ['planner', 'executor', 'critic', 'imageDrafts', 'imageFinals'] as const;
+export const MODEL_ROUTE_ROLES = [
+  "planner",
+  "executor",
+  "critic",
+  "imageDrafts",
+  "imageFinals",
+] as const;
 
 export type ModelRouteRole = (typeof MODEL_ROUTE_ROLES)[number];
 
@@ -54,51 +60,58 @@ export interface ModelRoute {
 
 /** Tier → routing class (§5.2 rows 1–5). Image tiers route by role only. */
 export const TIER_MODEL_CLASS: Readonly<Record<RunTierId, ModelClass | null>> = {
-  quick: 'economy',
-  standard: 'default',
-  complex: 'default_plus',
-  premium: 'premium',
-  max: 'max',
+  quick: "economy",
+  standard: "default",
+  complex: "default_plus",
+  premium: "premium",
+  max: "max",
   image_gen: null, // image roles are picked by the image pipeline (§5.2 rows 6–7)
   image_gen_hd: null,
 };
 
 /** Primary model per (role, class). `null` = the role is skipped for that class. */
-export const ROLE_ROUTES: Readonly<Record<ModelRouteRole, Readonly<Record<ModelClass, ModelRoute | null>>>> = {
+export const ROLE_ROUTES: Readonly<
+  Record<ModelRouteRole, Readonly<Record<ModelClass, ModelRoute | null>>>
+> = {
   planner: {
-    economy: { provider: 'gemini', id: 'gemini-2.5-flash-lite', class: 'economy' }, // §5.3: "Gemini 2.5 Flash-Lite / …"
-    default: { provider: 'gemini', id: 'gemini-3.8-flash', class: 'default' },
-    default_plus: { provider: 'gemini', id: 'gemini-3.8-flash', class: 'default_plus' }, // §5.2: default+ with more planning
-    premium: { provider: 'anthropic', id: 'claude-sonnet-5.5', class: 'premium' },
-    max: { provider: 'anthropic', id: 'claude-opus-5.5', class: 'max' },
+    economy: { provider: "gemini", id: "gemini-2.5-flash-lite", class: "economy" }, // §5.3: "Gemini 2.5 Flash-Lite / …"
+    default: { provider: "gemini", id: "gemini-3.8-flash", class: "default" },
+    default_plus: { provider: "gemini", id: "gemini-3.8-flash", class: "default_plus" }, // §5.2: default+ with more planning
+    premium: { provider: "anthropic", id: "claude-sonnet-5.5", class: "premium" },
+    max: { provider: "anthropic", id: "claude-opus-5.5", class: "max" },
   },
   executor: {
-    economy: { provider: 'deepseek', id: 'deepseek-v4.1-flash', class: 'economy', offPeak: true }, // §5.3: off-peak
-    default: { provider: 'gemini', id: 'gemini-3.8-flash', class: 'default' },
-    default_plus: { provider: 'gemini', id: 'gemini-3.8-flash', class: 'default_plus' },
-    premium: { provider: 'anthropic', id: 'claude-sonnet-5.5', class: 'premium' },
-    max: { provider: 'anthropic', id: 'claude-opus-5.5', class: 'max' },
+    economy: { provider: "deepseek", id: "deepseek-v4.1-flash", class: "economy", offPeak: true }, // §5.3: off-peak
+    default: { provider: "gemini", id: "gemini-3.8-flash", class: "default" },
+    default_plus: { provider: "gemini", id: "gemini-3.8-flash", class: "default_plus" },
+    premium: { provider: "anthropic", id: "claude-sonnet-5.5", class: "premium" },
+    max: { provider: "anthropic", id: "claude-opus-5.5", class: "max" },
   },
   critic: {
     economy: null, // §5.3: "— (skip for quick tier)"
-    default: { provider: 'gemini', id: 'gemini-3.8-flash', class: 'default', vision: true },
-    default_plus: { provider: 'gemini', id: 'gemini-3.8-flash', class: 'default_plus', vision: true },
-    premium: { provider: 'anthropic', id: 'claude-sonnet-5.5', class: 'premium', vision: true },
-    max: { provider: 'anthropic', id: 'claude-opus-5.5', class: 'max', vision: true },
+    default: { provider: "gemini", id: "gemini-3.8-flash", class: "default", vision: true },
+    default_plus: {
+      provider: "gemini",
+      id: "gemini-3.8-flash",
+      class: "default_plus",
+      vision: true,
+    },
+    premium: { provider: "anthropic", id: "claude-sonnet-5.5", class: "premium", vision: true },
+    max: { provider: "anthropic", id: "claude-opus-5.5", class: "max", vision: true },
   },
   imageDrafts: {
-    economy: { provider: 'flux', id: 'flux-2-schnell', class: 'economy' },
-    default: { provider: 'flux', id: 'flux-2-schnell', class: 'default' },
-    default_plus: { provider: 'flux', id: 'flux-2-schnell', class: 'default_plus' },
-    premium: { provider: 'flux', id: 'flux-2-schnell', class: 'premium' },
-    max: { provider: 'gemini', id: 'gemini-3-pro-image', class: 'max' }, // §5.3 max drafts
+    economy: { provider: "flux", id: "flux-2-schnell", class: "economy" },
+    default: { provider: "flux", id: "flux-2-schnell", class: "default" },
+    default_plus: { provider: "flux", id: "flux-2-schnell", class: "default_plus" },
+    premium: { provider: "flux", id: "flux-2-schnell", class: "premium" },
+    max: { provider: "gemini", id: "gemini-3-pro-image", class: "max" }, // §5.3 max drafts
   },
   imageFinals: {
     economy: null, // §5.3: "—" quick tier ships draft quality (1024²)
-    default: { provider: 'gemini', id: 'gemini-3-pro-image', class: 'default' },
-    default_plus: { provider: 'gemini', id: 'gemini-3-pro-image', class: 'default_plus' },
-    premium: { provider: 'gemini', id: 'gemini-3-pro-image', class: 'premium' },
-    max: { provider: 'openai', id: 'gpt-image-1.5', class: 'max' }, // §5.3: "GPT Image 1.5 HD"
+    default: { provider: "gemini", id: "gemini-3-pro-image", class: "default" },
+    default_plus: { provider: "gemini", id: "gemini-3-pro-image", class: "default_plus" },
+    premium: { provider: "gemini", id: "gemini-3-pro-image", class: "premium" },
+    max: { provider: "openai", id: "gpt-image-1.5", class: "max" }, // §5.3: "GPT Image 1.5 HD"
   },
 };
 
@@ -113,37 +126,39 @@ export const FAILOVER_PAIRS: Readonly<
   Record<ModelRouteRole, Readonly<Partial<Record<ModelClass, readonly ModelRoute[]>>>>
 > = {
   planner: {
-    economy: [{ provider: 'deepseek', id: 'deepseek-v4.1-flash', class: 'economy' }], // §5.3 explicit
-    default: [{ provider: 'anthropic', id: 'claude-haiku-4.5', class: 'default' }],
-    default_plus: [{ provider: 'anthropic', id: 'claude-haiku-4.5', class: 'default_plus' }],
-    premium: [{ provider: 'openai', id: 'gpt-5.6-terra', class: 'premium' }], // Appendix C: "Premium alternative"
-    max: [{ provider: 'openai', id: 'gpt-6-astra', class: 'max' }], // Appendix C: "Frontier; not default"
+    economy: [{ provider: "deepseek", id: "deepseek-v4.1-flash", class: "economy" }], // §5.3 explicit
+    default: [{ provider: "anthropic", id: "claude-haiku-4.5", class: "default" }],
+    default_plus: [{ provider: "anthropic", id: "claude-haiku-4.5", class: "default_plus" }],
+    premium: [{ provider: "openai", id: "gpt-5.6-terra", class: "premium" }], // Appendix C: "Premium alternative"
+    max: [{ provider: "openai", id: "gpt-6-astra", class: "max" }], // Appendix C: "Frontier; not default"
   },
   executor: {
-    economy: [{ provider: 'gemini', id: 'gemini-2.5-flash-lite', class: 'economy' }],
-    default: [{ provider: 'anthropic', id: 'claude-haiku-4.5', class: 'default' }],
-    default_plus: [{ provider: 'anthropic', id: 'claude-haiku-4.5', class: 'default_plus' }],
-    premium: [{ provider: 'openai', id: 'gpt-5.6-terra', class: 'premium' }],
-    max: [{ provider: 'openai', id: 'gpt-6-astra', class: 'max' }],
+    economy: [{ provider: "gemini", id: "gemini-2.5-flash-lite", class: "economy" }],
+    default: [{ provider: "anthropic", id: "claude-haiku-4.5", class: "default" }],
+    default_plus: [{ provider: "anthropic", id: "claude-haiku-4.5", class: "default_plus" }],
+    premium: [{ provider: "openai", id: "gpt-5.6-terra", class: "premium" }],
+    max: [{ provider: "openai", id: "gpt-6-astra", class: "max" }],
   },
   critic: {
-    default: [{ provider: 'anthropic', id: 'claude-haiku-4.5', class: 'default', vision: true }],
-    default_plus: [{ provider: 'anthropic', id: 'claude-haiku-4.5', class: 'default_plus', vision: true }],
-    premium: [{ provider: 'openai', id: 'gpt-5.6-terra', class: 'premium', vision: true }],
-    max: [{ provider: 'openai', id: 'gpt-6-astra', class: 'max', vision: true }],
+    default: [{ provider: "anthropic", id: "claude-haiku-4.5", class: "default", vision: true }],
+    default_plus: [
+      { provider: "anthropic", id: "claude-haiku-4.5", class: "default_plus", vision: true },
+    ],
+    premium: [{ provider: "openai", id: "gpt-5.6-terra", class: "premium", vision: true }],
+    max: [{ provider: "openai", id: "gpt-6-astra", class: "max", vision: true }],
   },
   imageDrafts: {
-    economy: [{ provider: 'gemini', id: 'gemini-3-pro-image', class: 'economy' }],
-    default: [{ provider: 'gemini', id: 'gemini-3-pro-image', class: 'default' }],
-    default_plus: [{ provider: 'gemini', id: 'gemini-3-pro-image', class: 'default_plus' }],
-    premium: [{ provider: 'gemini', id: 'gemini-3-pro-image', class: 'premium' }],
-    max: [{ provider: 'flux', id: 'flux-2-schnell', class: 'max' }], // availability fallback
+    economy: [{ provider: "gemini", id: "gemini-3-pro-image", class: "economy" }],
+    default: [{ provider: "gemini", id: "gemini-3-pro-image", class: "default" }],
+    default_plus: [{ provider: "gemini", id: "gemini-3-pro-image", class: "default_plus" }],
+    premium: [{ provider: "gemini", id: "gemini-3-pro-image", class: "premium" }],
+    max: [{ provider: "flux", id: "flux-2-schnell", class: "max" }], // availability fallback
   },
   imageFinals: {
-    default: [{ provider: 'openai', id: 'gpt-image-1.5', class: 'default' }], // Appendix C: "Alternative finals"
-    default_plus: [{ provider: 'openai', id: 'gpt-image-1.5', class: 'default_plus' }],
-    premium: [{ provider: 'openai', id: 'gpt-image-1.5', class: 'premium' }],
-    max: [{ provider: 'gemini', id: 'gemini-3-pro-image', class: 'max' }],
+    default: [{ provider: "openai", id: "gpt-image-1.5", class: "default" }], // Appendix C: "Alternative finals"
+    default_plus: [{ provider: "openai", id: "gpt-image-1.5", class: "default_plus" }],
+    premium: [{ provider: "openai", id: "gpt-image-1.5", class: "premium" }],
+    max: [{ provider: "gemini", id: "gemini-3-pro-image", class: "max" }],
   },
 };
 
@@ -171,7 +186,7 @@ export function routeChain(role: ModelRouteRole, modelClass: ModelClass): readon
 // --- Circuit breakers (§5.3: per-provider, with failover) -------------------------
 
 /** Circuit states per §5.3: closed (healthy) → open (tripped) → half_open (probing). */
-export type CircuitBreakerStatus = 'closed' | 'open' | 'half_open';
+export type CircuitBreakerStatus = "closed" | "open" | "half_open";
 
 /** One recorded provider failure (code is a stable provider error code). */
 export interface ProviderFailure {
@@ -191,7 +206,7 @@ export interface CircuitBreakerState {
 
 /** A fresh healthy breaker. */
 export function freshCircuitBreaker(): CircuitBreakerState {
-  return { status: 'closed', lastFailure: null, consecutiveFailures: 0, openedAt: null };
+  return { status: "closed", lastFailure: null, consecutiveFailures: 0, openedAt: null };
 }
 
 /** Records a failure; trips the breaker `open` at `failureThreshold` (default 3). */
@@ -203,17 +218,21 @@ export function tripBreaker(
 ): CircuitBreakerState {
   const consecutiveFailures = state.consecutiveFailures + 1;
   if (consecutiveFailures >= failureThreshold) {
-    return { status: 'open', lastFailure: failure, consecutiveFailures, openedAt: now };
+    return { status: "open", lastFailure: failure, consecutiveFailures, openedAt: now };
   }
   return { ...state, lastFailure: failure, consecutiveFailures };
 }
 
 /** Lets one probe request through after the open→half_open cooldown elapses. */
-export function halfOpenBreaker(state: CircuitBreakerState, now: number, cooldownMs: number): CircuitBreakerState {
-  if (state.status !== 'open' || state.openedAt === null) {
+export function halfOpenBreaker(
+  state: CircuitBreakerState,
+  now: number,
+  cooldownMs: number,
+): CircuitBreakerState {
+  if (state.status !== "open" || state.openedAt === null) {
     return state;
   }
-  return now - state.openedAt >= cooldownMs ? { ...state, status: 'half_open' } : state;
+  return now - state.openedAt >= cooldownMs ? { ...state, status: "half_open" } : state;
 }
 
 /** Successful call: closes the breaker again from any state. */
@@ -222,13 +241,17 @@ export function resetBreaker(state: CircuitBreakerState): CircuitBreakerState {
 }
 
 /** Routing decision helper: may we attempt a call on this provider right now? */
-export function shouldAttemptRequest(state: CircuitBreakerState, now: number, cooldownMs: number): boolean {
+export function shouldAttemptRequest(
+  state: CircuitBreakerState,
+  now: number,
+  cooldownMs: number,
+): boolean {
   switch (state.status) {
-    case 'closed':
+    case "closed":
       return true;
-    case 'half_open':
+    case "half_open":
       return true; // one probe in flight
-    case 'open':
+    case "open":
       return state.openedAt !== null && now - state.openedAt >= cooldownMs;
   }
 }

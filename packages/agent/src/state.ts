@@ -21,24 +21,24 @@
 // Status strings are identical to the `agent_runs.status` column type (W1-E,
 // packages/db/src/schema/runs.ts) — a type-level guard at the bottom of this file
 // fails compilation on drift.
-import { z } from 'zod';
-import { agentErr, agentOk, type AgentResult } from './errors.js';
+import { z } from "zod";
+import { type AgentResult, agentErr, agentOk } from "./errors.js";
 
 /** §5.1 — non-terminal phases + terminal states (13 total). */
 export const RUN_STATUSES = [
-  'queued',
-  'planning',
-  'executing',
-  'observing',
-  'rendering',
-  'validating',
-  'critiquing',
-  'repairing',
-  'finalizing',
-  'succeeded',
-  'succeeded_with_warnings',
-  'failed',
-  'cancelled',
+  "queued",
+  "planning",
+  "executing",
+  "observing",
+  "rendering",
+  "validating",
+  "critiquing",
+  "repairing",
+  "finalizing",
+  "succeeded",
+  "succeeded_with_warnings",
+  "failed",
+  "cancelled",
 ] as const satisfies readonly string[];
 
 export type RunStatus = (typeof RUN_STATUSES)[number];
@@ -47,25 +47,25 @@ export const RUN_STATUS_SCHEMA = z.enum(RUN_STATUSES);
 
 /** §5.1 terminal states — no outgoing transitions, ever. */
 export const TERMINAL_RUN_STATUSES = [
-  'succeeded',
-  'succeeded_with_warnings',
-  'failed',
-  'cancelled',
+  "succeeded",
+  "succeeded_with_warnings",
+  "failed",
+  "cancelled",
 ] as const satisfies readonly RunStatus[];
 
 export type TerminalRunStatus = (typeof TERMINAL_RUN_STATUSES)[number];
 
 /** Every status that can still move (the state machine's working set). */
 export const NON_TERMINAL_RUN_STATUSES = [
-  'queued',
-  'planning',
-  'executing',
-  'observing',
-  'rendering',
-  'validating',
-  'critiquing',
-  'repairing',
-  'finalizing',
+  "queued",
+  "planning",
+  "executing",
+  "observing",
+  "rendering",
+  "validating",
+  "critiquing",
+  "repairing",
+  "finalizing",
 ] as const satisfies readonly RunStatus[];
 
 export type NonTerminalRunStatus = (typeof NON_TERMINAL_RUN_STATUSES)[number];
@@ -75,14 +75,14 @@ export type NonTerminalRunStatus = (typeof NON_TERMINAL_RUN_STATUSES)[number];
  * `RUN_PHASES` in packages/db/src/schema/runs.ts (W1-E).
  */
 export const RUN_PHASES = [
-  'planning',
-  'executing',
-  'observing',
-  'rendering',
-  'validating',
-  'critiquing',
-  'repairing',
-  'finalizing',
+  "planning",
+  "executing",
+  "observing",
+  "rendering",
+  "validating",
+  "critiquing",
+  "repairing",
+  "finalizing",
 ] as const satisfies readonly RunStatus[];
 
 export type RunPhase = (typeof RUN_PHASES)[number];
@@ -103,25 +103,25 @@ export function isRunPhase(status: RunStatus): status is RunPhase {
  */
 export const ALLOWED_TRANSITIONS: Readonly<Record<RunStatus, readonly RunStatus[]>> = {
   // Plan first (§5.1): a queued run may only start planning — or die early.
-  queued: ['planning', 'failed', 'cancelled'],
+  queued: ["planning", "failed", "cancelled"],
   // Plan validated → execute. §5.1: invalid plan → one retry → clear failure.
-  planning: ['executing', 'failed', 'cancelled'],
+  planning: ["executing", "failed", "cancelled"],
   // Observe after act (§5.1).
-  executing: ['observing', 'failed', 'cancelled'],
+  executing: ["observing", "failed", "cancelled"],
   // ⇄ back to executing for the next phase, or forward to the render pipeline.
-  observing: ['executing', 'rendering', 'failed', 'cancelled'],
+  observing: ["executing", "rendering", "failed", "cancelled"],
   // Render, then validate before critique (§5.1).
-  rendering: ['validating', 'failed', 'cancelled'],
+  rendering: ["validating", "failed", "cancelled"],
   // No blocker → critic (or skip it: quick tier §5.3, export intents) → finalizing.
   // Blocker/major → repairing (§11.1/§11.3). A fatal blocker → failed (rollback §5.1).
-  validating: ['critiquing', 'repairing', 'finalizing', 'failed', 'cancelled'],
+  validating: ["critiquing", "repairing", "finalizing", "failed", "cancelled"],
   // Critic issues drive the repair loop; otherwise the run finalizes.
   // Revision cap reached → finalizing → succeeded_with_warnings (§5.1/§11.2).
-  critiquing: ['repairing', 'finalizing', 'failed', 'cancelled'],
+  critiquing: ["repairing", "finalizing", "failed", "cancelled"],
   // (repairing → observing) ×N — one repair cycle re-enters the observe loop.
-  repairing: ['observing', 'failed', 'cancelled'],
+  repairing: ["observing", "failed", "cancelled"],
   // agent.commit → succeeded / succeeded_with_warnings; commit failure → failed.
-  finalizing: ['succeeded', 'succeeded_with_warnings', 'failed', 'cancelled'],
+  finalizing: ["succeeded", "succeeded_with_warnings", "failed", "cancelled"],
   // Terminal rows are frozen (§5.1).
   succeeded: [],
   succeeded_with_warnings: [],
@@ -141,19 +141,19 @@ export function canTransition(from: RunStatus, to: RunStatus): boolean {
 export function transition(from: RunStatus, to: RunStatus): AgentResult<RunStatus> {
   if (isTerminal(from)) {
     return agentErr(
-      'invalid_transition',
+      "invalid_transition",
       `Cannot transition '${from} → ${to}': '${from}' is terminal (§5.1) — runs never leave a terminal state.`,
-      { hint: 'Start a new run instead of continuing this one.' },
+      { hint: "Start a new run instead of continuing this one." },
     );
   }
   if (!canTransition(from, to)) {
     return agentErr(
-      'invalid_transition',
+      "invalid_transition",
       `A run cannot move from '${from}' to '${to}' (§5.1 state machine).`,
       {
         hint: isTerminal(to)
           ? `Reach '${to}' via 'finalizing' (success) or directly from any active phase (failure/cancel).`
-          : `Allowed next states from '${from}': ${ALLOWED_TRANSITIONS[from].join(', ')}.`,
+          : `Allowed next states from '${from}': ${ALLOWED_TRANSITIONS[from].join(", ")}.`,
       },
     );
   }
@@ -167,4 +167,4 @@ export function transition(from: RunStatus, to: RunStatus): AgentResult<RunStatu
 type _ExactUnion<Db> = [Db] extends [RunStatus] ? ([RunStatus] extends [Db] ? true : never) : never;
 
 /** Internal contract check — resolves to `true`; never import this. */
-export type RunStatusMatchesDb = _ExactUnion<import('@studio/db').RunStatus>;
+export type RunStatusMatchesDb = _ExactUnion<import("@studio/db").RunStatus>;

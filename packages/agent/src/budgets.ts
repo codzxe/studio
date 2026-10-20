@@ -9,14 +9,20 @@
 // hard failure): the loop uses it to finish cleanly and surface `message` via
 // SSE. The clock is injectable (`Clock = () => epoch ms`) so tests and replayed
 // runs are deterministic.
-import { z } from 'zod';
-import { resolveTierConfig, type RunTierId } from '@studio/config';
+import { type RunTierId, resolveTierConfig } from "@studio/config";
+import { z } from "zod";
 
 /** Injectable wall clock: returns epoch milliseconds. */
 export type Clock = () => number;
 
 /** Budget dimensions, in the deterministic order `exceeded()` reports them. */
-export const BUDGET_KINDS = ['tokens_in', 'tokens_out', 'tool_calls', 'revisions', 'wall_clock'] as const;
+export const BUDGET_KINDS = [
+  "tokens_in",
+  "tokens_out",
+  "tool_calls",
+  "revisions",
+  "wall_clock",
+] as const;
 
 export type BudgetKind = (typeof BUDGET_KINDS)[number];
 
@@ -29,14 +35,13 @@ export interface BudgetLimits {
   readonly wallClockMs: number;
 }
 
-export const budgetLimitsSchema = z
-  .strictObject({
-    tokenBudgetIn: z.number().int().min(0).nullable(),
-    tokenBudgetOut: z.number().int().min(0).nullable(),
-    toolCallCap: z.number().int().min(0),
-    revisions: z.number().int().min(0),
-    wallClockMs: z.number().int().min(1),
-  });
+export const budgetLimitsSchema = z.strictObject({
+  tokenBudgetIn: z.number().int().min(0).nullable(),
+  tokenBudgetOut: z.number().int().min(0).nullable(),
+  toolCallCap: z.number().int().min(0),
+  revisions: z.number().int().min(0),
+  wallClockMs: z.number().int().min(1),
+});
 
 /** Per-model counters — mirrors `ModelCallUsage` in packages/db (W1-E), minus cost. */
 export interface BudgetModelUsage {
@@ -136,7 +141,7 @@ export class BudgetTracker {
    * Invalid numbers (NaN/negative) are treated as 0 — never throw on flaky telemetry.
    */
   trackTokens(model: string, tokensIn: number, tokensOut: number, cacheHits = 0): void {
-    const key = model.trim() || 'unknown';
+    const key = model.trim() || "unknown";
     const inTokens = sanitizeCount(tokensIn);
     const outTokens = sanitizeCount(tokensOut);
     const hits = sanitizeCount(cacheHits);
@@ -173,8 +178,14 @@ export class BudgetTracker {
   /** Remaining headroom per dimension (mirrors `BudgetLimits` nullability). */
   remaining(): BudgetRemaining {
     return {
-      tokensIn: this.limits.tokenBudgetIn === null ? null : Math.max(0, this.limits.tokenBudgetIn - this.tokensIn),
-      tokensOut: this.limits.tokenBudgetOut === null ? null : Math.max(0, this.limits.tokenBudgetOut - this.tokensOut),
+      tokensIn:
+        this.limits.tokenBudgetIn === null
+          ? null
+          : Math.max(0, this.limits.tokenBudgetIn - this.tokensIn),
+      tokensOut:
+        this.limits.tokenBudgetOut === null
+          ? null
+          : Math.max(0, this.limits.tokenBudgetOut - this.tokensOut),
       toolCalls: Math.max(0, this.limits.toolCallCap - this.toolCalls),
       revisions: Math.max(0, this.limits.revisions - this.revisions),
       wallClockMs: Math.max(0, this.limits.wallClockMs - this.wallClockUsedMs()),
@@ -191,20 +202,31 @@ export class BudgetTracker {
    * order is `BUDGET_KINDS` order (deterministic).
    */
   exceeded(): BudgetExceeded | null {
-    if (this.limits.tokenBudgetIn !== null && this.spent(this.tokensIn, this.limits.tokenBudgetIn)) {
-      return this.report('tokens_in', this.tokensIn, this.limits.tokenBudgetIn, 'input tokens');
+    if (
+      this.limits.tokenBudgetIn !== null &&
+      this.spent(this.tokensIn, this.limits.tokenBudgetIn)
+    ) {
+      return this.report("tokens_in", this.tokensIn, this.limits.tokenBudgetIn, "input tokens");
     }
-    if (this.limits.tokenBudgetOut !== null && this.spent(this.tokensOut, this.limits.tokenBudgetOut)) {
-      return this.report('tokens_out', this.tokensOut, this.limits.tokenBudgetOut, 'output tokens');
+    if (
+      this.limits.tokenBudgetOut !== null &&
+      this.spent(this.tokensOut, this.limits.tokenBudgetOut)
+    ) {
+      return this.report("tokens_out", this.tokensOut, this.limits.tokenBudgetOut, "output tokens");
     }
     if (this.spent(this.toolCalls, this.limits.toolCallCap)) {
-      return this.report('tool_calls', this.toolCalls, this.limits.toolCallCap, 'tool calls');
+      return this.report("tool_calls", this.toolCalls, this.limits.toolCallCap, "tool calls");
     }
     if (this.spent(this.revisions, this.limits.revisions)) {
-      return this.report('revisions', this.revisions, this.limits.revisions, 'repair cycles');
+      return this.report("revisions", this.revisions, this.limits.revisions, "repair cycles");
     }
     if (this.spent(this.wallClockUsedMs(), this.limits.wallClockMs)) {
-      return this.report('wall_clock', this.wallClockUsedMs(), this.limits.wallClockMs, 'wall-clock time');
+      return this.report(
+        "wall_clock",
+        this.wallClockUsedMs(),
+        this.limits.wallClockMs,
+        "wall-clock time",
+      );
     }
     return null;
   }
@@ -218,7 +240,7 @@ export class BudgetTracker {
     return {
       kind,
       remaining: Math.max(0, cap - used),
-      message: `${kind.replace('_', ' ')} budget reached (${used} of ${cap} ${unit}); the run stops cleanly and keeps committed work (§5.2).`,
+      message: `${kind.replace("_", " ")} budget reached (${used} of ${cap} ${unit}); the run stops cleanly and keeps committed work (§5.2).`,
     };
   }
 

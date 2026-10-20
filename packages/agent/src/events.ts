@@ -10,13 +10,13 @@
 // strings) — re-exported here as `RUN_EVENT_TYPES` for agent consumers; the
 // import-time equality check below fails loudly on any drift.
 import {
+  type RunTierId,
   SSE_EVENT_TYPES,
   SSE_EVENT_TYPE_KEYS,
-  type RunTierId,
   type SseEventType,
-} from '@studio/config';
-import type { Plan } from './plan.js';
-import type { RunPhase } from './state.js';
+} from "@studio/config";
+import type { Plan } from "./plan.js";
+import type { RunPhase } from "./state.js";
 
 // --- Payload types, discriminated by `type` (§13.2) ------------------------------
 
@@ -72,7 +72,7 @@ export interface ValidateReportPayload {
  * validated critic output without remapping.
  */
 export interface CritiqueReportPayload {
-  readonly verdict: 'accept' | 'revise';
+  readonly verdict: "accept" | "revise";
   readonly scores: Readonly<{
     hierarchy: number;
     balance: number;
@@ -86,7 +86,7 @@ export interface CritiqueReportPayload {
 
 /** §11.2 critic issue (≤5 in a report; only blocker/major drive repairs). */
 export interface CritiqueIssue {
-  readonly severity: 'blocker' | 'major' | 'minor';
+  readonly severity: "blocker" | "major" | "minor";
   readonly code: string;
   readonly layer?: string;
   readonly observation: string;
@@ -127,19 +127,19 @@ export interface RunCancelledPayload {
 
 /** Payload type per event type — the discriminated-union source of truth. */
 export interface RunEventPayloadMap {
-  readonly 'run.queued': RunQueuedPayload;
-  readonly 'run.started': RunStartedPayload;
-  readonly 'run.plan': RunPlanPayload;
-  readonly 'step.started': StepStartedPayload;
-  readonly 'step.finished': StepFinishedPayload;
-  readonly 'preview.updated': PreviewUpdatedPayload;
-  readonly 'validate.report': ValidateReportPayload;
-  readonly 'critique.report': CritiqueReportPayload;
-  readonly 'credits.reserved': CreditsReservedPayload;
-  readonly 'credits.charged': CreditsChargedPayload;
-  readonly 'run.succeeded': RunSucceededPayload;
-  readonly 'run.failed': RunFailedPayload;
-  readonly 'run.cancelled': RunCancelledPayload;
+  readonly "run.queued": RunQueuedPayload;
+  readonly "run.started": RunStartedPayload;
+  readonly "run.plan": RunPlanPayload;
+  readonly "step.started": StepStartedPayload;
+  readonly "step.finished": StepFinishedPayload;
+  readonly "preview.updated": PreviewUpdatedPayload;
+  readonly "validate.report": ValidateReportPayload;
+  readonly "critique.report": CritiqueReportPayload;
+  readonly "credits.reserved": CreditsReservedPayload;
+  readonly "credits.charged": CreditsChargedPayload;
+  readonly "run.succeeded": RunSucceededPayload;
+  readonly "run.failed": RunFailedPayload;
+  readonly "run.cancelled": RunCancelledPayload;
 }
 
 export type RunEventType = keyof RunEventPayloadMap & SseEventType;
@@ -161,19 +161,19 @@ export type RunEventTypeContract = _ExactEventKeys;
  * the import-time loop below fails fast if any §13.2 type is missing here.
  */
 export const RUN_EVENT_TYPES = [
-  'run.queued',
-  'run.started',
-  'run.plan',
-  'step.started',
-  'step.finished',
-  'preview.updated',
-  'validate.report',
-  'critique.report',
-  'credits.reserved',
-  'credits.charged',
-  'run.succeeded',
-  'run.failed',
-  'run.cancelled',
+  "run.queued",
+  "run.started",
+  "run.plan",
+  "step.started",
+  "step.finished",
+  "preview.updated",
+  "validate.report",
+  "critique.report",
+  "credits.reserved",
+  "credits.charged",
+  "run.succeeded",
+  "run.failed",
+  "run.cancelled",
 ] as const satisfies readonly RunEventType[];
 
 // Import-time drift check vs @studio/config (W1-B) — fails fast, never silently.
@@ -185,7 +185,7 @@ for (const type of RUN_EVENT_TYPES) {
   wireEventTypes.delete(type);
 }
 if (wireEventTypes.size > 0) {
-  throw new Error('[agent/events] @studio/config §13.2 types missing a payload here');
+  throw new Error("[agent/events] @studio/config §13.2 types missing a payload here");
 }
 
 /** Named emission constants (mirror of @studio/config `SSE_EVENT_TYPES`). */
@@ -204,9 +204,11 @@ export interface RunEventFor<T extends RunEventType> {
 export type RunEvent = RunEventFor<RunEventType>;
 
 /** The three terminal event types (a client closes the stream after one of these). */
-export const TERMINAL_RUN_EVENT_TYPES = ['run.succeeded', 'run.failed', 'run.cancelled'] as const;
+export const TERMINAL_RUN_EVENT_TYPES = ["run.succeeded", "run.failed", "run.cancelled"] as const;
 
-export function isTerminalRunEventType(type: RunEventType): type is (typeof TERMINAL_RUN_EVENT_TYPES)[number] {
+export function isTerminalRunEventType(
+  type: RunEventType,
+): type is (typeof TERMINAL_RUN_EVENT_TYPES)[number] {
   return (TERMINAL_RUN_EVENT_TYPES as readonly RunEventType[]).includes(type);
 }
 

@@ -12,13 +12,13 @@
 //
 // The schema is STRICT: unknown properties are rejected so a model cannot smuggle
 // extra directives into the plan (§5.7 injection stance).
-import { z } from 'zod';
-import { MAX_MUTATING_COMMANDS_PER_RUN, RUN_TIER_IDS } from '@studio/config';
+import { MAX_MUTATING_COMMANDS_PER_RUN, RUN_TIER_IDS } from "@studio/config";
+import { z } from "zod";
 
 // --- Enums and formats -----------------------------------------------------------
 
 /** §5.5 `intent` — exactly these five. */
-export const PLAN_INTENTS = ['create_post', 'edit_layers', 'resize', 'variant', 'export'] as const;
+export const PLAN_INTENTS = ["create_post", "edit_layers", "resize", "variant", "export"] as const;
 export type PlanIntent = (typeof PLAN_INTENTS)[number];
 
 export const PLAN_INTENT_SCHEMA = z.enum(PLAN_INTENTS);
@@ -28,7 +28,7 @@ export const PLAN_INTENT_SCHEMA = z.enum(PLAN_INTENTS);
  * tiers (image_gen/image_gen_hd) are asset jobs, not document plans; the
  * planner cannot request them.
  */
-export const PLAN_MODEL_TIER_IDS = ['quick', 'standard', 'complex', 'premium', 'max'] as const;
+export const PLAN_MODEL_TIER_IDS = ["quick", "standard", "complex", "premium", "max"] as const;
 export type PlanModelTier = (typeof PLAN_MODEL_TIER_IDS)[number];
 
 export const PLAN_MODEL_TIER_SCHEMA = z.enum(PLAN_MODEL_TIER_IDS);
@@ -48,7 +48,7 @@ export const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 export const PLAN_TOOL_NAME_RE = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)?$/;
 
 /** §6.2 asset fit modes. */
-export const ASSET_FITS = ['cover', 'contain', 'fill'] as const;
+export const ASSET_FITS = ["cover", "contain", "fill"] as const;
 export type AssetFit = (typeof ASSET_FITS)[number];
 
 // --- Sizes (policy constants; §5.7 "cap string lengths and array sizes") ---------
@@ -82,13 +82,12 @@ export const focalPointSchema = z.strictObject({
 
 export type FocalPoint = z.infer<typeof focalPointSchema>;
 
-export const planAssetSchema = z
-  .strictObject({
-    ref: z.string().min(1).max(200),
-    slot: z.string().min(1).max(200),
-    fit: z.enum(ASSET_FITS).default('cover'), // §6.2 default
-    focal: focalPointSchema.optional(),
-  });
+export const planAssetSchema = z.strictObject({
+  ref: z.string().min(1).max(200),
+  slot: z.string().min(1).max(200),
+  fit: z.enum(ASSET_FITS).default("cover"), // §6.2 default
+  focal: focalPointSchema.optional(),
+});
 
 export type PlanAsset = z.infer<typeof planAssetSchema>;
 
@@ -98,7 +97,7 @@ export type PlanAsset = z.infer<typeof planAssetSchema>;
  * by design; the tool boundary is where they die.
  */
 export const planStepSchema = z.strictObject({
-  tool: z.string().regex(PLAN_TOOL_NAME_RE, 'tool must be a snake_case or dotted tool name'),
+  tool: z.string().regex(PLAN_TOOL_NAME_RE, "tool must be a snake_case or dotted tool name"),
   args: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -160,7 +159,7 @@ function truncate(text: string, max: number): string {
 
 function formatPlanIssues(error: z.ZodError): string[] {
   return error.issues.map((issue) => {
-    const path = issue.path.length > 0 ? issue.path.map(String).join('.') : '(root)';
+    const path = issue.path.length > 0 ? issue.path.map(String).join(".") : "(root)";
     return `plan.${truncate(path, 120)}: ${issue.message}`;
   });
 }
