@@ -1,0 +1,5 @@
+{
+  "name": "@studio/evals", "version": "0.1.0", "private": true, "type": "module",
+  "devDependencies": { "promptfoo": "^0.103.0" },
+  "scripts": { "typecheck": "tsc --noEmit", "eval": "promptfoo eval" }
+}
