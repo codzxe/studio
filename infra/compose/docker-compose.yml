@@ -1,0 +1,337 @@
+# =============================================================================
+# infra/compose/docker-compose.yml — single-node production stack (spec §17.2)
+# =============================================================================
+# Target: ONE AWS Lightsail 4 GB instance, Ubuntu 24.04, Docker Compose (§17.1).
+# All-in box for the first ~10–20 active users; no per-service tax.
+#
+# HOW TO RUN (canonical env file is the repo root .env, ADR-0002):
+#     docker compose --env-file ../../.env -f docker-compose.yml up -d
+# --env-file feeds ${...} interpolation from the SAME file the containers get
+# via env_file (single source of truth; keep .env chmod 0600, §17.2).
+#
+# Environments (§17.5): local/staging/production all use this file; staging is
+# the SAME box but a separate Compose project — set COMPOSE_PROJECT_NAME and a
+# separate .env (own subdomain + own DB). Never test migrations on prod first.
+#
+# Stack rules honored here (§17.2): every service has a healthcheck,
+# restart: unless-stopped, resource limits on the engine pool, ONLY Caddy
+# publishes host ports, secrets via env file 0600, logs rotated via
+# json-file caps (≤ 500 MB box-wide, §17.4).
+#
+# Wave-9 note: the four app services reference Dockerfiles that do NOT exist
+# yet (they land in Wave 9). Until then `docker compose build` fails for
+# gateway/worker/engine-pool/web — expected; infra/README.md tracks it.
+# =============================================================================
+
+name: ${COMPOSE_PROJECT_NAME:-studio}
+
+# Rotated structured logs for every service (§17.4 disk pressure rule).
+# 10 MB × 5 files × ~9 services ≈ 450 MB — inside the 500 MB budget.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# Common healthcheck tuning (§17.2 "every service has a healthcheck").
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 15s
+
+services:
+  # --------------------------------------------------------------------------
+  # Caddy — TLS termination + reverse proxy (§3.1 proxy row, §16.3 Apache-2.0).
+  # The ONLY service with host ports (80/443). Automatic ACME certificates on
+  # first boot once DNS points at the box (§17.1 first-boot runbook).
+  # --------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # 443/udp is HTTP/3; harmless on firewalls that only filter TCP.
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      # Site config is owned here (infra/caddy/Caddyfile) — mounted read-only.
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certs + ACME account must survive redeploys or we re-issue on every boot.
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      # Least privilege: Caddy gets ONLY the proxy vars — not the full .env
+      # (no Stripe/LLM keys inside the TLS proxy container).
+      # {$APP_DOMAIN} site address in the Caddyfile (DNS must exist first,
+      # or ACME fails — see infra/README.md first-boot runbook).
+      APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN required in ../../.env (public DNS name for TLS, §17.1)}
+      GATEWAY_INTERNAL: ${GATEWAY_INTERNAL:-gateway:8787}
+      WEB_INTERNAL: ${WEB_INTERNAL:-web:3000}
+      # Optional: ACME account email for expiry notices. Empty = anonymous.
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    healthcheck:
+      <<: *healthcheck-defaults
+      # Port 80 always answers (ACME http-01 + redirect) — no self-signed TLS
+      # needed for a liveness probe.
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80"]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    networks: [studio]
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # gateway — Hono REST + SSE API (§3.1). Stateless. Never receives host
+  # ports: Caddy proxies {$APP_DOMAIN}/v1/* → gateway:8787.
+  # --------------------------------------------------------------------------
+  gateway:
+    # TODO(Wave 9): Dockerfile lands there; context is the app package.
+    build:
+      context: ../../apps/gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Non-root: the Wave-9 Dockerfile MUST `USER node` (§15.2 least
+    # privilege; node:22-alpine base ships the unprivileged `node` user).
+    env_file:
+      - ../../.env
+    healthcheck:
+      <<: *healthcheck-defaults
+      # Liveness route built by apps/gateway/src/routes/health.ts
+      # (GET /v1/health). Uses Node's global fetch so the check survives any
+      # base image (no curl/wget dependency inside app images).
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.GATEWAY_PORT??'8787')+'/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks: [studio]
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # worker — BullMQ agent loop, critic, exports (§3.1). Two replicas on the
+  # 4 GB box (§17.2); each honors WORKER_CONCURRENCY (see .env.example).
+  # No host port: its ops endpoint (127.0.0.1:9876/health, apps/worker
+  # src/health.ts) is in-container only — docker inspect / compose exec reach
+  # it, the internet cannot.
+  # --------------------------------------------------------------------------
+  worker:
+    # TODO(Wave 9): Dockerfile lands there; context is the app package.
+    build:
+      context: ../../apps/worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    deploy:
+      # §17.2 pins replicas: 2. Compose v2 honors deploy.replicas; keep small
+      # on a 4 GB box shared with Postgres + the engine pool.
+      replicas: 2
+    # Non-root: see gateway — Wave-9 Dockerfile must `USER node`.
+    env_file:
+      - ../../.env
+    healthcheck:
+      <<: *healthcheck-defaults
+      # Worker ops endpoint (apps/worker/src/health.ts): GET /health, default
+      # WORKER_HEALTH_PORT 9876, bound to loopback inside its own container.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.WORKER_HEALTH_PORT??'9876')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks: [studio]
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # engine-pool — supervisor spawning one `photocraft-cli serve` per active
+  # tenant session (§3.2, §15.1). Capped at 2 GB / 2 CPU so a runaway engine
+  # can never starve Postgres (§17.4 memory-pressure rule: the pool dies
+  # first). Engine processes bind loopback inside this container — the
+  # browser NEVER reaches them (§3.2). No host ports, ever.
+  # --------------------------------------------------------------------------
+  engine-pool:
+    # TODO(Wave 9): Dockerfile lands there; it must bake the pinned engine
+    # binary (ADR-0001; .env.example: "the compose image bakes its own copy")
+    # so ENGINE_CLI_PATH in .env points at the IN-IMAGE path on the box.
+    build:
+      context: ../../apps/engine-pool
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+    volumes:
+      # Per-session working dirs / capability roots live here (§3.2, §15.1).
+      - engine_work:/work
+    # Non-root: Wave-9 Dockerfile must `USER node` AND the baked engine
+    # binary must be runnable as that user (§15.1 capability roots).
+    env_file:
+      - ../../.env
+    healthcheck:
+      <<: *healthcheck-defaults
+      # TODO(engine-pool Wave 2): replace this process-liveness stopgap with
+      # the supervisor's real probe once it exposes one; gateway's
+      # /v1/health/deep already carries an engine_pool probe (§22).
+      test: ["CMD", "node", "-e", "process.kill(1,0)"]
+    networks: [studio]
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # web — Next.js marketing + product UI (§3.1). Caddy proxies everything not
+  # under /v1/* here. In staging/prod static assets may move to Cloudflare
+  # Pages (§17.1) — this service stays as the SSR/app origin either way.
+  # --------------------------------------------------------------------------
+  web:
+    # TODO(Wave 9): Dockerfile lands there; context is the app package.
+    build:
+      context: ../../apps/web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Non-root: Wave-9 Dockerfile must `USER node` (Next.js runs fine
+    # unprivileged; .next cache dir must be owned by that user).
+    env_file:
+      - ../../.env
+    healthcheck:
+      <<: *healthcheck-defaults
+      # Marketing page answers 200 on /. Swap for /api/health if web adds one.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.WEB_PORT??'3000')+'/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      start_period: 30s
+    depends_on:
+      # Ordering only — the web server starts fine while the API is down.
+      gateway:
+        condition: service_started
+    networks: [studio]
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # db — PostgreSQL 16, source of truth (§3.1 db row, §12 data model).
+  # Official image; the entrypoint self-demotes to the unprivileged
+  # `postgres` user after init. pgdata volume survives redeploys.
+  # --------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      # Interpolation comes from ../../.env (pass --env-file, see header).
+      # No secret defaults — fail fast on a missing password (§4).
+      POSTGRES_USER: ${POSTGRES_USER:-studio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required in ../../.env (must match the password inside DATABASE_URL)}
+      POSTGRES_DB: ${POSTGRES_DB:-studio}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-studio}\" -d \"$${POSTGRES_DB:-studio}\""]
+    networks: [studio]
+    logging: *default-logging
+
+  # --------------------------------------------------------------------------
+  # valkey — queue/cache store (§3.1). Valkey, NOT Redis ≥ 7.4: Redis is
+  # RSALv2/SSPL and forbidden by license policy — Valkey is BSD-3-Clause
+  # (§16.3, §16.5). noeviction: BullMQ jobs must NEVER be silently evicted.
+  # No host ports — only the internal bridge network.
+  # --------------------------------------------------------------------------
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    # §17.2 exact flags: snapshot every 60s if ≥1 key changed, 512 MB cap.
+    command:
+      - valkey-server
+      - --save
+      - "60"
+      - "1"
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - noeviction
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "valkey-cli", "ping"]
+    volumes:
+      # Snapshots survive container replacement (cheap warm-start bonus).
+      - valkey_data:/data
+    networks: [studio]
+    logging: *default-logging
+
+  # ==========================================================================
+  # profile "obs" — optional observability tooling (§17.1 obs row, §22).
+  # Enable with: docker compose --env-file ../../.env --profile obs up -d
+  # Not started by default; keep the box lean at ≤ 2 users (§17.2 Langfuse
+  # note applies to all heavy obs self-hosting).
+  # ==========================================================================
+
+  # Uptime Kuma — external uptime pings (MIT, §16.3). §17.2 pins the 1.x
+  # major (louislam/uptime-kuma:1) for stability; `latest` per task — pin to
+  # :1 on the box if upgrades churn. Reach it via SSH tunnel or a subdomain
+  # site block in Caddyfile, NOT a published port.
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest
+    profiles: ["obs"]
+    restart: unless-stopped
+    volumes:
+      - kuma:/app/data
+    healthcheck:
+      <<: *healthcheck-defaults
+      # Kuma listens on 3001 in-container; image ships Node.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+    networks: [studio]
+    logging: *default-logging
+
+  # GlitchTip — Sentry-compatible error tracking (MIT, §16.3; avoids the
+  # FSL-licensed Sentry server, §16.5). Postgres dependency note: it MUST use
+  # its OWN database (and role) on the shared Postgres instance — never the
+  # app DB. Create once before first boot:
+  #   docker compose --env-file ../../.env exec db psql -U studio \
+  #     -c "CREATE ROLE glitchtip LOGIN PASSWORD '<pw>'" \
+  #     -c "CREATE DATABASE glitchtip OWNER glitchtip"
+  # Cache: Valkey DB 1 (BullMQ owns DB 0) — redis://valkey:6379/1.
+  # Image runs as root in its stock Dockerfile — acceptable for profile-
+  # gated tooling; harden with `user:` once the image's uid/gid is verified.
+  glitchtip:
+    image: glitchtip/glitchtip:latest
+    profiles: ["obs"]
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:?GLITCHTIP_SECRET_KEY required when the obs profile runs}
+      DATABASE_URL: ${GLITCHTIP_DATABASE_URL:?GLITCHTIP_DATABASE_URL required when the obs profile runs (own DB, e.g. postgres://glitchtip:<pw>@db:5432/glitchtip)}
+      REDIS_URL: ${GLITCHTIP_REDIS_URL:-redis://valkey:6379/1}
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      # Django app served by uWSGI on 8080; python3 is guaranteed in-image.
+      # Verify this endpoint on first boot and adjust if the major changes.
+      start_period: 60s
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=5)"]
+    networks: [studio]
+    logging: *default-logging
+
+# =============================================================================
+# Volumes (§17.2): pgdata + kuma are mandated; caddy_data keeps ACME certs
+# across redeploys; caddy_config avoids ACME re-issues on config reloads;
+# engine_work holds per-session capability roots; valkey_data holds snapshots.
+# =============================================================================
+volumes:
+  pgdata:
+  kuma:
+  caddy_data:
+  caddy_config:
+  engine_work:
+  valkey_data:
+
+# =============================================================================
+# Network: ONE internal bridge (§17.2: "no service exposes ports except
+# Caddy"). Not `internal: true` — services need egress (S3, LLM APIs, ACME);
+# isolation comes from publishing nothing but Caddy 80/443 and keeping
+# engine processes on loopback inside their container (§3.2, §15.1).
+# =============================================================================
+networks:
+  studio:
+    driver: bridge

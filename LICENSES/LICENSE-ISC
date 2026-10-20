@@ -1,0 +1,26 @@
+# studio — LICENSES/LICENSE-ISC (spec §16.0 license policy; §1.5 rule 9 attribution)
+#
+# Standard ISC (SPDX: ISC) permissive license text.
+#
+# Dependencies declared "ISC" in licenses.overrides.json (validated by
+# scripts/check-licenses.mjs, `pnpm check:licenses`):
+#   lucide-react (lucide icon set; the vendored editor engine also bundles
+#   ISC-licensed lucide icon assets — see its NOTICE/ATTRIBUTION.md)
+#
+# --- verbatim license text below; do not edit below this line ---
+
+ISC License
+
+Copyright (c) <year>, <copyright holder>
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
+OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.

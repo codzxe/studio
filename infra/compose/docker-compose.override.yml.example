@@ -1,0 +1,69 @@
+# =============================================================================
+# infra/compose/docker-compose.override.yml.example — LOCAL DEV CONVENIENCES
+# =============================================================================
+# Copy to `docker-compose.override.yml` (same directory) and Docker Compose
+# auto-merges it on every command — or pass it explicitly:
+#     docker compose --env-file ../../.env \
+#       -f docker-compose.yml -f docker-compose.override.yml up -d
+#
+# Everything here is DEV-ONLY and must never reach the box: host ports are
+# bound to 127.0.0.1 (loopback) so nothing extra is reachable from the
+# internet (§17.2 rule — only Caddy publishes in production). §17.5: local
+# runs Compose; staging is a separate project on the box, not this file.
+#
+# §3.2 engine bind-mount: for local iteration you can bind-mount the
+# host-built `photocraft-cli` (vendor clone, ADR-0001) into the engine-pool
+# container instead of waiting for a full image rebuild (Wave 9 images bake
+# the binary; this is the fast inner loop while wiring §3.2).
+# =============================================================================
+
+services:
+  # Host debugging ports — loopback only. `curl http://127.0.0.1:8787/v1/health`
+  # from your workstation; these ports are NOT reachable off-box.
+  gateway:
+    ports:
+      - "127.0.0.1:8787:8787"
+
+  worker:
+    ports:
+      # Worker ops endpoint (apps/worker/src/health.ts, WORKER_HEALTH_PORT).
+      - "127.0.0.1:9876:9876"
+    # One replica is plenty while step-debugging (base stack runs 2, §17.2).
+    deploy:
+      replicas: 1
+
+  web:
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  db:
+    ports:
+      # Host psql / Drizzle Studio against the compose Postgres.
+      - "127.0.0.1:5432:5432"
+
+  valkey:
+    ports:
+      # Host redis-cli (Valkey speaks RESP) / BullMQ board inspection.
+      - "127.0.0.1:6379:6379"
+
+  engine-pool:
+    volumes:
+      # --- §3.2 dev bind-mount placeholder -----------------------------------
+      # Replace the left path with your host-built engine binary
+      # (vendor/photocraft pinned clone, ADR-0001 — build outside the repo):
+      #   /home/z/my-project/vendor/photocraft/target/release/photocraft-cli
+      # Mounted READ-ONLY at the in-image path; .env's ENGINE_CLI_PATH must
+      # point at this in-container path while the mount is active.
+      - /absolute/path/to/photocraft-cli:/usr/local/bin/photocraft-cli:ro
+      # Per-session capability roots (ENGINE_WORK_DIR, §15.1) as a host bind
+      # so you can inspect engine working dirs / attach a debugger.
+      - ../../.local/engine-work:/work
+    environment:
+      ENGINE_CLI_PATH: /usr/local/bin/photocraft-cli
+      # Watch engine supervisor logs at debug level locally (§22).
+      LOG_LEVEL: debug
+
+  # Dev-only obs profile conveniences (profile "obs", see base file):
+  uptime-kuma:
+    ports:
+      - "127.0.0.1:3001:3001"
