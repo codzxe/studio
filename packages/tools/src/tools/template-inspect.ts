@@ -113,7 +113,8 @@ function sameVersion(a: string, b: string): boolean {
   if (a === b) return true;
   const na = Number(a);
   const nb = Number(b);
-  return a.trim() !== "" && b.trim() !== "" && Number.isFinite(na) && Number.isFinite(nb) && na === nb;
+  const numeric = a.trim() !== "" && b.trim() !== "" && Number.isFinite(na) && Number.isFinite(nb);
+  return numeric && na === nb;
 }
 
 // ---------------------------------------------------------------------------
@@ -335,9 +336,10 @@ async function unknownTemplateErr(ctx: ToolContext, ref: string): Promise<ToolEr
       ? "the template catalog is empty"
       : `known templates: ${shown}${pins.length > MAX_SHOWN_PINS ? ", ..." : ""}`;
   if (pin !== undefined) {
-    const versions = summaries
-      .filter((summary) => summary.id === pin.id)
-      .map((summary) => summary.version);
+    const versions: string[] = [];
+    for (const summary of summaries) {
+      if (summary.id === pin.id) versions.push(summary.version);
+    }
     if (versions.length > 0 && !versions.some((version) => sameVersion(version, pin.version))) {
       return err(UNKNOWN_TEMPLATE_CODE, `Template "${pin.id}" has no version ${pin.version}`, {
         hint: capText(`versions of ${pin.id}: ${versions.join(", ")}; ${hint}`, MAX_HINT_CHARS),

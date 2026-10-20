@@ -17,11 +17,10 @@ import {
 import { parseToolArgs } from "../src/kit.js";
 import type {
   EngineBatchOptions,
-  EngineBatchReport,
   EngineCommand,
   EngineFailure,
   EngineLayerSummary,
-  EngineOutcome,
+  EngineLike,
   ToolContext,
   ToolErr,
 } from "../src/types.js";
@@ -72,16 +71,13 @@ function makeRecordingEngine(options: FakeEngineOptions = {}) {
   const batches: RecordedBatch[] = [];
   let listCalls = 0;
   const trees = options.trees ?? [TREE];
-  const engine = {
-    batch: async (
-      cmds: readonly EngineCommand[],
-      batchOptions?: EngineBatchOptions,
-    ): Promise<EngineOutcome<EngineBatchReport>> => {
+  const engine: EngineLike = {
+    batch: async (cmds, batchOptions) => {
       batches.push({ cmds: [...cmds], options: batchOptions });
       if (options.batchFailure !== undefined) {
         return options.batchFailure;
       }
-      const outcomes = [...cmds].map((cmd, index): EngineBatchReport["outcomes"][number] => ({
+      const outcomes = [...cmds].map((cmd, index) => ({
         index,
         commandId: cmd.id,
         ok: !options.commandFailure,
@@ -89,15 +85,13 @@ function makeRecordingEngine(options: FakeEngineOptions = {}) {
       }));
       return { ok: true, value: { revision: options.revision ?? 7, outcomes } };
     },
-    execute: async (): Promise<EngineOutcome<{ revision: number }>> => ({ ok: true, value: { revision: 7 } }),
-    render: async (): Promise<EngineOutcome<{ image: Uint8Array; widthPx: number; heightPx: number }>> => ({
+    execute: async () => ({ ok: true, value: { revision: 7 } }),
+    render: async () => ({
       ok: true,
       value: { image: new Uint8Array(), widthPx: 64, heightPx: 64 },
     }),
-    inspect: async (): Promise<
-      EngineOutcome<{ revision: number; widthPx: number; heightPx: number; layers: readonly EngineLayerSummary[] }>
-    > => ({ ok: true, value: { revision: 7, widthPx: 800, heightPx: 600, layers: [] } }),
-    listLayers: async (): Promise<EngineOutcome<readonly EngineLayerSummary[]>> => {
+    inspect: async () => ({ ok: true, value: { revision: 7, widthPx: 800, heightPx: 600, layers: [] } }),
+    listLayers: async () => {
       listCalls += 1;
       if (
         options.listFailure !== undefined &&
@@ -243,7 +237,11 @@ describe("layer_ops — op → command mapping (§2.2 ids, one batch)", () => {
     },
     {
       what: "align selects its targets then aligns to their combined bounds",
-      raw: { op: "align", layers: [{ layerId: "1" }, { layerId: "2" }, { layerId: "3" }], mode: "leftEdges" },
+      raw: {
+        op: "align",
+        layers: [{ layerId: "1" }, { layerId: "2" }, { layerId: "3" }],
+        mode: "leftEdges",
+      },
       ids: ["layer.select", "layer.select", "layer.select", "layer.align.leftEdges"],
       params: [
         { layer: 1, mode: "replace" },
@@ -348,11 +346,15 @@ describe("layer_ops — op → command mapping (§2.2 ids, one batch)", () => {
 
 describe("layer_ops — group bounds (2–50 refs)", () => {
   it("rejects a single ref at the parse boundary", () => {
-    expect(parseErr({ op: "group", layers: manyRefs(1), name: "Content" }).code).toBe("invalid_args");
+    expect(parseErr({ op: "group", layers: manyRefs(1), name: "Content" }).code).toBe(
+      "invalid_args",
+    );
   });
 
   it("rejects 51 refs at the parse boundary", () => {
-    expect(parseErr({ op: "group", layers: manyRefs(51), name: "Content" }).code).toBe("invalid_args");
+    expect(parseErr({ op: "group", layers: manyRefs(51), name: "Content" }).code).toBe(
+      "invalid_args",
+    );
   });
 
   it("accepts 2 and 50 refs", () => {
@@ -374,7 +376,14 @@ describe("layer_ops — §10.2 naming", () => {
     for (const name of ["Layer 0", "Layer 42", "Group 3"]) {
       expect(isAutoLayerName(name), name).toBe(true);
     }
-    for (const name of ["Headline", "Photo — Latte", "Layered 2", "layer 1", "Group", "Layer 42x"]) {
+    for (const name of [
+      "Headline",
+      "Photo — Latte",
+      "Layered 2",
+      "layer 1",
+      "Group",
+      "Layer 42x",
+    ]) {
       expect(isAutoLayerName(name), name).toBe(false);
     }
   });
@@ -467,7 +476,11 @@ describe("layer_ops — §6.1 layer refs", () => {
   });
 
   it("an ambiguous name lists the candidate ids", async () => {
-    const trees = [layer("1", "Headline", "Type"), layer("2", "Photo"), layer("3", "Headline", "Type")];
+    const trees = [
+      layer("1", "Headline", "Type"),
+      layer("2", "Photo"),
+      layer("3", "Headline", "Type"),
+    ];
     const { result, batches } = await runTool(
       { op: "rename", layer: { layerName: "Headline" }, name: "CTA" },
       { trees: [trees] },
@@ -510,9 +523,18 @@ describe("layer_ops — §6.1 layer refs", () => {
       layer("3", "Photo"),
       layer("4", "Headline", "Type"),
     ];
-    expect(resolveLayerRef({ layerId: "2" }, layers)).toMatchObject({ ok: true, layer: { layerId: "2" } });
-    expect(resolveLayerRef({ layerName: "Photo" }, layers)).toMatchObject({ ok: true, layer: { layerId: "3" } });
-    expect(resolveLayerRef({ layerName: "photo" }, layers)).toMatchObject({ ok: true, layer: { layerId: "3" } });
+    expect(resolveLayerRef({ layerId: "2" }, layers)).toMatchObject({
+      ok: true,
+      layer: { layerId: "2" },
+    });
+    expect(resolveLayerRef({ layerName: "Photo" }, layers)).toMatchObject({
+      ok: true,
+      layer: { layerId: "3" },
+    });
+    expect(resolveLayerRef({ layerName: "photo" }, layers)).toMatchObject({
+      ok: true,
+      layer: { layerId: "3" },
+    });
     const ambiguous = resolveLayerRef({ layerName: "Headline" }, layers);
     expect(ambiguous.ok).toBe(false);
     const miss = resolveLayerRef({ layerId: "404" }, layers);

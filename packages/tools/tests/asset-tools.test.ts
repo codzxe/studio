@@ -18,7 +18,6 @@ import {
 } from "../src/tools/asset-place.js";
 import { MAX_SUMMARY_CHARS, parseToolArgs } from "../src/kit.js";
 import { TOOLS, ToolRegistry } from "../src/registry.js";
-import type { AnyTool } from "../src/types.js";
 import type {
   AssetRecord,
   AssetStoreLike,
@@ -311,8 +310,6 @@ describe("asset_search", () => {
   });
 
   it("schema is strict: caps, kinds and unknown keys are rejected", () => {
-    const reject = (raw: unknown) => errOf(runSearch(raw) as unknown as ToolResult);
-    // runSearch is async; parseToolArgs is sync, so test the schema directly:
     const parse = (raw: unknown) => parseToolArgs(assetSearchTool, raw);
     expect(parse({ query: "x".repeat(121) }).ok).toBe(false);
     expect(parse({ kind: "video" }).ok).toBe(false);
@@ -322,7 +319,6 @@ describe("asset_search", () => {
     expect(parse({ extra: 1 }).ok).toBe(false);
     const good = parse({ query: "sunset", limit: 5 });
     expect(good.ok).toBe(true);
-    expect(reject).toBeDefined();
   });
 });
 
@@ -597,7 +593,8 @@ describe("asset_place", () => {
 
   it("explicit bounds override the target layer's box", async () => {
     const { ctx, state } = placeCtx({ layers: [layer("L1", "Photo", { x: 0, y: 0, w: 4000, h: 3000 })] });
-    const result = okOf(await runPlace(placeArgs({ target: { layer: { layerName: "Photo" }, bounds: [10, 10, 100, 100] } }), ctx));
+    const raw = placeArgs({ target: { layer: { layerName: "Photo" }, bounds: [10, 10, 100, 100] } });
+    const result = okOf(await runPlace(raw, ctx));
     expect(state.batches[0]?.[0]?.params).toEqual({
       path: `assets/organizations/${ORG}/assets/${ASSET_ID}`,
       scale: 100,
@@ -730,8 +727,8 @@ describe("asset_place schema (§6.1 strict)", () => {
 
   it("both tools register against the pinned §6 surface", () => {
     const registry = new ToolRegistry({ allowedNames: Object.values(TOOLS) });
-    expect(registry.register(assetSearchTool as AnyTool)).toEqual({ ok: true });
-    expect(registry.register(assetPlaceTool as AnyTool)).toEqual({ ok: true });
+    expect(registry.register(assetSearchTool)).toEqual({ ok: true });
+    expect(registry.register(assetPlaceTool)).toEqual({ ok: true });
     expect(registry.get("asset_place").ok).toBe(true);
     expect(assetSearchTool.name).toBe("asset_search");
     expect(assetPlaceTool.name).toBe("asset_place");

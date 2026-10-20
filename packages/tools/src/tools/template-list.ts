@@ -189,7 +189,11 @@ function tagList(tags: readonly string[]): string {
 }
 
 /** Engine semantics: AND over `wanted` tags + substring over the seam's id+title. */
-function matchesFilters(summary: TemplateSummary, wanted: readonly string[], needle: string): boolean {
+function matchesFilters(
+  summary: TemplateSummary,
+  wanted: readonly string[],
+  needle: string,
+): boolean {
   const carriesAll = wanted.every((tag) =>
     summary.tags.some((own) => own.trim().toLowerCase() === tag),
   );
