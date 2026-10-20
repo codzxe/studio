@@ -11,6 +11,6 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "promptfoo": "^0.103.0"
+    "promptfoo": "^0.124.1"
   }
 }
