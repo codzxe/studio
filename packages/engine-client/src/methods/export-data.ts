@@ -15,11 +15,11 @@
 
 import { z } from "zod";
 import {
+  type BuiltMethodCall,
   PROTOCOL_METHODS,
   READ_ROOT_PATH,
   WRITE_ROOT_PATH,
   buildCall,
-  type BuiltMethodCall,
 } from "./protocol.js";
 
 const nonNegativeInt = z.number().int().nonnegative();
@@ -57,7 +57,12 @@ export type ExportResult = z.infer<typeof EXPORT_RESULT>;
 export function docExportLayers(
   input: DocExportLayersInput,
 ): BuiltMethodCall<DocExportLayersParams, ExportResult> {
-  return buildCall(PROTOCOL_METHODS.docExportLayers, DOC_EXPORT_LAYERS_PARAMS, input, EXPORT_RESULT);
+  return buildCall(
+    PROTOCOL_METHODS.docExportLayers,
+    DOC_EXPORT_LAYERS_PARAMS,
+    input,
+    EXPORT_RESULT,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +88,12 @@ export type DocExportDataSetsInput = DocExportDataSetsParams;
 export function docExportDataSets(
   input: DocExportDataSetsInput,
 ): BuiltMethodCall<DocExportDataSetsParams, ExportResult> {
-  return buildCall(PROTOCOL_METHODS.docExportDataSets, DOC_EXPORT_DATA_SETS_PARAMS, input, EXPORT_RESULT);
+  return buildCall(
+    PROTOCOL_METHODS.docExportDataSets,
+    DOC_EXPORT_DATA_SETS_PARAMS,
+    input,
+    EXPORT_RESULT,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -109,5 +119,10 @@ export type ImportDataSetsResult = z.infer<typeof IMPORT_DATA_SETS_RESULT>;
 export function docImportDataSets(
   input: DocImportDataSetsInput,
 ): BuiltMethodCall<DocImportDataSetsParams, ImportDataSetsResult> {
-  return buildCall(PROTOCOL_METHODS.docImportDataSets, DOC_IMPORT_DATA_SETS_PARAMS, input, IMPORT_DATA_SETS_RESULT);
+  return buildCall(
+    PROTOCOL_METHODS.docImportDataSets,
+    DOC_IMPORT_DATA_SETS_PARAMS,
+    input,
+    IMPORT_DATA_SETS_RESULT,
+  );
 }

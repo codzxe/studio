@@ -172,7 +172,10 @@ export function parseEngineReply<TResult>(
   const parsed = resultSchema.safeParse(wire.data.result);
   if (!parsed.success) {
     const who = method === undefined ? "engine result" : `engine result for \`${method}\``;
-    return { ok: false, error: `${who} failed schema validation: ${summarizeIssues(parsed.error)}` };
+    return {
+      ok: false,
+      error: `${who} failed schema validation: ${summarizeIssues(parsed.error)}`,
+    };
   }
   return { ok: true, result: parsed.data };
 }
@@ -220,7 +223,11 @@ export function isMethodCall<TParams, TResult>(
   return built.ok;
 }
 
-export function buildFailure(code: BuildErrorCode, message: string, hint?: string): MethodBuildFailure {
+export function buildFailure(
+  code: BuildErrorCode,
+  message: string,
+  hint?: string,
+): MethodBuildFailure {
   return hint === undefined ? { ok: false, code, message } : { ok: false, code, message, hint };
 }
 
@@ -257,14 +264,20 @@ export function hasParentTraversal(path: string): boolean {
 }
 
 /** A non-empty path under the automation read root (forward slashes; may be absolute). */
-export const READ_ROOT_PATH = z.string().min(1).refine((path) => !hasParentTraversal(path), {
-  message: "path must stay inside the automation read root (no `..` segments)",
-});
+export const READ_ROOT_PATH = z
+  .string()
+  .min(1)
+  .refine((path) => !hasParentTraversal(path), {
+    message: "path must stay inside the automation read root (no `..` segments)",
+  });
 
 /** A non-empty path under the automation write root. */
-export const WRITE_ROOT_PATH = z.string().min(1).refine((path) => !hasParentTraversal(path), {
-  message: "path must stay inside the automation write root (no `..` segments)",
-});
+export const WRITE_ROOT_PATH = z
+  .string()
+  .min(1)
+  .refine((path) => !hasParentTraversal(path), {
+    message: "path must stay inside the automation write root (no `..` segments)",
+  });
 
 // ---------------------------------------------------------------------------
 // Transport seam (src/transport implements this; methods never import the transport)

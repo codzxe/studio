@@ -154,7 +154,12 @@ function respond(line, engine) {
     return null; // hang fault: the client must hit its own request timeout
   }
   try {
-    const result = engine.handle(method, params);
+    let result = engine.handle(method, params);
+    if (faults.oversizes(method)) {
+      // Fault hook: pad the result past the 8 MiB reply ceiling so the transport answers
+      // with the vendor's reply-budget error (budgets.rs write_reply).
+      result = { oversized: "x".repeat(MAX_RESPONSE_BYTES + (1 << 20)) };
+    }
     return { id, ok: true, result };
   } catch (error) {
     // The vendor's last-resort guard: a request that would panic answers an error instead

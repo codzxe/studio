@@ -14,7 +14,7 @@
 // `layers` rows in `doc.inspect` stay opaque so fixtures need no full scene graph.
 
 import { z } from "zod";
-import { PROTOCOL_METHODS, READ_ROOT_PATH, buildCall, type BuiltMethodCall } from "./protocol.js";
+import { type BuiltMethodCall, PROTOCOL_METHODS, READ_ROOT_PATH, buildCall } from "./protocol.js";
 
 const nonNegativeInt = z.number().int().nonnegative();
 

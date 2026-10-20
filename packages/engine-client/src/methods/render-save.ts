@@ -15,12 +15,12 @@
 
 import { z } from "zod";
 import {
+  type BuiltMethodCall,
   MAX_PNG_BYTES,
   MAX_PREVIEW_SIDE,
   PROTOCOL_METHODS,
   WRITE_ROOT_PATH,
   buildCall,
-  type BuiltMethodCall,
 } from "./protocol.js";
 
 const nonNegativeInt = z.number().int().nonnegative();
@@ -59,7 +59,9 @@ export type RenderToFile = z.infer<typeof RENDER_TO_FILE_RESULT>;
 export type RenderInline = z.infer<typeof RENDER_INLINE_RESULT>;
 export type RenderResult = z.infer<typeof RENDER_RESULT>;
 
-export function docRender(input: DocRenderInput = {}): BuiltMethodCall<DocRenderParams, RenderResult> {
+export function docRender(
+  input: DocRenderInput = {},
+): BuiltMethodCall<DocRenderParams, RenderResult> {
   return buildCall(PROTOCOL_METHODS.docRender, DOC_RENDER_PARAMS, input, RENDER_RESULT);
 }
 

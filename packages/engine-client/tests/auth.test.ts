@@ -7,19 +7,19 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   AUTH_METHOD,
-  authRequestFrame,
   CONTROL_TOKEN_BYTES,
   CONTROL_TOKEN_HEX_LENGTH,
+  type EngineAuth,
+  REDACTED_CONTROL_TOKEN,
+  authRequestFrame,
   engineAuthFromEnv,
   generateControlToken,
   isControlToken,
   parseEngineAuth,
   redactEngineAuth,
   redactToken,
-  REDACTED_CONTROL_TOKEN,
   resolveEngineToken,
   tokenMatches,
-  type EngineAuth,
 } from "../src/auth.js";
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -141,7 +141,10 @@ describe("auth: EngineAuth config (token-file vs inline)", () => {
 
 describe("auth: resolveEngineToken", () => {
   it("validates and lowercases an inline token", async () => {
-    const resolved = await resolveEngineToken({ source: "inline", token: secretToken.toUpperCase() });
+    const resolved = await resolveEngineToken({
+      source: "inline",
+      token: secretToken.toUpperCase(),
+    });
     expect(resolved).toEqual({ ok: true, value: secretToken });
   });
 
@@ -166,7 +169,10 @@ describe("auth: resolveEngineToken", () => {
   });
 
   it("refuses a missing file and a directory", async () => {
-    const missing = await resolveEngineToken({ source: "file", tokenFile: join(scratchRoot, "absent.token") });
+    const missing = await resolveEngineToken({
+      source: "file",
+      tokenFile: join(scratchRoot, "absent.token"),
+    });
     expect(missing).toMatchObject({ ok: false, code: "token_file_refused" });
 
     const dir = await mkdtemp(join(scratchRoot, "not-a-file-"));
@@ -206,7 +212,9 @@ describe("auth: engineAuthFromEnv (security.rs token_inputs)", () => {
   });
 
   it("rejects both set (conflict) and neither set (missing)", () => {
-    expect(engineAuthFromEnv({ PHOTOCRAFT_CONTROL_TOKEN: "x", PHOTOCRAFT_CONTROL_TOKEN_FILE: "/p" })).toMatchObject({
+    expect(
+      engineAuthFromEnv({ PHOTOCRAFT_CONTROL_TOKEN: "x", PHOTOCRAFT_CONTROL_TOKEN_FILE: "/p" }),
+    ).toMatchObject({
       ok: false,
       code: "auth_source_conflict",
     });
@@ -230,7 +238,11 @@ describe("auth: first-frame auth request (control-protocol.md)", () => {
     const frame = authRequestFrame(secretToken.toUpperCase(), 7);
     expect(frame.ok).toBe(true);
     if (!frame.ok) return;
-    expect(JSON.parse(frame.value)).toEqual({ id: 7, method: "auth", params: { token: secretToken } });
+    expect(JSON.parse(frame.value)).toEqual({
+      id: 7,
+      method: "auth",
+      params: { token: secretToken },
+    });
   });
 
   it("refuses to build a frame for an invalid token", () => {

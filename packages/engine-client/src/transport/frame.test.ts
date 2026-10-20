@@ -195,7 +195,7 @@ describe("utf8ByteLength (pure)", () => {
     ["é", 2],
     ["€", 3],
     ["😀", 4], // surrogate pair = one code point = 4 UTF-8 bytes
-    ["aéb😀", 9],
+    ["aéb😀", 8],
   ])("%s → %d bytes", (input, expected) => {
     expect(utf8ByteLength(input)).toBe(expected);
   });

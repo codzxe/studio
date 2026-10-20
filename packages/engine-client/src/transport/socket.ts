@@ -181,6 +181,11 @@ export const defaultTcpSocketFactory: LowLevelSocketFactory = async (endpoint, o
   // error never becomes an unhandled 'error' event; the adapter's own listener surfaces it.
   return {
     write(chunk, callback) {
+      if (typeof chunk !== "string") {
+        // NodeNetSocket only writes encoded frame lines (strings); anything else is a bug.
+        callback?.(protocolViolation("node:net transport writes text frames only"));
+        return false;
+      }
       return raw.write(chunk, callback);
     },
     destroy() {

@@ -11,7 +11,8 @@
 // every client connection then authenticates with it (the `client_token` role).
 // Clients never silently generate credentials: `resolveEngineToken` fails closed.
 import { randomBytes } from "node:crypto";
-import { readFile, stat, type Stats } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -48,7 +49,13 @@ interface FailOptions {
 }
 
 function fail(code: AuthErrorCode, message: string, options: FailOptions = {}): AuthFailure {
-  const failure: { ok: false; code: AuthErrorCode; message: string; hint?: string; retryable?: boolean } = {
+  const failure: {
+    ok: false;
+    code: AuthErrorCode;
+    message: string;
+    hint?: string;
+    retryable?: boolean;
+  } = {
     ok: false,
     code,
     message,
@@ -93,11 +100,9 @@ export function isControlToken(value: string): boolean {
 /** Validate and normalize (lowercase) a token, exactly like security.rs server/client_token. */
 function validateToken(token: string): AuthResult<string> {
   if (!isControlToken(token)) {
-    return fail(
-      "invalid_token",
-      "control token must contain exactly 64 hexadecimal characters",
-      { hint: "generate one with generateControlToken or read the engine's token file" },
-    );
+    return fail("invalid_token", "control token must contain exactly 64 hexadecimal characters", {
+      hint: "generate one with generateControlToken or read the engine's token file",
+    });
   }
   return { ok: true, value: token.toLowerCase() };
 }
@@ -109,7 +114,10 @@ function validateToken(token: string): AuthResult<string> {
  * letter case; the server keeps the token lowercased).
  */
 export function tokenMatches(expected: string, supplied: string): boolean {
-  if (expected.length !== CONTROL_TOKEN_HEX_LENGTH || supplied.length !== CONTROL_TOKEN_HEX_LENGTH) {
+  if (
+    expected.length !== CONTROL_TOKEN_HEX_LENGTH ||
+    supplied.length !== CONTROL_TOKEN_HEX_LENGTH
+  ) {
     return false;
   }
   let different = 0;
@@ -172,7 +180,10 @@ export function parseEngineAuth(input: unknown): AuthResult<EngineAuth> {
   if (isRecord(input) && "token" in input && "tokenFile" in input) {
     // Faithful to security.rs client_token/server_token: supplying both sources is
     // its own error, not a generic schema failure.
-    return fail("auth_source_conflict", "use either a control token or a control token file, not both");
+    return fail(
+      "auth_source_conflict",
+      "use either a control token or a control token file, not both",
+    );
   }
   const parsed = ENGINE_AUTH_SCHEMA.safeParse(input);
   if (!parsed.success) {
@@ -214,7 +225,10 @@ async function readTokenFile(path: string): Promise<AuthResult<string>> {
   }
   if (process.platform !== "win32" && (info.mode & 0o077) !== 0) {
     // #4966: a group- or world-readable token file is refused, not trusted.
-    return fail("token_file_refused", "control token file is readable by group or others; restrict it to its owner (e.g. chmod 600)");
+    return fail(
+      "token_file_refused",
+      "control token file is readable by group or others; restrict it to its owner (e.g. chmod 600)",
+    );
   }
   let contents: string;
   try {
@@ -246,7 +260,10 @@ export interface EngineAuthEnv {
 export function engineAuthFromEnv(env: EngineAuthEnv): AuthResult<EngineAuth> {
   const { PHOTOCRAFT_CONTROL_TOKEN: token, PHOTOCRAFT_CONTROL_TOKEN_FILE: tokenFile } = env;
   if (token !== undefined && tokenFile !== undefined) {
-    return fail("auth_source_conflict", "use either a control token or a control token file, not both");
+    return fail(
+      "auth_source_conflict",
+      "use either a control token or a control token file, not both",
+    );
   }
   if (token !== undefined) {
     return { ok: true, value: { source: "inline", token } };
@@ -272,7 +289,10 @@ export const AUTH_METHOD = "auth";
  * credential never touches the socket. Returns the JSON line WITHOUT its
  * trailing newline; the transport appends it.
  */
-export function authRequestFrame(token: string, id: string | number = AUTH_METHOD): AuthResult<string> {
+export function authRequestFrame(
+  token: string,
+  id: string | number = AUTH_METHOD,
+): AuthResult<string> {
   const checked = validateToken(token);
   if (!checked.ok) {
     return checked;

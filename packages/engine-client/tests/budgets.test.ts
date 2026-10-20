@@ -1,12 +1,10 @@
+import { planLimits } from "@studio/config";
 // W2-B — engine budget awareness: reply/request/PNG frames, preview clamping,
 // plan-gated canvas ceilings. Mirrors vendor crates/automation/src/budgets.rs
 // and security.rs transport limits + studio §2.2/§5.1/§14.1.
 import { describe, expect, it } from "vitest";
-import { planLimits } from "@studio/config";
 import {
   AGENT_OBSERVE_PREVIEW_PX,
-  checkCanvasMegapixels,
-  clampPreviewSide,
   ENGINE_MAX_BATCH_STEPS,
   ENGINE_MAX_CANVAS_MEGAPIXELS,
   ENGINE_MAX_RENDER_SOURCE_PIXELS,
@@ -14,13 +12,15 @@ import {
   ENGINE_PREVIEW_MAX_PX,
   ENGINE_REPLY_MAX_BYTES,
   ENGINE_REQUEST_MAX_BYTES,
+  type PlanId,
+  type PreviewPurpose,
+  checkCanvasMegapixels,
+  clampPreviewSide,
   frameByteLength,
   previewCeiling,
   validatePngSize,
   validateReplySize,
   validateRequestSize,
-  type PlanId,
-  type PreviewPurpose,
 } from "../src/budgets.js";
 
 describe("budgets: constants match the engine (budgets.rs / security.rs / §2.2)", () => {
@@ -87,7 +87,10 @@ describe("budgets: validateRequestSize → frame_too_large (1 MiB request line)"
 
 describe("budgets: validatePngSize (5 MiB PNG cap)", () => {
   it("accepts the exact ceiling and rejects one byte more", () => {
-    expect(validatePngSize(ENGINE_PNG_MAX_BYTES)).toEqual({ ok: true, value: { bytes: ENGINE_PNG_MAX_BYTES } });
+    expect(validatePngSize(ENGINE_PNG_MAX_BYTES)).toEqual({
+      ok: true,
+      value: { bytes: ENGINE_PNG_MAX_BYTES },
+    });
     const result = validatePngSize(ENGINE_PNG_MAX_BYTES + 1);
     expect(result).toMatchObject({ ok: false, code: "png_too_large" });
   });
@@ -100,7 +103,12 @@ describe("budgets: validatePngSize (5 MiB PNG cap)", () => {
 });
 
 describe("budgets: preview clamping (§5.1 agent previews; 2048 hard cap)", () => {
-  const table: Array<{ requested: number; purpose?: PreviewPurpose; maxSide: number; clamped: boolean }> = [
+  const table: Array<{
+    requested: number;
+    purpose?: PreviewPurpose;
+    maxSide: number;
+    clamped: boolean;
+  }> = [
     // Agent observe previews request ≤1024 px (§5.1).
     { requested: 0, maxSide: 1024, clamped: true }, // 0 means FULL SIZE to the engine — never send it
     { requested: 0.5, maxSide: 1024, clamped: true },
@@ -121,7 +129,10 @@ describe("budgets: preview clamping (§5.1 agent previews; 2048 hard cap)", () =
   it("clamps every row of the requested/purpose table", () => {
     for (const row of table) {
       const result = clampPreviewSide(row.requested, row.purpose ?? "agent");
-      expect(result, JSON.stringify(row)).toEqual({ ok: true, value: { maxSide: row.maxSide, clamped: row.clamped } });
+      expect(result, JSON.stringify(row)).toEqual({
+        ok: true,
+        value: { maxSide: row.maxSide, clamped: row.clamped },
+      });
     }
   });
 
@@ -160,7 +171,11 @@ describe("budgets: canvas megapixel ceilings (§14.1 plans; §2.2 engine cap)", 
           value: { pixels: row.w * row.h, megapixels: row.megapixels },
         });
       } else {
-        expect(result, JSON.stringify(row)).toMatchObject({ ok: false, code: row.code, retryable: false });
+        expect(result, JSON.stringify(row)).toMatchObject({
+          ok: false,
+          code: row.code,
+          retryable: false,
+        });
       }
     }
   });
@@ -183,7 +198,10 @@ describe("budgets: canvas megapixel ceilings (§14.1 plans; §2.2 engine cap)", 
       [Number.POSITIVE_INFINITY, 1],
     ];
     for (const [w, h] of bad) {
-      expect(checkCanvasMegapixels(w, h, "pro")).toMatchObject({ ok: false, code: "invalid_canvas_dimensions" });
+      expect(checkCanvasMegapixels(w, h, "pro")).toMatchObject({
+        ok: false,
+        code: "invalid_canvas_dimensions",
+      });
     }
   });
 });

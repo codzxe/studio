@@ -73,12 +73,10 @@ export const DEFAULT_CALL_TIMEOUT_MS = 55_000;
  */
 export const DEFAULT_IDLE_RECONNECT_MS = SERVER_IO_TIMEOUT_MS - 5_000;
 
-/** Compile-time guard: the client call timeout stays strictly below the server's reply deadline. */
-export const CALL_TIMEOUT_BELOW_SERVER_DEADLINE: true =
+/** True while the client call timeout stays strictly below the engine's reply deadline
+ *  (doc §MCP bridge). frame.test.ts asserts it; drift fails CI before it ships. */
+export const CALL_TIMEOUT_BELOW_SERVER_DEADLINE: boolean =
   DEFAULT_CALL_TIMEOUT_MS < SERVER_REPLY_DEADLINE_MS;
-
-/** Documented for CI and reviewers; the constant above makes drift fail the typecheck. */
-void CALL_TIMEOUT_BELOW_SERVER_DEADLINE;
 
 // ---------------------------------------------------------------------------
 // JSON value types + Zod schemas (AGENTS.md: Zod at every boundary; the wire is one).
@@ -380,11 +378,11 @@ export function decodeFrame(line: string): FramedMessage {
   throw protocolViolation("frame line matches no envelope: expected method, ok:result or ok:error");
 }
 
-function parseOrViolate<T>(
-  schema: z.ZodType<T>,
+function parseOrViolate<S extends z.ZodTypeAny>(
+  schema: S,
   value: unknown,
   what: string,
-): T {
+): z.output<S> {
   const result = schema.safeParse(value);
   if (!result.success) {
     throw protocolViolation(`frame line does not match the ${what} envelope`, {

@@ -2,6 +2,8 @@
 // ambient path refusal. Mirrors vendor crates/automation/src/workspace.rs.
 import { describe, expect, it } from "vitest";
 import {
+  type CapabilityScope,
+  type EngineTenant,
   capabilityPath,
   isSafePathComponent,
   isWindowsDeviceName,
@@ -10,8 +12,6 @@ import {
   sessionDirectory,
   sessionLayout,
   validateRelativePath,
-  type CapabilityScope,
-  type EngineTenant,
 } from "../src/capabilities.js";
 
 const tenant: EngineTenant = {
@@ -29,7 +29,11 @@ describe("capabilities: per-tenant session roots (§3.2 tenancy layout)", () => 
       const root = resolveRoot(scope, tenant);
       expect(root).toEqual({
         ok: true,
-        value: { scope, root: sessionDir, subdirs: { assets: "assets", tmp: "tmp", renders: "renders", save: "save" } },
+        value: {
+          scope,
+          root: sessionDir,
+          subdirs: { assets: "assets", tmp: "tmp", renders: "renders", save: "save" },
+        },
       });
     }
   });
@@ -41,7 +45,10 @@ describe("capabilities: per-tenant session roots (§3.2 tenancy layout)", () => 
 
   it("keeps a single slash for a root baseDir", () => {
     const root = sessionDirectory({ ...tenant, baseDir: "/" });
-    expect(root).toEqual({ ok: true, value: `/organizations/${tenant.organizationId}/sessions/${tenant.sessionId}` });
+    expect(root).toEqual({
+      ok: true,
+      value: `/organizations/${tenant.organizationId}/sessions/${tenant.sessionId}`,
+    });
   });
 
   it("lays out the four sanctioned subdirectories beneath the session dir", () => {
@@ -62,7 +69,12 @@ describe("capabilities: per-tenant session roots (§3.2 tenancy layout)", () => 
       const path = capabilityPath(scope, tenant, "assets/logo.png");
       expect(path).toEqual({
         ok: true,
-        value: { scope, root: sessionDir, relative: "assets/logo.png", absolute: `${sessionDir}/assets/logo.png` },
+        value: {
+          scope,
+          root: sessionDir,
+          relative: "assets/logo.png",
+          absolute: `${sessionDir}/assets/logo.png`,
+        },
       });
     }
   });
@@ -105,7 +117,13 @@ describe("capabilities: tenant ids are single safe path components", () => {
 
   it("validates untrusted tenant input at the zod boundary", () => {
     expect(parseEngineTenant(tenant)).toEqual({ ok: true, value: tenant });
-    const badInputs: unknown[] = [null, "x", [], { ...tenant, sessionId: "" }, { ...tenant, extra: 1 }];
+    const badInputs: unknown[] = [
+      null,
+      "x",
+      [],
+      { ...tenant, sessionId: "" },
+      { ...tenant, extra: 1 },
+    ];
     for (const bad of badInputs) {
       const result = parseEngineTenant(bad);
       expect(result.ok).toBe(false);

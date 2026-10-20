@@ -107,6 +107,45 @@ const pathRejected = (reason, raw) =>
 /** Engine commands that run as background jobs under `wait: false` (vendor: edit.transform). */
 const JOB_COMMANDS = new Set(["edit.transform"]);
 
+// Ambient-path engine commands automation refuses (workspace.rs authorize_engine_command /
+// docs/control-protocol.md › Engine commands): use the capability-scoped doc.* methods
+// instead. `file.new` and the path-free file.* commands are safe and stay runnable.
+const SAFE_FILE_COMMANDS = new Set([
+  "file.new",
+  "file.newFromClipboard",
+  "file.close",
+  "file.closeAll",
+  "file.closeOthers",
+  "file.fileInfo",
+  "file.automate.fitImage",
+  "file.automate.conditionalModeChange",
+  "file.automate.cropAndStraightenPhotos",
+  "file.scripts.flattenAllLayerEffects",
+  "file.scripts.flattenAllMasks",
+  "file.scripts.deleteAllEmptyLayers",
+  "file.export.exportPreferences",
+]);
+const AMBIENT_COMMANDS = new Set([
+  "file.placeEmbedded",
+  "file.placeLinked",
+  "file.export.layersToFiles",
+  "file.export.dataSetsAsFiles",
+  "file.import.variableDataSets",
+  "layer.exportAs",
+  "filter.distort.displace",
+  "brush.presets.importAbr",
+  "actions.save",
+]);
+const ambientRefusal = (id) =>
+  (id.startsWith("file.") && !SAFE_FILE_COMMANDS.has(id)) ||
+  AMBIENT_COMMANDS.has(id) ||
+  id.startsWith("image.mode.");
+const ambientError = (id) =>
+  new EngineFailure(
+    `automation command \`${id}\` uses ambient filesystem paths and is disabled; use capability-scoped document methods`,
+    "denied",
+  );
+
 // ---------------------------------------------------------------------------
 // Minimal valid PNG encoder — zero deps (README.md › The fake render)
 //
@@ -1187,6 +1226,7 @@ export class MockEngine {
       // Fault hook: die like a crashed engine process; the client sees the socket drop.
       process.exit(1);
     }
+    if (ambientRefusal(id)) throw ambientError(id);
     const spec = COMMAND_INDEX.get(id);
     if (!spec) throw unknownCommand(id);
     const reason = spec.enabled(this);
@@ -1952,7 +1992,7 @@ export class MockEngine {
     const doc = this.documents[this.docIndex(index)];
     const target = rawPath ?? doc.path;
     if (target === null || target === undefined) {
-      throw bad("doc.save", "document has no path; pass `path`");
+      throw plainBad("document has no path; pass `path`");
     }
     let ext = format ?? path.posix.extname(target).replace(/^\./, "");
     ext = typeof ext === "string" ? ext.toLowerCase() : "";
@@ -1971,10 +2011,7 @@ export class MockEngine {
       this.writeRoot(target, renderPng(doc, 0));
       return { path: target, warnings: [] };
     }
-    throw bad(
-      "doc.save",
-      `this mock saves .pcraft or .png, not \`.${ext}\` (pass "format" or a recognised extension)`,
-    );
+    throw plainBad(`this mock saves .pcraft or .png, not \`.${ext}\` (pass "format" or a recognised extension)`);
   }
 
   docExportLayers(index, dir, params) {

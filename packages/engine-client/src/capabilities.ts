@@ -46,7 +46,11 @@ interface FailOptions {
   readonly retryable?: boolean;
 }
 
-function fail(code: CapabilityErrorCode, message: string, options: FailOptions = {}): CapabilityFailure {
+function fail(
+  code: CapabilityErrorCode,
+  message: string,
+  options: FailOptions = {},
+): CapabilityFailure {
   const failure: {
     ok: false;
     code: CapabilityErrorCode;
@@ -71,7 +75,12 @@ function fail(code: CapabilityErrorCode, message: string, options: FailOptions =
 export type CapabilityScope = "read" | "write";
 
 /** Sanctioned per-session subdirectories (workspace model, W2-B task). */
-export const SESSION_SUBDIRS = ["assets", "tmp", "renders", "save"] as const satisfies readonly string[];
+export const SESSION_SUBDIRS = [
+  "assets",
+  "tmp",
+  "renders",
+  "save",
+] as const satisfies readonly string[];
 
 export type SessionSubdir = (typeof SESSION_SUBDIRS)[number];
 
@@ -100,7 +109,10 @@ export function parseEngineTenant(input: unknown): CapabilityResult<EngineTenant
     const issues = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
       .join("; ");
-    return fail("path_outside_capability_root", `engine tenant config failed schema validation: ${issues}`);
+    return fail(
+      "path_outside_capability_root",
+      `engine tenant config failed schema validation: ${issues}`,
+    );
   }
   return { ok: true, value: parsed.data };
 }
@@ -120,6 +132,17 @@ export function isWindowsDeviceName(component: string): boolean {
   return /^COM[1-9]$/.test(stem) || /^LPT[1-9]$/.test(stem);
 }
 
+/** True when any code unit is a C0 control character or DEL (no regex: biome forbids control chars in regex literals). */
+function hasControlCharacter(component: string): boolean {
+  for (let i = 0; i < component.length; i += 1) {
+    const code = component.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * One safe forward-slash path component: non-empty, no `.`/`..`, no separators
  * or drive/device/stream prefixes, no trailing dot or space, no control
@@ -136,7 +159,7 @@ export function isSafePathComponent(component: string): boolean {
   if (component.endsWith(".") || component.endsWith(" ")) {
     return false;
   }
-  if (/[\u0000-\u001f\u007f]/.test(component)) {
+  if (hasControlCharacter(component)) {
     return false;
   }
   if (component.includes("/") || component.includes("\\") || component.includes(":")) {
@@ -161,7 +184,7 @@ function reasonForComponent(component: string): string {
   if (component.endsWith(".") || component.endsWith(" ")) {
     return "path components ending in a dot or space are not allowed";
   }
-  if (/[\u0000-\u001f\u007f]/.test(component)) {
+  if (hasControlCharacter(component)) {
     return "control characters are not allowed";
   }
   if (component.includes("/") || component.includes("\\")) {
@@ -190,20 +213,35 @@ export function validateRelativePath(raw: string): CapabilityResult<string> {
     );
   }
   if (raw.startsWith("\\\\")) {
-    return fail("ambient_path_refused", "automation path rejected: UNC share paths are not allowed");
+    return fail(
+      "ambient_path_refused",
+      "automation path rejected: UNC share paths are not allowed",
+    );
   }
   if (raw.startsWith("~")) {
-    return fail("ambient_path_refused", "automation path rejected: home-relative paths are not allowed");
+    return fail(
+      "ambient_path_refused",
+      "automation path rejected: home-relative paths are not allowed",
+    );
   }
   if (raw.includes(":")) {
-    return fail("ambient_path_refused", "automation path rejected: drive, device and stream prefixes are not allowed");
+    return fail(
+      "ambient_path_refused",
+      "automation path rejected: drive, device and stream prefixes are not allowed",
+    );
   }
   if (raw.includes("\\")) {
-    return fail("path_outside_capability_root", "automation path rejected: alternate separators are not allowed; use /");
+    return fail(
+      "path_outside_capability_root",
+      "automation path rejected: alternate separators are not allowed; use /",
+    );
   }
   for (const component of raw.split("/")) {
     if (!isSafePathComponent(component)) {
-      return fail("path_outside_capability_root", `automation path rejected: ${reasonForComponent(component)}`);
+      return fail(
+        "path_outside_capability_root",
+        `automation path rejected: ${reasonForComponent(component)}`,
+      );
     }
   }
   return { ok: true, value: raw };
@@ -278,7 +316,10 @@ export interface CapabilityRoot {
  * the engine is launched with --automation-read-root <root> and
  * --automation-write-root <root> (workspace.rs AuthorizedWorkspace::new).
  */
-export function resolveRoot(scope: CapabilityScope, tenant: EngineTenant): CapabilityResult<CapabilityRoot> {
+export function resolveRoot(
+  scope: CapabilityScope,
+  tenant: EngineTenant,
+): CapabilityResult<CapabilityRoot> {
   const dir = sessionDirectory(tenant);
   if (!dir.ok) {
     return dir;
@@ -298,7 +339,9 @@ export function resolveRoot(scope: CapabilityScope, tenant: EngineTenant): Capab
  * create before a session starts (workspace.rs: the parent of a new output
  * file must already exist; nothing is auto-created by the engine).
  */
-export function sessionLayout(tenant: EngineTenant): CapabilityResult<Readonly<Record<SessionSubdir, string>>> {
+export function sessionLayout(
+  tenant: EngineTenant,
+): CapabilityResult<Readonly<Record<SessionSubdir, string>>> {
   const dir = sessionDirectory(tenant);
   if (!dir.ok) {
     return dir;
@@ -346,6 +389,11 @@ export function capabilityPath(
   }
   return {
     ok: true,
-    value: { scope, root: root.value, relative: validated.value, absolute: `${root.value}/${validated.value}` },
+    value: {
+      scope,
+      root: root.value,
+      relative: validated.value,
+      absolute: `${root.value}/${validated.value}`,
+    },
   };
 }

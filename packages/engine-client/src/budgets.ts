@@ -14,7 +14,15 @@
 // Shared ceilings live in @studio/config (single source of truth, §4) and are
 // re-exported here so engine-client consumers need no direct config import.
 // Connection cap (16) and socket timeouts (30 s) belong to the transport owner.
-import { type PlanId, planLimits, AGENT_OBSERVE_PREVIEW_PX, ENGINE_MAX_CANVAS_MEGAPIXELS, ENGINE_PNG_MAX_BYTES, ENGINE_PREVIEW_MAX_PX, ENGINE_REPLY_MAX_BYTES } from "@studio/config";
+import {
+  AGENT_OBSERVE_PREVIEW_PX,
+  ENGINE_MAX_CANVAS_MEGAPIXELS,
+  ENGINE_PNG_MAX_BYTES,
+  ENGINE_PREVIEW_MAX_PX,
+  ENGINE_REPLY_MAX_BYTES,
+  type PlanId,
+  planLimits,
+} from "@studio/config";
 
 // Re-exported so engine-client consumers need no direct @studio/config import.
 // Shared ceilings stay defined in @studio/config (single source of truth, §4).
@@ -78,7 +86,13 @@ interface FailOptions {
 }
 
 function fail(code: BudgetErrorCode, message: string, options: FailOptions = {}): BudgetFailure {
-  const failure: { ok: false; code: BudgetErrorCode; message: string; hint?: string; retryable?: boolean } = {
+  const failure: {
+    ok: false;
+    code: BudgetErrorCode;
+    message: string;
+    hint?: string;
+    retryable?: boolean;
+  } = {
     ok: false,
     code,
     message,
@@ -135,10 +149,14 @@ export function validateReplySize(frame: EngineFrame): BudgetResult<{ bytes: num
 export function validateRequestSize(frame: EngineFrame): BudgetResult<{ bytes: number }> {
   const bytes = frameByteLength(frame);
   if (bytes > ENGINE_REQUEST_MAX_BYTES) {
-    return fail("frame_too_large", `engine request frame of ${bytes} bytes exceeds the ${ENGINE_REQUEST_MAX_BYTES} byte request-line budget`, {
-      hint: "the engine closes a TCP connection after an oversized request line; split large batches (≤256 steps) or trim parameters",
-      retryable: false,
-    });
+    return fail(
+      "frame_too_large",
+      `engine request frame of ${bytes} bytes exceeds the ${ENGINE_REQUEST_MAX_BYTES} byte request-line budget`,
+      {
+        hint: "the engine closes a TCP connection after an oversized request line; split large batches (≤256 steps) or trim parameters",
+        retryable: false,
+      },
+    );
   }
   return { ok: true, value: { bytes } };
 }
@@ -152,10 +170,14 @@ export function validatePngSize(pngBytes: number): BudgetResult<{ bytes: number 
     return fail("invalid_png_size", "PNG byte count must be a non-negative integer");
   }
   if (pngBytes > ENGINE_PNG_MAX_BYTES) {
-    return fail("png_too_large", `PNG of ${pngBytes} bytes exceeds the ${ENGINE_PNG_MAX_BYTES} byte engine cap`, {
-      hint: "render a smaller preview side (clampPreviewSide) or write the render to a path beneath the write root",
-      retryable: false,
-    });
+    return fail(
+      "png_too_large",
+      `PNG of ${pngBytes} bytes exceeds the ${ENGINE_PNG_MAX_BYTES} byte engine cap`,
+      {
+        hint: "render a smaller preview side (clampPreviewSide) or write the render to a path beneath the write root",
+        retryable: false,
+      },
+    );
   }
   return { ok: true, value: { bytes: pngBytes } };
 }
@@ -185,9 +207,15 @@ export interface ClampedPreview {
  * 2048, so anything below 1 px is treated as "no explicit size" and clamped
  * to the ceiling instead of ever sending 0.
  */
-export function clampPreviewSide(requestedPx: number, purpose: PreviewPurpose = "agent"): BudgetResult<ClampedPreview> {
+export function clampPreviewSide(
+  requestedPx: number,
+  purpose: PreviewPurpose = "agent",
+): BudgetResult<ClampedPreview> {
   if (!Number.isFinite(requestedPx) || requestedPx < 0) {
-    return fail("invalid_preview_side", "requested preview side must be a finite non-negative number");
+    return fail(
+      "invalid_preview_side",
+      "requested preview side must be a finite non-negative number",
+    );
   }
   const ceiling = previewCeiling(purpose);
   if (requestedPx < 1) {

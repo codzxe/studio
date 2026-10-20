@@ -5,29 +5,17 @@
 //   - vendor/photocraft/docs/control-protocol.md (envelope, command-list rows, jobs)
 //   - crates/engine/src/{commands,file_cmds,inspect,jobs}.rs and
 //     crates/automation/src/headless.rs (result keys)
-// Pure in-process: no sockets, no timers (waitForJob tests inject sleep/now).
+// Pure in-process: no sockets, no real timers (waitForJob tests inject sleep/now).
 
 import { describe, expect, it } from "vitest";
-import type { MethodCall, ReplyOutcome, WireSender } from "../src/methods/protocol.js";
+import { z } from "zod";
 import {
-  JOB_METHODS,
-  MAX_BATCH_STEPS,
-  MAX_PNG_BYTES,
-  MAX_PREVIEW_SIDE,
-  PROTOCOL_METHODS,
-  SERVED_METHODS,
-  isNotRunTimeout,
-  isReplyTimeout,
-  parseCallReply,
-  parseEngineReply,
-  type BuiltMethodCall,
-} from "../src/methods/protocol.js";
-import {
+  DOCUMENT_INSPECT_SCHEMA,
   DOC_NEW_RESULT,
   DOC_OPEN_RESULT,
   DOC_PLACE_RESULT,
+  type DocSelectInput,
   SESSION_LIST_SCHEMA,
-  DOCUMENT_INSPECT_SCHEMA,
   docClose,
   docInspect,
   docNew,
@@ -37,16 +25,10 @@ import {
   sessionList,
 } from "../src/methods/document.js";
 import {
-  DOC_SAVE_RESULT,
-  RENDER_RESULT,
-  clampPreviewMaxSide,
-  docRender,
-  docSave,
-  pngWithinBudget,
-} from "../src/methods/render-save.js";
-import {
+  BACKGROUND_EXECUTE_RESULT,
   BATCH_RESULT,
   COMMAND_LIST_RESULT,
+  JOBS_CANCEL_RESULT,
   JOBS_LIST_RESULT,
   METHODS_RESULT,
   agentBegin,
@@ -65,17 +47,41 @@ import {
   waitForJob,
 } from "../src/methods/engine-commands.js";
 import {
+  type DocExportLayersInput,
   EXPORT_RESULT,
   IMPORT_DATA_SETS_RESULT,
   docExportDataSets,
   docExportLayers,
   docImportDataSets,
 } from "../src/methods/export-data.js";
-import { z } from "zod";
+import type { MethodCall, ReplyOutcome, WireSender } from "../src/methods/protocol.js";
+import {
+  type BuiltMethodCall,
+  JOB_METHODS,
+  MAX_BATCH_STEPS,
+  MAX_PNG_BYTES,
+  MAX_PREVIEW_SIDE,
+  PROTOCOL_METHODS,
+  SERVED_METHODS,
+  isNotRunTimeout,
+  isReplyTimeout,
+  parseCallReply,
+  parseEngineReply,
+} from "../src/methods/protocol.js";
+import {
+  DOC_SAVE_RESULT,
+  RENDER_RESULT,
+  clampPreviewMaxSide,
+  docRender,
+  docSave,
+  pngWithinBudget,
+} from "../src/methods/render-save.js";
 
 // -- helpers -----------------------------------------------------------------
 
-function expectCall<TParams, TResult>(built: BuiltMethodCall<TParams, TResult>): MethodCall<TParams, TResult> {
+function expectCall<TParams, TResult>(
+  built: BuiltMethodCall<TParams, TResult>,
+): MethodCall<TParams, TResult> {
   if (!built.ok) {
     throw new Error(`builder failed unexpectedly: ${built.code}: ${built.message}`);
   }
@@ -124,6 +130,11 @@ const fakeClock = (stepMs: number) => {
   return { now: () => clock, sleep, sleeps };
 };
 
+const noSleep = async (): Promise<void> => {};
+
+/** Compile-time-legal holder for values the schemas must reject at runtime. */
+const asInvalid = (value: unknown): never => value as never;
+
 // -- fixtures (copied from rpc.rs / control-protocol.md) -----------------------
 
 /** rpc.rs `METHODS`, registry order. */
@@ -148,13 +159,14 @@ const METHODS_FIXTURE = [
   "methods",
 ] as const;
 
-/** rpc.rs command-list test: the `file.new` row, exactly these keys (+ optional keywords). */
+/** rpc.rs command-list test: the `file.new` row — exactly these keys (+ optional keywords). */
 const FILE_NEW_ROW = {
   id: "file.new",
   label: "New…",
   menu: ["File"],
   shortcut: "Cmd+N",
-  params: '{"width":1..300000=1920,"height":1..300000=1080,"mode":"rgb|gray|grayscale|cmyk|lab"="rgb"}',
+  params:
+    '{"width":1..300000=1920,"height":1..300000=1080,"mode":"rgb|gray|grayscale|cmyk|lab"="rgb"}',
   enabled: true,
   disabledReason: null,
   needsDocument: false,
@@ -162,7 +174,9 @@ const FILE_NEW_ROW = {
 
 const SESSION_FIXTURE = {
   active: 0,
-  documents: [{ index: 0, name: "Untitled", path: null, width: 64, height: 48, dirty: false, revision: 3 }],
+  documents: [
+    { index: 0, name: "Untitled", path: null, width: 64, height: 48, dirty: false, revision: 3 },
+  ],
   foreground: "#000000",
   background: "#ffffff",
 };
@@ -199,11 +213,11 @@ const RUNNING_JOB = {
   progress: 0.25,
   message: "",
   elapsedMs: 1.5,
-};
+} as const;
 
-const DONE_JOB = { ...RUNNING_JOB, state: "done", progress: 1, result: { filter: {} } };
+const DONE_JOB = { ...RUNNING_JOB, state: "done", progress: 1, result: { filter: {} } } as const;
 
-// -- method name constants -----------------------------------------------------
+// -- method name constants ------------------------------------------------------
 
 describe("method name constants", () => {
   it("SERVED_METHODS matches rpc.rs `METHODS` order exactly", () => {
@@ -239,17 +253,20 @@ describe("request builders", () => {
       height: 32,
       background: "white",
     });
-    const full = docNew({
-      width: 1920,
-      height: 1080,
-      mode: "rgb",
-      depth: 16,
-      background: "#ff8800",
-      backgroundColor: [1, 0, 0],
-      resolution: 300,
-      name: "Poster",
-    });
-    expect(expectCall(full).params).toEqual({
+    const full = expectCall(
+      docNew({
+        width: 1920,
+        height: 1080,
+        mode: "rgb",
+        depth: 16,
+        background: "#ff8800",
+        backgroundColor: [1, 0, 0],
+        resolution: 300,
+        name: "Poster",
+      }),
+    );
+    expect(full.method).toBe("doc.new");
+    expect(full.params).toEqual({
       width: 1920,
       height: 1080,
       mode: "rgb",
@@ -263,7 +280,6 @@ describe("request builders", () => {
 
   it("doc.new without input sends {} — the engine applies the file.new defaults", () => {
     const call = expectCall(docNew());
-    expect(call.method).toBe("doc.new");
     expect(call.params).toEqual({});
   });
 
@@ -271,7 +287,9 @@ describe("request builders", () => {
     const call = expectCall(docPlace({ path: "logo.png", scale: 50 }));
     expect(call.method).toBe("doc.place");
     expect(call.params).toEqual({ path: "logo.png", scale: 50 });
-    expect(expectCall(docPlace({ path: "logo.png", fit: true, center: [10, 20], index: 1 })).params).toEqual({
+    expect(
+      expectCall(docPlace({ path: "logo.png", fit: true, center: [10, 20], index: 1 })).params,
+    ).toEqual({
       path: "logo.png",
       fit: true,
       center: [10, 20],
@@ -280,29 +298,33 @@ describe("request builders", () => {
   });
 
   it("doc.select requires an index; doc.close and doc.inspect take an optional one", () => {
+    expect(expectCall(docSelect({ index: 0 })).method).toBe("doc.select");
     expect(expectCall(docSelect({ index: 0 })).params).toEqual({ index: 0 });
     expect(expectCall(docClose()).params).toEqual({});
     expect(expectCall(docClose({ index: 0 })).params).toEqual({ index: 0 });
     expect(expectCall(docInspect()).params).toEqual({});
     expect(expectCall(docInspect({ index: 1 })).params).toEqual({ index: 1 });
-    expect(expectCall(sessionList()).params).toEqual({});
     expect(expectCall(sessionList()).method).toBe("session.list");
+    expect(expectCall(sessionList()).params).toEqual({});
   });
 
   it("doc.save sends the write-root path and the format options (rpc.rs fixture: out.png)", () => {
     expect(expectCall(docSave({ path: "out.png" })).params).toEqual({ path: "out.png" });
-    const full = docSave({
-      path: "card.pcraft",
-      format: "pcraft",
-      quality: 90,
-      index: 0,
-      tiffLayers: true,
-      tgaBits: 32,
-      ddsCompression: "bc3",
-      ddsMipmaps: true,
-      dpxBits: 10,
-    });
-    expect(expectCall(full).params).toEqual({
+    const full = expectCall(
+      docSave({
+        path: "card.pcraft",
+        format: "pcraft",
+        quality: 90,
+        index: 0,
+        tiffLayers: true,
+        tgaBits: 32,
+        ddsCompression: "bc3",
+        ddsMipmaps: true,
+        dpxBits: 10,
+      }),
+    );
+    expect(full.method).toBe("doc.save");
+    expect(full.params).toEqual({
       path: "card.pcraft",
       format: "pcraft",
       quality: 90,
@@ -330,7 +352,10 @@ describe("request builders", () => {
     const call = expectCall(engineExecute({ command: "layer.new.layer", params: { name: "Ink" } }));
     expect(call.method).toBe("engine.execute");
     expect(call.params).toEqual({ command: "layer.new.layer", params: { name: "Ink" } });
-    expect(expectCall(engineExecute({ command: "filter.blur.gaussianBlur", params: { radius: 3 } })).params).toEqual({
+    expect(
+      expectCall(engineExecute({ command: "filter.blur.gaussianBlur", params: { radius: 3 } }))
+        .params,
+    ).toEqual({
       command: "filter.blur.gaussianBlur",
       params: { radius: 3 },
     });
@@ -338,10 +363,12 @@ describe("request builders", () => {
       command: "command.list",
       params: null,
     });
-    expect(expectCall(engineExecute({ command: "edit.undo" })).params).toEqual({ command: "edit.undo" });
+    expect(expectCall(engineExecute({ command: "edit.undo" })).params).toEqual({
+      command: "edit.undo",
+    });
   });
 
-  it("engine.execute with wait:false flags the background start", () => {
+  it("engine.execute with wait:false flags the background start (rpc.rs fixture)", () => {
     const call = expectCall(
       engineExecuteBackground({ command: "filter.blur.gaussianBlur", params: { radius: 40 } }),
     );
@@ -353,6 +380,7 @@ describe("request builders", () => {
   });
 
   it("engine.commands sends {} or {filter} (rpc.rs fixture: filter blur)", () => {
+    expect(expectCall(engineCommands()).method).toBe("engine.commands");
     expect(expectCall(engineCommands()).params).toEqual({});
     expect(expectCall(engineCommands({ filter: "blur" })).params).toEqual({ filter: "blur" });
   });
@@ -360,6 +388,7 @@ describe("request builders", () => {
   it("jobs and methods builders send the exact minimal params", () => {
     expect(expectCall(jobsList()).method).toBe("jobs.list");
     expect(expectCall(jobsList()).params).toEqual({});
+    expect(expectCall(jobsCancel({ job: 7 })).method).toBe("jobs.cancel");
     expect(expectCall(jobsCancel({ job: 7 })).params).toEqual({ job: 7 });
     expect(expectCall(jobsCancel()).params).toEqual({});
     expect(expectCall(methodsCall()).method).toBe("methods");
@@ -367,18 +396,26 @@ describe("request builders", () => {
   });
 
   it("export/import builders send the capability-root params (rpc.rs fixtures)", () => {
-    expect(expectCall(docExportLayers({ dir: "out", format: "png", prefix: "card" })).params).toEqual({
+    expect(
+      expectCall(docExportLayers({ dir: "out", format: "png", prefix: "card" })).params,
+    ).toEqual({
       dir: "out",
       format: "png",
       prefix: "card",
     });
-    expect(expectCall(docExportDataSets({ dir: "sets", format: "png", dataSets: ["one"], naming: "{index}" })).params).toEqual({
+    const dataSets = expectCall(
+      docExportDataSets({ dir: "sets", format: "png", dataSets: ["one"], naming: "{index}" }),
+    );
+    expect(dataSets.method).toBe("doc.exportDataSets");
+    expect(dataSets.params).toEqual({
       dir: "sets",
       format: "png",
       dataSets: ["one"],
       naming: "{index}",
     });
-    expect(expectCall(docImportDataSets({ path: "sets.csv" })).params).toEqual({ path: "sets.csv" });
+    expect(expectCall(docImportDataSets({ path: "sets.csv" })).params).toEqual({
+      path: "sets.csv",
+    });
     expect(expectCall(docImportDataSets({ path: "sets.csv", delimiter: ";" })).params).toEqual({
       path: "sets.csv",
       delimiter: ";",
@@ -395,7 +432,7 @@ describe("batch builders", () => {
     { command: "no.such.command" },
     { command: "layer.new.layer", params: { name: "B" } },
     { method: "doc.inspect" },
-  ] as const;
+  ];
 
   it("sends the steps verbatim; stopOnError is omitted (engine default true)", () => {
     const call = expectCall(batch({ steps: STEPS }));
@@ -430,10 +467,14 @@ describe("batch builders", () => {
   it("accepts at most 256 steps (rpc.rs: maximum is 256)", () => {
     const steps = Array.from({ length: MAX_BATCH_STEPS }, () => ({ command: "command.list" }));
     expect(expectCall(batch({ steps })).params.steps).toHaveLength(MAX_BATCH_STEPS);
-    const tooMany = Array.from({ length: MAX_BATCH_STEPS + 1 }, () => ({ command: "command.list" }));
+    const tooMany = Array.from({ length: MAX_BATCH_STEPS + 1 }, () => ({
+      command: "command.list",
+    }));
     const failure = expectFailure(batch({ steps: tooMany }));
     expect(failure.code).toBe("engine_limit");
-    expect(failure.message).toBe(`batch contains ${MAX_BATCH_STEPS + 1} steps; maximum is ${MAX_BATCH_STEPS}`);
+    expect(failure.message).toBe(
+      `batch contains ${MAX_BATCH_STEPS + 1} steps; maximum is ${MAX_BATCH_STEPS}`,
+    );
   });
 
   it("refuses a nested batch method step, as the engine does", () => {
@@ -443,10 +484,14 @@ describe("batch builders", () => {
   });
 
   it("rejects ambiguous and empty steps client-side", () => {
-    const both = expectFailure(batch({ steps: [{ command: "edit.undo", method: "doc.inspect" }] }));
-    expect(both.message).toContain("not both");
-    const neither = expectFailure(batch({ steps: [{ params: {} }] }));
-    expect(neither.message).toContain("needs `command` or `method`");
+    const both = { command: "edit.undo", method: "doc.inspect" };
+    const failure = expectFailure(batch({ steps: [both] }));
+    expect(failure.code).toBe("invalid_params");
+    expect(failure.message).toContain("not both");
+    const neither = { params: {} } as unknown as { command: string };
+    const failure2 = expectFailure(batch({ steps: [neither] }));
+    expect(failure2.code).toBe("invalid_params");
+    expect(failure2.message).toContain("needs `command` or `method`");
   });
 
   it("rejects unknown method steps before dispatch", () => {
@@ -455,15 +500,28 @@ describe("batch builders", () => {
     expect(failure.message).toContain("unknown method `doc.nope`");
   });
 
-  it("rejects `wait` on a method step (the engine ignores it; rpc.rs reads it for commands only)", () => {
-    const failure = expectFailure(batch({ steps: [{ method: "doc.inspect", wait: false } as never] }));
+  it("rejects a non-array steps value without throwing (untyped callers)", () => {
+    const badInput = { steps: undefined } as unknown as { steps: readonly [] };
+    const failure = expectFailure(batch(badInput));
+    expect(failure.code).toBe("invalid_params");
+    expect(failure.message).toContain("`steps` must be an array");
+  });
+
+  it("rejects `wait` on a method step (rpc.rs reads it for command steps only)", () => {
+    const sneaky = { method: "doc.inspect", wait: false };
+    const failure = expectFailure(batch({ steps: [sneaky] }));
     expect(failure.code).toBe("invalid_params");
   });
 });
 
 describe("transactional batches (§5.6)", () => {
   it("wraps the steps in agent.begin/agent.commit and forces stop-on-error", () => {
-    const call = expectCall(transactionalBatch({ name: "run-42", steps: [{ command: "layer.new.layer", params: { name: "A" } }] }));
+    const call = expectCall(
+      transactionalBatch({
+        name: "run-42",
+        steps: [{ command: "layer.new.layer", params: { name: "A" } }],
+      }),
+    );
     expect(call.method).toBe("batch");
     expect(call.params).toEqual({
       steps: [
@@ -472,15 +530,20 @@ describe("transactional batches (§5.6)", () => {
         { command: "agent.commit" },
       ],
     });
-    expect(call.params.stopOnError).toBeUndefined();
+    expect("stopOnError" in call.params).toBe(false);
   });
 
   it("reserves two step slots for begin/commit", () => {
     const limit = MAX_BATCH_STEPS - 2;
     const fits = Array.from({ length: limit }, () => ({ command: "edit.undo" }));
-    expect(expectCall(transactionalBatch({ name: "x", steps: fits })).params.steps).toHaveLength(MAX_BATCH_STEPS);
+    expect(expectCall(transactionalBatch({ name: "x", steps: fits })).params.steps).toHaveLength(
+      MAX_BATCH_STEPS,
+    );
     const failure = expectFailure(
-      transactionalBatch({ name: "x", steps: Array.from({ length: limit + 1 }, () => ({ command: "edit.undo" })) }),
+      transactionalBatch({
+        name: "x",
+        steps: Array.from({ length: limit + 1 }, () => ({ command: "edit.undo" })),
+      }),
     );
     expect(failure.code).toBe("engine_limit");
   });
@@ -493,7 +556,9 @@ describe("transactional batches (§5.6)", () => {
 
   it("requires a non-empty checkpoint name", () => {
     expect(expectFailure(transactionalBatch({ name: "", steps: [] })).code).toBe("invalid_params");
-    expect(expectFailure(transactionalBatch({ name: "   ", steps: [] })).code).toBe("invalid_params");
+    expect(expectFailure(transactionalBatch({ name: "   ", steps: [] })).code).toBe(
+      "invalid_params",
+    );
   });
 
   it("exposes the §5.6 transaction commands as engine.execute calls", () => {
@@ -509,11 +574,14 @@ describe("transactional batches (§5.6)", () => {
 // -- builder validation ----------------------------------------------------------
 
 describe("builder validation (fail fast, typed envelopes)", () => {
-  it("doc.select rejects missing or non-integer index values (rpc.rs: index_of)", () => {
-    expect(expectFailure(docSelect({})).code).toBe("invalid_params");
+  it("doc.select rejects a missing index (rpc.rs: doc.select needs `index`)", () => {
+    const missing = {} as unknown as DocSelectInput;
+    const failure = expectFailure(docSelect(missing));
+    expect(failure.code).toBe("invalid_params");
+    expect(failure.message).toContain("doc.select");
   });
 
-  it("rejects the rpc.rs invalid-index table: \"0\", -1, 0.5, true", () => {
+  it('rejects the rpc.rs invalid-index table: "0", -1, 0.5, true', () => {
     for (const bad of ["0", -1, 0.5, true] as unknown[]) {
       expect(expectFailure(docSelect({ index: bad as number })).code).toBe("invalid_params");
       expect(expectFailure(docInspect({ index: bad as number })).code).toBe("invalid_params");
@@ -535,7 +603,9 @@ describe("builder validation (fail fast, typed envelopes)", () => {
 
   it("engine.execute rejects non-object params (control-protocol.md §Methods)", () => {
     for (const bad of [[1], "abc", 5, true] as unknown[]) {
-      const failure = expectFailure(engineExecute({ command: "edit.fill", params: bad as Record<string, unknown> }));
+      const failure = expectFailure(
+        engineExecute({ command: "edit.fill", params: bad as Record<string, unknown> }),
+      );
       expect(failure.code).toBe("invalid_params");
       expect(failure.message).toContain("engine.execute");
     }
@@ -554,9 +624,11 @@ describe("builder validation (fail fast, typed envelopes)", () => {
     expect(expectFailure(docSave({ quality: 0 })).code).toBe("invalid_params");
     expect(expectFailure(docSave({ quality: 101 })).code).toBe("invalid_params");
     expect(expectFailure(docSave({ quality: 90.5 })).code).toBe("invalid_params");
-    expect(expectFailure(docSave({ tgaBits: 25 })).code).toBe("invalid_params");
-    expect(expectFailure(docSave({ dpxBits: 11 })).code).toBe("invalid_params");
-    expect(expectFailure(docSave({ ddsCompression: "dxt5" })).code).toBe("invalid_params");
+    expect(expectFailure(docSave({ tgaBits: asInvalid(25) })).code).toBe("invalid_params");
+    expect(expectFailure(docSave({ dpxBits: asInvalid(11) })).code).toBe("invalid_params");
+    expect(expectFailure(docSave({ ddsCompression: asInvalid("dxt5") })).code).toBe(
+      "invalid_params",
+    );
     expect(expectCall(docSave({ quality: 1 })).ok).toBe(true);
     expect(expectCall(docSave({ tgaBits: 24, dpxBits: 16, ddsCompression: "none" })).ok).toBe(true);
   });
@@ -568,17 +640,29 @@ describe("builder validation (fail fast, typed envelopes)", () => {
   });
 
   it("export/import builders require their root path and a non-empty delimiter", () => {
-    expect(expectFailure(docExportLayers({})).code).toBe("invalid_params");
+    const missing = {} as unknown as DocExportLayersInput;
+    expect(expectFailure(docExportLayers(missing)).code).toBe("invalid_params");
     expect(expectFailure(docExportLayers({ dir: "../escaped" })).code).toBe("invalid_params");
     expect(expectFailure(docExportDataSets({ dir: "" })).code).toBe("invalid_params");
-    expect(expectFailure(docImportDataSets({ path: "../outside.csv" })).code).toBe("invalid_params");
-    expect(expectFailure(docImportDataSets({ path: "sets.csv", delimiter: "" })).code).toBe("invalid_params");
+    expect(expectFailure(docImportDataSets({ path: "../outside.csv" })).code).toBe(
+      "invalid_params",
+    );
+    expect(expectFailure(docImportDataSets({ path: "sets.csv", delimiter: "" })).code).toBe(
+      "invalid_params",
+    );
   });
 
   it("failures carry the house envelope shape", () => {
-    const failure = expectFailure(docSelect({}));
-    expect(failure).toEqual({ code: "invalid_params", message: expect.stringContaining("doc.select") });
-    expect(Object.keys(failure).sort()).toEqual(["code", "message", "ok"]);
+    const built = docSelect({ index: -1 });
+    expect(built.ok).toBe(false);
+    if (!built.ok) {
+      expect(Object.keys(built).sort()).toEqual(["code", "message", "ok"]);
+      expect(built).toEqual({
+        ok: false,
+        code: "invalid_params",
+        message: expect.stringContaining("doc.select"),
+      });
+    }
   });
 });
 
@@ -600,14 +684,24 @@ describe("reply envelope parsing (rpc.rs `respond`)", () => {
   });
 
   it("keeps id: null error replies (bad JSON frames, oversized lines)", () => {
-    for (const error of ["bad JSON: expected value at line 1 column 1", "request exceeds 1048576 bytes"]) {
+    for (const error of [
+      "bad JSON: expected value at line 1 column 1",
+      "request exceeds 1048576 bytes",
+    ]) {
       const outcome = parseEngineReply({ id: null, ok: false, error }, DOC_NEW_RESULT);
       expect(outcome).toEqual({ ok: false, error });
     }
   });
 
   it("fails closed on non-envelope values", () => {
-    for (const reply of [[1, 2, 3], "nope", 5, null, { ok: "yes" }, { id: 1, ok: true, result: 1, extra: true }]) {
+    for (const reply of [
+      [1, 2, 3],
+      "nope",
+      5,
+      null,
+      { ok: "yes" },
+      { id: 1, ok: true, result: 1, extra: true },
+    ]) {
       const outcome = parseEngineReply(reply, DOC_NEW_RESULT);
       expect(outcome.ok).toBe(false);
       if (!outcome.ok) {
@@ -617,7 +711,11 @@ describe("reply envelope parsing (rpc.rs `respond`)", () => {
   });
 
   it("turns result-schema mismatches into typed failures without echoing values", () => {
-    const outcome = parseEngineReply({ id: 1, ok: true, result: { document: "zero" } }, DOC_NEW_RESULT, "doc.new");
+    const outcome = parseEngineReply(
+      { id: 1, ok: true, result: { document: "zero" } },
+      DOC_NEW_RESULT,
+      "doc.new",
+    );
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
       expect(outcome.error).toContain("doc.new");
@@ -626,7 +724,7 @@ describe("reply envelope parsing (rpc.rs `respond`)", () => {
     }
   });
 
-  it("accepts string request ids (rpc.rs: {\"id\":\"a\"})", () => {
+  it('accepts string request ids (rpc.rs: {"id":"a"} replies)', () => {
     const outcome = parseEngineReply({ id: "a", ok: true, result: 1 }, z.unknown());
     expect(expectParsed(outcome)).toBe(1);
   });
@@ -636,7 +734,9 @@ describe("reply envelope parsing (rpc.rs `respond`)", () => {
 
 describe("result schemas", () => {
   it("doc.new → {document: index} (commands.rs file.new)", () => {
-    expect(expectParsed(parseEngineReply({ id: 1, ok: true, result: { document: 0 } }, DOC_NEW_RESULT))).toEqual({
+    expect(
+      expectParsed(parseEngineReply({ id: 1, ok: true, result: { document: 0 } }, DOC_NEW_RESULT)),
+    ).toEqual({
       document: 0,
     });
   });
@@ -650,32 +750,46 @@ describe("result schemas", () => {
       layers: 2,
       warnings: ["adjustment layer flattened"],
     };
-    expect(expectParsed(parseEngineReply({ id: 1, ok: true, result: fixture }, DOC_OPEN_RESULT))).toEqual(fixture);
+    expect(
+      expectParsed(parseEngineReply({ id: 1, ok: true, result: fixture }, DOC_OPEN_RESULT)),
+    ).toEqual(fixture);
   });
 
   it("doc.place → {layer, scale, bounds, smartObject} (file_cmds.rs place_bytes)", () => {
     const fixture = { layer: 1, scale: 50, bounds: [5, 3, 25, 18], smartObject: true };
-    expect(expectParsed(parseEngineReply({ id: 1, ok: true, result: fixture }, DOC_PLACE_RESULT))).toEqual(fixture);
+    expect(
+      expectParsed(parseEngineReply({ id: 1, ok: true, result: fixture }, DOC_PLACE_RESULT)),
+    ).toEqual(fixture);
   });
 
   it("doc.save → {path, warnings} (headless.rs save)", () => {
     const fixture = { path: "out.png", warnings: [] };
-    expect(expectParsed(parseEngineReply({ id: 1, ok: true, result: fixture }, DOC_SAVE_RESULT))).toEqual(fixture);
+    expect(
+      expectParsed(parseEngineReply({ id: 1, ok: true, result: fixture }, DOC_SAVE_RESULT)),
+    ).toEqual(fixture);
   });
 
   it("doc.render → {path, bytes} to a file, else {mime, base64} (rpc.rs)", () => {
     const toFile = { path: "render.png", bytes: 1234 };
     const inline = { mime: "image/png", base64: "iVBORw0KGgo=" };
-    expect(expectParsed(parseEngineReply({ id: 1, ok: true, result: toFile }, RENDER_RESULT))).toEqual(toFile);
-    expect(expectParsed(parseEngineReply({ id: 2, ok: true, result: inline }, RENDER_RESULT))).toEqual(inline);
+    expect(
+      expectParsed(parseEngineReply({ id: 1, ok: true, result: toFile }, RENDER_RESULT)),
+    ).toEqual(toFile);
+    expect(
+      expectParsed(parseEngineReply({ id: 2, ok: true, result: inline }, RENDER_RESULT)),
+    ).toEqual(inline);
   });
 
   it("session.list → {active, documents, foreground, background} (inspect.rs session)", () => {
-    const result = expectParsed(parseEngineReply({ id: 1, ok: true, result: SESSION_FIXTURE }, SESSION_LIST_SCHEMA));
+    const result = expectParsed(
+      parseEngineReply({ id: 1, ok: true, result: SESSION_FIXTURE }, SESSION_LIST_SCHEMA),
+    );
     expect(result.active).toBe(0);
     expect(result.documents).toEqual(SESSION_FIXTURE.documents);
     const empty = { active: null, documents: [], foreground: "#000000", background: "#ffffff" };
-    const parsedEmpty = expectParsed(parseEngineReply({ id: 1, ok: true, result: empty }, SESSION_LIST_SCHEMA));
+    const parsedEmpty = expectParsed(
+      parseEngineReply({ id: 1, ok: true, result: empty }, SESSION_LIST_SCHEMA),
+    );
     expect(parsedEmpty.active).toBeNull();
   });
 
@@ -690,11 +804,11 @@ describe("result schemas", () => {
   });
 
   it("engine.commands → a BARE array of pinned command rows (rpc.rs #3684)", () => {
-    const outcome = parseEngineReply({ id: 1, ok: true, result: [FILE_NEW_ROW] }, COMMAND_LIST_RESULT);
-    const rows = expectParsed(outcome);
+    const rows = expectParsed(
+      parseEngineReply({ id: 1, ok: true, result: [FILE_NEW_ROW] }, COMMAND_LIST_RESULT),
+    );
     expect(rows).toEqual([FILE_NEW_ROW]);
-    const keys = Object.keys(FILE_NEW_ROW).sort();
-    expect(keys).toEqual([
+    expect(Object.keys(FILE_NEW_ROW).sort()).toEqual([
       "disabledReason",
       "enabled",
       "id",
@@ -705,43 +819,63 @@ describe("result schemas", () => {
       "shortcut",
     ]);
     // An optional `keywords` string is allowed (rpc.rs: only commands that have one).
-    const withKeywords = { ...FILE_NEW_ROW, keywords: "Elliptical Marquee" };
-    expect(expectParsed(parseEngineReply({ id: 1, ok: true, result: [withKeywords] }, COMMAND_LIST_RESULT))).toEqual([
-      withKeywords,
-    ]);
+    const withKeywords = { ...FILE_NEW_ROW, keywords: "New Document Image" };
+    expect(
+      expectParsed(
+        parseEngineReply({ id: 1, ok: true, result: [withKeywords] }, COMMAND_LIST_RESULT),
+      ),
+    ).toEqual([withKeywords]);
     // The {"commands": [...]} wrapper is refused — the reply must be a bare array.
-    const wrapped = parseEngineReply({ id: 1, ok: true, result: { commands: [FILE_NEW_ROW] } }, COMMAND_LIST_RESULT);
-    expect(wrapped.ok).toBe(false);
+    expect(
+      parseEngineReply(
+        { id: 1, ok: true, result: { commands: [FILE_NEW_ROW] } },
+        COMMAND_LIST_RESULT,
+      ).ok,
+    ).toBe(false);
   });
 
   it("engine.commands rows keep enabled/disabledReason/needsDocument coherent", () => {
-    const disabled = { ...FILE_NEW_ROW, id: "layer.new.layer", enabled: false, disabledReason: "no document open", needsDocument: true };
-    const rows = expectParsed(parseEngineReply({ id: 1, ok: true, result: [disabled] }, COMMAND_LIST_RESULT));
+    const disabled = {
+      ...FILE_NEW_ROW,
+      id: "layer.new.layer",
+      enabled: false,
+      disabledReason: "no document open",
+      needsDocument: true,
+    };
+    const rows = expectParsed(
+      parseEngineReply({ id: 1, ok: true, result: [disabled] }, COMMAND_LIST_RESULT),
+    );
     expect(rows[0]?.enabled).toBe(false);
     expect(rows[0]?.needsDocument).toBe(true);
   });
 
   it("jobs.list → {jobs: [...]} with running/terminal rows (jobs.rs JobInfo)", () => {
     const result = expectParsed(
-      parseEngineReply({ id: 1, ok: true, result: { jobs: [RUNNING_JOB, DONE_JOB] } }, JOBS_LIST_RESULT),
+      parseEngineReply(
+        { id: 1, ok: true, result: { jobs: [RUNNING_JOB, DONE_JOB] } },
+        JOBS_LIST_RESULT,
+      ),
     );
     expect(result.jobs).toHaveLength(2);
-    const running = result.jobs.find((job) => job.id === 7 && job.state === "running");
-    expect(running?.progress).toBe(0.25);
+    expect(result.jobs.find((job) => job.state === "running")?.progress).toBe(0.25);
     expect(isTerminalJob(RUNNING_JOB)).toBe(false);
     expect(isTerminalJob(DONE_JOB)).toBe(true);
-    const failed = { ...RUNNING_JOB, state: "failed", error: "filter failed" };
+    const failed = { ...RUNNING_JOB, state: "failed", error: "filter failed" } as const;
     expect(isTerminalJob(failed)).toBe(true);
   });
 
   it("jobs.cancel → {cancelled} (jobs.rs)", () => {
-    const fixture = { cancelled: 1 };
-    const outcome = parseEngineReply({ id: 1, ok: true, result: fixture }, z.object({ cancelled: z.number() }).passthrough());
-    expect(expectParsed(outcome)).toEqual(fixture);
+    expect(
+      expectParsed(
+        parseEngineReply({ id: 1, ok: true, result: { cancelled: 1 } }, JOBS_CANCEL_RESULT),
+      ),
+    ).toEqual({ cancelled: 1 });
   });
 
   it("methods → the rpc.rs METHODS array", () => {
-    const result = expectParsed(parseEngineReply({ id: "m", ok: true, result: METHODS_FIXTURE }, METHODS_RESULT));
+    const result = expectParsed(
+      parseEngineReply({ id: "m", ok: true, result: METHODS_FIXTURE }, METHODS_RESULT),
+    );
     expect(result).toEqual([...METHODS_FIXTURE]);
     expect(result).toContain("batch");
   });
@@ -755,7 +889,9 @@ describe("result schemas", () => {
         { ok: false, error: "unknown command `no.such.command`" },
       ],
     };
-    const result = expectParsed(parseEngineReply({ id: 1, ok: true, result: fixture }, BATCH_RESULT));
+    const result = expectParsed(
+      parseEngineReply({ id: 1, ok: true, result: fixture }, BATCH_RESULT),
+    );
     expect(result).toEqual(fixture);
     // rpc.rs: a budget-exhausted batch ends with an error row and counts it failed.
     const budget = {
@@ -764,27 +900,44 @@ describe("result schemas", () => {
       results: [
         { ok: true, result: null },
         { ok: false, error: "unknown command `no.such.command`" },
-        { ok: false, error: "batch response budget exceeded; current step may have completed: …" },
+        { ok: false, error: "batch response budget exceeded; current step may have completed" },
       ],
     };
-    expect(expectParsed(parseEngineReply({ id: 1, ok: true, result: budget }, BATCH_RESULT))).toEqual(budget);
+    expect(
+      expectParsed(parseEngineReply({ id: 1, ok: true, result: budget }, BATCH_RESULT)),
+    ).toEqual(budget);
   });
 
   it("exports → {files, count}; import → {imported} (rpc.rs data-set tests)", () => {
-    const exported = { files: ["out/card_0000_Background.png", "out/card_0001_Badge.png"], count: 2 };
-    expect(expectParsed(parseEngineReply({ id: 1, ok: true, result: exported }, EXPORT_RESULT))).toEqual(exported);
-    expect(expectParsed(parseEngineReply({ id: 2, ok: true, result: { imported: 2 } }, IMPORT_DATA_SETS_RESULT))).toEqual({
-      imported: 2,
-    });
+    const exported = {
+      files: ["out/card_0000_Background.png", "out/card_0001_Badge.png"],
+      count: 2,
+    };
+    expect(
+      expectParsed(parseEngineReply({ id: 1, ok: true, result: exported }, EXPORT_RESULT)),
+    ).toEqual(exported);
+    expect(
+      expectParsed(
+        parseEngineReply({ id: 2, ok: true, result: { imported: 2 } }, IMPORT_DATA_SETS_RESULT),
+      ),
+    ).toEqual({ imported: 2 });
   });
 
   it("background execute → {job, pending} or the command's own result (rpc.rs command_start)", () => {
     const pending = { job: 7, pending: true };
-    const outcome = parseEngineReply({ id: 1, ok: true, result: pending }, z.object({ job: z.number(), pending: z.boolean() }).passthrough());
-    expect(expectParsed(outcome)).toEqual(pending);
+    expect(
+      expectParsed(
+        parseEngineReply({ id: 1, ok: true, result: pending }, BACKGROUND_EXECUTE_RESULT),
+      ),
+    ).toEqual(pending);
     expect(isJobPending(pending)).toBe(true);
     // rpc.rs Started::Done: a non-job command replies its own result even with wait:false.
     const inline = { filter: { radius: 40 } };
+    expect(
+      expectParsed(
+        parseEngineReply({ id: 1, ok: true, result: inline }, BACKGROUND_EXECUTE_RESULT),
+      ),
+    ).toEqual(inline);
     expect(isJobPending(inline)).toBe(false);
   });
 });
@@ -819,7 +972,9 @@ describe("timeout classification (control-protocol.md)", () => {
 
   it("only `timeout: not run` is safe to re-send", () => {
     expect(isNotRunTimeout("timeout: not run")).toBe(true);
-    expect(isNotRunTimeout("timeout: no reply in 60s, the command may still be running")).toBe(false);
+    expect(isNotRunTimeout("timeout: no reply in 60s, the command may still be running")).toBe(
+      false,
+    );
   });
 });
 
@@ -845,41 +1000,66 @@ describe("waitForJob (jobs.list polling, §Background jobs)", () => {
   });
 
   it("resolves failed and cancelled jobs with their error/state", async () => {
-    const failedJob = { ...RUNNING_JOB, state: "failed", error: "filter failed" };
-    const failed = await waitForJob(queueSender([{ id: 1, ok: true, result: { jobs: [failedJob] } }]).send, 7, {
-      sleep: async () => {},
-    });
-    expect(failed.ok && failed.job.state === "failed" && failed.job.error === "filter failed").toBe(true);
-    const cancelledJob = { ...RUNNING_JOB, state: "cancelled" };
-    const cancelled = await waitForJob(queueSender([{ id: 1, ok: true, result: { jobs: [cancelledJob] } }]).send, 7, {
-      sleep: async () => {},
-    });
-    expect(cancelled.ok && cancelled.job.state === "cancelled").toBe(true);
+    const failedJob = { ...RUNNING_JOB, state: "failed", error: "filter failed" } as const;
+    const failed = await waitForJob(
+      queueSender([{ id: 1, ok: true, result: { jobs: [failedJob] } }]).send,
+      7,
+      {
+        sleep: noSleep,
+      },
+    );
+    expect(failed.ok).toBe(true);
+    if (failed.ok) {
+      expect(failed.job.state).toBe("failed");
+      expect(failed.job.error).toBe("filter failed");
+    }
+    const cancelledJob = { ...RUNNING_JOB, state: "cancelled" } as const;
+    const cancelled = await waitForJob(
+      queueSender([{ id: 1, ok: true, result: { jobs: [cancelledJob] } }]).send,
+      7,
+      {
+        sleep: noSleep,
+      },
+    );
+    expect(cancelled.ok).toBe(true);
+    if (cancelled.ok) {
+      expect(cancelled.job.state).toBe("cancelled");
+    }
   });
 
   it("surfaces engine errors as engine_error, un-retryable", async () => {
-    const outcome = await waitForJob(queueSender([{ id: 1, ok: false, error: "no document open" }]).send, 7, {
-      sleep: async () => {},
+    const outcome = await waitForJob(
+      queueSender([{ id: 1, ok: false, error: "no document open" }]).send,
+      7,
+      {
+        sleep: noSleep,
+      },
+    );
+    expect(outcome).toEqual({
+      ok: false,
+      code: "engine_error",
+      message: "no document open",
+      retryable: false,
     });
-    expect(outcome).toEqual({ ok: false, code: "engine_error", message: "no document open", retryable: false });
   });
 
-  it("reports job_lost after three consecutive misses (recent list eviction)", async () => {
+  it("reports job_lost after three consecutive misses (recent-list eviction)", async () => {
     const empty = { id: 1, ok: true, result: { jobs: [] } };
-    const { calls } = queueSender([empty, empty, empty, empty]);
-    const outcome = await waitForJob(calls ? emptySender(empty) : emptySender(empty), 42, { sleep: async () => {} });
-    // never seen: three misses
+    // Never seen: three consecutive misses.
+    const neverSeen = queueSender([empty, empty, empty, empty]);
+    const outcome = await waitForJob(neverSeen.send, 42, { sleep: noSleep });
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
       expect(outcome.code).toBe("job_lost");
     }
+    // Seen running, then gone.
     const seenThenLost = queueSender([
       { id: 1, ok: true, result: { jobs: [RUNNING_JOB] } },
       empty,
       empty,
       empty,
     ]);
-    const outcome2 = await waitForJob(seenThenLost.send, 7, { sleep: async () => {} });
+    const outcome2 = await waitForJob(seenThenLost.send, 7, { sleep: noSleep });
     expect(outcome2.ok).toBe(false);
     if (!outcome2.ok) {
       expect(outcome2.code).toBe("job_lost");
@@ -888,11 +1068,15 @@ describe("waitForJob (jobs.list polling, §Background jobs)", () => {
 
   it("times out as retryable when the job keeps running", async () => {
     const clock = fakeClock(600);
-    const outcome = await waitForJob(queueSender([{ id: 1, ok: true, result: { jobs: [RUNNING_JOB] } }]).send, 7, {
-      sleep: clock.sleep,
-      now: clock.now,
-      timeoutMs: 1000,
-    });
+    const outcome = await waitForJob(
+      queueSender([{ id: 1, ok: true, result: { jobs: [RUNNING_JOB] } }]).send,
+      7,
+      {
+        sleep: clock.sleep,
+        now: clock.now,
+        timeoutMs: 1000,
+      },
+    );
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
       expect(outcome.code).toBe("job_timeout");
@@ -904,21 +1088,29 @@ describe("waitForJob (jobs.list polling, §Background jobs)", () => {
     const { send, calls } = queueSender([{ id: 1, ok: true, result: { jobs: [DONE_JOB] } }]);
     const controller = new AbortController();
     controller.abort();
-    const outcome = await waitForJob(send, 7, { signal: controller.signal, sleep: async () => {} });
-    expect(outcome).toEqual({ ok: false, code: "aborted", message: "job wait aborted by the caller" });
+    const outcome = await waitForJob(send, 7, { signal: controller.signal, sleep: noSleep });
+    expect(outcome).toEqual({
+      ok: false,
+      code: "aborted",
+      message: "job wait aborted by the caller",
+    });
     expect(calls).toHaveLength(0);
   });
 
   it("rejects invalid job ids and clock options without polling", async () => {
     const { send, calls } = queueSender([]);
-    expect((await waitForJob(send, -1)).code).toBe("invalid_params");
-    expect((await waitForJob(send, 1.5)).code).toBe("invalid_params");
-    expect((await waitForJob(send, 1, { intervalMs: -1 })).code).toBe("invalid_params");
+    const invalidId = await waitForJob(send, -1);
+    expect(invalidId.ok).toBe(false);
+    if (!invalidId.ok) {
+      expect(invalidId.code).toBe("invalid_params");
+    }
+    const fractional = await waitForJob(send, 1.5);
+    expect(fractional.ok).toBe(false);
+    const badInterval = await waitForJob(send, 1, { intervalMs: -1 });
+    expect(badInterval.ok).toBe(false);
+    if (!badInterval.ok) {
+      expect(badInterval.code).toBe("invalid_params");
+    }
     expect(calls).toHaveLength(0);
   });
 });
-
-/** Minimal sender used by one edge-case test above. */
-function emptySender(reply: unknown): WireSender {
-  return async () => reply;
-}

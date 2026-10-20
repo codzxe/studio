@@ -21,18 +21,18 @@
 import { z } from "zod";
 import type { ZodType, ZodTypeDef } from "zod";
 import {
+  type BuiltMethodCall,
   JOB_METHODS,
   MAX_BATCH_STEPS,
+  type MethodBuildFailure,
   PROTOCOL_METHODS,
   REPLY_DEADLINE_MS,
   SERVED_METHODS,
+  type WireSender,
   buildCall,
   buildFailure,
   parseEngineReply,
   summarizeIssues,
-  type BuiltMethodCall,
-  type MethodBuildFailure,
-  type WireSender,
 } from "./protocol.js";
 
 const nonNegativeInt = z.number().int().nonnegative();
@@ -62,8 +62,15 @@ export function engineExecute<TResult = unknown>(
   input: EngineExecuteInput,
   resultSchema?: ZodType<TResult, ZodTypeDef, unknown>,
 ): BuiltMethodCall<EngineExecuteParams, TResult> {
-  const schema: ZodType<TResult, ZodTypeDef, unknown> = resultSchema ?? z.unknown();
-  return buildCall(PROTOCOL_METHODS.engineExecute, ENGINE_EXECUTE_PARAMS, input, schema);
+  // No schema given: the result stays opaque (`TResult` defaults to `unknown`); the
+  // caller may parse the raw value itself. The double cast is only for that default.
+  const fallback = z.unknown() as unknown as ZodType<TResult, ZodTypeDef, unknown>;
+  return buildCall(
+    PROTOCOL_METHODS.engineExecute,
+    ENGINE_EXECUTE_PARAMS,
+    input,
+    resultSchema ?? fallback,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +141,12 @@ export type EngineCommandsParams = z.infer<typeof ENGINE_COMMANDS_PARAMS>;
 export function engineCommands(
   input: { readonly filter?: string } = {},
 ): BuiltMethodCall<EngineCommandsParams, CommandListResult> {
-  return buildCall(PROTOCOL_METHODS.engineCommands, ENGINE_COMMANDS_PARAMS, input, COMMAND_LIST_RESULT);
+  return buildCall(
+    PROTOCOL_METHODS.engineCommands,
+    ENGINE_COMMANDS_PARAMS,
+    input,
+    COMMAND_LIST_RESULT,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +203,9 @@ export const JOBS_CANCEL_RESULT = z.object({ cancelled: nonNegativeInt }).passth
 export type JobsCancelResult = z.infer<typeof JOBS_CANCEL_RESULT>;
 
 /** Omit `job` to cancel every running job (rpc.rs forwards params to `jobs.cancel`). */
-export function jobsCancel(input: { readonly job?: number } = {}): BuiltMethodCall<JobsCancelParams, JobsCancelResult> {
+export function jobsCancel(
+  input: { readonly job?: number } = {},
+): BuiltMethodCall<JobsCancelParams, JobsCancelResult> {
   return buildCall(JOB_METHODS.jobsCancel, JOBS_CANCEL_PARAMS, input, JOBS_CANCEL_RESULT);
 }
 
@@ -256,6 +270,9 @@ type CheckedSteps = { readonly ok: true; readonly steps: BatchStep[] } | MethodB
 /** Fail-fast step checks mirroring rpc.rs: step count, command-vs-method, nested batch,
  *  served-method names. */
 function checkBatchSteps(raw: readonly unknown[], limit: number): CheckedSteps {
+  if (!Array.isArray(raw)) {
+    return buildFailure("invalid_params", "`steps` must be an array");
+  }
   if (raw.length > limit) {
     return buildFailure(
       "engine_limit",
@@ -269,8 +286,8 @@ function checkBatchSteps(raw: readonly unknown[], limit: number): CheckedSteps {
       return buildFailure("invalid_params", `step ${i} must be an object`);
     }
     const record = step as Record<string, unknown>;
-    const hasCommand = record["command"] !== undefined;
-    const hasMethod = record["method"] !== undefined;
+    const hasCommand = record.command !== undefined;
+    const hasMethod = record.method !== undefined;
     if (hasCommand && hasMethod) {
       return buildFailure("invalid_params", `step ${i}: pass \`command\` or \`method\`, not both`);
     }
@@ -278,7 +295,7 @@ function checkBatchSteps(raw: readonly unknown[], limit: number): CheckedSteps {
       return buildFailure("invalid_params", `step ${i} needs \`command\` or \`method\``);
     }
     if (hasMethod) {
-      const method = record["method"];
+      const method = record.method;
       if (method === PROTOCOL_METHODS.batch) {
         return buildFailure(
           "invalid_params",
@@ -287,7 +304,10 @@ function checkBatchSteps(raw: readonly unknown[], limit: number): CheckedSteps {
         );
       }
       if (typeof method !== "string" || !(SERVED_METHODS as readonly string[]).includes(method)) {
-        return buildFailure("invalid_params", `step ${i}: unknown method \`${String(method)}\` (try \`methods\`)`);
+        return buildFailure(
+          "invalid_params",
+          `step ${i}: unknown method \`${String(method)}\` (try \`methods\`)`,
+        );
       }
     }
     const parsed = (hasCommand ? COMMAND_STEP_SCHEMA : METHOD_STEP_SCHEMA).safeParse(step);
@@ -304,7 +324,12 @@ export function batch(input: BatchInput): BuiltMethodCall<BatchParams, BatchResu
   if (!checked.ok) {
     return checked;
   }
-  return buildCall(PROTOCOL_METHODS.batch, BATCH_PARAMS, { steps: checked.steps, stopOnError: input.stopOnError }, BATCH_RESULT);
+  return buildCall(
+    PROTOCOL_METHODS.batch,
+    BATCH_PARAMS,
+    { steps: checked.steps, stopOnError: input.stopOnError },
+    BATCH_RESULT,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -315,9 +340,9 @@ export interface TransactionalBatchInput {
   /** Checkpoint name for `agent.begin` (§5.6: a stable id for one undoable run). */
   readonly name: string;
   readonly steps: readonly BatchStepInput[];
-  /** Must stay true: a failed transactional batch stops BEFORE `agent.commit` and the
-   *  caller rolls back with `agent.rollback`. */
-  readonly stopOnError?: true;
+  /** Only `true` (or omitted) is accepted: a failed transactional batch stops BEFORE
+   *  `agent.commit` and the caller rolls back with `agent.rollback`. */
+  readonly stopOnError?: boolean;
 }
 
 export function agentBegin(name: string): BuiltMethodCall<EngineExecuteParams, unknown> {
@@ -340,12 +365,13 @@ export function agentRollback(): BuiltMethodCall<EngineExecuteParams, unknown> {
  * come from the studio engine-patches wave (§2.3); §2.2 keeps the live registry
  * authoritative, so worker startup must verify them via `engine.commands`.
  */
-export function transactionalBatch(input: TransactionalBatchInput): BuiltMethodCall<BatchParams, BatchResult> {
+export function transactionalBatch(
+  input: TransactionalBatchInput,
+): BuiltMethodCall<BatchParams, BatchResult> {
   if (input.stopOnError === false) {
     return buildFailure(
       "invalid_params",
-      "a transactional batch cannot continue past a failed step before `agent.commit`",
-      "call agent.rollback after a failed transactionalBatch",
+      "a transactional batch must stop before `agent.commit` when a step fails; roll back with `agent.rollback`",
     );
   }
   if (typeof input.name !== "string" || input.name.trim().length === 0) {
@@ -368,7 +394,12 @@ export function transactionalBatch(input: TransactionalBatchInput): BuiltMethodC
 // waitForJob — jobs.list polling for `wait: false` long operations (§Background jobs)
 // ---------------------------------------------------------------------------
 
-export type JobWaitFailureCode = "invalid_params" | "engine_error" | "job_timeout" | "job_lost" | "aborted";
+export type JobWaitFailureCode =
+  | "invalid_params"
+  | "engine_error"
+  | "job_timeout"
+  | "job_lost"
+  | "aborted";
 
 export type JobWaitOutcome =
   | { readonly ok: true; readonly job: TerminalJobInfo }
@@ -401,7 +432,8 @@ const defaultSleep = (ms: number): Promise<void> =>
  * Every jobs.list call first applies finished jobs (rpc.rs `sync_jobs`), so the returned
  * job's `result` (done) or `error` (failed) reflects the applied document. A job missing
  * for three consecutive polls never existed or ended and was evicted from the 16-slot
- * recent list — reported as `job_lost`, never as success. Never throws.
+ * recent list — reported as `job_lost`, never as success. Reply parsing never throws;
+ * a rejecting `send` (transport failure) still rejects to its caller.
  */
 export async function waitForJob(
   send: WireSender,
@@ -415,8 +447,17 @@ export async function waitForJob(
   const timeoutMs = options.timeoutMs ?? REPLY_DEADLINE_MS;
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
-  if (!Number.isFinite(intervalMs) || intervalMs < 0 || !Number.isFinite(timeoutMs) || timeoutMs < 0) {
-    return { ok: false, code: "invalid_params", message: "intervalMs and timeoutMs must be non-negative" };
+  if (
+    !Number.isFinite(intervalMs) ||
+    intervalMs < 0 ||
+    !Number.isFinite(timeoutMs) ||
+    timeoutMs < 0
+  ) {
+    return {
+      ok: false,
+      code: "invalid_params",
+      message: "intervalMs and timeoutMs must be non-negative",
+    };
   }
   const startedAt = now();
   let misses = 0;

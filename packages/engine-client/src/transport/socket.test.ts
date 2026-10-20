@@ -28,11 +28,30 @@ const LOOPBACK: ReadonlyArray<readonly [string, boolean]> = [
   ["example.com", false],
 ];
 
-const encoder = new (globalThis as unknown as {
-  TextEncoder: new () => { encode(input: string): Uint8Array };
-})().TextEncoder();
+/** Pure UTF-8 encoder (hermetic: no TextEncoder/Buffer globals in this package's types). */
+function utf8(text: string): Uint8Array {
+  const out: number[] = [];
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (cp < 0x80) {
+      out.push(cp);
+    } else if (cp < 0x800) {
+      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
+    } else if (cp < 0x10000) {
+      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    } else {
+      out.push(
+        0xf0 | (cp >> 18),
+        0x80 | ((cp >> 12) & 0x3f),
+        0x80 | ((cp >> 6) & 0x3f),
+        0x80 | (cp & 0x3f),
+      );
+    }
+  }
+  return Uint8Array.from(out);
+}
 
-const bytes = (text: string): Uint8Array => encoder.encode(text);
+const bytes = (text: string): Uint8Array => utf8(text);
 
 function makeSocket(fake: FakeLowLevelSocket, host = "127.0.0.1") {
   let seenOptions: LowLevelConnectOptions | null = null;

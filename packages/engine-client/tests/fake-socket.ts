@@ -116,9 +116,9 @@ export class FakeSocket {
     return true;
   }
 
-  /** Server-side: push an unsolicited line to the client (no trailing newline added). */
+  /** Server-side: push one unsolicited framed line to the client (newline appended if missing). */
   sendLine(line: string): void {
-    this.emitData(line);
+    this.emitData(line.endsWith("\n") ? line : `${line}\n`);
   }
 
   destroy(error?: Error): void {

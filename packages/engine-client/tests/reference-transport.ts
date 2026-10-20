@@ -165,6 +165,9 @@ export class JsonLinesTransport {
   }
 
   private onLine(line: string): void {
+    if (line.trim() === "") {
+      return; // the engine skips blank lines (rpc.rs :: serve_lines)
+    }
     if (line.length > this.maxReplyBytes) {
       this.failAllPending(new EngineTransportError("protocol_violation", "reply line exceeds budget"));
       return;

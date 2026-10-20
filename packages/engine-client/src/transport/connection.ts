@@ -405,10 +405,10 @@ export class ProtocolConnection {
     if (frame.kind === "reply") {
       const parsed = AUTH_RESULT_SCHEMA.safeParse(frame.result);
       if (parsed.success) {
-        auth.resolve();
+        this.acceptPendingAuth(auth);
         return;
       }
-      auth.reject(
+      this.rejectPendingAuth(
         protocolViolation("auth reply did not confirm authentication", {
           hint: 'Expected {"ok":true,"result":{"authenticated":true}} (security.rs authentication_reply).',
         }),
@@ -417,7 +417,7 @@ export class ProtocolConnection {
       return;
     }
     if (frame.kind === "error") {
-      auth.reject(
+      this.rejectPendingAuth(
         authRejected(`the engine rejected authentication: ${frame.error}`, {
           hint: "Check the control token (token file, not a CLI argument); a repeat `auth` frame on one connection also answers this way.",
         }),
@@ -460,6 +460,15 @@ export class ProtocolConnection {
     } else {
       pending.resolve(outcome);
     }
+  }
+
+  private acceptPendingAuth(auth: PendingAuth): void {
+    if (this.pendingAuth !== auth) {
+      return; // already settled (e.g. the deadline won a race); late events must not double-settle
+    }
+    this.pendingAuth = null;
+    this.clock.clearTimeout(auth.timer);
+    auth.resolve();
   }
 
   private rejectPendingAuth(error: TransportError): void {

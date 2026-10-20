@@ -38,12 +38,10 @@ export class FakeClock implements Clock {
   }
 
   setTimeout(fn: () => void, ms: number): number {
-    if (ms < 0) {
-      ms = 0;
-    }
+    const delay = ms < 0 ? 0 : ms;
     const handle = this.nextOrder;
     this.nextOrder += 1;
-    this.tasks.set(handle, { runAtMs: this.nowMs + ms, order: handle, fn, cancelled: false });
+    this.tasks.set(handle, { runAtMs: this.nowMs + delay, order: handle, fn, cancelled: false });
     return handle;
   }
 
@@ -109,9 +107,10 @@ export class FakeSocket implements TransportSocket {
 
   async connect(): Promise<void> {
     this.connectCount += 1;
-    if (this.connectError !== null) {
+    const error = this.connectError;
+    if (error !== null) {
       this.connectError = null;
-      throw this.connectError;
+      throw error;
     }
     this.open = true;
   }

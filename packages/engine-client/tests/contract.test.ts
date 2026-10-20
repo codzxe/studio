@@ -49,12 +49,12 @@ interface Exchange {
 }
 
 /**
- * Fixture loader. The ".json" suffix is appended at runtime so `tsc` (no resolveJsonModule
- * in tsconfig.base.json) does not check the JSON module specifier; vitest/vite imports the
- * parsed file natively.
+ * Fixture loader. The specifier is a template literal so `tsc` (no resolveJsonModule in
+ * tsconfig.base.json) does not check the JSON module specifier; vitest/vite imports the
+ * parsed file natively (dynamic-import variables are supported with a static prefix).
  */
 async function loadReply(name: string): Promise<Exchange> {
-  const mod = (await import(`../fixtures/replies/${name}` + ".json")) as { default: Exchange };
+  const mod = (await import(`../fixtures/replies/${name}.json`)) as { default: Exchange };
   return mod.default;
 }
 
@@ -336,8 +336,12 @@ describe("JsonLinesTransport drives the fixtures through FakeSocket", () => {
   it("replies with an unknown id are recorded as orphans and never crash the transport", async () => {
     const fake = new FakeSocket({
       replies: [
-        JSON.stringify({ id: 99, ok: true, result: { stray: true } }),
-        JSON.stringify({ id: 1, ok: true, result: { document: 0 } }),
+        (frame, socket) => {
+          // An unsolicited reply for an id the client never used arrives first…
+          socket.sendLine(JSON.stringify({ id: 99, ok: true, result: { stray: true } }));
+          // …then the real reply for the live call.
+          return JSON.stringify({ id: 1, ok: true, result: { document: 0 } });
+        },
       ],
     });
     const transport = new JsonLinesTransport(fake);
