@@ -280,7 +280,9 @@ describe("deriveExportIdempotencyKey", () => {
 
 describe("export_document — delegation", () => {
   it("delegates a deterministic idempotent submission with only model-controlled fields", async () => {
-    const jobs = new FakeExportJobs();
+    const jobs = new FakeExportJobs({
+      enqueue: { ok: true, value: { exportId: "exp-000", status: "succeeded" } },
+    });
     const ctx = makeExportContext({ exports: jobs });
     const result = await exportDocumentTool.run(
       ctx,
@@ -417,10 +419,12 @@ describe("export_document — delegation", () => {
 describe("export_document — result envelope", () => {
   it("returns the task's fact set as compact JSON in the kit string summary", async () => {
     const jobs = new FakeExportJobs({
-      enqueue: {
-        ok: true,
-        value: { exportId: "exp-1", status: "succeeded" },
-      },
+      queue: [
+        {
+          ok: true,
+          value: record({ warnings: ["jpeg quality ignored for png"], documentRevision: 4 }),
+        },
+      ],
     });
     const ctx = makeExportContext({ exports: jobs });
     const result = await exportDocumentTool.run(ctx, { format: "jpg" }, freshSignal());
@@ -437,7 +441,8 @@ describe("export_document — result envelope", () => {
       ]);
       expect(summary.format).toBe("jpg");
       expect(summary.status).toBe("succeeded");
-      expect(summary.warnings).toEqual([]);
+      expect(summary.warnings).toEqual(["jpeg quality ignored for png"]);
+      expect(result.documentRevision).toBe(4);
     }
   });
 
@@ -500,9 +505,7 @@ describe("export_document — result envelope", () => {
 
   it("sanitizes an invalid echoed documentRevision instead of failing", async () => {
     const jobs = new FakeExportJobs({
-      enqueue: { ok: true, value: { exportId: "exp-1", status: "succeeded" } },
-      repeat: { ok: true, value: record({ documentRevision: -1 }) },
-      queue: [],
+      queue: [{ ok: true, value: record({ documentRevision: -1 }) }],
     });
     const ctx = makeExportContext({ exports: jobs });
     const result = await exportDocumentTool.run(ctx, { format: "png" }, freshSignal());

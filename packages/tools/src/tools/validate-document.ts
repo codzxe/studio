@@ -525,8 +525,12 @@ class Collector {
   readonly notes: string[] = [];
 
   push(level: IssueLevel, code: string, layer: string | undefined, message: string, fix: string): void {
-    const issue: ValidationIssue = { level, code, message: clip(message, MESSAGE_CAP), fix: clip(fix, FIX_CAP) };
-    if (layer !== undefined && layer.length > 0) issue.layer = clip(layer, NAME_CAP);
+    const messageClipped = clip(message, MESSAGE_CAP);
+    const fixClipped = clip(fix, FIX_CAP);
+    const issue: ValidationIssue =
+      layer !== undefined && layer.length > 0
+        ? { level, code, layer: clip(layer, NAME_CAP), message: messageClipped, fix: fixClipped }
+        : { level, code, message: messageClipped, fix: fixClipped };
     this.issues.push(issue);
   }
 
@@ -993,9 +997,8 @@ export function readValidateReport(report: EngineCommandReport): EngineValidateR
       dropped += 1;
       continue;
     }
-    const issue: ValidationIssue = { level, code, message, fix };
-    const layer = readString(r?.layer, NAME_CAP);
-    if (layer !== undefined) issue.layer = layer;
+    const issue: ValidationIssue =
+      layer !== undefined ? { level, code, message, fix, layer } : { level, code, message, fix };
     issues.push(issue);
   }
   return { issues, dropped, truncated: record.truncated === true };
