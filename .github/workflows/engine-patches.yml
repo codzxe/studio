@@ -1,0 +1,99 @@
+# Engine-patch verification — spec §2.3 (Rust additions) and §16.1 (pin policy).
+#
+# The editor is NOT vendored in this repo. engine-patches/ holds upstreamable NEW
+# modules (never in-place vendored edits — docs/AGENTS.md + §16.1). This workflow:
+#   1. clones storytold/photocraft at the pinned commit (ADR-0001),
+#   2. overlays engine-patches/ onto that tree,
+#   3. runs `cargo check` + the panic-hunt gate every engine change must pass (§2.3:
+#      `cargo test -p photocraft-engine --test panic_hunt -- --ignored`).
+#
+# TODO(Wave 3): the patches have not landed yet, so the guard step makes this
+# workflow exit green with a notice while engine-patches/ is absent/empty. When
+# patches land, also consider (upstream AGENTS.md gates, §21 Rust row):
+#   cargo clippy --workspace --all-targets -- -D warnings
+#   cargo check --target wasm32-unknown-unknown   (upstream "never break wasm" rule)
+#   cargo xtask parity                            (regenerate docs/parity-checklist.md)
+# and the craft-fonts test job pattern from upstream docs/development.md.
+name: engine-patches
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "engine-patches/**"
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: cargo check + panic_hunt on pinned editor
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # ADR-0001 pin (§16.1): bump deliberately, only after upstream's own gates pass.
+      ENGINE_REPO: https://github.com/storytold/photocraft
+      ENGINE_PIN: 872748fb5b2a53e09dd4e385e31968d985c0515b
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard — skip while engine-patches/ is absent or empty
+        id: guard
+        run: |
+          set -euo pipefail
+          if [ -d engine-patches ] && [ -n "$(find engine-patches -type f ! -name '.gitkeep' -print -quit)" ]; then
+            echo "has_patches=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=engine-patches::engine-patches/ is absent or empty — nothing to verify against the pinned editor (patches land in Wave 3, §2.3)."
+            echo "has_patches=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rust toolchain
+        if: steps.guard.outputs.has_patches == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Editor build prerequisites (Linux; upstream docs/development.md)
+        if: steps.guard.outputs.has_patches == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
+            libxi-dev libgl1-mesa-dev libgtk-3-dev
+
+      - name: Clone pinned editor (shallow fetch at the exact pin)
+        if: steps.guard.outputs.has_patches == 'true'
+        run: |
+          set -euo pipefail
+          git init engine-src
+          git -C engine-src remote add origin "$ENGINE_REPO"
+          git -C engine-src fetch --depth 1 origin "$ENGINE_PIN"
+          git -C engine-src checkout FETCH_HEAD
+          git -C engine-src rev-parse HEAD
+
+      - name: Cache cargo (engine-src workspace)
+        if: steps.guard.outputs.has_patches == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "engine-src -> engine-src/target"
+
+      - name: Overlay engine-patches/ onto the editor tree
+        if: steps.guard.outputs.has_patches == 'true'
+        run: |
+          set -euo pipefail
+          # TODO(Wave 3): engine-patches/ mirrors the editor-repo layout of NEW files
+          # (§16.1: upstreamable modules only, registered per §2.3's commands.rs rule).
+          # If Wave 3 ships an apply script, prefer it; otherwise a straight overlay.
+          if [ -f engine-patches/apply.sh ]; then
+            bash engine-patches/apply.sh engine-src
+          else
+            cp -a engine-patches/. engine-src/
+          fi
+
+      - name: cargo check (patched editor)
+        if: steps.guard.outputs.has_patches == 'true'
+        run: cargo check --workspace
+
+      - name: Panic hunt — no command panics on adversarial params (§2.3)
+        if: steps.guard.outputs.has_patches == 'true'
+        run: cargo test -p photocraft-engine --test panic_hunt -- --ignored

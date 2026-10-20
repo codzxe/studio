@@ -1,0 +1,38 @@
+# Dependabot — spec §16.1 ("enable Dependabot + private vulnerability reporting").
+# Keep updates weekly + direct-only so the 2-person fleet can review them in one sitting.
+version: 2
+updates:
+  # npm — root manifest (direct dependencies only; transitive deps are pinned by
+  # the lockfile and surface through the weekly lockfile refresh).
+  # TODO(W1-M): pnpm workspaces need one entry per package dir (apps/*, packages/*)
+  # once per-package dependencies stabilize; root-only for now, per task W1-M.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+    # §16 policy reminder: AGPL/SSPL/BUSL/RSALv2/Elastic/FSL deps fail the CI
+    # license gate (license-check.yml) even if Dependabot proposes them.
+
+  # GitHub Actions — keep actions/*, dtolnay/*, Swatinem/* fresh (weekly).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"

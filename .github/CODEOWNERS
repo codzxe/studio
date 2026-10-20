@@ -1,0 +1,4 @@
+# CODEOWNERS — W1-M (docs/AGENTS.md)
+# Single fleet owner during Wave 1: every path routes to @codzxe for review.
+# TODO: split ownership per package (apps/*, packages/*) as the fleet specializes.
+* @codzxe
