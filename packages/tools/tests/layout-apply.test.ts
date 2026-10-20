@@ -11,13 +11,13 @@ import {
   LAYOUT_MAX_DEPTH,
   LAYOUT_MAX_NODES,
   MISSING_MOVE_REPORT_WARNING,
+  type LayoutMovedLayer,
   compactLayoutApplyReply,
   findLayoutTreeCapsViolation,
   layoutApplyArgsSchema,
   layoutApplyTool,
   mapLayoutEngineFailure,
   parseLayoutApplyReport,
-  type LayoutMovedLayer,
 } from "../src/tools/layout-apply.js";
 import type {
   EngineCallOptions,

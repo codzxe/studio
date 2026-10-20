@@ -30,8 +30,8 @@ import { z } from "zod";
 import {
   MAX_ERROR_MESSAGE_CHARS,
   MAX_HINT_CHARS,
-  MAX_WARNINGS,
   MAX_WARNING_CHARS,
+  MAX_WARNINGS,
   cappedArray,
   cappedString,
   defineTool,
@@ -42,10 +42,10 @@ import {
 } from "../kit.js";
 import { TOOLS } from "../registry.js";
 import {
-  TOOL_ERROR_CODE_SCHEMA,
   type EngineCommand,
   type EngineCommandReport,
   type EngineFailure,
+  TOOL_ERROR_CODE_SCHEMA,
   type ToolErr,
 } from "../types.js";
 
@@ -343,15 +343,26 @@ let flowUnionCache: z.ZodType<LayoutNode> | undefined;
 let absoluteUnionCache: z.ZodType<LayoutAbsoluteChild> | undefined;
 let centerUnionCache: z.ZodType<LayoutCenterChild> | undefined;
 
-const flowChildNode: z.ZodType<LayoutNode> = z.lazy(
-  () => (flowUnionCache ??= buildFlowUnion()),
-);
-const absoluteChildNode: z.ZodType<LayoutAbsoluteChild> = z.lazy(
-  () => (absoluteUnionCache ??= buildAbsoluteUnion()),
-);
-const centerChildNode: z.ZodType<LayoutCenterChild> = z.lazy(
-  () => (centerUnionCache ??= buildCenterUnion()),
-);
+// z.lazy defers the union builds to first parse; the caches build them once, so
+// per-node parses reuse one discriminated union (and one option-map) ever after.
+const flowChildNode: z.ZodType<LayoutNode> = z.lazy(() => {
+  if (flowUnionCache === undefined) {
+    flowUnionCache = buildFlowUnion();
+  }
+  return flowUnionCache;
+});
+const absoluteChildNode: z.ZodType<LayoutAbsoluteChild> = z.lazy(() => {
+  if (absoluteUnionCache === undefined) {
+    absoluteUnionCache = buildAbsoluteUnion();
+  }
+  return absoluteUnionCache;
+});
+const centerChildNode: z.ZodType<LayoutCenterChild> = z.lazy(() => {
+  if (centerUnionCache === undefined) {
+    centerUnionCache = buildCenterUnion();
+  }
+  return centerUnionCache;
+});
 
 const flowChildren = () =>
   cappedArray(LAYOUT_MAX_CHILDREN_PER_NODE, flowChildNode).min(1, {
