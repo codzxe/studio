@@ -667,7 +667,7 @@ describe("redactMetadata (§15.3 — never store raw prompts)", () => {
       input: { tags: ["a", "b", "c"] },
       expected: { tags: ["a", "b", "c"] }
     }
-    ];
+  ];
 
   for (const row of table) {
     it(row.name, () => {

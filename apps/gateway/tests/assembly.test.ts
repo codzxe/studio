@@ -16,10 +16,9 @@ import { describe, expect, it } from "vitest";
 import pino from "pino";
 import type { Hono } from "hono";
 import { RunEventBus } from "@studio/agent";
-import { ok, parseGatewayEnv } from "@studio/config";
-import type { Asset, } from "@studio/db";
+import { ok, parseGatewayEnv, type Result } from "@studio/config";
+import type { Asset } from "@studio/db";
 import type { LedgerStore, TrialGrantOutcome } from "@studio/billing";
-import type { Result } from "@studio/config";
 import { billingFromLedger } from "../src/services/runs.js";
 import type { RunsStore } from "../src/services/runs.js";
 import { InMemoryKV, RateLimiter } from "../src/services/limiter.js";
@@ -39,7 +38,6 @@ import {
 import { gatewayTransportSchema } from "../src/env.js";
 import { stubProbes } from "../src/routes/health.js";
 import type { RunEventsDeps } from "../src/routes/runs-events.js";
-import type { Probe } from "../src/routes/health.js";
 import type { AppEnv } from "../src/types.js";
 
 // --- constants -------------------------------------------------------------
@@ -338,7 +336,11 @@ describe("assembly: every mounted path answers (401 without auth / 200 with)", (
 
   it("POST /v1/runs is gated before any billing/enqueue work", async () => {
     const { app } = makeHarness();
-    const denied = await app.request("/v1/runs", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const denied = await app.request("/v1/runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
     expect(denied.status).toBe(401);
   });
 
@@ -473,7 +475,6 @@ describe("assembly: default wiring (createDefaultDeps, §4 fail-fast)", () => {
       logger: silentLogger,
       version: "0.0.0-defaults",
       startedAt: BASE_MS,
-      probes: gateway.probes as readonly Probe[],
     });
 
     const health = await app.request("/v1/health");
