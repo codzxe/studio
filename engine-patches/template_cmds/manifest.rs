@@ -343,7 +343,9 @@ impl TemplateManifest {
     }
 
     /// Every declared limit, checked once so the commands can trust the manifest. `Err` is the
-    /// reason, prefixed by the field it names.
+    /// reason, prefixed by the field it names. One check per line: the table of limits is the
+    /// point of this function.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn validate(&self) -> Result<(), String> {
         // Identity.
         if self.id.is_empty() || self.id.len() > MAX_ID {

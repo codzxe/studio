@@ -20,7 +20,7 @@ use photocraft_doc::{Document, Layer, LayerId};
 use serde_json::{Value, json};
 
 use crate::commands::CommandSpec;
-use crate::file_cmds::{read_file, str_param};
+use crate::file_cmds::{self, read_file, str_param};
 use crate::{EngineError, Result, Session};
 use manifest::TemplateManifest;
 
@@ -87,9 +87,9 @@ pub(crate) fn templates_dir() -> Option<PathBuf> {
     None
 }
 
-/// Every template in `dir` (§ the layout note above). Malformed manifests, oversized files and
-/// manifests without their `.pcraft` are skipped and remembered, as installed profiles are:
-/// one broken template must not hide the rest of the catalog.
+/// Every template in `dir` (the layout the module comment describes). Malformed manifests,
+/// oversized files and manifests without their `.pcraft` are skipped and remembered, as
+/// installed profiles are: one broken template must not hide the rest of the catalog.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn scan(dir: &Path) -> Result<Catalog> {
     let listed = std::fs::read_dir(dir).map_err(|e| EngineError::Other(format!("{}: {e}", dir.display())))?;
@@ -108,7 +108,7 @@ pub(crate) fn scan(dir: &Path) -> Result<Catalog> {
         let file = path.to_string_lossy().into_owned();
         let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         if std::fs::metadata(&path).map_or(true, |m| m.len() > MAX_MANIFEST_BYTES) {
-            cat.skipped.push((stem, format!("{file}: the manifest is larger than {} bytes", MAX_MANIFEST_BYTES)));
+            cat.skipped.push((stem, format!("{file}: the manifest is unreadable or larger than {} bytes", MAX_MANIFEST_BYTES)));
             continue;
         }
         let bytes = match read_file(&file) {
@@ -121,7 +121,7 @@ pub(crate) fn scan(dir: &Path) -> Result<Catalog> {
         let manifest = match TemplateManifest::from_slice(&bytes) {
             Ok(m) => m,
             Err(e) => {
-                cat.skipped.push((stem, e.at(&file).to_string()));
+                cat.skipped.push((stem, e.at(file.as_str()).to_string()));
                 continue;
             }
         };
@@ -469,7 +469,7 @@ pub(crate) fn apply_from(s: &mut Session, dir: &Path, id: &str, version: Option<
         Some(gid.0)
     } else {
         // A lone copy takes the given name, as Duplicate Layer does.
-        if let (Some(n), 1) = (name.as_deref(), copies.len()) {
+        if let (Some(n), 1) = (name, copies.len()) {
             if let Some(l) = copies.first_mut() {
                 l.name = n.to_string();
             }
@@ -623,6 +623,11 @@ mod tests {
         doc
     }
 
+    /// A document of a different size than the templates (the canvas-mismatch warning path).
+    fn small_doc() -> Document {
+        Document::new("scratch", photocraft_doc::Size::new(64, 48), photocraft_color::ColorMode::Rgb, photocraft_color::SampleType::U8)
+    }
+
     /// The error of `r`, or the test fails with `why` (an `Err` result — no `unwrap` here).
     fn must_err<T: std::fmt::Debug, E: std::fmt::Debug>(
         r: std::result::Result<T, E>,
@@ -647,16 +652,18 @@ mod tests {
         let specs = specs();
         let ids: Vec<&str> = specs.iter().map(|s| s.id).collect();
         assert_eq!(ids, ["template.list", "template.inspect", "template.apply"]);
-        let journal: Vec<(&str, bool)> = specs.iter().map(|s| (s.id, s.journal)).collect();
-        assert_eq!(journal, [("template.list", false), ("template.inspect", false), ("template.apply", true)]);
-        for id in ["template.inspect", "template.apply"] {
-            let s = specs.iter().find(|s| s.id == id).ok_or("missing spec").ok_or("missing spec").ok_or("missing spec").ok_or("missing spec");
-            let _ = s;
-        }
+        // Queries never journal; the edit does.
+        assert!(!specs[0].journal);
+        assert!(!specs[1].journal);
+        assert!(specs[2].journal);
+        // Every param the commands read is documented (strict-param hygiene).
+        assert!(specs[0].params.contains("\"tags\"") && specs[0].params.contains("\"query\""));
+        assert!(specs[1].params.contains("\"id\"") && specs[1].params.contains("\"version\""));
+        assert!(specs[2].params.contains("\"id\"") && specs[2].params.contains("\"version\"") && specs[2].params.contains("\"asGroup\""));
     }
 
     #[test]
-    fn params_are_validated_before_anything_touches_disk_or_env() {
+    fn params_are_validated_before_anything_touches_disk_or_env() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let mut s = Session::new();
         // list
         for p in [
@@ -699,16 +706,28 @@ mod tests {
             let e = must_err(e, format!("{cmd} ran without a directory"))?;
             assert!(e.to_string().contains("PHOTOCRAFT_TEMPLATES_DIR"), "{cmd}: {e}");
         }
+        Ok(())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn apply_whole_float_versions_are_whole() -> std::result::Result<(), Box<dyn std::error::Error>> {
-        let dir = fixture_dir()?;
-        // A JSON `3.0` is the whole number 3 (UIs send floats), fractions are not.
-        let r = inspect_from(&dir, "instagram-post", Some(3))?;
-        assert_eq!(u64_of(&r, "id").map(|_| ()), Ok(())); // placeholder replaced below
-        let _ = r;
+    fn versions_accept_whole_floats_and_refuse_the_rest() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(version_param(&json!({}), "t")?, None);
+        assert_eq!(version_param(&json!({"version": null}), "t")?, None);
+        assert_eq!(version_param(&json!({"version": 2}), "t")?, Some(2));
+        // A JSON `2.0` is the whole number 2 (UIs send floats); fractions are not versions.
+        assert_eq!(version_param(&json!({"version": 2.0}), "t")?, Some(2));
+        assert_eq!(version_param(&serde_json::from_str::<Value>(r#"{"version":1e3}"#)?, "t")?, Some(1000));
+        for p in [
+            json!({"version": 0}),
+            json!({"version": -1}),
+            json!({"version": 2.5}),
+            json!({"version": "3"}),
+            json!({"version": 1e30}),
+            json!({"version": [1]}),
+        ] {
+            let e = must_err(version_param(&p, "t"), format!("accepted {p}"))?;
+            assert!(e.to_string().contains("version"), "{p}: {e}");
+        }
         Ok(())
     }
 
@@ -738,7 +757,7 @@ mod tests {
         assert_eq!(row.get("canvas").and_then(|c| c.get("width")).and_then(Value::as_u64), Some(1080));
         let slots = row.get("slots").and_then(Value::as_array).ok_or("no slots")?;
         assert_eq!(slots.len(), 2, "{row}");
-        assert_eq!(slots.iter().map(Value::as_str).collect::<Vec<_>>(), ["ghost", "photo"]);
+        assert_eq!(slots.iter().map(|s| s.as_str()).collect::<Vec<_>>(), [Some("ghost"), Some("photo")]);
         // Tags: all of them, case-insensitively.
         let social = list_from(dir.path(), &["SOCIAL".into()], None)?;
         assert_eq!(rows(&social)?.len(), 2);
@@ -802,7 +821,7 @@ mod tests {
         // The v2 manifest's Ghost slot is not in the document, and it is reported.
         let r = inspect_from(dir.path(), "instagram-post", Some(2))?;
         let missing = r.get("missing").and_then(Value::as_array).ok_or("no missing")?;
-        assert_eq!(missing.iter().map(Value::as_str).collect::<Vec<_>>(), ["ghost"]);
+        assert_eq!(missing.iter().map(|m| m.as_str()).collect::<Vec<_>>(), [Some("ghost")]);
         Ok(())
     }
 
@@ -811,7 +830,7 @@ mod tests {
     fn apply_into_a_document_groups_and_maps_slots() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let dir = fixture_dir()?;
         let mut s = Session::new();
-        s.add_document(template_doc(), None);
+        s.add_document(small_doc(), None);
         let before = s.active().ok_or("no doc")?.doc.layers.len();
         let revision = s.active().ok_or("no doc")?.revision;
         let r = apply_from(&mut s, dir.path(), "instagram-post", Some(3), Some("Promo group"), true)?;
@@ -868,9 +887,10 @@ mod tests {
         let r = apply_from(&mut s, dir.path(), "instagram-post", Some(3), None, false)?;
         assert!(r.get("group_id").and_then(Value::as_u64).is_none(), "{r}");
         assert_eq!(s.active().ok_or("no doc")?.doc.layers.len(), before + 6);
-        // The newest version is the default when none is pinned.
+        // No version pinned: the newest applies — v3, whose slots all resolve, not @2's ghost.
         let r = apply_from(&mut s, dir.path(), "instagram-post", None, None, true)?;
-        assert_eq!(r.get("id"), None); // apply replies carry no id; the pin is in the journal
+        let missing = r.get("missing").and_then(Value::as_array).ok_or("no missing")?;
+        assert!(missing.is_empty(), "the newest version was not the default: {r}");
         Ok(())
     }
 
@@ -882,7 +902,7 @@ mod tests {
         let mut s = Session::new();
         let r = apply_from(&mut s, dir.path(), "instagram-post", Some(2), None, false)?;
         let missing = r.get("missing").and_then(Value::as_array).ok_or("no missing")?;
-        assert_eq!(missing.iter().map(Value::as_str).collect::<Vec<_>>(), ["ghost"]);
+        assert_eq!(missing.iter().map(|m| m.as_str()).collect::<Vec<_>>(), [Some("ghost")]);
         let slots = r.get("slots").and_then(Value::as_object).ok_or("no slots")?;
         assert_eq!(slots.len(), 1);
 
