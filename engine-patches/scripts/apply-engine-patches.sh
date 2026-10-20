@@ -74,7 +74,12 @@ info() { echo "apply-engine-patches: $*"; }
 
 ACTUAL_PIN="$(git -C "$VENDOR_DIR" rev-parse HEAD)" || die "cannot read HEAD of $VENDOR_DIR"
 
-ADR_PIN="$(sed -n 's/.*\([0-9a-f]\{40\}\).*/\1/p' "$ADR_PIN_FILE" | head -n 1 || true)"
+# The ADR names the pin too; both must agree (a re-pin always touches the two together).
+# Missing ADR file = only the built-in pin check applies (still refuses on mismatch).
+ADR_PIN=""
+if [ -f "$ADR_PIN_FILE" ]; then
+  ADR_PIN="$(sed -n 's/.*\([0-9a-f]\{40\}\).*/\1/p' "$ADR_PIN_FILE" | head -n 1 || true)"
+fi
 if [ -n "$ADR_PIN" ] && [ "$ADR_PIN" != "$EXPECTED_PIN" ]; then
   die "built-in pin $EXPECTED_PIN disagrees with $ADR_PIN_FILE ($ADR_PIN) — update them in the same change"
 fi

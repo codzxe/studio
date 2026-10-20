@@ -686,10 +686,11 @@ fn list_core(root: &Path, p: &Value) -> Result<Value> {
     let tags = match p.get("tags") {
         None | Some(Value::Null) => None,
         Some(Value::Array(a)) => {
-            let mut wanted: Vec<String> = Vec::with_capacity(a.len());
+            // Cap BEFORE the allocation hint: a huge `tags` array is input-sized (§9.5).
             if a.len() > manifest::MAX_TAGS {
                 return Err(bad(cmd, format!("at most {} tags can be filtered on", manifest::MAX_TAGS)));
             }
+            let mut wanted: Vec<String> = Vec::with_capacity(a.len());
             for t in a {
                 let Some(t) = t.as_str().map(str::to_lowercase) else {
                     return Err(bad(cmd, "`tags` must be an array of strings"));
