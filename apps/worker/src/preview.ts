@@ -114,8 +114,10 @@ export interface SignedObjectUrl {
 /**
  * Object-storage seam (§3.1 `objects`: S3/R2).
  * RECONCILIATION (packages/storage, W2-M — parallel): the real Storage interface
- * (put/get/sign) must satisfy this shape, or be adapted at the composition root.
- * Keys are plain `/`-separated relative strings (no leading `/`, no `..`).
+ * must be adapted at the composition root — its `put(key, data, options)` takes
+ * required PutOptions (contentType), `get` resolves `null` (not `undefined`) and
+ * `sign` takes SignOptions with `ttlSeconds` 1..900 (§15.1) and returns
+ * { url, expiresAt }, which this seam matches structurally.
  */
 export interface ObjectStorage {
   put(key: string, data: Uint8Array): Promise<void>;
@@ -243,9 +245,11 @@ export interface PreviewKeyInput {
  * The clamped width + the document revision make the key content-addressed, so
  * re-rendering the same revision is an idempotent overwrite (§13 "cached").
  *
- * RECONCILIATION (packages/storage, W2-M — parallel): built per the documented
- * key-space until @studio/storage exports its key builders; when it does, replace
- * this constructor with that import — same key-space, byte-identical output.
+ * RECONCILIATION (packages/storage, W2-M — parallel): @studio/storage exports
+ * `previewKey({ organizationId, documentId, width, revision })` from src/keys.ts
+ * — same signature, byte-identical key — so adopting it is a one-line import
+ * swap once apps/worker declares the @studio/storage dependency; this local
+ * constructor keeps the key-space identical until then.
  */
 export function makePreviewKey(input: PreviewKeyInput): string {
   const organization = keySegment("organizationId", input.organizationId);

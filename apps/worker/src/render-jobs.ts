@@ -211,13 +211,15 @@ export interface ExportStorageKeyInput {
  *     (the layered document artifact)
  *   - `png`/`jpg` → `exports/organizations/<org>/documents/<doc>/export-<idem>-r<rev>.<ext>`
  *     (the raster deliverable)
- * Both share the `<kind>/organizations/<org>/documents/<doc>/<file>` shape of the
- * preview key-space; the idempotency key + revision make retries land on the
- * same key (§3.4 idempotency: a retried export overwrites, never duplicates).
+ * Both share the `<kind>/organizations/<org>/documents/<doc>/<file>` prefix family
+ * of the storage key-space (previewKey/exportKey in packages/storage, W2-M); the
+ * idempotency key + revision make retries land on the same key (§3.4 idempotency:
+ * a retried export overwrites, never duplicates).
  *
- * RECONCILIATION (packages/storage, W2-M — parallel): built per the documented
- * key-space until @studio/storage exports its key builders; when it does, replace
- * this constructor with that import — same key-space, byte-identical output.
+ * RECONCILIATION (packages/storage, W2-M — parallel): @studio/storage exports
+ * `exportKey` with the same prefix family but a `<format>-<versionId>` file name;
+ * when apps/worker adopts that builder, reconcile the suffix (versionId vs
+ * idempotencyKey+revision) at the composition root.
  */
 export function makeExportStorageKey(input: ExportStorageKeyInput): string {
   const organization = keySegment("organizationId", input.organizationId);
