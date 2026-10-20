@@ -18,8 +18,10 @@
 //!   exact-overflow reporting — never a silent clip.
 //! * [`fit_specs`] — the `layout.fitText` + `layout.measure` `CommandSpec`s (§9.4), chained
 //!   into [`specs`] below through their own single `specs()`.
+//! * [`measure_impl`] — the engine-side `TextMeasurer` for [`layout_apply`]'s hug seam
+//!   (§9.2): the bridge from a document's type layer to [`fit_text`]'s production measurer.
 //!
-//! All three are declared `pub` so the solver's pure seams (`parse_tree`, `solve`, the fit
+//! All four are declared `pub` so the solver's pure seams (`parse_tree`, `solve`, the fit
 //! math) stay reachable to callers and tests; registration never looks past the parent.
 //! (The apply script copies `<sib>.rs` to `crates/engine/src/layout_cmds/<sib>.rs`, Rust
 //! 2018 subdirectory layout — the same place a `#[path]` attribute would resolve to.)
@@ -34,6 +36,7 @@
 pub mod layout_apply;
 pub mod fit_text;
 pub mod fit_specs;
+pub mod measure_impl;
 
 use crate::commands::CommandSpec;
 use crate::Session;
@@ -77,11 +80,11 @@ pub fn specs() -> Vec<CommandSpec> {
 // * The signature is exactly what registration/commands-registry.patch.txt registers:
 //   `pub fn specs() -> Vec<CommandSpec>` behind `v.extend(crate::layout_cmds::specs());`.
 // * apply-engine-patches.sh's pre-flight greps THIS file for a `mod <sib>;` line per
-//   sibling `.rs` in this directory (all three declared above) and for the one child that
+//   sibling `.rs` in this directory (all four declared above) and for the one child that
 //   owns commands — `fit_specs::specs()`, chained above — so an undeclared sibling or an
 //   unregistered child `specs()` refuses the apply before the vendor tree is touched.
-// * The one family-wide seam still owed elsewhere: `layout_apply::apply` coerces
+// * The one family-wide measure seam, landed: `layout_apply::apply` coerces
 //   `&layout_apply::EngineTextMeasurer` to `&dyn layout_apply::TextMeasurer`, and that
-//   engine-side `impl` belongs in `fit_text.rs` (the measure module — one home for
-//   everything that calls the text stack; see `layout_apply`'s module docs for the exact
-//   block to write there), never in this parent.
+//   engine-side `impl` lives in `measure_impl.rs` (declared above; it delegates to
+//   `fit_text`'s production measurer, so the measure modules stay the one home for
+//   everything that calls the text stack), never in this parent.

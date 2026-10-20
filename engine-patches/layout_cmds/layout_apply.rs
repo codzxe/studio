@@ -13,9 +13,9 @@
 //! (`bounds`, `resolve`, and the [`TextMeasurer`] below) so it needs no `Session` and is
 //! table-testable.
 //!
-//! Coordination seam (W3-E): **the `impl TextMeasurer for EngineTextMeasurer` lives in
-//! `fit_text.rs`** (the measure module — one home for everything that calls the engine's text
-//! stack). The exact block to implement there:
+//! Coordination seam (W3-E, landed): **the `impl TextMeasurer for EngineTextMeasurer` lives
+//! in `measure_impl.rs`** (the measure module, delegating to `fit_text`'s production
+//! measurer — one home for everything that calls the engine's text stack). The block there:
 //!
 //! ```ignore
 //! impl super::layout_apply::TextMeasurer for super::layout_apply::EngineTextMeasurer<'_> {
