@@ -367,7 +367,9 @@ class FakeAuth {
     this.current = { ok: true, value: initial };
   }
 
-  resolve(): Promise<{ ok: true; value: Principal } | { ok: false; code: "unauthorized"; message: string }> {
+  authenticate(): Promise<
+    { ok: true; value: Principal } | { ok: false; code: "unauthorized"; message: string }
+  > {
     return Promise.resolve(this.current);
   }
 }

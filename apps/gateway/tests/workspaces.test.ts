@@ -277,12 +277,12 @@ async function call(
 }
 
 async function createWorkspaceAs(
-  app: ReturnType<typeof buildApp>,
+  harness: Harness,
   user: AuthContext,
   name: string
 ): Promise<string> {
-  h.actAs(user);
-  const res = await call(app, "POST", "/v1/workspaces", { name });
+  harness.actAs(user);
+  const res = await call(harness.app, "POST", "/v1/workspaces", { name });
   expect(res.status).toBe(201);
   const workspace = res.json.workspace as { id: string };
   return workspace.id;
@@ -335,7 +335,7 @@ describe("slugify", () => {
 
 describe("POST /v1/workspaces (create: org + owner + trial grant)", () => {
   it("creates workspace, owner member, one trial grant, and audit entries", async () => {
-    const res = await call(h.app, "POST", "/v1/workspaces", { name: "Acme Studio" }, );
+    const res = await call(h.app, "POST", "/v1/workspaces", { name: "Acme Studio" });
     expect(res.status).toBe(201);
     expect(res.json.ok).toBe(true);
     const workspace = res.json.workspace as {
@@ -434,7 +434,7 @@ describe("workspace slugs", () => {
 
 describe("POST /v1/workspaces/:id/invites (role ∈ editor|viewer|admin)", () => {
   it("rejects owner/unknown roles with 422 and accepts the three invitable roles", async () => {
-    const workspaceId = await createWorkspaceAs(h.app, ALICE, "Invite Co");
+    const workspaceId = await createWorkspaceAs(h, ALICE, "Invite Co");
 
     for (const role of ["owner", "member", "", "OWNER"]) {
       const res = await call(h.app, "POST", `/v1/workspaces/${workspaceId}/invites`, {
@@ -470,10 +470,10 @@ describe("POST /v1/workspaces/:id/invites (role ∈ editor|viewer|admin)", () =>
     expect(dup.status).toBe(409);
     expect(dup.json.code).toBe("invite_already_pending");
 
-    // Admin+ listing sees all pending invitations.
+    // Admin+ listing sees all pending invitations (the duplicate was rejected).
     const list = await call(h.app, "GET", `/v1/workspaces/${workspaceId}/invites`);
     expect(list.status).toBe(200);
-    expect((list.json.invites as unknown[]).length).toBe(4);
+    expect((list.json.invites as unknown[]).length).toBe(3);
   });
 });
 
@@ -483,7 +483,7 @@ describe("POST /v1/workspaces/:id/invites (role ∈ editor|viewer|admin)", () =>
 
 describe("invite accept flow (/v1/invites/:token)", () => {
   it("views, accepts, and consumes an invitation", async () => {
-    const workspaceId = await createWorkspaceAs(h.app, ALICE, "Accept Co");
+    const workspaceId = await createWorkspaceAs(h, ALICE, "Accept Co");
     const created = await call(h.app, "POST", `/v1/workspaces/${workspaceId}/invites`, {
       email: "bob@example.com",
       role: "editor"
@@ -534,7 +534,7 @@ describe("invite accept flow (/v1/invites/:token)", () => {
   });
 
   it("expires invitations deterministically against the injected clock", async () => {
-    const workspaceId = await createWorkspaceAs(h.app, ALICE, "Expiry Co");
+    const workspaceId = await createWorkspaceAs(h, ALICE, "Expiry Co");
     const created = await call(h.app, "POST", `/v1/workspaces/${workspaceId}/invites`, {
       email: "carol@example.com",
       role: "viewer",
@@ -554,7 +554,7 @@ describe("invite accept flow (/v1/invites/:token)", () => {
   });
 
   it("cancels invitations by token and by workspace-scoped id (admin+)", async () => {
-    const workspaceId = await createWorkspaceAs(h.app, ALICE, "Cancel Co");
+    const workspaceId = await createWorkspaceAs(h, ALICE, "Cancel Co");
     const created = await call(h.app, "POST", `/v1/workspaces/${workspaceId}/invites`, {
       email: "carol@example.com",
       role: "viewer"
@@ -595,7 +595,7 @@ describe("invite accept flow (/v1/invites/:token)", () => {
 
 describe("DELETE /v1/workspaces/:id/members/:userId", () => {
   it("protects the last owner and restricts owner removals", async () => {
-    const workspaceId = await createWorkspaceAs(h.app, ALICE, "Owner Co");
+    const workspaceId = await createWorkspaceAs(h, ALICE, "Owner Co");
 
     // Self-removal of the only owner → 409 last_owner_protection.
     const self = await call(h.app, "DELETE", `/v1/workspaces/${workspaceId}/members/user-alice`);
@@ -663,7 +663,7 @@ describe("DELETE /v1/workspaces/:id/members/:userId", () => {
   });
 
   it("404s when the target is not a member", async () => {
-    const workspaceId = await createWorkspaceAs(h.app, ALICE, "Ghost Co");
+    const workspaceId = await createWorkspaceAs(h, ALICE, "Ghost Co");
     const res = await call(h.app, "DELETE", `/v1/workspaces/${workspaceId}/members/user-nobody`);
     expect(res.status).toBe(404);
     expect(res.json.code).toBe("not_found");
@@ -676,9 +676,9 @@ describe("DELETE /v1/workspaces/:id/members/:userId", () => {
 
 describe("cross-tenant access is denied with 403", () => {
   it("denies every org-scoped route to a non-member", async () => {
-    const alphaId = await createWorkspaceAs(h.app, ALICE, "Alpha");
+    const alphaId = await createWorkspaceAs(h, ALICE, "Alpha");
     h.actAs(BOB);
-    const betaId = await createWorkspaceAs(h.app, BOB, "Beta");
+    const betaId = await createWorkspaceAs(h, BOB, "Beta");
     const betaInvite = await call(h.app, "POST", `/v1/workspaces/${betaId}/invites`, {
       email: "x@example.com",
       role: "viewer"
@@ -724,7 +724,7 @@ describe("cross-tenant access is denied with 403", () => {
 
 describe("RBAC (§15.2) on workspace routes", () => {
   it("lets admins manage, blocks editors/viewers from admin+ routes", async () => {
-    const workspaceId = await createWorkspaceAs(h.app, ALICE, "Rbac Co");
+    const workspaceId = await createWorkspaceAs(h, ALICE, "Rbac Co");
     const seed = (userId: string, role: WorkspaceRole): void => {
       h.db.memberships.push({
         id: h.newId(),
@@ -779,7 +779,7 @@ describe("RBAC (§15.2) on workspace routes", () => {
 
 describe("PATCH /v1/workspaces/:id (rename, brand tokens)", () => {
   it("renames, stores brand tokens, and rejects empty/unknown patches", async () => {
-    const workspaceId = await createWorkspaceAs(h.app, ALICE, "Patch Co");
+    const workspaceId = await createWorkspaceAs(h, ALICE, "Patch Co");
 
     const rename = await call(h.app, "PATCH", `/v1/workspaces/${workspaceId}`, { name: "Renamed" });
     expect(rename.status).toBe(200);
@@ -810,7 +810,7 @@ describe("PATCH /v1/workspaces/:id (rename, brand tokens)", () => {
 describe("audit log appends (§22)", () => {
   it("records role changes, invites and deletes with actor/org/target/request id", async () => {
     const harness = makeHarness();
-    const workspaceId = await createWorkspaceAs(harness.app, ALICE, "Audit Co");
+    const workspaceId = await createWorkspaceAs(harness, ALICE, "Audit Co");
 
     const invited = await call(harness.app, "POST", `/v1/workspaces/${workspaceId}/invites`, {
       email: "bob@example.com",
@@ -866,7 +866,7 @@ describe("audit log appends (§22)", () => {
 describe("requireAuth", () => {
   it("returns a 401 envelope when no user resolves", async () => {
     const harness = makeHarness();
-    await createWorkspaceAs(harness.app, ALICE, "Auth Co");
+    await createWorkspaceAs(harness, ALICE, "Auth Co");
     harness.actAs(null);
     for (const [method, path] of [
       ["GET", "/v1/workspaces"],

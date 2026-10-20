@@ -19,29 +19,34 @@
 // across mounts, so the variable set by the parent middleware is readable
 // here). Handlers fail closed with a typed 500 when deps are missing.
 //
-// RECONCILIATION (authz/guard.ts owner): apps/gateway/src/authz/guard.ts did
-// not exist when W4-F started, so this module declares its own minimal
-// `PrincipalResolver` seam (organizationId / userId / plan / role) and the
-// `assertDocAccess` helper the brief names. When the guard lands, wire it as
-// the resolver implementation; the §12.2 enforcement stays in the service's
-// composite org-scoped queries either way.
+// RECONCILIATION (authz, W4-B/W4-C — landed mid-task): src/authz/{roles,
+// matrix,guard}.ts + middleware/auth-context.ts are the authoritative RBAC
+// layer. Mutations here enforce `documents:write` through the authoritative
+// matrix (`can()`, src/authz/roles.ts) — never a local role list. The
+// `PrincipalResolver` seam below mirrors services/runs.ts `AuthLike`
+// (W4-G) and adds `plan` (canvas MP ceiling needs it, §14.1 — caps.ts takes
+// plan the same way); the wiring wave composes one adapter over W4-A's
+// session/API-key resolvers + the subscriptions plan lookup. The §12.2 tenant
+// enforcement stays in the service's composite org-scoped queries (guard.ts
+// rule 1: lookups stay 404), with guard.assertTenant/assertDocAccess available
+// for any path that fetches a resource before scoping.
+//
+// TODO (idempotency owner, §13 preamble): mutating handlers read the
+// Idempotency-Key header and record it in the audit trail; replay/dedup over
+// the `idempotency_keys` table (§12.1) is the middleware's to wrap here.
 //
 // Errors: typed flat envelopes `{ ok:false, code, message, hint?, retryable }`
 // (docs/AGENTS.md + middleware/error-mapper.ts). Service failures use the
 // @studio/config stable code catalog and are mapped here with its
 // code → status table; schema failures surface as ZodError → 422
 // `validation_failed` with field details (W1-H contract).
-//
-// Idempotency-Key (§13 preamble): mutating handlers read the header and record
-// it in the audit trail. Replay/dedup enforcement is a cross-cutting concern
-// owned by the idempotency middleware over the `idempotency_keys` table (§12.1)
-// — TODO for its owner to wrap these routes.
 
 import { Hono, type Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { httpStatusFor, type Failure, type PlanId, type Result } from "@studio/config";
+import { can, type Role } from "../authz/roles.js";
 import { AppError } from "../middleware/error-mapper.js";
 import type { AppEnv } from "../types.js";
 import {
@@ -66,24 +71,24 @@ import {
 } from "../services/documents.js";
 
 // ---------------------------------------------------------------------------
-// Principal seam (authz contract — see the RECONCILIATION note above)
+// Principal seam (mirrors services/runs.ts AuthLike — see RECONCILIATION above)
 // ---------------------------------------------------------------------------
 
-/** Workspace RBAC ladder (§15.2, Better Auth `member.role`). */
-export type MemberRole = "owner" | "admin" | "editor" | "viewer";
+/** Workspace RBAC ladder (§15.2) — alias of authz/roles.ts `Role`. */
+export type MemberRole = Role;
 
-/** The authenticated principal for one request, resolved by the authz guard. */
+/** The authenticated principal for one request (§14.1 plan + §15.2 role). */
 export interface Principal {
   readonly organizationId: string;
   readonly userId: string;
   /** Plan drives the canvas MP ceiling (§14.1 via @studio/config PLAN_LIMITS). */
   readonly plan: PlanId;
-  readonly role: MemberRole;
+  readonly role: Role;
 }
 
 /** Resolves the caller from the raw request (session cookie or API key, §13). */
 export interface PrincipalResolver {
-  resolve(request: Request): Promise<Result<Principal>>;
+  authenticate(request: Request): Promise<Result<Principal>>;
 }
 
 /** Documents router deps: the service deps plus the principal resolver. */
@@ -231,7 +236,7 @@ async function requirePrincipal(
   deps: DocumentRoutesDeps,
   c: Context<DocumentsEnv>,
 ): Promise<Principal> {
-  const result = await deps.auth.resolve(c.req.raw);
+  const result = await deps.auth.authenticate(c.req.raw);
   if (!result.ok) {
     // 401 unauthorized / 403 forbidden per the resolver's stable code.
     throwAppError(result);
@@ -239,11 +244,15 @@ async function requirePrincipal(
   return result.value;
 }
 
-/** §15.2: viewers read + comment only; every document mutation needs editor+. */
+/**
+ * §15.2: document mutations need `documents:write` — enforced through the
+ * authoritative RBAC matrix (src/authz/roles.ts, W4-C), never a local role
+ * list, so this can never drift from ADR-0003.
+ */
 function requireMutator(principal: Principal): void {
-  if (principal.role === "viewer") {
-    throw new AppError(403, "forbidden", "Viewers cannot modify documents.", {
-      hint: "Ask an editor, admin or owner for write access (§15.2 roles).",
+  if (!can(principal.role, "documents:write")) {
+    throw new AppError(403, "forbidden", "You do not have permission to modify documents.", {
+      hint: 'This action requires the "documents:write" permission (editor or above, §15.2).',
       retryable: false,
     });
   }

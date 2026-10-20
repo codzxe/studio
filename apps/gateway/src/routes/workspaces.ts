@@ -73,10 +73,13 @@ export interface WorkspaceAuth {
    * for this request. (Context is passed via a WeakMap keyed by the request's
    * context object: AppEnv has no `auth` variable and types.ts is not owned by
    * W4-E; W4-C's guard can provide an equivalent adapter.)
+   *
+   * The return type is a plain handler function (Response-returning, optional
+   * `next`) so the wrapper registers both as a route handler and as middleware.
    */
   readonly authed: (
     handler: (c: GatewayContext, auth: AuthContext) => Response | Promise<Response>
-  ) => MiddlewareHandler<AppEnv>;
+  ) => (c: GatewayContext, next?: unknown) => Promise<Response>;
 }
 
 export function createWorkspaceAuth(resolve: UserResolver): WorkspaceAuth {

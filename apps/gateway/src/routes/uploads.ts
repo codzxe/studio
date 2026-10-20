@@ -36,7 +36,11 @@ import type { Failure } from "@studio/config";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 
-import { type UploadFailure, stripExifPlan, validateUpload } from "../../../../packages/storage/src/validate.js";
+import {
+  type UploadFailure,
+  stripExifPlan,
+  validateUpload,
+} from "../../../../packages/storage/src/validate.js";
 
 import { AppError } from "../middleware/error-mapper.js";
 import {
@@ -107,7 +111,10 @@ export const MULTIPART_OVERHEAD_SLACK_BYTES = 8 * 1024;
  * anything. Malformed/absent headers pass through (the actual bytes are
  * re-checked by validateUpload; §15.2: headers lie).
  */
-export function contentLengthOverCap(contentLength: string | undefined, maxBytes: number): boolean {
+export function contentLengthOverCap(
+  contentLength: string | undefined,
+  maxBytes: number,
+): boolean {
   if (contentLength === undefined) {
     return false;
   }
@@ -136,9 +143,7 @@ function throwServiceFailure(failure: Failure): never {
   });
 }
 
-function failureStatus(
-  code: string,
-): 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503 {
+function failureStatus(code: string): number {
   switch (code) {
     case "validation_failed":
     case "quota_exceeded":
@@ -202,6 +207,13 @@ export const uploadRoutes = new Hono<UploadsEnv>();
 uploadRoutes.post("/uploads", async (c) => {
   const auth = requireAuth(c);
   const { service, limits } = requireDeps(c);
+
+  // §15.2 RBAC: uploading writes to the workspace — editor and above.
+  if (!roleAtLeast(auth.role, "editor")) {
+    throw new AppError(403, "forbidden", "Viewers cannot upload assets.", {
+      hint: "An editor, admin or owner must upload assets.",
+    });
+  }
 
   const contentType = c.req.header("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("multipart/form-data")) {

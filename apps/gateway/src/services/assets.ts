@@ -46,12 +46,24 @@
 
 import { randomUUID } from "node:crypto";
 
-import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MEGAPIXELS, type Result, err, ok } from "@studio/config";
+import {
+  type Failure,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_MEGAPIXELS,
+  type Result,
+  err,
+  ok,
+} from "@studio/config";
 import type { Asset, NewAsset } from "@studio/db";
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import { assetKey, assertTenant, isSafeFilename, parseStorageKey } from "../../../../packages/storage/src/keys.js";
+import {
+  assetKey,
+  assertTenant,
+  isSafeFilename,
+  parseStorageKey,
+} from "../../../../packages/storage/src/keys.js";
 import {
   MAX_SIGN_TTL_SECONDS,
   type SignedUrl,
@@ -242,9 +254,8 @@ const cursorPayloadSchema = z
   .strict();
 
 export function encodeAssetsCursor(cursor: AssetCursor): string {
-  return Buffer.from(JSON.stringify({ createdAtMs: cursor.createdAtMs, id: cursor.id }), "utf8").toString(
-    "base64url",
-  );
+  const payload = JSON.stringify({ createdAtMs: cursor.createdAtMs, id: cursor.id });
+  return Buffer.from(payload, "utf8").toString("base64url");
 }
 
 export function decodeAssetsCursor(raw: string): Result<AssetCursor> {
@@ -423,6 +434,14 @@ export interface AssetsService {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Re-shape a failure envelope at a different Result type (never re-wraps ok). */
+function failAs<T>(failure: Failure): Result<T> {
+  return err(failure.code, failure.message, {
+    hint: failure.hint,
+    retryable: failure.retryable,
+  });
+}
+
 /** Client-safe message for a storage rejection (§13.3: no stacks, no keys). */
 function storageFailureMessage(error: unknown): string {
   return isStorageError(error) ? error.message : "Object storage is unavailable.";
@@ -441,9 +460,7 @@ export function createAssetsService(deps: AssetsServiceDeps): AssetsService {
     }
   };
 
-  const registerUpload = async (
-    input: RegisterUploadInput,
-  ): Promise<Result<RegisterUploadOutcome>> => {
+  const registerUpload: AssetsService["registerUpload"] = async (input) => {
     const sha = sha256Checksum(input.bytes);
 
     // §12.1 dedupe: identical bytes already in this organization → same asset.
@@ -460,7 +477,7 @@ export function createAssetsService(deps: AssetsServiceDeps): AssetsService {
       filename,
     });
     if (!key.ok) {
-      return key;
+      return failAs(key);
     }
 
     try {
@@ -497,14 +514,17 @@ export function createAssetsService(deps: AssetsServiceDeps): AssetsService {
     try {
       stored = await deps.store.registerAsset({
         row,
-        metadata: needsStrip ? { exifPlan: input.exifPlan } : undefined,
+        metadata: needsStrip && input.exifPlan !== null ? { exifPlan: input.exifPlan } : undefined,
       });
     } catch (error) {
       warn("asset register failed; compensating with a best-effort object delete", error);
       try {
         await deps.storage.delete(key.value);
       } catch (compensationError) {
-        warn("asset register compensation delete failed; orphaned object left for the sweeper", compensationError);
+        warn(
+          "asset register compensation delete failed; orphaned object left for the sweeper",
+          compensationError,
+        );
       }
       return err("internal_error", "The asset could not be registered.");
     }
@@ -528,16 +548,12 @@ export function createAssetsService(deps: AssetsServiceDeps): AssetsService {
     return ok({ asset: stored, duplicate: false });
   };
 
-  const list = async (query: {
-    readonly organizationId: string;
-    readonly limit: number;
-    readonly cursor?: string;
-  }): Promise<Result<AssetsListOutcome>> => {
+  const list: AssetsService["list"] = async (query) => {
     let cursor: AssetCursor | null = null;
     if (query.cursor !== undefined) {
       const decoded = decodeAssetsCursor(query.cursor);
       if (!decoded.ok) {
-        return decoded;
+        return failAs(decoded);
       }
       cursor = decoded.value;
     }
@@ -560,10 +576,7 @@ export function createAssetsService(deps: AssetsServiceDeps): AssetsService {
     return ok({ assets: rows.map(assetSummary), nextCursor });
   };
 
-  const getSigned = async (query: {
-    readonly organizationId: string;
-    readonly id: string;
-  }): Promise<Result<AssetWithUrl>> => {
+  const getSigned: AssetsService["getSigned"] = async (query) => {
     const row = await deps.store.getAsset({ organizationId: query.organizationId, id: query.id });
     if (row === null) {
       return err("not_found", "Asset not found.");
@@ -590,11 +603,7 @@ export function createAssetsService(deps: AssetsServiceDeps): AssetsService {
     });
   };
 
-  const remove = async (query: {
-    readonly organizationId: string;
-    readonly id: string;
-    readonly actorId: string;
-  }): Promise<Result<RemovedAsset>> => {
+  const remove: AssetsService["remove"] = async (query) => {
     const row = await deps.store.getAsset({ organizationId: query.organizationId, id: query.id });
     if (row === null) {
       return err("not_found", "Asset not found.");

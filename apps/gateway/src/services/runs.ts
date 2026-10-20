@@ -383,6 +383,17 @@ function requireRow(rows: readonly AgentRun[], what: string): AgentRun {
   return row;
 }
 
+/** Keyset guard: rows strictly before (createdAt, id) — §12.2 index order. */
+function keysetGuard(before: RunPageCursor | undefined): SQL<unknown> | undefined {
+  if (before === undefined) {
+    return undefined;
+  }
+  return or(
+    lt(agentRuns.createdAt, before.createdAt),
+    and(eq(agentRuns.createdAt, before.createdAt), lt(agentRuns.id, before.id)),
+  );
+}
+
 /** Typed queries over agent_runs / agent_steps / documents (§12.1/§12.2). */
 export function drizzleRunsStore(db: Db): RunsStore {
   return {
@@ -431,12 +442,7 @@ export function drizzleRunsStore(db: Db): RunsStore {
     },
 
     async listRuns(query) {
-      const guard = query.before === undefined
-        ? undefined
-        : or(
-            lt(agentRuns.createdAt, query.before.createdAt),
-            and(eq(agentRuns.createdAt, query.before.createdAt), lt(agentRuns.id, query.before.id)),
-          );
+      const guard = keysetGuard(query.before);
       const filters: SQL[] = [eq(agentRuns.organizationId, query.organizationId)];
       if (query.documentId !== undefined) {
         filters.push(eq(agentRuns.documentId, query.documentId));
@@ -675,7 +681,9 @@ export async function createRun(deps: RunsDeps, input: CreateRunInput): Promise<
     return err(
       "insufficient_credits",
       `This run needs ${credits} credits but the workspace has ${balance} available.`,
-      { hint: "Top up credits or upgrade your plan, then retry. The run was not started." },
+      {
+        hint: "Top up credits or upgrade your plan, then retry. The run was not started.",
+      },
     );
   }
 
@@ -854,11 +862,9 @@ export async function cancelRun(deps: RunsDeps, input: CancelRunInput): Promise<
 
   // §5.1: only active (non-terminal) statuses may move to cancelled.
   if (!canTransition(run.status, "cancelled")) {
-    return err(
-      "conflict",
-      `This run already reached its final state ('${run.status}').`,
-      { hint: "Only active runs can be cancelled; start a new run instead (§5.1)." },
-    );
+    return err("conflict", `This run already reached its final state ('${run.status}').`, {
+      hint: "Only active runs can be cancelled; start a new run instead (§5.1).",
+    });
   }
 
   // Compare-and-swap on the active-status set: a run that reached a terminal

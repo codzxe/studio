@@ -136,10 +136,15 @@ function resolveIdempotencyKey(c: Context<RunsEnv>, bodyKey: string | undefined)
   }
   const resolved = headerKey ?? bodyKey;
   if (resolved === undefined) {
-    throw new AppError(422, "validation_failed", "An idempotency key is required to create a run.", {
-      hint: "Send an Idempotency-Key header (a client-generated UUID). Retries with the same key return the same run and never double-charge (§3.4).",
-      retryable: true,
-    });
+    throw new AppError(
+      422,
+      "validation_failed",
+      "An idempotency key is required to create a run.",
+      {
+        hint: "Send an Idempotency-Key header (a client-generated UUID) — retries with the same key return the same run (§3.4).",
+        retryable: true,
+      },
+    );
   }
   return IDEMPOTENCY_KEY_SCHEMA.parse(resolved);
 }
