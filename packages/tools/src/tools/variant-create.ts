@@ -59,8 +59,8 @@ import {
   MAX_ERROR_MESSAGE_CHARS,
   MAX_HINT_CHARS,
   MAX_SUMMARY_CHARS,
-  MAX_WARNING_CHARS,
   MAX_WARNINGS,
+  MAX_WARNING_CHARS,
   ambiguousLayerErr,
   cappedArray,
   cappedString,
@@ -146,10 +146,7 @@ const zSizePx = z.number().int().min(MIN_SIZE_PX).max(MAX_SIZE_PX);
 
 const SIZES_OP = strictObject({
   op: z.literal("sizes"),
-  sizes: cappedArray(
-    MAX_SIZES,
-    strictObject({ width: zSizePx, height: zSizePx }),
-  ).min(1),
+  sizes: cappedArray(MAX_SIZES, strictObject({ width: zSizePx, height: zSizePx })).min(1),
   fromCurrent: z.boolean(),
 });
 
@@ -185,7 +182,10 @@ export type VariantCreateArgs =
       readonly sizes: readonly { readonly width: number; readonly height: number }[];
       readonly fromCurrent: boolean;
     }
-  | { readonly op: "languages"; readonly texts: Readonly<Record<string, Readonly<Record<string, string>>>> };
+  | {
+      readonly op: "languages";
+      readonly texts: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    };
 
 const VARIANT_CREATE_ARGS: z.ZodType<VariantCreateArgs, z.ZodTypeDef, unknown> =
   z.discriminatedUnion("op", [
@@ -244,8 +244,10 @@ function followsVariantPattern(name: string): boolean {
   if (!name.includes(VARIANT_SEPARATOR)) {
     return false;
   }
-  const [base, ...rest] = name.split(VARIANT_SEPARATOR);
-  return base.trim().length > 0 && rest.join(VARIANT_SEPARATOR).trim().length > 0;
+  const parts = name.split(VARIANT_SEPARATOR);
+  const base = parts[0] ?? "";
+  const qualifier = parts.slice(1).join(VARIANT_SEPARATOR);
+  return base.trim().length > 0 && qualifier.trim().length > 0;
 }
 
 export interface FixedVariantName {
@@ -271,17 +273,17 @@ export function fixVariantName(name: string): FixedVariantName {
       return { name: normalized, fixed: true };
     }
   }
-  return { name: `${trimmed} ${VARIANT_SEPARATOR} ${AUTO_VARIANT_QUALIFIER}`, fixed: true };
+  return { name: `${trimmed}${VARIANT_SEPARATOR}${AUTO_VARIANT_QUALIFIER}`, fixed: true };
 }
 
 /** "Variant — 1080x1920" — the §10.2 handle for one canvas size variant. */
 export function compNameForSize(width: number, height: number): string {
-  return `${VARIANT_COMP_BASE} ${VARIANT_SEPARATOR} ${width}x${height}`;
+  return `${VARIANT_COMP_BASE}${VARIANT_SEPARATOR}${width}x${height}`;
 }
 
 /** "Variant — es" — the §10.2 handle for one language variant. */
 export function compNameForLanguage(lang: string): string {
-  return `${VARIANT_COMP_BASE} ${VARIANT_SEPARATOR} ${lang}`;
+  return `${VARIANT_COMP_BASE}${VARIANT_SEPARATOR}${lang}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +409,12 @@ function readDataSetRow(row: unknown): DataSetRow | undefined {
   if (name === undefined) {
     return undefined;
   }
-  const values = Array.isArray(row.values) ? row.values.flatMap(readValueRow) : [];
+  const values = Array.isArray(row.values)
+    ? row.values.flatMap((value) => {
+        const parsed = readValueRow(value);
+        return parsed === undefined ? [] : [parsed];
+      })
+    : [];
   return { name, values };
 }
 
@@ -417,9 +424,19 @@ export function readVariablesListing(report: EngineCommandReport): VariablesList
   if (!isRec(payload)) {
     return undefined;
   }
-  const defs = Array.isArray(payload.defs) ? payload.defs.flatMap(readDefRow) : [];
-  const dataSets = Array.isArray(payload.dataSets)
-    ? payload.dataSets.flatMap(readDataSetRow)
+  const defsRow = payload.defs;
+  const defs = Array.isArray(defsRow)
+    ? defsRow.flatMap((row) => {
+        const parsed = readDefRow(row);
+        return parsed === undefined ? [] : [parsed];
+      })
+    : [];
+  const setsRow = payload.dataSets;
+  const dataSets = Array.isArray(setsRow)
+    ? setsRow.flatMap((row) => {
+        const parsed = readDataSetRow(row);
+        return parsed === undefined ? [] : [parsed];
+      })
     : [];
   return { defs, dataSets };
 }
@@ -440,8 +457,7 @@ export function readCompListing(report: EngineCommandReport): CompListing | unde
         return id !== undefined && name !== undefined ? [{ id, name }] : [];
       })
     : [];
-  const lastApplied = readEngineId(payload.lastApplied);
-  return { comps, lastApplied };
+  return { comps, lastApplied: readEngineId(payload.lastApplied) ?? null };
 }
 
 // ---------------------------------------------------------------------------
@@ -449,7 +465,14 @@ export function readCompListing(report: EngineCommandReport): CompListing | unde
 // ---------------------------------------------------------------------------
 
 const VISIBILITY_TRUE: ReadonlySet<string> = new Set(["true", "1", "yes", "on", "visible"]);
-const VISIBILITY_FALSE: ReadonlySet<string> = new Set(["false", "0", "no", "off", "invisible", "hidden"]);
+const VISIBILITY_FALSE: ReadonlySet<string> = new Set([
+  "false",
+  "0",
+  "no",
+  "off",
+  "invisible",
+  "hidden",
+]);
 
 /**
  * Visibility variables take booleans; the args record is stringly typed
@@ -492,15 +515,22 @@ function quote(value: string): string {
 export function buildDataSetValues(
   values: Readonly<Record<string, string>>,
   defs: readonly VariableDefRow[],
-): { readonly rows: readonly DataSetValueRow[] } | ToolErr {
+): { readonly ok: true; readonly rows: readonly DataSetValueRow[] } | ToolErr {
   const byName = new Map(defs.map((def) => [def.name, def] as const));
   const keys = Object.keys(values).sort();
   const unknown = keys.filter((key) => !byName.has(key));
   if (unknown.length > 0) {
-    return err("validation_failed", `data set values reference unknown variables: ${unknown.join(", ")}`, {
-      hint: candidateNames(defs.map((def) => def.name), "defined variables"),
-      retryable: false,
-    });
+    return err(
+      "validation_failed",
+      `data set values reference unknown variables: ${unknown.join(", ")}`,
+      {
+        hint: candidateNames(
+          defs.map((def) => def.name),
+          "defined variables",
+        ),
+        retryable: false,
+      },
+    );
   }
   const rows: DataSetValueRow[] = [];
   for (const key of keys) {
@@ -524,7 +554,10 @@ export function buildDataSetValues(
         return err(
           "validation_failed",
           `visibility variable ${quote(key)} needs "true" or "false"`,
-          { hint: `got ${quote(values[key] ?? "")}; accepted: true/1/yes/on/visible, false/0/no/off/invisible/hidden`, retryable: false },
+          {
+            hint: `got ${quote(values[key] ?? "")}; accepted: true/1/yes/on/visible, false/0/no/off/invisible/hidden`,
+            retryable: false,
+          },
         );
       }
       rows.push({ variable: key, kind: "visibility", value: visible });
@@ -532,7 +565,7 @@ export function buildDataSetValues(
     }
     rows.push({ variable: key, kind: "text", value: values[key] ?? "" });
   }
-  return { rows };
+  return { ok: true, rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -597,7 +630,10 @@ function capWarnings(warnings: readonly string[]): readonly string[] {
   if (warnings.length <= MAX_WARNINGS) {
     return warnings;
   }
-  return [...warnings.slice(0, MAX_WARNINGS - 1), `(+${warnings.length - MAX_WARNINGS + 1} more warnings)`];
+  return [
+    ...warnings.slice(0, MAX_WARNINGS - 1),
+    `(+${warnings.length - MAX_WARNINGS + 1} more warnings)`,
+  ];
 }
 
 interface Preflight<T> {
@@ -822,14 +858,13 @@ export const variantCreateTool: Tool<VariantCreateArgs> = defineTool({
             });
           }
           if (matches.length > 1) {
-            return err(
-              "conflict",
-              `${matches.length} layer comps are named ${quote(args.name)}`,
-              {
-                hint: `comp ids: ${matches.slice(0, 8).map((comp) => comp.id).join(", ")}`,
-                retryable: false,
-              },
-            );
+            return err("conflict", `${matches.length} layer comps are named ${quote(args.name)}`, {
+              hint: `comp ids: ${matches
+                .slice(0, 8)
+                .map((comp) => comp.id)
+                .join(", ")}`,
+              retryable: false,
+            });
           }
         }
         // comps_cmds.rs apply → {comp, missingLayers}: layers deleted since
@@ -859,7 +894,7 @@ export const variantCreateTool: Tool<VariantCreateArgs> = defineTool({
           }
         }
         return ok({
-          summary: buildSummary({ applied: [args.name], warnings }),
+          summary: buildSummary({ created: [], applied: [args.name], warnings }),
           documentRevision: batch.report.revision,
           warnings: warnings.length > 0 ? capWarnings(warnings) : undefined,
         });
@@ -938,7 +973,7 @@ export const variantCreateTool: Tool<VariantCreateArgs> = defineTool({
           ctx,
           [{ id: VARIANT_CREATE_COMMANDS.applyDataSet, params: { name: args.name } }],
           "apply the data set",
-          { applied: [args.name], warnings },
+          { created: [], applied: [args.name], warnings },
           signal,
         );
       }
@@ -1094,7 +1129,9 @@ export const variantCreateTool: Tool<VariantCreateArgs> = defineTool({
       // ---------------------------------------------------------------------
       case "languages": {
         const langs = Object.keys(args.texts);
-        const slots = [...new Set(langs.flatMap((lang) => Object.keys(args.texts[lang] ?? {})))].sort();
+        const slots = [
+          ...new Set(langs.flatMap((lang) => Object.keys(args.texts[lang] ?? {}))),
+        ].sort();
         const warnings: string[] = [];
 
         // Slots name Type layers (§10.2 roles); resolve against the tree first.
@@ -1115,7 +1152,10 @@ export const variantCreateTool: Tool<VariantCreateArgs> = defineTool({
             continue;
           }
           if (matches.length > 1) {
-            return ambiguousLayerErr(slot, matches.map((layer) => `id ${layer.layerId}`));
+            return ambiguousLayerErr(
+              slot,
+              matches.map((layer) => `id ${layer.layerId}`),
+            );
           }
           const layer = matches[0];
           if (layer === undefined) {
@@ -1128,16 +1168,23 @@ export const variantCreateTool: Tool<VariantCreateArgs> = defineTool({
             layer.kind.length === 0 ||
             layer.kind.toLowerCase() === "type";
           if (!isText) {
-            return err("invalid_slots", `Slot ${quote(slot)} names a ${layer.kind} layer, not a text layer`, {
-              hint: "text slots reference Type layers — §10.2 roles like Headline, Subhead, Body, Caption, CTA",
-              retryable: false,
-            });
+            return err(
+              "invalid_slots",
+              `Slot ${quote(slot)} names a ${layer.kind} layer, not a text layer`,
+              {
+                hint: "text slots reference Type layers — §10.2 roles like Headline, Subhead, Body, Caption, CTA",
+                retryable: false,
+              },
+            );
           }
           slotLayers.set(slot, layer);
         }
         if (unknown.length > 0) {
           return err("unknown_slots", `unknown slots: ${unknown.join(", ")}`, {
-            hint: candidateNames(tree.value.map((layer) => layer.name), "document layers"),
+            hint: candidateNames(
+              tree.value.map((layer) => layer.name),
+              "document layers",
+            ),
             retryable: false,
           });
         }
@@ -1238,7 +1285,9 @@ export const variantCreateTool: Tool<VariantCreateArgs> = defineTool({
         if (compPreflight.failure !== undefined) {
           return compPreflight.failure;
         }
-        const existingComps = new Set((compPreflight.listing?.comps ?? []).map((comp) => comp.name));
+        const existingComps = new Set(
+          (compPreflight.listing?.comps ?? []).map((comp) => comp.name),
+        );
         const compNames = langs.map((lang) => compNameForLanguage(lang));
         const colliding = compNames.filter((name) => existingComps.has(name));
         if (colliding.length > 0) {
