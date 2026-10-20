@@ -46,7 +46,9 @@ export default function HomePage() {
           layers" proof strip. No images until real assets exist. */}
       <main className="flex flex-1 flex-col">
         <section className="mx-auto w-full max-w-4xl px-6 py-20 text-center">
-          <p className="mb-4 inline-block rounded-full border border-border bg-surface-muted px-3 py-1 font-mono text-xs text-muted-foreground">
+          <p
+            className="mb-4 inline-block rounded-full border border-border bg-surface-muted px-3 py-1 font-mono text-xs text-muted-foreground"
+          >
             prompt → layered document
           </p>
           <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">

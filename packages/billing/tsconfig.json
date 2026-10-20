@@ -1,5 +1,9 @@
 {
     "extends": "../../tsconfig.base.json",
-    "compilerOptions": { "rootDir": "src", "outDir": "dist", "jsx": "preserve" },
-    "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"]
+    "compilerOptions": {
+      // No rootDir/outDir: tests/ sits next to src/ and `tsc --noEmit` is the
+      // gate (fleet precedent — apps/worker, apps/engine-pool).
+      "noEmit": true
+    },
+    "include": ["src/**/*.ts", "tests/**/*.ts"]
   }

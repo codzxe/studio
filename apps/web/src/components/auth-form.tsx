@@ -68,7 +68,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 
   if (done) {
     return (
-      <p className="max-w-sm rounded-lg border border-border bg-surface p-6 text-center text-sm text-muted-foreground">
+      <p
+        className="max-w-sm rounded-lg border border-border bg-surface p-6 text-center text-sm text-muted-foreground"
+      >
         You&apos;re in. The workspace opens here once sign-in is fully wired.
       </p>
     );

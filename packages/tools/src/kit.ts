@@ -42,7 +42,7 @@ export const MAX_PREVIEW_URL_CHARS = 2048;
 export const TOOL_NAME_RE = /^[a-z][a-z0-9_]{1,63}$/;
 
 /** Is this a legal tool name? (snake_case, 2–64 chars, mirrors the §6 surface.) */
-export function isToolName(value: unknown): value is string {
+export function isToolName(value: unknown): boolean {
   return typeof value === "string" && TOOL_NAME_RE.test(value);
 }
 

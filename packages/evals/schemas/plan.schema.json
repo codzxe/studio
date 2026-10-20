@@ -1,6 +1,5 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$comment": "packages/evals/schemas/plan.schema.json — the {plan, run} envelope asserted by the promptfoo suite. `plan` mirrors the planner output contract (spec §5.5 / §23.2); `run` mirrors the worker's run-outcome envelope (§5.1 loop + §11.1 validator verdict + §24 trace fields) that carries the tier-cost and budget assertions. NOTE: the eval-binding copy of this schema lives inline in promptfoo.config.yaml (defaultTest.assert is-json) because promptfoo inlines object schemas most reliably; keep the two in sync. TODO(W6): extract to a single shared source imported by both the eval config and packages/agent.",
   "type": "object",
   "required": ["plan", "run"],
   "additionalProperties": false,
@@ -24,7 +23,7 @@
             "required": ["ref", "slot"],
             "additionalProperties": false,
             "properties": {
-              "ref": { "type": "string", "minLength": 1, "$comment": "asset_id from SNAPSHOT, or an imagegen:<slug> ref for a to-be-generated image (§24.4)" },
+              "ref": { "type": "string", "minLength": 1 },
               "slot": { "type": "string", "minLength": 1 },
               "fit": { "enum": ["cover", "contain", "fill"] },
               "focal": {
@@ -62,8 +61,7 @@
         "checks": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string" },
-          "$comment": "validator checks the planner requests (§23.2 example: in_bounds, contrast>=4.5, headline_largest, safe_area; codes per §11.1)"
+          "items": { "type": "string" }
         },
         "model_tier": { "enum": ["quick", "standard", "complex"] },
         "notes_for_user": { "type": "string", "maxLength": 300 }
@@ -75,15 +73,15 @@
       "additionalProperties": false,
       "properties": {
         "status": { "enum": ["succeeded", "succeeded_with_warnings", "failed"] },
-        "credits_charged": { "type": "number", "minimum": 0, "maximum": 20, "$comment": "§5.2 exact tier costs: quick=1, standard=2, complex=5 (premium x2, max x4); 0 on refunded provider failures (§14.2, §24.4)" },
-        "tool_calls": { "type": "integer", "minimum": 0, "maximum": 24, "$comment": "§5.2 hard caps: quick 6 / standard 12 / complex 24" },
-        "revisions": { "type": "integer", "minimum": 0, "maximum": 3, "$comment": "§5.1: max 2 repair cycles; §5.2 max tier 3 revisions" },
-        "code": { "anyOf": [{ "type": "string" }, { "type": "null" }], "$comment": "error code on failed runs (e.g. image_provider_error §24.4)" },
+        "credits_charged": { "type": "number", "minimum": 0, "maximum": 20 },
+        "tool_calls": { "type": "integer", "minimum": 0, "maximum": 24 },
+        "revisions": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "code": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
         "retryable": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] },
-        "retry_grace": { "type": "integer", "minimum": 0, "$comment": "§24.4 policy constant retry_grace: 1 — first provider-caused retry is free" },
+        "retry_grace": { "type": "integer", "minimum": 0 },
         "validator": {
           "anyOf": [
-            { "type": "null", "$comment": "null when the run failed or paused before a render/validate happened" },
+            { "type": "null" },
             {
               "type": "object",
               "required": ["ok", "blockers", "majors", "minors"],
@@ -97,10 +95,10 @@
             }
           ]
         },
-        "layers": { "type": "array", "items": { "type": "string" }, "$comment": "final layer names (or pre-run tree after a rollback) — §23.1 rule 5 role naming" },
-        "undo_entries": { "type": "integer", "minimum": 0, "maximum": 1, "$comment": "§1.5 constraint 10: one transaction per run — undo is exactly one history entry" },
-        "rolled_back": { "type": "boolean", "$comment": "§5.6 agent.rollback on failure/cancel" },
-        "reservation_released": { "type": "boolean", "$comment": "credit reservation released (always true once the run settles; §12 reservations held->committed/released)" }
+        "layers": { "type": "array", "items": { "type": "string" } },
+        "undo_entries": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "rolled_back": { "type": "boolean" },
+        "reservation_released": { "type": "boolean" }
       }
     }
   }

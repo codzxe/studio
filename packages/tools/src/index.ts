@@ -2,6 +2,8 @@
 // Wave 5 tool authors. §6: tools wrap engine commands; raw command ids never
 // reach the model.
 
+import type { AnyTool } from "./types.js";
+
 export * from "./types.js";
 export * from "./kit.js";
 export * from "./registry.js";
