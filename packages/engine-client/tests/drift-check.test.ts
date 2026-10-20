@@ -18,6 +18,7 @@
 // reconcile with the owners named above — do not weaken the assertion to get CI green.
 
 import { describe, expect, it } from "vitest";
+import { loadReply } from "./fixtures.js";
 import {
   METHODS_PIN,
   REQUIRED_METHODS,
@@ -68,18 +69,9 @@ const externalRequiredCommands: readonly string[] | null = await tryLoadExternal
 /** REQUIRED_COMMANDS is W2-L's src/commands.ts list once available; local fallback otherwise. */
 const REQUIRED_COMMANDS: readonly string[] = externalRequiredCommands ?? LOCAL_REQUIRED_COMMANDS;
 
-interface CommandsFixture {
-  $comment?: string | string[];
-  request: Record<string, unknown>;
-  reply: Record<string, unknown>;
-}
-
 async function loadCommandListFixture(): Promise<CommandEntry[]> {
-  const fixtureName = "engine-commands";
-  const mod = (await import(`../fixtures/replies/${fixtureName}.json`)) as {
-    default: CommandsFixture;
-  };
-  const result: unknown = mod.default.reply.result;
+  const fixture = await loadReply("engine-commands");
+  const result: unknown = fixture.reply.result;
   // The #3684 pin: a bare array of command objects (never {"commands": [...]}).
   return commandListResultSchema.parse(result);
 }
@@ -125,11 +117,8 @@ describe("upstream drift alarm (§21)", () => {
   });
 
   it("the frozen headless METHODS surface is unchanged (rpc.rs)", async () => {
-    const fixtureName = "methods";
-    const mod = (await import(`../fixtures/replies/${fixtureName}.json`)) as {
-      default: CommandsFixture;
-    };
-    const methods: unknown = mod.default.reply.result;
+    const fixture = await loadReply("methods");
+    const methods: unknown = fixture.reply.result;
     expect(methods).toEqual([...METHODS_PIN]);
 
     const listed = new Set(methods as string[]);

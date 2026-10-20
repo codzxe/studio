@@ -52,7 +52,8 @@ export type Envelope = z.infer<typeof envelopeSchema>;
 
 /** `auth` success: security.rs always replies exactly `{"authenticated": true}`. */
 export const authOkSchema = envelopeSchema.and(
-  z.object({ result: z.object({ authenticated: z.literal(true) }).strict() }).strict(),
+  // Non-strict outer: the envelope already strictly validates id/ok; this arm only pins `result`.
+  z.object({ result: z.object({ authenticated: z.literal(true) }).strict() }),
 );
 
 /** `doc.new` result: file.new replies `{"document": index}` — a session index, not an id. */
@@ -90,16 +91,41 @@ export const sessionListResultSchema = z
 /** `[x, y, w, h]` or null when a surface has no content (inspect.rs :: layer_sel bounds). */
 const boundsSchema = z.union([z.tuple([z.number(), z.number(), z.number(), z.number()]), z.null()]);
 
+const layerKindSchema = z.enum(["Pixel", "Group", "Adjustment", "Fill", "Type", "Shape", "Smart Object"]);
+
+/** One layer node of `doc.inspect`'s `layers` tree (base keys + kind-specific extras). */
+export interface LayerNode {
+  id: number;
+  name: string;
+  kind: z.infer<typeof layerKindSchema>;
+  visible: boolean;
+  labelColor: string;
+  opacity: number;
+  fill: number;
+  blend: string;
+  clipped: boolean;
+  hasMask: boolean;
+  hasVectorMask: boolean;
+  vectorMaskEnabled: boolean | null;
+  bounds: [number, number, number, number] | null;
+  selected: boolean;
+  linkGroup: number | null;
+  children?: LayerNode[];
+  expanded?: boolean;
+  text?: { text: string; font: string; sizePt: number };
+  adjustment?: { kind: string; params: unknown };
+}
+
 /**
- * One layer node of `doc.inspect`'s `layers` tree — base keys on every node
- * (inspect.rs :: layer_sel), plus kind-specific extras (children/expanded on groups,
- * text on type layers, adjustment on adjustment layers, smart* on smart objects).
+ * One layer node — base keys on every node (inspect.rs :: layer_sel), plus kind-specific
+ * extras (children/expanded on groups, text on type layers, adjustment on adjustment
+ * layers, smart* on smart objects). Recursive: groups list their `children`.
  */
-export const layerNodeSchema = z
+export const layerNodeSchema: z.ZodType<LayerNode> = z
   .object({
     id: z.number().int().nonnegative(),
     name: z.string(),
-    kind: z.enum(["Pixel", "Group", "Adjustment", "Fill", "Type", "Shape", "Smart Object"]),
+    kind: layerKindSchema,
     visible: z.boolean(),
     labelColor: z.string(),
     opacity: z.number().min(0).max(1),

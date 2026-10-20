@@ -1,0 +1,22 @@
+{
+  "$comment": [
+    "Recorded-style fixture (hand-crafted, not machine-recorded).",
+    "Shapes pinned to vendor/photocraft/crates/automation/src/security.rs :: authentication_reply (success arm)",
+    "and docs/control-protocol.md › 'The first request on every TCP connection must authenticate'.",
+    "The token is a 64-hex-char credential normally read from a mode-0600 token file; this synthetic value is not a secret.",
+    "A later auth frame on the same connection replies {\"ok\":false,\"error\":\"already authenticated\"}",
+    "and the connection keeps serving (security.rs :: repeat_auth_reply)."
+  ],
+  "request": {
+    "id": "auth",
+    "method": "auth",
+    "params": {
+      "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+  },
+  "reply": {
+    "id": "auth",
+    "ok": true,
+    "result": { "authenticated": true }
+  }
+}
