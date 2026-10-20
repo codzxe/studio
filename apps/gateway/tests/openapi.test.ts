@@ -133,7 +133,7 @@ const ROUTE_MOUNTS: Readonly<Record<string, readonly string[]>> = {
   "index.ts": ["/v1"],
 };
 
-/** Strip // and /* */ comments, respecting strings and template literals. */
+/** Strip line (//) and block comments, respecting strings and template literals. */
 function stripComments(source: string): string {
   const out: string[] = [];
   let i = 0;
@@ -226,8 +226,9 @@ function scanRouteLiterals(): RouteLiteral[] {
   const found: RouteLiteral[] = [];
   for (const file of Object.keys(ROUTE_MOUNTS)) {
     const source = stripComments(readFileSync(join(ROUTES_DIR, file), "utf8"));
-    const pattern =
-      /\.(get|post|put|patch|delete|all|route|use)\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g;
+    // Coarse on purpose: string args with escaped quotes would confuse it —
+    // none exist in routes/ (paths are plain literals).
+    const pattern = /\.(get|post|put|patch|delete|all|route|use)\(\s*(?:"([^"]*)"|'([^']*)')/g;
     for (const match of source.matchAll(pattern)) {
       const method = match[1] ?? "";
       const literal = match[2] ?? match[3] ?? "";
@@ -305,7 +306,10 @@ describe("openapi document (W4-O)", () => {
     const operationIds = new Set<string>();
     for (const { operation } of operations) {
       const status = operation["x-studio-status"];
-      expect(AUDIT_STATUSES.has(String(status)), `bad x-studio-status: ${String(status)}`).toBe(true);
+      expect(
+        AUDIT_STATUSES.has(String(status)),
+        `bad x-studio-status: ${String(status)}`
+      ).toBe(true);
       const id = String(operation.operationId);
       expect(operationIds.has(id), `duplicate operationId ${id}`).toBe(false);
       operationIds.add(id);
@@ -437,7 +441,11 @@ describe("route files ⊆ spec (coarse scan, see header LIMITATIONS)", () => {
     const literals = scanRouteLiterals();
     const files = new Set(literals.map((l) => l.file));
     for (const file of Object.keys(ROUTE_MOUNTS)) {
-      expect(files.has(file), `${file} yielded no route literals — is it still a router?`).toBe(true);
+      const isRouter = files.has(file);
+      expect(
+        isRouter,
+        `${file} yielded no route literals — is it still a router?`
+      ).toBe(true);
     }
   });
 });

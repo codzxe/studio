@@ -262,12 +262,13 @@ export function enginePoolProbe(pool: PoolLike): Probe {
     check: async (): Promise<ProbeCheck> => {
       if (pool.ping !== undefined) {
         const ping = await pool.ping();
-        return ping === undefined
-          ? { ok: true, detail: "supervisor ping ok" }
-          : {
-              ok: true,
-              detail: `supervisor ping ok (sessions=${ping.sessions}, idle=${ping.idle})`
-            };
+        if (ping === undefined) {
+          return { ok: true, detail: "supervisor ping ok" };
+        }
+        return {
+          ok: true,
+          detail: `supervisor ping ok (sessions=${ping.sessions}, idle=${ping.idle})`
+        };
       }
       if (pool.allocate === undefined) {
         return { ok: false, status: "down", detail: "pool exposes neither ping nor allocate" };
@@ -286,13 +287,14 @@ export function enginePoolProbe(pool: PoolLike): Probe {
           }
         }
       }
-      return releaseFailed
-        ? {
-            ok: true,
-            status: "degraded",
-            detail: "scratch session.list ok; release failed (session may leak)"
-          }
-        : { ok: true, detail: "scratch session allocate -> session.list -> release ok" };
+      if (releaseFailed) {
+        return {
+          ok: true,
+          status: "degraded",
+          detail: "scratch session.list ok; release failed (session may leak)"
+        };
+      }
+      return { ok: true, detail: "scratch session allocate -> session.list -> release ok" };
     }
   };
 }
@@ -422,20 +424,23 @@ function resolveProbe(
   if (enabled !== undefined && !enabled.has(name)) {
     return staticProbe(name, { ok: true, status: "skipped", detail: "disabled by probe flag" });
   }
-  if (make === undefined) {
-    return enabled === undefined
-      ? staticProbe(name, {
-          ok: true,
-          status: "skipped",
-          detail: "not configured (no client injected)"
-        })
-      : staticProbe(name, {
-          ok: false,
-          status: "down",
-          detail: "flagged but no client injected (bootstrap wiring bug)"
-        });
+  if (make !== undefined) {
+    return make();
   }
-  return make();
+  if (enabled === undefined) {
+    // No flags configured: local/CI mode without this dependency.
+    return staticProbe(name, {
+      ok: true,
+      status: "skipped",
+      detail: "not configured (no client injected)"
+    });
+  }
+  // Flagged but no client injected: a bootstrap wiring bug — visible as down.
+  return staticProbe(name, {
+    ok: false,
+    status: "down",
+    detail: "flagged but no client injected (bootstrap wiring bug)"
+  });
 }
 
 /**

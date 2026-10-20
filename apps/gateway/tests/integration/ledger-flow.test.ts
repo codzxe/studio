@@ -103,8 +103,14 @@ describe("§20 #10 ledger flow — reserve→commit matches, refunds, no double 
     // Balances match (§20 #10): grant − hold + settlement = grant − charge.
     expect(await h.ledger.balanceAfter(ORG_A)).toBe(TRIAL_CREDITS - STANDARD_TIER_CREDITS);
 
-    // The ledger is append-only and tells the whole story in order.
-    expect(h.ledger.all().map((row) => row.kind)).toEqual(["grant", "reserve", "commit"]);
+    // The ledger is append-only and tells the whole story in order (org A's
+    // rows only — org B's seeded trial is a different tenant's pot).
+    expect(
+      h.ledger
+        .all()
+        .filter((row) => row.organizationId === ORG_A)
+        .map((row) => row.kind),
+    ).toEqual(["grant", "reserve", "commit"]);
   });
 
   it("a §5.2 budget-stop partial commit returns the uncharged remainder", async () => {

@@ -165,9 +165,7 @@ function walk(value: unknown, policy: RedactionPolicy, depth: number): unknown {
     return value;
   }
   if (Array.isArray(value)) {
-    const items = value
-      .slice(0, policy.maxKeys)
-      .map((item) => walk(item, policy, depth + 1));
+    const items = value.slice(0, policy.maxKeys).map((item) => walk(item, policy, depth + 1));
     if (value.length > policy.maxKeys) {
       items.push(AUDIT_TRUNCATED);
     }
@@ -603,18 +601,23 @@ export class AuditService {
       };
     }
 
-    if (
-      (query.from !== undefined && !isDate(query.from)) ||
-      (query.to !== undefined && !isDate(query.to)) ||
-      (query.from !== undefined &&
-        query.to !== undefined &&
-        query.from.getTime() > query.to.getTime())
-    ) {
+    const from = query.from;
+    const to = query.to;
+    if ((from !== undefined && !isDate(from)) || (to !== undefined && !isDate(to))) {
       return {
         ok: false,
         code: "invalid_window",
-        message: "from/to must be valid dates with from <= to (inclusive bounds).",
+        message: "from/to must be valid dates.",
         hint: "Use ISO 8601 strings parsed at the route layer.",
+        retryable: false
+      };
+    }
+    if (from !== undefined && to !== undefined && from.getTime() > to.getTime()) {
+      return {
+        ok: false,
+        code: "invalid_window",
+        message: "from must not be after to (both bounds are inclusive).",
+        hint: "Swap the bounds or drop one.",
         retryable: false
       };
     }
@@ -644,8 +647,8 @@ export class AuditService {
     try {
       // limit+1: one lookahead row decides whether a nextCursor exists.
       rows = await this.#store.page(org, {
-        from: query.from,
-        to: query.to,
+        from,
+        to,
         before,
         limit: limit + 1
       });

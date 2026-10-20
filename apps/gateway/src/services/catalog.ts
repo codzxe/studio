@@ -999,8 +999,11 @@ export async function registerWorkspaceTemplate(
       { hint: "Register templates into your own workspace (§15.1).", retryable: false },
     );
   }
-  const rank = ROLE_RANK[input.caller.role] ?? -1;
-  if (rank < ROLE_RANK.admin) {
+  // ROLE_RANK[role] is number for every declared Role, but a misbehaving auth
+  // adapter can hand us garbage at runtime — anything unknown fails CLOSED
+  // (the W4-C can() rule: runtime garbage grants nothing, §15.2).
+  const rank = ROLE_RANK[input.caller.role];
+  if (typeof rank !== "number" || rank < ROLE_RANK.admin) {
     return err("forbidden", "Your workspace role does not allow registering templates.", {
       hint: "Admins and owners register workspace templates (§15.2).",
       retryable: false,
