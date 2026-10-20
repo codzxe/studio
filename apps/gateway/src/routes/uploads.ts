@@ -111,10 +111,7 @@ export const MULTIPART_OVERHEAD_SLACK_BYTES = 8 * 1024;
  * anything. Malformed/absent headers pass through (the actual bytes are
  * re-checked by validateUpload; §15.2: headers lie).
  */
-export function contentLengthOverCap(
-  contentLength: string | undefined,
-  maxBytes: number,
-): boolean {
+export function contentLengthOverCap(contentLength: string | undefined, maxBytes: number): boolean {
   if (contentLength === undefined) {
     return false;
   }
@@ -279,8 +276,7 @@ uploadRoutes.post("/uploads", async (c) => {
   if (nameField !== undefined && typeof nameField !== "string") {
     throw new AppError(400, "validation_failed", "The 'name' field must be a text value.");
   }
-  const clientName =
-    nameField !== undefined && nameField.length > 0 ? nameField : file.name;
+  const clientName = nameField !== undefined && nameField.length > 0 ? nameField : file.name;
   if (clientName.length > 200) {
     throw new AppError(400, "validation_failed", "The asset name is too long.", {
       hint: "Use a name of at most 200 characters.",

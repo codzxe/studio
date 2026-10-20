@@ -49,6 +49,7 @@ import { httpStatusFor, type Failure, type PlanId, type Result } from "@studio/c
 import { can, type Role } from "../authz/roles.js";
 import { AppError } from "../middleware/error-mapper.js";
 import type { AppEnv } from "../types.js";
+import type { Document, DocumentVersion } from "@studio/db";
 import {
   MAX_DOCUMENTS_PAGE_SIZE,
   MAX_DOCUMENT_SIDE_PX,
@@ -62,8 +63,6 @@ import {
   listDocuments,
   restoreVersion,
   updateDocument,
-  type Document,
-  type DocumentVersion,
   type DocumentsServiceDeps,
   type TemplateCatalogLike,
   type StorageLike,

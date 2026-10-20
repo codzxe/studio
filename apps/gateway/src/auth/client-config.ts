@@ -70,7 +70,12 @@ export function buildWebAuthClientConfig(input: {
       "[auth] webAuthClientConfig requires the gateway origin (BETTER_AUTH_URL)."
     );
   }
-  const parsed = URL.parse?.(baseURL) ?? safeParseUrl(baseURL);
+  let parsed: URL;
+  try {
+    parsed = new URL(baseURL);
+  } catch {
+    throw new Error("[auth] webAuthClientConfig.baseURL must be an http(s) URL.");
+  }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("[auth] webAuthClientConfig.baseURL must be an http(s) URL.");
   }
@@ -92,9 +97,4 @@ export function buildWebAuthClientConfig(input: {
       admin: Object.freeze({ enabled: true, defaultRole: "user" })
     })
   });
-}
-
-/** URL.parse fallback for older runtimes (Node 22 has it; keep tests honest). */
-function safeParseUrl(value: string): URL {
-  return new URL(value);
 }

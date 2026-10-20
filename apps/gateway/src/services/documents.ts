@@ -31,7 +31,6 @@ import {
   err,
   ok,
   planLimits,
-  type Failure,
   type PlanId,
   type Result,
 } from "@studio/config";
@@ -147,7 +146,7 @@ export function encodeDocumentsCursor(createdAt: Date, id: string): string {
  * a 400, never a silent restart from the first page (no page skipping lies).
  */
 export function decodeDocumentsCursor(cursor: string): Result<DocumentsCursor> {
-  const rejected = (message: string): Failure =>
+  const rejected = (message: string): Result<never> =>
     err("validation_failed", message, {
       hint: "Pass the next_cursor value from the previous page exactly as received.",
       retryable: false,
@@ -329,7 +328,7 @@ export interface DocumentsStore extends DocumentQueries {
 // ---------------------------------------------------------------------------
 
 /** Drizzle executor: the pooled db or an open transaction (same method surface). */
-type DrizzleExecutor = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type DrizzleExecutor = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 function firstRow<T>(rows: readonly T[], what: string): T {
   const row = rows[0];
@@ -567,19 +566,19 @@ export interface RestoredDocument {
   readonly bytesStored: number;
 }
 
-const documentNotFound = (): Failure =>
+const documentNotFound = (): Result<never> =>
   err("not_found", "Document not found.", {
     hint: "Check the id against GET /v1/documents for this workspace.",
     retryable: false,
   });
 
-const versionNotFound = (): Failure =>
+const versionNotFound = (): Result<never> =>
   err("not_found", "Version not found.", {
     hint: "Check the id against GET /v1/documents/:id/versions (revision timeline).",
     retryable: false,
   });
 
-const storeUnavailable = (): Failure =>
+const storeUnavailable = (): Result<never> =>
   err("internal_error", "The document store is unavailable.", { retryable: true });
 
 /** Sentinel for the optimistic-revision guard inside a restore transaction. */

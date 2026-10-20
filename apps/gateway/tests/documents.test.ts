@@ -12,7 +12,11 @@
 //   - archive ≠ delete (soft marker only; §12.2)
 
 import { describe, expect, it } from "vitest";
-import pino from "pino";
+// Named import: with vitest's types in the program, pino's default-import
+// form degrades to a non-callable namespace under NodeNext (TS2349); the
+// named `pino` export is callable in both type and runtime interop. Other
+// gateway test files still carry the default-import form (flagged W4-F).
+import { pino } from "pino";
 import type { PlanId } from "@studio/config";
 import type {
   AuditLog,

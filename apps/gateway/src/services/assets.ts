@@ -471,11 +471,7 @@ export function createAssetsService(deps: AssetsServiceDeps): AssetsService {
 
     const assetId = newId();
     const filename = sanitizeStoredFilename(input.clientName, extensionForMime(input.mime));
-    const key = buildTenantAssetKey({
-      organizationId: input.organizationId,
-      assetId,
-      filename,
-    });
+    const key = buildTenantAssetKey({ organizationId: input.organizationId, assetId, filename });
     if (!key.ok) {
       return failAs(key);
     }
