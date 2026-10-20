@@ -15,7 +15,7 @@
 //
 // Pure module: no I/O, no clock, no globals — the client injects time and randomness.
 
-import { engineError, type EngineErrorEnvelope, type EngineErrorCode } from "./errors.js";
+import { type EngineErrorCode, type EngineErrorEnvelope, engineError } from "./errors.js";
 
 // ---------------------------------------------------------------------------
 // Kinds

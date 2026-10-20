@@ -22,10 +22,10 @@
 import { describe, expect, it } from "vitest";
 import { loadReply } from "./fixtures.js";
 import {
+  type CommandEntry,
   METHODS_PIN,
   REQUIRED_METHODS,
   commandListResultSchema,
-  type CommandEntry,
 } from "./protocol-schemas.js";
 
 /**
@@ -87,9 +87,7 @@ describe("upstream drift alarm (§21)", () => {
     expect(
       missing,
       missing.length > 0
-        ? `upstream drift: the pinned engine registry no longer serves ${missing.join(", ")}. ` +
-          "Re-record fixtures/replies/engine-commands.json against the new revision and " +
-          "reconcile REQUIRED_COMMANDS with §2.2 (src/commands.ts owner: W2-D)."
+        ? `upstream drift: the pinned engine registry no longer serves ${missing.join(", ")}. Re-record fixtures/replies/engine-commands.json against the new revision and reconcile REQUIRED_COMMANDS with §2.2 (src/commands.ts owner: W2-D).`
         : "",
     ).toEqual([]);
   });
@@ -102,7 +100,9 @@ describe("upstream drift alarm (§21)", () => {
     const missing = LOCAL_REQUIRED_COMMANDS.filter((id) => !recordedIds.has(id));
     expect(missing).toEqual([]);
     if (externalRequiredCommands !== null) {
-      const dropped = LOCAL_REQUIRED_COMMANDS.filter((id) => !externalRequiredCommands.includes(id));
+      const dropped = LOCAL_REQUIRED_COMMANDS.filter(
+        (id) => !externalRequiredCommands.includes(id),
+      );
       expect(dropped, "src/commands.ts dropped a §2.2-pinned command").toEqual([]);
       // Registry hygiene: the required list carries each id exactly once, non-empty.
       expect(
@@ -121,8 +121,27 @@ describe("upstream drift alarm (§21)", () => {
     for (const command of commands) {
       const keys = Object.keys(command).sort();
       const expected = keys.includes("keywords")
-        ? ["disabledReason", "enabled", "id", "keywords", "label", "menu", "needsDocument", "params", "shortcut"]
-        : ["disabledReason", "enabled", "id", "label", "menu", "needsDocument", "params", "shortcut"];
+        ? [
+            "disabledReason",
+            "enabled",
+            "id",
+            "keywords",
+            "label",
+            "menu",
+            "needsDocument",
+            "params",
+            "shortcut",
+          ]
+        : [
+            "disabledReason",
+            "enabled",
+            "id",
+            "label",
+            "menu",
+            "needsDocument",
+            "params",
+            "shortcut",
+          ];
       expect(keys, command.id).toEqual(expected);
     }
   });
@@ -137,8 +156,7 @@ describe("upstream drift alarm (§21)", () => {
     expect(
       missingMethods,
       missingMethods.length > 0
-        ? `upstream drift: the headless server no longer lists ${missingMethods.join(", ")}. ` +
-          "Re-record fixtures/replies/methods.json and update METHODS_PIN in tests/protocol-schemas.ts."
+        ? `upstream drift: the headless server no longer lists ${missingMethods.join(", ")}. Re-record fixtures/replies/methods.json and update METHODS_PIN in tests/protocol-schemas.ts.`
         : "",
     ).toEqual([]);
   });

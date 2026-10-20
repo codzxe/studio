@@ -49,5 +49,5 @@ export { MAX_REQUEST_BYTES, MAX_BATCH_STEPS, type RequestId } from "./transport/
 
 // connection.ts's WireReply (one exchange's correlated outcome) wins; the methods
 // module's full-envelope type stays importable under its alias.
-export { type WireReply } from "./transport/connection.js";
-export { type WireReply as ProtocolWireReply } from "./methods/protocol.js";
+export type { WireReply } from "./transport/connection.js";
+export type { WireReply as ProtocolWireReply } from "./methods/protocol.js";

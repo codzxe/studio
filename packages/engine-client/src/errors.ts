@@ -19,7 +19,7 @@
 // module is the single facade-level catalog: every failure the public API returns is
 // one of these stable codes with the offending engine text preserved verbatim in `data`.
 
-import { isNotRunTimeout, isReplyTimeout, type MethodBuildFailure } from "./methods/protocol.js";
+import { type MethodBuildFailure, isNotRunTimeout, isReplyTimeout } from "./methods/protocol.js";
 import type { TransportError, TransportFailure } from "./transport/errors.js";
 import { transportFailure } from "./transport/errors.js";
 
@@ -214,12 +214,15 @@ export function isEngineError(value: unknown): value is EngineErrorEnvelope {
 // Engine reply strings → catalog codes
 // ---------------------------------------------------------------------------
 
-const AUTH_PATTERNS = /already authenticated|invalid token|bad token|unauthorized|unauthenticated|authentication required|authentication/i;
+const AUTH_PATTERNS =
+  /already authenticated|invalid token|bad token|unauthorized|unauthenticated|authentication required|authentication/i;
 const UNKNOWN_ID_PATTERN = /unknown (tool|command|method|rpc)\b/i;
 const CONNECTION_CAP_PATTERN =
   /connection cap|too many (simultaneous |simultaneously serviced )?connections?|connection (limit|quota)|listener (full|busy)/i;
-const STEP_CEILING_PATTERN = /too many steps|steps? (limit|exceed)|batch (limit|too many|exceed)|at most \d+ steps/i;
-const FRAME_SIZE_PATTERN = /too large|too long|exceeds|exceeded|oversized|maximum (line|reply|request|frame)|1 ?MiB|8 ?MiB/i;
+const STEP_CEILING_PATTERN =
+  /too many steps|steps? (limit|exceed)|batch (limit|too many|exceed)|at most \d+ steps/i;
+const FRAME_SIZE_PATTERN =
+  /too large|too long|exceeds|exceeded|oversized|maximum (line|reply|request|frame)|1 ?MiB|8 ?MiB/i;
 const CAPABILITY_PATH_PATTERN =
   /outside|beneath|read root|write root|ambient path|traversal|capability|relative path/i;
 
@@ -284,7 +287,11 @@ export function engineReplyFailure(text: string): EngineErrorEnvelope {
  */
 export function mapTransportError(error: TransportError): EngineErrorEnvelope {
   const failure: TransportFailure = transportFailure(error);
-  const data: Record<string, unknown> = { source: "transport", code: failure.code, message: failure.message };
+  const data: Record<string, unknown> = {
+    source: "transport",
+    code: failure.code,
+    message: failure.message,
+  };
   if (failure.hint !== undefined) {
     data.hint = failure.hint;
   }
@@ -302,7 +309,10 @@ export function mapTransportError(error: TransportError): EngineErrorEnvelope {
     case "reply_timeout":
       return engineError("reply_timeout", { data, retryable: failure.retryable === true });
     case "connection_dropped_mid_call":
-      return engineError("connection_dropped_mid_call", { data, retryable: failure.retryable === true });
+      return engineError("connection_dropped_mid_call", {
+        data,
+        retryable: failure.retryable === true,
+      });
     case "frame_too_large":
       return engineError("frame_too_large", { data, retryable: failure.retryable === true });
     case "protocol_violation":
@@ -334,7 +344,14 @@ function isTransportErrorLike(value: unknown): boolean {
   return (
     record.name === "TransportError" &&
     typeof record.code === "string" &&
-    ["connection_refused", "auth_rejected", "connection_dropped_mid_call", "reply_timeout", "frame_too_large", "protocol_violation"].includes(record.code)
+    [
+      "connection_refused",
+      "auth_rejected",
+      "connection_dropped_mid_call",
+      "reply_timeout",
+      "frame_too_large",
+      "protocol_violation",
+    ].includes(record.code)
   );
 }
 

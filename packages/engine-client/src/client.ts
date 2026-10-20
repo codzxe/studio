@@ -19,39 +19,25 @@
 // (W2-B) owns the reply budget; auth.ts (W2-B) owns token loading; THIS module owns the
 // policy: per-kind retry, §3.4 timeout defaults, AbortSignal, and the envelope surface.
 
+import type { ZodType, ZodTypeDef } from "zod";
 import type { EngineAuth } from "./auth.js";
-import { generateControlToken, isControlToken, parseEngineAuth, resolveEngineToken } from "./auth.js";
+import {
+  generateControlToken,
+  isControlToken,
+  parseEngineAuth,
+  resolveEngineToken,
+} from "./auth.js";
 import { validateReplySize } from "./budgets.js";
 import {
-  buildFailure,
-  PROTOCOL_METHODS,
-  summarizeIssues,
-  type BuiltMethodCall,
-  type MethodCall,
-} from "./methods/protocol.js";
+  type EngineErrorEnvelope,
+  type EngineFacadeFailure,
+  type EngineOutcome,
+  engineError,
+  engineOk,
+  engineReplyFailure,
+  mapTransportThrow,
+} from "./errors.js";
 import {
-  batch as buildBatch,
-  engineCommands as buildEngineCommands,
-  engineExecute as buildEngineExecute,
-  engineExecuteBackground as buildEngineExecuteBackground,
-  jobsCancel as buildJobsCancel,
-  jobsList as buildJobsList,
-  methodsCall as buildMethodsCall,
-  type BatchInput,
-  type BatchResult,
-  type CommandListResult,
-  type EngineExecuteInput,
-  type JobsCancelResult,
-  type JobsListResult,
-} from "./methods/engine-commands.js";
-import {
-  docClose as buildDocClose,
-  docInspect as buildDocInspect,
-  docNew as buildDocNew,
-  docOpen as buildDocOpen,
-  docPlace as buildDocPlace,
-  docSelect as buildDocSelect,
-  sessionList as buildSessionList,
   type DocIndexInput,
   type DocNewInput,
   type DocNewResult,
@@ -59,54 +45,73 @@ import {
   type DocOpenResult,
   type DocPlaceInput,
   type DocPlaceResult,
-  type DocumentInspect,
   type DocSelectInput,
+  type DocumentInspect,
   type SessionList,
+  docClose as buildDocClose,
+  docInspect as buildDocInspect,
+  docNew as buildDocNew,
+  docOpen as buildDocOpen,
+  docPlace as buildDocPlace,
+  docSelect as buildDocSelect,
+  sessionList as buildSessionList,
 } from "./methods/document.js";
 import {
-  docExportDataSets as buildDocExportDataSets,
-  docExportLayers as buildDocExportLayers,
-  docImportDataSets as buildDocImportDataSets,
+  type BatchInput,
+  type BatchResult,
+  type CommandListResult,
+  type EngineExecuteInput,
+  type JobsCancelResult,
+  type JobsListResult,
+  batch as buildBatch,
+  engineCommands as buildEngineCommands,
+  engineExecute as buildEngineExecute,
+  engineExecuteBackground as buildEngineExecuteBackground,
+  jobsCancel as buildJobsCancel,
+  jobsList as buildJobsList,
+  methodsCall as buildMethodsCall,
+} from "./methods/engine-commands.js";
+import {
   type DocExportDataSetsInput,
   type DocExportLayersInput,
   type DocImportDataSetsInput,
   type ExportResult,
   type ImportDataSetsResult,
+  docExportDataSets as buildDocExportDataSets,
+  docExportLayers as buildDocExportLayers,
+  docImportDataSets as buildDocImportDataSets,
 } from "./methods/export-data.js";
 import {
-  docRender as buildDocRender,
-  docSave as buildDocSave,
+  type BuiltMethodCall,
+  type MethodCall,
+  PROTOCOL_METHODS,
+  buildFailure,
+  summarizeIssues,
+} from "./methods/protocol.js";
+import {
   type DocRenderInput,
   type DocSaveInput,
   type DocSaveResult,
   type RenderResult,
+  docRender as buildDocRender,
+  docSave as buildDocSave,
 } from "./methods/render-save.js";
-import type { ZodType, ZodTypeDef } from "zod";
 import {
-  engineError,
-  engineOk,
-  engineReplyFailure,
-  mapTransportThrow,
-  type EngineErrorEnvelope,
-  type EngineFacadeFailure,
-  type EngineOutcome,
-} from "./errors.js";
-import {
-  abortOutcome,
-  connectAttemptPlan,
-  MAX_CONNECT_ATTEMPTS,
-  mutateMidCallFailure,
-  shouldAutoRetry,
   type BackoffPolicy,
   type CallKind,
+  MAX_CONNECT_ATTEMPTS,
+  abortOutcome,
+  connectAttemptPlan,
+  mutateMidCallFailure,
+  shouldAutoRetry,
 } from "./retry.js";
-import { ProtocolConnection, type ConnectionBudget } from "./transport/connection.js";
+import { type ConnectionBudget, ProtocolConnection } from "./transport/connection.js";
+import { type TransportError, isTransportError } from "./transport/errors.js";
+import { connectionDroppedMidCall, protocolViolation } from "./transport/errors.js";
 import { DEFAULT_CALL_TIMEOUT_MS, decodeFrame, encodeFrame } from "./transport/frame.js";
-import { isTransportError, type TransportError } from "./transport/errors.js";
+import type { JsonObject } from "./transport/frame.js";
 import type { Clock, TransportSocket } from "./transport/socket.js";
 import { SYSTEM_CLOCK } from "./transport/socket.js";
-import type { JsonObject } from "./transport/frame.js";
-import { connectionDroppedMidCall, protocolViolation } from "./transport/errors.js";
 
 // ---------------------------------------------------------------------------
 // Public option surfaces
@@ -209,8 +214,7 @@ export function resolveWaitMs(
   waitMs: number | undefined,
   timeouts: Required<EngineTimeouts>,
 ): number {
-  const requested =
-    waitMs ?? (RENDER_METHODS.has(method) ? timeouts.renderMs : timeouts.readMs);
+  const requested = waitMs ?? (RENDER_METHODS.has(method) ? timeouts.renderMs : timeouts.readMs);
   // transport/frame.ts: the client call timeout stays strictly below the engine's 60 s
   // reply deadline so the client's error is the one callers see (§MCP bridge).
   return Math.max(1, Math.min(requested, DEFAULT_CALL_TIMEOUT_MS));
@@ -271,7 +275,13 @@ class LineSocketAdapter implements TransportSocket {
     }
   }
 
-  onFrame(callback: (frame: Parameters<TransportSocket["onFrame"]> extends never ? never : import("./transport/frame.js").FramedMessage) => void): void {
+  onFrame(
+    callback: (
+      frame: Parameters<TransportSocket["onFrame"]> extends never
+        ? never
+        : import("./transport/frame.js").FramedMessage,
+    ) => void,
+  ): void {
     this.frameCallbacks.push(callback as (frame: unknown) => void);
   }
 
@@ -306,7 +316,9 @@ class LineSocketAdapter implements TransportSocket {
         callback(
           isTransportError(error)
             ? error
-            : connectionDroppedMidCall("the connection stream failed while in use", { cause: error }),
+            : connectionDroppedMidCall("the connection stream failed while in use", {
+                cause: error,
+              }),
         );
       }
     });
@@ -340,7 +352,9 @@ class LineSocketAdapter implements TransportSocket {
           callback(frame);
         }
       } catch (error) {
-        const failure = isTransportError(error) ? error : protocolViolation("frame decoding failed");
+        const failure = isTransportError(error)
+          ? error
+          : protocolViolation("frame decoding failed");
         this.open = false;
         for (const callback of this.errorCallbacks.slice()) {
           callback(failure);
@@ -375,7 +389,10 @@ export class EngineClient {
     if (typeof options.transport === "function") {
       this.socketFactory = options.transport;
     } else if (typeof options.connect === "function") {
-      this.socketFactory = () => new LineSocketAdapter(options.connect!());
+      // Capture the narrowing: the factory below may run after `options` is out of
+      // scope, and biome forbids non-null assertions (lint/style/noNonNullAssertion).
+      const connect = options.connect;
+      this.socketFactory = () => new LineSocketAdapter(connect());
     } else {
       throw new EngineClientConfigError(
         "EngineClient needs a socket factory: pass `transport` (TransportSocket) or `connect` (JSON-lines socket)",
@@ -455,11 +472,14 @@ export class EngineClient {
       encodeFrame({ kind: "request", id: 1, method, params: wireParams.value });
     } catch (error) {
       if (isTransportError(error)) {
-        return engineError(error.code === "frame_too_large" ? "frame_too_large" : "engine_unavailable", {
-          message: error.code === "frame_too_large" ? error.message : undefined,
-          data: { source: "request_precheck", code: error.code, message: error.message },
-          retryable: false,
-        });
+        return engineError(
+          error.code === "frame_too_large" ? "frame_too_large" : "engine_unavailable",
+          {
+            message: error.code === "frame_too_large" ? error.message : undefined,
+            data: { source: "request_precheck", code: error.code, message: error.message },
+            retryable: false,
+          },
+        );
       }
       return buildFailure("invalid_params", "request params are not JSON-encodable");
     }
@@ -623,7 +643,8 @@ export class EngineClient {
       return engineError("engine_crashed", {
         data: {
           firstFailure: { code: midCall.code, message: midCall.message, data: midCall.data },
-          reconnectFailure: lastFailure === null ? null : { code: lastFailure.code, message: lastFailure.message },
+          reconnectFailure:
+            lastFailure === null ? null : { code: lastFailure.code, message: lastFailure.message },
         },
       });
     }
@@ -717,7 +738,10 @@ export class EngineClient {
         data: { source: "client_deadline", waitMs, dropped: true },
       });
     }
-    if (!outcome.ok && (outcome.code === "frame_too_large" || outcome.code === "engine_command_failed")) {
+    if (
+      !outcome.ok &&
+      (outcome.code === "frame_too_large" || outcome.code === "engine_command_failed")
+    ) {
       const dropped = connection.connectionState !== "ready";
       if (dropped) {
         await connection.close();
@@ -734,42 +758,66 @@ export class EngineClient {
   }
 
   /** doc.new — mutate. */
-  newDocument(input: DocNewInput = {}, options?: WrapperOptions): Promise<EngineOutcome<DocNewResult>> {
+  newDocument(
+    input: DocNewInput = {},
+    options?: WrapperOptions,
+  ): Promise<EngineOutcome<DocNewResult>> {
     return this.executeBuilt(buildDocNew(input), "mutate", options);
   }
 
   /** doc.open — mutate (changes the active document). */
-  openDocument(input: DocOpenInput, options?: WrapperOptions): Promise<EngineOutcome<DocOpenResult>> {
+  openDocument(
+    input: DocOpenInput,
+    options?: WrapperOptions,
+  ): Promise<EngineOutcome<DocOpenResult>> {
     return this.executeBuilt(buildDocOpen(input), "mutate", options);
   }
 
   /** doc.place — mutate (adds a layer). */
-  placeDocument(input: DocPlaceInput, options?: WrapperOptions): Promise<EngineOutcome<DocPlaceResult>> {
+  placeDocument(
+    input: DocPlaceInput,
+    options?: WrapperOptions,
+  ): Promise<EngineOutcome<DocPlaceResult>> {
     return this.executeBuilt(buildDocPlace(input), "mutate", options);
   }
 
   /** doc.select — mutate. */
-  selectDocument(input: DocSelectInput, options?: WrapperOptions): Promise<EngineOutcome<SessionList>> {
+  selectDocument(
+    input: DocSelectInput,
+    options?: WrapperOptions,
+  ): Promise<EngineOutcome<SessionList>> {
     return this.executeBuilt(buildDocSelect(input), "mutate", options);
   }
 
   /** doc.close — mutate. */
-  closeDocument(input: DocIndexInput = {}, options?: WrapperOptions): Promise<EngineOutcome<SessionList>> {
+  closeDocument(
+    input: DocIndexInput = {},
+    options?: WrapperOptions,
+  ): Promise<EngineOutcome<SessionList>> {
     return this.executeBuilt(buildDocClose(input), "mutate", options);
   }
 
   /** doc.inspect — read (§5.1 observe loop). */
-  inspectDocument(input: DocIndexInput = {}, options?: WrapperOptions): Promise<EngineOutcome<DocumentInspect>> {
+  inspectDocument(
+    input: DocIndexInput = {},
+    options?: WrapperOptions,
+  ): Promise<EngineOutcome<DocumentInspect>> {
     return this.executeBuilt(buildDocInspect(input), "read", options);
   }
 
   /** doc.render — read with the §3.4 render budget (30 s default). */
-  renderDocument(input: DocRenderInput = {}, options?: WrapperOptions): Promise<EngineOutcome<RenderResult>> {
+  renderDocument(
+    input: DocRenderInput = {},
+    options?: WrapperOptions,
+  ): Promise<EngineOutcome<RenderResult>> {
     return this.executeBuilt(buildDocRender(input), "read", options);
   }
 
   /** doc.save — mutate (writes beneath the write root). */
-  saveDocument(input: DocSaveInput, options?: WrapperOptions): Promise<EngineOutcome<DocSaveResult>> {
+  saveDocument(
+    input: DocSaveInput,
+    options?: WrapperOptions,
+  ): Promise<EngineOutcome<DocSaveResult>> {
     return this.executeBuilt(buildDocSave(input), "mutate", options);
   }
 

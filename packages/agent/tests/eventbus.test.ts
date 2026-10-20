@@ -552,7 +552,6 @@ describe("eventbus backpressure + gap detection", () => {
       await publish(bus, RUN_A, "step.finished", stepFinishedPayload(i + 1));
     }
     expect(sub.dropped).toBe(2);
-
     const iterator = sub[Symbol.asyncIterator]();
     const pulls: Array<Promise<IteratorResult<EventDelivery, undefined>>> = [
       iterator.next(), // parks on the empty queue
@@ -578,14 +577,16 @@ describe("eventbus backpressure + gap detection", () => {
 
     pulls.push(iterator.next());
     await tick();
-    gates[2]?.resolve(); // page 3: row seq 3 >= live floor → stop; live tail flushes
+    gates[2]?.resolve(); // page 3: re-fetches the seq shed mid-backfill — healed
     result = await (pulls[2] as Promise<IteratorResult<EventDelivery, undefined>>);
     expect(result.done).toBe(false);
     if (!result.done) {
       deliveries.push(result.value);
     }
+    gates[3]?.resolve(); // page 4: row 4 >= live floor → stop; live tail flushes
+    await tick();
     for (let i = 0; i < 3; i += 1) {
-      const next = await iterator.next(); // 4, 5, 6 already buffered
+      const next = await iterator.next(); // 4, 5, 6 flushed from the live buffer
       expect(next.done).toBe(false);
       if (!next.done) {
         deliveries.push(next.value);
@@ -594,6 +595,7 @@ describe("eventbus backpressure + gap detection", () => {
     expect(seqs(deliveries)).toEqual([1, 2, 3, 4, 5, 6]); // contiguous despite shedding
     expect(deliveries.every((delivery) => !delivery.resync)).toBe(true);
     expect(sub.needsResync).toBe(false); // healed: the gap never reached the consumer
+    expect(sub.dropped).toBe(3); // seqs 1, 2 (pre-backfill) + 3 (mid-backfill) shed — all healed
     expect(sub.lastDeliveredSeq).toBe(6);
   });
 });
@@ -650,8 +652,12 @@ describe("eventbus redaction policy", () => {
     await tick();
     await optedIn.publish(RUN_A, "run.plan", planPayload(), { organizationId: ORG });
     await tick();
-    const planIn = (seenIn[0]?.event.payload as RunEventPayloadMap["run.plan"]) ?? { plan: null };
-    expect(planIn.plan?.slots.headline).toBe("Launch day headline copy");
+    const optedInDelivery = seenIn[0];
+    expect(optedInDelivery).toBeDefined();
+    if (optedInDelivery !== undefined) {
+      const planIn = optedInDelivery.event.payload as RunEventPayloadMap["run.plan"];
+      expect(planIn.plan.slots.headline).toBe("Launch day headline copy");
+    }
 
     const predicateBus = new RunEventBus({
       store: new FakeEventStore(),

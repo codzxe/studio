@@ -44,10 +44,14 @@ const HEADLINE_TEXT = "Single Origin";
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
 
 const log = (line) => process.stdout.write(`${line}\n`);
-const fail = (message, code = 1) => {
-  process.stderr.write(`demo-spine: ${message}\n`);
-  process.exit(code);
-};
+
+class SpineError extends Error {
+  constructor(message, exitCode = 1) {
+    super(message);
+    this.name = "SpineError";
+    this.exitCode = exitCode;
+  }
+}
 
 const summarize = (value) => {
   const json = JSON.stringify(value);
@@ -251,7 +255,7 @@ async function waitForAnnouncedPort(child) {
 
 async function main() {
   if (!existsSync(MOCK_ENTRY)) {
-    fail(`mock-engine not found at ${MOCK_ENTRY} (apps/mock-engine, W2-F)`, 2);
+    throw new SpineError(`mock-engine not found at ${MOCK_ENTRY} (apps/mock-engine, W2-F)`, 2);
   }
 
   const externalPort = Number.parseInt(process.env.MOCK_ENGINE_PORT ?? "", 10);
@@ -278,14 +282,12 @@ async function main() {
         MOCK_ENGINE_ROOT: root,
         MOCK_ENGINE_WRITE_ROOT: root,
       },
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
     try {
       port = await waitForAnnouncedPort(child);
     } catch (error) {
-      child.kill("SIGKILL");
-      rmSync(root, { recursive: true, force: true });
-      fail(error instanceof Error ? error.message : String(error));
+      throw new SpineError(error instanceof Error ? error.message : String(error));
     }
     log(`mock-engine listening on 127.0.0.1:${port}`);
   }
@@ -358,7 +360,9 @@ async function main() {
     log("Phase-0 spine: ok (auth, doc.new, batch, render PNG, save, reopen, inspect)");
     process.exitCode = 0;
   } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`demo-spine: ${message}\n`);
+    process.exitCode = error instanceof SpineError ? error.exitCode : 1;
   } finally {
     client.close();
     if (child !== null) {

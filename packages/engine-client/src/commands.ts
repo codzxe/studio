@@ -89,10 +89,7 @@ export const LAYER_COMMANDS = [
 ] as const satisfies readonly string[];
 
 /** Text layers (§2.2 "Text"). */
-export const TEXT_COMMANDS = [
-  "type.create",
-  "type.edit",
-] as const satisfies readonly string[];
+export const TEXT_COMMANDS = ["type.create", "type.edit"] as const satisfies readonly string[];
 
 /** Fill and paint operations (§2.2 "Fill/paint"). */
 export const FILL_PAINT_COMMANDS = [

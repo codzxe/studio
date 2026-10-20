@@ -2,7 +2,7 @@
 // when the temp dir is missing or read-only), plus pure signed-URL tests.
 // Deterministic clocks via the `now` seam; no network.
 
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -254,13 +254,6 @@ describeFs("local signed URLs (dev §15.1 contract)", () => {
 
   it("different secrets produce different signatures (unguessability)", async () => {
     const key = "assets/organizations/org-1/assets/ast-1";
-    const a = createHash("sha256").update(key).digest("hex"); // placeholder replaced below
-    expect(a.length).toBe(64);
-    const params = (secret: string): LocalSignedUrlParams => {
-      const storage = new LocalFsStorage(base ?? "/nonexistent", { signingSecret: secret, now: () => FIXED_NOW });
-      return { key, exp: FIXED_NOW.getTime() + 1000, sig: "", disposition: "inline" };
-    };
-    void params; // signature computed via the driver below
     const one = new LocalFsStorage(base ?? "/nonexistent", { signingSecret: "secret-one-0123456789", now: () => FIXED_NOW });
     const two = new LocalFsStorage(base ?? "/nonexistent", { signingSecret: "secret-two-0123456789", now: () => FIXED_NOW });
     const sigOne = new URL((await one.sign(key, { ttlSeconds: 60 })).url).searchParams.get("sig");
@@ -272,18 +265,15 @@ describeFs("local signed URLs (dev §15.1 contract)", () => {
 describe("verifyLocalSignedUrlParams (pure — runs even on read-only fs)", () => {
   const key = "exports/organizations/org-1/documents/doc-1/png-v-1.png";
   const exp = FIXED_NOW.getTime() + 60_000;
+
+  /** HMAC computed with node:crypto directly — independent of the driver under test. */
+  const hmacHex = (secret: string, payload: string): string =>
+    createHmac("sha256", secret).update(payload, "utf8").digest("hex");
+
   const make = (disposition: LocalSignedUrlParams["disposition"], secret = SECRET): LocalSignedUrlParams => {
     const payload = localSignaturePayload({ key, exp, sig: "", disposition });
-    const sig = createHmacHex(secret, payload);
-    return { key, exp, sig, disposition };
+    return { key, exp, sig: hmacHex(secret, payload), disposition };
   };
-
-  function createHmacHex(secret: string, payload: string): string {
-    // node:crypto directly — independent of the driver under test.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires -- biome/ts
-    const { createHmac } = require("node:crypto") as { createHmac: (a: string, b: string) => { update: (s: string) => { digest: (f: string) => string } } };
-    return createHmac("sha256", secret).update(payload, "utf8").digest("hex");
-  }
 
   it("accepts a correctly signed URL", () => {
     expect(verifyLocalSignedUrlParams(SECRET, make("inline"), FIXED_NOW)).toEqual({ ok: true });
