@@ -2,11 +2,11 @@
 //
 // Deterministic, pure: the engine/db/catalog seams are fakes (tests/fakes.ts),
 // fixtures mirror the pinned engine's row shapes (vendor layer_list_cmds.rs /
-// inspect.rs: top-down listings, `text: {font, sizePt}` probes, bounds as
-// `[x, y, w, h]` or `{x, y, width, height}`) plus the adapter's richer probes
-// (colour/fill/smart-object/baked-text flags) that Wave 2 may pass through.
-// WCAG expectations are the standard published values (black/white 21:1,
-// #767676 on white 4.54:1 passes, #777777 4.48:1 fails).
+// inspect.rs: TOP-DOWN listings, `text: {font, sizePt}` probes, bounds as
+// `[x, y, w, h]` or `{x, y, width, height}`) plus the richer adapter probes the
+// tool reads defensively (colour/fill/smart-object/baked-text/zIndex). WCAG
+// expectations are the published values (black/white 21:1, #767676 on white
+// 4.54:1 passes, #777777 4.48:1 fails); the 3.2:1 fixture is white on #909090.
 
 import { describe, expect, it } from "vitest";
 import { isToolResult, parseToolArgs } from "../src/kit.js";
@@ -37,8 +37,9 @@ import {
   validateDocument,
   withinSafeArea,
 } from "../src/tools/validate-document.js";
-import type { AnyTool } from "../src/types.js";
+import type { ValidationIssue } from "../src/tools/validate-document.js";
 import type {
+  AnyTool,
   BudgetTracker,
   EngineCommand,
   EngineCommandReport,
@@ -49,13 +50,9 @@ import type {
   EngineOutcome,
   TemplateCatalogLike,
   TemplateManifest,
-  ValidationIssue,
-} from "../src/tools/validate-document.js";
-import type { ToolContext } from "../src/types.js";
+  ToolContext,
+} from "../src/types.js";
 import { freshSignal, makeFakeContext } from "./fakes.js";
-
-// The ValidationIssue type is re-exported through the tool module for fixtures.
-type { ValidationIssue };
 
 const DOC_ID = "d0a1b2c3-1111-4222-8333-444455556666";
 const CANVAS = 1080;
@@ -79,26 +76,16 @@ function row(name: string, kind: string, extra: Record<string, unknown> = {}): E
   } as EngineLayerSummary;
 }
 
-/** A visible text layer with the vendor's `text` probe (font/sizePt/colour). */
-function textRow(
-  name: string,
-  extra: {
-    bounds?: [number, number, number, number];
-    font?: string;
-    sizePt?: number;
-    color?: string;
-    box?: [number, number, number, number];
-    visible?: boolean;
-  } = {},
-): EngineLayerSummary {
+/** A visible text layer with the vendor's `text` probe (font/sizePt/colour/box). */
+function textRow(name: string, extra: Record<string, unknown> = {}): EngineLayerSummary {
   const text: Record<string, unknown> = {};
   if (extra.font !== undefined) text.font = extra.font;
   if (extra.sizePt !== undefined) text.sizePt = extra.sizePt;
   if (extra.color !== undefined) text.color = extra.color;
   if (extra.box !== undefined) text.box = extra.box;
   return row(name, "Type", {
+    ...extra,
     bounds: extra.bounds ?? [72, 100, 400, 60],
-    visible: extra.visible ?? true,
     ...(Object.keys(text).length > 0 ? { text } : {}),
   });
 }
@@ -137,7 +124,7 @@ function one(issues: readonly ValidationIssue[], code: string): ValidationIssue 
 }
 
 // ---------------------------------------------------------------------------
-// Fake engine + context (template arm records engine.execute calls)
+// Fake engine + context (the template arm records engine.execute calls)
 // ---------------------------------------------------------------------------
 
 interface EngineSpy extends EngineLike {
@@ -161,7 +148,7 @@ function makeEngine(options: {
     heightPx: options.snapshot?.heightPx ?? CANVAS,
     layers: options.snapshot?.layers ?? options.rows ?? [],
   };
-  return {
+  const spy: EngineSpy = {
     executed,
     batchCount: () => batches,
     async batch() {
@@ -184,7 +171,15 @@ function makeEngine(options: {
       if (options.listFailure !== undefined) return options.listFailure;
       return { ok: true, value: options.rows ?? snapshot.layers };
     },
-  } as EngineSpy;
+  };
+  return spy;
+}
+
+/** An EngineCommandReport carrying the engine's JSON reply (adapter convention). */
+function reportWith(payload: unknown, message?: string): EngineCommandReport {
+  const report: Record<string, unknown> = { revision: 9, result: payload };
+  if (message !== undefined) report.message = message;
+  return report as EngineCommandReport;
 }
 
 function catalogWith(...manifests: TemplateManifest[]): TemplateCatalogLike {
@@ -214,7 +209,7 @@ function makeContext(over: {
   engine: EngineSpy;
   templates?: TemplateCatalogLike;
   brandFonts?: readonly string[];
-}): { ctx: ToolContext; budgets: () => number } {
+}): { ctx: ToolContext; charges: () => number } {
   let charges = 0;
   const budgets: BudgetTracker = {
     remaining: () => ({ msRemaining: 5000, commandsRemaining: 99 }),
@@ -235,14 +230,7 @@ function makeContext(over: {
       },
     },
   });
-  return { ctx, budgets: () => charges };
-}
-
-async function run(
-  ctx: ToolContext,
-  args: { documentId: string; template?: string },
-): Promise<ReturnType<typeof isToolResult extends (v: unknown) => v is infer R ? never : never> | ReturnType<typeof validateDocument.run>> {
-  return validateDocument.run(ctx, args, freshSignal());
+  return { ctx, charges: () => charges };
 }
 
 // ---------------------------------------------------------------------------
@@ -318,25 +306,40 @@ describe("validate_document: WCAG math", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Pure geometry + naming
+// Pure geometry + naming (§11.1 / §10.2)
 // ---------------------------------------------------------------------------
 
 describe("validate_document: geometry helpers", () => {
+  it("the §11.1 defaults are pinned: 48 px safe area, 12 text layers", () => {
+    expect(DEFAULT_SAFE_AREA_PX).toBe(48);
+    expect(DEFAULT_MAX_TEXT_LAYERS).toBe(12);
+  });
+
   it.each([
     ["fully on", [0, 0, 100, 100], true],
     ["fully right of canvas", [1200, 0, 100, 100], false],
     ["fully above canvas", [0, -200, 100, 100], false],
     ["partial bleed", [-20, 0, 1100, 700], true],
-    ["touching the edge", [1080, 0, 100, 100], false],
+    ["touching the right edge (zero overlap)", [1080, 0, 100, 100], false],
   ])("intersectsCanvas %s", (_label, b, expected) => {
     expect(
       intersectsCanvas({ x: b[0], y: b[1], width: b[2], height: b[3] }, CANVAS, CANVAS),
     ).toBe(expected);
   });
 
+  it("intersectsCanvas refuses NaN geometry (a violation, never a crash)", () => {
+    expect(
+      intersectsCanvas(
+        { x: Number.NaN, y: 0, width: 10, height: 10 },
+        CANVAS,
+        CANVAS,
+      ),
+    ).toBe(false);
+  });
+
   it.each([
     ["inside the margin", [48, 48, 984, 984], true],
-    ["at the margin exactly", [48, 48, 984, 984.5], false],
+    ["half a px past the margin", [48, 48, 984, 984.5], false],
     ["left edge intrudes", [10, 100, 200, 50], false],
     ["bottom intrudes", [100, 100, 200, 980], false],
   ])("withinSafeArea %s", (_label, b, expected) => {
@@ -351,7 +354,7 @@ describe("validate_document: geometry helpers", () => {
   });
 
   it.each([
-    ["inside", [72, 732, 936, 176], [72, 732, 936, 176.3], true],
+    ["inside (render rounding tolerance)", [72, 732, 936, 176], [72, 732, 936, 176.3], true],
     ["overflowing the bottom", [72, 732, 936, 200], [72, 732, 936, 176], false],
     ["outside the left", [70, 732, 936, 176], [72, 732, 936, 176], false],
   ])("fitsIn %s", (_label, inner, outer, expected) => {
@@ -400,8 +403,12 @@ describe("validate_document: rule table", () => {
 
   it("in_bounds: hidden layers and rows without bounds are skipped", () => {
     const issues = lint([
-      row("Hidden Stray", "Pixel", { bounds: [2000, 0, 50, 50], visible: false, smartObject: true }),
-      row("Unmeasured", "Type", { text: { font: "Inter", sizePt: 12 } }),
+      row("Hidden Stray", "Pixel", {
+        bounds: [2000, 0, 50, 50],
+        visible: false,
+        smartObject: true,
+      }),
+      textRow("Unmeasured"),
     ]).issues;
     expect(codes(issues)).not.toContain("in_bounds");
   });
@@ -474,13 +481,11 @@ describe("validate_document: rule table", () => {
 
   it("contrast: no readable background degrades to a note, never a guess", () => {
     const pass = lint([
-      row("Photo", "Pixel", { bounds: [0, 0, 1080, 1080], smartObject: true }),
+      row("Photo", "Pixel", { bounds: [0, 0, 1080, 700], smartObject: true }),
       textRow("Body", { color: "#FFFFFF", sizePt: 12, bounds: [72, 900, 400, 60] }),
     ]);
     expect(codes(pass.issues)).not.toContain("contrast");
-    expect(pass.notes).toContainEqual(
-      expect.stringContaining("no readable background colour"),
-    );
+    expect(pass.notes).toContainEqual(expect.stringContaining("no readable background colour"));
   });
 
   it("contrast: text rows without a colour probe degrade to a note", () => {
@@ -492,21 +497,22 @@ describe("validate_document: rule table", () => {
     expect(pass.notes).toContainEqual(expect.stringContaining("without a readable colour"));
   });
 
-  it("effectiveBackground prefers the visible layer named Background (bottom-most)", () => {
+  it("effectiveBackground prefers the visible layer named Background; hidden fills never win", () => {
     const { flat } = flattenRows([
       row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" }),
       row("Panel", "Fill", { bounds: [0, 700, 1080, 380], fillColor: "#909090" }),
-      row("Hidden Fill", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#123456", visible: false }),
+      row("Hidden Fill", "Fill", {
+        bounds: [0, 0, 1080, 1080],
+        fillColor: "#123456",
+        visible: false,
+      }),
     ]);
     expect(effectiveBackground(flat)).toBe("#F4E7D3");
   });
 
   it("text_overflow: bounds beyond the declared box are a blocker with exact px", () => {
     const issues = lint([
-      textRow("Headline", {
-        bounds: [72, 732, 936, 200],
-        box: [72, 732, 936, 176],
-      }),
+      textRow("Headline", { bounds: [72, 732, 936, 200], box: [72, 732, 936, 176] }),
     ]).issues;
     const issue = one(issues, "text_overflow");
     expect(issue.level).toBe("blocker");
@@ -583,23 +589,55 @@ describe("validate_document: rule table", () => {
     const issue = one(issues, "z_order");
     expect(issue.level).toBe("blocker");
     expect(issue.layer).toBe("Caption");
-    expect(issue.message).toContain("hidden behind the opaque image \"Photo\"");
+    expect(issue.message).toContain('hidden behind the opaque image "Photo"');
     expect(issue.fix).toContain("layer.arrange.bringToFront");
   });
 
   it.each([
-    ["text sits above the photo", [textRow("Caption", { bounds: [100, 600, 300, 40] }), row("Photo", "Pixel", { bounds: [0, 0, 1080, 700], smartObject: true })]],
-    ["photo is half transparent", [row("Photo", "Pixel", { bounds: [0, 0, 1080, 700], opacity: 0.5, smartObject: true }), textRow("Caption", { bounds: [100, 600, 300, 40] })]],
-    ["photo only partially covers the text", [row("Photo", "Pixel", { bounds: [0, 0, 500, 700], smartObject: true }), textRow("Caption", { bounds: [600, 100, 300, 40] })]],
-    ["covering layer is hidden", [row("Photo", "Pixel", { bounds: [0, 0, 1080, 700], visible: false, smartObject: true }), textRow("Caption", { bounds: [100, 600, 300, 40] })]],
+    [
+      "text sits above the photo",
+      [
+        textRow("Caption", { bounds: [100, 600, 300, 40] }),
+        row("Photo", "Pixel", { bounds: [0, 0, 1080, 700], smartObject: true }),
+      ],
+    ],
+    [
+      "photo is half transparent",
+      [
+        row("Photo", "Pixel", {
+          bounds: [0, 0, 1080, 700],
+          opacity: 0.5,
+          smartObject: true,
+        }),
+        textRow("Caption", { bounds: [100, 600, 300, 40] }),
+      ],
+    ],
+    [
+      "photo only partially covers the text",
+      [
+        row("Photo", "Pixel", { bounds: [0, 0, 500, 700], smartObject: true }),
+        textRow("Caption", { bounds: [600, 100, 300, 40] }),
+      ],
+    ],
+    [
+      "covering layer is hidden",
+      [
+        row("Photo", "Pixel", {
+          bounds: [0, 0, 1080, 700],
+          visible: false,
+          smartObject: true,
+        }),
+        textRow("Caption", { bounds: [100, 600, 300, 40] }),
+      ],
+    ],
   ])("z_order passes when %s", (_label, rows) => {
     expect(codes(lint(rows).issues)).not.toContain("z_order");
   });
 
   it("z_order: an explicit zIndex probe overrides listing order", () => {
     const issues = lint([
-      textRow("Caption", { bounds: [100, 600, 300, 40], zIndex: 0 } as never),
-      row("Photo", "Pixel", { bounds: [0, 0, 1080, 700], smartObject: true, zIndex: 5 } as never),
+      textRow("Caption", { bounds: [100, 600, 300, 40], zIndex: 0 }),
+      row("Photo", "Pixel", { bounds: [0, 0, 1080, 700], smartObject: true, zIndex: 5 }),
     ]).issues;
     expect(one(issues, "z_order").layer).toBe("Caption");
   });
@@ -607,7 +645,9 @@ describe("validate_document: rule table", () => {
   it("max_text_layers: over the cap is a major; hidden placeholders count", () => {
     const rows: EngineLayerSummary[] = [];
     for (let i = 0; i < DEFAULT_MAX_TEXT_LAYERS + 1; i += 1) {
-      rows.push(textRow(`Copy ${i}`, { visible: i % 2 === 0, bounds: [100, 100 + i * 40, 200, 30] }));
+      rows.push(
+        textRow(`Copy ${i}`, { visible: i % 2 === 0, bounds: [100, 100 + i * 40, 200, 30] }),
+      );
     }
     const issues = lint(rows).issues;
     const issue = one(issues, "max_text_layers");
@@ -629,6 +669,7 @@ describe("validate_document: rule table", () => {
     expect(flagged.length).toBe(3);
     expect(flagged.every((issue) => issue.level === "minor")).toBe(true);
     expect(flagged.map((issue) => issue.layer)).toEqual(["Dust", "Ghost", "Brand"]);
+    expect(flagged[0]?.message).toContain("0×0 px");
     expect(flagged[2]?.message).toContain("single unnamed child");
   });
 
@@ -657,7 +698,7 @@ describe("validate_document: rule table", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Flatten/probe behavior
+// Row projection (flatten/probe behavior)
 // ---------------------------------------------------------------------------
 
 describe("validate_document: row projection", () => {
@@ -667,9 +708,15 @@ describe("validate_document: row projection", () => {
         children: [row("Inner A", "Type", {}), row("Inner B", "Type", {})],
       }),
       row("Background", "Fill", {}),
-      row("Bad Row", "Pixel", {}),
+      row("Loose Pixel", "Pixel", {}),
     ]);
-    expect(flat.map((r) => r.name)).toEqual(["Group", "Inner A", "Inner B", "Background", "Bad Row"]);
+    expect(flat.map((r) => r.name)).toEqual([
+      "Group",
+      "Inner A",
+      "Inner B",
+      "Background",
+      "Loose Pixel",
+    ]);
     expect(skipped).toBe(0);
   });
 
@@ -697,10 +744,20 @@ describe("validate_document: row projection", () => {
     expect(flat[0]?.opacity).toBe(0.5);
     expect(flat[1]?.opacity).toBe(0.5);
   });
+
+  it("toRow-style probes: the row object's `text` carries font/sizePt/colour", () => {
+    const { flat } = flattenRows([
+      textRow("Headline", { font: "Inter", sizePt: 96, color: "#3B2A20", box: [72, 732, 936, 176] }),
+    ]);
+    expect(flat[0]?.font).toBe("Inter");
+    expect(flat[0]?.sizePt).toBe(96);
+    expect(flat[0]?.color).toBe("#3B2A20");
+    expect(flat[0]?.box).toEqual({ x: 72, y: 732, width: 936, height: 176 });
+  });
 });
 
 // ---------------------------------------------------------------------------
-// Reply shaping: cap, budget, severity order, compact JSON
+// Reply shaping: severity order, the 25 cap, the 2000-char budget
 // ---------------------------------------------------------------------------
 
 describe("validate_document: report shaping", () => {
@@ -735,7 +792,7 @@ describe("validate_document: report shaping", () => {
     expect(uncapped.truncated).toBe(false);
   });
 
-  it("ok is true without blockers even when majors exist (the task's rule)", () => {
+  it("ok is true without blockers even when majors exist (§5.1: blockers gate)", () => {
     const report = buildReport([major, minor]);
     expect(report.ok).toBe(true);
     expect(report.issueCounts).toEqual({ blocker: 0, major: 1, minor: 1 });
@@ -756,7 +813,7 @@ describe("validate_document: report shaping", () => {
     expect(renderSummary(report).length).toBeLessThanOrEqual(2000);
   });
 
-  it("the §6.1 2000-char budget sheds minors first and says so", () => {
+  it("the §6.1 2000-char budget sheds from the tail and says so", () => {
     const long = many(10, "major").map((issue) => ({
       ...issue,
       message: "x".repeat(160),
@@ -770,9 +827,7 @@ describe("validate_document: report shaping", () => {
   });
 
   it("renderSummary emits compact JSON with the §11.1 row shape", () => {
-    const summary = renderSummary(
-      buildReport([blocker], { template: "instagram-post@3" }),
-    );
+    const summary = renderSummary(buildReport([blocker], { template: "instagram-post@3" }));
     const parsed = JSON.parse(summary) as {
       ok: boolean;
       template: string;
@@ -793,17 +848,16 @@ describe("validate_document: report shaping", () => {
 
 describe("validate_document: readValidateReport (engine reply)", () => {
   it("reads issues off the adapter's `result` payload", () => {
-    const reply = readValidateReport({
-      revision: 9,
-      result: {
+    const reply = readValidateReport(
+      reportWith({
         ok: false,
         issues: [
           { level: "blocker", code: "contrast", layer: "Headline", message: "too low", fix: "darken" },
           { level: "minor", code: "naming", message: "machine name", fix: "rename" },
         ],
         truncated: true,
-      },
-    });
+      }),
+    );
     expect(reply?.issues.length).toBe(2);
     expect(reply?.issues[0]?.layer).toBe("Headline");
     expect(reply?.truncated).toBe(true);
@@ -811,33 +865,31 @@ describe("validate_document: readValidateReport (engine reply)", () => {
   });
 
   it("falls back to JSON serialized in `message`", () => {
-    const reply = readValidateReport({
-      revision: 9,
-      message: JSON.stringify({ issues: [{ level: "major", code: "safe_area", message: "m", fix: "f" }] }),
-    });
+    const reply = readValidateReport(
+      reportWith(undefined, JSON.stringify({
+        issues: [{ level: "major", code: "safe_area", message: "m", fix: "f" }],
+      })),
+    );
     expect(reply?.issues[0]?.level).toBe("major");
   });
 
   it("drops malformed rows instead of guessing", () => {
-    const reply = readValidateReport({
-      revision: 9,
-      result: {
+    const reply = readValidateReport(
+      reportWith({
         issues: [
           { level: "fatal", code: "x", message: "m", fix: "f" },
           { level: "major", code: "ok", message: "m" },
           { level: "minor", code: "fine", message: "m", fix: "f" },
         ],
-      },
-    });
+      }),
+    );
     expect(reply?.issues.length).toBe(1);
     expect(reply?.dropped).toBe(2);
   });
 
   it("returns undefined when the adapter attached nothing readable", () => {
     expect(readValidateReport({ revision: 9 })).toBeUndefined();
-    expect(
-      readValidateReport({ revision: 9, message: "no json here" }),
-    ).toBeUndefined();
+    expect(readValidateReport({ revision: 9, message: "no json here" })).toBeUndefined();
   });
 });
 
@@ -847,11 +899,22 @@ describe("validate_document: readValidateReport (engine reply)", () => {
 
 describe("validate_document: tool (generic arm)", () => {
   it("a clean §10.1 document passes with zero issues and no warnings", async () => {
+    // Engine listings are TOP-DOWN (frontmost first): text over photo over fill.
     const rows = [
-      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" }),
+      textRow("Subhead", {
+        bounds: [72, 924, 936, 56],
+        color: "#3B2A20",
+        sizePt: 36,
+        font: "Display Bold",
+      }),
+      textRow("Headline", {
+        bounds: [72, 732, 936, 176],
+        color: "#3B2A20",
+        sizePt: 96,
+        font: "Inter",
+      }),
       row("Photo", "Smart Object", { bounds: [0, 0, 1080, 700] }),
-      textRow("Headline", { bounds: [72, 732, 936, 176], color: "#3B2A20", sizePt: 96, font: "Inter" }),
-      textRow("Subhead", { bounds: [72, 924, 936, 56], color: "#3B2A20", sizePt: 36, font: "Display Bold" }),
+      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" }),
     ];
     const engine = makeEngine({ rows });
     const { ctx } = makeContext({ engine });
@@ -872,10 +935,15 @@ describe("validate_document: tool (generic arm)", () => {
     expect(parsed.truncated).toBe(false);
   });
 
-  it("a broken document reports every rule with severity-ordered issues", async () => {
+  it("a broken document reports every violated rule with severity-ordered issues", async () => {
     const rows = [
       row("Photo", "Pixel", { bounds: [0, 0, 1080, 700] }),
-      textRow("Caption", { bounds: [100, 600, 300, 40], font: "Comic Sans", color: "#FFFFFF", sizePt: 12 }),
+      textRow("Caption", {
+        bounds: [100, 600, 300, 40],
+        font: "Comic Sans",
+        color: "#FFFFFF",
+        sizePt: 12,
+      }),
       row("Layer 9", "Group", { childCount: 1 }),
     ];
     const engine = makeEngine({ rows });
@@ -888,15 +956,18 @@ describe("validate_document: tool (generic arm)", () => {
       issues: { level: string; code: string }[];
     };
     expect(parsed.ok).toBe(false);
-    expect(parsed.issueCounts).toEqual({ blocker: 3, major: 0, minor: 1 });
+    // Photo: raster (editability) + covers the Caption (z_order) + Comic Sans
+    // (missing_font) — and Layer 9 is both a single-child group and machine-named.
+    expect(parsed.issueCounts).toEqual({ blocker: 3, major: 0, minor: 2 });
     const codesSeen = parsed.issues.map((issue) => issue.code);
     expect(codesSeen).toContain("editability");
     expect(codesSeen).toContain("missing_font");
     expect(codesSeen).toContain("z_order");
+    expect(codesSeen).toContain("empty_layers");
     expect(codesSeen).toContain("naming");
     // Blockers first (§5.1: they drive the repair loop).
     const levels = parsed.issues.map((issue) => issue.level);
-    expect([...levels].sort()).toEqual(["blocker", "blocker", "blocker", "minor"]);
+    expect([...levels].sort()).toEqual(["blocker", "blocker", "blocker", "minor", "minor"]);
   });
 
   it("30 machine names hit the 25-issue cap: counts exact, list capped, summary bounded", async () => {
@@ -921,7 +992,9 @@ describe("validate_document: tool (generic arm)", () => {
   });
 
   it("listLayers failure falls back to document.inspect rows with a warning", async () => {
-    const rows = [row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" })];
+    const rows = [
+      row("Background", "Fill", { bounds: [0, 0, 1080, 1080], fillColor: "#F4E7D3" }),
+    ];
     const engine = makeEngine({
       rows,
       listFailure: { ok: false, code: "engine_crashed", message: "boom" },
@@ -971,14 +1044,14 @@ describe("validate_document: tool (generic arm)", () => {
     }
   });
 
-  it("is read-only: no engine.batch, no budget charge", async () => {
+  it("is read-only: no engine.batch, no engine.execute, no budget charge", async () => {
     const rows = [row("Layer 5", "Pixel", { bounds: [0, 0, 10, 10], smartObject: true })];
     const engine = makeEngine({ rows });
-    const { ctx, budgets } = makeContext({ engine });
+    const { ctx, charges } = makeContext({ engine });
     await validateDocument.run(ctx, { documentId: DOC_ID }, freshSignal());
     expect(engine.batchCount()).toBe(0);
     expect(engine.executed.length).toBe(0);
-    expect(budgets()).toBe(0);
+    expect(charges()).toBe(0);
   });
 
   it("rejects a pre-aborted signal through the kit boundary", async () => {
@@ -998,7 +1071,7 @@ describe("validate_document: tool (generic arm)", () => {
 
 describe("validate_document: tool (template-bound delegation)", () => {
   const LOCAL_ROWS = [
-    row("Layer 9", "Group", { childCount: 2 }), // machine name: engine owns naming
+    row("Layer 9", "Group", { childCount: 2 }), // machine name: the ENGINE owns naming
     textRow("Headline", { bounds: [72, 732, 936, 176], font: "Comic Sans", sizePt: 96 }),
     row("Photo", "Pixel", { bounds: [0, 0, 1080, 700] }), // local editability applies
   ];
@@ -1019,10 +1092,7 @@ describe("validate_document: tool (template-bound delegation)", () => {
   };
 
   it("delegates to engine template.validate and adds only the local supplement", async () => {
-    const engine = makeEngine({
-      rows: LOCAL_ROWS,
-      executeReport: { revision: 9, result: ENGINE_REPLY },
-    });
+    const engine = makeEngine({ rows: LOCAL_ROWS, executeReport: reportWith(ENGINE_REPLY) });
     const { ctx } = makeContext({ engine });
     const result = await validateDocument.run(
       ctx,
@@ -1044,7 +1114,7 @@ describe("validate_document: tool (template-bound delegation)", () => {
     // Engine's major + the local supplement's blockers (font + raster image).
     expect(parsed.issueCounts).toEqual({ blocker: 2, major: 1, minor: 0 });
     const seen = parsed.issues.map((issue) => issue.code);
-    expect(seen).toContain("safe_area"); // engine rule
+    expect(seen).toContain("safe_area"); // engine-owned rule
     expect(seen).toContain("missing_font"); // local rule the engine cannot own
     expect(seen).toContain("editability"); // local rule the engine cannot own
     // The engine's naming pass owns machine names — the local arm must not duplicate.
@@ -1068,7 +1138,7 @@ describe("validate_document: tool (template-bound delegation)", () => {
     }
   });
 
-  it("an engine failure on template.validate passes code/hint/retryable through", async () => {
+  it("an engine failure on template.validate passes code/message/retryable through", async () => {
     const engine = makeEngine({
       rows: LOCAL_ROWS,
       executeFailure: {
@@ -1107,20 +1177,17 @@ describe("validate_document: tool (template-bound delegation)", () => {
     }
   });
 
-  it("malformed engine rows are dropped with a warning; the pass still runs", async () => {
+  it("malformed engine rows are dropped with a warning; the engine's truncation surfaces too", async () => {
     const engine = makeEngine({
       rows: LOCAL_ROWS,
-      executeReport: {
-        revision: 9,
-        result: {
-          ok: true,
-          issues: [
-            { level: "fatal", code: "mystery", message: "m", fix: "f" },
-            { level: "minor", code: "naming", layer: "Layer 9", message: "machine name", fix: "rename" },
-          ],
-          truncated: true,
-        },
-      },
+      executeReport: reportWith({
+        ok: true,
+        issues: [
+          { level: "fatal", code: "mystery", message: "m", fix: "f" },
+          { level: "minor", code: "naming", layer: "Layer 9", message: "machine name", fix: "rename" },
+        ],
+        truncated: true,
+      }),
     });
     const { ctx } = makeContext({ engine });
     const result = await validateDocument.run(

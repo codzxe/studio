@@ -12,16 +12,16 @@ import {
   ENGINE_HARD_PREVIEW_CEILING_PX,
   PREVIEW_RENDER_TIMEOUT_MS,
   PREVIEW_WIDTHS,
-  buildPreviewSummary,
-  clampRenderWidth,
-  isEngineWriteRootPath,
-  isSafePreviewUrlValue,
-  renderPreviewTool,
   type PreviewPutMeta,
   type PreviewSinkLike,
   type PreviewSinkPut,
   type RenderPreviewArgs,
   type RenderPreviewContext,
+  buildPreviewSummary,
+  clampRenderWidth,
+  isEngineWriteRootPath,
+  isSafePreviewUrlValue,
+  renderPreviewTool,
 } from "../src/tools/render-preview.js";
 import type {
   EngineFailure,
@@ -66,8 +66,12 @@ interface EngineScript {
 
 function makeEngine(script: EngineScript = {}) {
   const renders: RecordedRender[] = [];
-  const report: EngineRenderReport =
-    script.report ?? { image: pngBytes(1024, 512), widthPx: 1024, heightPx: 512, revision: 7 };
+  const report: EngineRenderReport = script.report ?? {
+    image: pngBytes(1024, 512),
+    widthPx: 1024,
+    heightPx: 512,
+    revision: 7,
+  };
   const engine: EngineLike = {
     batch: async () => ({ ok: true, value: { revision: 1, outcomes: [] } }),
     execute: async () => ({ ok: true, value: { revision: 1 } }),
@@ -82,7 +86,10 @@ function makeEngine(script: EngineScript = {}) {
       }
       return { ok: true, value: report };
     },
-    inspect: async () => ({ ok: true, value: { revision: 1, widthPx: 800, heightPx: 600, layers: [] } }),
+    inspect: async () => ({
+      ok: true,
+      value: { revision: 1, widthPx: 800, heightPx: 600, layers: [] },
+    }),
     listLayers: async () => ({ ok: true, value: [] }),
   };
   return { engine, renders };
@@ -107,7 +114,10 @@ function makeSink(script: SinkScript = {}) {
   const puts: RecordedPut[] = [];
   const url = script.url ?? SIGNED_URL;
   const key = script.key ?? STORAGE_KEY;
-  const success = (): EngineOutcome<PreviewSinkPut> => ({ ok: true, value: { previewUrl: url, storageKey: key } });
+  const success = (): EngineOutcome<PreviewSinkPut> => ({
+    ok: true,
+    value: { previewUrl: url, storageKey: key },
+  });
   const outcome = (): EngineOutcome<PreviewSinkPut> => {
     if (script.throwWith !== undefined) {
       throw script.throwWith;
@@ -225,10 +235,13 @@ describe("clampRenderWidth (budgets seam mirror, §5.1 ≤1024 / §2.2 2048 hard
     [2048, 1024],
     [4096, 1024],
     [1025, 1024],
-  ])("clamps %i px down to the 1024 agent ceiling (2048 hard cap never binds)", (requested, width) => {
-    const result = clampRenderWidth(requested);
-    expect(result).toEqual({ ok: true, value: { width, clamped: true } });
-  });
+  ])(
+    "clamps %i px down to the 1024 agent ceiling (2048 hard cap never binds)",
+    (requested, width) => {
+      const result = clampRenderWidth(requested);
+      expect(result).toEqual({ ok: true, value: { width, clamped: true } });
+    },
+  );
 
   it.each([0, 0.5, 0.9])("treats %p as no explicit size → ceiling 1024", (requested) => {
     const result = clampRenderWidth(requested);
@@ -321,7 +334,9 @@ describe("render_preview happy path", () => {
   });
 
   it("propagates revision 0 as a valid document revision", async () => {
-    const engine = makeEngine({ report: { image: pngBytes(64, 64), widthPx: 64, heightPx: 64, revision: 0 } });
+    const engine = makeEngine({
+      report: { image: pngBytes(64, 64), widthPx: 64, heightPx: 64, revision: 0 },
+    });
     const sink = makeSink();
     const result = await run(makeContext({ engine, sink }));
     expect(result).toMatchObject({ ok: true, documentRevision: 0 });
@@ -368,7 +383,9 @@ describe("render_preview revision propagation", () => {
   });
 
   it("warns when the rendered PNG is wider than the requested cap", async () => {
-    const engine = makeEngine({ report: { image: pngBytes(2048, 1024), widthPx: 2048, heightPx: 1024, revision: 7 } });
+    const engine = makeEngine({
+      report: { image: pngBytes(2048, 1024), widthPx: 2048, heightPx: 1024, revision: 7 },
+    });
     const result = await run(makeContext({ engine, sink: makeSink() }), { width: 256 });
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -411,7 +428,12 @@ describe("render_preview PNG validation", () => {
 
   it("rejects a PNG above the 5 MiB engine budget (§2.2)", async () => {
     const engine = makeEngine({
-      report: { image: pngBytes(64, 64, ENGINE_PNG_MAX_BYTES - 23), widthPx: 64, heightPx: 64, revision: 7 },
+      report: {
+        image: pngBytes(64, 64, ENGINE_PNG_MAX_BYTES - 23),
+        widthPx: 64,
+        heightPx: 64,
+        revision: 7,
+      },
     });
     const sink = makeSink();
     const result = await run(makeContext({ engine, sink }));
@@ -486,7 +508,9 @@ describe("render_preview engine-path arm (§3.2 capability roots)", () => {
   });
 
   it("rejects an out-of-root path without touching the sink", async () => {
-    const engine = makeEngine({ report: { ...PATH_REPORT, path: "/etc/passwd" } as EngineRenderReport });
+    const engine = makeEngine({
+      report: { ...PATH_REPORT, path: "/etc/passwd" } as EngineRenderReport,
+    });
     const sink = makeSink();
     const result = await run(makeContext({ engine, sink }));
 
@@ -644,11 +668,7 @@ describe("render_preview timeout semantics (§3.4)", () => {
     const controller = new AbortController();
     const engine = makeEngine({ onRender: () => controller.abort() });
     const sink = makeSink();
-    const result = await run(
-      makeContext({ engine, sink }),
-      {},
-      controller.signal,
-    );
+    const result = await run(makeContext({ engine, sink }), {}, controller.signal);
 
     const failure = asErr(result);
     expect(failure.code).toBe("engine_timeout");

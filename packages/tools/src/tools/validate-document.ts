@@ -887,19 +887,16 @@ function fitToBudget(prefix: string, issues: readonly ValidationIssue[]): {
   readonly kept: readonly ValidationIssue[];
   readonly truncated: boolean;
 } {
-  let kept = issues;
-  let truncated = false;
-  while (kept.length > 1) {
-    const head = kept.slice(0, -1);
-    const candidate = `${prefix}${JSON.stringify(head.map(issueRow))},"truncated":false}`;
-    truncated = true;
-    if (candidate.length <= MAX_SUMMARY_CHARS) {
-      kept = head;
-      break;
-    }
-    kept = head;
+  const render = (rows: readonly ValidationIssue[]): string =>
+    `${prefix}${JSON.stringify(rows.map(issueRow))},"truncated":false}`;
+  if (issues.length <= 1 || render(issues).length <= MAX_SUMMARY_CHARS) {
+    return { kept: issues, truncated: false };
   }
-  return { kept, truncated };
+  let kept = issues.slice(0, -1);
+  while (kept.length > 1 && render(kept).length > MAX_SUMMARY_CHARS) {
+    kept = kept.slice(0, -1);
+  }
+  return { kept, truncated: true };
 }
 
 export interface ValidationReport {
@@ -925,6 +922,7 @@ export function buildReport(issues: readonly ValidationIssue[], options: {
   ];
   if (options.template !== undefined) prefixParts.push(`"template":${JSON.stringify(options.template)}`);
   const fit = fitToBudget(`{${prefixParts.join(",")},"issues":`, capped.kept);
+  const truncated = capped.truncated || fit.truncated;
   const warnings = [...(options.extraWarnings ?? [])];
   if (capped.truncated) {
     warnings.push(

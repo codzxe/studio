@@ -49,12 +49,7 @@ import {
   strictObject,
 } from "../kit.js";
 import { TOOLS } from "../registry.js";
-import type {
-  EngineOutcome,
-  EngineRenderReport,
-  Tool,
-  ToolContext,
-} from "../types.js";
+import type { EngineOutcome, EngineRenderReport, Tool, ToolContext } from "../types.js";
 import { type PngCheck, validatePng } from "./image-generate.js";
 
 // ---------------------------------------------------------------------------
@@ -85,11 +80,7 @@ const MAX_ENGINE_PATH_CHARS = 512;
 export const PREVIEW_WIDTHS = [256, 512, 1024] as const;
 export type PreviewWidth = (typeof PREVIEW_WIDTHS)[number];
 
-const zPreviewWidth = z.union([
-  z.literal(256),
-  z.literal(512),
-  z.literal(1024),
-]);
+const zPreviewWidth = z.union([z.literal(256), z.literal(512), z.literal(1024)]);
 
 export const renderPreviewArgsSchema = strictObject({
   /** Requested long-edge cap in px; 2048+ is rejected here (agent ceiling 1024). */
@@ -165,10 +156,7 @@ export interface PreviewSinkLike {
    * (§3.2 capability roots); the sink ingests it by path and stores it
    * identically. Absent → the engine adapter must resolve replies to bytes.
    */
-  putEnginePath?(
-    path: string,
-    meta: PreviewPutMeta,
-  ): Promise<EngineOutcome<PreviewSinkPut>>;
+  putEnginePath?(path: string, meta: PreviewPutMeta): Promise<EngineOutcome<PreviewSinkPut>>;
 }
 
 /** The context the worker assembles for `render_preview`: ToolContext + sink. */
@@ -182,14 +170,10 @@ function isRenderPreviewContext(value: ToolContext): value is RenderPreviewConte
 
 function requireRenderPreviewContext(ctx: ToolContext): RenderPreviewContext {
   if (!isRenderPreviewContext(ctx)) {
-    throw new ToolError(
-      "internal_error",
-      "render_preview requires the preview-sink seam on ctx",
-      {
-        hint: "The agent runtime wires ctx.previews (§6 row 14); see the W5-R assembly note.",
-        retryable: false,
-      },
-    );
+    throw new ToolError("internal_error", "render_preview requires the preview-sink seam on ctx", {
+      hint: "The agent runtime wires ctx.previews (§6 row 14); see the W5-R assembly note.",
+      retryable: false,
+    });
   }
   return ctx;
 }
@@ -310,9 +294,7 @@ function envelopePreviewUrl(previewUrl: string): string | undefined {
 
 /** Defensively read the render report's revision (ok() requires ≥ 0 integers). */
 function readRevision(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : undefined;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 /** Defensive structural probe for the engine's file arm: a write-root path the
@@ -445,7 +427,11 @@ export const renderPreviewTool: Tool<RenderPreviewArgs> = defineTool({
     }
 
     // Inline bytes or engine write-root path → the SAME sink (§6.1: the URL).
-    const persisted = await persistPreview(pctx.previews, report, revision === undefined ? { width } : { width, revision });
+    const persisted = await persistPreview(
+      pctx.previews,
+      report,
+      revision === undefined ? { width } : { width, revision },
+    );
     if (!persisted.ok) {
       return persisted;
     }
