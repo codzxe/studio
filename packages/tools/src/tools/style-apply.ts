@@ -343,7 +343,9 @@ function styleParamsFor(style: LayerStyleSpec, warnings: string[]): Record<strin
       // intensity maps to `depth` (engine command units 1..1000, vendor
       // layer_style.rs: bv.depth = depth/100). The colour is schema-required but
       // the engine's bevelEmboss command takes no colour params — warn, never fail.
-      void color(style.color);
+      if (normalizeColor(style.color).droppedAlpha) {
+        warnings.push(ALPHA_WARNING);
+      }
       warnings.push(BEVEL_COLOR_WARNING);
       return { depth: Math.round(style.intensity * 1000) };
     }

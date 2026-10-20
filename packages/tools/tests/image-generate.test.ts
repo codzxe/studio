@@ -676,7 +676,11 @@ describe("image_generate budgets and seams", () => {
   });
 
   it("fails typed when the worker did not wire the image seams", async () => {
-    const result = await imageGenerateTool.run(makeFakeContext(), parsedArgs(), freshSignal());
+    const result = await imageGenerateTool.run(
+      makeFakeContext(),
+      parsedArgs(baseArgs()),
+      freshSignal(),
+    );
     const failure = expectErr(result);
     expect(failure.code).toBe("internal_error");
     expect(failure.hint).toContain("ctx.credits");

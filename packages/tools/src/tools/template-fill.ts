@@ -287,7 +287,7 @@ function engineColorErr(slotName: string): ToolErr {
 }
 
 function kindMismatchErr(slotName: string, expected: string, got: string): ToolErr {
-  const message = `Slot "${truncateStr(slotName, 80)}" expects a ${expected} value, got kind "${got}"`;
+  const message = `Slot "${truncateStr(slotName, 80)}" expects kind "${expected}", got "${got}"`;
   return err("invalid_slots", message, {
     hint: "template_inspect lists every slot's kind (§6 row 3); fill each slot with its declared kind.",
     retryable: false,
