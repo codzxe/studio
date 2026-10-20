@@ -200,6 +200,7 @@ function makeHarness(provider: AuthProvider = new MapAuthProvider()): Harness {
     version: "0.0.0-assembly",
     probes: stubProbes(),
     startedAt: BASE_MS,
+    auth: provider,
     limiter: new RateLimiter({ kv: new InMemoryKV() }),
     workspacesDeps: {
       db: fakeWorkspacesDb,

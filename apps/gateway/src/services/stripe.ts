@@ -129,17 +129,17 @@ export function priceMapFromEnv(
   const max = env.STRIPE_PRICE_MAX ?? env.STRIPE_PRICE_PLAN_120_CREDITS;
   const pack = env.STRIPE_PRICE_PACK ?? env.STRIPE_PRICE_CREDIT_PACK_100;
   const seat = env.STRIPE_PRICE_EXTRA_SEAT;
-  const missing: string[] = [];
-  if (starter === undefined) {
-    missing.push("STRIPE_PRICE_STARTER");
-  }
-  if (pro === undefined) {
-    missing.push("STRIPE_PRICE_PRO");
-  }
-  if (max === undefined) {
-    missing.push("STRIPE_PRICE_MAX");
-  }
-  if (missing.length > 0) {
+  if (starter === undefined || pro === undefined || max === undefined) {
+    const missing: string[] = [];
+    if (starter === undefined) {
+      missing.push("STRIPE_PRICE_STARTER");
+    }
+    if (pro === undefined) {
+      missing.push("STRIPE_PRICE_PRO");
+    }
+    if (max === undefined) {
+      missing.push("STRIPE_PRICE_MAX");
+    }
     return err("validation_failed", "Stripe price ids are not configured.", {
       hint: `Set ${missing.join(", ")} (or the PLAN_*_CREDITS aliases).`,
     });
@@ -154,7 +154,7 @@ export function priceIdForPlanCode(
 ): Result<string> {
   if (planCode === "pack") {
     if (prices.pack === undefined) {
-      return err("not_configured", "Credit pack checkout is not configured.", {
+      return err("validation_failed", "Credit pack checkout is not configured.", {
         hint: "Set STRIPE_PRICE_CREDIT_PACK_100 (or STRIPE_PRICE_PACK) to sell packs.",
       });
     }
@@ -1069,9 +1069,12 @@ export function createStripeBillingService(deps: StripeBillingDeps): StripeBilli
             { hint: "Sign in with a verified email address, then retry.", retryable: false },
           );
         }
+        // const alias so the closure below sees the narrowed string on every
+        // TS version (property narrowing is not preserved in closures).
+        const email: string = caller.email;
         customerId = (
           await providerCall(() =>
-            stripe.upsertCustomer({ organizationId: input.workspaceId, email: caller.email }),
+            stripe.upsertCustomer({ organizationId: input.workspaceId, email }),
           )
         ).customerId;
       }
