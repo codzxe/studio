@@ -37,10 +37,10 @@
 // covers their seq (the gap never reaches the consumer, so no flag).
 
 import {
-  buildRunEvent,
   type RunEventFor,
   type RunEventPayloadMap,
   type RunEventType,
+  buildRunEvent,
   isTerminalRunEventType,
 } from "./events.js";
 
@@ -129,7 +129,13 @@ function eventBusFailure(
   message: string,
   options: { hint?: string; retryable?: boolean } = {},
 ): EventBusFailure {
-  const failure: { ok: false; code: EventBusErrorCode; message: string; hint?: string; retryable?: boolean } = {
+  const failure: {
+    ok: false;
+    code: EventBusErrorCode;
+    message: string;
+    hint?: string;
+    retryable?: boolean;
+  } = {
     ok: false,
     code,
     message,
@@ -220,7 +226,10 @@ const CURATED_KEYS: ReadonlySet<string> = new Set(["error", "reason"]);
 const MAX_REDACTION_DEPTH = 8;
 
 function isSensitiveKey(key: string): boolean {
-  const tokens = key.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 0);
+  const tokens = key
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 0);
   return tokens.some((token) => SENSITIVE_KEY_TOKENS.has(token));
 }
 
@@ -598,7 +607,9 @@ class Subscriber implements RunEventSubscription {
       const waiter = this.#waiters.shift();
       const delivery = this.#nextDelivery();
       if (waiter !== undefined) {
-        waiter(delivery === null ? { done: true, value: undefined } : { done: false, value: delivery });
+        waiter(
+          delivery === null ? { done: true, value: undefined } : { done: false, value: delivery },
+        );
       }
       return;
     }
@@ -934,9 +945,9 @@ export class RunEventBus {
         cursor = Math.min(cursor, tail);
       }
       for (let page = 0; page < this.#maxBackfillPages; page += 1) {
-        const rows = [...(await this.#store.sinceSeq(subscriber.runId, cursor, this.#backfillPageLimit))].sort(
-          (a, b) => a.seq - b.seq,
-        );
+        const rows = [
+          ...(await this.#store.sinceSeq(subscriber.runId, cursor, this.#backfillPageLimit)),
+        ].sort((a, b) => a.seq - b.seq);
         let pagedThrough = cursor;
         let stoppedAtLive = false;
         let enqueuedAny = false;
@@ -950,7 +961,10 @@ export class RunEventBus {
             break;
           }
           pagedThrough = Math.max(pagedThrough, row.seq);
-          if (subscriber.organizationFilter !== null && row.organizationId !== subscriber.organizationFilter) {
+          if (
+            subscriber.organizationFilter !== null &&
+            row.organizationId !== subscriber.organizationFilter
+          ) {
             continue; // §15.1 tenant filter; the seq jump flags at drain time
           }
           subscriber.backfillEnqueue(this.#rowToEvent(subscriber.runId, row));
@@ -982,10 +996,14 @@ export class RunEventBus {
   #rowToEvent(runId: string, row: StoredEventRow): CorrelatedRunEvent {
     // Internal seam (rows come from our own appends): cast, then redact per
     // policy — identical delivery guarantees as the live path (§22).
-    const delivered = this.#redaction.redactPayload(row.type, row.payload as RunEventPayloadMap[RunEventType], {
-      organizationId: row.organizationId,
-      runId,
-    });
+    const delivered = this.#redaction.redactPayload(
+      row.type,
+      row.payload as RunEventPayloadMap[RunEventType],
+      {
+        organizationId: row.organizationId,
+        runId,
+      },
+    );
     return {
       seq: row.seq,
       runId,

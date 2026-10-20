@@ -12,6 +12,7 @@ here in the same change (spec §1.5 rule 9). License texts live in `LICENSES/`.
 | `apps/web` reference patterns (Better Auth + Drizzle + Stripe) | Next SaaS Stripe Starter | mickasmt | https://github.com/mickasmt/next-saas-stripe-starter | MIT | `c6df229ae73c207e87356d5e592779c511a9b56d` |
 | Marketing/landing reference | AstroWind | onwidget | https://github.com/onwidget/astrowind | MIT | `14e1a691f80548dcc36370847b1a02c0d0b12821` |
 | UI animation reference | Magic UI | magicuidesign | https://github.com/magicuidesign/magicui | MIT | `efe76fc5755eca1142dd4f74c1d6f0ace2887e3c` |
+| `aws4fetch` (npm dependency of `packages/storage`; optional) | Minimal SigV4 client for AWS-compatible fetch APIs | mhart (Michael Hart) | https://github.com/mhart/aws4fetch | MIT (`LICENSES/LICENSE-MIT`) | `^1.0.20` (npm, pinned in `pnpm-lock.yaml`) |
 
 Runtime dependencies (installed from the package manager) are pinned in `pnpm-lock.yaml`
 and must pass the CI license allowlist: MIT, Apache-2.0, BSD-2/3, ISC, MPL-2.0 (unmodified),

@@ -11,10 +11,10 @@ import {
   S3_STORAGE_OPTIONS_SCHEMA,
   type AwsClientLike,
 } from "../src/drivers/s3.js";
-import { assetKey, documentKey, expectOkKey } from "../src/s3-test-globals.js";
+import { assetKey, documentKey } from "../src/keys.js";
 import { sha256Hex } from "../src/sha256.js";
 import type { Storage } from "../src/types.js";
-import { expectStorageErrorCode } from "./helpers.js";
+import { expectOk, expectStorageErrorCode } from "./helpers.js";
 
 const FIXED_NOW = () => new Date("2026-01-02T03:04:05.000Z");
 
@@ -52,6 +52,9 @@ function newStorage(
   signerSink?: Array<{ method: string; url: string }>,
   fetchRecord?: RecordedFetch,
 ): S3Storage {
+  const offlineFetch: typeof fetch = async () => {
+    throw new Error("network is disabled in storage tests");
+  };
   return new S3Storage({
     endpoint: "http://127.0.0.1:9000",
     region: "auto",
@@ -62,7 +65,7 @@ function newStorage(
     forceR2Compat: true,
     now: FIXED_NOW,
     signerFactory: () => recordingSigner(signerSink ?? []),
-    fetchImpl: fetchRecord === undefined ? undefined : recordingFetch(fetchRecord),
+    fetchImpl: fetchRecord === undefined ? offlineFetch : recordingFetch(fetchRecord),
     ...options,
   });
 }
@@ -293,7 +296,7 @@ describe("S3Storage — list (ListObjectsV2 paging, prefix stripping)", () => {
 describe("S3Storage — signing (driver level)", () => {
   it("sign presigns the physical key and honours the ttl/download options", async () => {
     const storage = newStorage();
-    const key = expectOkKey(documentKey({ organizationId: "org-1", documentId: "doc-1", versionId: "v-42" }));
+    const key = expectOk(documentKey({ organizationId: "org-1", documentId: "doc-1", versionId: "v-42" }));
     const { url, expiresAt } = await storage.sign(key, { ttlSeconds: 900 });
     expect(url).toContain("http://127.0.0.1:9000/test-bucket/prod/documents/organizations/org-1/documents/doc-1/v-42.pcraft?");
     expect(url).toContain("X-Amz-Expires=900");
@@ -308,7 +311,7 @@ describe("S3Storage — signing (driver level)", () => {
 
   it("sign caps ttlSeconds at 900 (§15.1)", async () => {
     const storage = newStorage();
-    const key = expectOkKey(assetKey({ organizationId: "org-1", assetId: "ast-1" }));
+    const key = expectOk(assetKey({ organizationId: "org-1", assetId: "ast-1" }));
     await expectStorageErrorCode(storage.sign(key, { ttlSeconds: 901 }), "storage_invalid_ttl");
     await expectStorageErrorCode(storage.sign(key, { ttlSeconds: 0 }), "storage_invalid_ttl");
   });

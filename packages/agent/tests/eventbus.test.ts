@@ -3,20 +3,20 @@
 // All against a fake durable store: deterministic, no DB, no network, no timers
 // except explicit `tick()` settles for callback-drain microtasks.
 import { describe, expect, it } from "vitest";
-import type { RunEventPayloadMap, RunEventType } from "../src/events.js";
 import {
   type CorrelatedRunEvent,
   DefaultRedactionPolicy,
   type EventDelivery,
   type EventStoreLike,
-  type RedactionPolicy,
   REDACTED,
+  type RedactionPolicy,
   RunEventBus,
   type RunEventSubscription,
   type StoredEventAppend,
   type StoredEventRow,
   type StreamEnd,
 } from "../src/eventbus.js";
+import type { RunEventPayloadMap, RunEventType } from "../src/events.js";
 
 const RUN_A = "run-aaaaaaaa-0000-4000-8000-00000000000a";
 const RUN_B = "run-bbbbbbbb-0000-4000-8000-00000000000b";
@@ -59,7 +59,14 @@ function previewPayload(): RunEventPayloadMap["preview.updated"] {
 }
 
 function stepFinishedPayload(stepSeq: number): RunEventPayloadMap["step.finished"] {
-  return { stepSeq, phase: "executing", tool: null, ok: true, durationMs: 3, deviationFromPlan: false };
+  return {
+    stepSeq,
+    phase: "executing",
+    tool: null,
+    ok: true,
+    durationMs: 3,
+    deviationFromPlan: false,
+  };
 }
 
 function succeededPayload(): RunEventPayloadMap["run.succeeded"] {
@@ -85,7 +92,9 @@ function planPayload(): RunEventPayloadMap["run.plan"] {
       slots: { headline: "Launch day headline copy" },
       palette: ["#F4E7D3"],
       typography: {},
-      steps: [{ tool: "text_add", args: { text: "Body copy from the user brief", name: "Headline" } }],
+      steps: [
+        { tool: "text_add", args: { text: "Body copy from the user brief", name: "Headline" } },
+      ],
       checks: [],
       model_tier: "standard",
       notes_for_user: "Notes paraphrasing the brief",
@@ -100,7 +109,10 @@ function publish(
   type: RunEventType,
   payload: RunEventPayloadMap[RunEventType],
   organizationId: string = ORG,
-): Promise<{ ok: true; event: CorrelatedRunEvent } | { ok: false; code: string; message: string; retryable?: boolean }> {
+): Promise<
+  | { ok: true; event: CorrelatedRunEvent }
+  | { ok: false; code: string; message: string; retryable?: boolean }
+> {
   return bus.publish(runId, type, payload, { organizationId });
 }
 
@@ -147,13 +159,19 @@ class FakeStoreCore implements EventStoreLike {
     this.appendLog.push({ runId, row });
   }
 
-  async sinceSeq(runId: string, afterSeq: number, limit: number): Promise<readonly StoredEventRow[]> {
+  async sinceSeq(
+    runId: string,
+    afterSeq: number,
+    limit: number,
+  ): Promise<readonly StoredEventRow[]> {
     this.sinceSeqCalls.push({ runId, afterSeq, limit });
     await this.sinceSeqGate?.();
     if (this.failSinceSeq) {
       throw new Error("store read failed");
     }
-    return this.list(runId).filter((row) => row.seq > afterSeq).slice(0, limit);
+    return this.list(runId)
+      .filter((row) => row.seq > afterSeq)
+      .slice(0, limit);
   }
 }
 
@@ -170,7 +188,10 @@ class FakeEventStore extends FakeStoreCore {
   }
 }
 
-async function collect(subscription: RunEventSubscription, count: number): Promise<EventDelivery[]> {
+async function collect(
+  subscription: RunEventSubscription,
+  count: number,
+): Promise<EventDelivery[]> {
   const out: EventDelivery[] = [];
   for await (const delivery of subscription) {
     out.push(delivery);
@@ -205,15 +226,17 @@ describe("eventbus publish: seq monotonicity + durability", () => {
     store.appendMicrotasks = 3; // store appends overlap; the bus must serialize per run
     const bus = new RunEventBus({ store });
     const results = await Promise.all(
-      Array.from({ length: 40 }, (_, i) => publish(bus, RUN_A, "step.finished", stepFinishedPayload(i + 1))),
+      Array.from({ length: 40 }, (_, i) =>
+        publish(bus, RUN_A, "step.finished", stepFinishedPayload(i + 1)),
+      ),
     );
     const allocated = results.map((r) => (r.ok ? r.event.seq : -1)).sort((a, b) => a - b);
     expect(allocated).toEqual(range(1, 40));
     // the durable backlog is exactly the allocated sequence, in append order
     expect(store.list(RUN_A).map((row) => row.seq)).toEqual(range(1, 40));
-    expect(store.appendLog.filter((entry) => entry.runId === RUN_A).map((entry) => entry.row.seq)).toEqual(
-      range(1, 40),
-    );
+    expect(
+      store.appendLog.filter((entry) => entry.runId === RUN_A).map((entry) => entry.row.seq),
+    ).toEqual(range(1, 40));
     // §22 correlation on every persisted row
     for (const entry of store.appendLog) {
       expect(entry.row.organizationId).toBe(ORG);
@@ -307,7 +330,9 @@ describe("eventbus publish: seq monotonicity + durability", () => {
     const bus = new RunEventBus({ store });
     const ok = await bus.publish(RUN_A, "run.queued", queuedPayload(), { organizationId: ORG });
     expect(ok.ok).toBe(true);
-    const foreign = await bus.publish(RUN_A, "run.queued", queuedPayload(), { organizationId: ORG_OTHER });
+    const foreign = await bus.publish(RUN_A, "run.queued", queuedPayload(), {
+      organizationId: ORG_OTHER,
+    });
     expect(foreign.ok).toBe(false);
     if (!foreign.ok) {
       expect(foreign.code).toBe("organization_mismatch");
@@ -522,9 +547,24 @@ describe("eventbus backpressure + gap detection", () => {
 
   it("flags resync when the durable store has a hole (external writer / pruned history)", async () => {
     const store = new FakeEventStore();
-    store.seed(RUN_A, { seq: 1, type: "run.queued", payload: queuedPayload(), organizationId: ORG });
-    store.seed(RUN_A, { seq: 2, type: "run.started", payload: startedPayload(), organizationId: ORG });
-    store.seed(RUN_A, { seq: 4, type: "preview.updated", payload: previewPayload(), organizationId: ORG });
+    store.seed(RUN_A, {
+      seq: 1,
+      type: "run.queued",
+      payload: queuedPayload(),
+      organizationId: ORG,
+    });
+    store.seed(RUN_A, {
+      seq: 2,
+      type: "run.started",
+      payload: startedPayload(),
+      organizationId: ORG,
+    });
+    store.seed(RUN_A, {
+      seq: 4,
+      type: "preview.updated",
+      payload: previewPayload(),
+      organizationId: ORG,
+    });
     const bus = new RunEventBus({ store });
     const sub = bus.subscribe(RUN_A, { fromSeq: 0 });
     const deliveries = await collect(sub, 3);
@@ -559,7 +599,7 @@ describe("eventbus backpressure + gap detection", () => {
     await tick();
 
     gates[0]?.resolve(); // page 1: store row seq 1 — heals the first shed event
-    let deliveries: EventDelivery[] = [];
+    const deliveries: EventDelivery[] = [];
     let result = await (pulls[0] as Promise<IteratorResult<EventDelivery, undefined>>);
     expect(result.done).toBe(false);
     if (!result.done) {
@@ -611,8 +651,10 @@ describe("eventbus redaction policy", () => {
     sub.onDelivery((delivery) => seen.push(delivery));
     await tick();
     await bus.publish(RUN_A, "run.plan", planPayload(), { organizationId: ORG });
-    await bus.publish(RUN_A, "run.failed", failedPayload(), { organizationId: ORG });
     await bus.publish(RUN_A, "run.queued", queuedPayload(), { organizationId: ORG });
+    // terminal: the §13.3 curated envelope must pass redaction verbatim, and
+    // the stream ends after this delivery
+    await bus.publish(RUN_A, "run.failed", failedPayload(), { organizationId: ORG });
     await tick();
 
     const planDelivery = seen.find((delivery) => delivery.event.type === "run.plan");
@@ -728,14 +770,24 @@ describe("eventbus redaction policy", () => {
 describe("eventbus tenant filter", () => {
   it("skips foreign-organization rows in backfill and flags the gap at drain time", async () => {
     const store = new FakeEventStore();
-    store.seed(RUN_A, { seq: 1, type: "run.queued", payload: queuedPayload(), organizationId: ORG });
+    store.seed(RUN_A, {
+      seq: 1,
+      type: "run.queued",
+      payload: queuedPayload(),
+      organizationId: ORG,
+    });
     store.seed(RUN_A, {
       seq: 2,
       type: "run.queued",
       payload: queuedPayload(),
       organizationId: ORG_OTHER, // never delivered to the ORG subscriber
     });
-    store.seed(RUN_A, { seq: 3, type: "run.started", payload: startedPayload(), organizationId: ORG });
+    store.seed(RUN_A, {
+      seq: 3,
+      type: "run.started",
+      payload: startedPayload(),
+      organizationId: ORG,
+    });
     const bus = new RunEventBus({ store });
     const sub = bus.subscribe(RUN_A, { fromSeq: 0, organizationId: ORG });
     const deliveries = await collect(sub, 2);
