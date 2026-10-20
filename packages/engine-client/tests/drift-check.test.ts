@@ -5,11 +5,13 @@
 //   - fixtures/replies/engine-commands.json — a recorded-style excerpt of the
 //     `engine.commands` registry reply, hand-verified against
 //     vendor/photocraft/crates/engine/src/commands.rs at the pinned engine revision (872748fb…).
-//   - REQUIRED_COMMANDS — the §2.2 "verified agent-ready" subset the product relies on.
-//     When src/commands.ts (W2-L) lands, this file imports its REQUIRED_COMMANDS instead of
-//     the local list (auto-detected); the local list below is the fallback and matches the
-//     fixture excerpt one-to-one. TODO(W2-L): land src/commands.ts with REQUIRED_COMMANDS
-//     and delete the local copy in the same change.
+//   - REQUIRED_COMMANDS — src/commands.ts (W2-D) now owns the full §2.2 list
+//     (REQUIRED_ENGINE_COMMANDS, registry-verified); this file auto-detects it and
+//     keeps its own fixture-pinned subset (LOCAL_REQUIRED_COMMANDS) as the excerpt
+//     contract: the full list is verified against the LIVE registry at worker startup
+//     via discoverRequiredCommands() (§2.2), while the 12-command fixture can only pin
+//     the excerpt — so the alarm here checks the excerpt, and the hand-off check below
+//     guarantees src/commands.ts stays a superset of it.
 //   - fixtures/replies/methods.json — the frozen headless METHODS list from
 //     vendor/photocraft/crates/automation/src/rpc.rs, order included.
 //
@@ -47,7 +49,7 @@ const LOCAL_REQUIRED_COMMANDS: readonly string[] = [
   "filter.blur.gaussianBlur",
 ];
 
-/** Load src/commands.ts (W2-L) once it exists; null while it is absent. */
+/** Load src/commands.ts once it exists; null while it is absent. */
 async function tryLoadExternalRequiredCommands(): Promise<readonly string[] | null> {
   try {
     const mod = (await import("../src/commands" + ".js")) as { REQUIRED_COMMANDS?: unknown };
@@ -59,15 +61,12 @@ async function tryLoadExternalRequiredCommands(): Promise<readonly string[] | nu
     }
     return null;
   } catch {
-    // Module not authored yet — the local §2.2 subset is the contract for now.
+    // Module failed to load (absent or broken): the local §2.2 excerpt stays the contract.
     return null;
   }
 }
 
 const externalRequiredCommands: readonly string[] | null = await tryLoadExternalRequiredCommands();
-
-/** REQUIRED_COMMANDS is W2-L's src/commands.ts list once available; local fallback otherwise. */
-const REQUIRED_COMMANDS: readonly string[] = externalRequiredCommands ?? LOCAL_REQUIRED_COMMANDS;
 
 async function loadCommandListFixture(): Promise<CommandEntry[]> {
   const fixture = await loadReply("engine-commands");
@@ -77,23 +76,26 @@ async function loadCommandListFixture(): Promise<CommandEntry[]> {
 }
 
 describe("upstream drift alarm (§21)", () => {
-  it("every REQUIRED_COMMANDS id exists in the recorded registry fixture", async () => {
+  it("every fixture-pinned §2.2 id still exists in the recorded registry excerpt", async () => {
     const commands = await loadCommandListFixture();
     const recordedIds = new Set(commands.map((command) => command.id));
 
-    const missing = REQUIRED_COMMANDS.filter((id) => !recordedIds.has(id));
+    // The fixture is a 12-command excerpt (its $comment): CI can only alarm on the
+    // pinned subset; src/commands.ts's full REQUIRED_COMMANDS list is checked against
+    // the LIVE registry via discoverRequiredCommands() at worker startup (§2.2).
+    const missing = LOCAL_REQUIRED_COMMANDS.filter((id) => !recordedIds.has(id));
     expect(
       missing,
       missing.length > 0
         ? `upstream drift: the pinned engine registry no longer serves ${missing.join(", ")}. ` +
           "Re-record fixtures/replies/engine-commands.json against the new revision and " +
-          "reconcile REQUIRED_COMMANDS with §2.2 (src/commands.ts owner: W2-L)."
+          "reconcile REQUIRED_COMMANDS with §2.2 (src/commands.ts owner: W2-D)."
         : "",
     ).toEqual([]);
   });
 
   it("the local §2.2 subset stays covered even when src/commands.ts provides the list", async () => {
-    // Guards the W2-L hand-off: their REQUIRED_COMMANDS may grow, but dropping a fixture-pinned
+    // Guards the W2-D hand-off: their REQUIRED_COMMANDS may grow, but dropping a fixture-pinned
     // command must be a loud reconciliation, not a silent pass.
     const commands = await loadCommandListFixture();
     const recordedIds = new Set(commands.map((command) => command.id));
@@ -102,6 +104,15 @@ describe("upstream drift alarm (§21)", () => {
     if (externalRequiredCommands !== null) {
       const dropped = LOCAL_REQUIRED_COMMANDS.filter((id) => !externalRequiredCommands.includes(id));
       expect(dropped, "src/commands.ts dropped a §2.2-pinned command").toEqual([]);
+      // Registry hygiene: the required list carries each id exactly once, non-empty.
+      expect(
+        new Set(externalRequiredCommands).size,
+        "src/commands.ts REQUIRED_COMMANDS contains duplicate ids",
+      ).toBe(externalRequiredCommands.length);
+      expect(
+        externalRequiredCommands.includes(""),
+        "src/commands.ts REQUIRED_COMMANDS contains an empty id",
+      ).toBe(false);
     }
   });
 

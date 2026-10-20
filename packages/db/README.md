@@ -56,9 +56,19 @@ its full environment in `@studio/config`.
 ## Seed (local/staging demo data)
 
 ```sh
+# from the repo root — uses tsx (devDependency of this package)
+pnpm db:seed
+
 # from packages/db — Node >= 22.6, no extra tooling needed
 node --env-file=../../.env --experimental-strip-types scripts/seed.ts
 ```
+
+<!-- TODO(tsx): the root `db:seed` script runs `pnpm --filter @studio/db exec
+     tsx scripts/seed.ts` (W1-G handoff, W2-Q). tsx is a devDependency here and
+     must be installed (`pnpm install`) before `pnpm db:seed` works — in CI or
+     fresh clones without node_modules, use the bare-node strip-types line above
+     instead (no tsx, no drizzle-kit). Remove this note if CI proves tsx
+     resolves everywhere. -->
 
 Idempotent and forward-only: creates the demo user (`demo@studio.test`), the
 "Demo Studio" organization + owner membership, the 30-credit trial grant ledger

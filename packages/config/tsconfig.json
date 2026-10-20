@@ -1,5 +1,11 @@
 {
     "extends": "../../tsconfig.base.json",
-    "compilerOptions": { "rootDir": "src", "outDir": "dist", "jsx": "preserve" },
-    "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"]
+    "compilerOptions": { "rootDir": ".", "outDir": "dist", "jsx": "preserve" },
+    "include": [
+      "src/**/*.ts",
+      "src/**/*.tsx",
+      "tests/**/*.ts",
+      "scripts/**/*.ts",
+      "*.ts"
+    ]
   }

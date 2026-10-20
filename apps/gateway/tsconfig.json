@@ -1,5 +1,10 @@
 {
     "extends": "../../tsconfig.base.json",
+    // Fleet normalization (W2-Q): NO explicit rootDir. This app's program pulls
+    // sibling workspace SOURCES via imports (@studio/config/@studio/db/@studio/billing
+    // resolve to src/*.ts through pnpm links), and an explicit rootDir would trip
+    // TS6059 on those files. tsc infers the common root across src/, tests/ and the
+    // imported sources; `tsc --noEmit` is the typecheck gate.
     "compilerOptions": { "outDir": "dist", "jsx": "preserve" },
     "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"]
   }

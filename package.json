@@ -11,6 +11,7 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
+    "db:seed": "pnpm --filter @studio/db exec tsx scripts/seed.ts",
     "test": "turbo run test",
     "format": "biome check --write .",
     "check:licenses": "node scripts/check-licenses.mjs"

@@ -7,6 +7,7 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "jsx": "preserve",
     "noEmit": true,
+    "rootDir": ".",
     "declaration": false,
     "sourceMap": false,
     "types": ["node"],

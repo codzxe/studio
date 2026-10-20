@@ -1,5 +1,13 @@
 {
     "extends": "../../tsconfig.base.json",
-    "compilerOptions": { "rootDir": "src", "outDir": "dist", "jsx": "preserve" },
-    "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"]
+    // W2-Q normalization: rootDir "." (tests/ + scripts/ + drizzle.config.ts live
+    // next to src/ — a "src" rootDir trips TS6059 on `tsc --noEmit`).
+    "compilerOptions": { "rootDir": ".", "outDir": "dist", "jsx": "preserve" },
+    "include": [
+      "src/**/*.ts",
+      "src/**/*.tsx",
+      "tests/**/*.ts",
+      "scripts/**/*.ts",
+      "*.ts"
+    ]
   }

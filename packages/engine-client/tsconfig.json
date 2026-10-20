@@ -1,8 +1,10 @@
 {
     "extends": "../../tsconfig.base.json",
-    // No explicit rootDir: tests/ sits next to src/ and tsc would otherwise report
-    // TS6059 ("file is not under rootDir") while typechecking (same call as the
-    // tools, worker and engine-pool packages).
+    // Fleet normalization (W2-Q): NO explicit rootDir. tests/ sit next to src/
+    // and this package's program pulls sibling workspace SOURCES via imports
+    // (@studio/config resolves to src/*.ts through pnpm links), so an explicit
+    // rootDir — "src" or "." — would trip TS6059 on those files. tsc infers the
+    // common root; `tsc --noEmit` is the gate.
     "compilerOptions": { "outDir": "dist", "jsx": "preserve" },
     "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts"]
   }

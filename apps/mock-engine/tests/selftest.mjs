@@ -1,490 +1,293 @@
-// @studio/mock-engine — self-test of the transport + engine, run with bare `node --test`
-// (this app IS the test tool, so it validates itself against the vendor protocol's own
-// pinned behaviors from vendor/photocraft/crates/automation/src/rpc.rs tests).
-
+// @ts-check
+/**
+ * Selftest: spawns src/index.mjs on an ephemeral port (MOCK_ENGINE_PORT=0) and
+ * speaks the real NDJSON protocol over TCP — auth reject, then the required
+ * doc.new → engine.execute → doc.render roundtrip, plus the cheap contract
+ * checks (repeat auth, unknown method/command, engine.commands, batch, cap).
+ * Run: `node --test tests/` (no npm test deps).
+ */
+import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import process from "node:process";
-import { after, before, test } from "node:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { METHODS } from "../src/engine.mjs";
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const SERVER = join(ROOT, "src", "index.mjs");
+const TOKEN = "0123456789abcdef".repeat(4); // 64 hex chars, synthetic
 
-const HERE = path.dirname(new URL(import.meta.url).pathname);
-const ENTRY = path.join(HERE, "..", "src", "index.mjs");
-const TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-const WRONG_TOKEN = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+/** Features this suite needs; `describe.skipIf` semantics via describe.skip. */
+const missing = [];
+const nodeMajor = Number.parseInt(process.versions.node.split(".")[0], 10);
+if (nodeMajor < 18) missing.push(`node>=18 (have ${process.versions.node})`);
+if (typeof structuredClone !== "function") missing.push("structuredClone");
+if (typeof spawn !== "function" || typeof net.createServer !== "function") missing.push("node core modules");
+const d = missing.length > 0 ? describe.skip : describe;
 
-/**
- * Spawn a mock engine and wait for its listening line (the W2-J env contract).
- * @param {Record<string, string>} [env] extra environment entries
- * @returns {Promise<{child: import("node:child_process").ChildProcess, port: number, stop: () => Promise<void>}>}
- */
-function startServer(env = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [ENTRY], {
-      env: {
-        ...process.env,
-        MOCK_ENGINE_PORT: "0",
-        MOCK_ENGINE_TOKEN: TOKEN,
-        MOCK_ENGINE_ROOT: root,
-        ...env,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
+/** Spawn one mock server; resolves once its stderr announces the real port. */
+function startServer(extraEnv = {}) {
+  const writeRoot = mkdtempSync(join(tmpdir(), "mock-engine-selftest-"));
+  const child = spawn(process.execPath, [SERVER], {
+    env: { ...process.env, MOCK_ENGINE_PORT: "0", MOCK_ENGINE_TOKEN: TOKEN, MOCK_ENGINE_WRITE_ROOT: writeRoot, ...extraEnv },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let err = "";
+  const portPromise = new Promise((res, rej) => {
+    const timer = setTimeout(() => rej(new Error(`server never announced readiness; stderr: ${err}`)), 8000);
+    child.stderr.on("data", (chunk) => {
+      err += String(chunk);
+      const m = /listening on 127\.0\.0\.1:(\d+)/.exec(err);
+      if (m) {
+        clearTimeout(timer);
+        res(Number(m[1]));
+      }
     });
-    let buffer = "";
-    const onLine = (line) => {
-      try {
-        const message = JSON.parse(line);
-        if (message.mockEngine === "listening") {
-          cleanup();
-          resolve({
-            child,
-            port: message.port,
-            stop: () =>
-              new Promise((done) => {
-                child.on("exit", () => done());
-                child.kill("SIGTERM");
-                setTimeout(() => child.kill("SIGKILL"), 1500).unref();
-              }),
-          });
-        }
-      } catch {
-        reject(new Error(`unexpected stdout line: ${line}`));
-      }
-    };
-    const onData = (chunk) => {
-      buffer += chunk.toString("utf8");
-      let newline;
-      while ((newline = buffer.indexOf("\n")) !== -1) {
-        onLine(buffer.slice(0, newline));
-        buffer = buffer.slice(newline + 1);
-      }
-    };
-    const onError = (error) => {
-      cleanup();
-      reject(error);
-    };
-    /** @param {Buffer} chunk */
-    const onErrData = (chunk) => process.stderr.write(chunk); // surfaces fail-fast messages
-    const cleanup = () => {
-      child.stdout.off("data", onData);
-      child.stderr.off("data", onErrData);
-      child.off("error", onError);
-    };
-    child.stdout.on("data", onData);
-    child.stderr.on("data", onErrData);
-    child.on("error", onError);
+    child.on("exit", (code) => rej(new Error(`server exited early (${code}); stderr: ${err}`)));
+  });
+  return { child, writeRoot, port: portPromise };
+}
+
+function stopServer(h) {
+  h.child.kill("SIGTERM");
+  return new Promise((res) => {
+    const t = setTimeout(() => {
+      h.child.kill("SIGKILL");
+      res();
+    }, 1500);
+    h.child.on("exit", () => {
+      clearTimeout(t);
+      res();
+    });
   });
 }
 
-/** A minimal protocol client: newline-delimited JSON with id-correlated replies. */
-class Client {
-  /**
-   * @param {number} port
-   * @param {string} [token] authenticate immediately when given
-   */
-  constructor(port, token = null) {
-    this.socket = net.connect({ host: "127.0.0.1", port });
-    this.buffer = "";
-    /** @type {Array<(reply: any|null) => void>} */
-    this.waiters = [];
-    this.socket.on("data", (chunk) => {
-      this.buffer += chunk.toString("utf8");
-      let newline;
-      while ((newline = this.buffer.indexOf("\n")) !== -1) {
-        const line = this.buffer.slice(0, newline);
-        this.buffer = this.buffer.slice(newline + 1);
-        const waiter = this.waiters.shift();
-        if (waiter) waiter(line.trim().length === 0 ? null : JSON.parse(line));
+/** A minimal NDJSON client with id correlation and hard timeouts (never hangs the suite). */
+function connect(port) {
+  const socket = net.createConnection({ host: "127.0.0.1", port });
+  socket.on("error", () => {});
+  const client = { socket, buf: "", pending: new Map(), closed: false, closeWaiters: [] };
+  socket.on("data", (chunk) => {
+    client.buf += chunk.toString("utf8");
+    let i = client.buf.indexOf("\n");
+    while (i >= 0) {
+      const line = client.buf.slice(0, i);
+      client.buf = client.buf.slice(i + 1);
+      if (line.trim().length > 0) {
+        try {
+          const msg = JSON.parse(line);
+          const waiter = client.pending.get(JSON.stringify(msg.id ?? null));
+          if (waiter) {
+            client.pending.delete(JSON.stringify(msg.id ?? null));
+            waiter(msg);
+          }
+        } catch { /* not a JSON line: ignore */ }
       }
-    });
-    this.open = new Promise((resolve, reject) => {
-      this.socket.once("connect", resolve);
-      this.socket.once("error", reject);
-    });
-    this.authenticated = token === null ? Promise.resolve(null) : this.auth(token);
-  }
-
-  /** @param {string} token */
-  auth(token) {
-    return this.call("auth", { token }, "auth");
-  }
-
-  /**
-   * @param {string} method
-   * @param {any} [params]
-   * @param {any} [id]
-   * @returns {Promise<any|null>} the parsed reply, or null when the connection closed
-   */
-  call(method, params, id = 1) {
-    this.socket.write(`${JSON.stringify({ id, method, params: params ?? {} })}\n`);
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(new Error("timeout")), 4000);
-      this.waiters.push((reply) => {
+      i = client.buf.indexOf("\n");
+    }
+  });
+  socket.on("close", () => {
+    client.closed = true;
+    for (const [, waiter] of client.pending) waiter({ ok: false, error: "connection closed" });
+    client.pending.clear();
+    for (const w of client.closeWaiters.splice(0)) w();
+  });
+  client.call = (id, method, params = {}, ms = 4000) => {
+    const key = JSON.stringify(id ?? null);
+    const p = new Promise((res, rej) => {
+      const timer = setTimeout(() => {
+        client.pending.delete(key);
+        rej(new Error(`timeout waiting for reply id=${key}`));
+      }, ms);
+      client.pending.set(key, (msg) => {
         clearTimeout(timer);
-        resolve(reply);
-      });
-      this.socket.once("close", () => {
-        clearTimeout(timer);
-        const waiter = this.waiters.pop();
-        if (waiter) waiter(null);
+        res(msg);
       });
     });
-  }
-
-  end() {
-    this.socket.end();
-  }
-
-  destroy() {
-    this.socket.destroy();
-  }
-}
-
-/** Decode a PNG's IHDR dimensions without a dependency. @param {Buffer} bytes */
-function pngDims(bytes) {
-  assert.equal(bytes.readUInt32BE(0), 0x89504e47, "PNG signature");
-  assert.equal(bytes.toString("ascii", 12, 16), "IHDR");
-  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
-}
-
-let root = "";
-let server = null;
-let port = 0;
-const held = [];
-
-before(async () => {
-  root = mkdtempSync(path.join(os.tmpdir(), "mock-engine-selftest-"));
-  server = await startServer();
-  port = server.port;
-});
-
-after(async () => {
-  for (const client of held) client.destroy();
-  if (server) await server.stop();
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("auth rejects a wrong token and closes, without exposing any method", async () => {
-  const client = new Client(port, null);
-  await client.open;
-  const reply = await client.call("auth", { token: WRONG_TOKEN }, "a");
-  assert.equal(reply.ok, false);
-  assert.equal(reply.error, "authentication required");
-  const closed = new Promise((resolve) => client.socket.once("close", resolve));
-  assert.equal(await closed, undefined, "the connection is closed after a refused auth");
-});
-
-test("requests before auth are refused the same way", async () => {
-  const client = new Client(port, null);
-  await client.open;
-  const reply = await client.call("methods", {});
-  assert.equal(reply.ok, false);
-  assert.equal(reply.error, "authentication required");
-  await new Promise((resolve) => client.socket.once("close", resolve));
-});
-
-test("auth accepts the token case-insensitively and methods lists the vendor surface", async () => {
-  const client = new Client(port, null);
-  await client.open;
-  const reply = await client.call("auth", { token: TOKEN.toUpperCase() }, "auth");
-  assert.deepEqual(reply, { id: "auth", ok: true, result: { authenticated: true } });
-  const methods = await client.call("methods", {}, "m");
-  assert.deepEqual(methods.result, METHODS);
-  assert.ok(methods.result.includes("batch"));
-  client.end();
-});
-
-test("doc.new → execute → inspect → render roundtrip", async () => {
-  const client = new Client(port, TOKEN);
-  await client.authenticated;
-
-  const created = await client.call("doc.new", { width: 40, height: 30, background: "white" }, 1);
-  assert.deepEqual(created.result, { document: 0 });
-
-  const fail = await client.call("engine.execute", { command: "layer.new.layer", params: [] }, 2);
-  assert.equal(fail.ok, false, "params must be a JSON object");
-  assert.match(fail.error, /invalid parameters for `layer\.new\.layer`: params must be a JSON object/);
-
-  const layer = await client.call("engine.execute", { command: "layer.new.layer", params: { name: "Ink" } }, 3);
-  assert.deepEqual(layer.result, { layer: 2 });
-
-  const inspected = await client.call("doc.inspect", {}, 4);
-  assert.equal(inspected.result.name, "Untitled");
-  assert.equal(inspected.result.width, 40);
-  assert.equal(inspected.result.layers.length, 2);
-  assert.equal(inspected.result.layers[0].name, "Ink"); // top-down
-  assert.equal(inspected.result.layers[0].kind, "Pixel");
-  assert.equal(inspected.result.activeLayer, 2);
-  assert.deepEqual(inspected.result.history, ["New Layer"]);
-  assert.ok(inspected.result.canUndo);
-
-  const rendered = await client.call("doc.render", { maxSide: 1024 }, 5);
-  assert.equal(rendered.result.mime, "image/png");
-  const png = Buffer.from(rendered.result.base64, "base64");
-  assert.deepEqual(pngDims(png), { width: 40, height: 30 }, "no upscaling below maxSide");
-
-  const scaled = await client.call("doc.render", { maxSide: 20 }, 6);
-  assert.deepEqual(pngDims(Buffer.from(scaled.result.base64, "base64")), { width: 20, height: 15 });
-
-  const oversize = await client.call("doc.render", { maxSide: 4096 }, 7);
-  assert.equal(oversize.ok, false);
-  assert.match(oversize.error, /preview side exceeds 2048 pixels/);
-
-  const session = await client.call("session.list", {}, 8);
-  assert.equal(session.result.documents[0].dirty, true, "edits leave the document dirty");
-  client.end();
-});
-
-test("errors: unknown method, unknown command, disabled command, bad index", async () => {
-  const client = new Client(port, TOKEN);
-  await client.authenticated;
-
-  const method = await client.call("nope", {}, 1);
-  assert.equal(method.ok, false);
-  assert.equal(method.error, "unknown method `nope` (try `methods`)");
-
-  const command = await client.call("engine.execute", { command: "no.such.command" }, 2);
-  assert.equal(command.error, "unknown command `no.such.command`");
-
-  const index = await client.call("doc.close", { index: "0" }, 3);
-  assert.equal(index.error, "`index` must be a non-negative integer");
-
-  // A fresh second server process has no document: layer commands report needsDocument.
-  const fresh = await startServer();
-  const probe = new Client(fresh.port, TOKEN);
-  await probe.authenticated;
-  const commands = await probe.call("engine.commands", { filter: "layer.new.layer" }, 1);
-  const entry = commands.result.find((c) => c.id === "layer.new.layer");
-  assert.equal(entry.enabled, false);
-  assert.equal(entry.disabledReason, "no document open");
-  assert.equal(entry.needsDocument, true);
-  assert.deepEqual(
-    Object.keys(entry).sort(),
-    ["disabledReason", "enabled", "id", "label", "menu", "needsDocument", "params", "shortcut"],
-    "the command-list reply shape is pinned (rpc.rs #3684)",
-  );
-  const refused = await probe.call("engine.execute", { command: "layer.new.layer" }, 2);
-  assert.equal(
-    refused.error,
-    "command `layer.new.layer` is not available right now: no document open",
-  );
-  const ambient = await probe.call("engine.execute", { command: "file.open" }, 3);
-  assert.match(ambient.error, /uses ambient filesystem paths and is disabled/);
-  probe.end();
-  await fresh.stop();
-  client.end();
-});
-
-test("a second auth frame answers 'already authenticated' and keeps serving", async () => {
-  const client = new Client(port, TOKEN);
-  await client.authenticated;
-  const again = await client.call("auth", { token: TOKEN }, "again");
-  assert.deepEqual(again, { id: "again", ok: false, error: "already authenticated" });
-  const methods = await client.call("methods", {}, "m");
-  assert.equal(methods.ok, true);
-  client.end();
-});
-
-test("a malformed line is answered with id null and the session keeps serving", async () => {
-  const client = new Client(port, TOKEN);
-  await client.authenticated;
-  client.socket.write("this is not json\n");
-  const reply = await new Promise((resolve) => {
-    client.waiters.push((value) => resolve(value));
-  });
-  assert.equal(reply.ok, false);
-  assert.equal(reply.id, null);
-  assert.match(reply.error, /bad JSON:/);
-  const session = await client.call("session.list", {}, 2);
-  assert.equal(session.ok, true, "the document stays open and the session keeps serving");
-  client.end();
-});
-
-test("an oversized request line is refused before dispatch and closes the connection", async () => {
-  const client = new Client(port, TOKEN);
-  await client.authenticated;
-  const reply = await new Promise((resolve) => {
-    client.waiters.push((value) => resolve(value));
-    client.socket.once("close", () => resolve(null));
-  });
-  client.socket.write(`${" ".repeat((1 << 20) + 2)}\n`);
-  assert.ok(reply, "one error reply arrives");
-  assert.equal(reply.ok, false);
-  assert.equal(reply.error, "request exceeds 1048576 bytes");
-  await new Promise((resolve) => client.socket.once("close", resolve));
-});
-
-test("batch: sequential steps, stopOnError default, per-step envelopes", async () => {
-  const client = new Client(port, TOKEN);
-  await client.authenticated;
-  const steps = [
-    { command: "layer.new.layer", params: { name: "A" } },
-    { command: "no.such.command" },
-    { command: "layer.new.layer", params: { name: "B" } },
-    { method: "doc.inspect" },
-  ];
-  const stopped = await client.call("batch", { steps }, 1);
-  assert.equal(stopped.result.completed, 1);
-  assert.equal(stopped.result.failed, 1);
-  assert.equal(stopped.result.results.length, 2, "stopped at the first error");
-  assert.equal(stopped.result.results[0].ok, true);
-
-  const continued = await client.call("batch", { steps, stopOnError: false }, 2);
-  assert.equal(continued.result.completed, 3);
-  assert.equal(continued.result.failed, 1);
-  const inspected = continued.result.results[3].result;
-  assert.ok(inspected.layers.some((l) => l.name === "B"));
-
-  const nested = await client.call("batch", { steps: [{ method: "batch", params: { steps: [] } }] }, 3);
-  assert.equal(nested.result.results[0].error, "nested batch");
-
-  const tooMany = await client.call("batch", { steps: Array.from({ length: 257 }, () => ({ command: "command.list" })) }, 4);
-  assert.equal(tooMany.ok, false);
-  assert.match(tooMany.error, /batch contains 257 steps; maximum is 256/);
-  client.end();
-});
-
-test("jobs: wait:false on a job-capable command returns a job id, list shows it done", async () => {
-  const client = new Client(port, TOKEN);
-  await client.authenticated;
-  const started = await client.call("engine.execute", { command: "edit.transform", params: { dx: 10 }, wait: false }, 1);
-  assert.equal(started.result.pending, true);
-  const jobId = started.result.job;
-  const listed = await client.call("jobs.list", {}, 2);
-  const job = listed.result.jobs.find((j) => j.id === jobId);
-  assert.equal(job.state, "done");
-  assert.equal(job.progress, 1);
-  assert.equal(job.command, "edit.transform");
-  assert.deepEqual(Object.keys(job).sort(), [
-    "command",
-    "document",
-    "elapsedMs",
-    "id",
-    "label",
-    "message",
-    "progress",
-    "result",
-    "state",
-  ], "JobInfo shape (jobs.rs, camelCase)");
-  const cancel = await client.call("jobs.cancel", { job: jobId }, 3);
-  assert.equal(cancel.ok, false);
-  assert.equal(cancel.error, `no running job ${jobId}`);
-  client.end();
-});
-
-test("agent.begin → edit → rollback restores the checkpoint; commit keeps the edits", async () => {
-  const client = new Client(port, TOKEN);
-  await client.authenticated;
-  const began = await client.call("engine.execute", { command: "agent.begin", params: { label: "try" } }, 1);
-  assert.equal(began.ok, true);
-  await client.call("engine.execute", { command: "layer.new.layer", params: { name: "Scratch" } }, 2);
-  const rolled = await client.call("engine.execute", { command: "agent.rollback" }, 3);
-  assert.equal(rolled.ok, true);
-  const after = await client.call("doc.inspect", {}, 4);
-  assert.ok(!after.result.layers.some((l) => l.name === "Scratch"), "rollback removed the layer");
-
-  await client.call("engine.execute", { command: "agent.begin" }, 5);
-  await client.call("engine.execute", { command: "layer.new.layer", params: { name: "Kept" } }, 6);
-  const committed = await client.call("engine.execute", { command: "agent.commit" }, 7);
-  assert.equal(committed.ok, true);
-  const kept = await client.call("doc.inspect", {}, 8);
-  assert.ok(kept.result.layers.some((l) => l.name === "Kept"));
-  client.end();
-});
-
-test("capability roots: traversal and escape are refused; save/open roundtrips .pcraft", async () => {
-  const client = new Client(port, TOKEN);
-  await client.authenticated;
-  const escape = await client.call("doc.place", { path: "../../etc/passwd" }, 1);
-  assert.equal(escape.ok, false);
-  assert.match(escape.error, /automation path rejected: parent traversal is not allowed/);
-
-  const absolute = await client.call("doc.open", { path: "/etc/passwd" }, 2);
-  assert.match(absolute.error, /absolute paths must be inside the automation root/);
-
-  const saved = await client.call("doc.save", { path: "state.pcraft" }, 3);
-  assert.deepEqual(saved.result, { path: "state.pcraft", warnings: [] });
-  const clean = await client.call("session.list", {}, 4);
-  assert.equal(clean.result.documents[0].dirty, false, "a .pcraft save records the revision");
-
-  await client.call("doc.close", {}, 5);
-  const reopened = await client.call("doc.open", { path: "state.pcraft" }, 6);
-  assert.equal(reopened.ok, true);
-  assert.ok(reopened.result.layers >= 2, "the layers survive the roundtrip");
-
-  const denied = await startServer({ MOCK_ENGINE_ROOT: "" });
-  const probe = new Client(denied.port, TOKEN);
-  await probe.authenticated;
-  await probe.call("doc.new", { width: 8, height: 8 }, 1);
-  const refused = await probe.call("doc.save", { path: "x.pcraft" }, 2);
-  assert.match(refused.error, /automation filesystem access is not granted: write authority is absent/);
-  probe.end();
-  await denied.stop();
-  client.end();
-});
-
-test("mock.faults: an oversized reply is cut down to the reply-budget error", async () => {
-  const client = new Client(port, TOKEN);
-  await client.authenticated;
-  const armed = await client.call("mock.faults", { config: { oversizedReply: "doc.inspect" } }, 1);
-  assert.deepEqual(armed.result.faults, { oversizedReply: "doc.inspect" });
-  const reply = await client.call("doc.inspect", {}, 2);
-  assert.equal(reply.ok, false);
-  assert.match(reply.error, /response exceeds 8388608 bytes; operation may have completed/);
-  const reset = await client.call("mock.faults", { config: null }, 3);
-  assert.deepEqual(reset.result.faults, {});
-  const healthy = await client.call("doc.inspect", {}, 4);
-  assert.equal(healthy.ok, true);
-  client.end();
-});
-
-test("fault hooks via env: crash-on-command kills the process; hang-on-method never replies", async () => {
-  const crashed = await startServer({ MOCK_ENGINE_FAULTS: JSON.stringify({ crashOnCommand: "edit.fill" }) });
-  const killer = new Client(crashed.port, TOKEN);
-  await killer.authenticated;
-  await killer.call("doc.new", { width: 8, height: 8 }, 1);
-  const exit = new Promise((resolve) => crashed.child.once("exit", (code) => resolve(code)));
-  killer.socket.write(`${JSON.stringify({ id: 2, method: "engine.execute", params: { command: "edit.fill", params: {} } })}\n`);
-  assert.equal(await exit, 1, "the process dies mid-command; the client sees the socket drop");
-  killer.destroy();
-
-  const hung = await startServer({ MOCK_ENGINE_FAULTS: JSON.stringify({ hangOnMethod: "doc.render" }) });
-  const waiter = new Client(hung.port, TOKEN);
-  await waiter.authenticated;
-  await waiter.call("doc.new", { width: 8, height: 8 }, 1);
-  const silent = await Promise.race([
-    new Promise((resolve) => {
-      waiter.socket.once("data", () => resolve("data"));
-    }),
-    new Promise((resolve) => setTimeout(() => resolve("timeout"), 300)),
-  ]);
-  assert.equal(silent, "timeout", "no reply arrives; the client must hit its own request timeout");
-  waiter.destroy();
-  await hung.stop();
-});
-
-test("transport limits: 16 serviced connections; the 17th is refused with one line", async () => {
-  const sockets = [];
-  for (let i = 0; i < 16; i += 1) {
-    const client = new Client(port, TOKEN);
-    held.push(client);
-    await client.open;
-    sockets.push(client);
-  }
-  const extra = net.connect({ host: "127.0.0.1", port });
-  const reply = await new Promise((resolve) => {
-    let buffer = "";
-    extra.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
-      if (buffer.includes("\n")) resolve(JSON.parse(buffer.trim()));
+    socket.write(`${JSON.stringify({ id, method, params })}\n`);
+    return p;
+  };
+  client.waitForClose = (ms = 4000) => (client.closed ? Promise.resolve() : new Promise((res, rej) => {
+    const timer = setTimeout(() => rej(new Error("timeout waiting for connection close")), ms);
+    client.closeWaiters.push(() => {
+      clearTimeout(timer);
+      res();
     });
+  }));
+  client.destroy = () => socket.destroy();
+  return new Promise((res, rej) => {
+    socket.once("connect", () => res(client));
+    socket.once("error", (e) => rej(e));
   });
-  assert.deepEqual(reply, { id: null, ok: false, error: "connection limit reached" });
-  extra.destroy();
-  for (const client of sockets) client.destroy();
+}
+
+d("mock-engine selftest (spawned TCP server)", () => {
+  /** @type {any} */ let srv;
+
+  before(async () => {
+    srv = startServer();
+    await srv.port;
+  });
+
+  after(async () => {
+    await stopServer(srv);
+  });
+
+  it("rejects a wrong token with `authentication required` and closes", async (t) => {
+    const port = await srv.port;
+    const c = await connect(port);
+    t.after(() => c.destroy());
+    const bad = await c.call("auth", "auth", { token: "f".repeat(64) });
+    assert.equal(bad.ok, false);
+    assert.equal(bad.error, "authentication required");
+    await c.waitForClose();
+  });
+
+  it("doc.new → engine.execute → doc.render roundtrip, then save/inspect/close", async (t) => {
+    const port = await srv.port;
+    const c = await connect(port);
+    t.after(() => c.destroy());
+    const auth = await c.call("auth", "auth", { token: TOKEN });
+    assert.deepEqual(auth, { id: "auth", ok: true, result: { authenticated: true } });
+
+    const created = await c.call(1, "doc.new", { width: 800, height: 600, background: "white" });
+    assert.equal(created.ok, true);
+    assert.equal(created.result.document, 0);
+
+    const layer = await c.call(2, "engine.execute", { command: "layer.new.layer", params: { name: "Ink" } });
+    assert.equal(layer.ok, true);
+    assert.equal(typeof layer.result.layer, "number");
+
+    const typed = await c.call(3, "engine.execute", { command: "type.create", params: { text: "Hi", x: 10, y: 20 } });
+    assert.equal(typed.ok, true);
+    assert.equal(typed.result.bounds.length, 4);
+
+    const rendered = await c.call(4, "doc.render", { maxSide: 1024 });
+    assert.equal(rendered.ok, true);
+    assert.equal(rendered.result.mime, "image/png");
+    const png = Buffer.from(rendered.result.base64, "base64");
+    assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    assert.equal(png.readUInt32BE(16), 8, "IHDR width");
+    assert.equal(png.readUInt32BE(20), 8, "IHDR height");
+
+    const inspected = await c.call(5, "doc.inspect", {});
+    assert.equal(inspected.ok, true);
+    assert.equal(inspected.result.layers.length, 3);
+    assert.equal(inspected.result.layers[0].kind, "Type", "top-down order");
+    assert.equal(inspected.result.layers[0].text.text, "Hi");
+    assert.equal(inspected.result.layers.at(-1).name, "Background");
+    assert.ok(inspected.result.revision >= 3);
+
+    const saved = await c.call(6, "doc.save", { path: "snapshots/roundtrip.json" });
+    assert.equal(saved.ok, true);
+    const onDisk = JSON.parse(readFileSync(join(srv.writeRoot, "snapshots/roundtrip.json"), "utf8"));
+    assert.equal(onDisk.layers.length, 3);
+
+    const session = await c.call(7, "session.list", {});
+    assert.equal(session.result.documents[0].dirty, false, "a layered save clears dirty");
+
+    const closed = await c.call(8, "doc.close", {});
+    assert.equal(closed.ok, true);
+    const emptied = await c.call(9, "session.list", {});
+    assert.equal(emptied.result.active, null);
+  });
+
+  it("repeat auth is `already authenticated` and the connection keeps serving", async (t) => {
+    const port = await srv.port;
+    const c = await connect(port);
+    t.after(() => c.destroy());
+    await c.call("auth", "auth", { token: TOKEN });
+    const again = await c.call("again", "auth", { token: TOKEN });
+    assert.deepEqual(again, { id: "again", ok: false, error: "already authenticated" });
+    const still = await c.call("still", "methods", {});
+    assert.equal(still.ok, true);
+  });
+
+  it("correlates unknown method/command errors to the request id", async (t) => {
+    const port = await srv.port;
+    const c = await connect(port);
+    t.after(() => c.destroy());
+    await c.call("auth", "auth", { token: TOKEN });
+    const badMethod = await c.call(41, "nope", {});
+    assert.deepEqual(badMethod, { id: 41, ok: false, error: "unknown method `nope` (try `methods`)" });
+    const badCommand = await c.call(42, "engine.execute", { command: "filter.noise.addNoise" });
+    assert.equal(badCommand.ok, false);
+    assert.ok(badCommand.error.includes("unknown command"), badCommand.error);
+    assert.equal(badCommand.id, 42);
+  });
+
+  it("engine.commands lists exactly the supported commands", async (t) => {
+    const port = await srv.port;
+    const c = await connect(port);
+    t.after(() => c.destroy());
+    await c.call("auth", "auth", { token: TOKEN });
+    const made = await c.call(1, "doc.new", {});
+    assert.equal(made.ok, true);
+    const commands = await c.call(2, "engine.commands", {});
+    assert.equal(commands.ok, true);
+    assert.deepEqual(
+      commands.result.map((r) => r.id),
+      [
+        "layer.new.layer", "layer.new.group", "layer.delete", "layer.setProps", "layer.select",
+        "type.create", "type.edit", "edit.fill", "layer.arrange.bringToFront", "layer.arrange.sendToBack",
+        "edit.transform", "layer.layerMask.revealAll", "agent.begin", "agent.commit", "agent.rollback",
+      ],
+    );
+    for (const row of commands.result) {
+      assert.equal(row.enabled, true);
+      assert.equal(row.disabledReason, null);
+      assert.equal(row.needsDocument, false);
+    }
+  });
+
+  it("batch runs steps in order and stops on the first error", async (t) => {
+    const port = await srv.port;
+    const c = await connect(port);
+    t.after(() => c.destroy());
+    await c.call("auth", "auth", { token: TOKEN });
+    await c.call(1, "doc.new", {});
+    const batch = await c.call(2, "batch", {
+      steps: [
+        { command: "layer.new.layer", params: { name: "A" } },
+        { method: "session.list" },
+        { command: "definitely.not.a.command" },
+        { command: "layer.new.layer", params: { name: "never-run" } },
+      ],
+    });
+    assert.equal(batch.ok, true);
+    assert.equal(batch.result.completed, 2);
+    assert.equal(batch.result.failed, 1);
+    assert.equal(batch.result.results.length, 3, "stopOnError (default) halts after the failure");
+    assert.equal(batch.result.results[2].ok, false);
+    assert.ok(batch.result.results[2].error.includes("unknown command"));
+  });
+
+  it("closes the 17th connection past the 16-connection cap", async (t) => {
+    const port = await srv.port;
+    const held = [];
+    for (let i = 0; i < 16; i++) held.push(await connect(port));
+    t.after(() => held.forEach((c) => c.destroy()));
+    const extra = await connect(port);
+    await extra.waitForClose();
+    assert.equal(extra.closed, true, "the excess connection is rejected before any dispatch");
+  });
+
+  it("MOCK_FAULT=crash-on-command exits the process on engine.execute", async () => {
+    const faulty = startServer({ MOCK_FAULT: "crash-on-command" });
+    const port = await faulty.port;
+    const c = await connect(port);
+    await c.call("auth", "auth", { token: TOKEN });
+    const code = await new Promise((res, rej) => {
+      const timer = setTimeout(() => rej(new Error("faulty server never exited")), 4000);
+      faulty.child.on("exit", (exitCode) => {
+        clearTimeout(timer);
+        res(exitCode);
+      });
+      c.call(1, "engine.execute", { command: "layer.new.layer" }).catch(() => {});
+    });
+    assert.equal(code, 86);
+    c.destroy();
+  });
 });

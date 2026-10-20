@@ -43,18 +43,15 @@ import {
   type EngineExecuteInput,
   type JobsCancelResult,
   type JobsListResult,
-  type ZodTypeShim,
 } from "./methods/engine-commands.js";
 import {
   docClose as buildDocClose,
-  docImportDataSets as buildDocImportDataSets,
   docInspect as buildDocInspect,
   docNew as buildDocNew,
   docOpen as buildDocOpen,
   docPlace as buildDocPlace,
   docSelect as buildDocSelect,
   sessionList as buildSessionList,
-  type DocCloseResult,
   type DocIndexInput,
   type DocNewInput,
   type DocNewResult,
@@ -69,25 +66,29 @@ import {
 import {
   docExportDataSets as buildDocExportDataSets,
   docExportLayers as buildDocExportLayers,
+  docImportDataSets as buildDocImportDataSets,
+  type DocExportDataSetsInput,
+  type DocExportLayersInput,
+  type DocImportDataSetsInput,
+  type ExportResult,
+  type ImportDataSetsResult,
+} from "./methods/export-data.js";
+import {
   docRender as buildDocRender,
   docSave as buildDocSave,
-  type DocExportDataSetsInput,
-  type DocExportDataSetsResult,
-  type DocExportLayersInput,
-  type DocExportLayersResult,
-  type DocImportDataSetsInput,
-  type DocImportDataSetsResult,
   type DocRenderInput,
   type DocSaveInput,
   type DocSaveResult,
   type RenderResult,
-} from "./methods/export-data-shim.js";
+} from "./methods/render-save.js";
+import type { ZodType, ZodTypeDef } from "zod";
 import {
   engineError,
   engineOk,
   engineReplyFailure,
   mapTransportThrow,
   type EngineErrorEnvelope,
+  type EngineFacadeFailure,
   type EngineOutcome,
 } from "./errors.js";
 import {
@@ -427,15 +428,21 @@ export class EngineClient {
    * come back as catalog envelopes carrying the engine's verbatim text in `data` (§5.7).
    * Calls are sequential per client (one outstanding request per connection, §MCP
    * bridge); a second concurrent call fails with a non-retryable envelope.
+   *
+   * `options` is optional (the pinned client seam, tests/contract.test.ts: `call(method,
+   * params)`): without it the call is classified "mutate" — the safe default, since a
+   * mutating call is never auto-resent (§MCP bridge #1007) and a timeout therefore
+   * surfaces as connection_dropped_mid_call (inspect before re-sending).
    */
   async call<TRes = unknown>(
     method: string,
     params: unknown,
-    options: CallOptions,
+    options?: CallOptions,
   ): Promise<EngineOutcome<TRes>> {
-    const signal = options.signal;
+    const kind: CallKind = options?.kind ?? "mutate";
+    const signal = options?.signal;
     if (signal?.aborted) {
-      return abortOutcome(options.kind, false);
+      return abortOutcome(kind, false);
     }
     const wireParams = normalizeParams(params);
     if (!wireParams.ok) {
@@ -456,7 +463,7 @@ export class EngineClient {
       }
       return buildFailure("invalid_params", "request params are not JSON-encodable");
     }
-    const waitMs = resolveWaitMs(method, options.waitMs, this.timeouts);
+    const waitMs = resolveWaitMs(method, options?.waitMs, this.timeouts);
 
     let readRetries = 0;
     let midCall: EngineErrorEnvelope | null = null;
@@ -470,7 +477,7 @@ export class EngineClient {
         method,
         wireParams.value,
         waitMs,
-        options.kind,
+        kind,
         signal,
       );
       if (outcome.ok) {
@@ -480,12 +487,12 @@ export class EngineClient {
         return outcome;
       }
       const code = outcome.code;
-      if (options.kind === "mutate" && code === "reply_timeout") {
+      if (kind === "mutate" && code === "reply_timeout") {
         // §3.4/§MCP bridge: a mutating call that outlived its deadline may have applied;
         // never auto-resend — surface the inspect-before-retry semantics.
         return mutateMidCallFailure({ code, message: outcome.message, data: outcome.data });
       }
-      if (shouldAutoRetry(options.kind, code, readRetries)) {
+      if (shouldAutoRetry(kind, code, readRetries)) {
         readRetries += 1;
         if (code === "reply_timeout" || code === "connection_dropped_mid_call") {
           // Evidence the engine died under an in-flight request: if the fresh connection
@@ -747,7 +754,7 @@ export class EngineClient {
   }
 
   /** doc.close — mutate. */
-  closeDocument(input: DocIndexInput = {}, options?: WrapperOptions): Promise<EngineOutcome<DocCloseResult>> {
+  closeDocument(input: DocIndexInput = {}, options?: WrapperOptions): Promise<EngineOutcome<SessionList>> {
     return this.executeBuilt(buildDocClose(input), "mutate", options);
   }
 
@@ -770,7 +777,7 @@ export class EngineClient {
   exportLayers(
     input: DocExportLayersInput,
     options?: WrapperOptions,
-  ): Promise<EngineOutcome<DocExportLayersResult>> {
+  ): Promise<EngineOutcome<ExportResult>> {
     return this.executeBuilt(buildDocExportLayers(input), "mutate", options);
   }
 
@@ -778,7 +785,7 @@ export class EngineClient {
   exportDataSets(
     input: DocExportDataSetsInput,
     options?: WrapperOptions,
-  ): Promise<EngineOutcome<DocExportDataSetsResult>> {
+  ): Promise<EngineOutcome<ExportResult>> {
     return this.executeBuilt(buildDocExportDataSets(input), "mutate", options);
   }
 
@@ -786,7 +793,7 @@ export class EngineClient {
   importDataSets(
     input: DocImportDataSetsInput,
     options?: WrapperOptions,
-  ): Promise<EngineOutcome<DocImportDataSetsResult>> {
+  ): Promise<EngineOutcome<ImportDataSetsResult>> {
     return this.executeBuilt(buildDocImportDataSets(input), "mutate", options);
   }
 
@@ -797,9 +804,7 @@ export class EngineClient {
    */
   executeCommand<TRes = unknown>(
     input: EngineExecuteInput,
-    options: ExecuteOptions & { readonly resultSchema?: ZodTypeShim<TRes> } = {},
-    // biome-ignore lint/suspicious/noExplicitAny: resultSchema is a zod ZodType; the
-    // import above re-exports it structurally to keep this signature `any`-free.
+    options: ExecuteOptions & { readonly resultSchema?: ZodType<TRes, ZodTypeDef, unknown> } = {},
   ): Promise<EngineOutcome<TRes>> {
     const built = buildEngineExecute(input, options.resultSchema);
     return this.executeBuilt(built, options.kind ?? "mutate", options);
@@ -860,7 +865,7 @@ export class EngineClient {
       return built;
     }
     const call: MethodCall<TParams, TResult> = built;
-    const outcome = await this.call<unknown, TResult>(call.method, call.params, {
+    const outcome = await this.call<TResult>(call.method, call.params, {
       kind,
       waitMs: options?.waitMs,
       signal: options?.signal,
@@ -890,7 +895,13 @@ function isMethodCallOf<TParams, TResult>(
   return built.ok;
 }
 
-function isFacadeFailure(outcome: EngineOutcome<unknown>): boolean {
+/**
+ * Type guard for the builder-rejection arm of EngineOutcome (W2-C MethodBuildFailure:
+ * {ok:false, code: invalid_params|engine_limit|unsupported}). Catalog envelopes always
+ * carry `retryable: boolean`, so the two failure arms stay distinguishable without
+ * inspecting codes — and the guard narrows `outcome.code` to EngineErrorCode below.
+ */
+function isFacadeFailure<T>(outcome: EngineOutcome<T>): outcome is EngineFacadeFailure {
   return (
     !outcome.ok &&
     typeof outcome.code === "string" &&
