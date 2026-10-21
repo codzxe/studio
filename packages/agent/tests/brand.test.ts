@@ -268,13 +268,15 @@ describe("W7-F brand tokens: fallback on missing/invalid (§7.5)", () => {
     const partial = await makeService({
       orgs: { [ORG_ID]: json({ brandTokens: { toneWords: ["warm", 5, null, "warm"] } }) },
     }).service.get(ORG_ID);
-    expect(partial.source).toBe("default"); // nothing usable survived
-    expect(partial.tokens.toneWords).toEqual(DEFAULT_BRAND.toneWords);
+    expect(partial.source).toBe("organization"); // "warm" survived
+    expect(partial.tokens.toneWords).toEqual(["warm"]);
     expect(partial.warnings).toContain("brand tokens: toneWords dropped 2 invalid words");
     expect(partial.warnings).toContain("brand tokens: toneWords dropped 1 duplicate word");
     const notAnArray = await makeService({
       orgs: { [ORG_ID]: json({ brandTokens: { toneWords: "warm" } }) },
     }).service.get(ORG_ID);
+    expect(notAnArray.source).toBe("default");
+    expect(notAnArray.tokens.toneWords).toEqual(DEFAULT_BRAND.toneWords);
     expect(notAnArray.warnings).toContain("brand tokens: toneWords is not an array; default tone applied");
   });
 });

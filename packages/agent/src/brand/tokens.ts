@@ -109,13 +109,16 @@ export function normalizeHex(value: string): string | undefined {
 // Zod schemas (granular fields + the canonical contract)
 // ---------------------------------------------------------------------------
 
-/** Hex colour, parsed to its canonical form. */
-export const hexColorSchema = z
+/**
+ * Hex colour, parsed to its canonical `#RRGGBB` form. Typed like the tools
+ * kit's zColor (ZodEffects annotated as ZodType<Output, Def, Input> — the
+ * repo-proven idiom); the refine guard makes the transform's cast sound.
+ */
+export const hexColorSchema: z.ZodType<string, z.ZodTypeDef, string> = z
   .string()
   .refine((value) => normalizeHex(value) !== undefined, {
     message: "palette colour must be #RGB or #RRGGBB hex",
   })
-  // Refine above guarantees non-undefined here; the cast is sound, never `any`.
   .transform((value) => normalizeHex(value) as string);
 
 /** Registry font name (trimmed, non-empty). */
