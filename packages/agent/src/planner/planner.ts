@@ -576,15 +576,14 @@ export class PlannerService {
 
       const extraction = extractPlanJson(completion.text);
       const schema = extraction.ok ? validatePlan(extraction.json) : undefined;
-      const rules =
-        schema !== undefined && schema.ok ? enforcePlannerRules(schema.plan, sections) : undefined;
+      const rules = schema?.ok ? enforcePlannerRules(schema.plan, sections) : undefined;
       issues = [
         ...(extraction.ok ? [] : [extraction.issue]),
         ...(schema !== undefined && !schema.ok ? schema.issues : []),
         ...(rules !== undefined && rules.issues.length > 0 ? rules.issues : []),
       ];
 
-      if (schema !== undefined && schema.ok && rules !== undefined && issues.length === 0) {
+      if (schema?.ok && rules !== undefined && issues.length === 0) {
         return {
           ok: true,
           plan: schema.plan,

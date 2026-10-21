@@ -10,6 +10,7 @@
 // land in the transcript BETWEEN the fake's yields — exactly how the worker's
 // AI-SDK loop will observe them.
 import {
+  type BudgetTracker as ToolBudgetTracker,
   defineTool,
   err as toolErr,
   ok as toolOk,
@@ -19,7 +20,6 @@ import {
   type EngineFailure,
   type EngineLike,
   type TemplateCatalogLike,
-  type ToolBudgetTracker,
   type ToolContext,
   type ToolListing,
   type ToolLogger,
@@ -61,16 +61,19 @@ function okTool(
   name: string,
   options: {
     readonly revision?: number;
-    readonly run?: (args: Readonly<Record<string, unknown>>, signal: AbortSignal) => ToolResult;
+    readonly run?: (
+      args: Readonly<Record<string, unknown>>,
+      signal: AbortSignal,
+    ) => ToolResult | Promise<ToolResult>;
   } = {},
 ): AnyTool {
   return defineTool({
     name,
     description: `Test ${name} tool — deterministic executor fake.`,
     args: z.record(z.string(), z.unknown()),
-    run: async (_ctx, args, signal) => {
+    run: async (_ctx, args: Readonly<Record<string, unknown>>, signal) => {
       if (options.run !== undefined) {
-        return options.run(args, signal);
+        return await options.run(args, signal);
       }
       return toolOk({
         summary: `${name} done`,
@@ -206,7 +209,7 @@ interface ScriptedModelState {
   budgets: ExecutorBudgetView[];
   toolsSeen: ToolListing[][];
   /** Transcript snapshot before every yield — how the fake "sees" executor feedback. */
-  snapshots: ExecutorMessage[][];
+  snapshots: (readonly ExecutorMessage[])[];
   turnsConsumed: number;
 }
 
@@ -233,7 +236,10 @@ function scriptedModel(
         state.snapshots.push(messages.messages());
       };
       while (turn < turns.length) {
-        const scripted = turns[turn];
+        const scripted: ScriptedTurn | undefined = turns[turn];
+        if (scripted === undefined) {
+          return; // unreachable: bounds checked — keeps noUncheckedIndexedAccess happy
+        }
         turn += 1;
         state.turnsConsumed += 1;
         if (options.omitTurnStarted !== true) {
@@ -350,7 +356,7 @@ function isStarted(event: ExecutorStepEvent): boolean {
 }
 
 /** All tool-result codes seen by the fake, in yield order. */
-function toolResultCodes(snapshots: readonly ExecutorMessage[][]): string[] {
+function toolResultCodes(snapshots: readonly (readonly ExecutorMessage[])[]): string[] {
   const codes: string[] = [];
   for (const messages of snapshots) {
     for (const message of messages) {

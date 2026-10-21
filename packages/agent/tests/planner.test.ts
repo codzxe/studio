@@ -216,7 +216,7 @@ describe("buildPlannerRetryPrompt: §5.1 issues attached", () => {
     expect(retry).toContain("issue-0");
     expect(retry).toContain(`issue-${MAX_ISSUES_ATTACHED - 1}`);
     expect(retry).not.toContain(`issue-${MAX_ISSUES_ATTACHED}`);
-    expect(retry).toContain(`…and 5 more issue(s)`);
+    expect(retry).toContain("…and 5 more issue(s)");
   });
 });
 
@@ -576,7 +576,13 @@ describe("PlannerService.plan", () => {
       expect(result.issues[0]).toContain("not valid JSON");
       expect(result.rawExcerpt.length).toBeLessThanOrEqual(RAW_EXCERPT_MAX_CHARS);
       expect(result.rawExcerpt.includes("I can haz design?")).toBe(true);
-      expect(/[\u0000-\u0008\u000b-\u001f\u007f]/.test(result.rawExcerpt)).toBe(false);
+      // charCode table, not a control-char regex (biome: noControlCharactersInRegex)
+      expect(
+        [...result.rawExcerpt].every((ch) => {
+          const code = ch.charCodeAt(0);
+          return code >= 0x20 && code !== 0x7f;
+        }),
+      ).toBe(true);
       expect(result.usage.calls).toBe(2);
     }
     expect(model.prompts).toHaveLength(2); // exactly one retry

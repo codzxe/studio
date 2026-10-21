@@ -317,17 +317,16 @@ export function canonicalJson(value: unknown, depth = 0): string {
   if (value === null) {
     return "null";
   }
-  const type = typeof value;
-  if (type === "number") {
+  if (typeof value === "number") {
     return Number.isFinite(value) ? JSON.stringify(value) : '"non-finite"';
   }
-  if (type === "boolean") {
+  if (typeof value === "boolean") {
     return value ? "true" : "false";
   }
-  if (type === "string") {
+  if (typeof value === "string") {
     return JSON.stringify(value);
   }
-  if (type === "bigint") {
+  if (typeof value === "bigint") {
     return `"${value.toString()}"`;
   }
   if (depth >= MAX_CANONICAL_DEPTH) {
@@ -336,14 +335,14 @@ export function canonicalJson(value: unknown, depth = 0): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => canonicalJson(item, depth + 1)).join(",")}]`;
   }
-  if (type === "object") {
+  if (typeof value === "object") {
     const record = value as Readonly<Record<string, unknown>>;
     const keys = Object.keys(record).sort();
     return `{${keys
       .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key], depth + 1)}`)
       .join(",")}}`;
   }
-  return `"unsupported:${type}"`; // functions/symbols/undefined never come from JSON args
+  return `"unsupported:${typeof value}"`; // functions/symbols/undefined never come from JSON args
 }
 
 /** The §23.1 rule 7 call identity: tool name + canonical args of the FAILED call. */
@@ -793,7 +792,7 @@ export class ExecutorService {
           tool: step.tool,
           ok: record.ok,
           durationMs,
-          deviationFromPlan: record.deviatedFromPlan,
+          deviationFromPlan: record.deviationFromPlan,
         },
       });
 
