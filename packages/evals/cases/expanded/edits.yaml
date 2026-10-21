@@ -1,0 +1,639 @@
+# =============================================================================
+# packages/evals/cases/expanded/edits.yaml — golden briefs: edit_layers intents
+# (W7-D growth wave).
+#
+# (c) intent matrix row edit_layers x8 — ALL on PREPARED documents (full layer
+#     trees in snapshot, §19 Phase 2 "multi-turn chat edits on a document").
+# (d) quick-tier targeted edits x6 in §24.2 style: one restyle + one
+#     add_component/set_var move, 1 credit, 6-call cap, "a targeted edit must
+#     never become a regeneration" (§23.5). The two heavier cases (multi-target
+#     restyle, asset swap + retype) route to the standard tier (2 credits).
+#
+# Component coverage rides the set_vars surface (§8.3 component.setVars) against
+# the ACTUAL component manifests in evals/components/.
+# =============================================================================
+
+# ── quick targeted edit #1: price-tag setVars (§24.2 style) ───────────────────
+- id: edit-quick-price-eur
+  description: >-
+    §24.2-style quick edit on the prepared flash-sale doc: change the price-tag@1
+    instance to 14.50 with a EUR currency — component.setVars only (§8.3), no
+    template reapply, quick tier = 1 credit, 4 tool calls, undo in ONE step (§1.5-10).
+  vars:
+    brief: "Change the price on the tag to 14,50 €."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_755 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 36 }
+        - { name: PriceTag, kind: component, component: price-tag@1, price: '18.00', currency: '$' }
+        - { name: Button, kind: component, component: button-cta@1, label: 'Shop now' }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components:
+        - { id: price-tag@1, vars: [price, currency, bg, textColor] }
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null            # targeted edit — no reapply (§23.5)
+      assets: []
+      slots: {}
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: {}
+      steps:
+        - { tool: component.setVars, args: { instance: PriceTag, vars: { price: '14.50', currency: '€' } } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5']
+      model_tier: quick
+      notes_for_user: "Tag now reads 14.50 €; nothing else touched, one-step undo."
+    run:
+      status: succeeded
+      credits_charged: 1        # §5.2 quick tier
+      tool_calls: 4
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, PriceTag, Button]
+      undo_entries: 1           # one transaction (§1.5-10)
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # targeted edit: no template chosen (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # setVars carries the exact price/currency (§8.3)
+      value: "return JSON.parse(output).plan.steps[0].tool === 'component.setVars' && JSON.parse(output).plan.steps[0].args.instance === 'PriceTag' && JSON.parse(output).plan.steps[0].args.vars.price === '14.50' && JSON.parse(output).plan.steps[0].args.vars.currency === '€'"
+    - type: javascript          # §8.2 caps: price 10 chars, currency 3 chars
+      value: "return JSON.parse(output).plan.steps[0].args.vars.price.length <= 10 && JSON.parse(output).plan.steps[0].args.vars.currency.length <= 3"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # one-step undo (§1.5-10)
+      value: "return JSON.parse(output).run.undo_entries === 1"
+
+# ── quick targeted edit #2: offer-badge relabel + ribbon off (§24.2 style) ────
+- id: edit-quick-badge-relabel
+  description: >-
+    §24.2-style quick edit on the prepared friday-special doc: offer-badge@2 instance
+    relabels to "TODAY ONLY" (10 chars, inside the 12-char cap) and hides its ribbon —
+    both via ONE setVars call; quick tier = 1 credit.
+  vars:
+    brief: "The badge should say 'TODAY ONLY' and drop the ribbon."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 36 }
+        - { name: Badge, kind: component, component: offer-badge@2, label: TODAY, showRibbon: true }
+        - { name: Logo, kind: smart_object, asset: asset_902 }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components:
+        - { id: offer-badge@2, vars: [label, bg, textColor, showRibbon] }
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null            # targeted edit — no reapply (§23.5)
+      assets: []
+      slots: {}
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: {}
+      steps:
+        - { tool: component.setVars, args: { instance: Badge, vars: { label: 'TODAY ONLY', showRibbon: false } } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5']
+      model_tier: quick
+      notes_for_user: "Badge now TODAY ONLY with the ribbon hidden; one-step undo."
+    run:
+      status: succeeded
+      credits_charged: 1        # §5.2 quick tier
+      tool_calls: 4
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, Badge, Logo]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # targeted edit: no template chosen (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # badge relabel + ribbon visibility in one setVars (§8.3/§8.2)
+      value: "return JSON.parse(output).plan.steps[0].args.instance === 'Badge' && JSON.parse(output).plan.steps[0].args.vars.label === 'TODAY ONLY' && JSON.parse(output).plan.steps[0].args.vars.label.length <= 12 && JSON.parse(output).plan.steps[0].args.vars.showRibbon === false"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: contains            # slot content: the new badge copy (§21)
+      value: "TODAY ONLY"
+
+# ── quick targeted edit #3: star-rating value + handle icon (§24.2 style) ─────
+- id: edit-quick-stars-handle
+  description: >-
+    §24.2-style quick edit on the prepared review post: star-rating@1 shows "4.5"
+    (3-char cap) and the social-handle@1 icon turns off — two setVars calls, still
+    inside the quick budget; quick tier = 1 credit.
+  vars:
+    brief: "Show 4.5 stars instead of the full row, and turn the little icon off next to our handle."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_766 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 36 }
+        - { name: StarRating, kind: component, component: star-rating@1, stars: '4.9' }
+        - { name: Avatar, kind: component, component: avatar-circle@1, initials: MC }
+        - { name: Handle, kind: component, component: social-handle@1, handle: '@acme.coffee', showIcon: true }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components:
+        - { id: star-rating@1, vars: [stars, color] }
+        - { id: social-handle@1, vars: [handle, color, showIcon] }
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null            # targeted edit — no reapply (§23.5)
+      assets: []
+      slots: {}
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: {}
+      steps:
+        - { tool: component.setVars, args: { instance: StarRating, vars: { stars: '4.5' } } }
+        - { tool: component.setVars, args: { instance: Handle, vars: { showIcon: false } } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5']
+      model_tier: quick
+      notes_for_user: "Stars now 4.5 and the handle icon is off; one-step undo."
+    run:
+      status: succeeded
+      credits_charged: 1        # §5.2 quick tier
+      tool_calls: 5
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, StarRating, Avatar, Handle]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # targeted edit: no template chosen (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # star value within the 3-char cap (§8.2)
+      value: "return JSON.parse(output).plan.steps[0].args.instance === 'StarRating' && JSON.parse(output).plan.steps[0].args.vars.stars === '4.5' && JSON.parse(output).plan.steps[0].args.vars.stars.length <= 3"
+    - type: javascript          # handle icon visibility flipped (§8.3)
+      value: "return JSON.parse(output).plan.steps[1].args.instance === 'Handle' && JSON.parse(output).plan.steps[1].args.vars.showIcon === false"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: contains            # slot content: the new star value (§21)
+      value: "4.5"
+
+# ── quick targeted edit #4: quote-block swap (§24.2 style) ────────────────────
+- id: edit-quick-quote-swap
+  description: >-
+    §24.2-style quick edit on the prepared testimonial doc: swap the quote-block@1
+    text to Lena's review ("Best flat white in town", 23 chars) and attribution
+    "Lena R." — one setVars call; quick tier = 1 credit.
+  vars:
+    brief: "Swap in Lena's review instead — the quote 'Best flat white in town', from Lena R."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_762 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 36 }
+        - { name: QuoteBlock, kind: component, component: quote-block@1, quote: 'Good coffee is a small daily celebration.', author: 'Main Street Coffee' }
+        - { name: StarRating, kind: component, component: star-rating@1, stars: '5.0' }
+        - { name: Avatar, kind: component, component: avatar-circle@1, initials: MC }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components:
+        - { id: quote-block@1, vars: [quote, author, accent] }
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null            # targeted edit — no reapply (§23.5)
+      assets: []
+      slots: {}
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: {}
+      steps:
+        - { tool: component.setVars, args: { instance: QuoteBlock, vars: { quote: 'Best flat white in town', author: 'Lena R.' } } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5']
+      model_tier: quick
+      notes_for_user: "Quote swapped to Lena's review; layout untouched, one-step undo."
+    run:
+      status: succeeded
+      credits_charged: 1        # §5.2 quick tier
+      tool_calls: 4
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, QuoteBlock, StarRating, Avatar]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # targeted edit: no template chosen (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # quote + author exact, inside §8.2 caps (280/48)
+      value: "return JSON.parse(output).plan.steps[0].args.instance === 'QuoteBlock' && JSON.parse(output).plan.steps[0].args.vars.quote === 'Best flat white in town' && JSON.parse(output).plan.steps[0].args.vars.quote.length <= 280 && JSON.parse(output).plan.steps[0].args.vars.author === 'Lena R.' && JSON.parse(output).plan.steps[0].args.vars.author.length <= 48"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: contains            # slot content: the new quote (§21)
+      value: "Best flat white in town"
+
+# ── quick targeted edit #5: avatar recolour to brand token (§24.2 style) ──────
+- id: edit-quick-avatar-brand
+  description: >-
+    §24.2-style quick edit on the prepared doc: avatar-circle@1 initials become "LR"
+    and the off-brand blue plate (#4A90D9) is pulled back to the brand terracotta
+    #D96C3B (§11.1 color_out_of_palette cleared); quick tier = 1 credit.
+  vars:
+    brief: "The avatar initials should be LR, and use the terracotta plate instead of that blue."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_766 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 36 }
+        - { name: Avatar, kind: component, component: avatar-circle@1, initials: MC, bg: '#4A90D9' }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']   # brand tokens — no blue
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components:
+        - { id: avatar-circle@1, vars: [initials, bg, textColor] }
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null            # targeted edit — no reapply (§23.5)
+      assets: []
+      slots: {}
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: {}
+      steps:
+        - { tool: component.setVars, args: { instance: Avatar, vars: { initials: LR, bg: '#D96C3B' } } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5']
+      model_tier: quick
+      notes_for_user: "Avatar is now LR on brand terracotta; the off-brand blue is gone. One-step undo."
+    run:
+      status: succeeded
+      credits_charged: 1        # §5.2 quick tier
+      tool_calls: 4
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }  # color_out_of_palette cleared
+      layers: [Background, Photo, Headline, Subhead, Avatar]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # targeted edit: no template chosen (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # initials + brand-token recolour (§8.2/§11.1)
+      value: "return JSON.parse(output).plan.steps[0].args.instance === 'Avatar' && JSON.parse(output).plan.steps[0].args.vars.initials === 'LR' && JSON.parse(output).plan.steps[0].args.vars.initials.length <= 3 && JSON.parse(output).plan.steps[0].args.vars.bg === '#D96C3B'"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # validator results: off-palette colour cleared (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0 && v.majors === 0)(JSON.parse(output).run.validator)"
+
+# ── quick targeted edit #6: button-cta label swap (§24.2 style) ───────────────
+- id: edit-quick-cta-label
+  description: >-
+    §24.2-style quick edit on the prepared webinar slide: button-cta@1 label swaps
+    "Register" -> "Save my seat" (13 chars, inside the 24-char cap); quick tier =
+    1 credit; 4 tool calls.
+  vars:
+    brief: "The CTA should read 'Save my seat', not 'Register'."
+    snapshot:
+      canvas: { w: 1920, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Title, kind: text, size: 72 }
+        - { name: Subtitle, kind: text, size: 36 }
+        - { name: Visual, kind: smart_object, asset: asset_935 }
+        - { name: Lockup, kind: component, component: logo-lockup@1, name: Studio }
+        - { name: Button, kind: component, component: button-cta@1, label: Register }
+        - { name: Handle, kind: component, component: social-handle@1, handle: '@studio.design' }
+      palette: ['#F6F5F2', '#1A1A1A', '#D96C3B']
+      fonts: ['display-sans', 'brand-sans']
+    catalog:
+      templates: []
+      components:
+        - { id: button-cta@1, vars: [label, bg, textColor, rounded] }
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: edit_layers
+      template: null            # targeted edit — no reapply (§23.5)
+      assets: []
+      slots: {}
+      palette: ['#F6F5F2', '#1A1A1A', '#D96C3B']
+      typography: {}
+      steps:
+        - { tool: component.setVars, args: { instance: Button, vars: { label: 'Save my seat' } } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5']
+      model_tier: quick
+      notes_for_user: "CTA now says Save my seat; slide otherwise untouched. One-step undo."
+    run:
+      status: succeeded
+      credits_charged: 1        # §5.2 quick tier
+      tool_calls: 4
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Title, Subtitle, Visual, Lockup, Button, Handle]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # targeted edit: no template chosen (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # label swap within the 24-char cap (§8.2)
+      value: "return JSON.parse(output).plan.steps[0].args.instance === 'Button' && JSON.parse(output).plan.steps[0].args.vars.label === 'Save my seat' && JSON.parse(output).plan.steps[0].args.vars.label.length <= 24"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: contains            # slot content: the new CTA copy (§21)
+      value: "Save my seat"
+
+# ── heavier edit #7: multi-target restyle routes UP to standard (§23.5) ───────
+- id: edit-std-ribbon-restyle
+  description: >-
+    Multi-target restyle on the prepared grand-opening doc (three simultaneous asks:
+    ribbon colour, wave flip, headline retype) — too broad for the quick tier, so the
+    golden classifier routes it UP to standard (§5.2: 2 credits, 12-call cap); still
+    edit_layers, still no template reapply (§23.5).
+  vars:
+    brief: "Make the ribbon the deep brown, flip the wave divider, and retitle the headline to 'Now open Sundays'."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_781 }
+        - { name: Headline, kind: text, size: 88, text: "We're open on 5th Ave" }
+        - { name: Subhead, kind: text, size: 36 }
+        - { name: Wave, kind: component, component: wave-divider@1, color: '#D96C3B', flip: false }
+        - { name: Lockup, kind: component, component: logo-lockup@1, name: 'Acme Coffee' }
+        - { name: Ribbon, kind: component, component: ribbon-banner@1, label: 'GRAND OPENING', bg: '#D96C3B' }
+        - { name: Handle, kind: component, component: social-handle@1, handle: '@acme.coffee' }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: []
+      components:
+        - { id: ribbon-banner@1, vars: [label, bg, textColor, corner] }
+        - { id: wave-divider@1, vars: [color, flip] }
+    plan:
+      intent: edit_layers
+      template: null            # restyle, not a reapply (§23.5)
+      assets: []
+      slots:
+        headline: "Now open Sundays"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography:
+        headline: { font: display-serif, weight: bold, size: 88 }
+      steps:
+        - { tool: component.setVars, args: { instance: Ribbon, vars: { bg: '#6B4A32' } } }
+        - { tool: component.setVars, args: { instance: Wave, vars: { flip: true } } }
+        - { tool: type.edit, args: { layer: Headline, text: 'Now open Sundays' } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest]
+      model_tier: standard       # three simultaneous targets — up-tiered (§5.2)
+      notes_for_user: "Ribbon is deep brown, wave flipped, headline now 'Now open Sundays'."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier (multi-target restyle)
+      tool_calls: 6
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, Wave, Lockup, Ribbon, Handle]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # targeted edit: no template chosen (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # all three asks answered: ribbon token, wave flip, retype
+      value: "return JSON.parse(output).plan.steps.some(s => s.args.instance === 'Ribbon' && s.args.vars.bg === '#6B4A32') && JSON.parse(output).plan.steps.some(s => s.args.instance === 'Wave' && s.args.vars.flip === true) && JSON.parse(output).plan.slots.headline === 'Now open Sundays'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # §11.1 palette discipline: deep brown is a brand token
+      value: "return ((brand) => JSON.parse(output).plan.palette.every(h => brand.includes(h)))(['#6B4A32', '#F4E7D3', '#D96C3B'])"
+
+# ── heavier edit #8: visual swap + retype on a prepared slide ─────────────────
+- id: edit-std-visual-swap
+  description: >-
+    Standard-tier edit on the prepared quarterly slide: swap the chart smart object
+    to the freshly uploaded beta screenshot (asset_921 — exists in SNAPSHOT, §23.2
+    asset-id discipline) and retype the subtitle; still edit_layers, no reapply.
+  vars:
+    brief: "Replace the chart with the new beta screenshot that I uploaded today, and update the subtitle to 'Self-serve, live in beta'."
+    snapshot:
+      canvas: { w: 1920, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Title, kind: text, size: 72 }
+        - { name: Subtitle, kind: text, size: 36, text: 'ARR +38% YoY' }
+        - { name: Visual, kind: smart_object, asset: asset_901 }
+        - { name: Logo, kind: smart_object, asset: asset_902 }
+      palette: ['#F6F5F2', '#1A1A1A', '#52504B']
+      fonts: ['display-sans', 'brand-sans']
+      assets:
+        - { id: asset_901, name: 'q3-arr-chart.png', kind: chart }
+        - { id: asset_921, name: 'beta-dashboard.png', kind: screenshot }
+        - { id: asset_902, name: 'logo.png', kind: logo }
+    catalog:
+      templates: []
+      components: []
+    plan:
+      intent: edit_layers
+      template: null            # targeted swap, no reapply (§23.5)
+      assets:
+        - { ref: asset_921, slot: visual, fit: cover, focal: { x: 0.5, y: 0.5 } }
+      slots:
+        subtitle: "Self-serve, live in beta"
+      palette: ['#F6F5F2', '#1A1A1A', '#52504B']
+      typography: {}
+      steps:
+        - { tool: doc.place, args: { asset: asset_921, layer: Visual, replace: true, fit: cover } }
+        - { tool: type.edit, args: { layer: Subtitle, text: 'Self-serve, live in beta' } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', asset_resolution]
+      model_tier: standard
+      notes_for_user: "Visual swapped to the beta screenshot and subtitle updated; logo and title untouched."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier (asset swap + retype)
+      tool_calls: 5
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Title, Subtitle, Visual, Logo]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'edit_layers'"
+    - type: javascript          # targeted edit: no template chosen (§23.5)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # §23.2 asset-id discipline: asset_921 exists in SNAPSHOT
+      value: "return JSON.parse(output).plan.assets[0].ref === 'asset_921' && JSON.parse(output).plan.assets[0].slot === 'visual'"
+    - type: javascript          # in-place swap keeps the role name (§23.1 rule 5)
+      value: "return JSON.parse(output).plan.steps[0].tool === 'doc.place' && JSON.parse(output).plan.steps[0].args.layer === 'Visual' && JSON.parse(output).plan.steps[0].args.replace === true"
+    - type: javascript          # subtitle retype verbatim (§21)
+      value: "return JSON.parse(output).plan.slots.subtitle === 'Self-serve, live in beta'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present (asset_resolution guards the swap, §11.1)
+      value: "return ['in_bounds', 'contrast>=4.5', 'asset_resolution'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
