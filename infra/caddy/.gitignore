@@ -1,0 +1,3 @@
+# Prebuilt editor dist staged for the Caddy image build (see Dockerfile header).
+# Produced by `cargo xtask web` + `cp -r editor/target/web/dist/. ./editor-dist/`.
+editor-dist/

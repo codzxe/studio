@@ -1,0 +1,106 @@
+# infra/caddy/Caddyfile — Studio edge (PRODUCT_ARCHITECTURE §6.1, §14.2).
+#
+# One-box beta Caddy: terminates TLS, serves the frozen EffectCraft wasm editor
+# same-origin at /editor/* with COOP/COEP (§6.1 required headers), proxies
+# /v1/* (incl. SSE streams) to the Hono gateway and everything else to Next.js.
+#
+# Placeholders (parse-time env, `{$VAR:default}`):
+#   SITE_ADDR  site address / beta domain        (default: app.example.com — EDIT-ME)
+#   ACME_EMAIL TLS certificate account email    (default: ops@example.com  — EDIT-ME)
+#   CADDY_ENCODERS encode chain                 (default: brotli zstd gzip — the
+#              infra/caddy Dockerfile builds Caddy WITH the brotli module; use
+#              "zstd gzip" when running a stock Caddy binary, e.g. locally).
+#
+# Validate:  CADDY_ENCODERS="zstd gzip" caddy validate --config Caddyfile
+
+{
+        # EDIT-ME: ACME account email (Let's Encrypt).
+        email {$ACME_EMAIL:ops@example.com}
+}
+
+{$SITE_ADDR:app.example.com} {
+        # wasm compresses to ~10MB with brotli / ~17MB with gzip (§15 budget: 18MB
+        # compressed). The Dockerfile image registers `brotli`; stock Caddy builds
+        # must set CADDY_ENCODERS="zstd gzip".
+        encode {$CADDY_ENCODERS:brotli zstd gzip}
+
+        # Structured access log → stdout (journald / docker logs).
+        log
+
+        # Baseline security headers on every response (§15.2 spirit).
+        # SAMEORIGIN (not DENY): the SaaS embeds same-origin iframes (the editor).
+        header {
+                Strict-Transport-Security "max-age=31536000; includeSubDomains"
+                Referrer-Policy strict-origin-when-cross-origin
+                X-Content-Type-Options nosniff
+                X-Frame-Options SAMEORIGIN
+                -Server
+        }
+
+        # ── /editor/* — frozen EffectCraft build (§6.1) ────────────────────────────
+        # Image layout: the Dockerfile copies the editor dist to /srv/editor.
+        # handle_path strips the /editor prefix so the dist is served verbatim.
+        redir /editor /editor/ 308
+
+        handle_path /editor/* {
+                root * /srv/editor
+
+                # §6.1 required headers: cross-origin isolation for SharedArrayBuffer.
+                # COEP require-corp: same-origin assets satisfy CORP automatically; the
+                # PWA precache keeps responses isolated (sw.js caches server headers).
+                header {
+                        Cross-Origin-Opener-Policy same-origin
+                        Cross-Origin-Embedder-Policy require-corp
+                }
+
+                # Hashed build assets → immutable (§6.1 "long cache for hashed assets").
+                # snippets/* paths carry per-build hashes. The stable-named wasm + glue
+                # are safe to long-cache because EffectCraft's sw.js precaches with
+                # cache:"reload" into a version-named cache and sw.js itself is no-cache:
+                # deploys never serve stale bytes through the service worker.
+                @hashed {
+                        path /snippets/*
+                        path /effectcraft_web.js
+                        path /effectcraft_web_bg.wasm
+                        path /effectcraft_web_opt.wasm
+                }
+                header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+                # Entry points revalidate on every load so new deploys are picked up.
+                @entry path /index.html /sw.js
+                header @entry Cache-Control "no-cache"
+
+                # PWA manifest, icons and small helper scripts: short shared cache
+                # (§6.1: manifest 1h).
+                @media {
+                        path /manifest.webmanifest
+                        path /favicon.svg
+                        path /icon-*
+                        path /worker.js
+                        path /audio-worklet.js
+                        path /js/*
+                }
+                header @media Cache-Control "public, max-age=3600"
+
+                # Caddy's mime DB serves .wasm as application/wasm already; kept explicit
+                # because a wrong Content-Type breaks WebAssembly.instantiate.
+                @wasm path *.wasm
+                header @wasm Content-Type application/wasm
+
+                file_server
+        }
+
+        # ── /v1/* — Hono gateway (API + SSE, §7.2/§7.4) ────────────────────────────
+        handle /v1/* {
+                reverse_proxy gateway:8787 {
+                        # SSE: flush upstream bytes immediately (run events / chat deltas);
+                        # Caddy passes the original Host + X-Forwarded-* by default.
+                        flush_interval -1
+                }
+        }
+
+        # ── everything else — Next.js SaaS shell ───────────────────────────────────
+        handle {
+                reverse_proxy web:3000
+        }
+}

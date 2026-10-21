@@ -1,0 +1,58 @@
+# infra/litellm/config.yaml — LiteLLM proxy for Studio (§8.2 model routing).
+#
+# EDIT-ME TEMPLATE — nothing here is production-ready as-is:
+#   1. Replace each `model:` with the model YOUR provider account allows
+#      (OpenAI / Anthropic / Azure / Bedrock / self-hosted …).
+#   2. Feed provider credentials via env (never in this file):
+#        export OPENAI_API_KEY=sk-…        # or ANTHROPIC_API_KEY, AZURE_…, …
+#      (compose: add them to the `litellm` service environment block.)
+#   3. LITELLM_MASTER_KEY (compose maps it from the app's LITELLM_API_KEY) and
+#      LITELLM_DATABASE_URL (budget/spend DB) are set by the deployment env —
+#      see infra/compose/docker-compose.yml.
+#
+# Aliases are the product's model tiers (MODEL_CATALOG in @studio/contracts,
+# §8.2/§10.1): the app requests `studio-fast` / `studio-smart` /
+# `studio-vision` and never names a raw provider model, so switching providers
+# never touches application code.
+
+model_list:
+  # Small fast model — chat autocomplete-ish latency, cheap tier
+  # (plans: trial/starter → fast only; pro → fast+smart; studio → all).
+  - model_name: studio-fast
+    litellm_params:
+      model: openai/gpt-4o-mini # EDIT-ME: set per your provider
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Frontier "smart" model — planning, complex edits, risk>low plans.
+  - model_name: studio-smart
+    litellm_params:
+      model: openai/gpt-4o # EDIT-ME: frontier placeholder
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Multimodal "vision" model — screenshots/preview understanding (§8.4).
+  - model_name: studio-vision
+    litellm_params:
+      model: openai/gpt-4o # EDIT-ME: multimodal placeholder
+      api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  # Whole-proxy budget guardrail (§15 "Model cost" mitigation). Per-tenant
+  # budgets live in the LiteLLM DB via virtual keys/teams (§10.1 credits are
+  # enforced by the app ledger on top of this hard ceiling).
+  max_budget: 100 # EDIT-ME: USD
+  budget_duration: "30d"
+  # Drop unsupported params instead of failing the call (provider drift).
+  drop_params: true
+  # Streaming chat runs can be long; keep a generous ceiling in seconds.
+  request_timeout: 300
+  # Retry transient provider failures.
+  num_retries: 2
+
+general_settings:
+  # Master key for the proxy itself (single-box beta: compose maps the app's
+  # LITELLM_API_KEY here). Create virtual keys per tenant when you split it.
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # Budget/spend tracking DB (compose: separate `litellm` database in the same
+  # Postgres instance — created by infra/compose/db-init/01-litellm.sql).
+  # With STORE_MODEL_IN_DB=True this also persists models/keys created via UI.
+  database_url: os.environ/LITELLM_DATABASE_URL
