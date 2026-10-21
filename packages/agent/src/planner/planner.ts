@@ -25,7 +25,12 @@
 import { PLAN_RETRY_LIMIT } from "@studio/config";
 import type { AgentErrorCode } from "../errors.js";
 import { type Plan, validatePlan } from "../plan.js";
-import { type PlannerSections, buildPlannerPrompt, buildPlannerRetryPrompt, plannerInputSchema } from "./prompt.js";
+import {
+  type PlannerSections,
+  buildPlannerPrompt,
+  buildPlannerRetryPrompt,
+  plannerInputSchema,
+} from "./prompt.js";
 
 // ---------------------------------------------------------------------------
 // The model seam (§5.3 — worker wires the AI SDK + router)
@@ -101,7 +106,10 @@ export interface PlannerSuccess {
 }
 
 /** Planner failure codes — a subset of the agent catalog (../errors.ts). */
-export type PlannerErrorCode = Extract<AgentErrorCode, "plan_invalid" | "provider_unhealthy" | "run_timeout">;
+export type PlannerErrorCode = Extract<
+  AgentErrorCode,
+  "plan_invalid" | "provider_unhealthy" | "run_timeout"
+>;
 
 export interface PlannerFailure {
   readonly ok: false;
@@ -257,7 +265,10 @@ function normalizeToolName(tool: string): string {
 }
 
 /** `id@version` (plan.ts TEMPLATE_REF_RE forbids `@` inside the id) vs a catalog entry. */
-function templateRefMatches(ref: string, entry: { id: string; version?: number | string }): boolean {
+function templateRefMatches(
+  ref: string,
+  entry: { id: string; version?: number | string },
+): boolean {
   const at = ref.indexOf("@");
   const id = at === -1 ? ref : ref.slice(0, at);
   const version = at === -1 ? "" : ref.slice(at + 1);
@@ -285,10 +296,7 @@ function templateRefMatches(ref: string, entry: { id: string; version?: number |
 export function enforcePlannerRules(plan: Plan, sections: PlannerSections): PlanRuleOutcome {
   const issues: string[] = [];
   const warnings: string[] = [];
-  const templates = [
-    ...(sections.catalog.templates ?? []),
-    ...(sections.snapshot.templates ?? []),
-  ];
+  const templates = [...(sections.catalog.templates ?? []), ...(sections.snapshot.templates ?? [])];
 
   // Legal asset refs: brief attachments ∪ document assets ∪ catalog assets.
   const assetIds = new Set<string>();
@@ -325,7 +333,10 @@ export function enforcePlannerRules(plan: Plan, sections: PlannerSections): Plan
     chosen !== undefined && chosen.slots !== undefined
       ? new Set<string>(chosen.slots)
       : allKnownSlots(sections, templates);
-  const slotNames = new Set<string>([...Object.keys(plan.slots), ...plan.assets.map((a) => a.slot)]);
+  const slotNames = new Set<string>([
+    ...Object.keys(plan.slots),
+    ...plan.assets.map((a) => a.slot),
+  ]);
   if (slotNames.size > 0 && slotScope.size === 0) {
     issues.push(
       "plan.slots: slot names cannot be verified — CATALOG/SNAPSHOT list no template slots, so citing any slot invents one (§23.2)",
@@ -333,7 +344,9 @@ export function enforcePlannerRules(plan: Plan, sections: PlannerSections): Plan
   }
   for (const slot of slotNames) {
     if (slotScope.size > 0 && !slotScope.has(slot)) {
-      issues.push(`plan slot "${slot}": not a slot in CATALOG/SNAPSHOT — invented slot name (§23.2)`);
+      issues.push(
+        `plan slot "${slot}": not a slot in CATALOG/SNAPSHOT — invented slot name (§23.2)`,
+      );
     }
   }
   if (templateRef === null && Object.keys(plan.slots).length > 0) {
@@ -521,9 +534,7 @@ export class PlannerService {
     if (!parsed.success) {
       // Worker wiring bug → fail fast (BudgetTracker.parse precedent) with
       // field PATHS only — the brief is user content and never echoes (§15.3).
-      const paths = parsed.error.issues
-        .map((issue) => issue.path.join(".") || "(root)")
-        .join(", ");
+      const paths = parsed.error.issues.map((issue) => issue.path.join(".") || "(root)").join(", ");
       throw new Error(`[agent/planner] invalid planner input (worker wiring): ${paths}`);
     }
     const sections: PlannerSections = parsed.data;
@@ -565,7 +576,8 @@ export class PlannerService {
 
       const extraction = extractPlanJson(completion.text);
       const schema = extraction.ok ? validatePlan(extraction.json) : undefined;
-      const rules = schema !== undefined && schema.ok ? enforcePlannerRules(schema.plan, sections) : undefined;
+      const rules =
+        schema !== undefined && schema.ok ? enforcePlannerRules(schema.plan, sections) : undefined;
       issues = [
         ...(extraction.ok ? [] : [extraction.issue]),
         ...(schema !== undefined && !schema.ok ? schema.issues : []),

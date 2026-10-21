@@ -6,12 +6,13 @@ import { describe, expect, it } from "vitest";
 import { type Plan, validatePlan } from "../src/plan.js";
 import {
   MAX_ISSUES_ATTACHED,
-  RAW_EXCERPT_MAX_CHARS,
   type PlanModelCompletion,
   type PlanModelLike,
-  PlannerService,
+  type PlannerInput,
   type PlannerPath,
   type PlannerSections,
+  PlannerService,
+  RAW_EXCERPT_MAX_CHARS,
   buildPlannerPrompt,
   buildPlannerRetryPrompt,
   enforcePlannerRules,
@@ -59,7 +60,13 @@ const sections: PlannerSections = {
     ],
     components: [{ id: "offer-badge", variables: ["label", "bg", "textColor", "showRibbon"] }],
   },
-  budget: { tier: "standard", tokenBudgetIn: 80000, tokenBudgetOut: 5000, toolCallCap: 12, revisions: 2 },
+  budget: {
+    tier: "standard",
+    tokenBudgetIn: 80000,
+    tokenBudgetOut: 5000,
+    toolCallCap: 12,
+    revisions: 2,
+  },
   rules: { checks: ["in_bounds", "contrast>=4.5", "headline_largest", "safe_area"] },
 };
 
@@ -123,7 +130,10 @@ class FakePlanModel implements PlanModelLike {
   }
 }
 
-function serviceWith(outcomes: readonly ModelOutcome[]): { model: FakePlanModel; service: PlannerService } {
+function serviceWith(outcomes: readonly ModelOutcome[]): {
+  model: FakePlanModel;
+  service: PlannerService;
+} {
   const model = new FakePlanModel(outcomes);
   return { model, service: new PlannerService(model) };
 }
@@ -217,7 +227,11 @@ describe("buildPlannerRetryPrompt: §5.1 issues attached", () => {
 describe("extractPlanJson", () => {
   const table: readonly { name: string; text: string; json: unknown }[] = [
     { name: "bare JSON", text: '{"intent":"create_post"}', json: { intent: "create_post" } },
-    { name: "fenced json block", text: '```json\n{"intent":"create_post"}\n```', json: { intent: "create_post" } },
+    {
+      name: "fenced json block",
+      text: '```json\n{"intent":"create_post"}\n```',
+      json: { intent: "create_post" },
+    },
     { name: "fenced untagged block", text: '```\n{"a":1}\n```', json: { a: 1 } },
     {
       name: "prose preamble + trailing prose",
@@ -225,8 +239,16 @@ describe("extractPlanJson", () => {
       json: { intent: "create_post" },
     },
     { name: "brace inside string is not a closer", text: 'x {"a":"}"} y', json: { a: "}" } },
-    { name: "open fence, balanced object still recovered", text: '```json\n{"a":1}', json: { a: 1 } },
-    { name: "valid non-object JSON extracts (validatePlan owns the shape)", text: "[1,2]", json: [1, 2] },
+    {
+      name: "open fence, balanced object still recovered",
+      text: '```json\n{"a":1}',
+      json: { a: 1 },
+    },
+    {
+      name: "valid non-object JSON extracts (validatePlan owns the shape)",
+      text: "[1,2]",
+      json: [1, 2],
+    },
   ];
   for (const { name, text, json } of table) {
     it(`extracts: ${name}`, () => {
@@ -388,13 +410,18 @@ describe("enforcePlannerRules: path classification and freeform flagging", () =>
     expect(unexplained.issues.some((i) => i.includes("notes_for_user"))).toBe(true);
     expect(unexplained.warnings.some((w) => w.includes("freeform composition planned"))).toBe(true);
     expect(
-      unexplained.warnings.some((w) => w.includes("1 template(s)") && w.includes("prefer template")),
+      unexplained.warnings.some(
+        (w) => w.includes("1 template(s)") && w.includes("prefer template"),
+      ),
     ).toBe(true);
   });
 
   it("accepts a freeform composition when notes_for_user explains it", () => {
     const explained = enforcePlannerRules(
-      planFrom({ ...primitives, notes_for_user: "No template or component fits; composed from primitives." }),
+      planFrom({
+        ...primitives,
+        notes_for_user: "No template or component fits; composed from primitives.",
+      }),
       sections,
     );
     expect(explained.issues).toEqual([]);
@@ -445,7 +472,9 @@ describe("enforcePlannerRules: path classification and freeform flagging", () =>
       sections,
     );
     expect(
-      offManifest.warnings.some((w) => w.includes("outside the §6 manifest") && w.includes("canvas_resize")),
+      offManifest.warnings.some(
+        (w) => w.includes("outside the §6 manifest") && w.includes("canvas_resize"),
+      ),
     ).toBe(true);
   });
 
@@ -493,7 +522,9 @@ describe("PlannerService.plan", () => {
   });
 
   it("extracts fenced JSON end-to-end", async () => {
-    const { service } = serviceWith([{ text: `\`\`\`json\n${JSON.stringify(specPlanJson)}\n\`\`\`` }]);
+    const { service } = serviceWith([
+      { text: `\`\`\`json\n${JSON.stringify(specPlanJson)}\n\`\`\`` },
+    ]);
     const result = await service.plan({ ...sections });
     expect(result.ok).toBe(true);
   });
@@ -603,7 +634,10 @@ describe("PlannerService.plan", () => {
 
   it("fails fast on malformed worker input with field paths only (no values)", async () => {
     const { service } = serviceWith([{ text: JSON.stringify(specPlanJson) }]);
-    const bad = { ...sections, budget: { ...sections.budget, tier: "ultra" } } as unknown as PlannerInput;
+    const bad = {
+      ...sections,
+      budget: { ...sections.budget, tier: "ultra" },
+    } as unknown as PlannerInput;
     let message = "";
     try {
       await service.plan(bad);

@@ -45,7 +45,10 @@ export const plannerBriefSchema = z
      * Brief attachment asset ids — the §5.5 `assets[].ref` cross-check source
      * (§23.2: "never invent … asset ids not present in CATALOG/SNAPSHOT").
      */
-    attachments: z.array(z.object({ id: idField }).passthrough()).max(64).optional(),
+    attachments: z
+      .array(z.object({ id: idField }).passthrough())
+      .max(64)
+      .optional(),
   })
   .passthrough();
 
