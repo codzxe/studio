@@ -86,11 +86,11 @@ describe("coerceBrandTokens", () => {
 
   it("caps palette and tone words at the contract limits", () => {
     const coerced = coerceBrandTokens({
-      palette: Array.from({ length: 30 }, (_, i) => `#${(i % 16).toString(16).repeat(6)}`),
-      toneWords: Array.from({ length: 30 }, (_, i) => `word-${i % 5}`),
+      palette: Array.from({ length: 30 }, (_, i) => `#${i.toString(16).padStart(6, "0")}`),
+      toneWords: Array.from({ length: 30 }, (_, i) => `word-${i}`),
     });
-    expect(coerced.palette).toHaveLength(Math.min(30, MAX_PALETTE_TOKENS));
-    expect(coerced.toneWords).toHaveLength(Math.min(30, MAX_TONE_WORDS));
+    expect(coerced.palette).toHaveLength(MAX_PALETTE_TOKENS);
+    expect(coerced.toneWords).toHaveLength(MAX_TONE_WORDS);
   });
 
   it("drops over-long logo ids", () => {
@@ -217,7 +217,7 @@ describe("isDraftDirty", () => {
     // Cosmetic edits (extra whitespace) are NOT dirty — canonical compare.
     expect(
       isDraftDirty(
-        { ...draft, fonts: { ...draft.fonts, [FONT_ROLES[0]]: "  " } },
+        { ...draft, fonts: { ...draft.fonts, [FONT_ROLES[1]]: " sans-serif " } },
         seeded,
       ),
     ).toBe(false);

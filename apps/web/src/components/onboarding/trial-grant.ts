@@ -3,8 +3,6 @@
 // /v1/credits check (API table §13). Pure parsing + a thin injectable fetch
 // default, so hosts can swap in their own session-aware client.
 
-import type { SafeStorage } from "./onboarding-storage";
-
 export const CREDITS_PATH = "/v1/credits"; // §13 API table: "GET /v1/credits — Balance + ledger page"
 
 export interface TrialGrantOk {
@@ -116,18 +114,4 @@ export async function defaultCheckTrialGrant(
       retryable: true,
     };
   }
-}
-
-/** Read the persisted "celebration shown once" timestamp, if any. */
-export function readCelebratedAt(storage: SafeStorage | null): string | null {
-  return storage?.getItem("onboarding.checklist.celebrated.v1") ?? null;
-}
-
-/** Persist the celebration exactly once; returns the written value. */
-export function writeCelebratedAt(
-  storage: SafeStorage | null,
-  value: string,
-): string {
-  storage?.setItem("onboarding.checklist.celebrated.v1", value);
-  return value;
 }
