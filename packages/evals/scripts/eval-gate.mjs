@@ -21,7 +21,8 @@
 // Usage:
 //   node scripts/eval-gate.mjs --suite results/suite.json [--suite-threshold 0.85] \
 //                             [--chat results/chat-edits.json [--chat-threshold 0.90]]
-//                             [--classifier results/chat-edit-eval.json [--classifier-threshold 0.90]]
+//                             [--classifier results/chat-edit-eval.json 
+//                              [--classifier-threshold 0.90]]
 //   node scripts/eval-gate.mjs <results.json> [threshold=0.85]   // legacy single gate
 //   node scripts/eval-gate.mjs --dry                             // offline self-test
 //
@@ -47,7 +48,7 @@ import { fileURLToPath } from 'node:url';
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SUITE_THRESHOLD_DEFAULT = 0.85; // §19 Phase 2: "eval suite >= 50 briefs with >= 85% pass"
 const CHAT_THRESHOLD_DEFAULT = 0.9; // §19 Phase 2: "chat edits correct >= 90% on the curated set"
-const CLASSIFIER_THRESHOLD_DEFAULT = 0.9; // §19 chat gate at the §23.5 classifier level (same 90% law)
+const CLASSIFIER_THRESHOLD_DEFAULT = 0.9; // §19: same 90% law, at the §23.5 classifier level
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -272,8 +273,14 @@ function selfTest() {
   check('suite 56/67 = 0.8358 < 0.85 fails (exit 1)', gate('suite', mk(56, 67), 0.85).code === 1);
   check('chat boundary 13/14 = 0.9286 >= 0.90 passes', gate('chat-edits', mk(13, 14), 0.9).code === 0);
   check('chat 12/14 = 0.8571 < 0.90 fails (exit 1)', gate('chat-edits', mk(12, 14), 0.9).code === 1);
-  check('classifier boundary 18/20 = 0.90 passes (>= semantics)', gate('chat-edit-classifier', mk(18, 20), 0.9).code === 0);
-  check('classifier 17/20 = 0.85 < 0.90 fails (exit 1)', gate('chat-edit-classifier', mk(17, 20), 0.9).code === 1);
+  check(
+    'classifier boundary 18/20 = 0.90 passes (>= semantics)',
+    gate('chat-edit-classifier', mk(18, 20), 0.9).code === 0,
+  );
+  check(
+    'classifier 17/20 = 0.85 < 0.90 fails (exit 1)',
+    gate('chat-edit-classifier', mk(17, 20), 0.9).code === 1,
+  );
   check('exact boundary 17/20 = 0.85 passes (>= semantics)', gate('x', mk(17, 20), 0.85).code === 0);
   check('empty results is an input error (exit 2)', gate('suite', { results: [] }, 0.85).code === 2);
   check(
@@ -382,7 +389,11 @@ function main(argv) {
         usage(t.error);
         return 2;
       }
-      gates.push({ label: 'chat-edit-classifier', file: parsed.parsed.classifier, threshold: t.value });
+      gates.push({
+        label: 'chat-edit-classifier',
+        file: parsed.parsed.classifier,
+        threshold: t.value,
+      });
     }
   } else {
     // Legacy single-gate mode (pre-chat-gate wiring, e.g. the eval:ci script).

@@ -34,7 +34,8 @@ export async function callApi(prompt, context) {
   if (!vars.classification) {
     return {
       error:
-        'mock-chat-edit: case is missing the golden `classification` var — see cases/chat-edits/README.md',
+        'mock-chat-edit: case is missing the golden `classification` var ' +
+        '— see cases/chat-edits/README.md',
     };
   }
 
