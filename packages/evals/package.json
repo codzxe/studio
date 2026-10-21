@@ -7,7 +7,8 @@
   "scripts": {
     "eval": "promptfoo eval --config promptfoo.config.yaml",
     "eval:chat": "promptfoo eval --config chat-edits.config.yaml --no-cache --output results/chat-edits.json",
-    "eval:ci": "promptfoo eval --config promptfoo.config.yaml --no-cache --output results/suite.json && promptfoo eval --config chat-edits.config.yaml --no-cache --output results/chat-edits.json && node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json",
+    "eval:classifier": "promptfoo eval --config promptfoo.chat-edit.config.yaml --no-cache --output results/chat-edit-eval.json",
+    "eval:ci": "promptfoo eval --config promptfoo.config.yaml --no-cache --output results/suite.json && promptfoo eval --config chat-edits.config.yaml --no-cache --output results/chat-edits.json && promptfoo eval --config promptfoo.chat-edit.config.yaml --no-cache --output results/chat-edit-eval.json && node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json --classifier results/chat-edit-eval.json",
     "eval:view": "promptfoo view",
     "typecheck": "tsc --noEmit"
   },

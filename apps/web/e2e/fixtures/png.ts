@@ -5,8 +5,10 @@
 // in-test. The byte-level approach is copied from
 // apps/mock-engine/src/engine.mjs `grayPng()` (CRC32 table + pngChunk() +
 // 8×8 grayscale IHDR + zlib IDAT): the upload fixture is exactly the class of
-// image mock-mode `doc.render` streams back, so preview/undo assertions and
-// mock-engine behaviour stay in sync.
+// image mock-mode `doc.render` streams back. ONE deliberate divergence: the
+// scanline filter byte is 0x00 (None — PNG-spec-valid) instead of
+// mock-engine's 0x80 fill, so browsers actually decode this PNG (the E2E
+// preview/asset assertions require naturalWidth > 0).
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -57,6 +59,7 @@ export function tinyPng({ width = 8, height = 8, fill = 0x80 }: TinyPngOptions =
   ihdr[8] = 8;
   ihdr[9] = 0;
   const raw = Buffer.alloc(height * (width + 1), fill); // filter byte + row pixels
+  for (let y = 0; y < height; y++) raw[y * (width + 1)] = 0x00; // valid "None" filter
   return Buffer.concat([
     PNG_SIGNATURE,
     pngChunk("IHDR", ihdr),

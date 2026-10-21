@@ -17,7 +17,13 @@ packages/evals/
                           curated set"): the 14-brief curated chat-edit set
                           (cases/edits.yaml + cases/expanded/edits.yaml); same
                           provider/prompt/defaultTest as the suite config — one
-                          promptfoo eval yields one pass rate, hence two configs
+                          promptfoo eval yields one pass rate, hence one config per gate
+  promptfoo.chat-edit.config.yaml
+                          GATE 3 config (the §23.5 classifier curated set, ≥ 0.90):
+                          the 20 chat-edit classifier briefs in cases/chat-edits/
+                          (5 files); its own provider + prompt (the §23.5 output
+                          contract intentionally has no {plan, run} envelope, so it
+                          cannot ride the suite config); asserts live inline per case
   prompts/                promptfoo-facing STARTER mirrors of spec §23.1–§23.3
                           (template vars {{brief}}/{{snapshot}}/{{catalog}}/…).
                           The canonical, versioned prompts land in packages/agent/prompts
@@ -25,17 +31,25 @@ packages/evals/
     planner.system.txt    §23.2 planner  (used by the W1 suite)
     executor.system.txt   §23.1 executor (joins the suite in W6)
     critic.system.txt     §23.3 critic    (joins the suite in W7 with renders)
+    chat-edit-classifier.system.txt
+                          §23.5 classifier mirror (used by the GATE 3 config; sync
+                          TODO noted in the file)
   providers/
     mock-planner.mjs      deterministic CI provider: answers each brief with the case's
                           golden {plan, run} envelope — zero model calls, zero cost
+    mock-chat-edit.mjs    deterministic CI provider for GATE 3: echoes each case's
+                          golden §23.5 classification — same pattern
   cases/                  golden briefs (YAML): §24.1–§24.4 verbatim seeds + 11 invented
+  cases/chat-edits/      the 20-case §23.5 classifier curated set (GATE 3)
   schemas/
     plan.schema.json      the {plan, run} envelope contract (§5.5/§23.2 + §24 trace fields);
-                          the eval-binding copy is inlined in BOTH configs — keep in sync
+                          the eval-binding copy is inlined in BOTH envelope configs — keep in sync
   scripts/
-    eval-gate.mjs         two-gate pass-rate gate: --suite (≥ 0.85, §19 Phase 2) and/or
-                          --chat (≥ 0.90 curated chat-edits, §19 Phase 2); exits with the
-                          strictest failure; --dry = offline self-test; exit 0/1/2
+    eval-gate.mjs         three-gate pass-rate gate: --suite (≥ 0.85, §19 Phase 2),
+                          --chat (≥ 0.90 curated chat-edits, §19 Phase 2) and/or
+                          --classifier (≥ 0.90 §23.5 classifier set, §19 Phase 2);
+                          exits with the strictest failure; --dry = offline self-test;
+                          exit 0/1/2
 ```
 
 ## The envelope contract
@@ -66,6 +80,9 @@ pnpm --filter @studio/evals eval
 # deterministic chat-edits curated gate alone (§19 Phase 2: ≥ 0.90):
 pnpm --filter @studio/evals exec promptfoo eval --config chat-edits.config.yaml
 
+# deterministic §23.5 classifier gate alone (≥ 0.90 over the 20 curated cases):
+pnpm --filter @studio/evals eval:classifier
+
 # browse the local run matrix / scoreboard:
 pnpm --filter @studio/evals eval:view
 
@@ -74,7 +91,10 @@ pnpm --filter @studio/evals exec promptfoo eval --config promptfoo.config.yaml \
   --no-cache --output results/suite.json
 pnpm --filter @studio/evals exec promptfoo eval --config chat-edits.config.yaml \
   --no-cache --output results/chat-edits.json
-node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json
+pnpm --filter @studio/evals exec promptfoo eval --config promptfoo.chat-edit.config.yaml \
+  --no-cache --output results/chat-edit-eval.json
+node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json \
+  --classifier results/chat-edit-eval.json
 
 # offline wiring/logic self-test — no promptfoo install needed (agents use this):
 node scripts/eval-gate.mjs --dry
@@ -99,19 +119,21 @@ point the config gains an env-gated real provider row alongside the mock.
 
 ## CI + threshold policy
 
-Two §19 Phase 2 exit gates, BOTH enforced by `scripts/eval-gate.mjs`:
+Three §19 Phase 2 exit gates, ALL enforced by `scripts/eval-gate.mjs`:
 
 | Gate | Config | Threshold | Scope |
 |---|---|---|---|
 | suite | `promptfoo.config.yaml` | ≥ 0.85 | all 67 briefs (12 case files) — §19 "eval suite ≥ 50 briefs with ≥ 85% pass" |
-| chat-edits | `chat-edits.config.yaml` | ≥ 0.90 | curated 14 chat-edit briefs (`cases/edits.yaml` + `cases/expanded/edits.yaml`) — §19 "chat edits correct ≥ 90% on the curated set" |
+| chat-edits | `chat-edits.config.yaml` | ≥ 0.90 | curated 14 planner-level chat-edit briefs (`cases/edits.yaml` + `cases/expanded/edits.yaml`) — §19 "chat edits correct ≥ 90% on the curated set" |
+| chat-edit-classifier | `promptfoo.chat-edit.config.yaml` | ≥ 0.90 | the 20-case §23.5 classifier curated set (`cases/chat-edits/`, 5 files) — the same §19 sentence graded at the classifier-routing level |
 
-One promptfoo eval produces one results file with one pass rate, so the second
-gate has its own config; the gate script reads both outputs and exits with the
+One promptfoo eval produces one results file with one pass rate, so each gate has
+its own config; the gate script reads all the outputs and exits with the
 STRICTEST failure:
 
 ```bash
-node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json
+node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json \
+  --classifier results/chat-edit-eval.json
 ```
 
 **Exit codes (CI contract, documented in the script header):**
@@ -130,12 +152,15 @@ this package): add a step after the turbo job —
 
 `pnpm --filter @studio/evals eval` alone already runs the deterministic full
 suite in CI (mocked provider, zero model calls, §1.5-6); `eval:ci` now covers
-BOTH configs — suite + curated chat-edits — and drives the dual `--suite/--chat`
-gate (W10-F wired the exact pipeline below). Thresholds default to the §19 law
-inside the gate script (0.85 / 0.90), so the step needs no extra arguments.
-promptfoo itself is the authoritative YAML validator for both configs;
-`node scripts/eval-gate.mjs --dry` re-checks the wiring offline (every case
-file registered in the suite, chat set ⊆ suite, strictest-exit math).
+ALL THREE configs — suite + curated chat-edits + §23.5 classifier — and drives
+the triple `--suite/--chat/--classifier` gate (W10-F wired the two-gate
+pipeline; W10-P added the classifier gate). Thresholds default to the §19 law
+inside the gate script (0.85 / 0.90 / 0.90), so the step needs no extra
+arguments. promptfoo itself is the authoritative YAML validator for all
+configs; `node scripts/eval-gate.mjs --dry` re-checks the wiring offline (every
+case file registered in the config that gates its contract — suite files in
+`promptfoo.config.yaml`, `cases/chat-edits/**` in
+`promptfoo.chat-edit.config.yaml`, chat set ⊆ suite, strictest-exit math).
 
 - **Critic-drift human review (§21 evals row / §11.4):** sample 10 runs/week,
   score them with the same §11.2 rubric; the **monthly** review compares human
@@ -175,8 +200,10 @@ fuzzy image assertions in this scaffold.
 **Growth plan (§19 Phase 2 gate):** 15 seeds → ≥50 before Phase 2 exit — **done in
 Wave 7** (W7-D's `cases/expanded/` added 52; total 67; §11.4's longer-term 200-brief
 target stays open). New cases copy an existing case file, keep the assertion
-categories, and register the new file under `tests:` in `promptfoo.config.yaml`
-(pure chat-edit files also go into `chat-edits.config.yaml`; `node
+categories, and register the new file under `tests:` in the config that gates
+its contract: planner-envelope briefs → `promptfoo.config.yaml`
+(pure edit_layers chat briefs also go into `chat-edits.config.yaml`);
+§23.5 classifier cases → `promptfoo.chat-edit.config.yaml` (`node
 scripts/eval-gate.mjs --dry` fails loudly if a case file on disk is ever left
 unregistered).
 
@@ -200,22 +227,26 @@ promptfoo behaviors should be confirmed on the first CI run and hardened if need
    It now lives in **three places** — `promptfoo.config.yaml`, `chat-edits.config.yaml`
    and the standalone `schemas/plan.schema.json` (human/codegen mirror) — keep all
    three in sync (TODO W6: extract to one shared source).
-4. **Two configs, one gate script** — `chat-edits.config.yaml` duplicates the suite's
-   provider/prompt/defaultTest so each gate is a standalone, CI-runnable config. The
-   curated set is defined at file granularity (promptfoo includes test files
-   wholesale); edit-intent briefs in mixed policy files (`failures.yaml` §24.4,
-   `injection.yaml` §5.7) deliberately gate the full suite only. A future
-   pure-chat-edit file joins BOTH configs' `tests:`.
+4. **Three configs, one gate script** — `chat-edits.config.yaml` duplicates the suite's
+   provider/prompt/defaultTest so each envelope gate is a standalone, CI-runnable
+   config; `promptfoo.chat-edit.config.yaml` deliberately has NO defaultTest
+   (§23.5 classifier asserts are inline per case, and their output contract is not
+   the {plan, run} envelope). The curated sets are defined at file granularity
+   (promptfoo includes test files wholesale); edit-intent briefs in mixed policy
+   files (`failures.yaml` §24.4, `injection.yaml` §5.7) deliberately gate the full
+   suite only. A future pure-chat-edit planner file joins BOTH envelope configs'
+   `tests:`; a future classifier file joins the classifier config.
 
 ## Fleet flags (for Wave 6 / other owners)
 
-- **@studio/evals `package.json` — DONE (W10-F):** `eval:ci` now runs the
-  two-gate CI pipeline —
+- **@studio/evals `package.json` — DONE (W10-F, extended W10-P):** `eval:ci` runs the
+  three-gate CI pipeline —
   `promptfoo eval --config promptfoo.config.yaml --no-cache --output results/suite.json &&
   promptfoo eval --config chat-edits.config.yaml --no-cache --output results/chat-edits.json &&
-  node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json`
+  promptfoo eval --config promptfoo.chat-edit.config.yaml --no-cache --output results/chat-edit-eval.json &&
+  node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json --classifier results/chat-edit-eval.json`
   (legacy `node scripts/eval-gate.mjs <file> [threshold]` remains supported for
-  compatibility; an `eval:chat` script runs the curated gate standalone).
+  compatibility; `eval:chat` / `eval:classifier` scripts run each gate standalone).
 
 - Tool-name style is inconsistent in the spec (`template_apply` in §23.2 vs
   `template.apply` in §5.5/§24 traces). Cases use the dotted §5.5 style; the tool
@@ -225,3 +256,9 @@ promptfoo behaviors should be confirmed on the first CI run and hardened if need
   `defaultTest` is the contract reference.
 - Repair (§23.4) and chat-classifier (§23.5) starter prompts belong in
   `packages/agent/prompts` (Wave 6) and get promptfoo mirrors here when their evals land.
+  The §23.5 mirror landed with the W10-P classifier gate registration
+  (`prompts/chat-edit-classifier.system.txt` — sync the VERBATIM §23.5 block from
+  `packages/agent/prompts/v1/chat-edit-classifier.md` before real-model runs).
+- See `docs/final-review.md` (W10-P) for the final §19/§21 audit: brief count,
+  intent × tier × template coverage map, gate verification, determinism notes and
+  the café-menu/qr-code coverage gaps.
