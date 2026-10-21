@@ -129,13 +129,13 @@ this package): add a step after the turbo job —
 ```
 
 `pnpm --filter @studio/evals eval` alone already runs the deterministic full
-suite in CI (mocked provider, zero model calls, §1.5-6); the gating form above
-needs `eval:ci` to cover BOTH configs — flagged below for the package.json owner.
-thresholds default to the §19 law inside the gate script (0.85 / 0.90), so the
-step needs no extra arguments. promptfoo itself is the authoritative YAML
-validator for both configs; `node scripts/eval-gate.mjs --dry` re-checks the
-wiring offline (every case file registered in the suite, chat set ⊆ suite,
-strictest-exit math).
+suite in CI (mocked provider, zero model calls, §1.5-6); `eval:ci` now covers
+BOTH configs — suite + curated chat-edits — and drives the dual `--suite/--chat`
+gate (W10-F wired the exact pipeline below). Thresholds default to the §19 law
+inside the gate script (0.85 / 0.90), so the step needs no extra arguments.
+promptfoo itself is the authoritative YAML validator for both configs;
+`node scripts/eval-gate.mjs --dry` re-checks the wiring offline (every case
+file registered in the suite, chat set ⊆ suite, strictest-exit math).
 
 - **Critic-drift human review (§21 evals row / §11.4):** sample 10 runs/week,
   score them with the same §11.2 rubric; the **monthly** review compares human
@@ -209,13 +209,13 @@ promptfoo behaviors should be confirmed on the first CI run and hardened if need
 
 ## Fleet flags (for Wave 6 / other owners)
 
-- **@studio/evals `package.json` owner:** `eval:ci` still runs only the suite config +
-  legacy single-gate form. Extend it to the two-gate CI pipeline —
+- **@studio/evals `package.json` — DONE (W10-F):** `eval:ci` now runs the
+  two-gate CI pipeline —
   `promptfoo eval --config promptfoo.config.yaml --no-cache --output results/suite.json &&
   promptfoo eval --config chat-edits.config.yaml --no-cache --output results/chat-edits.json &&
   node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json`
   (legacy `node scripts/eval-gate.mjs <file> [threshold]` remains supported for
-  compatibility; consider an `eval:chat` script for the curated gate).
+  compatibility; an `eval:chat` script runs the curated gate standalone).
 
 - Tool-name style is inconsistent in the spec (`template_apply` in §23.2 vs
   `template.apply` in §5.5/§24 traces). Cases use the dotted §5.5 style; the tool

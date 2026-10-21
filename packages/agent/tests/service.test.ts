@@ -471,6 +471,9 @@ describe("critic service: tool failures map to typed envelopes", () => {
   it.each([
     ["provider_unhealthy", "provider_unhealthy", true],
     ["engine_timeout", "run_timeout", true],
+    // The tool's adopted parse-failure code (W7-M flip; shared §13.3 catalog
+    // since W10-F) — one fresh critique may fix, same as the legacy key.
+    ["critique_parse_failed", CRITIC_TOOL_FAILURE_CODE, true],
     ["validation_failed", CRITIC_TOOL_FAILURE_CODE, true],
     ["internal_error", CRITIC_TOOL_FAILURE_CODE, false],
     ["invalid_args", CRITIC_TOOL_FAILURE_CODE, false],

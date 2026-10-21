@@ -69,6 +69,9 @@ import {
 } from "./services/workspaces.js";
 import { registerRoutes } from "./routes/index.js";
 import type { Probe } from "./routes/health.js";
+import type { AuditRoutesDeps } from "./routes/audit.js";
+import type { BillingRoutesDeps } from "./routes/billing.js";
+import type { CreditsDeps } from "./routes/credits.js";
 import { createGatewayMetrics, httpMetricsMiddleware, metricsRoutes } from "./routes/metrics.js";
 import { createWorkspaceAuth } from "./routes/workspaces.js";
 import type { DocumentRoutesDeps, PrincipalResolver } from "./routes/documents.js";
@@ -144,6 +147,14 @@ export interface AppDeps extends Partial<GatewayDeps> {
   readonly runsDeps?: RunsDeps;
   readonly runEventsDeps?: RunEventsDeps;
   readonly uploadsDeps?: UploadsDeps;
+  // W8-K/W9-H fleet flags → W10-F: the credits/billing/audit groups mount
+  // through the routes/index.ts registry when these are present (same
+  // pre-baked pattern — absent deps leave the group behind the typed 501
+  // catch-all, the W8-K degrade contract). /metrics needs no field: app.ts
+  // (W10-E) builds its MetricsRouteDeps from env + the shared HTTP counters.
+  readonly creditsDeps?: CreditsDeps;
+  readonly billingDeps?: BillingRoutesDeps;
+  readonly auditDeps?: AuditRoutesDeps;
 }
 
 /** Env with the auth/reqCtx variables narrowed non-optional (mount-time only). */

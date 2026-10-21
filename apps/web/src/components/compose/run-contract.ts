@@ -21,16 +21,25 @@
 // Vitest aliases (same TODO as src/lib/api.ts's §13.2 event mirror); until
 // then this local mirror is pinned against it by the colocated test.
 //
-// Read-side contracts (catalog cards, documents, credits) are NOT mirrored
-// here: the composer consumes the shared hooks that landed with the rest of
-// Wave 8 — useTemplateCards (components/gallery/use-catalog.ts, W8-J),
-// useRecentDocuments / useCreateDocument / useSession credits
-// (hooks/use-session.tsx, W8-A) and the asset library
-// (components/assets/use-assets.ts, W8-I). Only the run-creation contract is
-// duplicated — the same "local mirror" posture as those modules.
+// Read-side contracts (catalog cards, documents, credits) were originally
+// NOT mirrored here (the W8-D draft routed them through the shared Wave-8
+// hooks), but the composer imports them from THIS module — the drift W8-O
+// flagged as the apps/web typecheck break. W10-F reconciled: the wire
+// schemas below alias the CANONICAL coarse mirrors in src/lib/api/
+// schema-mirror.ts (W8-O) so the shapes stay pinned in one place
+// (non-strict: unknown fields strip, never blank a page — §13.3), and the
+// query keys follow the frozen conventions in src/lib/api/hooks.ts.
 
 import { z } from "zod";
-import { type ApiError, isApiError } from "../../src/lib/api";
+import {
+  type ApiError,
+  creditsSchema,
+  documentCardSchema,
+  documentListEnvelopeSchema,
+  documentVersionCardSchema,
+  isApiError,
+  templateCardsEnvelopeSchema,
+} from "../../src/lib/api";
 
 // ---------------------------------------------------------------------------
 // Prompt + attachment caps (gateway CREATE_RUN_BODY_SCHEMA, W4-G)
@@ -180,6 +189,57 @@ export function runTimelineHref(runId: string): string {
  * string typed `string`, so the CTA compiles while the page fills in.
  */
 export const CREDITS_ROUTE: string = "/billing";
+
+// ---------------------------------------------------------------------------
+// Composer read-side contracts (W10-F reconciliation — see the header note)
+// ---------------------------------------------------------------------------
+
+/** `GET /v1/templates` discovery cards (§7.4) — NOT the full manifests. */
+export const templatesResponseSchema = templateCardsEnvelopeSchema;
+
+/** `GET /v1/documents` page — cursor paging, newest first (§13.1). */
+export const documentsResponseSchema = documentListEnvelopeSchema;
+
+/**
+ * `GET /v1/credits` — the workspace balance (§14.1). Coarse on purpose: the
+ * paged ledger rows strip; the composer renders the balance only.
+ */
+export const creditsResponseSchema = creditsSchema;
+
+/**
+ * `POST /v1/documents` 201 (§13.1): the created card plus the initial
+ * version stub — NOT the detail envelope (no latest_version on create).
+ */
+export const createDocumentResponseSchema = z.object({
+  ok: z.literal(true),
+  document: documentCardSchema,
+  version: documentVersionCardSchema,
+});
+
+export type CreateDocumentResponse = z.infer<typeof createDocumentResponseSchema>;
+
+/** The composer's template card — re-exported from the shared mirror. */
+export type { TemplateCard } from "../../src/lib/api";
+
+// --- Query keys (frozen to the src/lib/api/hooks.ts family shapes) ----------
+
+/**
+ * Unfiltered catalog read — the ["catalog","templates"] family prefix of
+ * the gallery's param-keyed entries (W8-J queryKeys.catalog.templates).
+ */
+export const TEMPLATES_QUERY_KEY = ["catalog", "templates"] as const;
+
+/**
+ * The composer's document list — identical to queryKeys.documents.lists, so
+ * the post-create invalidation refreshes EVERY list entry.
+ */
+export const DOCUMENTS_QUERY_KEY = ["documents", "list"] as const;
+
+/**
+ * The composer's balance read — inside the ["session"] family so the shell's
+ * refreshSession() invalidates it with the badge (W8-A contract).
+ */
+export const CREDITS_QUERY_KEY = ["session", "credits"] as const;
 
 // ---------------------------------------------------------------------------
 // Wire schema — POST /v1/runs (§13.1; the composer's only own write contract)

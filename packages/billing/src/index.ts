@@ -15,3 +15,13 @@ export * from "./policy.js";
 // InviteOptions, LimitsSeams, RunIntake*, UploadCeiling) appear in
 // ledger/plans/policy — no disambiguation needed.
 export * from "./limits/index.js";
+// guardrails/ (W9-N: daily spend caps, demo-workspace policy, provider-class
+// kill switch) — re-exported from the package barrel per W9-N's fleet flag
+// ("billing index owner: export * from './guardrails/index.js'"; the limits/
+// barrel precedent above). Collision audit at wiring time (scripted, full
+// src/ export-name intersect): none of the guardrails names (GUARDRAIL_*,
+// guardrailOk/Err/isGuardrailFailure, DailySpendGuard, DEMO_*, DemoWorkspace*
+// exportWatermarkFor, ProviderHealthPolicy, parseDemoEnabled/
+// parseDisabledProviders, sanitizeCounter, formatUsdCents, isValidOrgId…)
+// appear in ledger/plans/policy/limits — no disambiguation needed.
+export * from "./guardrails/index.js";

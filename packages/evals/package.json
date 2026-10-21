@@ -6,7 +6,8 @@
   "description": "Golden-brief eval suite (promptfoo) — spec §11.4/§21: CI for prompts, ≥85% suite pass-rate gate per §19",
   "scripts": {
     "eval": "promptfoo eval --config promptfoo.config.yaml",
-    "eval:ci": "promptfoo eval --config promptfoo.config.yaml --no-cache --output results/eval.json && node scripts/eval-gate.mjs results/eval.json 0.85",
+    "eval:chat": "promptfoo eval --config chat-edits.config.yaml --no-cache --output results/chat-edits.json",
+    "eval:ci": "promptfoo eval --config promptfoo.config.yaml --no-cache --output results/suite.json && promptfoo eval --config chat-edits.config.yaml --no-cache --output results/chat-edits.json && node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json",
     "eval:view": "promptfoo view",
     "typecheck": "tsc --noEmit"
   },

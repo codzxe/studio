@@ -324,8 +324,9 @@ export interface AttachJournalEntry {
   readonly appliedCommands: number;
 }
 
-function toBatchStep(row: ReplayCommand): BatchStepInput {
-  return { command: row.commandName, params: { ...row.params } };
+/** The §5.6 batch steps of a WAL slice — verbatim replay inputs (§5.6). */
+export function toReplaySteps(rows: readonly WorkerWalEntry[]): BatchStepInput[] {
+  return rows.map((row) => ({ command: row.commandName, params: { ...row.params } }));
 }
 
 /**
@@ -387,9 +388,7 @@ export class ProcessAttachExecutor implements AttachExecutorLike {
         restoredFrom: plan.kind === "checkpoint" ? this.checkpointPath : undefined,
       };
     }
-    const replayed = unwrapOutcome(
-      await client.runBatch({ steps: commands.map((row) => toBatchStep(row)) }),
-    );
+    const replayed = unwrapOutcome(await client.runBatch({ steps: toReplaySteps(commands) }));
     this.clock.advance(PROTOCOL_ROUND_TRIP_MS);
     if (replayed.failed > 0) {
       return {
