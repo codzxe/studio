@@ -651,14 +651,57 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
   const commands = deps.commandDeps;
   const exportRoutesDeps = deps.exportDeps;
 
+  // --- W10-R: catalog / commands / exports (the awaiting-mount checklist) --
+  // One documented one-call helper per module (W4-J/W4-K/W4-L), mounted on the
+  // app ROOT with each helper's DEFAULT paths — the exact call shape the
+  // sibling suites exercise (catalog.test.ts / command-exec.test.ts /
+  // exports.test.ts mount through the deps.mount hook at this same position).
+  // Registered BEFORE the /v1 sub-app + the registry, so their concrete routes
+  // always beat the typed 501 catch-all; each helper injects its own
+  // auth/deps middleware before its routers (their own module contracts).
+  if (catalog !== undefined) {
+    const catalogMod = shape(catalogRoutesModule);
+    const mount = helperOf(catalogMod, "mountCatalogRoutes");
+    if (mount !== undefined) {
+      (mount as (app: Hono<AppEnv>, deps: CatalogDeps) => void)(app, catalog);
+    }
+  }
+
+  if (commands !== undefined) {
+    const commandsMod = shape(commandsRoutesModule);
+    const mount = helperOf(commandsMod, "mountCommandRoutes");
+    if (mount !== undefined) {
+      (mount as (
+        app: Hono<AppEnv>,
+        deps: CommandRoutesDeps,
+        options?: { readonly path?: string },
+      ) => void)(app, commands);
+    }
+  }
+
+  if (exportRoutesDeps !== undefined) {
+    const exportsMod = shape(exportsRoutesModule);
+    const mount = helperOf(exportsMod, "mountExportRoutes");
+    if (mount !== undefined) {
+      (mount as (
+        app: Hono<AppEnv>,
+        deps: ExportRoutesDeps,
+        options?: { readonly documentsPath?: string },
+      ) => void)(app, exportRoutesDeps);
+    }
+  }
+
   // --- the /v1 sub-app ------------------------------------------------------
   const v1 = new Hono<AppEnv>();
-  // Authenticated-group prefixes (§15.2 org-keyed preset below). Commands and
-  // exports live under /documents/*, so they ride the documents prefix; the
-  // catalog charges its own per-org bucket in catalogMiddleware (W4-J) — its
-  // prefixes are only primed here so the org preset applies. credits/billing/
-  // audit mount through the routes/index.ts registry sub-app (their modules
-  // own their per-org buckets; audit documents "intentionally none").
+  // Authenticated-group prefixes (§15.2 org-keyed preset below) — the groups
+  // mounted INSIDE the v1 sub-app (W4-R's five). The W4-J/K/L groups mount on
+  // the app root (below, before this sub-app) with their default /v1 paths —
+  // the exact call shape their suites exercise — so the org preset for their
+  // prefixes lives in their own modules: catalog charges api.catalog.read per
+  // org in its middleware; commands/exports keep the global IP floor (their
+  // modules ship no limiter seam — §13 amendment candidate). credits/billing/
+  // audit mount through the routes/index.ts registry sub-app (their modules own
+  // their per-org buckets; audit documents "intentionally none").
   const authedPrefixes = new Set<string>();
 
   if (workspaces !== undefined) {
@@ -674,13 +717,6 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
   if (uploadsMounted) {
     authedPrefixes.add("/uploads");
     authedPrefixes.add("/assets");
-  }
-  if (commands !== undefined || exportRoutesDeps !== undefined) {
-    authedPrefixes.add("/documents");
-  }
-  if (catalog !== undefined) {
-    authedPrefixes.add("/templates");
-    authedPrefixes.add("/components");
   }
 
   // Session-prime + the org-keyed preset for authenticated groups (§15.2).
@@ -783,46 +819,6 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
         v1.use("/assets/*", inject);
       }
       v1.route("/", uploadsRouter);
-    }
-  }
-
-  // --- W10-R: catalog / commands / exports (the awaiting-mount checklist) --
-  // One documented one-call helper per module (W4-J/W4-K/W4-L), mounted on the
-  // /v1 sub-app so the concrete routes beat the registry catch-all. Each
-  // helper injects its own middleware BEFORE its routers (their own contracts).
-  if (catalog !== undefined) {
-    const catalogMod = shape(catalogRoutesModule);
-    const mount = helperOf(catalogMod, "mountCatalogRoutes");
-    if (mount !== undefined) {
-      (mount as (app: Hono<AppEnv>, deps: CatalogDeps, options?: { readonly path?: string }) => void)(
-        v1,
-        catalog,
-        { path: "" },
-      );
-    }
-  }
-
-  if (commands !== undefined) {
-    const commandsMod = shape(commandsRoutesModule);
-    const mount = helperOf(commandsMod, "mountCommandRoutes");
-    if (mount !== undefined) {
-      (mount as (
-        app: Hono<AppEnv>,
-        deps: CommandRoutesDeps,
-        options?: { readonly path?: string },
-      ) => void)(v1, commands, { path: "/documents" });
-    }
-  }
-
-  if (exportRoutesDeps !== undefined) {
-    const exportsMod = shape(exportsRoutesModule);
-    const mount = helperOf(exportsMod, "mountExportRoutes");
-    if (mount !== undefined) {
-      (mount as (
-        app: Hono<AppEnv>,
-        deps: ExportRoutesDeps,
-        options?: { readonly documentsPath?: string },
-      ) => void)(v1, exportRoutesDeps, { documentsPath: "/documents" });
     }
   }
 
@@ -1188,7 +1184,10 @@ function drizzleAuditCounts(db: Db): AuditActionCountsLike {
         .select({ action: auditLog.action, n: count() })
         .from(auditLog)
         .where(
-          and(eq(auditLog.organizationId, query.organizationId), gte(auditLog.createdAt, query.since)),
+          and(
+            eq(auditLog.organizationId, query.organizationId),
+            gte(auditLog.createdAt, query.since),
+          ),
         )
         .groupBy(auditLog.action);
       return Object.fromEntries(rows.map((row) => [row.action, Number(row.n)]));
@@ -1272,7 +1271,7 @@ export function createDefaultDeps(
   }
   const billingWiring =
     overrides.billingWiring ??
-    (prices?.ok === true
+    (prices !== undefined && prices.ok
       ? { webhookSecret: env.STRIPE_WEBHOOK_SECRET, appUrl: env.APP_URL, prices: prices.value }
       : undefined);
   return {

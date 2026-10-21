@@ -264,7 +264,7 @@ describe("assembly: boots and serves health + openapi (W4-R)", () => {
     expect(res.headers.get("x-ratelimit-limit")).toBeNull();
   });
 
-  it("GET /v1/openapi.json serves the mounted surface", async () => {
+  it("GET /v1/openapi.json serves the AUDITED spec (D11, W10-R)", async () => {
     const { app } = makeHarness();
     const res = await app.request("/v1/openapi.json");
     expect(res.status).toBe(200);
@@ -274,22 +274,26 @@ describe("assembly: boots and serves health + openapi (W4-R)", () => {
       paths: Record<string, Record<string, unknown>>;
     };
     expect(body.openapi).toBe("3.1.0");
+    // mountOpenApi(app, { version }) stamps the running version (D11).
     expect(body.info.version).toBe("0.0.0-assembly");
+    // The audited document (src/openapi.ts) keys paths ABSOLUTE from the app
+    // root (/v1/…) — the W4-R runtime summary (relative keys, servers:/v1)
+    // was retired with the D11 resolution.
     const paths = Object.keys(body.paths);
     for (const expected of [
-      "/health",
-      "/health/deep",
-      "/workspaces",
-      "/invites/{token}",
-      "/documents",
-      "/documents/{id}/versions",
-      "/runs",
-      "/runs/{id}",
-      "/runs/{id}/cancel",
-      "/runs/{id}/events",
-      "/uploads",
-      "/assets",
-      "/assets/{id}",
+      "/v1/health",
+      "/v1/health/deep",
+      "/v1/workspaces",
+      "/v1/invites/{token}",
+      "/v1/documents",
+      "/v1/documents/{id}/versions",
+      "/v1/runs",
+      "/v1/runs/{id}",
+      "/v1/runs/{id}/cancel",
+      "/v1/runs/{id}/events",
+      "/v1/uploads",
+      "/v1/assets",
+      "/v1/assets/{id}",
     ]) {
       expect(paths).toContain(expected);
     }
@@ -499,7 +503,7 @@ describe("assembly: default wiring (createDefaultDeps, §4 fail-fast)", () => {
     const spec = await app.request("/v1/openapi.json");
     expect(spec.status).toBe(200);
     const specBody = (await spec.json()) as { paths: Record<string, unknown> };
-    expect(Object.keys(specBody.paths)).toContain("/runs/{id}/events");
+    expect(Object.keys(specBody.paths)).toContain("/v1/runs/{id}/events");
   });
 
   it("fails fast on an unusable storage driver (§4, no silent default)", () => {

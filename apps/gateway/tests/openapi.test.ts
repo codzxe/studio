@@ -426,7 +426,9 @@ describe("openapi document (W4-O)", () => {
 
     const exportPath = asRecord(paths["/v1/workspaces/{id}/audit"], "audit export");
     const exportGet = asRecord(exportPath.get, "audit export.get");
-    expect(String(exportGet["x-studio-status"])).toBe("implemented-awaiting-mount");
+    // W10-R: the composition root wired the W9-H group — the final audit's
+    // awaiting-mount statuses flipped to `implemented` with the mounts.
+    expect(String(exportGet["x-studio-status"])).toBe("implemented");
     const params = asArray(exportGet.parameters, "audit export.parameters");
     const paramNames = params.map((p) =>
       String(asRecord(asRecord(p, "param"), "param").name ?? asRecord(p, "param").name),
@@ -451,7 +453,19 @@ describe("openapi document (W4-O)", () => {
     const summaryPath = asRecord(paths["/v1/audit/summary/{id}"], "audit summary");
     const summaryGet = asRecord(summaryPath.get, "audit summary.get");
     expect(String(summaryGet.operationId)).toBe("getAuditSummary");
-    expect(String(summaryGet["x-studio-status"])).toBe("implemented-awaiting-mount");
+    expect(String(summaryGet["x-studio-status"])).toBe("implemented");
+  });
+
+  it("carries NO awaiting-mount operation anymore (W10-R wired every module)", () => {
+    const parsed = parseSpec();
+    const stale = flattenOperations(parsed).filter(
+      (op) => String(op.operation["x-studio-status"]) === "implemented-awaiting-mount",
+    );
+    expect(
+      stale.map((op) => `${op.path}:${op.method}`),
+      "operations still awaiting the composition root — wire them in app.ts " +
+        "(W10-R) or revert this test",
+    ).toEqual([]);
   });
 
   it("keeps the internal /metrics surface OUT of the /v1 spec (§22/§17.2)", () => {

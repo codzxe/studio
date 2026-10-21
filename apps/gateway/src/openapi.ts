@@ -19,9 +19,11 @@
 //    implemented-awaiting-mount | partial | not-implemented) so the spec and
 //    the audit cannot drift silently. W10-G's final audit renamed the wave-4
 //    vocabulary: every wave-4 `wired-in-W4-R` row is now `implemented` (app.ts,
-//    the W4-R composition root, mounts them) and landed-but-unwired modules
-//    (catalog, commands, exports, credits, billing, audit — wave 4-9) are
-//    `implemented-awaiting-mount`.
+//    the W4-R composition root, mounts them). W10-R wired the remaining
+//    wave-4…9 modules (catalog, commands, exports, credits, billing, audit —
+//    plus the D11 audited spec + the D1 /v1/auth alias), so no operation
+//    carries `implemented-awaiting-mount` today; the status stays in the
+//    vocabulary for future modules.
 // 4. /metrics (routes/metrics.ts, W9-G) is deliberately NOT a path in this
 //    document: it is the internal-only Prometheus surface (§22/§17.2) mounted
 //    OUTSIDE the versioned /v1 API, behind the METRICS_TOKEN Basic-auth seam
@@ -1255,7 +1257,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
     { name: "Meta", description: "Health + this document (§13.1)." },
   ],
   paths: {
-    // --- Auth (§13.1: POST /v1/auth/*; W4-A modules landed — audit D1) ------
+    // --- Auth (§13.1: POST /v1/auth/*; W4-A + the W10-R /v1 alias — D1 fixed) -
     "/v1/auth/{handler}": {
       summary: "Better Auth handlers (sign-up/in/out, magic link, OAuth, sessions, orgs, keys).",
       description:
@@ -1265,11 +1267,11 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         "(basePath) or proxy. Some handlers are public (session bootstrap); " +
         "org/invite/key handlers require an existing session.",
       post: {
-        summary: "Better Auth action handlers (mount divergence flagged, audit D1).",
+        summary: "Better Auth action handlers (D1 resolved: /v1/auth alias, W10-R).",
         operationId: "authHandlerPost",
         tags: ["Auth"],
         security: [],
-        "x-studio-status": "partial",
+        "x-studio-status": "implemented",
         parameters: [pathParam("handler", "Better Auth handler name.", 128)],
         responses: {
           "200": {
@@ -1281,11 +1283,11 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         },
       },
       get: {
-        summary: "Better Auth read handlers (e.g. get-session).",
+        summary: "Better Auth read handlers (e.g. get-session) via the /v1 alias.",
         operationId: "authHandlerGet",
         tags: ["Auth"],
         security: [],
-        "x-studio-status": "partial",
+        "x-studio-status": "implemented",
         parameters: [pathParam("handler", "Better Auth handler name.", 128)],
         responses: {
           "200": {
@@ -2226,11 +2228,11 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "executeDocumentCommand",
         tags: ["Commands"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/commands.ts (W4-K) + services/command-exec.ts — mounted via " +
-          "mountCommandRoutes(); awaiting the composition-root wiring (until " +
-          "then the /v1 catch-all answers 501). §13.4: the public API is the " +
+          "mountCommandRoutes(); mounted by the app.ts composition root "
+          "(W10-R — pre-baked deps gate). §13.4: the public API is the " +
           "agent API — raw engine ids are NOT exposed; the §2.2 allowlist gates " +
           "every id (refused → 400 command_not_allowlisted). Idempotency-Key is " +
           "REQUIRED: header or `idempotency_key` body field; both present ⇒ " +
@@ -2289,10 +2291,10 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "undoDocument",
         tags: ["Commands"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/commands.ts (W4-K) POST /:id/undo — engine edit.undo via the " +
-          "session, ONE step; awaiting the composition-root wiring. Editor+ " +
+          "session, ONE step; mounted by the app.ts composition root (W10-R). Editor+ " +
           "(documents:write, ADR-0003). Idempotency-Key REQUIRED: header or " +
           "`idempotency_key` body field; absent ⇒ 422.",
         parameters: [
@@ -2336,10 +2338,10 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "redoDocument",
         tags: ["Commands"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/commands.ts (W4-K) POST /:id/redo — engine edit.redo via the " +
-          "session, ONE step; awaiting the composition-root wiring. Editor+ " +
+          "session, ONE step; mounted by the app.ts composition root (W10-R). Editor+ " +
           "(documents:write, ADR-0003). Idempotency-Key REQUIRED: header or " +
           "`idempotency_key` body field; absent ⇒ 422.",
         parameters: [
@@ -2384,10 +2386,11 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "createExport",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/exports.ts (W4-L) + services/exports.ts — mounted via " +
-          "mountExportRoutes(); awaiting the composition-root wiring. Editor+ " +
+          "mountExportRoutes(); mounted by the app.ts composition root "
+          "(W10-R — pre-baked deps gate). Editor+ " +
           "(exports:create, ADR-0003); §14.1 MP ceiling; jobId = the " +
           "Idempotency-Key (§3.4: retries cannot double-render). The key is " +
           "REQUIRED — header or `idempotency_key` body twin; absent ⇒ 422.",
@@ -2450,7 +2453,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listDocumentExports",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/exports.ts (W4-L) — viewer+ (documents:read). No exports " +
           "table ships in @studio/db yet: the production ExportStatusLike " +
@@ -2491,10 +2494,11 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getDocumentPreview",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/exports.ts (W4-L) — viewer+ (documents:read); mounted via " +
-          "mountExportRoutes(); awaiting the composition-root wiring. The " +
+          "mountExportRoutes(); mounted by the app.ts composition root "
+          "(W10-R — pre-baked deps gate). The " +
           "worker (W2-N preview pipeline) renders + caches after the first " +
           "open/run; the gateway only reads. Until a render exists: 404 " +
           "preview_not_rendered (route-local add-only code). The 200 also sets " +
@@ -2715,10 +2719,11 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listTemplates",
         tags: ["Catalog"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
-          "routes/catalog.ts (W4-J) — mounted via mountCatalogRoutes(); " +
-          "awaiting the composition-root wiring. Auth required even though " +
+          "routes/catalog.ts (W4-J) — mounted via mountCatalogRoutes() in" +
+          "the app.ts composition root (W10-R — pre-baked deps gate). " +
+          "Auth required even though " +
           "the catalog is public content; per-org token bucket (120 reads/min, " +
           "§1.5 rule 5) fails OPEN on a KV outage. ?tags=a,b,c is AND " +
           "semantics; a `tags` param that splits to zero tags is a 422 (not " +
@@ -2763,7 +2768,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getTemplate",
         tags: ["Catalog"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/catalog.ts (W4-J) GET /templates/:id — the full manifest. " +
           "?version=N pins a version; absent means the newest. Misses answer " +
@@ -2803,7 +2808,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listComponents",
         tags: ["Catalog"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/catalog.ts (W4-J) — same card/manifest split as templates " +
           "(?tags AND semantics, ?query substring; per-org bucket fails open).",
@@ -2847,7 +2852,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getComponent",
         tags: ["Catalog"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/catalog.ts (W4-J) GET /components/:id — ?version=N pins; " +
           "absent means the newest. Misses answer 404 unknown_component.",
@@ -2886,7 +2891,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "registerWorkspaceTemplate",
         tags: ["Catalog"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/catalog.ts (W4-J) POST /workspaces/:id/templates. The body " +
           "is the §7.2 manifest (services/catalog.ts " +
@@ -2957,12 +2962,12 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getCredits",
         tags: ["Billing"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/credits.ts (W4-M) — viewer+ by design (no billing READ " +
           "permission in the W4-C matrix; the role field is correlation-only). " +
-          "Mounted via mountCreditsRoutes(); awaiting the composition-root " +
-          "wiring. Per-org read bucket 120/min fails open (§1.5 rule 5). " +
+          "Mounted via mountCreditsRoutes(); mounted by the composition root " +
+          "(W10-R, seam-built deps). Per-org read bucket 120/min fails open (§1.5 rule 5). " +
           "balance ≡ Σ ledger deltas; the newest row's balance_after equals " +
           "it (§12.2 sum sanity).",
         parameters: [
@@ -3013,7 +3018,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getCreditsSummary",
         tags: ["Billing"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/credits.ts (W4-M) GET /summary — one composite billing read " +
           "(spend since now − 30d, open credit_reservations holds, trial " +
@@ -3032,7 +3037,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listBillingPlans",
         tags: ["Billing"],
         security: [],
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/billing.ts (W4-N) GET /plans — public by design (no auth; " +
           "§14.1 numbers come straight from @studio/config).",
@@ -3048,14 +3053,15 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "createCheckout",
         tags: ["Billing"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/billing.ts (W4-N) + services/stripe.ts — mounted via " +
-          "mountBillingRoutes(); awaiting the composition-root wiring. " +
-          "Owner/admin only (§15.2, ADR-0003 row 8). BODY IS camelCase per " +
-          "the W4-N task contract (runs.ts precedent) — §13.1's snake_case " +
-          "reconciliation is owed to the API-contract wave (audit D4). Stripe " +
-          "Tax enabled; PCI scope is Stripe's (§14.3).",
+          "mountBillingRoutes(); mounted by the composition root (W10-R, " +
+          "seam-built deps behind the Stripe price wiring). " +
+          "Owner/admin only (§15.2, ADR-0003 row 8). BODY IS camelCase " +
+          "per the W4-N task contract (runs.ts precedent) — §13.1's " +
+          "snake_case reconciliation is owed to the API-contract wave (audit D4). " +
+          "Stripe Tax enabled; PCI scope is Stripe's (§14.3).",
         parameters: [paramRef("IdempotencyKey")],
         requestBody: jsonBody(
           {
@@ -3099,7 +3105,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "createPortal",
         tags: ["Billing"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/billing.ts (W4-N) — owner/admin only; Stripe-hosted card/plan " +
           "management (§14.3). camelCase body per the W4-N contract (audit D4).",
@@ -3140,12 +3146,12 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "stripeWebhook",
         tags: ["Billing"],
         security: [],
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/billing.ts (W4-N) stripeWebhookRoutes — mounted via " +
-          "mountBillingRoutes(); awaiting the composition-root wiring. NO " +
-          "auth (the signature is the authentication): the RAW body is passed " +
-          "through — the signature is computed over the exact bytes Stripe " +
+          "mountBillingRoutes(); mounted by the composition root (W10-R, seam-built " +
+          "seam-built deps behind the Stripe price wiring). " +
+          "NO auth (the signature is the authentication): the RAW body is passed " +
           "sent (§15.2). A bad signature is a typed 400 invalid_signature; a " +
           "processing failure bubbles as the generic 500 so Stripe retries; " +
           "everything else answers 2xx (unknown events are a logged 200 " +
@@ -3191,7 +3197,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getUsage",
         tags: ["Usage"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/credits.ts (W4-M) — viewer+; per-org bucket 30 reads/min " +
           "(grouped scans) fails open. ?from/?to are inclusive UTC calendar " +
@@ -3233,7 +3239,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getAuditExport",
         tags: ["Audit"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/audit.ts (W9-H) — mounted via mountAuditRoutes(); awaiting " +
           "the composition-root wiring. RBAC admin+ via the authoritative " +
@@ -3341,7 +3347,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getAuditSummary",
         tags: ["Audit"],
         security: AUTH_BOTH,
-        "x-studio-status": "implemented-awaiting-mount",
+        "x-studio-status": "implemented",
         description:
           "routes/audit.ts (W9-H) — the §16.3 better-auth admin-plugin " +
           "consumers' landing card. Same admin+ gate + tenant guard as the " +
@@ -3441,18 +3447,18 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getOpenapi",
         tags: ["Meta"],
         security: [],
-        "x-studio-status": "partial",
+        "x-studio-status": "implemented",
         description:
-          "MOUNTED, but app.ts:653 serves its own minimal runtime document " +
-          "(openApiDocument(deps.version, openapiPaths) — the actually-mounted " +
-          "paths) at this URL; mountOpenApi()/buildOpenApiSpec() from this " +
-          "module — the audited document — is NOT wired into the app (audit " +
-          "D11). Resolution owed to the composition-root owner: serve the " +
-          "audited spec (or supersede it with a generated one per docs/api/" +
-          "README.md 'OpenAPI').",
+          "D11 RESOLVED (W10-R): the app.ts composition root calls " +
+          "mountOpenApi(app, { version }) — this URL serves THE AUDITED " +
+          "document (buildOpenApiSpec over OPENAPI_SPEC, the running version " +
+          "stamped into info.version). The W4-R minimal runtime document " +
+          "(openApiDocument + the mounted-paths accumulator) was retired with " +
+          "the D11 resolution; a generated spec may still supersede this one " +
+          "per docs/api/README.md 'OpenAPI'.",
         responses: {
           "200": {
-            description: "An OpenAPI 3.1 JSON document (today: the runtime summary).",
+            description: "The audited OpenAPI 3.1 document (version-stamped).",
             content: { "application/json": media(looseObject("The OpenAPI 3.1 document.")) },
           },
         },
@@ -3494,10 +3500,26 @@ export function buildOpenApiSpec(options: BuildOpenApiSpecOptions = {}): OpenApi
 // machinery and makes the emitted bytes deterministic.
 // ---------------------------------------------------------------------------
 
-/** Serve GET /v1/openapi.json — the authored spec const (W4-R mounts it). */
-export function mountOpenApi(app: Hono<AppEnv>): void {
+export interface MountOpenApiOptions {
+  /**
+   * Stamp the running service version into info.version (D11, W10-R: the
+   * composition root passes deps.version — the assembly suite pins the served
+   * version; omitted serves the const's authored version untouched).
+   */
+  readonly version?: string;
+}
+
+/**
+ * Serve GET /v1/openapi.json — the audited spec (D11: the composition root
+ * mounts it once on the built app, before the /v1 sub-apps). Serving a JSON
+ * string directly (c.body) keeps the const's readonly types out of Hono's
+ * JSONValue machinery and makes the emitted bytes deterministic.
+ */
+export function mountOpenApi(app: Hono<AppEnv>, options: MountOpenApiOptions = {}): void {
+  const document =
+    options.version !== undefined ? buildOpenApiSpec({ version: options.version }) : OPENAPI_SPEC;
   app.get("/v1/openapi.json", (c) =>
-    c.body(JSON.stringify(OPENAPI_SPEC), 200, {
+    c.body(JSON.stringify(document), 200, {
       "content-type": "application/json",
     })
   );

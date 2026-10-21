@@ -50,9 +50,9 @@
 //      (MOCK_ENGINE=1|true|yes → mock; a missing binary also downgrades to
 //      mock so local dev boots without a Rust build).
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync, chmodSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -60,17 +60,17 @@ import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
+import { TRIAL_PLAN_LIMITS } from "@studio/billing";
+import { PLAN_ID_SCHEMA, type PlanId, planLimits } from "@studio/config";
 import {
   EngineClient,
+  type LineSocket,
   generateControlToken,
   isControlToken,
   isSafePathComponent,
   resolveRoot,
   sessionLayout,
-  type LineSocket,
 } from "@studio/engine-client";
-import { TRIAL_PLAN_LIMITS } from "@studio/billing";
-import { PLAN_ID_SCHEMA, planLimits, type PlanId } from "@studio/config";
 
 import type { Logger } from "../logger.js";
 
@@ -1003,11 +1003,10 @@ export class LocalSessionAllocator {
    */
   async allocate(documentId: string, organizationId: string): Promise<EngineSessionAllocation> {
     if (this.#drained) {
-      throw new SessionAllocatorError(
-        "engine_unavailable",
-        "Session allocator is shutting down",
-        { hint: "This allocator has been drained; construct a new one.", retryable: false },
-      );
+      throw new SessionAllocatorError("engine_unavailable", "Session allocator is shutting down", {
+        hint: "This allocator has been drained; construct a new one.",
+        retryable: false,
+      });
     }
     if (documentId.trim().length === 0 || organizationId.trim().length === 0) {
       throw validationFailedError(
@@ -1109,7 +1108,8 @@ export class LocalSessionAllocator {
       const candidates = [...this.#records.values()]
         .filter(
           (record) =>
-            ACTIVE_STATES.includes(record.state) && now - record.lastActivityAt >= this.#idleTimeoutMs,
+            ACTIVE_STATES.includes(record.state) &&
+            now - record.lastActivityAt >= this.#idleTimeoutMs,
         )
         .sort((a, b) => a.lastActivityAt - b.lastActivityAt);
       const evicted: string[] = [];
@@ -1296,7 +1296,6 @@ export class LocalSessionAllocator {
   }
 
   #allocationOf(record: SessionRecord): EngineSessionAllocation {
-    const allocator = this;
     return {
       sessionId: record.sessionId,
       organizationId: record.organizationId,
@@ -1310,8 +1309,8 @@ export class LocalSessionAllocator {
       get state() {
         return record.state;
       },
-      release: () => allocator.release(record.sessionId, record.organizationId),
-      touch: () => allocator.touch(record.sessionId, record.organizationId),
+      release: () => this.release(record.sessionId, record.organizationId),
+      touch: () => this.touch(record.sessionId, record.organizationId),
     };
   }
 
@@ -1367,22 +1366,29 @@ export class LocalSessionAllocator {
 export function connectLineSocket(port: number): LineSocket {
   const socket = connect({ host: "127.0.0.1", port });
   socket.setNoDelay(true);
-  function on(event: "data", listener: (chunk: string) => void): unknown;
-  function on(event: "close", listener: (hadError: boolean) => void): unknown;
-  function on(event: "error", listener: (error: Error) => void): unknown;
-  function on(event: string, listener: (...args: never[]) => void): unknown {
-    if (event === "data") {
-      socket.on("data", (chunk: Buffer) => listener(chunk.toString("utf8")));
-    } else if (event === "close") {
-      socket.on("close", (hadError: boolean) => listener(hadError));
-    } else {
-      socket.on("error", (error: Error) => listener(error));
-    }
-    return socket;
-  }
+  type DataListener = (chunk: string) => void;
+  type CloseListener = (hadError: boolean) => void;
+  type ErrorListener = (error: Error) => void;
   return {
     write: (chunk: string): boolean => socket.write(chunk, "utf8"),
-    on,
+    // The facade's overloaded `on` (client.ts LineSocket) collapses to one
+    // dispatch here; each narrowing cast is guarded by the same event literal.
+    on: (
+      event: "data" | "close" | "error",
+      listener: DataListener | CloseListener | ErrorListener,
+    ): unknown => {
+      if (event === "data") {
+        const onData = listener as DataListener;
+        socket.on("data", (chunk: Buffer) => onData(chunk.toString("utf8")));
+      } else if (event === "close") {
+        const onClose = listener as CloseListener;
+        socket.on("close", (hadError: boolean) => onClose(hadError));
+      } else {
+        const onError = listener as ErrorListener;
+        socket.on("error", (error: Error) => onError(error));
+      }
+      return socket;
+    },
     destroy: (error?: Error): void => {
       socket.destroy(error);
     },
