@@ -451,11 +451,17 @@ function buildPhotoFixture(width, height, cream, terracotta, ink) {
 /** Use the repo's generated gradient fixture when present; else synthesize in-code. */
 function loadPhotoFixture(palette) {
   const candidates = [
+    // the fixture generator's exact path (evals/templates/.../assets-note.md)
+    path.join(REPO_ROOT, "evals", "fixtures", "generated", "instagram-post@3", "asset_photo_1080x700.png"),
+    path.join(REPO_ROOT, "evals", "fixtures", "generated", "instagram-post@3"),
     path.join(REPO_ROOT, "evals", "fixtures", "generated"),
     path.join(REPO_ROOT, "evals", "fixtures", "assets"),
   ];
   for (const dir of candidates) {
     if (!existsSync(dir)) continue;
+    if (dir.endsWith(".png")) {
+      return { bytes: readFileSync(dir), source: path.relative(REPO_ROOT, dir) };
+    }
     const names = (readdirSync(dir) ?? []).filter((n) => n.toLowerCase().endsWith(".png")).sort();
     if (names.length > 0) {
       const bytes = readFileSync(path.join(dir, names[0]));
@@ -464,7 +470,7 @@ function loadPhotoFixture(palette) {
   }
   return {
     bytes: buildPhotoFixture(1080, 700, palette[0], palette[2], palette[1]),
-    source: "synthetic in-code (assets-note.md spec; evals/fixtures has no generated PNG yet)",
+    source: "synthetic in-code (assets-note.md spec; no generated fixture found)",
   };
 }
 

@@ -43,7 +43,7 @@ node apps/worker/scripts/demo-coffee.mjs
 | `renders/coffee-promo.png` | the engine-side `doc.render {path}` write under the capability root (mock `MOCK_ENGINE_WRITE_ROOT`). |
 | `command-log.jsonl` | the command log — 17 append-only rows shaped like the §5.6 WAL (`documentId, seq, commandName, params, revisionBefore, revisionAfter, flag`) plus demo annotations (`ts, kind, trace, stage, probe, error`); revision chain `1→9` asserted monotonic and re-asserted against `doc.inspect` at phase boundaries. |
 | `critic-report.json` | the **MOCK CRITIC** report (see below). |
-| `assets/asset_photo_1080x700.png` | the synthetic latte-photo fixture (`asset_812`) built in-code per `evals/templates/instagram-post@3/assets-note.md` (1080×700 RGB gradient + three ink circles) — the script prefers a repo fixture from `evals/fixtures/generated/` or `evals/fixtures/assets/` when one exists. |
+| `assets/asset_photo_1080x700.png` | the photo fixture copied into the run's write root — the repo's generated gradient (`evals/fixtures/generated/instagram-post@3/asset_photo_1080x700.png`, `asset_812`, built per `assets-note.md` by the fixture generator) when present; otherwise a synthetic in-code stand-in with the same spec (1080×700 RGB gradient + three ink circles). The script asserts the fixture is a real PNG at the slot's `minPixels`. |
 
 ## What it proves (per §19) — and what is mocked
 
@@ -85,7 +85,9 @@ of importing it.
    (which stages everything); only `*.pcraft` is covered by the root ignore
    today. The script wipes `.demo-output/` at startup, never reads prior state.
 
-3. **Determinism digest** — current replay digest on this box (Node 22):
-   `sha256:3ad74ab471576e7e5f64cf26a3b5a05bcde79fb150605fd704c9f121f71adc41`.
-   It changes only if the script, the template manifest, or the mock's
-   task-model change — pin it in CI with `DEMO_COFFEE_EXPECT_SHA256` if wanted.
+3. **Determinism digest** — current replay digest on this box (Node 22, with the
+   W7-E generated fixture in place):
+   `sha256:e03c017026f379caf04c5cf783f25533e65dec9dd4c799b9bc95b1b094270687`.
+   It changes only if the script, the template manifest, the photo fixture, or
+   the mock's task-model change — pin it in CI with `DEMO_COFFEE_EXPECT_SHA256`
+   if wanted.
