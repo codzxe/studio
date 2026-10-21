@@ -151,6 +151,8 @@ export function CommandPalette({
   }, [filtered, listId]);
 
   // Keep the active option visible while navigating.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the ref only ever points
+  // at the active option, so the effect must re-run on navigation and filter changes.
   useEffect(() => {
     activeOptionRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [activeIndex, filtered]);
@@ -231,18 +233,23 @@ export function CommandPalette({
             />
           </div>
           {filtered.length === 0 ? (
-            <p role="status" className="px-4 py-8 text-center text-sm text-muted-foreground">
+            <output className="block px-4 py-8 text-center text-sm text-muted-foreground">
               {emptyMessage}
-            </p>
+            </output>
           ) : (
-            <ul
+            // biome-ignore lint/a11y/useSemanticElements: the aria 1.2 combobox pattern
+            // requires a listbox container; a native <select> cannot render grouped,
+            // styled command entries driven by aria-activedescendant.
+            <div
               id={listId}
               role="listbox"
               aria-label="Commands"
               className="max-h-72 overflow-y-auto p-1"
             >
               {sections.map((section) => (
-                <li key={section.groupId} role="group" aria-labelledby={section.groupId}>
+                // biome-ignore lint/a11y/useSemanticElements: <fieldset> is a form
+                // control; role="group" is the APG grouping for listbox sections.
+                <div key={section.groupId} role="group" aria-labelledby={section.groupId}>
                   {section.group === undefined ? null : (
                     <div
                       id={section.groupId}
@@ -252,10 +259,15 @@ export function CommandPalette({
                     </div>
                   )}
                   {section.items.map(({ command, index }) => (
+                    // biome-ignore lint/a11y/useSemanticElements: <option> only exists
+                    // inside <select>; the combobox pattern renders div options whose
+                    // focus stays with the input (tabIndex -1 satisfies keyboard focus
+                    // bookkeeping without joining the tab order).
                     <div
                       key={command.id}
                       role="option"
                       id={optionId(listId, command)}
+                      tabIndex={-1}
                       aria-selected={index === activeIndex}
                       aria-disabled={command.disabled ?? undefined}
                       ref={index === activeIndex ? activeOptionRef : undefined}
@@ -264,6 +276,12 @@ export function CommandPalette({
                       }}
                       onClick={() => {
                         if (!command.disabled) runCommand(command);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          if (!command.disabled) runCommand(command);
+                        }
                       }}
                       className={cn(
                         "flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
@@ -282,9 +300,9 @@ export function CommandPalette({
                       )}
                     </div>
                   ))}
-                </li>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
           <div
             aria-hidden="true"

@@ -117,6 +117,9 @@ export type PresenceStatusHandler = (status: PresenceStatus) => void;
 
 export type RealtimeMode = "centrifugo" | "sse" | "off";
 
+/** The lazy env-source contract this module reads (re-export for consumers). */
+export type { EnvSource } from "../env";
+
 /** Typed env error (mirrors ClientEnvError): names the offending variables. */
 export class RealtimeEnvError extends Error {
   readonly problems: readonly string[];
