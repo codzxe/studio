@@ -84,15 +84,19 @@ pub mod analysis_cmds;
     v.extend(crate::layer_mask_props_cmds::specs());
     v.extend(crate::actions_cmds::specs());
     v.extend(crate::template_cmds::specs());       ← added
+    v.extend(crate::template_cmds::fill_specs::specs()); ← added (W10-S)
     v.extend(crate::component_cmds::specs());      ← added
     v.extend(crate::layout_cmds::specs());         ← added
     v.extend(crate::agent_cmds::specs());          ← added
+    v.extend(crate::agent_cmds::document_diff::specs()); ← added (W10-S)
     // The dispatch guard's unit test needs a command that panics on purpose (REL-3).
     #[cfg(test)]
     v.push(test_panic_command());
 ```
 
-(four added lines, in spec §2.3 order).
+(six added lines: the four parent modules in spec §2.3 order, plus the two submodule
+specs merges — `template_cmds::fill_specs` and `agent_cmds::document_diff` — each at
+its parent's side; the hunk header is `@@ -1537,6 +1537,12 @@`.)
 
 ## Submodule specs merges (fill_specs / document_diff)
 
@@ -116,9 +120,10 @@ sanctioned ways — both keep the §2.3 rule (one registration site, no chaotic 
    nothing extra in this patch.
 2. **Registered at the same site** — registration calls `template_cmds::specs()`
    concatenated with `fill_specs::specs()` (and `agent_cmds::specs()` with
-   `document_diff::specs()`). When W3-B's `fill_specs.rs` (owning `template.fill` /
-   `template.validate` CommandSpecs) and W3-G's `document_diff.rs` (owning
-   `document.diff`) land, the registration hunk becomes:
+   `document_diff::specs()`). LANDED (W10-S): W3-B's `fill_specs.rs` (owning the
+   `template.fill` / `template.validate` CommandSpecs) and W3-G's `document_diff.rs`
+   (owning `document.diff`) are in the tree, so the registration hunk now carries both
+   merge lines and reads:
 
 ```
     v.extend(crate::mask_view_cmds::specs());
@@ -134,7 +139,8 @@ sanctioned ways — both keep the §2.3 rule (one registration site, no chaotic 
 ```
 
    i.e. two added lines in `commands-registry.patch.txt` (one `v.extend` each, at the
-   parent's side), and the hunk header grows `@@ -1537,6 +1537,12 @@`.
+   parent's side) on top of the four parent lines, and the hunk header is
+   `@@ -1537,6 +1537,12 @@`.
 
 `engine-patches/scripts/apply-engine-patches.sh` enforces the invariant at apply
 time: a sibling file that has `pub fn specs()` must be registered **one** of the two
@@ -166,7 +172,7 @@ failure names the exact line to add. A command that exists as a file but never r
 2. Dry-run the patch itself against a **throwaway copy** of the two affected files —
    never vendor: copy `crates/engine/src/{lib.rs,commands.rs}` from the pristine pin
    to `/tmp/<dir>/crates/engine/src/`, then `git apply --check` **and** `git apply`
-   there; verify the four `pub mod` lines land in alphabetical slots and the four
+   there; verify the four `pub mod` lines land in alphabetical slots and the six
    `v.extend` lines land after `actions_cmds` (the numbers above); `git apply
    --reverse --check` proves the script's already-applied detection. Rot check:
    mutate one anchor line in the copy — `git apply --check` must fail.

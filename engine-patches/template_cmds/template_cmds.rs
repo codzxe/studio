@@ -9,10 +9,17 @@
 //! template it used as `id@version`, so the command log always says which version ran.
 //!
 //! `template.fill` and `template.validate` (slot values against an applied copy, the rules
-//! check) live in `fill.rs` and `validate.rs` beside this file and register their own `specs()`
-//! at the same site this module's does; see the note in [`specs`].
+//! check) live in `fill.rs` and `validate.rs` beside this file; both `CommandSpec`s are owned
+//! by the sibling `fill_specs.rs`, which registers them at the same site this module's does
+//! (the registry patch) — see the note in [`specs`].
 
 mod manifest;
+mod fill;
+mod validate;
+/// The `template.fill` + `template.validate` specs: reached by the registry patch line
+/// `v.extend(crate::template_cmds::fill_specs::specs());`, so `pub` like `document_diff`
+/// (commands-registry.patch.md § "Submodule specs merges", shape (b)).
+pub mod fill_specs;
 
 use std::path::{Path, PathBuf};
 
@@ -527,9 +534,9 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub fn specs() -> Vec<CommandSpec> {
     // `template.fill` and `template.validate` are the slot-value engine over an applied copy:
-    // they live in fill.rs and validate.rs beside this file, with their own `specs()` registered
-    // at the same site this one is (the registry patch), so the catalog stays separate from the
-    // filler. Nothing of theirs is stubbed here.
+    // they live in fill.rs and validate.rs beside this file, and fill_specs.rs owns their
+    // `CommandSpec`s, registered at the same site this one is (the registry patch), so the
+    // catalog stays separate from the filler. Nothing of theirs is stubbed here.
     vec![
         CommandSpec {
             id: "template.list",

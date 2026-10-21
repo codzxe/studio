@@ -1,19 +1,27 @@
 // packages/evals/scripts/eval-gate.mjs
 //
-// TWO-GATE pass-rate gate for the golden-brief suite (spec §11.4 "block merge on
+// THREE-GATE pass-rate gate for the golden-brief suite (spec §11.4 "block merge on
 // regression beyond threshold"; §19 Phase 2 exit gates, verbatim: "eval suite >= 50
 // briefs with >= 85% pass; chat edits correct >= 90% on the curated set").
 //
 // Gates (thresholds are §19 law, CLI-overridable for local experiments):
-//   suite       >= 0.85 over ALL briefs in promptfoo.config.yaml (12 files, 67 cases)
-//   chat-edits  >= 0.90 over the curated chat-edit briefs in chat-edits.config.yaml
-//               (cases/edits.yaml + cases/expanded/edits.yaml, 14 cases). One
-//               promptfoo eval yields ONE results file with ONE pass rate, hence
-//               the second config; this script reads both results files.
+//   suite          >= 0.85 over ALL briefs in promptfoo.config.yaml
+//                  (12 files, 67 cases)
+//   chat-edits     >= 0.90 over the curated planner-level chat-edit briefs in
+//                  chat-edits.config.yaml (cases/edits.yaml +
+//                  cases/expanded/edits.yaml, 14 cases)
+//   chat-edit      >= 0.90 over the §23.5 classifier curated set in
+//     classifier   promptfoo.chat-edit.config.yaml (cases/chat-edits/, 5 files,
+//                  20 cases). "Chat edits correct >= 90%" is graded at BOTH
+//                  levels — planner routing AND classifier routing — so both
+//                  gates default to 0.90.
+//               One promptfoo eval yields ONE results file with ONE pass rate,
+//               hence the three configs; this script reads all results files.
 //
 // Usage:
 //   node scripts/eval-gate.mjs --suite results/suite.json [--suite-threshold 0.85] \
-//                             --chat  results/chat-edits.json [--chat-threshold 0.90]
+//                             [--chat results/chat-edits.json [--chat-threshold 0.90]]
+//                             [--classifier results/chat-edit-eval.json [--classifier-threshold 0.90]]
 //   node scripts/eval-gate.mjs <results.json> [threshold=0.85]   // legacy single gate
 //   node scripts/eval-gate.mjs --dry                             // offline self-test
 //
