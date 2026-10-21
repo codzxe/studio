@@ -264,3 +264,116 @@ Honest scope note per §1.3 — what this repo build did and did not deliver:
 
 Per-criterion scoring: `docs/phases/phase-exit-audit.md` (§19) and
 `docs/phases/acceptance-matrix.md` (§20).
+
+---
+
+## Final build — acceptance wrap (Waves 0–10) — 2026-10-21 (W10-J)
+
+The last entry of the parallel build: totals, phase statuses, retrospective,
+and the live-env path to paid beta. §20 scoring lives in
+`docs/phases/acceptance-matrix.md` (FINAL — supersedes W7-K's v1).
+
+**Totals (recorded on this box, honestly):**
+
+- **Waves:** 0, 0b, 1–10 — eleven wave labels; W10 is the acceptance/
+  finalization wave (this entry + the FINAL matrix; sibling W10 agents land
+  their own commits in parallel).
+- **Agents:** 118 distinct task IDs appear across 139 commits
+  (`git log --oneline | wc -l` → 139 at entry time; biggest waves ran ~20
+  parallel agents — W1-A…W1-T set the pattern, W4–W9 kept it).
+- **Workspaces:** 9 packages (`agent`, `billing`, `config`, `db`,
+  `engine-client`, `evals`, `storage`, `tools`, `ui`) + 5 apps (`gateway`,
+  `worker`, `engine-pool`, `web`, `mock-engine`) = 14 pnpm projects. Phase 0
+  started at 12; `storage` (package) and `mock-engine` (app) were added in W2.
+- **LOC:** `find . -name '*.ts' -o -name '*.tsx' -o -name '*.rs' | xargs wc -l
+  | tail -1` → **200,465 lines** across 580 files (apps 308, packages 258,
+  `engine-patches` 14; zero `node_modules`/`dist`/`.next` — this box never
+  installs, AGENTS.md). Includes tests. Excludes the vendored Rust editor
+  (outside the repo, pin `872748fb`, ADR-0001) — its 14 patched/upstreamable
+  files under `engine-patches/` ARE counted.
+- **Tests:** never all-run locally (no installs — CI owns the green, and CI
+  itself has never run: gap G5). Largest known suites: billing 235/235 (W9-N),
+  prompt-injection/tool-gate 97 (W6-K), chat-edit classifier 81 (W6-O),
+  eval suite 67 briefs (W7-D), engine-pool registry 24 (W1-J).
+- **Docs:** ADRs 0001–0005, runbooks RB-01…RB-08 + drill log, phase exit
+  audit, this devlog, template/authoring guides, environments doc.
+
+**Phase statuses (§19):**
+
+- **Phase 0 spike — COMPLETE:** spine proven E2E vs the protocol-faithful
+  mock engine; four §19 artifacts; hash-pinned demo (`80b715c`, digest
+  `e03c0170…270687`, `DEMO_COFFEE_EXPECT_SHA256`).
+- **Phase 1 MVP — COMPLETE-BUILD:** 40 OpenAPI 3.1 paths; cross-tenant +
+  ledger-flow + signup integration suites; engine pool; run manager; Stripe
+  routes with fakes; W9-A billing completion (wiring guard, webhook
+  idempotency harness, ledger bridge).
+- **Phase 2 templates/components — COMPLETE-BUILD:** 16 manifests (spec 10),
+  10/15 components (G9), 67-brief eval suite with wired gates, 11 tools,
+  chat-edit classifier; 4 upstreamable engine patch modules.
+- **Phase 3 freeform/collab — SCOPED (partial):** `document.diff` primitive,
+  public API surface + §13 audit, comments table, freeform eval cases built;
+  freeform composer, comments routes, presence, run sharing, product
+  webhooks, PSD fidelity report remain OPEN (G10).
+- **Phase 4 hardening — BUILD-ONLY:** deploy v2/rollback/migrate/smoke
+  (`b9d6000`), backup v2 + verify + quarterly restore drill (`0dece72`), cost
+  guardrails (`d83bacf`), 5 Dockerfiles (`4f44a0a`), obs stack + compose
+  profile with Perses (not Grafana — §16.5 AGPL; `b49667b`), metering
+  (`efb73b1`), load+chaos drills (`55c588d`), web app + marketing landing
+  (W8). Live drills, load knee, and a dated restore drill remain.
+- **§20 gate:** 7 EVIDENCED-BUILD / 8 BUILD-ONLY / 0 OPEN rows; gaps G1–G10
+  itemized in the FINAL matrix.
+
+**What would I do differently:**
+
+1. **Enable CI in hour one.** Workflows sat staged outside the repo
+   (`infra/ci-staged/`, PAT scope) and CI never ran — the fleet flew blind
+   for 139 commits and every "CI verifies" was aspirational (G5). The first
+   W0 task should have been a PAT with `workflows` scope + one trivial green
+   run before any agent shipped code.
+2. **Commit `pnpm-lock.yaml` at scaffold time.** Dockerfile frozen-lockfile
+   branches and CI reproducibility still depend on it (G4).
+3. **Name a per-wave wiring owner.** The recurring debt pattern was "module
+   complete, flagged for owner": metering missing from the barrel, `/metrics`
+   built but unmounted, `demo:coffee` alias owed, obs name-prefix mismatch
+   (G2/G3). One designated integrator closing flags in the same wave would
+   have deleted roughly a dozen carry-overs.
+4. **Freeze cross-cutting vocab in W0:** error-envelope shape, metric-name
+   prefix, guardrail-code registry. Reconciliation waves were pure debt.
+5. **Re-score the acceptance matrix every wave.** W7-K's v1 went stale within
+   one wave — it flagged promptfoo registration as owed while W7-J landed it
+   the same day (`f34482f`). A living scoreboard would also have surfaced G1
+   (EXIF re-slice) a wave earlier.
+6. **Stand up the CI Rust job from W3.** Hash-determinism and panic-hunt vs
+   the real binary were permanently deferred to a job that does not exist
+   yet; mock-engine fidelity is asserted, not measured, until it runs.
+7. **Author the human-review rubric together with the eval suite.** #14's
+   anti-gaming half needs humans; an unwritten rubric is the first thing to
+   slip when the beta gate nears (G8).
+
+**Next actions (repo → live → paid beta, §19 Phase 4):**
+
+1. ☐ **Env provision** — live box (Docker, 2→4 vCPU, ≥8 GB) + secrets per
+   `infra/environments.md` (0600 box-only `.env`; CI holds only SSH + GHCR).
+2. ☐ **CI workflows enable** — move `infra/ci-staged/{ci,engine-patches,
+   license-check}.yml` → `.github/workflows/`, PAT, commit `pnpm-lock.yaml`
+   (G4/G5) → first green run: typecheck, vitest, license-check, Rust
+   panic-hunt job.
+3. ☐ **Compose up** — `./infra/scripts/migrate.sh` → `./infra/scripts/
+   deploy-v2.sh` (5 images, W9-I) → `./infra/scripts/smoke.sh`; close G2/G3
+   so #12 dashboards have data; wire G1 (EXIF re-slice) before the #2 live
+   check.
+4. ☐ **Real engine build** — `cargo build` the pinned vendor + apply
+   `engine-patches/`; bind-mount per §3.2; `cargo test -p photocraft-engine
+   --test panic_hunt -- --ignored` (#15); `pnpm demo:coffee` vs the real
+   binary — determinism = same hash across two real spawns (not the mock
+   digest).
+5. ☐ **Stripe test** — live test-mode subscription: checkout → webhook →
+   exactly one ledger grant (W9-A idempotency harness pins the contract);
+   that is the §19 Phase 1 exit.
+6. ☐ **Paid beta per §19 Phase 4** — evals ≥ 0.85 (`packages/evals/scripts/
+   eval-gate.mjs`) + chat ≥ 0.90 with live models (#14/#8); human critic
+   review (G8); `node infra/tests/chaos/kill-engine-midrun.mjs` ≤ 60 s
+   (#13); load knee (`infra/tests/load/`); quarterly restore drill
+   (`./infra/scripts/drill-restore.sh` → `docs/runbooks/drill-log.md`);
+   then open the gate: all 15 §20 rows green on staging — this matrix is
+   the checklist.
