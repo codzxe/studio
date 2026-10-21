@@ -24,14 +24,14 @@ tool-call caps, validator verdicts, layer names, slot contents).
 
 | Intent | Wave-1 | W7-D | total |
 |---|---|---|---|
-| create_post | 3 | 32 (14 creates + 12 template happy paths + 2 freeform + clarify #1, injection #1, budget ×2) | 35 |
-| edit_layers | 7 | 9 (8 edits + injection #2) | 16 |
+| create_post | 4 | 32 (14 creates + 12 template happy paths + 2 freeform + clarify #1, injection #1, budget ×2) | 36 |
+| edit_layers | 8 | 9 (8 edits + injection #2) | 17 |
 | resize | 1 | 3 | 4 |
 | variant | 1 | 5 (4 operations + clarify #2) | 6 |
 | export | 1 | 3 | 4 |
 
-Tier spread (credits per §5.2: quick 1 / standard 2 / complex 5): 18 quick,
-30 standard, 4 complex.
+Tier spread (credits per §5.2: quick 1 / standard 2 / complex 5): 15 quick,
+33 standard, 4 complex.
 
 ### Component coverage (every ACTUAL `evals/components/*` in ≥1 brief)
 
