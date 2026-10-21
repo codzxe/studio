@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Browser + node package: Bundler resolution (Vite/Next consume the TS
+    // sources via workspace links) and the DOM lib for fetch/Blob/ReadableStream
+    // (node >=22 provides all of them at runtime).
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // Fleet precedent (W2-Q): no rootDir/outDir; tests sit next to src/ and
+    // `tsc --noEmit` is the gate. Relative imports keep the .js extension.
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}
