@@ -1,160 +1,193 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
+  ERROR_CATALOG,
   ERROR_CODES,
   ERROR_CODE_SCHEMA,
-  ERROR_ENVELOPE_SCHEMA,
-  HTTP_STATUS_BY_ERROR_CODE,
-  err,
-  httpStatusFor,
-  isFailure,
-  ok,
-  type ErrorCode,
-} from '../src/index.js';
+  StudioError,
+  fromUnknown,
+  isErrEnvelope,
+  isStudioError,
+  newRequestId,
+  okEnvelope,
+} from "../src/index.js";
+import type { Envelope, ErrEnvelope } from "../src/index.js";
 
-describe('errors: catalog (§13.3 + §24.4)', () => {
-  it('codes are unique', () => {
-    expect(new Set<string>(ERROR_CODES).size).toBe(ERROR_CODES.length);
+// Frozen contract: the catalog is add-only. This list is the §7.3/§8.9 wire
+// contract — renaming or dropping a code must fail here.
+const EXPECTED_CODES: readonly string[] = [
+  "PROJECT_VERSION_CONFLICT",
+  "INSUFFICIENT_CREDITS",
+  "LEASE_HELD",
+  "LEASE_EXPIRED",
+  "RUN_MODEL_UNAVAILABLE",
+  "RUN_INVALID_TOOL",
+  "RUN_INVALID_COMMAND",
+  "RUN_BATCH_ROLLED_BACK",
+  "RUN_CANCELLED",
+  "EDITOR_DISCONNECTED",
+  "RENDER_TIMEOUT",
+  "RENDER_FAILED",
+  "ASSET_TOO_LARGE",
+  "ASSET_REJECTED",
+  "QUOTA_EXCEEDED",
+  "WORKSPACE_NOT_FOUND",
+  "PROJECT_NOT_FOUND",
+  "VERSION_NOT_FOUND",
+  "THREAD_NOT_FOUND",
+  "RUN_NOT_FOUND",
+  "RATE_LIMITED",
+  "AUTH_REQUIRED",
+  "FORBIDDEN",
+  "VALIDATION_FAILED",
+  "INTERNAL",
+];
+
+describe("errors: catalog", () => {
+  it("exposes exactly the §7.3/§8.9 codes, in order", () => {
+    expect(ERROR_CODES).toEqual(EXPECTED_CODES);
+    expect(Object.keys(ERROR_CATALOG)).toEqual(EXPECTED_CODES);
   });
 
-  it('contains the task-mandated codes', () => {
-    const required: ErrorCode[] = [
-      'text_overflow',
-      'unknown_slots',
-      'invalid_slots',
-      'insufficient_credits',
-      'image_provider_error',
-      'engine_unavailable',
-      'rate_limited',
-      'cross_tenant_denied',
-      'quota_exceeded',
-      'plan_limit',
-    ];
-    for (const code of required) {
-      expect(ERROR_CODES, `missing code: ${code}`).toContain(code);
-    }
-  });
-
-  it('contains the W9-N guardrail + W6/W7 swap-point codes (W10-F adoption)', () => {
-    const adopted: ErrorCode[] = [
-      'cost_cap_reached',
-      'disabled_workspace',
-      'demo_disabled',
-      'demo_cap_reached',
-      'providers_disabled',
-      'repair_plan_invalid',
-      'critique_parse_failed',
-      'export_failed',
-      'image_upscale_limit',
-      'unknown_component',
-      'unknown_component_vars',
-      'tool_retry_exhausted',
-    ];
-    for (const code of adopted) {
-      expect(ERROR_CODES, `missing code: ${code}`).toContain(code);
-      expect(ERROR_CODE_SCHEMA.safeParse(code).success).toBe(true);
-    }
-  });
-
-  it('rejects unknown codes at the boundary', () => {
-    expect(ERROR_CODE_SCHEMA.safeParse('oops_unknown').success).toBe(false);
-    expect(ERROR_CODE_SCHEMA.safeParse('rate_limited').success).toBe(true);
-  });
-
-  it('every code maps to a sane HTTP status (§13.3)', () => {
+  it("every entry has a safe message, a hint and a retryable flag", () => {
     for (const code of ERROR_CODES) {
-      const status = httpStatusFor(code);
-      expect(HTTP_STATUS_BY_ERROR_CODE[code]).toBe(status);
-      expect(status).toBeGreaterThanOrEqual(400);
-      expect(status).toBeLessThanOrEqual(503);
+      const entry = ERROR_CATALOG[code];
+      expect(typeof entry.message).toBe("string");
+      expect(entry.message.length).toBeGreaterThan(0);
+      expect(typeof entry.hint).toBe("string");
+      expect(typeof entry.retryable).toBe("boolean");
     }
   });
 
-  it('maps the spec’s class examples correctly', () => {
-    expect(httpStatusFor('text_overflow')).toBe(400);
-    expect(httpStatusFor('unauthorized')).toBe(401);
-    expect(httpStatusFor('insufficient_credits')).toBe(402); // 402 payment/credits required
-    expect(httpStatusFor('cross_tenant_denied')).toBe(403); // 403 permission
-    expect(httpStatusFor('not_found')).toBe(404); // 404 not found
-    expect(httpStatusFor('conflict')).toBe(409); // 409 conflict
-    expect(httpStatusFor('rate_limited')).toBe(429); // 429 rate limit
-    expect(httpStatusFor('engine_unavailable')).toBe(503); // 503 engine unavailable
-    expect(httpStatusFor('internal_error')).toBe(500); // 500 unexpected
+  it("§8.9 semantics are encoded per failure", () => {
+    expect(ERROR_CATALOG.PROJECT_VERSION_CONFLICT.retryable).toBe(false);
+    expect(ERROR_CATALOG.RUN_MODEL_UNAVAILABLE.retryable).toBe(true);
+    expect(ERROR_CATALOG.INSUFFICIENT_CREDITS.retryable).toBe(false);
+    expect(ERROR_CATALOG.RUN_BATCH_ROLLED_BACK.retryable).toBe(false);
+    expect(ERROR_CATALOG.EDITOR_DISCONNECTED.retryable).toBe(true);
+    expect(ERROR_CATALOG.RENDER_TIMEOUT.retryable).toBe(true);
+    expect(ERROR_CATALOG.INTERNAL.retryable).toBe(true);
+  });
+
+  it("ERROR_CODE_SCHEMA accepts every catalog code and rejects anything else", () => {
+    expect(ERROR_CODE_SCHEMA.safeParse("LEASE_HELD").success).toBe(true);
+    expect(ERROR_CODE_SCHEMA.safeParse("not_a_code").success).toBe(false);
   });
 });
 
-describe('errors: result envelopes (§4/§13.3)', () => {
-  it('ok() wraps a value', () => {
-    const result = ok(42);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value).toBe(42);
-    }
-    expect(isFailure(result)).toBe(false);
-  });
-
-  it('err() produces the minimal envelope', () => {
-    const result = err('engine_unavailable', 'No engine session is free');
-    expect(result).toEqual({
-      ok: false,
-      code: 'engine_unavailable',
-      message: 'No engine session is free',
-    });
-    expect(isFailure(result)).toBe(true);
-  });
-
-  it('err() attaches hint, retryable and docsUrl only when provided', () => {
-    const full = err('image_provider_error', 'Image provider failed', {
-      hint: 'Retry is free once (§24.4).',
-      retryable: true,
-      docsUrl: 'https://docs.example.com/runs#retry',
-    });
-    expect(full).toEqual({
-      ok: false,
-      code: 'image_provider_error',
-      message: 'Image provider failed',
-      hint: 'Retry is free once (§24.4).',
-      retryable: true,
-      docsUrl: 'https://docs.example.com/runs#retry',
-    });
-
-    const partial = err('rate_limited', 'Slow down', { retryable: false });
-    expect('hint' in partial).toBe(false);
-    expect('docsUrl' in partial).toBe(false);
-    if (isFailure(partial)) {
-      expect(partial.retryable).toBe(false);
-    }
-  });
-});
-
-describe('errors: wire envelope (§13.3)', () => {
-  it('validates `{ error: { code, message, hint?, retryable, docs_url? } }`', () => {
-    const parsed = ERROR_ENVELOPE_SCHEMA.safeParse({
+describe("errors: StudioError envelope (§7.3)", () => {
+  it("defaults come from the catalog; requestId is a fresh req_ id", () => {
+    const error = new StudioError("INSUFFICIENT_CREDITS");
+    expect(error.message).toBe(ERROR_CATALOG.INSUFFICIENT_CREDITS.message);
+    expect(error.retryable).toBe(false);
+    expect(error.requestId).toMatch(/^req_[0-9a-f]{32}$/);
+    const envelope = error.toEnvelope();
+    expect(envelope).toEqual({
       error: {
-        code: 'insufficient_credits',
-        message: 'Not enough credits for a standard run',
-        hint: 'Top up or switch to the quick tier.',
+        code: "INSUFFICIENT_CREDITS",
+        message: ERROR_CATALOG.INSUFFICIENT_CREDITS.message,
+        hint: ERROR_CATALOG.INSUFFICIENT_CREDITS.hint,
         retryable: false,
+        requestId: error.requestId,
       },
     });
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.error.code).toBe('insufficient_credits');
-      expect(parsed.data.error.retryable).toBe(false);
-    }
   });
 
-  it('rejects unknown codes and malformed envelopes', () => {
-    expect(
-      ERROR_ENVELOPE_SCHEMA.safeParse({
-        error: { code: 'nope', message: 'x', retryable: false },
-      }).success,
-    ).toBe(false);
-    expect(
-      ERROR_ENVELOPE_SCHEMA.safeParse({
-        code: 'rate_limited',
-        message: 'x',
-        retryable: false,
-      }).success,
-    ).toBe(false);
+  it("overrides win over catalog defaults", () => {
+    const error = new StudioError("RATE_LIMITED", {
+      message: "Slow down.",
+      hint: "Try again in 30s.",
+      retryable: true,
+      requestId: "req_fixed",
+    });
+    expect(error.message).toBe("Slow down.");
+    expect(error.hint).toBe("Try again in 30s.");
+    expect(error.retryable).toBe(true);
+    expect(error.requestId).toBe("req_fixed");
+  });
+
+  it("toJSON mirrors toEnvelope so accidental JSON.stringify cannot leak internals", () => {
+    const error = new StudioError("INTERNAL", { cause: new Error("ECONNREFUSED /var/run/x") });
+    expect(error.toJSON()).toEqual(error.toEnvelope());
+    expect(JSON.stringify(error)).toEqual(JSON.stringify(error.toEnvelope()));
+    expect(JSON.stringify(error)).not.toContain("ECONNREFUSED");
+  });
+});
+
+describe("errors: fromUnknown mapper", () => {
+  it("passes StudioError through unchanged", () => {
+    const original = new StudioError("LEASE_HELD");
+    expect(fromUnknown(original)).toBe(original);
+    expect(fromUnknown(original, original.requestId)).toBe(original);
+  });
+
+  it("restamps the requestId of a StudioError when a newer request context is known", () => {
+    const original = new StudioError("LEASE_HELD");
+    const mapped = fromUnknown(original, "req_newer");
+    expect(mapped).not.toBe(original);
+    expect(mapped.requestId).toBe("req_newer");
+    expect(mapped.code).toBe(original.code);
+    expect(mapped.message).toBe(original.message);
+  });
+
+  it("maps ZodError to VALIDATION_FAILED without echoing the input", () => {
+    const parsed = z.object({ name: z.string().min(100) }).safeParse({ name: "short" });
+    expect(parsed.success).toBe(false);
+    const mapped = fromUnknown(parsed.error);
+    expect(mapped.code).toBe("VALIDATION_FAILED");
+    const json = JSON.stringify(mapped.toEnvelope());
+    expect(json).not.toContain("short");
+  });
+
+  it("maps anything else to INTERNAL and never leaks the cause", () => {
+    const raw = new Error(
+      "connect ECONNREFUSED 127.0.0.1:5432 at /var/run/postgresql http://provider.internal/v1",
+    );
+    const mapped = fromUnknown(raw);
+    expect(mapped.code).toBe("INTERNAL");
+    expect(mapped.message).toBe(ERROR_CATALOG.INTERNAL.message);
+    expect(mapped.cause).toBe(raw);
+    const json = JSON.stringify(mapped.toEnvelope());
+    expect(json).not.toContain("ECONNREFUSED");
+    expect(json).not.toContain("/var/run");
+    expect(json).not.toContain("provider.internal");
+    expect(json).not.toContain("stack");
+  });
+
+  it("handles non-error throws", () => {
+    expect(fromUnknown("boom").code).toBe("INTERNAL");
+    expect(fromUnknown(null).code).toBe("INTERNAL");
+    expect(fromUnknown(undefined).code).toBe("INTERNAL");
+    expect(fromUnknown({ weird: true }, "req_x").requestId).toBe("req_x");
+  });
+
+  it("isStudioError guards", () => {
+    expect(isStudioError(new StudioError("FORBIDDEN"))).toBe(true);
+    expect(isStudioError(new Error("nope"))).toBe(false);
+  });
+});
+
+describe("errors: Ok envelope", () => {
+  it("okEnvelope wraps data and optional meta", () => {
+    expect(okEnvelope(42)).toEqual({ data: 42 });
+    expect(okEnvelope([1], { page: 2 })).toEqual({ data: [1], meta: { page: 2 } });
+  });
+
+  it("isErrEnvelope discriminates the union", () => {
+    const ok: Envelope<number> = okEnvelope(1);
+    const err: ErrEnvelope = new StudioError("RUN_CANCELLED").toEnvelope();
+    expect(isErrEnvelope(ok)).toBe(false);
+    expect(isErrEnvelope(err)).toBe(true);
+    expect(err.error.code).toBe("RUN_CANCELLED");
+    expect(err.error.retryable).toBe(false);
+  });
+
+  it("envelope hints are always present from the catalog", () => {
+    const envelope = new StudioError("PROJECT_VERSION_CONFLICT").toEnvelope();
+    expect(envelope.error.hint).toContain("version");
+  });
+
+  it("newRequestId is available for gateway middleware", () => {
+    expect(newRequestId()).toMatch(/^req_[0-9a-f]{32}$/);
   });
 });

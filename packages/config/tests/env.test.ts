@@ -1,258 +1,446 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
+  ENV_VAR_NAMES,
   EnvFatalError,
-  configuredModelProviders,
-  gatewayEnvSchema,
+  SECRET_ENV_VARS,
+  envSchema,
+  getEnv,
   isEnvFatalError,
-  modelProviderHealth,
-  parseEnginePoolEnv,
-  parseGatewayEnv,
-  parseWebEnv,
-  parseWorkerEnv,
-  type EnvSource,
-} from '../src/index.js';
+  parseEnv,
+  renderEnvExample,
+  writeEnvExample,
+} from "../src/index.js";
+import type { EnvSource, StudioEnv } from "../src/index.js";
 
-const gatewayFixture: EnvSource = {
-  DATABASE_URL: 'postgres://studio:pw@localhost:5432/studio',
-  VALKEY_URL: 'redis://localhost:6379',
-  S3_ENDPOINT: 'https://s3.example.com',
-  S3_BUCKET: 'studio-assets',
-  S3_REGION: 'auto',
-  S3_ACCESS_KEY_ID: 'AKIAEXAMPLEKEYID',
-  S3_SECRET_ACCESS_KEY: 'very-secret',
-  AUTH_SECRET: 'a'.repeat(40),
-  STRIPE_SECRET_KEY: 'sk_test_51example',
-  STRIPE_WEBHOOK_SECRET: 'whsec_example',
-  APP_URL: 'https://app.example.com',
+/** A complete, valid local-development environment. */
+const localFixture: EnvSource = {
+  APP_URL: "http://localhost:3000",
+  APP_ENV: "local",
+  DATABASE_URL: "postgres://studio:studio@localhost:5432/studio",
+  S3_ENDPOINT: "http://localhost:9000",
+  S3_REGION: "auto",
+  S3_ACCESS_KEY_ID: "minioadmin",
+  S3_SECRET_ACCESS_KEY: "minioadmin",
+  S3_BUCKET: "studio-local",
+  ASSET_MAX_BYTES: "524288000",
+  PROJECT_MAX_BYTES: "262144000",
+  STRIPE_WEBHOOK_SECRET: "whsec_local_placeholder",
+  STRIPE_PRICE_IDS: '{"starter":"price_starter","pro":"price_pro","studio":"price_studio"}',
+  AUTH_SECRET: "a".repeat(32),
+  AUTH_GOOGLE_ID: "google-client-id",
+  AUTH_GOOGLE_SECRET: "google-client-secret",
+  AUTH_GITHUB_ID: "github-client-id",
+  AUTH_GITHUB_SECRET: "github-client-secret",
+  LITELLM_BASE_URL: "http://localhost:4000",
+  LITELLM_API_KEY: "sk-litellm-local",
+  CHAT_MAX_STEPS: "50",
 };
 
-const workerFixture: EnvSource = {
-  DATABASE_URL: 'postgres://studio:pw@localhost:5432/studio',
-  VALKEY_URL: 'redis://localhost:6379',
-  S3_ENDPOINT: 'https://s3.example.com',
-  S3_BUCKET: 'studio-assets',
-  S3_REGION: 'us-east-1',
-  S3_ACCESS_KEY_ID: 'AKIAEXAMPLEKEYID',
-  S3_SECRET_ACCESS_KEY: 'very-secret',
-  ENGINE_BINARY_PATH: '/opt/photocraft/photocraft-cli',
-  ENGINE_CAPABILITY_ROOT_BASE: '/var/lib/studio/sessions',
+const productionFixture: EnvSource = {
+  ...localFixture,
+  APP_URL: "https://app.studio.example.com",
+  APP_ENV: "production",
+  STRIPE_SECRET_KEY: "sk_live_redacted_fixture",
+  VALKEY_URL: "rediss://valkey.internal:6379",
 };
 
-const enginePoolFixture: EnvSource = {
-  DATABASE_URL: 'postgres://studio:pw@localhost:5432/studio',
-  ENGINE_BINARY_PATH: '/opt/photocraft/photocraft-cli',
-  ENGINE_CAPABILITY_ROOT_BASE: '/var/lib/studio/sessions',
-};
-
-const webFixture: EnvSource = {
-  APP_URL: 'https://app.example.com',
-  API_BASE_URL: 'https://api.example.com',
-  STRIPE_PUBLISHABLE_KEY: 'pk_test_51example',
-};
-
-function fixtureWithout(base: EnvSource, key: string): EnvSource {
+function without(base: EnvSource, ...keys: string[]): EnvSource {
   const copy: Record<string, string | undefined> = { ...base };
-  delete copy[key];
+  for (const key of keys) {
+    delete copy[key];
+  }
   return copy;
 }
 
-describe('env: gateway', () => {
-  it('parses a valid gateway environment', () => {
-    const env = parseGatewayEnv(gatewayFixture);
-    expect(env.NODE_ENV).toBe('development');
-    expect(env.PORT).toBe(3001); // policy default
-    expect(env.S3_BUCKET).toBe('studio-assets');
-    expect(env.SSE_HEARTBEAT_MS).toBe(15000);
-    expect(env.SSE_RETRY_MS).toBe(3000);
-    expect(env.SSE_BACKFILL_LIMIT).toBe(500);
-  });
+function expectFatal(source: EnvSource): EnvFatalError {
+  try {
+    parseEnv(source);
+  } catch (error) {
+    expect(error).toBeInstanceOf(EnvFatalError);
+    return error as EnvFatalError;
+  }
+  throw new Error("parseEnv unexpectedly succeeded");
+}
 
-  it('coerces PORT and honours explicit values', () => {
-    const env = parseGatewayEnv({ ...gatewayFixture, PORT: '8080' });
-    expect(env.PORT).toBe(8080);
-  });
-
-  it('ignores unrelated process.env keys like PATH', () => {
-    const env = parseGatewayEnv({ ...gatewayFixture, PATH: '/usr/bin', HOME: '/root' });
-    expect(env.DATABASE_URL).toBe(gatewayFixture.DATABASE_URL);
-  });
-
-  it('names the missing variable and app in the fatal error', () => {
-    try {
-      parseGatewayEnv(fixtureWithout(gatewayFixture, 'DATABASE_URL'));
-      expect.unreachable('parseGatewayEnv must throw');
-    } catch (error) {
-      expect(error).toBeInstanceOf(EnvFatalError);
-      const fatal = error as EnvFatalError;
-      expect(fatal.missing).toContain('DATABASE_URL');
-      expect(fatal.message).toContain('DATABASE_URL');
-      expect(fatal.message).toContain('gateway');
-      expect(fatal.name).toBe('EnvFatalError');
-      expect(fatal.code).toBe('env_invalid');
-    }
-  });
-
-  it('aggregates multiple missing variables', () => {
-    try {
-      parseGatewayEnv(
-        fixtureWithout(fixtureWithout(gatewayFixture, 'DATABASE_URL'), 'VALKEY_URL'),
-      );
-      expect.unreachable('parseGatewayEnv must throw');
-    } catch (error) {
-      const fatal = error as EnvFatalError;
-      expect(fatal.missing).toEqual(expect.arrayContaining(['DATABASE_URL', 'VALKEY_URL']));
-    }
-  });
-
-  it('names invalid variables with reasons', () => {
-    try {
-      parseGatewayEnv({
-        ...gatewayFixture,
-        VALKEY_URL: 'mysql://nope',
-        PORT: 'not-a-port',
-        AUTH_SECRET: 'short',
-        STRIPE_SECRET_KEY: 'not-a-stripe-key',
-      });
-      expect.unreachable('parseGatewayEnv must throw');
-    } catch (error) {
-      const fatal = error as EnvFatalError;
-      const names = fatal.invalid.map((entry) => entry.name);
-      expect(names).toEqual(
-        expect.arrayContaining(['VALKEY_URL', 'PORT', 'AUTH_SECRET', 'STRIPE_SECRET_KEY']),
-      );
-      expect(fatal.missing).toHaveLength(0);
-    }
-  });
-
-  it('rejects out-of-range ports', () => {
-    try {
-      parseGatewayEnv({ ...gatewayFixture, PORT: '70000' });
-      expect.unreachable('parseGatewayEnv must throw');
-    } catch (error) {
-      expect((error as EnvFatalError).invalid[0]?.name).toBe('PORT');
-    }
-  });
-
-  it('exposes isEnvFatalError for app entrypoints', () => {
-    try {
-      parseGatewayEnv(fixtureWithout(gatewayFixture, 'AUTH_SECRET'));
-      expect.unreachable('parseGatewayEnv must throw');
-    } catch (error) {
-      expect(isEnvFatalError(error)).toBe(true);
-      expect(isEnvFatalError(new Error('plain'))).toBe(false);
-    }
-  });
-
-  it('the schema itself is strict (direct use rejects unknown keys)', () => {
-    const parsed = gatewayEnvSchema.safeParse({ ...gatewayFixture, UNDECLARED_VAR: 'x' });
-    expect(parsed.success).toBe(false); // .strict() — unknown keys rejected (§4)
-    const clean = gatewayEnvSchema.safeParse(gatewayFixture);
-    expect(clean.success).toBe(true);
-  });
-});
-
-describe('env: worker', () => {
-  it('defaults the §3.4 engine timeouts', () => {
-    const env = parseWorkerEnv(workerFixture);
-    expect(env.ENGINE_TOOL_TIMEOUT_MS).toBe(5000); // §3.4 tool 5 s
-    expect(env.ENGINE_RENDER_TIMEOUT_MS).toBe(30000); // §3.4 render 30 s
-    expect(env.ENGINE_RUN_TIMEOUT_MS).toBe(600000); // §3.4 run 10 min
-    expect(env.ENGINE_SESSION_IDLE_TIMEOUT_MS).toBe(900000); // §3.4 idle 15 min
-  });
-
-  it('model provider keys are all optional', () => {
-    const env = parseWorkerEnv(workerFixture);
-    expect(env.GEMINI_API_KEY).toBeUndefined();
-    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(env.OPENAI_API_KEY).toBeUndefined();
-    expect(env.DEEPSEEK_API_KEY).toBeUndefined();
-    expect(env.FLUX_API_KEY).toBeUndefined();
-  });
-
-  it('reports unconfigured providers via the health flag', () => {
-    const env = parseWorkerEnv(workerFixture);
-    const health = modelProviderHealth(env);
-    expect(Object.values(health).every((entry) => entry.configured === false)).toBe(true);
-    expect(configuredModelProviders(env)).toEqual([]);
-  });
-
-  it('reports configured providers via the health flag', () => {
-    const env = parseWorkerEnv({
-      ...workerFixture,
-      GEMINI_API_KEY: 'gemini-key-12345',
-      FLUX_API_KEY: 'flux-key-123456',
+describe("env: valid parse", () => {
+  it("groups every variable into the nested typed config", () => {
+    const env = parseEnv(localFixture);
+    expect(env.app).toEqual({
+      url: "http://localhost:3000",
+      env: "local",
+      logLevel: "info",
+      mockModel: false,
     });
-    const health = modelProviderHealth(env);
-    expect(health.gemini).toEqual({
-      provider: 'gemini',
-      envKey: 'GEMINI_API_KEY',
-      configured: true,
-      apiKey: 'gemini-key-12345',
+    expect(env.db.url).toBe(localFixture.DATABASE_URL);
+    expect(env.storage).toEqual({
+      endpoint: "http://localhost:9000",
+      region: "auto",
+      accessKeyId: "minioadmin",
+      secretAccessKey: "minioadmin",
+      bucket: "studio-local",
+      assetMaxBytes: 524288000,
+      projectMaxBytes: 262144000,
     });
-    expect(health.flux.configured).toBe(true);
-    expect(health.anthropic.configured).toBe(false);
-    expect(configuredModelProviders(env)).toEqual(['gemini', 'flux']);
+    expect(env.stripe.webhookSecret).toBe("whsec_local_placeholder");
+    expect(env.stripe.priceIds).toEqual({
+      starter: "price_starter",
+      pro: "price_pro",
+      studio: "price_studio",
+    });
+    expect(env.auth.google.id).toBe("google-client-id");
+    expect(env.auth.github.secret).toBe("github-client-secret");
+    expect(env.litellm).toEqual({
+      baseUrl: "http://localhost:4000",
+      apiKey: "sk-litellm-local",
+      virtualKey: undefined,
+    });
+    expect(env.queue.url).toBeUndefined();
+    expect(env.obs.otelEndpoint).toBeUndefined();
   });
 
-  it('names missing engine session settings', () => {
-    try {
-      parseWorkerEnv(fixtureWithout(workerFixture, 'ENGINE_BINARY_PATH'));
-      expect.unreachable('parseWorkerEnv must throw');
-    } catch (error) {
-      expect((error as EnvFatalError).missing).toContain('ENGINE_BINARY_PATH');
+  it("applies the documented defaults", () => {
+    const env = parseEnv(localFixture);
+    expect(env.editor.publicPath).toBe("/editor");
+    expect(env.editor.wasmMaxMb).toBe(18);
+    expect(env.agent.chatMaxSteps).toBe(50);
+    expect(env.agent.batchMaxSteps).toBe(100);
+    expect(env.agent.batchMaxBytes).toBe(2 * 1024 * 1024);
+    expect(env.agent.batchTimeoutMs).toBe(60000);
+    expect(env.lease.heartbeatMs).toBe(120000);
+    expect(env.lease.ttlMs).toBe(300000);
+  });
+
+  it("honours explicit values over defaults and parses production", () => {
+    const env = parseEnv({
+      ...productionFixture,
+      LOG_LEVEL: "debug",
+      EDITOR_WASM_MAX_MB: "24",
+      AGENT_BATCH_MAX_STEPS: "64",
+      EDITOR_PUBLIC_PATH: "/editor",
+    });
+    expect(env.app.env).toBe("production");
+    expect(env.app.logLevel).toBe("debug");
+    expect(env.editor.wasmMaxMb).toBe(24);
+    expect(env.agent.batchMaxSteps).toBe(64);
+    expect(env.stripe.secretKey).toBe("sk_live_redacted_fixture");
+    expect(env.queue.url).toBe("rediss://valkey.internal:6379");
+  });
+
+  it("accepts the documented boolean spellings for MOCK_MODEL", () => {
+    for (const raw of ["true", "1", "yes", "on", "TRUE", "True"]) {
+      expect(parseEnv({ ...localFixture, MOCK_MODEL: raw }).app.mockModel).toBe(true);
+    }
+    for (const raw of ["false", "0", "no", "off", "FALSE"]) {
+      expect(parseEnv({ ...localFixture, MOCK_MODEL: raw }).app.mockModel).toBe(false);
     }
   });
 
-  it('accepts timeout overrides', () => {
-    const env = parseWorkerEnv({ ...workerFixture, ENGINE_TOOL_TIMEOUT_MS: '8000' });
-    expect(env.ENGINE_TOOL_TIMEOUT_MS).toBe(8000);
+  it("parses optional variables when set", () => {
+    const env = parseEnv({
+      ...localFixture,
+      VALKEY_URL: "redis://localhost:6379",
+      LITELLM_VIRTUAL_KEY: "sk-virtual-1",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4318",
+      EDITOR_DEV_SERVER_URL: "http://localhost:8765",
+      STRIPE_SECRET_KEY: "sk_test_123",
+    });
+    expect(env.queue.url).toBe("redis://localhost:6379");
+    expect(env.litellm.virtualKey).toBe("sk-virtual-1");
+    expect(env.obs.otelEndpoint).toBe("http://localhost:4318");
+    expect(env.editor.devServerUrl).toBe("http://localhost:8765");
+    expect(env.stripe.secretKey).toBe("sk_test_123");
+  });
+
+  it("ignores unrelated keys like PATH", () => {
+    const env = parseEnv({ ...localFixture, PATH: "/usr/bin", HOME: "/root", TERM: "xterm" });
+    expect(env.app.url).toBe("http://localhost:3000");
+  });
+
+  it("returns a deeply frozen config", () => {
+    const env = parseEnv(localFixture);
+    expect(() => {
+      (env.app as { url?: string }).url = "http://evil.example";
+    }).toThrow(TypeError);
+    expect(() => {
+      (env.storage as { bucket?: string }).bucket = "other";
+    }).toThrow(TypeError);
+  });
+
+  it("blank values count as unset: defaults apply, required vars are missing", () => {
+    const env = parseEnv({ ...localFixture, LOG_LEVEL: "   ", VALKEY_URL: "" });
+    expect(env.app.logLevel).toBe("info");
+    expect(env.queue.url).toBeUndefined();
+    const fatal = expectFatal({ ...localFixture, ASSET_MAX_BYTES: "" });
+    expect(fatal.problems.map((problem) => problem.name)).toEqual(["ASSET_MAX_BYTES"]);
+    expect(fatal.problems[0]?.kind).toBe("missing");
   });
 });
 
-describe('env: engine-pool', () => {
-  it('applies supervisor policy defaults', () => {
-    const env = parseEnginePoolEnv(enginePoolFixture);
-    expect(env.PORT).toBe(3002);
-    expect(env.ENGINE_SESSION_MAX_CONNECTIONS).toBe(16); // vendor security.rs
-    expect(env.ENGINE_SESSION_MEM_LIMIT_MB).toBe(2048);
-    expect(env.ENGINE_POOL_MAX_SESSIONS).toBe(32);
-    expect(env.ENGINE_SESSION_IDLE_TIMEOUT_MS).toBe(900000); // §3.4
+describe("env: fail-fast on missing vars", () => {
+  it("lists EVERY missing variable with its purpose in one fatal error", () => {
+    const fatal = expectFatal(
+      without(localFixture, "APP_URL", "DATABASE_URL", "AUTH_SECRET", "CHAT_MAX_STEPS"),
+    );
+    expect(fatal.problems.map((problem) => problem.name)).toEqual([
+      "APP_URL",
+      "DATABASE_URL",
+      "AUTH_SECRET",
+      "CHAT_MAX_STEPS",
+    ]);
+    for (const problem of fatal.problems) {
+      expect(problem.kind).toBe("missing");
+      expect(problem.reason).toBe("missing");
+      expect(problem.purpose.length).toBeGreaterThan(10);
+    }
+    for (const name of ["APP_URL", "DATABASE_URL", "AUTH_SECRET", "CHAT_MAX_STEPS"]) {
+      expect(fatal.message).toContain(name);
+    }
+    expect(fatal.message).toContain("auth");
+    expect(fatal.message).toContain("never");
+    expect(isEnvFatalError(fatal)).toBe(true);
   });
 
-  it('names missing required variables', () => {
-    try {
-      parseEnginePoolEnv(fixtureWithout(enginePoolFixture, 'DATABASE_URL'));
-      expect.unreachable('parseEnginePoolEnv must throw');
-    } catch (error) {
-      expect((error as EnvFatalError).missing).toContain('DATABASE_URL');
-    }
+  it("isEnvFatalError rejects other errors", () => {
+    expect(isEnvFatalError(new Error("x"))).toBe(false);
   });
 });
 
-describe('env: web', () => {
-  it('parses a valid web environment', () => {
-    const env = parseWebEnv(webFixture);
-    expect(env.PORT).toBe(3000);
-    expect(env.DATABASE_URL).toBeUndefined(); // optional: gateway is the auth boundary
+describe("env: fail-fast on invalid vars", () => {
+  it("names the variable, the reason and the purpose — never the value", () => {
+    const secret = "mysql://super-secret-user:hunter2@db.internal:5432/prod";
+    const fatal = expectFatal({ ...localFixture, DATABASE_URL: secret });
+    const problem = fatal.problems.find((entry) => entry.name === "DATABASE_URL");
+    expect(problem?.kind).toBe("invalid");
+    expect(problem?.reason).toContain("postgres:// or postgresql://");
+    expect(fatal.message).not.toContain("hunter2");
+    expect(fatal.message).not.toContain("super-secret-user");
   });
 
-  it('names a missing API base URL', () => {
-    try {
-      parseWebEnv(fixtureWithout(webFixture, 'API_BASE_URL'));
-      expect.unreachable('parseWebEnv must throw');
-    } catch (error) {
-      const fatal = error as EnvFatalError;
-      expect(fatal.missing).toContain('API_BASE_URL');
-      expect(fatal.message).toContain('web');
+  it("rejects non-postgres URLs with the postgres-specific reason", () => {
+    const fatal = expectFatal({ ...localFixture, DATABASE_URL: "mysql://localhost/studio" });
+    expect(fatal.message).toContain("PostgreSQL URL");
+  });
+
+  it("validates APP_URL as an absolute http(s) URL", () => {
+    expect(
+      parseEnv({ ...localFixture, APP_URL: "https://app.studio.example.com" }).app.url,
+    ).toContain("https");
+    const fatal = expectFatal({ ...localFixture, APP_URL: "not-a-url" });
+    expect(fatal.problems[0]?.name).toBe("APP_URL");
+  });
+
+  it("validates APP_ENV and LOG_LEVEL enums without echoing the bad value", () => {
+    const envFatal = expectFatal({ ...localFixture, APP_ENV: "dev" });
+    expect(envFatal.message).toContain('must be one of: "local", "staging", "production"');
+    expect(envFatal.message).not.toContain('"dev"');
+    const logFatal = expectFatal({ ...localFixture, LOG_LEVEL: "loud" });
+    expect(logFatal.message).toContain("debug");
+  });
+
+  it("coerces numeric fields and reports non-numbers without echoing them", () => {
+    const fatal = expectFatal({ ...localFixture, ASSET_MAX_BYTES: "twenty-mb" });
+    const problem = fatal.problems[0];
+    expect(problem?.name).toBe("ASSET_MAX_BYTES");
+    expect(problem?.reason).toContain("whole number");
+    expect(fatal.message).not.toContain("twenty-mb");
+    const negative = expectFatal({ ...localFixture, CHAT_MAX_STEPS: "-5" });
+    expect(negative.problems[0]?.reason).toContain("must be at least 1");
+  });
+
+  it("rejects malformed STRIPE_PRICE_IDS JSON and non-object JSON", () => {
+    const badJson = expectFatal({ ...localFixture, STRIPE_PRICE_IDS: "{oops}" });
+    expect(badJson.problems[0]?.reason).toContain("JSON");
+    const notObject = expectFatal({ ...localFixture, STRIPE_PRICE_IDS: '["price_1"]' });
+    expect(notObject.problems[0]?.name).toBe("STRIPE_PRICE_IDS");
+    const values = expectFatal({
+      ...localFixture,
+      STRIPE_PRICE_IDS: '{"starter":42}',
+    });
+    expect(values.problems[0]?.name).toBe("STRIPE_PRICE_IDS");
+  });
+
+  it("enforces the 32-char AUTH_SECRET minimum without echoing the secret", () => {
+    const fatal = expectFatal({ ...localFixture, AUTH_SECRET: "too-short" });
+    expect(fatal.problems[0]?.reason).toContain("32");
+    expect(fatal.message).not.toContain("too-short");
+  });
+
+  it("enforces a plausible S3 bucket name", () => {
+    const fatal = expectFatal({ ...localFixture, S3_BUCKET: "Not_A_Valid_Bucket" });
+    expect(fatal.problems[0]?.reason).toContain("bucket");
+  });
+
+  it("enforces http(s) for editor/obs/litellm endpoints and redis:// for Valkey", () => {
+    const editor = expectFatal({ ...localFixture, EDITOR_DEV_SERVER_URL: "ftp://localhost:8765" });
+    expect(editor.problems[0]?.name).toBe("EDITOR_DEV_SERVER_URL");
+    const otel = expectFatal({ ...localFixture, OTEL_EXPORTER_OTLP_ENDPOINT: "localhost:4318" });
+    expect(otel.problems[0]?.name).toBe("OTEL_EXPORTER_OTLP_ENDPOINT");
+    const valkey = expectFatal({ ...localFixture, VALKEY_URL: "amqp://localhost" });
+    expect(valkey.problems[0]?.reason).toContain("redis:// or rediss://");
+  });
+
+  it("collects several invalid variables at once", () => {
+    const fatal = expectFatal({
+      ...localFixture,
+      APP_URL: "nope",
+      LITELLM_BASE_URL: "also-nope",
+      EDITOR_WASM_MAX_MB: "zero",
+    });
+    expect(fatal.problems.map((problem) => problem.name)).toEqual([
+      "APP_URL",
+      "LITELLM_BASE_URL",
+      "EDITOR_WASM_MAX_MB",
+    ]);
+  });
+
+  it("validates the editor public path shape", () => {
+    expect(parseEnv({ ...localFixture, EDITOR_PUBLIC_PATH: "/editor" }).editor.publicPath).toBe(
+      "/editor",
+    );
+    const trailing = expectFatal({ ...localFixture, EDITOR_PUBLIC_PATH: "/editor/" });
+    expect(trailing.problems[0]?.reason).toContain("trailing slash");
+    const relative = expectFatal({ ...localFixture, EDITOR_PUBLIC_PATH: "editor" });
+    expect(relative.problems[0]?.reason).toContain("absolute");
+  });
+});
+
+describe("env: cross-field rules", () => {
+  it("STRIPE_SECRET_KEY is required outside local", () => {
+    const staging: EnvSource = { ...localFixture, APP_ENV: "staging" };
+    const fatal = expectFatal(staging);
+    expect(fatal.problems.map((problem) => problem.name)).toEqual(["STRIPE_SECRET_KEY"]);
+    expect(fatal.problems[0]?.kind).toBe("rejected");
+    expect(fatal.problems[0]?.reason).toContain("staging");
+    expect(parseEnv({ ...staging, STRIPE_SECRET_KEY: "sk_test_1" }).stripe.secretKey).toBe(
+      "sk_test_1",
+    );
+  });
+
+  it("MOCK_MODEL is rejected in production", () => {
+    const fatal = expectFatal({ ...productionFixture, MOCK_MODEL: "true" });
+    expect(fatal.problems.map((problem) => problem.name)).toEqual(["MOCK_MODEL"]);
+    expect(fatal.problems[0]?.reason).toContain("production");
+    expect(parseEnv({ ...productionFixture, MOCK_MODEL: "false" }).app.mockModel).toBe(false);
+  });
+
+  it("MOCK_MODEL is allowed in local", () => {
+    expect(parseEnv({ ...localFixture, MOCK_MODEL: "true" }).app.mockModel).toBe(true);
+  });
+
+  it("EDITOR_DEV_SERVER_URL is rejected in production", () => {
+    const fatal = expectFatal({
+      ...productionFixture,
+      EDITOR_DEV_SERVER_URL: "http://localhost:8765",
+    });
+    expect(fatal.problems[0]?.name).toBe("EDITOR_DEV_SERVER_URL");
+    expect(fatal.problems[0]?.reason).toContain("dev-only");
+  });
+
+  it("LEASE_TTL_MS must exceed LEASE_HEARTBEAT_MS", () => {
+    const equal = expectFatal({
+      ...localFixture,
+      LEASE_HEARTBEAT_MS: "1000",
+      LEASE_TTL_MS: "1000",
+    });
+    expect(equal.problems.map((problem) => problem.name)).toEqual(["LEASE_TTL_MS"]);
+    expect(equal.problems[0]?.reason).toContain("heartbeat");
+    const inverted = expectFatal({
+      ...localFixture,
+      LEASE_HEARTBEAT_MS: "5000",
+      LEASE_TTL_MS: "2000",
+    });
+    expect(inverted.problems[0]?.name).toBe("LEASE_TTL_MS");
+  });
+
+  it("reports several cross-field rejections together", () => {
+    const fatal = expectFatal({
+      ...without(productionFixture, "STRIPE_SECRET_KEY"),
+      MOCK_MODEL: "1",
+      EDITOR_DEV_SERVER_URL: "http://localhost:8765",
+    });
+    expect(fatal.problems.map((problem) => problem.name)).toEqual([
+      "STRIPE_SECRET_KEY",
+      "MOCK_MODEL",
+      "EDITOR_DEV_SERVER_URL",
+    ]);
+  });
+});
+
+describe("env: getEnv singleton", () => {
+  it("parses once per source object (WeakMap cache)", () => {
+    const first: StudioEnv = getEnv(localFixture);
+    const second: StudioEnv = getEnv(localFixture);
+    expect(second).toBe(first);
+    const otherSource = { ...localFixture };
+    expect(getEnv(otherSource)).not.toBe(first);
+  });
+
+  it("does not cache failed parses", () => {
+    const bad = without(localFixture, "APP_URL");
+    expect(() => getEnv(bad)).toThrow(EnvFatalError);
+    expect(() => getEnv(bad)).toThrow(EnvFatalError);
+  });
+});
+
+describe("env: metadata and .env.example generator", () => {
+  it("specs and the zod schema declare the same variables", () => {
+    expect(ENV_VAR_NAMES).toEqual(Object.keys(envSchema.shape));
+  });
+
+  it("marks exactly the secret variables", () => {
+    for (const name of [
+      "DATABASE_URL",
+      "VALKEY_URL",
+      "S3_ACCESS_KEY_ID",
+      "S3_SECRET_ACCESS_KEY",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET",
+      "AUTH_SECRET",
+      "AUTH_GOOGLE_SECRET",
+      "AUTH_GITHUB_SECRET",
+      "LITELLM_API_KEY",
+      "LITELLM_VIRTUAL_KEY",
+    ]) {
+      expect(SECRET_ENV_VARS).toContain(name);
+    }
+    for (const name of ["APP_URL", "APP_ENV", "S3_BUCKET", "STRIPE_PRICE_IDS", "LOG_LEVEL"]) {
+      expect(SECRET_ENV_VARS).not.toContain(name);
     }
   });
 
-  it('rejects a malformed publishable key', () => {
-    try {
-      parseWebEnv({ ...webFixture, STRIPE_PUBLISHABLE_KEY: 'sk_live_oops' });
-      expect.unreachable('parseWebEnv must throw');
-    } catch (error) {
-      expect((error as EnvFatalError).invalid[0]?.name).toBe('STRIPE_PUBLISHABLE_KEY');
+  it("renderEnvExample lists every variable with purpose and placeholder", () => {
+    const text = renderEnvExample();
+    for (const name of ENV_VAR_NAMES) {
+      expect(text).toContain(`${name}=`);
+      expect(text).toContain(`# ${name} — `);
+    }
+    expect(text).toContain("APP_URL=http://localhost:3000");
+    expect(text).toContain("EDITOR_PUBLIC_PATH=/editor");
+    expect(text).toContain("AGENT_BATCH_MAX_BYTES=2097152");
+    expect(text).toContain('Rejected when APP_ENV is "production"');
+    // Placeholder-free guarantee: no fixture secret ever appears.
+    expect(text).not.toContain("sk_live_redacted_fixture");
+  });
+
+  const tmpDirs: string[] = [];
+  afterEach(async () => {
+    for (const dir of tmpDirs.splice(0)) {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writeEnvExample writes the generated template to disk", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "studio-config-"));
+    tmpDirs.push(dir);
+    const target = join(dir, ".env.example");
+    await writeEnvExample(target);
+    const text = await readFile(target, "utf8");
+    expect(text).toContain("# Studio environment template.");
+    for (const name of ENV_VAR_NAMES) {
+      expect(text).toContain(`${name}=`);
     }
   });
 });

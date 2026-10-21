@@ -1,11 +1,10 @@
 {
-    "extends": "../../tsconfig.base.json",
-    "compilerOptions": { "rootDir": ".", "outDir": "dist", "jsx": "preserve" },
-    "include": [
-      "src/**/*.ts",
-      "src/**/*.tsx",
-      "tests/**/*.ts",
-      "scripts/**/*.ts",
-      "*.ts"
-    ]
-  }
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Fleet normalization: no rootDir/outDir; tests sit next to src/ and the program
+    // resolves sibling workspace sources via imports. `tsc --noEmit` is the gate.
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}
