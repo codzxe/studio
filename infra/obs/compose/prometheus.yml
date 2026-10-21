@@ -5,14 +5,19 @@
 # service in infra/compose/docker-compose.yml and the W9-F contract in
 # infra/obs/README.md ("Compose mount contract").
 # =============================================================================
-# BEARER TOKEN (env interpolation): Prometheus does not expand env vars in its
+# BEARER/TOKEN (env interpolation): Prometheus does not expand env vars in its
 # config and Compose does not interpolate mounted files, so this file carries
 # the literal placeholder __METRICS_TOKEN__. The prometheus service entrypoint
-# seds the real value from $METRICS_TOKEN (../../.env — the SAME bearer token
+# seds the real value from $METRICS_TOKEN (../../.env — the SAME shared secret
 # gateway/worker require on /metrics) into a container-local copy,
 # promtool-checks it, then execs prometheus. The token therefore never lands
 # in a committed file (AGENTS.md: no secrets in the repo; .env stays 0600,
 # §17.2). Keep the token `|`-free — sed's delimiter.
+#
+# AUTH SHAPE (per W9-G, verified by W9-P): the apps verify METRICS_TOKEN with
+# a timing-safe HTTP Basic seam and IGNORE the username
+# (apps/gateway/src/routes/metrics.ts, apps/worker/src/metrics.ts) — so jobs
+# below use basic_auth and the token rides as the password.
 #
 # JOB LABELS: alerts in infra/obs/alerts/prometheus-rules.yml key off series
 # names (studio_*, node_*, probe_*), NOT job labels — jobs are named
@@ -56,9 +61,10 @@ scrape_configs:
   # ports) and never routed by Caddy (Caddyfile answers /metrics with 404).
   - job_name: gateway
     metrics_path: /metrics
-    authorization:
-      type: Bearer
-      credentials: __METRICS_TOKEN__ # ← sed-replaced at container start (header)
+    basic_auth:
+      # Username ignored by the app seam; token = Basic password.
+      username: scraper
+      password: __METRICS_TOKEN__ # ← sed-replaced at container start (header)
     static_configs:
       - targets: ["gateway:3001"]
         labels:
@@ -73,12 +79,13 @@ scrape_configs:
   # INSIDE its container — cross-container scrapes need it bound to 0.0.0.0 on
   # the internal bridge (still unreachable from the internet: nothing
   # publishes host ports but Caddy, §17.2) or these targets stay `down` with
-  # connection refused. Scraped with the same METRICS_TOKEN bearer.
+  # connection refused. Scraped with the same METRICS_TOKEN (Basic-auth).
   - job_name: worker
     metrics_path: /metrics
-    authorization:
-      type: Bearer
-      credentials: __METRICS_TOKEN__
+    basic_auth:
+      # Same seam as the gateway job: username ignored, token = password.
+      username: scraper
+      password: __METRICS_TOKEN__
     dns_sd_configs:
       - names: ["worker"]
         type: A

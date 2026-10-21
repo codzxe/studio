@@ -108,8 +108,9 @@ services:
     # port 3001 (separate from the 8787 API). `expose` only DOCUMENTS the port
     # on the internal bridge — it does not publish anything; ONLY Caddy
     # publishes host ports (§17.2). Prometheus (profile obs) scrapes
-    # gateway:3001/metrics with the METRICS_TOKEN bearer (infra/obs/compose/
-    # prometheus.yml). NEVER move this to `ports:` — /metrics stays
+    # gateway:3001/metrics with the METRICS_TOKEN (Basic-auth; the app seam
+    # ignores the username — infra/obs/compose/prometheus.yml). NEVER move
+    # this to `ports:` — /metrics stays
     # unreachable from the internet.
     expose:
       - "3001"
@@ -149,7 +150,8 @@ services:
     # Metrics (§22): the SAME ops server serves Prometheus-format /metrics at
     # worker:9876/metrics. INTERNAL NETWORK ONLY — `expose` publishes nothing
     # (§17.2: only Caddy publishes host ports); Prometheus (profile obs)
-    # scrapes it with the METRICS_TOKEN bearer. NOTE: the comment above
+    # scrapes it with the METRICS_TOKEN (Basic-auth; the app seam ignores
+    # the username). NOTE: the comment above
     # documents the ops endpoint as loopback-bound IN-CONTAINER — the worker
     # owner must bind it to 0.0.0.0 on the internal bridge (still private to
     # the box) for cross-container scrapes to succeed. NEVER move this to
@@ -284,7 +286,7 @@ services:
   # note applies to all heavy obs self-hosting).
   #
   # W9-M stack (§16.5 license-clean): Prometheus (Apache-2.0) scrapes
-  # gateway/worker /metrics with the METRICS_TOKEN bearer and evaluates the
+  # gateway/worker /metrics with the METRICS_TOKEN (Basic-auth) and evaluates the
   # §22 alert rules from infra/obs; Alertmanager stub routes alerts
   # (receivers log-only until the on-call rotation in infra/obs/README.md is
   # real); Perses (Apache-2.0) serves dashboards. Grafana was deliberately
@@ -344,8 +346,9 @@ services:
     logging: *default-logging
 
   # Prometheus — metrics hub for the obs profile (§22). prom/prometheus is
-  # Apache-2.0 (§16). Scrapes gateway:3001 and worker:9876 /metrics (bearer
-  # METRICS_TOKEN) and evaluates the §22 alert rules from infra/obs.
+  # Apache-2.0 (§16). Scrapes gateway:3001 and worker:9876 /metrics
+  # (METRICS_TOKEN — the apps verify it via timing-safe Basic auth and ignore
+  # the username, W9-G seam) and evaluates the §22 alert rules from infra/obs.
   # INTERNAL ONLY: no host port — reach the UI via SSH tunnel or a Caddyfile
   # subdomain block, never a published port (§17.2).
   prometheus:
@@ -355,9 +358,9 @@ services:
     profiles: ["obs"]
     restart: unless-stopped
     environment:
-      # Same bearer token gateway/worker require on /metrics (../../.env).
+      # Same shared secret gateway/worker require on /metrics (../../.env).
       # Fail fast when the obs profile runs without it (GlitchTip pattern).
-      METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN required when the obs profile runs (bearer token gateway/worker verify on /metrics — same value as ../../.env)}
+      METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN required when the obs profile runs (shared secret gateway/worker verify on /metrics — Basic-auth password, username ignored — same value as ../../.env)}
     # Compose does NOT interpolate mounted files and Prometheus does not read
     # env vars in its config, so the entrypoint seds the __METRICS_TOKEN__
     # placeholder from infra/obs/compose/prometheus.yml into a container-local
