@@ -1,16 +1,17 @@
 // @studio/agent — public barrel. Originally W3-M (wiring); rebuilt by W6-P
-// (wave-6 assembly) to re-export EVERY src/ module: the W1 core (budgets,
-// errors, events, models, plan, state), W2-P's eventbus, and all wave-6
-// service directories (planner, executor, observer, validator, critic, repair,
-// budgets-service, transactions, router). Consumers import ONLY this file —
-// package.json main/exports and tsconfig.base.json paths point here.
+// (wave-6 assembly) to re-export EVERY landed src/ module: the W1 core
+// (budgets, errors, events, models, plan, state), W2-P's eventbus, and the
+// wave-6 service directories (planner, executor, observer, validator, critic,
+// repair, budgets-service, transactions, router, classifier). Consumers import
+// ONLY this file — package.json main/exports and tsconfig.base.json paths point
+// here.
 //
-// Collision audit (W6-P, across all 465 exported names in src/): exactly three
-// clashes. Star-exports carry every module's public surface; each clashing name
-// is ALSO re-exported explicitly below (explicit re-exports beat star exports in
-// both TypeScript and the ESM spec — verified against tsc 5.7 + esbuild), so
-// every clash resolves deterministically instead of being silently dropped.
-// Documented aliases, one comment each:
+// Collision audit (W6-P, across the full src/ export surface, ~570 names):
+// exactly three clashes. Star-exports carry every module's public surface;
+// each clashing name is ALSO re-exported explicitly below (explicit re-exports
+// beat star exports in both TypeScript and the ESM spec — verified against
+// tsc 5.7 + esbuild), so every clash resolves deterministically instead of
+// being silently dropped. Documented aliases, one comment each:
 //   - RUN_PHASES / RunPhase: state.ts's §5.1 step phases (8 statuses, aligned
 //     1:1 with agent_runs.status / db RUN_PHASES) keep the canonical names;
 //     budgets-service/tracker-factory.js phases — the §5.2 budget-counted kinds
@@ -21,23 +22,29 @@
 //     rides as CriticIssue.
 //
 // Flagged error codes NOT added here (errors.ts is W1-P's; add-only): wave-6
-// modules left swap-point constants for two AgentErrorCodes that are absent
-// from the catalog, and flip the moment errors.ts adopts them —
-//   repair/planner.js  REPAIR_PLAN_INVALID_CODE (= "plan_invalid" today)
+// modules left swap-point constants for AgentErrorCodes that are absent from
+// the catalog, and flip the moment errors.ts adopts them —
+//   repair/planner.js       REPAIR_PLAN_INVALID_CODE (= "plan_invalid" today)
 //     → future code "repair_plan_invalid" (W6-F flag: errors.ts owner adds the
 //       code + its AGENT_TO_WIRE_ERROR_CODE row and flips the constant);
-//   critic/service.js  CRITIC_TOOL_FAILURE_CODE (= "tool_retry_exhausted" today)
-//     → future code "critique_unavailable" (W6-E flag, same adoption steps).
-// Both constants are public here via their modules' star-exports; no
+//   critic/service.js       CRITIC_TOOL_FAILURE_CODE (= "tool_retry_exhausted"
+//     today) → future code "critique_unavailable" (W6-E flag, same steps);
+//   classifier/classifier.js CHAT_EDIT_INVALID_CODE (= "plan_invalid" today)
+//     → same family, flips with the repair code or on its own row.
+// All three constants are public here via their modules' star-exports; no
 // index-aux.ts was needed — the three type/value clashes above resolve inline.
-// tests/barrel.test.ts pins the swap-point values so the flip is a visible,
+// tests/barrel.test.ts pins the swap-point values so each flip is a visible,
 // test-breaking change for whoever adopts the codes.
 //
-// Extension points (checked against `ls src/` at assembly time): the wave-6
-// dirs run-state/, guards/ and classifier/ (RunStateMachine,
-// CancellationCoordinator, ChatEditClassifier) had NOT landed when this barrel
-// was assembled; their owners add one `export * from "./<dir>/index.js"` line
-// (collision-check first) plus a tests/barrel.test.ts row when they do.
+// Extension points (checked against `ls src/` + git status at assembly time):
+//   - guards/ (W6-K: injection.ts + tool-gate.ts, ToolCallGate) landed
+//     MID-ASSEMBLY and was still being written — NOT wired here yet; its
+//     index.ts notes it is collision-checked, so the owner adds
+//     `export * from "./guards/index.js"` + a tests/barrel.test.ts row when
+//     injection.ts is whole.
+//   - run-state/ (RunStateMachine, CancellationCoordinator) had not landed at
+//     all; same one-line convention when it does.
+// Each wave-6 owner collision-checks before their module goes public here.
 
 // --- W1 core (W1-P budgets/models/plan/state/errors/events, W2-P eventbus) -----
 export * from "./budgets.js";
@@ -50,7 +57,7 @@ export * from "./state.js";
 
 // --- wave-6 services (owners: W6-A planner, W6-B executor, W6-C observer,
 // --- W6-D validator, W6-E critic, W6-F repair, W6-G budgets-service,
-// --- W6-H router, W6-I transactions) --------------------------------------------
+// --- W6-H router, W6-I transactions, W6-J classifier) ----------------------------
 export * from "./planner/index.js";
 export * from "./executor/index.js";
 export * from "./observer/context.js";
@@ -65,6 +72,8 @@ export * from "./budgets-service/tracker-factory.js";
 export * from "./budgets-service/settlement.js";
 export * from "./transactions/index.js";
 export * from "./router/index.js";
+export * from "./classifier/classifier.js";
+export * from "./classifier/prompt.js";
 
 // --- star-export collision disambiguation (explicit beats star) ----------------
 // (1) RUN_PHASES / RunPhase — state.ts's §5.1 phases stay canonical:
