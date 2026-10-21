@@ -4,31 +4,32 @@
 //
 // Sources:
 //  - GET /v1/workspaces/:id/members (W4-E, admin+) — authoritative roles +
-//    joined dates. Viewers/editors receive a typed forbidden envelope; the
-//    table then degrades to the Better Auth directory (any member can read
-//    it) so the roster stays visible, with management actions hidden.
-//  - GET /v1/workspaces/:id/invites (W4-E, admin+) + POST invites: the token
-//    is returned in-band until the email wave (TODO(email), routes/
+//    joined dates. Viewers/editors receive a typed 403 envelope; the table
+//    then degrades to the Better Auth directory (any member can read it) so
+//    the roster stays visible, with management actions hidden.
+//  - GET /v1/workspaces/:id/invites (admin+) + POST invites (§13.1): the
+//    token is returned in-band until the email wave (TODO(email), routes/
 //    workspaces.ts) — after creating an invite the UI shows the /invite/:id
 //    accept link with a copy affordance, so the flow works without email.
 //
-// Actions and their server-side enforcement (§15.2 "UI hiding is not
-// enforcement" — every control below is a convenience, never the guard):
-//  - role change: Better Auth updateMemberRole — plugin enforces member:update
-//    (admin+) and owner protections; owner rows render read-only (transfer is
-//    not offered);
+// Actions and their server-side enforcement (§15.2: "UI hiding is not
+// enforcement" — every disabled control here is convenience, never the guard):
+//  - role change: Better Auth updateMemberRole — the plugin enforces
+//    member:update (admin+) plus owner protections; owner rows render
+//    read-only (ownership transfer is not offered);
 //  - remove: DELETE /v1/workspaces/:id/members/:userId — admin+; the gateway
-//    protects the last owner (409 conflict envelope, W4-E);
-//  - invite/cancel: POST/DELETE invites — admin+.
+//    protects the last owner (409 conflict envelope, W4-E removeMember);
+//  - invite/cancel: POST / DELETE invites — admin+.
 //
-// A11y: the roster is a real <table> with a scoped caption + column headers;
+// A11y: the roster is a real <table> with a caption + scoped column headers;
 // role selects are native <select> labelled per row; inline confirms and
-// error envelopes ride role="alert"/aria-live regions.
+// error envelopes ride role="alert" / aria-live regions.
 
 import { Badge, Button, Input, Label, useFieldIds } from "@studio/ui";
 import { Copy, Trash2, UserPlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSession } from "@/hooks/use-session";
+import { isApiError } from "@/lib/api";
 import {
   INVITABLE_ROLE_OPTIONS,
   ROLE_DESCRIPTIONS,
@@ -44,11 +45,12 @@ import {
   useMembers,
   useRemoveMember,
   type MemberRow,
+  type SettingsError,
   type WorkspaceRole,
 } from "./use-settings";
 
 // ---------------------------------------------------------------------------
-// Props
+// Props + small helpers
 // ---------------------------------------------------------------------------
 
 export interface MembersTableProps {
@@ -62,6 +64,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** Masked fallback when no display name/email exists for a member row. */
 function maskedId(userId: string): string {
   return `member-${userId.slice(0, 8)}`;
+}
+
+function inviteAcceptLink(token: string): string {
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  return `${origin}/invite/${encodeURIComponent(token)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +89,7 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
   const cancelInvite = useCancelInvite(workspaceId);
 
   // Roster: the gateway list is authoritative (admin+); directory rows fill
-  // display names and double as the viewer/editor fallback when the list
+  // display names and double as the viewer/editor fallback when the members
   // endpoint answers 403.
   const rows = useMemo<readonly MemberRow[] | null>(() => {
     if (members.data !== undefined) {
@@ -101,9 +108,9 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
     return null;
   }, [members.data, directory.data]);
 
-  const listForbidden =
-    members.isError && toSettingsError(members.error).code === "forbidden";
+  const listForbidden = members.isError && isApiError(members.error) && members.error.status === 403;
   const listError = members.isError ? toSettingsError(members.error) : null;
+  const directoryError = directory.isError ? toSettingsError(directory.error) : null;
 
   const ownerCount = rows?.filter((row) => isWorkspaceOwner(row.role)).length ?? 0;
   const lastOwnerProtected = ownerCount === 1;
@@ -115,41 +122,16 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
           Managing members requires the admin role. Permissions are enforced server-side (§15.2) —
           you have the <strong>{role}</strong> role, so the roster is read-only for you.
         </p>
-      ) : listForbidden && rows !== null ? null : (
+      ) : (
         <p className="rounded-md border border-border bg-surface-muted p-3 text-sm text-muted-foreground">
           Roles: viewer (read + comment), editor (runs + commands), admin (members + invites),
-          owner (delete). Changing a role updates access on the member&apos;s next request.
+          owner (delete). A changed role applies on the member&apos;s next request. Ownership
+          transfer is not offered here.
         </p>
       )}
 
       {/* Roster */}
-      {rows === null ? (
-        listError !== null && rows === null && !listForbidden ? (
-          <div role="alert" className="flex flex-col gap-2 rounded-md border border-border bg-surface-muted p-4 text-sm">
-            <p className="font-medium">{listError.message}</p>
-            <p className="text-xs text-muted-foreground">
-              {listError.hint === undefined ? `Code: ${listError.code}` : listError.hint}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                void members.refetch();
-              }}
-              className="w-fit border-border"
-            >
-              Try again
-            </Button>
-          </div>
-        ) : (
-          <div aria-busy="true" className="flex flex-col gap-2">
-            <div className="h-9 rounded-md bg-surface-muted" />
-            <div className="h-9 rounded-md bg-surface-muted" />
-            <div className="h-9 rounded-md bg-surface-muted" />
-          </div>
-        )
-      ) : (
+      {rows !== null ? (
         <table className="w-full border-collapse text-sm">
           <caption className="sr-only">
             Members of this workspace — name, email, role and join date.
@@ -161,7 +143,7 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
               <th scope="col" className="py-2 pr-3 font-medium">Role</th>
               <th scope="col" className="py-2 pr-3 font-medium">Joined</th>
               <th scope="col" className="py-2 font-medium">
-                <span className="sr-only">Actions</span>
+                <span className="sr-only">Remove member</span>
                 <span aria-hidden="true">Remove</span>
               </th>
             </tr>
@@ -177,10 +159,13 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
                 changePending={
                   changeRole.isPending && changeRole.variables?.memberId === row.id
                 }
-                removePending={
-                  removeMember.isPending && removeMember.variables === row.userId
+                removePending={removeMember.isPending && removeMember.variables === row.userId}
+                rowError={
+                  (changeRole.error !== null && changeRole.variables?.memberId === row.id) ||
+                  (removeMember.error !== null && removeMember.variables === row.userId)
+                    ? toSettingsError(changeRole.error ?? removeMember.error)
+                    : null
                 }
-                error={changeRole.error ?? removeMember.error}
                 onRoleChange={(nextRole) => {
                   changeRole.mutate({ memberId: row.id, role: nextRole });
                 }}
@@ -191,22 +176,57 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
             ))}
           </tbody>
         </table>
-      )}
-
-      {/* Row-level error envelopes (role change / remove) */}
-      {(changeRole.error !== null || removeMember.error !== null) &&
-      rows !== null &&
-      changeRole.variables === undefined &&
-      removeMember.variables === undefined ? (
-        <div role="alert" className="rounded-md border border-border bg-surface-muted p-3 text-sm">
-          <p className="font-medium">{toSettingsError(changeRole.error ?? removeMember.error).message}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {listError === null
-              ? "The server refused this change — roles and removals are enforced server-side (§15.2)."
-              : undefined}
+      ) : listForbidden ? (
+        directoryError !== null ? (
+          <div role="alert" className="flex flex-col gap-2 rounded-md border border-border bg-surface-muted p-4 text-sm">
+            <p className="font-medium">{directoryError.message}</p>
+            <p className="text-xs text-muted-foreground">
+              The member roster could not be loaded for your role.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void directory.refetch();
+              }}
+              className="w-fit border-border"
+            >
+              Try again
+            </Button>
+          </div>
+        ) : (
+          <div aria-busy="true" className="flex flex-col gap-2">
+            <div className="h-9 rounded-md bg-surface-muted" />
+            <div className="h-9 rounded-md bg-surface-muted" />
+            <div className="h-9 rounded-md bg-surface-muted" />
+          </div>
+        )
+      ) : listError !== null ? (
+        <div role="alert" className="flex flex-col gap-2 rounded-md border border-border bg-surface-muted p-4 text-sm">
+          <p className="font-medium">{listError.message}</p>
+          <p className="text-xs text-muted-foreground">
+            {listError.hint === undefined ? `Code: ${listError.code}` : listError.hint}
           </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              void members.refetch();
+            }}
+            className="w-fit border-border"
+          >
+            Try again
+          </Button>
         </div>
-      ) : null}
+      ) : (
+        <div aria-busy="true" className="flex flex-col gap-2">
+          <div className="h-9 rounded-md bg-surface-muted" />
+          <div className="h-9 rounded-md bg-surface-muted" />
+          <div className="h-9 rounded-md bg-surface-muted" />
+        </div>
+      )}
 
       {/* Invite form (admin+) */}
       {canManage ? (
@@ -227,10 +247,10 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
         />
       ) : null}
 
-      {/* Pending invites (admin+) */}
+      {/* Invites (admin+) */}
       {canManage && invites.data !== undefined ? (
-        <section aria-labelledby="pending-invites-heading" className="flex flex-col gap-2">
-          <h3 id="pending-invites-heading" className="text-sm font-semibold text-foreground">
+        <section aria-labelledby="invites-heading" className="flex flex-col gap-2">
+          <h3 id="invites-heading" className="text-sm font-semibold text-foreground">
             Invites
           </h3>
           {invites.data.length === 0 ? (
@@ -250,11 +270,7 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
                   </Badge>
                   <Badge
                     variant="outline"
-                    className={
-                      invite.status === "pending"
-                        ? "border-border bg-surface-muted text-muted-foreground"
-                        : "border-border text-muted-foreground opacity-60"
-                    }
+                    className="border-border bg-surface-muted text-muted-foreground"
                   >
                     {invite.status}
                   </Badge>
@@ -268,7 +284,9 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
                         type="button"
                         variant="ghost"
                         size="sm"
-                        disabled={cancelInvite.isPending && cancelInvite.variables === invite.token}
+                        disabled={
+                          cancelInvite.isPending && cancelInvite.variables === invite.token
+                        }
                         onClick={() => {
                           cancelInvite.mutate(invite.token);
                         }}
@@ -282,9 +300,14 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
               ))}
             </ul>
           )}
+          {cancelInvite.error === null ? null : (
+            <p role="alert" className="text-xs text-red-600">
+              {toSettingsError(cancelInvite.error).message}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
-            Invite links accept only the invited email, expire, and can be cancelled here
-            (§13.1). Email delivery is coming — until then, share the link directly.
+            Invite links accept only the invited email and expire (§13.1). Email delivery is
+            coming — until then, share the link directly.
           </p>
         </section>
       ) : null}
@@ -292,13 +315,8 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
   );
 }
 
-function inviteAcceptLink(token: string): string {
-  const origin = typeof window === "undefined" ? "" : window.location.origin;
-  return `${origin}/invite/${encodeURIComponent(token)}`;
-}
-
 // ---------------------------------------------------------------------------
-// Rows
+// One roster row (own component — stable hook order, per-row confirm state)
 // ---------------------------------------------------------------------------
 
 function MemberTableRow({
@@ -308,7 +326,7 @@ function MemberTableRow({
   lastOwnerProtected,
   changePending,
   removePending,
-  error,
+  rowError,
   onRoleChange,
   onRemove,
 }: {
@@ -318,25 +336,21 @@ function MemberTableRow({
   readonly lastOwnerProtected: boolean;
   readonly changePending: boolean;
   readonly removePending: boolean;
-  readonly error: unknown;
+  readonly rowError: SettingsError | null;
   readonly onRoleChange: (role: "admin" | "editor" | "viewer") => void;
   readonly onRemove: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const isOwnerRow = isWorkspaceOwner(row.role);
-  const rowError = error === null ? null : toSettingsError(error);
+  const displayName = row.name ?? maskedId(row.userId);
 
   return (
     <>
       <tr className="border-b border-border align-middle">
         <td className="py-2.5 pr-3">
-          <span className="flex flex-col">
-            <span className="font-medium">
-              {row.name ?? maskedId(row.userId)}
-              {isSelf ? (
-                <span className="ml-1 text-xs text-muted-foreground">(you)</span>
-              ) : null}
-            </span>
+          <span className="font-medium">
+            {displayName}
+            {isSelf ? <span className="ml-1 text-xs text-muted-foreground">(you)</span> : null}
           </span>
         </td>
         <td className="py-2.5 pr-3 text-muted-foreground">
@@ -351,6 +365,7 @@ function MemberTableRow({
                   ? "border-border bg-accent/15 text-accent capitalize"
                   : "border-border capitalize"
               }
+              title={ROLE_DESCRIPTIONS[row.role]}
             >
               {row.role}
             </Badge>
@@ -359,29 +374,25 @@ function MemberTableRow({
             ) : null}
           </span>
           {isOwnerRow ? null : (
-            <label className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="sr-only">
-                Change role for {(row.name ?? maskedId(row.userId)) as string}
-              </span>
-              <select
-                value={row.role}
-                disabled={!canManage || changePending}
-                onChange={(event) => {
-                  onRoleChange(event.target.value as "admin" | "editor" | "viewer");
-                }}
-                className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground disabled:opacity-50"
-              >
-                <option value="admin">Admin</option>
-                <option value="editor">Editor</option>
-                <option value="viewer">Viewer</option>
-              </select>
-            </label>
+            <select
+              value={row.role}
+              aria-label={`Change role for ${displayName}`}
+              disabled={!canManage || changePending}
+              onChange={(event) => {
+                onRoleChange(event.target.value as "admin" | "editor" | "viewer");
+              }}
+              className="mt-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground disabled:opacity-50"
+            >
+              <option value="admin">Admin</option>
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+            </select>
           )}
         </td>
         <td className="py-2.5 pr-3 text-muted-foreground">{formatDate(row.joinedAt)}</td>
         <td className="py-2.5">
           {!canManage || isOwnerRow ? (
-            <span className="text-xs text-muted-foreground opacity-60" title={ROLE_DESCRIPTIONS[row.role]}>
+            <span className="text-xs text-muted-foreground opacity-60">
               {isOwnerRow ? "Protected" : "—"}
             </span>
           ) : confirming ? (
@@ -412,7 +423,7 @@ function MemberTableRow({
               type="button"
               variant="ghost"
               size="icon"
-              aria-label={`Remove ${(row.name ?? maskedId(row.userId)) as string} from the workspace`}
+              aria-label={`Remove ${displayName} from the workspace`}
               onClick={() => {
                 setConfirming(true);
               }}
@@ -427,7 +438,7 @@ function MemberTableRow({
         <tr>
           <td colSpan={5} className="pb-2">
             <p role="alert" className="text-xs text-red-600">
-              {rowError.message}
+              {rowError.hint === undefined ? rowError.message : `${rowError.message} ${rowError.hint}`}
             </p>
           </td>
         </tr>
@@ -447,7 +458,7 @@ function InviteForm({
   onInvite,
 }: {
   readonly pending: boolean;
-  readonly error: { readonly code: string; readonly message: string; readonly hint?: string } | null;
+  readonly error: SettingsError | null;
   readonly created: { readonly email: string; readonly link: string } | null;
   readonly onInvite: (email: string, role: "admin" | "editor" | "viewer") => void;
 }) {
@@ -472,8 +483,8 @@ function InviteForm({
           Invite a teammate
         </h3>
         <p className="text-xs text-muted-foreground">
-          The invite lands in their email — pending the email wave, the accept link is shown here
-          right after you send it.
+          The invite is emailed — pending the email wave, the accept link is shown here right
+          after you send it.
         </p>
       </div>
       <div className="flex flex-wrap items-end gap-3">
@@ -483,7 +494,7 @@ function InviteForm({
             id={ids.inputId}
             type="email"
             value={email}
-            placeholder="teammate@studio.example"
+            placeholder="teammate@example.com"
             autoComplete="off"
             aria-invalid={emailInvalid}
             aria-describedby={emailInvalid ? ids.errorId : undefined}
@@ -540,7 +551,7 @@ function InviteForm({
         >
           <p className="font-medium">Invited {created.email}</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Share this one-time accept link (visible until email delivery lands):
+            Share this accept link (shown here until email delivery lands):
           </p>
           <div className="mt-2 flex items-center gap-2">
             <Input
@@ -568,12 +579,16 @@ function CopyLinkButton({ link }: { readonly link: string }) {
       type="button"
       variant="outline"
       size="sm"
-      aria-label={copied ? "Link copied" : "Copy link"}
+      aria-label={copied ? "Link copied" : "Copy invite link"}
       onClick={() => {
         void navigator.clipboard
           ?.writeText(link)
-          .then(() => setCopied(true))
-          .catch(() => setCopied(false));
+          .then(() => {
+            setCopied(true);
+          })
+          .catch(() => {
+            setCopied(false);
+          });
       }}
       className="border-border"
     >

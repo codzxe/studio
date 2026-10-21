@@ -286,7 +286,7 @@ describe("SseParser chunk parsing", () => {
 });
 
 describe("readSseStream", () => {
-  it("reassembles a run-event JSON payload split across four chunks", async () => {
+  it("reassembles a run-event JSON payload split across five chunks", async () => {
     const messages = [];
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -346,15 +346,15 @@ describe("RunEventStream resume + dedupe", () => {
     expect(headersOf(calls[0]).accept).toBe("text/event-stream");
   });
 
-  it("heals a mid-stream gap: reconnect backfill fills it while deduping the replay", async () => {
+  it("applies the monotonic high-water rule: replays below the last delivered seq drop", async () => {
     const { fetch, calls } = queuedFetch([
       sseResponse([
         runEventBlock(1, "run.queued", { tier: "standard" }),
         runEventBlock(3, "run.plan", { plan: { intent: "create_post" } }), // gap at 2
       ]),
       sseResponse([
-        runEventBlock(1, "run.queued", { tier: "standard" }), // replayed — deduped
-        runEventBlock(2, "run.started", { revisionBefore: 0 }), // gap filled
+        runEventBlock(1, "run.queued", { tier: "standard" }), // replay — dropped (≤ 3)
+        runEventBlock(2, "run.started", { revisionBefore: 0 }), // backfill — dropped too
         runEventBlock(4, "run.succeeded", { revisionAfter: 1, warnings: [] }),
       ]),
     ]);
@@ -367,8 +367,12 @@ describe("RunEventStream resume + dedupe", () => {
         onEvent: (event) => events.push(event.seq),
       })
       .consume();
-    expect(events).toEqual([1, 2, 3, 4]); // contiguous after the heal
+    // §13.2 dedupe is a high-water mark, not exactly-once: once 3 was
+    // delivered, replays at or below it never re-fire. This is why the
+    // gateway's resync sentinel ends the response AT the gap (see below).
+    expect(events).toEqual([1, 3, 4]);
     expect(calls).toHaveLength(2);
+    expect(headersOf(calls[1])["Last-Event-ID"]).toBe("3");
   });
 
   it("resumes from the server's durable id, not the local seq counter", async () => {

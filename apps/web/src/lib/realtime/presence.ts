@@ -438,8 +438,10 @@ class ChannelRoster {
   }
 
   /**
-   * Wholesale replace (heartbeat roster / presence() refresh): emits one
-   * update per join/leave delta, then a terminal `sync` with the new roster.
+   * Wholesale replace (heartbeat roster / presence() refresh). The FIRST
+   * snapshot is a pure `sync` — people who were already viewing must not
+   * fire "joined" toasts (§19: presence, not noise). Later replaces diff by
+   * member id and emit one update per join/leave delta + a terminal `sync`.
    */
   replace(entries: readonly RosterEntry[]): readonly PresenceUpdate[] {
     const before = this.list();
@@ -447,7 +449,7 @@ class ChannelRoster {
     for (const entry of entries) {
       after.push(entry.member);
     }
-    const diff = diffMembers(before, after);
+    const diff = this.seenSnapshot ? diffMembers(before, after) : { joins: [], leaves: [] };
     const updates: PresenceUpdate[] = [];
     for (const member of diff.leaves) {
       updates.push({
@@ -469,6 +471,7 @@ class ChannelRoster {
       });
     }
     updates.push({ channel: this.channel, roster, delta: { type: "sync" } });
+    this.seenSnapshot = true;
     return updates;
   }
 
