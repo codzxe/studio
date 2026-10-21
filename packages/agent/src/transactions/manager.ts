@@ -513,8 +513,10 @@ export class TransactionManager {
     });
     if (!appended.ok) {
       // The engine transaction IS open, so the caller must roll the run back —
-      // register the run first so rollback(runId) can reach the engine.
-      this.#register({ runId, documentId, transactionId, revisionBefore, seq });
+      // register the run first so rollback(runId) can reach the engine. The marker
+      // never landed (seam contract: a throw means the row was not persisted), so the
+      // seq stays put and the rollback marker can reuse it without a log gap.
+      this.#register({ runId, documentId, transactionId, revisionBefore, seq }, false);
       return transactionErr("wal_append_failed", appended.message, {
         hint:
           "The engine transaction opened but its begin marker is not durable; roll the " +
@@ -523,7 +525,7 @@ export class TransactionManager {
       });
     }
 
-    this.#register({ runId, documentId, transactionId, revisionBefore, seq });
+    this.#register({ runId, documentId, transactionId, revisionBefore, seq }, true);
     return transactionOk({ transactionId, revisionBefore, seq });
   }
 
@@ -805,27 +807,32 @@ export class TransactionManager {
 
   // --- internals -----------------------------------------------------------
 
-  #register(input: {
-    runId: string;
-    documentId: string;
-    transactionId: number;
-    revisionBefore: number;
-    seq: number;
-  }): void {
+  #register(
+    input: {
+      runId: string;
+      documentId: string;
+      transactionId: number;
+      revisionBefore: number;
+      seq: number;
+    },
+    markerDurable: boolean,
+  ): void {
     const txn: RunTransaction = {
       runId: input.runId,
       documentId: input.documentId,
       transactionId: input.transactionId,
       revisionBefore: input.revisionBefore,
       lastRevision: input.revisionBefore,
-      nextSeq: input.seq + 1,
+      nextSeq: markerDurable ? input.seq + 1 : input.seq,
       lastSeq: input.seq,
       commandCount: 0,
       state: "open",
     };
     this.#runs.set(input.runId, txn);
     this.#openByDocument.set(input.documentId, input.runId);
-    this.#docNextSeq.set(input.documentId, input.seq + 1);
+    if (markerDurable) {
+      this.#docNextSeq.set(input.documentId, input.seq + 1);
+    }
   }
 
   #releaseDocument(txn: RunTransaction): void {

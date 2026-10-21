@@ -205,21 +205,15 @@ describe("context: cacheablePrefix (§5.4 items 1-3 only)", () => {
     const before = ctx.assembleContext(BASE_INPUT);
     const after = ctx.assembleContext({
       ...BASE_INPUT,
-      documentSummary: {
-        revision: BASE_INPUT.documentSummary
-          ? (BASE_INPUT.documentSummary as { revision: number }).revision + 1
-          : undefined,
-        canvas: CANVAS,
-        layers: twelveLayers(),
-      } as DocumentSummaryInput,
+      documentSummary: { revision: 4, canvas: CANVAS, layers: twelveLayers() },
     });
     expect(after.cacheablePrefix).toBe(before.cacheablePrefix);
     expect(after.messages.slice(0, 3)).toEqual(before.messages.slice(0, 3));
     // Section 4 DID change (the model must see the new revision)…
     expect(after.sections[3]?.content).not.toBe(before.sections[3]?.content);
-    expect((JSON.parse(after.sections[3]?.content ?? "{}") as Record<string, unknown>).revision).toBe(
-      4,
-    );
+    expect(
+      (JSON.parse(after.sections[3]?.content ?? "{}") as Record<string, unknown>).revision,
+    ).toBe(4);
   });
 
   it("also holds for the compact (pre-compacted string) arm", () => {
@@ -287,8 +281,9 @@ describe("context: cacheablePrefix (§5.4 items 1-3 only)", () => {
   it("presence is part of the cached bytes (omitting style_guide shifts the prefix)", () => {
     const ctx = assembler();
     const base = ctx.assembleContext(BASE_INPUT).cacheablePrefix;
-    const { styleGuide: _omitted, ...withoutStyleGuide } = BASE_INPUT;
-    expect(ctx.assembleContext(withoutStyleGuide).cacheablePrefix).not.toBe(base);
+    expect(
+      ctx.assembleContext({ ...BASE_INPUT, styleGuide: undefined }).cacheablePrefix,
+    ).not.toBe(base);
   });
 
   it("is deterministic across instances and key insertion order", () => {

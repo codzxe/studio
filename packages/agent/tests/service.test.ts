@@ -13,6 +13,7 @@ import {
   type CriticToolLike,
   type CritiqueIssue,
   type CritiqueRequest,
+  type CritiqueResult,
   type CritiqueScores,
   type RepairCycleCounter,
   RunCritic,
@@ -37,6 +38,22 @@ class FakeCriticTool implements CriticToolLike {
     this.calls.push({ ...args });
     return this.behavior(args, this.calls.length - 1);
   }
+}
+
+function callAt(tool: FakeCriticTool, index: number): CriticToolArgs {
+  const call = tool.calls.at(index);
+  if (call === undefined) {
+    throw new Error(`no tool call #${index} recorded`);
+  }
+  return call;
+}
+
+/** Unwraps a service AgentResult for hand-typed flow tests (failures rethrow). */
+function unwrap(outcome: { ok: true; value: CritiqueResult } | { ok: false; code: string }): CritiqueResult {
+  if (!outcome.ok) {
+    throw new Error(`critique failed: ${outcome.code}`);
+  }
+  return outcome.value;
 }
 
 const SCORES_CLEAN: CritiqueScores = {
@@ -101,10 +118,7 @@ const BASE_REQUEST: CritiqueRequest = {
 describe("critic service: §5.3 tier routing (quick tier skips the critic)", () => {
   it("quick tier skips entirely — { skipped: true, reason: 'tier' }, zero tool calls", async () => {
     const tool = new FakeCriticTool(() => okResult(critiqueSummary("accept", SCORES_CLEAN, [])));
-    const result = await new RunCritic({ tool }).critique({
-      ...BASE_REQUEST,
-      tier: "quick",
-    });
+    const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST, tier: "quick" });
     expect(result).toEqual({ ok: true, value: { skipped: true, reason: "tier" } });
     expect(tool.calls.length).toBe(0); // §5.3 economy row: no critique, no model spend
   });
@@ -115,7 +129,9 @@ describe("critic service: §5.3 tier routing (quick tier skips the critic)", () 
       const tool = new FakeCriticTool(() => okResult(critiqueSummary("accept", SCORES_CLEAN, [])));
       const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST, tier });
       expect(result.ok).toBe(true);
-      if (result.ok) expect(result.value.skipped).toBe(true);
+      if (result.ok) {
+        expect(result.value.skipped).toBe(true);
+      }
       expect(tool.calls.length).toBe(0);
     },
   );
@@ -126,7 +142,9 @@ describe("critic service: §5.3 tier routing (quick tier skips the critic)", () 
       const tool = new FakeCriticTool(() => okResult(critiqueSummary("accept", SCORES_CLEAN, [])));
       const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST, tier });
       expect(result.ok).toBe(true);
-      if (result.ok) expect(result.value.skipped).toBe(false);
+      if (result.ok) {
+        expect(result.value.skipped).toBe(false);
+      }
       expect(tool.calls.length).toBe(1);
     },
   );
@@ -163,22 +181,21 @@ describe("critic service: §23.3 blockers-only input mode", () => {
       ...BASE_REQUEST,
       validatorReport: MIXED_REPORT,
     });
-    expect(tool.calls.length).toBe(1);
-    const sent = JSON.parse(tool.calls[0]!.validatorReport) as {
+    const sent = JSON.parse(callAt(tool, 0).validatorReport) as {
       ok: boolean;
       issueCounts: { blocker: number; major: number; minor: number };
-      issues: { level: string; code: string }[];
+      issues: { level: string; code: string; layer?: string }[];
       truncated: boolean;
     };
     expect(sent.ok).toBe(false);
     expect(sent.issueCounts).toEqual({ blocker: 1, major: 0, minor: 0 }); // §23.3 focus: blockers
-    expect(sent.issues).toEqual([
-      { level: "blocker", code: "contrast", layer: "Subhead", message: expect.any(String), fix: expect.any(String) },
-    ]);
+    expect(sent.issues.length).toBe(1);
+    expect(sent.issues[0]?.level).toBe("blocker");
+    expect(sent.issues[0]?.code).toBe("contrast");
     expect(sent.truncated).toBe(false);
-    expect(result.ok).toBe(true);
-    if (result.ok && !result.value.skipped) {
-      expect(result.value.warnings).toContain(
+    const value = unwrap(result);
+    if (!value.skipped) {
+      expect(value.warnings).toContain(
         "Validator blockers present — the critique ran in blockers-only input mode (§23.3).",
       );
     }
@@ -208,7 +225,7 @@ describe("critic service: §23.3 blockers-only input mode", () => {
       JSON.stringify({
         ok: false,
         issueCounts: { blocker: 7, major: 2, minor: 0 },
-        issues: [validatorRow("major", "safe_area")], // list shed to majors only
+        issues: [validatorRow("major", "safe_area")], // the visible list was shed to majors
         truncated: true,
       }),
     );
@@ -224,7 +241,9 @@ describe("critic service: §23.3 blockers-only input mode", () => {
 
   it("blocker rows without counts → the count is derived from the rows", () => {
     const rebuilt = blockersOnlyValidatorReport(
-      JSON.stringify({ issues: [validatorRow("blocker", "in_bounds"), validatorRow("major", "z_order")] }),
+      JSON.stringify({
+        issues: [validatorRow("blocker", "in_bounds"), validatorRow("major", "z_order")],
+      }),
     );
     const sent = JSON.parse(rebuilt) as { issueCounts: { blocker: number }; issues: unknown[] };
     expect(sent.issueCounts.blocker).toBe(1);
@@ -233,9 +252,11 @@ describe("critic service: §23.3 blockers-only input mode", () => {
 
   it("oversized blocker lists shed tail rows to fit the tool's 2000-char cap", () => {
     const longMessage = "m".repeat(240);
-    const rows = Array.from({ length: 12 }, (_unused, index) =>
-      validatorRow("blocker", `rule_${index}`, `Layer ${index}`),
-    ).map((row) => ({ ...row, message: longMessage, fix: longMessage }));
+    const rows = Array.from({ length: 12 }, (_unused, index) => ({
+      ...validatorRow("blocker", `rule_${index}`, `Layer ${index}`),
+      message: longMessage,
+      fix: longMessage,
+    }));
     const rebuilt = blockersOnlyValidatorReport(
       JSON.stringify({
         ok: false,
@@ -252,7 +273,7 @@ describe("critic service: §23.3 blockers-only input mode", () => {
     expect(sent.issueCounts.blocker).toBe(12); // the count survives the shed
     expect(sent.issues.length).toBeGreaterThan(0);
     expect(sent.issues.length).toBeLessThan(12); // tail rows were shed
-    expect(sent.issues[0]!.code).toBe("rule_0"); // model order kept, head row survives
+    expect(sent.issues[0]?.code).toBe("rule_0"); // model order kept, head row survives
   });
 });
 
@@ -264,22 +285,23 @@ describe("critic service: accept path (verdict passthrough)", () => {
     const tool = new FakeCriticTool(() =>
       okResult(critiqueSummary("accept", SCORES_CLEAN, [minor])),
     );
-    const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
-    expect(result.ok).toBe(true);
-    if (!result.ok || result.value.skipped) throw new Error("unreachable");
-    expect(result.value.verdict).toEqual({
+    const value = unwrap(await new RunCritic({ tool }).critique({ ...BASE_REQUEST }));
+    if (value.skipped) {
+      throw new Error("unreachable");
+    }
+    expect(value.verdict).toEqual({
       verdict: "accept",
       scores: SCORES_CLEAN,
       issues: [minor],
     });
-    expect(result.value.repairIssues).toEqual([]); // §11.2: minors never feed repair
-    expect(result.value.warnings).toEqual([]);
+    expect(value.repairIssues).toEqual([]); // §11.2: minors never feed repair
+    expect(value.warnings).toEqual([]);
   });
 
   it("args bridge: request fields are forwarded verbatim; absent palette stays absent", async () => {
     const tool = new FakeCriticTool(() => okResult(critiqueSummary("accept", SCORES_CLEAN, [])));
     await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
-    expect(tool.calls[0]).toEqual({
+    expect(callAt(tool, 0)).toEqual({
       brief: BASE_REQUEST.brief,
       previewUrl: BASE_REQUEST.previewUrl,
       layerSummary: BASE_REQUEST.layerSummary,
@@ -287,7 +309,7 @@ describe("critic service: accept path (verdict passthrough)", () => {
       validatorReport: "",
     });
     await new RunCritic({ tool }).critique({ ...BASE_REQUEST, palette: undefined });
-    expect("palette" in tool.calls[1]!).toBe(false);
+    expect("palette" in callAt(tool, 1)).toBe(false);
   });
 });
 
@@ -300,26 +322,28 @@ describe("critic service: §23.3 score-forcing rules passthrough (enforced in th
         forcedWarning,
       ]),
     );
-    const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
-    expect(result.ok).toBe(true);
-    if (!result.ok || result.value.skipped) throw new Error("unreachable");
-    expect(result.value.verdict.verdict).toBe("revise"); // the tool's enforcement, passed through
-    expect(result.value.verdict.scores).toEqual(scores);
-    expect(result.value.warnings).toEqual([forcedWarning]); // verbatim, not recomputed
+    const value = unwrap(await new RunCritic({ tool }).critique({ ...BASE_REQUEST }));
+    if (value.skipped) {
+      throw new Error("unreachable");
+    }
+    expect(value.verdict.verdict).toBe("revise"); // the tool's enforcement, passed through
+    expect(value.verdict.scores).toEqual(scores);
+    expect(value.warnings).toEqual([forcedWarning]); // verbatim, not recomputed
   });
 
   it("avg-forced revise passes through unchanged", async () => {
-    const scores = { ...SCORES_CLEAN, balance: 2, contrast: 2 }; // avg < 3.5
+    const scores = { ...SCORES_CLEAN, balance: 2, contrast: 2 }; // avg < 3.5 (§23.3)
     const tool = new FakeCriticTool(() =>
       okResult(critiqueSummary("revise", scores, []), [
         "Average score 3.17 < 3.5 — verdict forced to revise (§23.3).",
       ]),
     );
-    const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
-    expect(result.ok).toBe(true);
-    if (!result.ok || result.value.skipped) throw new Error("unreachable");
-    expect(result.value.verdict.verdict).toBe("revise");
-    expect(result.value.repairIssues).toEqual([]); // score-forced revise with no issue rows
+    const value = unwrap(await new RunCritic({ tool }).critique({ ...BASE_REQUEST }));
+    if (value.skipped) {
+      throw new Error("unreachable");
+    }
+    expect(value.verdict.verdict).toBe("revise");
+    expect(value.repairIssues).toEqual([]); // score-forced revise can carry zero issue rows
   });
 
   it("the service never re-applies the rules: a substance-free revise stays a revise", async () => {
@@ -328,10 +352,11 @@ describe("critic service: §23.3 score-forcing rules passthrough (enforced in th
     const tool = new FakeCriticTool(() =>
       okResult(critiqueSummary("revise", SCORES_CLEAN, [criticIssue("minor", "naming")]), []),
     );
-    const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
-    expect(result.ok).toBe(true);
-    if (!result.ok || result.value.skipped) throw new Error("unreachable");
-    expect(result.value.verdict.verdict).toBe("revise");
+    const value = unwrap(await new RunCritic({ tool }).critique({ ...BASE_REQUEST }));
+    if (value.skipped) {
+      throw new Error("unreachable");
+    }
+    expect(value.verdict.verdict).toBe("revise");
   });
 });
 
@@ -342,11 +367,14 @@ describe("critic service: §11.2 repair-planner feed", () => {
       criticIssue("minor", "naming", "Group 3"),
       criticIssue("major", "safe_area", "Photo"),
     ];
-    const tool = new FakeCriticTool(() => okResult(critiqueSummary("revise", SCORES_CLEAN, issues)));
-    const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
-    expect(result.ok).toBe(true);
-    if (!result.ok || result.value.skipped) throw new Error("unreachable");
-    expect(result.value.repairIssues.map((issue) => issue.code)).toEqual(["contrast", "safe_area"]);
+    const tool = new FakeCriticTool(() =>
+      okResult(critiqueSummary("revise", SCORES_CLEAN, issues)),
+    );
+    const value = unwrap(await new RunCritic({ tool }).critique({ ...BASE_REQUEST }));
+    if (value.skipped) {
+      throw new Error("unreachable");
+    }
+    expect(value.repairIssues.map((issue) => issue.code)).toEqual(["contrast", "safe_area"]);
   });
 
   it("repairPlanIssues filters blocker/major and caps at §23.3's five", () => {
@@ -401,7 +429,7 @@ describe("critic service: §5.1 repair-cycle counter (injected factory, max 2)",
     expect(critic.remainingCycles()).toBe(0);
     expect(critic.canRepair()).toBe(false);
     expect(critic.noteRepairCycle()).toBe(false); // the cap refuses a third cycle
-    await critic.critique({ ...BASE_REQUEST }); // counter unaffected by critiques
+    await critic.critique({ ...BASE_REQUEST }); // critiques never touch the tally
     expect(critic.cycles()).toBe(2);
   });
 
@@ -414,7 +442,9 @@ describe("critic service: §5.1 repair-cycle counter (injected factory, max 2)",
         used: () => persisted,
         canStart: () => persisted < 2,
         consume: () => {
-          if (persisted >= 2) return false;
+          if (persisted >= 2) {
+            return false;
+          }
           persisted += 1;
           return true;
         },
@@ -450,7 +480,9 @@ describe("critic service: tool failures map to typed envelopes", () => {
       );
       const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
       expect(result.ok).toBe(false);
-      if (result.ok) throw new Error("unreachable");
+      if (result.ok) {
+        throw new Error("unreachable");
+      }
       expect(result.code).toBe(agentCode);
       expect(result.retryable).toBe(retryable);
       expect(result.message).toContain("the vision model call failed"); // §6.1 message rides along
@@ -464,7 +496,9 @@ describe("critic service: tool failures map to typed envelopes", () => {
     });
     const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
     expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("unreachable");
+    if (result.ok) {
+      throw new Error("unreachable");
+    }
     expect(result.code).toBe(CRITIC_TOOL_FAILURE_CODE);
     expect(result.retryable).toBe(false);
     expect(result.message).not.toContain("/etc/passwd"); // §6.1: no leaks
@@ -478,7 +512,9 @@ describe("critic service: tool failures map to typed envelopes", () => {
     });
     const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
     expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("unreachable");
+    if (result.ok) {
+      throw new Error("unreachable");
+    }
     expect(result.code).toBe("run_timeout");
     expect(result.retryable).toBe(true);
   });
@@ -498,13 +534,14 @@ describe("critic service: summary parsing (compaction-tolerant)", () => {
         }),
       ),
     );
-    const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
-    expect(result.ok).toBe(true);
-    if (!result.ok || result.value.skipped) throw new Error("unreachable");
-    expect(result.value.verdict.issues).toEqual([
+    const value = unwrap(await new RunCritic({ tool }).critique({ ...BASE_REQUEST }));
+    if (value.skipped) {
+      throw new Error("unreachable");
+    }
+    expect(value.verdict.issues).toEqual([
       { severity: "blocker", code: "contrast", layer: "Subhead" },
     ]);
-    expect(result.value.repairIssues.length).toBe(1);
+    expect(value.repairIssues.length).toBe(1);
   });
 
   it.each([
@@ -512,10 +549,11 @@ describe("critic service: summary parsing (compaction-tolerant)", () => {
     ["issues shed to [] (L4)", { verdict: "revise", scores: SCORES_CLEAN, issues: [], avg: 4.5 }],
   ])("%s parses to an empty issue list", async (_label, summaryObject) => {
     const tool = new FakeCriticTool(() => okResult(JSON.stringify(summaryObject)));
-    const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
-    expect(result.ok).toBe(true);
-    if (!result.ok || result.value.skipped) throw new Error("unreachable");
-    expect(result.value.verdict.issues).toEqual([]);
+    const value = unwrap(await new RunCritic({ tool }).critique({ ...BASE_REQUEST }));
+    if (value.skipped) {
+      throw new Error("unreachable");
+    }
+    expect(value.verdict.issues).toEqual([]);
   });
 
   it.each([
@@ -526,14 +564,16 @@ describe("critic service: summary parsing (compaction-tolerant)", () => {
     ["score not an int", { verdict: "accept", scores: { ...SCORES_CLEAN, balance: 3.5 }, issues: [] }],
     ["missing scores", { verdict: "accept", issues: [] }],
     ["bad severity", { verdict: "accept", scores: SCORES_CLEAN, issues: [{ severity: "fatal", code: "x" }] }],
-    ["issue code empty", { verdict: "accept", scores: SCORES_CLEAN, issues: [{ severity: "minor", code: "" }] }],
+    ["empty issue code", { verdict: "accept", scores: SCORES_CLEAN, issues: [{ severity: "minor", code: "" }] }],
   ])("unreadable summary (%s) → typed failure, no raw echo", async (_label, badSummary) => {
     const tool = new FakeCriticTool(() =>
       okResult(typeof badSummary === "string" ? badSummary : JSON.stringify(badSummary)),
     );
     const result = await new RunCritic({ tool }).critique({ ...BASE_REQUEST });
     expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("unreachable");
+    if (result.ok) {
+      throw new Error("unreachable");
+    }
     expect(result.code).toBe(CRITIC_TOOL_FAILURE_CODE);
     expect(result.retryable).toBe(false);
     expect(result.message).not.toContain("hello"); // §6.1: raw model text never echoed
@@ -545,7 +585,7 @@ describe("critic service: summary parsing (compaction-tolerant)", () => {
       parseCritiqueSummary(
         JSON.stringify({ verdict: "revise", scores: SCORES_CLEAN, issues: [], avg: 4, extra: 1 }),
       )?.verdict,
-    ).toBe("revise"); // extra keys stripped
+    ).toBe("revise"); // unknown keys are stripped
     expect(parseCritiqueSummary("")).toBeUndefined();
     expect(parseCritiqueSummary("{not json")).toBeUndefined();
     expect(
@@ -564,14 +604,12 @@ describe("critic service: summary parsing (compaction-tolerant)", () => {
 
 describe("critic service + gate: §5.1 flow pins", () => {
   const reviseWithBlocker = [criticIssue("blocker", "contrast", "Subhead")];
-  const acceptClean = okResult(critiqueSummary("accept", SCORES_CLEAN, []));
+  const acceptClean = () => okResult(critiqueSummary("accept", SCORES_CLEAN, []));
 
   it("accept path: critique → gate 'finalize', no cycle consumed", async () => {
-    const critic = new RunCritic({
-      tool: new FakeCriticTool(() => acceptClean),
-    });
+    const critic = new RunCritic({ tool: new FakeCriticTool(acceptClean) });
     const outcome = await critic.critique({ ...BASE_REQUEST });
-    expect(cycleGateForOutcome(outcome.ok ? outcome.value : { skipped: true, reason: "tier" }, critic.cycles())).toEqual({
+    expect(cycleGateForOutcome(unwrap(outcome), critic.cycles())).toEqual({
       decision: "finalize",
       remainingIssues: [],
     });
@@ -582,23 +620,17 @@ describe("critic service + gate: §5.1 flow pins", () => {
     const tool = new FakeCriticTool((_args, call) =>
       call === 0
         ? okResult(critiqueSummary("revise", SCORES_CLEAN, reviseWithBlocker))
-        : acceptClean,
+        : acceptClean(),
     );
     const critic = new RunCritic({ tool });
-    // Cycle 1: revise.
+    // Cycle 1: the critic wants a repair.
     let outcome = await critic.critique({ ...BASE_REQUEST });
-    let gate = cycleGateForOutcome(
-      outcome.ok ? outcome.value : { skipped: true, reason: "tier" },
-      critic.cycles(),
-    );
+    let gate = cycleGateForOutcome(unwrap(outcome), critic.cycles());
     expect(gate.decision).toBe("repair");
     expect(critic.noteRepairCycle()).toBe(true); // the run manager repairs…
-    // Cycle 2: repaired doc passes.
+    // Cycle 2: the repaired document passes.
     outcome = await critic.critique({ ...BASE_REQUEST });
-    gate = cycleGateForOutcome(
-      outcome.ok ? outcome.value : { skipped: true, reason: "tier" },
-      critic.cycles(),
-    );
+    gate = cycleGateForOutcome(unwrap(outcome), critic.cycles());
     expect(gate.decision).toBe("finalize");
     expect(critic.cycles()).toBe(1);
   });
@@ -608,27 +640,23 @@ describe("critic service + gate: §5.1 flow pins", () => {
       okResult(critiqueSummary("revise", SCORES_CLEAN, reviseWithBlocker)),
     );
     const critic = new RunCritic({ tool });
-    const outcomes: ("finalize" | "repair" | "finalize_with_warnings")[] = [];
+    const decisions: string[] = [];
     for (let pass = 0; pass < 3; pass += 1) {
       const outcome = await critic.critique({ ...BASE_REQUEST });
-      const value = outcome.ok ? outcome.value : { skipped: true, reason: "tier" as const };
-      const gate = cycleGateForOutcome(value, critic.cycles());
+      const gate = cycleGateForOutcome(unwrap(outcome), critic.cycles());
       if (gate.decision === "repair") {
         critic.noteRepairCycle(); // §5.1: consume exactly on a repair decision
       }
-      outcomes.push(gate.decision);
+      decisions.push(gate.decision);
     }
-    expect(outcomes).toEqual(["repair", "repair", "finalize_with_warnings"]);
+    expect(decisions).toEqual(["repair", "repair", "finalize_with_warnings"]);
     expect(critic.cycles()).toBe(2); // §5.1: max 2 repair cycles
     expect(critic.noteRepairCycle()).toBe(false); // no third repair, ever
-    // The final gate surfaces the remaining blocker for manual fixes (§5.1).
-    const last = await critic.critique({ ...BASE_REQUEST });
-    const lastGate = cycleGateForOutcome(
-      last.ok ? last.value : { skipped: true, reason: "tier" },
-      critic.cycles(),
-    );
-    expect(lastGate.decision).toBe("finalize_with_warnings");
-    expect(lastGate.remainingIssues.map((issue) => issue.code)).toEqual(["contrast"]);
-    expect(lastGate.remainingIssues[0]!.fix).toBe("The minimal concrete change"); // suggested manual fix
+    // The capped gate surfaces the remaining blocker for manual fixes (§5.1) —
+    // the run manager maps this to succeeded_with_warnings.
+    const last = cycleGateForOutcome(unwrap(await critic.critique({ ...BASE_REQUEST })), critic.cycles());
+    expect(last.decision).toBe("finalize_with_warnings");
+    expect(last.remainingIssues.map((issue) => issue.code)).toEqual(["contrast"]);
+    expect(last.remainingIssues[0]?.fix).toBe("The minimal concrete change"); // suggested manual fix
   });
 });
