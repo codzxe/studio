@@ -217,7 +217,7 @@ if [ "$OPT_SKIP_ENGINE" = "1" ]; then
 elif [ "$OPT_ENGINE" != "1" ] && [ "$MOCK_ENGINE_ON" != "1" ]; then
   skip_check "engine smoke" "optional — pass --engine or set ENGINE_MOCK=1/MOCK_ENGINE=1 to enable"
 elif [ -z "$ENGINE_SMOKE_CMD" ]; then
-  skip_check "engine smoke" "mock engine enabled but ENGINE_SMOKE_CMD not wired — see the 'ENGINE SMOKE WIRING' section in this file's header"
+  skip_check "engine smoke" "enabled but ENGINE_SMOKE_CMD not wired — see the 'ENGINE SMOKE WIRING' section in this file's header"
 else
   detail="session.list via scratch serve"
   if [ "$ROUNDTRIP" = "1" ]; then

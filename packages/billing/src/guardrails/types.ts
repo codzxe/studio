@@ -22,7 +22,7 @@
 // its nearest existing §13.3 code so the gateway error-mapper can render these
 // failures TODAY without edits outside this module.
 
-import { type ErrorCode } from "@studio/config";
+import type { ErrorCode } from "@studio/config";
 
 /**
  * Guardrail error codes (§13.3 shape; add-only, never rename/reuse).
@@ -135,11 +135,7 @@ const ORG_ID_MAX = 200;
 
 /** Shape-only org id check (plans.ts trialOrgSchema precedent; uuid-ness is the HTTP boundary's job). */
 export function isValidOrgId(orgId: string): boolean {
-  return (
-    typeof orgId === "string" &&
-    orgId.length >= ORG_ID_MIN &&
-    orgId.length <= ORG_ID_MAX
-  );
+  return typeof orgId === "string" && orgId.length >= ORG_ID_MIN && orgId.length <= ORG_ID_MAX;
 }
 
 /**

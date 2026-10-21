@@ -116,7 +116,16 @@ CURRENT="startup"
 on_err() {
   local code="$1" line="$2"
   err "deploy FAILED during '${CURRENT}' (line ${line}, exit ${code})"
-  rollback_help
+  case "$CURRENT" in
+    startup|pre-flight|images)
+      # nothing has been mutated yet — the running stack is untouched
+      warn "no mutations happened; fix the failure above and re-run"
+      ;;
+    *)
+      # migrate/up/smoke/state — the DB and/or the stack may be mid-change
+      rollback_help
+      ;;
+  esac
   exit "$code"
 }
 trap 'on_err $? "$LINENO"' ERR

@@ -33,18 +33,18 @@ import {
   CREDIT_PRICE_USD_CENTS,
   DAILY_CAP_ALERT_FRACTION,
   DAILY_SPEND_CAP_MULTIPLIER,
-  type PlanId,
   PLAN_ID_SCHEMA,
+  type PlanId,
   TRIAL_CREDITS,
 } from "@studio/config";
 
 import {
+  type GuardrailResult,
   formatUsdCents,
   guardrailErr,
   guardrailOk,
   isValidOrgId,
   sanitizeCounter,
-  type GuardrailResult,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -118,11 +118,9 @@ export function dailySpendCapUsdCents(planCode: string): GuardrailResult<number>
   if (alias !== undefined) {
     return guardrailOk(PLAN_DAILY_SPEND_CAP_USD_CENTS[alias]);
   }
-  return guardrailErr(
-    "validation_failed",
-    "Unknown plan code.",
-    { hint: `Expected a @studio/config plan id, an alias, or "trial".` },
-  );
+  return guardrailErr("validation_failed", "Unknown plan code.", {
+    hint: `Expected a @studio/config plan id, an alias, or "trial".`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -264,17 +262,13 @@ export class DailySpendGuard {
     const resetAtIso = nextUtcMidnightIso(nowMs);
 
     if (spent >= capUsdCents) {
-      return guardrailErr(
-        "cost_cap_reached",
-        "This workspace reached its daily spend cap.",
-        {
-          hint: `Daily spend is ${formatUsdCents(spent)} of the ${formatUsdCents(
-            capUsdCents,
-          )} cap. New runs resume at ${resetAtIso}.`,
-          retryable: true,
-          resetAtIso,
-        },
-      );
+      return guardrailErr("cost_cap_reached", "This workspace reached its daily spend cap.", {
+        hint: `Daily spend is ${formatUsdCents(spent)} of the ${formatUsdCents(
+          capUsdCents,
+        )} cap. New runs resume at ${resetAtIso}.`,
+        retryable: true,
+        resetAtIso,
+      });
     }
 
     return guardrailOk({

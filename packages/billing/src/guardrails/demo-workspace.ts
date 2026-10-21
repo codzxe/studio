@@ -28,14 +28,14 @@
 // precedent — abuse protection must not turn a counter blip into a marketing
 // outage). The kill switch itself is env-parsed config, not a seam.
 
+import { nextUtcMidnightIso } from "./daily-caps.js";
 import {
+  type GuardrailResult,
   guardrailErr,
   guardrailOk,
   isValidOrgId,
   sanitizeCounter,
-  type GuardrailResult,
 } from "./types.js";
-import { nextUtcMidnightIso } from "./daily-caps.js";
 
 // ---------------------------------------------------------------------------
 // The shared demo workspace (§16.2)

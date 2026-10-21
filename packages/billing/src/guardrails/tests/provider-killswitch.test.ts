@@ -3,31 +3,26 @@
 // env drain list, same-class failover, class-wide disable → failover class
 // → typed providers_disabled, and fail-open seams.
 
-import {
-  MODEL_PROVIDER_CLASSES,
-  RUN_TIER_IDS,
-  type ModelProviderClass,
-} from "@studio/config";
+import { MODEL_PROVIDER_CLASSES, type ModelProviderClass, RUN_TIER_IDS } from "@studio/config";
 import { describe, expect, it } from "vitest";
 import {
   CIRCUIT_CLASS_FAILOVER,
   CIRCUIT_CLASS_PROVIDERS,
+  DISABLED_PROVIDERS_ENV_VAR,
   PROVIDER_CIRCUIT_CLASSES,
   ProviderHealthPolicy,
   TIER_CIRCUIT_CLASS,
   parseDisabledProviders,
-  DISABLED_PROVIDERS_ENV_VAR,
 } from "../provider-killswitch.js";
-import {
-  InMemoryProviderHealthSeams,
-  expectErr,
-  expectOk,
-} from "./fakes.js";
+import { InMemoryProviderHealthSeams, expectErr, expectOk } from "./fakes.js";
 
 const TEXT_PROVIDERS = CIRCUIT_CLASS_PROVIDERS.text;
 
 function makePolicy(
-  init: { dbDisabled?: readonly ModelProviderClass[]; envDisabled?: readonly ModelProviderClass[] } = {},
+  init: {
+    dbDisabled?: readonly ModelProviderClass[];
+    envDisabled?: readonly ModelProviderClass[];
+  } = {},
 ): { policy: ProviderHealthPolicy; seams: InMemoryProviderHealthSeams } {
   const seams = new InMemoryProviderHealthSeams();
   for (const provider of init.dbDisabled ?? []) {
@@ -145,8 +140,12 @@ describe("single-provider disable → same-class failover (§21 drill)", () => {
 
   it("selectProvider honours a healthy preferred provider and fails over past a disabled one", async () => {
     const { policy } = makePolicy({ dbDisabled: ["openai"] });
-    expect(expectOk(await policy.selectProvider("image_final", { preferred: "openai" }))).toBe("gemini");
-    expect(expectOk(await policy.selectProvider("image_final", { preferred: "gemini" }))).toBe("gemini");
+    expect(expectOk(await policy.selectProvider("image_final", { preferred: "openai" }))).toBe(
+      "gemini",
+    );
+    expect(expectOk(await policy.selectProvider("image_final", { preferred: "gemini" }))).toBe(
+      "gemini",
+    );
   });
 
   it("enabledProviders keeps §5.3 preference order after filtering", async () => {

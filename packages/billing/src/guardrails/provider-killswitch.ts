@@ -32,17 +32,13 @@
 
 import {
   MODEL_PROVIDER_CLASSES,
-  RUN_TIER_ID_SCHEMA,
   type ModelProviderClass,
+  RUN_TIER_ID_SCHEMA,
   type RunTierId,
 } from "@studio/config";
 import { z } from "zod";
 
-import {
-  guardrailErr,
-  guardrailOk,
-  type GuardrailResult,
-} from "./types.js";
+import { type GuardrailResult, guardrailErr, guardrailOk } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Circuit classes (§5.3 routing families)
@@ -100,7 +96,9 @@ export const TIER_CIRCUIT_CLASS: Readonly<Record<RunTierId, ProviderCircuitClass
  * HD image finals degrade to the standard draft pipeline (§5.2 rows 6-7);
  * text and drafts have no cross-class substitute, so they are rejected.
  */
-export const CIRCUIT_CLASS_FAILOVER: Readonly<Record<ProviderCircuitClass, ProviderCircuitClass | null>> = {
+export const CIRCUIT_CLASS_FAILOVER: Readonly<
+  Record<ProviderCircuitClass, ProviderCircuitClass | null>
+> = {
   text: null,
   image_draft: null,
   image_final: "image_draft",
@@ -213,7 +211,9 @@ export class ProviderHealthPolicy {
   }
 
   /** Enabled providers of a circuit class, in §5.3 preference order. */
-  async enabledProviders(circuitClass: ProviderCircuitClass): Promise<readonly ModelProviderClass[]> {
+  async enabledProviders(
+    circuitClass: ProviderCircuitClass,
+  ): Promise<readonly ModelProviderClass[]> {
     const enabled: ModelProviderClass[] = [];
     for (const provider of CIRCUIT_CLASS_PROVIDERS[circuitClass]) {
       if (await this.isProviderEnabled(provider)) {
@@ -299,7 +299,8 @@ export class ProviderHealthPolicy {
       }
     }
 
-    const viaFailover = failoverClass !== null ? `, and its failover class (${failoverClass}) is also disabled` : "";
+    const viaFailover =
+      failoverClass !== null ? `, and its failover class (${failoverClass}) is also disabled` : "";
     return guardrailErr(
       "providers_disabled",
       `Every provider of the ${circuitClass} class is disabled.`,

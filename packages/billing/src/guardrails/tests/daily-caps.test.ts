@@ -12,8 +12,8 @@ import {
 } from "@studio/config";
 import { describe, expect, it } from "vitest";
 import {
-  DailySpendGuard,
   type DailyCapFacts,
+  DailySpendGuard,
   EXPECTED_COGS_SHARE,
   PLAN_DAILY_SPEND_CAP_USD_CENTS,
   TRIAL_DAILY_SPEND_CAP_USD_CENTS,
@@ -24,23 +24,16 @@ import {
   nextUtcMidnightIso,
   utcDayKey,
 } from "../daily-caps.js";
-import {
-  DEMO_ORG_ID,
-  guardrailCodeToErrorCode,
-  GUARDRAIL_ERROR_CODES,
-} from "../index.js";
-import {
-  InMemoryDailySpendSeams,
-  atUtc,
-  expectErr,
-  expectOk,
-} from "./fakes.js";
+import { DEMO_ORG_ID, GUARDRAIL_ERROR_CODES, guardrailCodeToErrorCode } from "../index.js";
+import { InMemoryDailySpendSeams, atUtc, expectErr, expectOk } from "./fakes.js";
 
 const ORG = "org_1";
 const CAP = PLAN_DAILY_SPEND_CAP_USD_CENTS.starter; // 600 = $6.00/day
 
-function makeGuard(init: { spend?: number; disabled?: boolean } = {}):
-  { guard: DailySpendGuard; seams: InMemoryDailySpendSeams } {
+function makeGuard(init: { spend?: number; disabled?: boolean } = {}): {
+  guard: DailySpendGuard;
+  seams: InMemoryDailySpendSeams;
+} {
   const seams = new InMemoryDailySpendSeams(atUtc("2027-03-14"));
   if (init.spend !== undefined) {
     seams.spend.set(ORG, init.spend);

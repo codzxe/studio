@@ -10,10 +10,10 @@ import {
   DEMO_ORG_ID,
   DEMO_RUNS_PER_DAY,
   DemoWorkspacePolicy,
+  type WatermarkLike,
   exportWatermarkFor,
   isDemoWorkspace,
   parseDemoEnabled,
-  type WatermarkLike,
 } from "../demo-workspace.js";
 import { InMemoryDemoSeams, expectErr, expectOk } from "./fakes.js";
 
