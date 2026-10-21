@@ -1,0 +1,47 @@
+# studio-worker.service — Studio render/agent worker (queues via Valkey, §7.6).
+#
+# INSTALL: see infra/systemd/README.md.
+# WIRED IN THE RENDER WAVE: @studio/worker does not exist yet; this unit is a
+# template with the same contract as the other two services.
+
+[Unit]
+Description=Studio — render/agent worker (Valkey queues)
+Documentation=https://github.com/codzxe/studio
+After=network-online.target postgresql.service valkey.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=studio
+Group=studio
+WorkingDirectory=/opt/studio
+EnvironmentFile=/etc/studio/.env
+Environment=NODE_ENV=production
+Environment=HOME=/opt/studio
+ExecStart=/usr/bin/pnpm --filter @studio/worker start
+Restart=always
+RestartSec=3
+
+# ── hardening (§15.2) ─────────────────────────────────────────────────────────
+NoNewPrivileges=yes
+ProtectSystem=strict
+# Workers write preview/render artifacts via the storage driver (local .local
+# scratch in this template; S3/MinIO in production).
+ReadWritePaths=/opt/studio/.local
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,209 @@
+# infra/compose/docker-compose.yml — Studio full stack (PRODUCT_ARCHITECTURE §14.2).
+#
+# Split into two profiles:
+#   * default (no profile): the data plane — db, valkey, minio, minio-init,
+#     litellm. `docker compose up -d` boots exactly these; usable today.
+#   * `apps` profile: web, gateway, worker, caddy — the app images. Their
+#     Dockerfiles land with the app/render waves; until then `--profile apps`
+#     builds will fail on the missing contexts (by design — see README.md).
+#
+# Usage (from this directory, see README.md for the full runbook):
+#   docker compose --env-file ../../.env up -d
+#   docker compose --env-file ../../.env --profile apps up -d --build
+#
+# env_file injects the APP's 34-var contract into app containers; the
+# --env-file flag additionally powers ${VAR} interpolation below (compose-only
+# deployment knobs: POSTGRES_PASSWORD, SITE_ADDR, ACME_EMAIL, LITELLM_DATABASE_URL —
+# these are NOT part of the app env contract).
+name: studio
+
+services:
+  # ── data plane ────────────────────────────────────────────────────────────
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-studio} # EDIT-ME in production
+      POSTGRES_DB: studio
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro # 01-litellm.sql etc.
+    ports:
+      - "127.0.0.1:5432:5432" # host access for pnpm db:migrate / db:seed / pg_dump
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio -d studio"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [studio]
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [studio]
+
+  minio:
+    image: minio/minio:latest # EDIT-ME: pin a RELEASE.<date> tag for beta
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "127.0.0.1:9000:9000" # S3 API (matches S3_ENDPOINT=http://127.0.0.1:9000)
+      - "127.0.0.1:9001:9001" # MinIO console
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [studio]
+
+  # One-shot: create the app bucket on FIRST bring-up (idempotent).
+  minio-init:
+    image: minio/mc
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-studio-local}
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+    entrypoint:
+      [
+        "/bin/sh", "-c",
+        "mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" && mc mb --ignore-existing \"local/$$S3_BUCKET\" && echo \"bucket $$S3_BUCKET ready\"",
+      ]
+    networks: [studio]
+
+  litellm:
+    image: ghcr.io/berriai/litellm-database:main
+    restart: unless-stopped
+    command: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+    volumes:
+      - ../litellm/config.yaml:/etc/litellm/config.yaml:ro
+    environment:
+      # Single-box beta: the app's platform key IS the LiteLLM master key.
+      LITELLM_MASTER_KEY: ${LITELLM_API_KEY:?set LITELLM_API_KEY in .env}
+      # LiteLLM budget/spend DB — separate database in the same instance
+      # (created by db-init/01-litellm.sql on first boot).
+      LITELLM_DATABASE_URL: ${LITELLM_DATABASE_URL:-postgres://studio:${POSTGRES_PASSWORD:-studio}@db:5432/litellm}
+      STORE_MODEL_IN_DB: "True"
+      # Provider keys for the EDIT-ME model aliases (infra/litellm/config.yaml):
+      # add the ones you use — deployment secret, NOT part of the app env contract.
+      # - OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4000:4000" # matches LITELLM_BASE_URL=http://127.0.0.1:4000
+    networks: [studio]
+
+  # ── app plane (profile `apps` — Dockerfiles land with the app/render waves) ─
+  web:
+    profiles: [apps]
+    build:
+      context: ../.. # repo root (Next.js needs workspace sources to build)
+      dockerfile: apps/web/Dockerfile # TODO(app-wave): placeholder until the Dockerfile exists
+    restart: unless-stopped
+    env_file: [../../.env]
+    environment:
+      # In-network overrides of the .env 127.0.0.1 defaults (see README).
+      DATABASE_URL: postgres://studio:${POSTGRES_PASSWORD:-studio}@db:5432/studio
+      VALKEY_URL: redis://valkey:6379
+      S3_ENDPOINT: http://minio:9000
+      LITELLM_BASE_URL: http://litellm:4000
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks: [studio]
+
+  gateway:
+    profiles: [apps]
+    build:
+      context: ../..
+      dockerfile: services/gateway/Dockerfile # TODO(app-wave): placeholder until the Dockerfile exists
+    restart: unless-stopped
+    env_file: [../../.env]
+    environment:
+      DATABASE_URL: postgres://studio:${POSTGRES_PASSWORD:-studio}@db:5432/studio
+      VALKEY_URL: redis://valkey:6379
+      S3_ENDPOINT: http://minio:9000
+      LITELLM_BASE_URL: http://litellm:4000
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      litellm:
+        condition: service_started
+    networks: [studio]
+
+  worker:
+    profiles: [apps]
+    build:
+      context: ../..
+      dockerfile: services/worker/Dockerfile # WIRED IN THE RENDER WAVE — placeholder build context
+    restart: unless-stopped
+    env_file: [../../.env]
+    environment:
+      DATABASE_URL: postgres://studio:${POSTGRES_PASSWORD:-studio}@db:5432/studio
+      VALKEY_URL: redis://valkey:6379
+      S3_ENDPOINT: http://minio:9000
+      LITELLM_BASE_URL: http://litellm:4000
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks: [studio]
+
+  caddy:
+    profiles: [apps]
+    build:
+      context: ../caddy # editor dist must be staged there first (see caddy/Dockerfile)
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      SITE_ADDR: ${SITE_ADDR:-app.example.com} # EDIT-ME: beta domain
+      ACME_EMAIL: ${ACME_EMAIL:-ops@example.com} # EDIT-ME: TLS account email
+    depends_on:
+      web:
+        condition: service_started
+      gateway:
+        condition: service_started
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [studio]
+
+networks:
+  studio:
+    driver: bridge
+
+volumes:
+  pg-data:
+  valkey-data:
+  minio-data:
+  caddy-data:
+  caddy-config:
