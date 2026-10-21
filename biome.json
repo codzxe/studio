@@ -10,5 +10,5 @@
       "style": { "noNonNullAssertion": "error" }
     }
   },
-  "files": { "ignore": ["**/dist/**", "**/.next/**", "**/node_modules/**", "**/*.md", "**/fixtures/**"] }
+  "files": { "ignore": ["**/dist/**", "**/.next/**", "**/node_modules/**", "**/*.md", "**/fixtures/**", "archive/**", "editor/**", "**/target/**"] }
 }

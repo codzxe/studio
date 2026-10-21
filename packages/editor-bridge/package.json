@@ -1,0 +1,26 @@
+{
+  "name": "@studio/editor-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed window.effectcraft bridge for the frozen EffectCraft editor iframe (PRODUCT_ARCHITECTURE §6.2) + deterministic fake editor for tests and E2E fixtures.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fake": "./src/fake.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src tests",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@studio/contracts": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

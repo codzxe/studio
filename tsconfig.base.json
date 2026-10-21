@@ -16,13 +16,12 @@
     "isolatedModules": true,
     "paths": {
       "@studio/config": ["./packages/config/src/index.ts"],
+      "@studio/contracts": ["./packages/contracts/src/index.ts"],
+      "@studio/ui": ["./packages/ui/src/index.ts"],
+      "@studio/editor-bridge": ["./packages/editor-bridge/src/index.ts"],
       "@studio/db": ["./packages/db/src/index.ts"],
-      "@studio/engine-client": ["./packages/engine-client/src/index.ts"],
-      "@studio/storage": ["./packages/storage/src/index.ts"],
-      "@studio/tools": ["./packages/tools/src/index.ts"],
-      "@studio/agent": ["./packages/agent/src/index.ts"],
       "@studio/billing": ["./packages/billing/src/index.ts"],
-      "@studio/ui": ["./packages/ui/src/index.ts"]
+      "@studio/storage": ["./packages/storage/src/index.ts"]
     }
   }
 }
