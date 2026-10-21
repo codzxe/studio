@@ -27,6 +27,12 @@ const EDITOR_DEV_SERVER_URL =
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // The editor is served at `/editor/` (trailing slash). Next would otherwise
+  // 308 `/editor/` → `/editor`, which breaks the editor's relative asset URLs
+  // (`effectcraft_web_bg.wasm` resolves against `/editor` as a *file*, landing
+  // on `/effectcraft_web_bg.wasm`). Keeping both forms lets the iframe keep
+  // the trailing slash so every relative URL in the upstream dist works.
+  skipTrailingSlashRedirect: true,
   async headers() {
     return [
       {
@@ -55,6 +61,12 @@ const nextConfig: NextConfig = {
       return [];
     }
     return [
+      // Bare `/editor` and `/editor/` both resolve to the dist index so the
+      // iframe URL `/editor/?empty` boots correctly in dev.
+      {
+        source: "/editor",
+        destination: `${EDITOR_DEV_SERVER_URL}/`,
+      },
       {
         source: "/editor/:path*",
         destination: `${EDITOR_DEV_SERVER_URL}/:path*`,
