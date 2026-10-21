@@ -2,19 +2,19 @@
 // document-summary DELTA mode, and the cross-module §5.4 prefix assertion.
 import { describe, expect, it } from "vitest";
 import {
-  type ContextInput,
   ContextAssembler,
+  type ContextInput,
   canonicalStringify,
 } from "../src/observer/context.js";
 import {
   type LayerDelta,
   type Observation,
-  type PreviewReport,
-  type SnapshotReport,
-  type SnapshotLike,
-  type PreviewLike,
   type ObserverSeams,
   ObserverService,
+  type PreviewLike,
+  type PreviewReport,
+  type SnapshotLike,
+  type SnapshotReport,
   buildDeltaSummary,
   diffLayers,
   parseSummary,
@@ -131,10 +131,7 @@ describe("observer: full observations", () => {
   });
 
   it("explicit mode 'full' stays full even with a prior observation", async () => {
-    const summaries = [
-      summaryJson([layerRow("1")]),
-      summaryJson([layerRow("1"), layerRow("2")]),
-    ];
+    const summaries = [summaryJson([layerRow("1")]), summaryJson([layerRow("1"), layerRow("2")])];
     let call = 0;
     const seams = makeSeams(() => summaries[call] ?? "");
     const service = new ObserverService(seams);
@@ -225,9 +222,7 @@ describe("observer: delta mode", () => {
     const second = expectOk(await service.afterAction(DOC_A, { mode: "delta" }));
     expect(second.mode).toBe("full");
     expect(second.compactSummary).toBe("<still not json>");
-    expect(
-      second.warnings.some((w) => w.includes("no trackable layer rows")),
-    ).toBe(true);
+    expect(second.warnings.some((w) => w.includes("no trackable layer rows"))).toBe(true);
   });
 
   it("explicit 'delta' with a layers-less summary degrades to full + warning", async () => {
@@ -331,7 +326,7 @@ describe("observer: seam failures and degradation", () => {
   });
 
   it("malformed snapshot envelope → wiring error, not retryable", async () => {
-    const seams = makeSeams(() => ({ nonsense: true } as unknown as SnapshotReport));
+    const seams = makeSeams(() => ({ nonsense: true }) as unknown as SnapshotReport);
     const service = new ObserverService(seams);
     const result = await service.afterAction(DOC_A);
     expect(result.ok).toBe(false);

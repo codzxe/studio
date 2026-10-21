@@ -37,8 +37,8 @@ import {
   DOC_SUMMARY_CHAR_BUDGET,
   type Rec,
   asRecord,
-  capText,
   canonicalStringify,
+  capText,
   compareLayerIds,
   finalizeWarnings,
   isSafeContextUrl,
@@ -315,7 +315,12 @@ export class ObserverService {
           : "delta unavailable (summary carries no trackable layer rows); full summary emitted",
       );
     }
-    if (mode === "delta" && canDelta && prior?.layers !== undefined && parsed?.layers !== undefined) {
+    if (
+      mode === "delta" &&
+      canDelta &&
+      prior?.layers !== undefined &&
+      parsed?.layers !== undefined
+    ) {
       const delta = diffLayers(prior.layers, parsed.layers);
       if (delta.skipped > 0) {
         warnings.push(

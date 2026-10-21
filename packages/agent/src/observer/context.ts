@@ -212,9 +212,7 @@ function readCount(value: unknown): number | undefined {
 
 /** Document revision (engine u64; safe-int on the wire) or undefined. */
 export function readRevision(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : undefined;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 /**
@@ -235,12 +233,7 @@ export interface SummaryBounds {
   readonly height: number;
 }
 
-function compactBounds(
-  x: unknown,
-  y: unknown,
-  w: unknown,
-  h: unknown,
-): SummaryBounds | undefined {
+function compactBounds(x: unknown, y: unknown, w: unknown, h: unknown): SummaryBounds | undefined {
   if (
     typeof x !== "number" ||
     typeof y !== "number" ||
@@ -396,7 +389,11 @@ export interface BriefInput {
 /** §5.4 (6): the previous cycle's validator report + critic issues (repair phase). */
 export interface ValidatorReportInput {
   readonly ok: boolean;
-  readonly issueCounts: { readonly blocker: number; readonly major: number; readonly minor: number };
+  readonly issueCounts: {
+    readonly blocker: number;
+    readonly major: number;
+    readonly minor: number;
+  };
   readonly issues?: readonly unknown[];
   readonly criticIssues?: readonly unknown[];
   readonly truncated?: boolean;
@@ -521,7 +518,11 @@ function buildStyleGuide(value: StyleGuideInput, warnings: string[]): Rec | unde
   const fonts = Array.isArray(fontsRaw) ? readFonts(fontsRaw) : undefined;
   const tone = readString(record.tone, 1_000);
   // Warn only when something WAS there but nothing survived projection.
-  if (palette === undefined && paletteRecord !== undefined && Object.keys(paletteRecord).length > 0) {
+  if (
+    palette === undefined &&
+    paletteRecord !== undefined &&
+    Object.keys(paletteRecord).length > 0
+  ) {
     warnings.push("style guide: palette unreadable; omitted");
   }
   if (fonts === undefined && Array.isArray(fontsRaw) && fontsRaw.length > 0) {
@@ -640,7 +641,9 @@ export function compactLayerRows(
   if (skipped > 0) {
     warnings.push(`document summary: ${skipped} layer row(s) skipped (no usable id)`);
   }
-  projected.sort((a, b) => compareLayerIds(a.id, b.id) || compareStrings(a.name ?? "", b.name ?? ""));
+  projected.sort(
+    (a, b) => compareLayerIds(a.id, b.id) || compareStrings(a.name ?? "", b.name ?? ""),
+  );
   return projected;
 }
 
@@ -662,7 +665,9 @@ function readAttachments(value: unknown, warnings: string[]): readonly Rec[] | u
     if (Object.keys(attachment).length > 0) rows.push(attachment);
   }
   if (value.length > MAX_BRIEF_ATTACHMENTS) {
-    warnings.push(`brief: attachments limited to first ${MAX_BRIEF_ATTACHMENTS} of ${value.length}`);
+    warnings.push(
+      `brief: attachments limited to first ${MAX_BRIEF_ATTACHMENTS} of ${value.length}`,
+    );
   }
   if (droppedUrls > 0) {
     warnings.push(
@@ -681,9 +686,7 @@ function readPriorChat(value: unknown, warnings: string[]): readonly Rec[] | und
     const content = readString(row.content, 2_000);
     if (content === undefined) continue;
     turns.push(
-      row.role === "assistant"
-        ? { role: "assistant", content }
-        : { role: "user", content }, // anything else reads as the user's turn
+      row.role === "assistant" ? { role: "assistant", content } : { role: "user", content }, // anything else reads as the user's turn
     );
   }
   if (value.length > MAX_PRIOR_CHAT_TURNS) {
@@ -783,7 +786,8 @@ function buildValidatorReport(
   if (criticIssues !== undefined) payload.criticIssues = criticIssues;
   const truncated = readBool(record.truncated);
   if (truncated !== undefined) payload.truncated = truncated;
-  return payload;
+  // Both arms wrap under `report` — one stable shape for the model (§5.4 item 6).
+  return { report: payload };
 }
 
 // ---------------------------------------------------------------------------

@@ -9,9 +9,10 @@ import {
   type BriefChatTurnInput,
   CACHED_SECTION_IDS,
   CHARS_PER_TOKEN,
+  CONTEXT_SECTION_IDS,
+  ContextAssembler,
   type ContextInput,
   type ContextSectionId,
-  CONTEXT_SECTION_IDS,
   DEFAULT_SECTION_CHAR_BUDGETS,
   DOC_SUMMARY_CHAR_BUDGET,
   DOC_SUMMARY_TOKEN_BUDGET,
@@ -20,9 +21,8 @@ import {
   type StyleGuideInput,
   type TemplateManifestInput,
   type ValidatorReportInput,
-  ContextAssembler,
-  capText,
   canonicalStringify,
+  capText,
   defaultContextAssembler,
   estimateTokens,
   finalizeWarnings,
@@ -126,7 +126,10 @@ describe("context: canonicalStringify determinism", () => {
   });
 
   it("keeps array order (chat turns, layer rows) while sorting each row", () => {
-    const rows = [{ id: "2", name: "b" }, { id: "1", name: "a" }];
+    const rows = [
+      { id: "2", name: "b" },
+      { id: "1", name: "a" },
+    ];
     expect(canonicalStringify(rows)).toBe('[{"id":"2","name":"b"},{"id":"1","name":"a"}]');
   });
 
@@ -252,9 +255,9 @@ describe("context: cacheablePrefix (§5.4 items 1-3 only)", () => {
     const base = ctx.assembleContext(BASE_INPUT).cacheablePrefix;
 
     // Sections 4-6 are outside the prefix.
-    expect(ctx.assembleContext({ ...BASE_INPUT, brief: { prompt: "different" } }).cacheablePrefix).toBe(
-      base,
-    );
+    expect(
+      ctx.assembleContext({ ...BASE_INPUT, brief: { prompt: "different" } }).cacheablePrefix,
+    ).toBe(base);
     expect(
       ctx.assembleContext({
         ...BASE_INPUT,
@@ -263,9 +266,9 @@ describe("context: cacheablePrefix (§5.4 items 1-3 only)", () => {
     ).toBe(base);
 
     // Sections 1-3 are inside the prefix.
-    expect(ctx.assembleContext({ ...BASE_INPUT, system: "different prompt" }).cacheablePrefix).not.toBe(
-      base,
-    );
+    expect(
+      ctx.assembleContext({ ...BASE_INPUT, system: "different prompt" }).cacheablePrefix,
+    ).not.toBe(base);
     expect(
       ctx.assembleContext({
         ...BASE_INPUT,
@@ -283,9 +286,9 @@ describe("context: cacheablePrefix (§5.4 items 1-3 only)", () => {
   it("presence is part of the cached bytes (omitting style_guide shifts the prefix)", () => {
     const ctx = assembler();
     const base = ctx.assembleContext(BASE_INPUT).cacheablePrefix;
-    expect(
-      ctx.assembleContext({ ...BASE_INPUT, styleGuide: undefined }).cacheablePrefix,
-    ).not.toBe(base);
+    expect(ctx.assembleContext({ ...BASE_INPUT, styleGuide: undefined }).cacheablePrefix).not.toBe(
+      base,
+    );
   });
 
   it("is deterministic across instances and key insertion order", () => {
@@ -295,7 +298,11 @@ describe("context: cacheablePrefix (§5.4 items 1-3 only)", () => {
       priorValidatorReport: BASE_INPUT.priorValidatorReport,
       documentSummary: BASE_INPUT.documentSummary,
       templateManifest: MANIFEST,
-      styleGuide: { tone: "Warm, confident, editorial.", fonts: ["grotesk-sans", "display-serif"], palette: { ember: "#D96C3B", ink: "#3B2A20", cream: "#F4E7D3" } },
+      styleGuide: {
+        tone: "Warm, confident, editorial.",
+        fonts: ["grotesk-sans", "display-serif"],
+        palette: { ember: "#D96C3B", ink: "#3B2A20", cream: "#F4E7D3" },
+      },
       system: SYSTEM,
     });
     expect(right.cacheablePrefix).toBe(left.cacheablePrefix);
@@ -368,7 +375,11 @@ describe("context: 12-layer compaction table (§5.4 ≤4k tokens)", () => {
   it("poisoned fields never reach the model (pixel data, paths, internal ids)", () => {
     const assembled = assembler().assembleContext({
       system: SYSTEM,
-      documentSummary: { revision: 7, canvas: CANVAS, layers: ids.map((id) => layerRow(id, POISON)) },
+      documentSummary: {
+        revision: 7,
+        canvas: CANVAS,
+        layers: ids.map((id) => layerRow(id, POISON)),
+      },
     });
     const content = sectionOf(assembled, "document_summary").content;
     expect(content).not.toContain("base64");
@@ -391,7 +402,18 @@ describe("context: 12-layer compaction table (§5.4 ≤4k tokens)", () => {
       layers: { id: string }[];
     };
     expect(parsed.layers.map((row) => row.id)).toEqual([
-      "1", "2", "4", "5", "6", "7", "8", "9", "10", "11", "21", "100",
+      "1",
+      "2",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "21",
+      "100",
     ]);
   });
 
@@ -418,7 +440,13 @@ describe("context: 12-layer compaction table (§5.4 ≤4k tokens)", () => {
     const deltaSummary = canonicalStringify({
       revision: 8,
       canvas: CANVAS,
-      delta: { added: [], changed: [{ id: "2", name: "renamed" }], removed: [], unchanged: 11, total: 12 },
+      delta: {
+        added: [],
+        changed: [{ id: "2", name: "renamed" }],
+        removed: [],
+        unchanged: 11,
+        total: 12,
+      },
     });
     const assembled = assembler().assembleContext({
       system: SYSTEM,
@@ -451,7 +479,10 @@ describe("context: 12-layer compaction table (§5.4 ≤4k tokens)", () => {
     });
     const summary = sectionOf(assembled, "document_summary");
     expect(summary.chars).toBeLessThanOrEqual(400);
-    expect(summary.truncated).toBe(true);
+    // The row-prefix fit rebuilt the payload within budget — no byte clamp
+    // needed, so `truncated` (the hard-clamp flag) stays false; the warning
+    // is the canonical "what was cut" signal.
+    expect(summary.truncated).toBe(false);
     expect(warningText(assembled)).toMatch(/truncated to \d+ of 12 rows/);
     // Fitted content stays valid JSON (row-prefix truncation, not a byte slice).
     expect(() => JSON.parse(summary.content)).not.toThrow();
