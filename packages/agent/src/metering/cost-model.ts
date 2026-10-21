@@ -27,7 +27,7 @@
 //    The ×10 scaling removes the cache fraction's denominator; the +5e6 over 1e7
 //    pair is round-half-up to the nearest micro-USD (max error $0.0000005 per
 //    call, and the direction is fixed so sums never drift systematically).
-//    bigint is mandatory: a single frontier call reaches ~5×10^14 in the
+//    bigint is mandatory: a single frontier call reaches ~10^14 in the
 //    numerator (200k tokens × $50/M × 10), and per-day workspace rollups must
 //    never round through float64. Every bigint→number conversion at row time
 //    goes through `microToSafeNumber`, which refuses to exceed
@@ -295,7 +295,8 @@ export function resolveModelRates(env: ModelRatesEnv = process.env): ModelRatesT
         : {
             kind: "image",
             imageMicroUsd: usdToMicroExact(override.imageUsd),
-            imageHdMicroUsd: override.imageHdUsd == null ? null : usdToMicroExact(override.imageHdUsd),
+            imageHdMicroUsd:
+              override.imageHdUsd == null ? null : usdToMicroExact(override.imageHdUsd),
           };
   }
   return Object.freeze(merged);
@@ -368,14 +369,15 @@ export function computeCost(
     );
   }
   const rate = requireTextRate(input.model, rates);
-  // Single rational over a common denominator — see precision note 2.
-  //   numerator = 10·(in − cache)·rateIn + cache·rateIn + 10·out·rateOut
-  //   denominator = 10 × 1e6 = 1e7, round-half-up.
+  // Single rational over a common denominator — see precision note 2:
+  //   numerator   = 10·(in − cache)·rateIn + cache·rateIn + 10·out·rateOut
+  //   denominator = 10 × 1e6 = 1e7 (cache fold × micro-per-million), half-up.
+  const ten = CACHE_READ_PRICE_DENOMINATOR;
   const numerator =
-    10n * BigInt(tokensIn - cacheHits) * rate.inputMicroPerM +
+    ten * BigInt(tokensIn - cacheHits) * rate.inputMicroPerM +
     BigInt(cacheHits) * rate.inputMicroPerM +
-    10n * BigInt(tokensOut) * rate.outputMicroPerM;
-  const denominator = 10n * CACHE_READ_PRICE_DENOMINATOR * 1_000_000n;
+    ten * BigInt(tokensOut) * rate.outputMicroPerM;
+  const denominator = ten * 1_000_000n;
   return (numerator + denominator / 2n) / denominator;
 }
 
@@ -499,7 +501,9 @@ export function margin(costUsd: number, credits: number): MarginCheck {
     });
   }
   const cogsRatio = Number(costMicro) / Number(revenueMicro);
-  const grossMargin = 1 - cogsRatio;
+  // Derive grossMargin straight from the integer rational (rev − cost)/rev:
+  // deriving it as 1 − cogsRatio would compound float error at the band edges.
+  const grossMargin = Number(revenueMicro - costMicro) / Number(revenueMicro);
   const zone: MarginZone =
     grossMargin < GROSS_MARGIN_TARGET.min
       ? "below_target"

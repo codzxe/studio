@@ -122,7 +122,7 @@ export class RunUsage {
   private readonly models = new Map<string, ModelTally>();
   private readonly tools = new Map<string, ToolTally>();
   private readonly stepRows: StepUsageRow[] = [];
-  private openStep: StepUsage | null = null;
+  private currentStep: StepUsage | null = null;
 
   private tokensIn = 0;
   private tokensOut = 0;
@@ -170,10 +170,10 @@ export class RunUsage {
    * scope before closing the first is a wiring bug and fails fast.
    */
   openStep(meta: StepMeta): StepUsage {
-    if (this.openStep !== null) {
+    if (this.currentStep !== null) {
       throw new MeteringError(
         "invalid_usage",
-        `cannot open step ${meta.seq} while step ${this.openStep.seq} is still open`,
+        `cannot open step ${meta.seq} while step ${this.currentStep.seq} is still open`,
         "the run loop closes each step before starting the next",
       );
     }
@@ -184,21 +184,21 @@ export class RunUsage {
         "agent_steps.seq is 1-based (§12.1)",
       );
     }
-    this.openStep = new StepUsage(this, meta);
-    return this.openStep;
+    this.currentStep = new StepUsage(this, meta);
+    return this.currentStep;
   }
 
   /** Closes the open step and freezes its row. Returns the frozen StepUsageRow. */
   closeStep(step: StepUsage): StepUsageRow {
-    if (this.openStep !== step) {
+    if (this.currentStep !== step) {
       throw new MeteringError(
         "invalid_usage",
         `cannot close step ${step.seq}: it is not the open step`,
         "steps close in the order they open (§5.1 run timeline)",
       );
     }
-    this.openStep = null;
-    const row = step.toRow();
+    this.currentStep = null;
+    const row = step.close(); // latches closed, freezes the row
     this.stepRows.push(row);
     return row;
   }
@@ -287,7 +287,6 @@ export class StepUsage {
   readonly tool: string | null;
 
   private readonly owner: RunUsage;
-  private readonly tools = new Map<string, ToolTally>();
   private tokensIn = 0;
   private tokensOut = 0;
   private costMicro = 0n;
@@ -316,8 +315,9 @@ export class StepUsage {
   /** Records a tool invocation into the step (and the run's tool tally). */
   addToolCall(tool: string, call: ToolCallInput = {}): void {
     this.assertOpen();
+    // owner validates tool + durationMs and tallies the run-level §22 rows;
+    // agent_steps keeps single-tool columns, so the step only counts.
     this.owner.addToolCall(tool, call);
-    recordToolCall(this.tools, tool, call);
     this.toolCalls += 1;
     this.toolErrors += call.error ? 1 : 0;
     this.durationMs += call.durationMs ?? 0;
