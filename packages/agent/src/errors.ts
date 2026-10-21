@@ -15,13 +15,18 @@ import { z } from "zod";
 /**
  * Stable agent-internal error codes. Add-only: never rename or reuse.
  * `invalid_transition` supports the §5.1 state machine guard (typed error on
- * every illegal transition attempt); the other eight are the run-loop codes
- * from the W1-P task contract.
+ * every illegal transition attempt); the rest are the run-loop codes from
+ * the W1-P task contract plus the W10-F adoption (`repair_plan_invalid`,
+ * from the W6-F swap-point flag — add-only, never rename/reuse).
  */
 export const AGENT_ERROR_CODES = [
   // Planner output failed the §5.5 schema. §5.1: one retry with the validation
   // errors attached, then fail with a clear message.
   "plan_invalid",
+  // Repair-model output failed the §23.4/§5.5 schema (the §5.1 plan-retry
+  // pattern in the repair loop). Adopted by W10-F from the W6-F swap-point
+  // flag; repair/planner.js REPAIR_PLAN_INVALID_CODE flipped onto it.
+  "repair_plan_invalid",
   // A §5.2 tier budget was exhausted. NOT a hard error: stop cleanly, commit what
   // strengthened the document, charge partially, tell the user what was cut.
   "budget_exceeded_soft",
@@ -101,8 +106,9 @@ export function isAgentFailure<T>(result: AgentResult<T>): result is AgentFailur
  */
 export const AGENT_TO_WIRE_ERROR_CODE: Readonly<Record<AgentErrorCode, ErrorCode>> = {
   plan_invalid: "validation_failed", // config catalog: "Plan or payload failed schema validation (§5.1)".
+  repair_plan_invalid: "repair_plan_invalid", // adopted into the §13.3 catalog (W10-F); 1:1 stable string.
   budget_exceeded_soft: "budget_exceeded", // config catalog: "Tier budget exhausted → clean stop, partial charge (§5.2)".
-  tool_retry_exhausted: "engine_timeout", // tool interaction failed past its retry budget (§6.3).
+  tool_retry_exhausted: "tool_retry_exhausted", // §6.3 retry budget spent — adopted into the §13.3 catalog (W10-F); was engine_timeout.
   revision_limit_reached: "budget_exceeded", // revision cap → ship with warnings, partial outcome (§5.2/§11.2).
   run_timeout: "engine_timeout", // §3.4: tool/render/run/session timeouts map to engine_timeout.
   engine_session_lost: "engine_crashed", // session died mid-run (§3.2).

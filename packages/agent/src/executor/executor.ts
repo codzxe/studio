@@ -382,13 +382,12 @@ export function canonicalCallKey(name: string, args: unknown): string {
 export const MAX_TOOL_CALL_ATTEMPTS_PER_STEP_TOOL = 2;
 
 /**
- * Swap-point error code (W5-E/W5-D/W5-K fleet precedent): the shared §13.3 +
- * tool catalog carries no retry-budget code yet, so the model-facing refusal
- * uses the code errors.ts already maps `tool_retry_exhausted` onto.
- * types.ts owner (@studio/tools): add "tool_retry_exhausted" to
- * TOOL_ONLY_ERROR_CODES and flip this one-line constant. Tests import it.
+ * Adopted error code (W5-E/W5-D/W5-K swap point, flipped by W10-F): the
+ * shared §13.3 catalog now carries `tool_retry_exhausted` (§6.3 retry budget
+ * spent), so the model-facing refusal uses the precise code instead of the
+ * engine_timeout stand-in. Tests import it.
  */
-export const TOOL_RETRY_EXHAUSTED_FEEDBACK_CODE: ToolErrorCode = "engine_timeout";
+export const TOOL_RETRY_EXHAUSTED_FEEDBACK_CODE: ToolErrorCode = "tool_retry_exhausted";
 
 // ---------------------------------------------------------------------------
 // ExecutorService

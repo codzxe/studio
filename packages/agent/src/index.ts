@@ -27,16 +27,19 @@
 //     RunAbortSignalLike — structurally compatible both ways (all extras are
 //     optional), so the alias is documentation, not a constraint.
 //
-// Flagged error codes NOT added here (errors.ts is W1-P's; add-only): wave-6
-// modules left swap-point constants for AgentErrorCodes that are absent from
-// the catalog, and flip the moment errors.ts adopts them —
-//   repair/planner.js       REPAIR_PLAN_INVALID_CODE (= "plan_invalid" today)
-//     → future code "repair_plan_invalid" (W6-F flag: errors.ts owner adds the
-//       code + its AGENT_TO_WIRE_ERROR_CODE row and flips the constant);
+// Flagged error codes and their swap-point constants (errors.ts is W1-P's;
+// add-only): wave-6 modules left constants for AgentErrorCodes that flip the
+// moment errors.ts adopts them —
+//   repair/planner.js       REPAIR_PLAN_INVALID_CODE — FLIPPED by W10-F:
+//     errors.ts adopted "repair_plan_invalid" (AGENT_ERROR_CODES + a 1:1
+//     AGENT_TO_WIRE_ERROR_CODE row onto the §13.3 code), so the constant now
+//     carries the dedicated code (was "plan_invalid");
 //   critic/service.js       CRITIC_TOOL_FAILURE_CODE (= "tool_retry_exhausted"
 //     today) → future code "critique_unavailable" (W6-E flag, same steps);
+//     its TOOL_FAILURE_MAP also recognizes the adopted `critique_parse_failed`
+//     tool code (W10-F) next to the legacy validation_failed key;
 //   classifier/classifier.js CHAT_EDIT_INVALID_CODE (= "plan_invalid" today)
-//     → same family, flips with the repair code or on its own row.
+//     → same family, flips with a chat-edit row of its own.
 // All three constants are public here via their modules' star-exports; no
 // index-aux.ts was needed — the four type/value clashes above resolve inline.
 // tests/barrel.test.ts pins the swap-point values so each flip is a visible,

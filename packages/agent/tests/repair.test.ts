@@ -319,8 +319,10 @@ describe("repair tool allow-list and add/delete ban", () => {
     }
   });
 
-  it("REPAIR_PLAN_INVALID_CODE is the plan_invalid swap-point until the catalog grows", () => {
-    expect(REPAIR_PLAN_INVALID_CODE).toBe("plan_invalid");
+  it("REPAIR_PLAN_INVALID_CODE carries the catalog-adopted repair code", () => {
+    // W10-F: errors.ts adopted "repair_plan_invalid" (W6-F flag) and this
+    // constant flipped onto it — 1:1 with the §13.3 code in @studio/config.
+    expect(REPAIR_PLAN_INVALID_CODE).toBe("repair_plan_invalid");
   });
 });
 
@@ -642,7 +644,7 @@ describe("planRepairs: the one §23.3/§5.1 retry", () => {
     const result = await planRepairs({ issues: [BLOCKER], context: CONTEXT, model });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe("plan_invalid");
+      expect(result.code).toBe("repair_plan_invalid");
       expect(result.retryable).toBe(false);
       expect(result.message).toContain("after 2 attempt(s)");
       expect(result.message).toContain("applied.0.tool"); // validation issue attached

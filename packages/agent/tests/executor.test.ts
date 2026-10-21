@@ -899,8 +899,11 @@ describe("executor: retry budget is exactly one per tool error (§6.3, §23.1 ru
     ]);
   });
 
-  it("exposes the retry-exhausted swap-point code for the catalog owner to flip", () => {
-    expect(TOOL_RETRY_EXHAUSTED_FEEDBACK_CODE).toBe("engine_timeout");
+  it("exposes the catalog-adopted retry-exhausted code on the refusal", () => {
+    // W10-F: the shared §13.3 catalog adopted "tool_retry_exhausted" (the
+    // W7-M flag), so the refusal feedback carries the precise code (was the
+    // engine_timeout stand-in).
+    expect(TOOL_RETRY_EXHAUSTED_FEEDBACK_CODE).toBe("tool_retry_exhausted");
   });
 });
 

@@ -261,21 +261,23 @@ describe("W6-P barrel: star-export collisions resolve as documented", () => {
     expectTypeOf<agent.AbortSignalLike>().not.toEqualTypeOf<agent.RunAbortSignalLike>();
   });
 
-  it("flagged-but-absent error codes stay pinned at their swap-point values", () => {
-    // errors.ts (W1-P, add-only) does not carry "repair_plan_invalid" (W6-F),
-    // "critique_unavailable" (W6-E) or a chat-edit-specific code (W6-J) yet;
-    // these constants flip when errors.ts adopts them, so pin today's values —
-    // the flip breaks this row and forces the barrel+CI conversation instead of
+  it("flagged error codes stay pinned at their swap-point values", () => {
+    // errors.ts (W1-P, add-only) adopted "repair_plan_invalid" in W10-F (the
+    // W6-F flag) and repair/planner.js flipped onto it. Still flagged, still
+    // pinned: "critique_unavailable" (W6-E) and a chat-edit-specific code
+    // (W6-J) — those constants flip when errors.ts adopts them, and the flip
+    // breaks this row and forces the barrel+CI conversation instead of
     // drifting silently.
     const codes: import("../src/errors.js").AgentErrorCode[] = [
       agent.REPAIR_PLAN_INVALID_CODE,
       agent.CRITIC_TOOL_FAILURE_CODE,
       agent.CHAT_EDIT_INVALID_CODE,
     ];
-    expect(codes).toEqual(["plan_invalid", "tool_retry_exhausted", "plan_invalid"]);
+    expect(codes).toEqual(["repair_plan_invalid", "tool_retry_exhausted", "plan_invalid"]);
     // The W1-P catalog itself is pinned add-only against accidental renames.
     expect(agent.AGENT_ERROR_CODES).toEqual([
       "plan_invalid",
+      "repair_plan_invalid",
       "budget_exceeded_soft",
       "tool_retry_exhausted",
       "revision_limit_reached",

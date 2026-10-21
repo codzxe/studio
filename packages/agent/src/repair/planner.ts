@@ -46,16 +46,16 @@ import {
   repairContextSchema,
 } from "./prompt.js";
 
-// --- Swap-point error code (W5-E/W5-D/W5-K fleet precedent) ------------------------
+// --- Adopted error code (W6-F swap point, flipped by W10-F) -----------------------
 
 /**
- * The agent error catalog (../errors.js) is add-only and carries no
- * repair-specific code yet, so invalid repair-model output maps to the closest
- * existing agent code — `plan_invalid`, "a plan failed schema validation".
- * errors.ts owner: add "repair_plan_invalid" to AGENT_ERROR_CODES +
- * AGENT_TO_WIRE_ERROR_CODE, then flip this one-line constant. Tests import it.
+ * The agent catalog (../errors.js) now carries the dedicated repair code:
+ * invalid repair-model output fails with `repair_plan_invalid` — the same
+ * §5.1 plan-retry pattern, its own stable string — instead of borrowing
+ * `plan_invalid`. AGENT_TO_WIRE_ERROR_CODE maps it 1:1 onto the §13.3 code
+ * adopted by @studio/config. Tests import it.
  */
-export const REPAIR_PLAN_INVALID_CODE: AgentErrorCode = "plan_invalid";
+export const REPAIR_PLAN_INVALID_CODE: AgentErrorCode = "repair_plan_invalid";
 
 /** §5.5 intent for a repair cycle: repairs edit existing layers, nothing else. */
 export const REPAIR_MINI_PLAN_NOTE =

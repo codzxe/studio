@@ -347,9 +347,12 @@ const TOOL_FAILURE_MAP: Readonly<
   provider_unhealthy: { code: "provider_unhealthy", retryable: true },
   // §3.4 deadline — retry within the run's remaining wall clock.
   engine_timeout: { code: "run_timeout", retryable: true },
-  // tools CRITIQUE_PARSE_FAILED_CODE ("validation_failed" until the types.ts
-  // owner adopts critique_parse_failed): the model reply was unparseable after
-  // the tool's in-tool "Return JSON only." retry — one fresh critique may fix.
+  // tools CRITIQUE_PARSE_FAILED_CODE — the model reply was unparseable after
+  // the tool's in-tool "Return JSON only." retry. The shared-catalog adoption
+  // (W7-M flip, W10-F §13.3 move) gave it its own stable string; one fresh
+  // critique may fix. The pre-adoption validation_failed key stays for older
+  // tool builds.
+  critique_parse_failed: { code: CRITIC_TOOL_FAILURE_CODE, retryable: true },
   validation_failed: { code: CRITIC_TOOL_FAILURE_CODE, retryable: true },
 };
 
