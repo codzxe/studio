@@ -72,10 +72,21 @@ export interface SanitizeOptions {
  * bidi tricks, zero-width splits like "ig\u200Bnore"). \n and \t are KEPT —
  * they are legitimate data formatting. \u2028/\u2029 become \n.
  */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: §15.3 requires stripping control characters from untrusted user content — this regex IS that control.
-const UNSAFE_CONTROL_RE =
-  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/gu;
-const LINE_SEPARATOR_RE = /[\u2028\u2029]/gu;
+function isUnsafeControlCodeUnit(codeUnit: number): boolean {
+  return (
+    codeUnit <= 0x08 || // C0: NUL–backspace (\n=0x0A and \t=0x09 are data)
+    (codeUnit >= 0x0b && codeUnit <= 0x0c) || // VT, FF
+    (codeUnit >= 0x0e && codeUnit <= 0x1f) || // SO–US
+    (codeUnit >= 0x7f && codeUnit <= 0x9f) || // DEL + C1
+    codeUnit === 0xad || // soft hyphen
+    codeUnit === 0x61c || // arabic letter sign (bidi)
+    (codeUnit >= 0x200b && codeUnit <= 0x200f) || // zero-width + LRM/RLM
+    (codeUnit >= 0x202a && codeUnit <= 0x202e) || // bidi overrides (Trojan Source)
+    (codeUnit >= 0x2060 && codeUnit <= 0x2064) || // word joiner + invisible operators
+    (codeUnit >= 0x2066 && codeUnit <= 0x206f) || // bidi isolates + deprecated
+    codeUnit === 0xfeff // BOM / zero-width no-break space
+  );
+}
 
 export interface StrippedControls {
   readonly text: string;
@@ -84,16 +95,25 @@ export interface StrippedControls {
 
 /** Removes control/invisible/bidi characters (line separators become \n), counting removals. */
 export function stripUnsafeControls(text: string): StrippedControls {
+  if (text.length === 0) {
+    return { text: "", removed: 0 };
+  }
+  let out = "";
   let removed = 0;
-  const asLines = text.replace(LINE_SEPARATOR_RE, () => {
-    removed += 1;
-    return "\n";
-  });
-  const stripped = asLines.replace(UNSAFE_CONTROL_RE, () => {
-    removed += 1;
-    return "";
-  });
-  return { text: stripped, removed };
+  for (let index = 0; index < text.length; index += 1) {
+    const codeUnit = text.charCodeAt(index);
+    if (codeUnit === 0x2028 || codeUnit === 0x2029) {
+      out += "\n"; // line/paragraph separator: legitimate break, as data
+      removed += 1;
+      continue;
+    }
+    if (isUnsafeControlCodeUnit(codeUnit)) {
+      removed += 1;
+      continue;
+    }
+    out += String.fromCharCode(codeUnit);
+  }
+  return { text: out, removed };
 }
 
 // ---------------------------------------------------------------------------
