@@ -1,0 +1,35 @@
+# =============================================================================
+# Root .dockerignore (W10-E, from the W9-I CI-owner flag) — guards the
+# repo-ROOT build context the four workspace app images use (W9-I):
+#     docker build -f apps/<app>/Dockerfile .
+# (apps/mock-engine keeps its app-dir context + its own .dockerignore.)
+# Mirrors the per-app apps/*/.dockerignore rules: anything NOT needed to
+# compile an image stays OUT of the context — leaner uploads, no secrets in
+# layers, no test fixtures riding along.
+# =============================================================================
+
+# Dependencies (re-installed inside the image; host copies are platform-skew).
+node_modules
+**/node_modules
+
+# VCS metadata.
+.git
+
+# Secrets: .env* NEVER enters a build context or an image layer (§17.2 — the
+# 0600 env file lives on the box, not in GHCR-pushed layers).
+.env*
+
+# Tests + fixtures never run in an image (the W9-I build stages rm -rf these
+# anyway; keeping them out shrinks the context upload too).
+apps/*/tests
+packages/*/tests
+
+# Non-runtime trees — not COPY'd by any Dockerfile: the evals harness, docs,
+# infra (compose/caddy/obs), engine patches.
+evals
+docs
+infra
+engine-patches
+
+# Scratch/demo output dirs anywhere in the tree.
+**/.demo-output

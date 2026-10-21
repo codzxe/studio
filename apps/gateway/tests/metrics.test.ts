@@ -101,24 +101,24 @@ describe("metrics route exposition", () => {
     const text = await res.text();
 
     // HTTP counters → shared registry → queue → engine → uptime.
-    const httpAt = text.indexOf("gateway_http_requests_total");
+    const httpAt = text.indexOf("studio_gateway_http_requests_total");
     const sharedAt = text.indexOf("shared_runs_total 7");
-    const queueAt = text.indexOf('queue_depth{queue="runs_standard"');
-    const engineAt = text.indexOf('engine_sessions{state="active"}');
-    const uptimeAt = text.indexOf("gateway_uptime_seconds");
+    const queueAt = text.indexOf('studio_queue_depth{queue="runs_standard"');
+    const engineAt = text.indexOf('studio_engine_sessions{state="active"}');
+    const uptimeAt = text.indexOf("studio_gateway_uptime_seconds");
     expect(httpAt).toBeGreaterThanOrEqual(0);
     expect(sharedAt).toBeGreaterThan(httpAt);
     expect(queueAt).toBeGreaterThan(sharedAt);
     expect(engineAt).toBeGreaterThan(queueAt);
     expect(uptimeAt).toBeGreaterThan(engineAt);
 
-    expect(text).toContain("# TYPE gateway_http_requests_total counter");
-    expect(text).toContain('queue_depth{queue="runs_standard",state="waiting"} 3');
-    expect(text).toContain('queue_depth{queue="runs_standard",state="failed"} 1');
-    expect(text).toContain('engine_sessions{state="active"} 2');
-    expect(text).toContain('engine_sessions{state="idle"} 3');
-    expect(text).toContain('gateway_build_info{version="0.0.0-test"} 1');
-    expect(text).toContain("gateway_uptime_seconds 61");
+    expect(text).toContain("# TYPE studio_gateway_http_requests_total counter");
+    expect(text).toContain('studio_queue_depth{queue="runs_standard",state="waiting"} 3');
+    expect(text).toContain('studio_queue_depth{queue="runs_standard",state="failed"} 1');
+    expect(text).toContain('studio_engine_sessions{state="active"} 2');
+    expect(text).toContain('studio_engine_sessions{state="idle"} 3');
+    expect(text).toContain('studio_gateway_build_info{version="0.0.0-test"} 1');
+    expect(text).toContain("studio_gateway_uptime_seconds 61");
   });
 
   it("renders the shared registry empty/uninjected/failing as comments, never 503", async () => {
@@ -152,7 +152,7 @@ describe("metrics route exposition", () => {
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).toContain("# queue depth source unavailable (queue gauges omitted)");
-    expect(text).not.toContain("queue_depth{");
+    expect(text).not.toContain("studio_queue_depth{");
   });
 
   it("handles a pool without ping and an absent snapshot", async () => {
@@ -181,7 +181,7 @@ describe("metrics route exposition", () => {
     const router = build({ queue: weird });
     const res = await router.request("/", { headers: { authorization: basic("prom", TOKEN) } });
     const text = await res.text();
-    expect(text).toContain('queue_depth{queue="weird \\"q\\" name",state="waiting"} 1');
+    expect(text).toContain('studio_queue_depth{queue="weird \\"q\\" name",state="waiting"} 1');
   });
 
   it("serves under the documented /metrics mount through a host app", async () => {
@@ -189,7 +189,7 @@ describe("metrics route exposition", () => {
     host.route("/metrics", build({ queue }));
     const res = await host.request("/metrics", { headers: { authorization: basic("prom", TOKEN) } });
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('queue_depth{queue="runs_standard",state="waiting"} 3');
+    expect(await res.text()).toContain('studio_queue_depth{queue="runs_standard",state="waiting"} 3');
   });
 });
 
@@ -210,14 +210,14 @@ describe("GatewayMetrics http counters", () => {
     await app.request("/boom");
 
     const text = metrics.render();
-    expect(text).toContain('gateway_http_requests_total{method="GET",status="200"} 2');
-    expect(text).toContain('gateway_http_requests_total{method="GET",status="500"} 1');
-    expect(text).toContain("gateway_http_requests_in_flight 0");
+    expect(text).toContain('studio_gateway_http_requests_total{method="GET",status="200"} 2');
+    expect(text).toContain('studio_gateway_http_requests_total{method="GET",status="500"} 1');
+    expect(text).toContain("studio_gateway_http_requests_in_flight 0");
   });
 
   it("buckets unknown methods into _other", () => {
     const metrics = createGatewayMetrics();
     metrics.incRequest("QUERY", 200);
-    expect(metrics.render()).toContain('gateway_http_requests_total{method="_other",status="200"} 1');
+    expect(metrics.render()).toContain('studio_gateway_http_requests_total{method="_other",status="200"} 1');
   });
 });

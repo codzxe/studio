@@ -545,7 +545,14 @@ export const RUN_DURATION_SECONDS_BUCKETS: readonly number[] = [
 /** Step-count buckets: §5.2 tool-call caps live in the low tens. */
 export const STEPS_PER_RUN_BUCKETS: readonly number[] = [1, 2, 4, 8, 16, 24, 32, 48, 64];
 
-/** The §22 metric set, pre-built and typed (see header for the names). */
+/**
+ * The §22 metric set, pre-built and typed (see header for the names).
+ *
+ * W10-E coherence: every family registers with the `studio_` prefix — the
+ * canonical registry (infra/obs/README.md), the dashboards
+ * (infra/obs/grafana/*.json) and the alert rules all speak studio_* series
+ * (closes the W9-P flag #1 / W9-M flag #4 prefix gap).
+ */
 export interface ObsMetrics {
   readonly registry: ObsMetricRegistry;
   readonly runsTotal: LabeledCounter<{ readonly status: RunMetricStatus; readonly tier: MetricTier }>;
@@ -572,78 +579,78 @@ export function createObsMetrics(): ObsMetrics {
       readonly status: RunMetricStatus;
       readonly tier: MetricTier;
     }>({
-      name: "runs_total",
+      name: "studio_runs_total",
       help: "Runs by terminal status and tier (§22).",
       labelNames: ["status", "tier"],
       registry,
     }),
     runDurationSeconds: createLabeledHistogram<{ readonly tier: MetricTier }>({
-      name: "run_duration_seconds",
+      name: "studio_run_duration_seconds",
       help: "End-to-end run duration by tier; p50/p95 read off the buckets (§22).",
       labelNames: ["tier"],
       buckets: RUN_DURATION_SECONDS_BUCKETS,
       registry,
     }),
     stepsPerRun: createUnlabeledHistogram({
-      name: "steps_per_run",
+      name: "studio_steps_per_run",
       help: "Tool steps per run distribution (§22).",
       buckets: STEPS_PER_RUN_BUCKETS,
       registry,
     }),
     toolErrorsTotal: createLabeledCounter<{ readonly tool: string }>({
-      name: "tool_errors_total",
+      name: "studio_tool_errors_total",
       help: "Tool execution errors by tool; drives the tool error rate (§22).",
       labelNames: ["tool"],
       registry,
     }),
     validatorBlockersTotal: createUnlabeledCounter({
-      name: "validator_blockers_total",
+      name: "studio_validator_blockers_total",
       help: "Deterministic validator blockers (§11.1; validator blocker rate §22).",
       registry,
     }),
     criticReviseTotal: createUnlabeledCounter({
-      name: "critic_revise_total",
+      name: "studio_critic_revise_total",
       help: "Vision-critic revise verdicts (§11.2; critic revise rate §22).",
       registry,
     }),
     creditsReservedTotal: createUnlabeledCounter({
-      name: "credits_reserved_total",
+      name: "studio_credits_reserved_total",
       help: "Credits reserved for runs (§14.2 holds).",
       registry,
     }),
     creditsCommittedTotal: createUnlabeledCounter({
-      name: "credits_committed_total",
+      name: "studio_credits_committed_total",
       help: "Credits settled into runs (§14.2 commits).",
       registry,
     }),
     aiCostUsdPerDay: createLabeledCounter<{ readonly workspace: string }>({
-      name: "ai_cost_usd_per_day",
+      name: "studio_ai_cost_usd_per_day",
       help: "AI provider spend in USD per workspace (§22 cost dashboards).",
       labelNames: ["workspace"],
       registry,
     }),
     tokensInTotal: createUnlabeledCounter({
-      name: "tokens_in_total",
+      name: "studio_tokens_in_total",
       help: "Model input tokens (§22 tokens in/out/cache).",
       registry,
     }),
     tokensOutTotal: createUnlabeledCounter({
-      name: "tokens_out_total",
+      name: "studio_tokens_out_total",
       help: "Model output tokens (§22 tokens in/out/cache).",
       registry,
     }),
     tokensCacheTotal: createUnlabeledCounter({
-      name: "tokens_cache_total",
+      name: "studio_tokens_cache_total",
       help: "Cache-read tokens (§5.3 cache-hit tracking; §22).",
       registry,
     }),
     queueDepth: createUnlabeledGauge({
-      name: "queue_depth",
+      name: "studio_queue_depth",
       help: "Pending run jobs (RB-02 queue-age alerting context, §22).",
       registry,
     }),
     engineSessions: createLabeledGauge<{ readonly state: EngineSessionState }>({
-      name: "engine_sessions",
+      name: "studio_engine_sessions",
       help: "Engine pool sessions by state (active/idle, ADR-0005 #7).",
       labelNames: ["state"],
       registry,

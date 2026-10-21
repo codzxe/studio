@@ -14,10 +14,19 @@
 // 2. Schema-validation failures answer 422 `validation_failed` (W1-H mapper);
 //    §13.3's literal 400 stays for malformed JSON/multipart/query frames.
 //    Both are documented below; the audit doc carries the divergence note (D5).
-// 3. Every operation carries `x-studio-status` mirroring the W4-O audit table
-//    (implemented | wired-in-W4-R | partial | not-implemented) so the spec
-//    and the audit cannot drift silently. W4-R mounts this document at
-//    GET /v1/openapi.json via `mountOpenApi(app)` and wires the audit's routes.
+// 3. Every operation carries `x-studio-status` mirroring the audit table in
+//    apps/gateway/docs/api/openapi-contract.md (implemented |
+//    implemented-awaiting-mount | partial | not-implemented) so the spec and
+//    the audit cannot drift silently. W10-G's final audit renamed the wave-4
+//    vocabulary: every wave-4 `wired-in-W4-R` row is now `implemented` (app.ts,
+//    the W4-R composition root, mounts them) and landed-but-unwired modules
+//    (catalog, commands, exports, credits, billing, audit — wave 4-9) are
+//    `implemented-awaiting-mount`.
+// 4. /metrics (routes/metrics.ts, W9-G) is deliberately NOT a path in this
+//    document: it is the internal-only Prometheus surface (§22/§17.2) mounted
+//    OUTSIDE the versioned /v1 API, behind the METRICS_TOKEN Basic-auth seam
+//    (fail-closed when unset). The audit doc's "out-of-band surfaces" section
+//    owns that note — this spec documents the public §13 surface only.
 //
 // TS style: strict, ESM (.js specifiers), no `any` in exported APIs. The spec
 // types below are a minimal structural subset of OpenAPI 3.1 — typed const,
@@ -116,10 +125,17 @@ export interface ReferenceObject {
 export type ResponseOrRef = ResponseObject | ReferenceObject;
 export type ParameterOrRef = ParameterObject | ReferenceObject;
 
-/** Audit vocabulary from docs/api/openapi-contract.md (§ audit table). */
+/**
+ * Audit vocabulary from apps/gateway/docs/api/openapi-contract.md (the audit
+ * table; W10-G final audit): `implemented` = route module landed AND mounted
+ * by the app.ts composition root; `implemented-awaiting-mount` = module +
+ * one-call mount helper landed, composition root not wired yet (the /v1
+ * catch-all answers 501 until it is); `partial` = served with a flagged §13
+ * divergence; `not-implemented` = contract-only.
+ */
 export type ImplementationStatus =
   | "implemented"
-  | "wired-in-W4-R"
+  | "implemented-awaiting-mount"
   | "partial"
   | "not-implemented";
 
@@ -289,7 +305,11 @@ const ERROR_ENVELOPE_SCHEMA: SchemaObject = {
         "internal_error; plus gateway transport codes (bad_request, " +
         "not_implemented, not_configured, service_unavailable, payment_required, " +
         "upload_too_large, run_not_found, run_events_unavailable, " +
-        "client_disconnected).",
+        "client_disconnected); plus route-local add-only codes (W4-J…W9-H): " +
+        "unknown_template, unknown_component, preview_not_rendered, " +
+        "invalid_signature, storage_unavailable, invalid_org, invalid_window, " +
+        "invalid_cursor, command_not_allowlisted, engine_session_unavailable, " +
+        "engine_command_failed.",
     },
     message: {
       type: "string",
@@ -735,6 +755,278 @@ const components: ComponentsObject = {
         payload: { description: "Per-type payload; opaque to the transport." },
       },
     },
+    // --- audit export/summary (§22; W9-H; added by the W10-G final audit) ---
+    AuditExportRow: {
+      type: "object",
+      description:
+        "services/audit.ts AuditExportRow (§22 rows are immutable; metadata was " +
+        "redacted at append time, §15.3). The CSV branch writes the SAME rows " +
+        "in this column order: id, organization_id, actor_id, action, target, " +
+        "metadata, created_at (routes/audit.ts AUDIT_CSV_COLUMNS, RFC 4180).",
+      required: ["id", "action", "target", "created_at"],
+      properties: {
+        id: { type: "string" },
+        organization_id: { type: ["string", "null"] },
+        actor_id: { type: ["string", "null"] },
+        action: { type: "string" },
+        target: { type: "string" },
+        metadata: {
+          description:
+            "One redacted JSON cell (compact); null exports as an empty cell.",
+        },
+        created_at: createdAt(),
+      },
+    },
+    AuditSummaryView: {
+      type: "object",
+      description: "GET /v1/audit/summary/:id body (routes/audit.ts; W9-H).",
+      required: ["window_days", "since", "total_events", "by_action"],
+      properties: {
+        window_days: { const: 30, description: "SUMMARY_WINDOW_DAYS (§22 card)." },
+        since: createdAt(),
+        total_events: { type: "integer" },
+        by_action: {
+          type: "object",
+          description: "action → count over the window (deterministic order).",
+          additionalProperties: { type: "integer" },
+        },
+      },
+      additionalProperties: false,
+    },
+    // --- catalog cards (W4-J) -------------------------------------------------
+    TemplateCard: {
+      type: "object",
+      description:
+        "services/catalog.ts TemplateCard — the §7.4/§8.3 discovery card. The " +
+        "full §7.2 manifest is served ONLY by the /{id} routes.",
+      required: ["id", "version", "ref", "name", "tags", "canvas", "slots"],
+      properties: {
+        id: { type: "string" },
+        version: { type: "integer" },
+        ref: { type: "string", description: 'The immutable pin "id@version" (§7.2).' },
+        name: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+        canvas: {
+          type: "object",
+          required: ["width", "height"],
+          properties: { width: { type: "integer" }, height: { type: "integer" } },
+        },
+        slots: { type: "array", items: { type: "string" } },
+      },
+    },
+    // --- manual command replies (§13.4; W4-K) ----------------------------------
+    CommandReply: {
+      type: "object",
+      description:
+        "routes/commands.ts toCommandReply — the §6.1 compact reply (never a " +
+        "scene-graph dump); served by commands, undo and redo alike.",
+      required: [
+        "ok",
+        "command",
+        "seq",
+        "summary",
+        "warnings",
+        "document_revision",
+        "revision_before",
+        "revision_after",
+        "replayed",
+      ],
+      properties: {
+        ok: OK_TRUE,
+        command: { type: "string" },
+        seq: { type: "integer", description: "WAL position, 1-based (§5.6)." },
+        summary: { type: "string" },
+        warnings: { type: "array", items: { type: "string" } },
+        document_revision: { type: "integer" },
+        revision_before: { type: "integer" },
+        revision_after: { type: "integer" },
+        replayed: { type: "boolean", description: "True on an idempotent replay (§3.4)." },
+      },
+      additionalProperties: false,
+    },
+    // --- exports (W4-L) --------------------------------------------------------
+    ExportJobView: {
+      type: "object",
+      description:
+        "services/exports.ts ExportApiView (snake_case wire fields; storage " +
+        "keys never leave the box, §15.1).",
+      required: [
+        "export_id",
+        "format",
+        "status",
+        "revision",
+        "width",
+        "height",
+        "quality",
+        "created_at",
+        "finished_at",
+        "url",
+        "expires_at",
+      ],
+      properties: {
+        export_id: { type: "string" },
+        format: { type: "string", enum: ["pcraft", "png", "jpg", "psd"] },
+        status: { type: "string", description: "Worker-side job status." },
+        revision: { type: "integer" },
+        width: { type: ["integer", "null"] },
+        height: { type: ["integer", "null"] },
+        quality: { type: ["integer", "null"] },
+        created_at: createdAt(),
+        finished_at: { type: ["string", "null"], format: "date-time" },
+        url: {
+          type: ["string", "null"],
+          description: "Fresh 15-min signed artifact URL when succeeded (§15.1).",
+        },
+        expires_at: { type: ["string", "null"], format: "date-time" },
+      },
+    },
+    // --- credits / usage (W4-M) ------------------------------------------------
+    LedgerEntry: {
+      type: "object",
+      description:
+        "routes/credits.ts LedgerEntryApiView (§12.2/§14.2). The idempotency " +
+        "key and creator stay internal — they are §22 audit surfaces, never " +
+        "the balance API.",
+      required: ["id", "kind", "delta", "run_id", "note", "balance_after", "created_at"],
+      properties: {
+        id: { type: "string" },
+        kind: {
+          type: "string",
+          description: "grant|pack|reserve|commit|refund|adjustment (§14.2).",
+        },
+        delta: { type: "number" },
+        run_id: { type: ["string", "null"] },
+        note: { type: ["string", "null"] },
+        balance_after: {
+          type: "number",
+          description: "Running total; the newest row ≡ balance (§12.2 sum sanity).",
+        },
+        created_at: createdAt(),
+      },
+    },
+    CreditsSummaryView: {
+      type: "object",
+      description: "GET /v1/credits/summary body (routes/credits.ts; W4-M).",
+      required: ["window_days", "spend_credits", "open_holds", "trial"],
+      properties: {
+        window_days: { const: 30 },
+        spend_credits: {
+          type: "number",
+          description: "Σ reserve/commit/refund since the window start (§14.2).",
+        },
+        open_holds: {
+          type: "number",
+          description: "credit_reservations rows with status=held (§14.2 rule 1).",
+        },
+        trial: { type: "boolean", description: "No active paid subscription (§14.1)." },
+      },
+      additionalProperties: false,
+    },
+    UsageDayView: {
+      type: "object",
+      description: "routes/credits.ts UsageDayApiView — one merged UTC day.",
+      required: ["day", "credits", "runs"],
+      properties: {
+        day: { type: "string", format: "date", description: "UTC day key, YYYY-MM-DD." },
+        credits: {
+          type: "object",
+          required: ["grant", "pack", "reserve", "commit", "refund", "adjustment", "net"],
+          properties: {
+            grant: { type: "number" },
+            pack: { type: "number" },
+            reserve: { type: "number" },
+            commit: { type: "number" },
+            refund: { type: "number" },
+            adjustment: { type: "number" },
+            net: { type: "number" },
+          },
+        },
+        runs: {
+          type: "object",
+          required: [
+            "count",
+            "by_status",
+            "by_tier",
+            "cost_micro_usd",
+            "tokens_in",
+            "tokens_out",
+          ],
+          properties: {
+            count: { type: "integer" },
+            by_status: { type: "object", additionalProperties: { type: "integer" } },
+            by_tier: { type: "object", additionalProperties: { type: "integer" } },
+            cost_micro_usd: { type: "number" },
+            tokens_in: { type: "integer" },
+            tokens_out: { type: "integer" },
+          },
+        },
+      },
+    },
+    UsageResponseView: {
+      type: "object",
+      description: "GET /v1/usage body (routes/credits.ts UsageApiView; W4-M).",
+      required: ["from", "to", "days", "totals"],
+      properties: {
+        from: { type: "string", format: "date" },
+        to: { type: "string", format: "date" },
+        days: { type: "array", items: schemaRef("UsageDayView") },
+        totals: {
+          type: "object",
+          required: ["runs", "cost_micro_usd", "tokens_in", "tokens_out"],
+          properties: {
+            runs: { type: "integer" },
+            cost_micro_usd: { type: "number" },
+            tokens_in: { type: "integer" },
+            tokens_out: { type: "integer" },
+          },
+        },
+      },
+    },
+    // --- billing plans (W4-N) --------------------------------------------------
+    PlanCardsResponse: {
+      type: "object",
+      description: "services/stripe.ts planCards() — §14.1 pricing, from @studio/config.",
+      required: ["ok", "plans", "credit_pack"],
+      properties: {
+        ok: OK_TRUE,
+        plans: {
+          type: "array",
+          items: {
+            type: "object",
+            required: [
+              "code",
+              "monthly_price_usd_cents",
+              "monthly_credits",
+              "extra_seat_price_usd_cents",
+              "seats",
+              "concurrent_runs",
+              "concurrent_sessions",
+              "max_canvas_megapixels",
+              "daily_spend_cap_credits",
+            ],
+            properties: {
+              code: { type: "string" },
+              monthly_price_usd_cents: { type: "integer" },
+              monthly_credits: { type: "number" },
+              extra_seat_price_usd_cents: { type: "integer" },
+              seats: { type: "integer" },
+              concurrent_runs: { type: "integer" },
+              concurrent_sessions: { type: "integer" },
+              max_canvas_megapixels: { type: "integer" },
+              daily_spend_cap_credits: { type: "number" },
+            },
+          },
+        },
+        credit_pack: {
+          type: "object",
+          required: ["credits", "price_usd_cents"],
+          properties: {
+            credits: { type: "number" },
+            price_usd_cents: { type: "integer" },
+          },
+        },
+      },
+    },
   },
   securitySchemes: {
     sessionCookie: {
@@ -764,9 +1056,11 @@ const components: ComponentsObject = {
       required: true,
       description:
         "§13 preamble: every mutating endpoint requires an Idempotency-Key " +
-        "(a client-generated UUID is fine; ≤128 chars). Enforced on run " +
-        "creation today; other mutations validate + correlate it into the " +
-        "audit trail until the idempotency store lands (audit D7).",
+        "(a client-generated UUID is fine; ≤128 chars). Enforced (replay/dedupe " +
+        "or jobId) on run creation, manual commands/undo/redo, export create " +
+        "and workspace template registration; other mutations validate + " +
+        "correlate it into the audit trail until the idempotency store lands " +
+        "(audit D7).",
       schema: {
         type: "string",
         minLength: 1,
@@ -916,16 +1210,19 @@ export const OPENAPI_SPEC: OpenApiDocument = {
       "never reveals which mechanism failed (§15.2).",
       "",
       "IDEMPOTENCY (§13 preamble): every mutating endpoint takes an",
-      "Idempotency-Key header (or a client-generated UUID). Run creation",
-      "enforces it today; other mutations validate + correlate it until the",
-      "idempotency store wave lands (audit D7).",
+      "Idempotency-Key header (or a client-generated UUID). Enforced (replay/",
+      "dedupe or jobId) on run creation, manual commands/undo/redo, export",
+      "create and workspace template registration; other mutations validate +",
+      "correlate it until the idempotency store wave lands (audit D7).",
       "",
-      "IMPLEMENTATION STATUS: each operation carries x-studio-status mirroring",
-      "the W4-O audit table — `implemented` (served today), `wired-in-W4-R`",
-      "(route module landed; W4-R mounts it), `partial` (lands with a flagged",
-      "divergence), `not-implemented` (contract-only; see the audit's gap",
-      "list). Until W4-R wiring lands, unmounted §13 paths answer 501",
-      "`not_implemented` from the /v1 catch-all placeholder (routes/index.ts).",
+      "IMPLEMENTATION STATUS (W10-G final audit): each operation carries",
+      "x-studio-status mirroring the audit table — `implemented` (route module",
+      "landed AND mounted by the app.ts composition root),",
+      "`implemented-awaiting-mount` (route module + one-call mount helper",
+      "landed; the composition root is not wired yet — the /v1 catch-all",
+      "placeholder answers 501 `not_implemented` until it is), `partial`",
+      "(served with a flagged divergence), `not-implemented` (contract-only;",
+      "see the audit's gap list).",
       "",
       "SSE (§13.2): GET /v1/runs/{id}/events streams text/event-stream frames",
       "id: <seq>, event: <type>, data: { seq, run_id, at, type, payload }.",
@@ -954,6 +1251,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
     { name: "Catalog", description: "Templates + components with manifests (§13.1, §7)." },
     { name: "Billing", description: "Credits, Stripe checkout/portal, webhooks (§13.1, §14)." },
     { name: "Usage", description: "Daily usage rollups (§13.1)." },
+    { name: "Audit", description: "§22 audit-log export + admin summary (W9-H)." },
     { name: "Meta", description: "Health + this document (§13.1)." },
   ],
   paths: {
@@ -1042,7 +1340,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listWorkspaces",
         tags: ["Workspaces"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         responses: {
           "200": jsonResponse(
             {
@@ -1064,7 +1362,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "createWorkspace",
         tags: ["Workspaces"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [paramRef("IdempotencyKey")],
         requestBody: jsonBody(
           schemaRef("CreateWorkspaceRequest"),
@@ -1107,7 +1405,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getWorkspace",
         tags: ["Workspaces"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [pathIdParam()],
         responses: {
           "200": jsonResponse(
@@ -1132,7 +1430,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "patchWorkspace",
         tags: ["Workspaces"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [pathIdParam(), paramRef("IdempotencyKey")],
         requestBody: jsonBody(
           schemaRef("WorkspacePatchRequest"),
@@ -1161,7 +1459,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listMembers",
         tags: ["Workspaces"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [pathIdParam()],
         responses: {
           "200": jsonResponse(
@@ -1188,7 +1486,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "removeMember",
         tags: ["Workspaces"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [
           pathIdParam(),
           pathParam("userId", "Member user id.", 200),
@@ -1213,7 +1511,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listInvites",
         tags: ["Invites"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [pathIdParam()],
         responses: {
           "200": jsonResponse(
@@ -1237,7 +1535,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "createInvite",
         tags: ["Invites"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         description:
           "TODO(email): the token is returned in-band until the email wave " +
           "lands.",
@@ -1267,7 +1565,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "cancelInviteById",
         tags: ["Invites"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [
           pathIdParam(),
           pathParam("inviteId", "Invite id.", 200),
@@ -1291,7 +1589,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "viewInvite",
         tags: ["Invites"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [pathParam("token", "Invite token (the capability).", 200)],
         responses: {
           "200": jsonResponse(
@@ -1311,7 +1609,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "cancelInviteByToken",
         tags: ["Invites"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [pathParam("token", "Invite token.", 200), paramRef("IdempotencyKey")],
         responses: {
           "200": jsonResponse(
@@ -1330,7 +1628,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "acceptInvite",
         tags: ["Invites"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         description:
           "TODO(email): verifying the accepter's address against invitation.email " +
           "lands with the email wave.",
@@ -1395,7 +1693,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listDocuments",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [
           {
             name: "cursor",
@@ -1439,7 +1737,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "createDocument",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         description:
           "Canvas ceiling enforced per plan (§14.1): 402 plan_limit; 422 on " +
           "shape errors.",
@@ -1473,7 +1771,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getDocument",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         description:
           "§13.1 also promises preview URL + layer summary in this body — not " +
           "yet in the DTO (audit D9); GET /v1/documents/{id}/preview and " +
@@ -1505,7 +1803,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "patchDocument",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [pathIdParam(), paramRef("IdempotencyKey")],
         requestBody: jsonBody(
           schemaRef("DocumentPatchRequest"),
@@ -1531,7 +1829,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "deleteDocument",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         description: "The GDPR hard-delete job owns true removal.",
         parameters: [pathIdParam(), paramRef("IdempotencyKey")],
         responses: {
@@ -1556,7 +1854,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listDocumentVersions",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [
           pathIdParam(),
           {
@@ -1591,7 +1889,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "restoreDocumentVersion",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [
           pathIdParam(),
           pathParam("versionId", "Version id.", 128),
@@ -1709,7 +2007,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "createRun",
         tags: ["Runs"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         description:
           "Implemented contract (W4-G). §14.2 rule 1: credits are reserved " +
           "up-front; insufficient balance → 402 and the run never starts. " +
@@ -1744,7 +2042,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listRuns",
         tags: ["Runs"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [
           {
             name: "document_id",
@@ -1789,7 +2087,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getRun",
         tags: ["Runs"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [pathRunIdParam()],
         responses: {
           "200": jsonResponse(schemaRef("RunDetail"), "RunDetailApiView."),
@@ -1805,7 +2103,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "cancelRun",
         tags: ["Runs"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         description:
           "Terminal runs answer 409; the worker enforces rollback/refund " +
           "idempotently.",
@@ -1854,7 +2152,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "streamRunEvents",
         tags: ["RunEvents"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         description:
           "§13.2. Frames: `id: <seq>`, `event: <type>`, `data: { seq, run_id, " +
           "at, type, payload }`. Resume with the Last-Event-ID header (the seq " +
@@ -1928,19 +2226,59 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "executeDocumentCommand",
         tags: ["Commands"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
+        "x-studio-status": "implemented-awaiting-mount",
         description:
-          "GAP (audit D2): the route module lands with W4-K (routes/documents.ts " +
-          "note). §13.4: the public API is the agent API — raw engine ids are NOT " +
-          "exposed. Body pinned when the route lands; Idempotency-Key per the " +
-          "§13 preamble.",
-        parameters: [pathIdParam(), paramRef("IdempotencyKey")],
+          "routes/commands.ts (W4-K) + services/command-exec.ts — mounted via " +
+          "mountCommandRoutes(); awaiting the composition-root wiring (until " +
+          "then the /v1 catch-all answers 501). §13.4: the public API is the " +
+          "agent API — raw engine ids are NOT exposed; the §2.2 allowlist gates " +
+          "every id (refused → 400 command_not_allowlisted). Idempotency-Key is " +
+          "REQUIRED: header or `idempotency_key` body field; both present ⇒ " +
+          "must agree; absent ⇒ 422 (§3.4 replay semantics).",
+        parameters: [
+          pathIdParam(),
+          {
+            name: "Idempotency-Key",
+            in: "header",
+            required: false,
+            description:
+              "Required (or the idempotency_key body field): retries with the " +
+              "same key replay the original outcome (§3.4).",
+            schema: { type: "string", minLength: 1, maxLength: 128 },
+          },
+        ],
+        requestBody: jsonBody(
+          {
+            type: "object",
+            description: "routes/commands.ts COMMAND_BODY_SCHEMA (strict).",
+            required: ["command"],
+            properties: {
+              command: {
+                type: "string",
+                minLength: 1,
+                description: "Allowlisted command id (§2.2).",
+              },
+              params: {
+                type: "object",
+                description:
+                  "Compact-command params — a single surgical operation, never " +
+                  "a scene-graph transport (§25-11 key/byte budgets).",
+              },
+              idempotency_key: { type: "string", minLength: 1, maxLength: 128 },
+            },
+            additionalProperties: false,
+          },
+          "The command + params."
+        ),
         responses: {
+          "200": jsonResponse(schemaRef("CommandReply"), "The §6.1 compact reply."),
+          "400": responseRef("BadRequest"),
           "401": responseRef("Unauthorized"),
           "403": responseRef("Forbidden"),
           "404": responseRef("NotFound"),
           "422": responseRef("ValidationFailed"),
           "429": responseRef("RateLimited"),
+          "503": responseRef("ServiceUnavailable"),
         },
       },
     },
@@ -1951,14 +2289,43 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "undoDocument",
         tags: ["Commands"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
-        description: "GAP (audit D2): W4-K.",
-        parameters: [pathIdParam(), paramRef("IdempotencyKey")],
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/commands.ts (W4-K) POST /:id/undo — engine edit.undo via the " +
+          "session, ONE step; awaiting the composition-root wiring. Editor+ " +
+          "(documents:write, ADR-0003). Idempotency-Key REQUIRED: header or " +
+          "`idempotency_key` body field; absent ⇒ 422.",
+        parameters: [
+          pathIdParam(),
+          {
+            name: "Idempotency-Key",
+            in: "header",
+            required: false,
+            description: "Required (or the idempotency_key body field), §3.4.",
+            schema: { type: "string", minLength: 1, maxLength: 128 },
+          },
+        ],
+        requestBody: jsonBody(
+          {
+            type: "object",
+            description: "routes/commands.ts UNDO_REDO_BODY_SCHEMA (strict).",
+            properties: {
+              idempotency_key: { type: "string", minLength: 1, maxLength: 128 },
+            },
+            additionalProperties: false,
+          },
+          "Optional; the header alone satisfies the key.",
+          false
+        ),
         responses: {
+          "200": jsonResponse(schemaRef("CommandReply"), "The new head, compactly."),
+          "400": responseRef("BadRequest"),
           "401": responseRef("Unauthorized"),
           "403": responseRef("Forbidden"),
           "404": responseRef("NotFound"),
           "409": responseRef("Conflict"),
+          "422": responseRef("ValidationFailed"),
+          "503": responseRef("ServiceUnavailable"),
         },
       },
     },
@@ -1969,58 +2336,107 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "redoDocument",
         tags: ["Commands"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
-        description: "GAP (audit D2): W4-K.",
-        parameters: [pathIdParam(), paramRef("IdempotencyKey")],
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/commands.ts (W4-K) POST /:id/redo — engine edit.redo via the " +
+          "session, ONE step; awaiting the composition-root wiring. Editor+ " +
+          "(documents:write, ADR-0003). Idempotency-Key REQUIRED: header or " +
+          "`idempotency_key` body field; absent ⇒ 422.",
+        parameters: [
+          pathIdParam(),
+          {
+            name: "Idempotency-Key",
+            in: "header",
+            required: false,
+            description: "Required (or the idempotency_key body field), §3.4.",
+            schema: { type: "string", minLength: 1, maxLength: 128 },
+          },
+        ],
+        requestBody: jsonBody(
+          {
+            type: "object",
+            description: "routes/commands.ts UNDO_REDO_BODY_SCHEMA (strict).",
+            properties: {
+              idempotency_key: { type: "string", minLength: 1, maxLength: 128 },
+            },
+            additionalProperties: false,
+          },
+          "Optional; the header alone satisfies the key.",
+          false
+        ),
         responses: {
+          "200": jsonResponse(schemaRef("CommandReply"), "The new head, compactly."),
+          "400": responseRef("BadRequest"),
           "401": responseRef("Unauthorized"),
           "403": responseRef("Forbidden"),
           "404": responseRef("NotFound"),
           "409": responseRef("Conflict"),
+          "422": responseRef("ValidationFailed"),
+          "503": responseRef("ServiceUnavailable"),
         },
       },
     },
     // --- Exports / preview (§13.1) ------------------------------------------
     "/v1/documents/{id}/exports": {
-      summary: "Create an export job (§13.1).",
+      summary: "Create an export job / list past jobs (§13.1; W4-L).",
       post: {
-        summary: "{ format, width?, height?, quality? } → job → URL.",
+        summary: "{ format, width?, height?, quality? } → 202 job handle.",
         operationId: "createExport",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
+        "x-studio-status": "implemented-awaiting-mount",
         description:
-          "GAP (audit D2): no route module yet. Plan gates apply to export " +
-          "fidelity (§14.1) → 402.",
-        parameters: [pathIdParam(), paramRef("IdempotencyKey")],
+          "routes/exports.ts (W4-L) + services/exports.ts — mounted via " +
+          "mountExportRoutes(); awaiting the composition-root wiring. Editor+ " +
+          "(exports:create, ADR-0003); §14.1 MP ceiling; jobId = the " +
+          "Idempotency-Key (§3.4: retries cannot double-render). The key is " +
+          "REQUIRED — header or `idempotency_key` body twin; absent ⇒ 422.",
+        parameters: [
+          pathIdParam(),
+          {
+            name: "Idempotency-Key",
+            in: "header",
+            required: false,
+            description: "Required (or the idempotency_key body field), §3.4.",
+            schema: { type: "string", minLength: 1, maxLength: 128 },
+          },
+        ],
         requestBody: jsonBody(
           {
             type: "object",
-            description: "§13.1 body.",
+            description: "services/exports.ts EXPORT_CREATE_BODY_SCHEMA (strict).",
             required: ["format"],
             properties: {
               format: { type: "string", enum: ["pcraft", "png", "jpg", "psd"] },
-              width: { type: "integer", minimum: 1 },
+              width: { type: "integer", minimum: 1, description: "Capped by the export side ceiling." },
               height: { type: "integer", minimum: 1 },
               quality: { type: "integer", minimum: 1, maximum: 100 },
+              idempotency_key: { type: "string", minLength: 1, maxLength: 128 },
             },
             additionalProperties: false,
           },
-          "§13.1 spelling."
+          "Export request."
         ),
         responses: {
           "202": jsonResponse(
             {
               type: "object",
-              description: "Provisional: job handle + final URL once the job completes.",
+              description: "routes/exports.ts queued reply (snake_case wire).",
+              required: ["export_id", "status", "revision", "warnings"],
               properties: {
-                ok: OK_TRUE,
-                job_id: { type: "string" },
-                url: { type: "string" },
+                export_id: { type: "string" },
+                status: { type: "string", description: "queued until the worker picks the job up." },
+                revision: { type: "integer", description: "Document revision at enqueue (§5.6)." },
+                warnings: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "§2.3: psd answers the experimental warning; [] otherwise.",
+                },
               },
             },
-            "Export job accepted (§13.1: job → URL)."
+            "Export job accepted (§13.1: job → URL; fetch GET …/exports for it)."
           ),
+          "400": responseRef("BadRequest"),
           "401": responseRef("Unauthorized"),
           "402": responseRef("PaymentRequired"),
           "403": responseRef("Forbidden"),
@@ -2029,26 +2445,67 @@ export const OPENAPI_SPEC: OpenApiDocument = {
           "429": responseRef("RateLimited"),
         },
       },
+      get: {
+        summary: "Past export jobs for this document (newest first).",
+        operationId: "listDocumentExports",
+        tags: ["Documents"],
+        security: AUTH_BOTH,
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/exports.ts (W4-L) — viewer+ (documents:read). No exports " +
+          "table ships in @studio/db yet: the production ExportStatusLike " +
+          "seam is worker-side TODO wiring and answers empty lists until " +
+          "then (W4-L header note).",
+        parameters: [
+          pathIdParam(),
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+          },
+        ],
+        responses: {
+          "200": jsonResponse(
+            {
+              type: "object",
+              required: ["exports"],
+              properties: {
+                exports: { type: "array", items: schemaRef("ExportJobView") },
+              },
+            },
+            "ExportApiView page (services/exports.ts listExports)."
+          ),
+          "400": responseRef("BadRequest"),
+          "401": responseRef("Unauthorized"),
+          "403": responseRef("Forbidden"),
+          "404": responseRef("NotFound"),
+          "422": responseRef("ValidationFailed"),
+        },
+      },
     },
     "/v1/documents/{id}/preview": {
-      summary: "Cached preview PNG (§13.1).",
+      summary: "Cached preview PNG behind a signed URL (§13.1; W4-L).",
       get: {
-        summary: "Cached preview at the requested width (signed URL).",
+        summary: "Cached preview at the requested width (signed URL, ttl 900 s).",
         operationId: "getDocumentPreview",
         tags: ["Documents"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
+        "x-studio-status": "implemented-awaiting-mount",
         description:
-          "GAP (audit D2): no route module yet. §13.1: cached preview PNG " +
-          "served via a short-lived signed URL (§15.1 ≤15 min); response shape " +
-          "pinned then.",
+          "routes/exports.ts (W4-L) — viewer+ (documents:read); mounted via " +
+          "mountExportRoutes(); awaiting the composition-root wiring. The " +
+          "worker (W2-N preview pipeline) renders + caches after the first " +
+          "open/run; the gateway only reads. Until a render exists: 404 " +
+          "preview_not_rendered (route-local add-only code). The 200 also sets " +
+          "Location so browsers can follow.",
         parameters: [
           pathIdParam(),
           {
             name: "w",
             in: "query",
             required: false,
-            description: "Preview width.",
+            description: "Preview width (§13.1 ?w=1024).",
             schema: { type: "integer", minimum: 1, default: 1024 },
           },
         ],
@@ -2056,15 +2513,14 @@ export const OPENAPI_SPEC: OpenApiDocument = {
           "200": jsonResponse(
             {
               type: "object",
-              description: "Provisional shape.",
+              required: ["url", "revision", "expires_at"],
               properties: {
-                ok: OK_TRUE,
-                url: { type: "string", description: "Signed URL (≤15 min, §15.1)." },
+                url: { type: "string", description: "Signed URL (ttl 900 s, §15.1)." },
                 revision: { type: "integer" },
-                width: { type: "integer" },
+                expires_at: createdAt(),
               },
             },
-            "Preview pointer."
+            "Preview pointer; Location carries the same URL."
           ),
           "401": responseRef("Unauthorized"),
           "404": responseRef("NotFound"),
@@ -2080,7 +2536,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "uploadAsset",
         tags: ["Uploads"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         description:
           "§13.1 offers pre-signed OR multipart; the multipart branch is " +
           "implemented (audit D10). §20.2: magic-byte sniffing (never the " +
@@ -2150,7 +2606,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "listAssets",
         tags: ["Uploads"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [
           {
             name: "cursor",
@@ -2200,7 +2656,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "getAsset",
         tags: ["Uploads"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [pathIdParam()],
         responses: {
           "200": jsonResponse(
@@ -2233,7 +2689,7 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         operationId: "deleteAsset",
         tags: ["Uploads"],
         security: AUTH_BOTH,
-        "x-studio-status": "wired-in-W4-R",
+        "x-studio-status": "implemented",
         parameters: [pathIdParam(), paramRef("IdempotencyKey")],
         responses: {
           "200": jsonResponse(
@@ -2251,91 +2707,272 @@ export const OPENAPI_SPEC: OpenApiDocument = {
         },
       },
     },
-    // --- Catalog (§13.1) ----------------------------------------------------
+    // --- Catalog (§13.1, §7; W4-J) -------------------------------------------
     "/v1/templates": {
-      summary: "Template catalog with manifests (§13.1, §7).",
+      summary: "Template discovery cards (§13.1, §7.4).",
       get: {
-        summary: "Templates + manifests.",
+        summary: "Discovery cards — NOT full manifests.",
         operationId: "listTemplates",
         tags: ["Catalog"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
-        description: "GAP (audit D2): no catalog route module yet.",
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/catalog.ts (W4-J) — mounted via mountCatalogRoutes(); " +
+          "awaiting the composition-root wiring. Auth required even though " +
+          "the catalog is public content; per-org token bucket (120 reads/min, " +
+          "§1.5 rule 5) fails OPEN on a KV outage. ?tags=a,b,c is AND " +
+          "semantics; a `tags` param that splits to zero tags is a 422 (not " +
+          "list-everything).",
+        parameters: [
+          {
+            name: "tags",
+            in: "query",
+            required: false,
+            description: "Comma-separated, case-insensitive; AND semantics.",
+            schema: { type: "string", minLength: 1, maxLength: 512 },
+          },
+          {
+            name: "query",
+            in: "query",
+            required: false,
+            description: "Substring filter over id / name / description.",
+            schema: { type: "string", minLength: 1, maxLength: 512 },
+          },
+        ],
         responses: {
           "200": jsonResponse(
             {
               type: "object",
-              required: ["ok", "templates"],
+              required: ["templates"],
               properties: {
-                ok: OK_TRUE,
-                templates: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      id: { type: "string" },
-                      version: { type: "integer" },
-                      name: { type: "string" },
-                      manifest: looseObject("Template manifest (§7)."),
-                    },
-                  },
-                },
+                templates: { type: "array", items: schemaRef("TemplateCard") },
               },
             },
-            "Catalog."
+            "Cards; fetch /v1/templates/{id} for the full manifest."
           ),
           "401": responseRef("Unauthorized"),
+          "422": responseRef("ValidationFailed"),
+          "429": responseRef("RateLimited"),
+        },
+      },
+    },
+    "/v1/templates/{id}": {
+      summary: "One template's full §7.2 manifest (§13.1; extra item route, audit E6).",
+      get: {
+        summary: "Full manifest at the newest (or pinned) version.",
+        operationId: "getTemplate",
+        tags: ["Catalog"],
+        security: AUTH_BOTH,
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/catalog.ts (W4-J) GET /templates/:id — the full manifest. " +
+          "?version=N pins a version; absent means the newest. Misses answer " +
+          "404 unknown_template with the known id@version pins in the hint.",
+        parameters: [
+          pathParam("id", "Template id (slug, ≤64; 'id@version' pins may also be used).", 64),
+          {
+            name: "version",
+            in: "query",
+            required: false,
+            description: "Positive integer version pin (§7.2).",
+            schema: { type: "integer", minimum: 1 },
+          },
+        ],
+        responses: {
+          "200": jsonResponse(
+            {
+              type: "object",
+              required: ["template"],
+              properties: {
+                template: looseObject("The full §7.2 template manifest + version pin."),
+              },
+            },
+            "Manifest."
+          ),
+          "401": responseRef("Unauthorized"),
+          "404": responseRef("NotFound"),
+          "422": responseRef("ValidationFailed"),
+          "429": responseRef("RateLimited"),
         },
       },
     },
     "/v1/components": {
-      summary: "Component catalog with manifests (§13.1, §7).",
+      summary: "Component discovery cards (§13.1, §8.3).",
       get: {
-        summary: "Components + manifests.",
+        summary: "Discovery cards — NOT full manifests.",
         operationId: "listComponents",
         tags: ["Catalog"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
-        description: "GAP (audit D2): no catalog route module yet.",
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/catalog.ts (W4-J) — same card/manifest split as templates " +
+          "(?tags AND semantics, ?query substring; per-org bucket fails open).",
+        parameters: [
+          {
+            name: "tags",
+            in: "query",
+            required: false,
+            description: "Comma-separated, case-insensitive; AND semantics.",
+            schema: { type: "string", minLength: 1, maxLength: 512 },
+          },
+          {
+            name: "query",
+            in: "query",
+            required: false,
+            description: "Substring filter over id / name / description.",
+            schema: { type: "string", minLength: 1, maxLength: 512 },
+          },
+        ],
         responses: {
           "200": jsonResponse(
             {
               type: "object",
-              required: ["ok", "components"],
+              required: ["components"],
               properties: {
-                ok: OK_TRUE,
-                components: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      id: { type: "string" },
-                      version: { type: "integer" },
-                      name: { type: "string" },
-                      manifest: looseObject("Component manifest (§7)."),
-                    },
-                  },
-                },
+                components: { type: "array", items: schemaRef("TemplateCard") },
               },
             },
-            "Catalog."
+            "Cards; fetch /v1/components/{id} for the full manifest."
           ),
           "401": responseRef("Unauthorized"),
+          "422": responseRef("ValidationFailed"),
+          "429": responseRef("RateLimited"),
+        },
+      },
+    },
+    "/v1/components/{id}": {
+      summary: "One component's full manifest (§13.1; extra item route, audit E6).",
+      get: {
+        summary: "Full manifest at the newest (or pinned) version.",
+        operationId: "getComponent",
+        tags: ["Catalog"],
+        security: AUTH_BOTH,
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/catalog.ts (W4-J) GET /components/:id — ?version=N pins; " +
+          "absent means the newest. Misses answer 404 unknown_component.",
+        parameters: [
+          pathParam("id", "Component id (slug, ≤64).", 64),
+          {
+            name: "version",
+            in: "query",
+            required: false,
+            description: "Positive integer version pin (§8).",
+            schema: { type: "integer", minimum: 1 },
+          },
+        ],
+        responses: {
+          "200": jsonResponse(
+            {
+              type: "object",
+              required: ["component"],
+              properties: {
+                component: looseObject("The full component manifest + version pin."),
+              },
+            },
+            "Manifest."
+          ),
+          "401": responseRef("Unauthorized"),
+          "404": responseRef("NotFound"),
+          "422": responseRef("ValidationFailed"),
+          "429": responseRef("RateLimited"),
+        },
+      },
+    },
+    "/v1/workspaces/{id}/templates": {
+      summary: "Register a workspace-private template (§7.2; extra route, audit E7).",
+      post: {
+        summary: "Admin+ registers a template row for this workspace.",
+        operationId: "registerWorkspaceTemplate",
+        tags: ["Catalog"],
+        security: AUTH_BOTH,
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/catalog.ts (W4-J) POST /workspaces/:id/templates. The body " +
+          "is the §7.2 manifest (services/catalog.ts " +
+          "REGISTER_TEMPLATE_BODY_SCHEMA — a strict TemplateManifest). The " +
+          "Idempotency-Key HEADER is required (422 when absent) — the key " +
+          "never enters the stored jsonb document. Byte-identical replays " +
+          "answer 200 duplicate:true instead of 201.",
+        parameters: [
+          pathParam("id", "Workspace id (≤64).", 64),
+          paramRef("IdempotencyKey"),
+        ],
+        requestBody: jsonBody(
+          looseObject(
+            "The §7.2 template manifest (strict); id + version + name + canvas " +
+            "+ slots per services/catalog.ts TEMPLATE_MANIFEST_SCHEMA."
+          ),
+          "The manifest to register."
+        ),
+        responses: {
+          "201": jsonResponse(
+            {
+              type: "object",
+              description: "routes/catalog.ts registration reply (snake_case wire).",
+              required: [
+                "id",
+                "workspace_id",
+                "template_id",
+                "version",
+                "license",
+                "created_at",
+                "duplicate",
+              ],
+              properties: {
+                id: { type: "string" },
+                workspace_id: { type: "string" },
+                template_id: { type: "string" },
+                version: { type: "integer" },
+                license: { type: "string", description: "row.source (§7.2 license: workspace-private)." },
+                created_at: createdAt(),
+                duplicate: { const: false },
+              },
+            },
+            "Registered."
+          ),
+          "200": {
+            description: "Idempotent replay: the same registration again (duplicate:true).",
+            content: {
+              "application/json": media({
+                type: "object",
+                description: "Same shape as 201 with duplicate:true.",
+              }),
+            },
+          },
+          "400": responseRef("BadRequest"),
+          "401": responseRef("Unauthorized"),
+          "403": responseRef("Forbidden"),
+          "404": responseRef("NotFound"),
+          "422": responseRef("ValidationFailed"),
+          "429": responseRef("RateLimited"),
         },
       },
     },
     // --- Credits / billing / webhooks (§13.1, §14) --------------------------
     "/v1/credits": {
-      summary: "Balance + ledger page (§13.1).",
+      summary: "Balance + ledger page (§13.1; W4-M).",
       get: {
         summary: "Credit balance + one ledger page (append-only ledger, §14.2).",
         operationId: "getCredits",
         tags: ["Billing"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
-        description: "GAP (audit D2): no route module yet.",
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/credits.ts (W4-M) — viewer+ by design (no billing READ " +
+          "permission in the W4-C matrix; the role field is correlation-only). " +
+          "Mounted via mountCreditsRoutes(); awaiting the composition-root " +
+          "wiring. Per-org read bucket 120/min fails open (§1.5 rule 5). " +
+          "balance ≡ Σ ledger deltas; the newest row's balance_after equals " +
+          "it (§12.2 sum sanity).",
         parameters: [
-          { name: "cursor", in: "query", required: false, schema: { type: "string" } },
+          {
+            name: "cursor",
+            in: "query",
+            required: false,
+            description: "Opaque base64url keyset cursor (next_cursor).",
+            schema: { type: "string", minLength: 1, maxLength: 1024 },
+          },
           {
             name: "limit",
             in: "query",
@@ -2347,75 +2984,138 @@ export const OPENAPI_SPEC: OpenApiDocument = {
           "200": jsonResponse(
             {
               type: "object",
-              description: "Provisional.",
+              description: "routes/credits.ts — balance ≡ Σ ledger deltas (§12.2).",
+              required: ["balance", "ledger"],
               properties: {
-                ok: OK_TRUE,
                 balance: { type: "number" },
-                ledger: { type: "array", items: looseObject("Ledger entry (§14.2).") },
-                next_cursor: { type: "string" },
+                ledger: {
+                  type: "object",
+                  required: ["rows"],
+                  properties: {
+                    rows: { type: "array", items: schemaRef("LedgerEntry") },
+                    next_cursor: { type: "string", maxLength: 1024 },
+                  },
+                },
               },
             },
-            "Balance + page."
+            "Balance + one page (newest first)."
           ),
           "401": responseRef("Unauthorized"),
-          "403": responseRef("Forbidden"),
+          "422": responseRef("ValidationFailed"),
+          "429": responseRef("RateLimited"),
+        },
+      },
+    },
+    "/v1/credits/summary": {
+      summary: "30-day spend, open holds, trial flag (extra route, audit E8).",
+      get: {
+        summary: "Workspace billing summary card (§22/§14).",
+        operationId: "getCreditsSummary",
+        tags: ["Billing"],
+        security: AUTH_BOTH,
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/credits.ts (W4-M) GET /summary — one composite billing read " +
+          "(spend since now − 30d, open credit_reservations holds, trial " +
+          "flag). Viewer+; per-org read bucket fails open.",
+        responses: {
+          "200": jsonResponse(schemaRef("CreditsSummaryView"), "Summary card."),
+          "401": responseRef("Unauthorized"),
+          "429": responseRef("RateLimited"),
+        },
+      },
+    },
+    "/v1/billing/plans": {
+      summary: "Public plan cards (§14.1; extra route, audit E9).",
+      get: {
+        summary: "Plan cards + the credit pack (marketing + billing pages).",
+        operationId: "listBillingPlans",
+        tags: ["Billing"],
+        security: [],
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/billing.ts (W4-N) GET /plans — public by design (no auth; " +
+          "§14.1 numbers come straight from @studio/config).",
+        responses: {
+          "200": jsonResponse(schemaRef("PlanCardsResponse"), "Plan cards."),
         },
       },
     },
     "/v1/billing/checkout": {
-      summary: "Stripe Checkout session (§13.1, §14.3).",
+      summary: "Stripe Checkout session (§13.1, §14.3; W4-N).",
       post: {
         summary: "Create a Stripe Checkout session (plans, credit packs).",
         operationId: "createCheckout",
         tags: ["Billing"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
+        "x-studio-status": "implemented-awaiting-mount",
         description:
-          "GAP (audit D2): no route module yet. Stripe Tax enabled; PCI scope " +
-          "is Stripe's (§14.3).",
+          "routes/billing.ts (W4-N) + services/stripe.ts — mounted via " +
+          "mountBillingRoutes(); awaiting the composition-root wiring. " +
+          "Owner/admin only (§15.2, ADR-0003 row 8). BODY IS camelCase per " +
+          "the W4-N task contract (runs.ts precedent) — §13.1's snake_case " +
+          "reconciliation is owed to the API-contract wave (audit D4). Stripe " +
+          "Tax enabled; PCI scope is Stripe's (§14.3).",
         parameters: [paramRef("IdempotencyKey")],
         requestBody: jsonBody(
           {
             type: "object",
-            description: "Provisional (§14.1 plans + credit packs).",
+            description: "routes/billing.ts checkoutBodySchema (strict, camelCase — audit D4).",
+            required: ["planCode", "workspaceId"],
             properties: {
-              plan_id: { type: "string" },
-              credit_pack: { type: "string", enum: ["pack_100"] },
+              planCode: { type: "string", description: "§14.1 plan code (BILLING_PLAN_CODE_SCHEMA)." },
+              workspaceId: { type: "string", minLength: 1, maxLength: 200 },
             },
             additionalProperties: false,
           },
-          "Pinned when the billing route lands.",
-          false
+          "The plan to check out."
         ),
         responses: {
           "200": jsonResponse(
             {
               type: "object",
-              required: ["ok", "url"],
+              required: ["ok", "url", "session_id"],
               properties: {
                 ok: OK_TRUE,
                 url: { type: "string", description: "Stripe Checkout URL." },
+                session_id: { type: "string" },
               },
             },
             "Redirect target."
           ),
+          "400": responseRef("BadRequest"),
           "401": responseRef("Unauthorized"),
           "403": responseRef("Forbidden"),
           "409": responseRef("Conflict"),
           "422": responseRef("ValidationFailed"),
+          "503": responseRef("ServiceUnavailable"),
         },
       },
     },
     "/v1/billing/portal": {
-      summary: "Stripe customer portal (§13.1, §14.3).",
+      summary: "Stripe customer portal (§13.1, §14.3; W4-N).",
       post: {
         summary: "Create a customer-portal session (card/plan changes).",
         operationId: "createPortal",
         tags: ["Billing"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
-        description: "GAP (audit D2): no route module yet.",
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/billing.ts (W4-N) — owner/admin only; Stripe-hosted card/plan " +
+          "management (§14.3). camelCase body per the W4-N contract (audit D4).",
         parameters: [paramRef("IdempotencyKey")],
+        requestBody: jsonBody(
+          {
+            type: "object",
+            description: "routes/billing.ts portalBodySchema (strict).",
+            required: ["workspaceId"],
+            properties: {
+              workspaceId: { type: "string", minLength: 1, maxLength: 200 },
+            },
+            additionalProperties: false,
+          },
+          "The workspace whose portal to open."
+        ),
         responses: {
           "200": jsonResponse(
             {
@@ -2425,84 +3125,236 @@ export const OPENAPI_SPEC: OpenApiDocument = {
             },
             "Portal URL."
           ),
+          "400": responseRef("BadRequest"),
           "401": responseRef("Unauthorized"),
           "403": responseRef("Forbidden"),
+          "422": responseRef("ValidationFailed"),
+          "503": responseRef("ServiceUnavailable"),
         },
       },
     },
     "/v1/webhooks/stripe": {
-      summary: "Signed Stripe webhook (§13.1, §14.3).",
+      summary: "Signed Stripe webhook (§13.1, §14.3; W4-N).",
       post: {
         summary: "Signature-verified, idempotent by event id.",
         operationId: "stripeWebhook",
         tags: ["Billing"],
         security: [],
-        "x-studio-status": "not-implemented",
+        "x-studio-status": "implemented-awaiting-mount",
         description:
-          "GAP (audit D2): no route module yet. Unauthenticated (signature-" +
-          "verified instead); idempotent by Stripe event id. Webhooks are the " +
-          "only source of truth for subscription state (§14.3).",
+          "routes/billing.ts (W4-N) stripeWebhookRoutes — mounted via " +
+          "mountBillingRoutes(); awaiting the composition-root wiring. NO " +
+          "auth (the signature is the authentication): the RAW body is passed " +
+          "through — the signature is computed over the exact bytes Stripe " +
+          "sent (§15.2). A bad signature is a typed 400 invalid_signature; a " +
+          "processing failure bubbles as the generic 500 so Stripe retries; " +
+          "everything else answers 2xx (unknown events are a logged 200 " +
+          "no-op). Idempotent by Stripe event id — webhooks are the only " +
+          "source of truth for subscription state (§14.3).",
+        parameters: [
+          {
+            name: "stripe-signature",
+            in: "header",
+            required: true,
+            description: "Stripe's v1 signature header (never logged or echoed).",
+            schema: { type: "string", minLength: 1 },
+          },
+        ],
+        requestBody: {
+          description: "The raw Stripe event body — bytes are never re-serialized.",
+          required: true,
+          content: { "application/json": media(looseObject("A Stripe event object.")) },
+        },
         responses: {
           "200": jsonResponse(
             {
               type: "object",
-              properties: { ok: OK_TRUE, received: { type: "boolean" } },
+              required: ["ok", "received", "handled", "duplicate"],
+              properties: {
+                ok: OK_TRUE,
+                received: { const: true },
+                handled: { type: "boolean", description: "False for unknown/no-op event types." },
+                duplicate: { type: "boolean", description: "True on a replayed event id (§14.3)." },
+              },
             },
             "Ack (idempotent)."
           ),
           "400": responseRef("BadRequest"),
-          "409": responseRef("Conflict"),
+          "500": responseRef("InternalError"),
         },
       },
     },
     "/v1/usage": {
-      summary: "Daily usage rollups (§13.1).",
+      summary: "Daily usage rollups (§13.1; W4-M).",
       get: {
         summary: "Daily rollups for the workspace dashboard.",
         operationId: "getUsage",
         tags: ["Usage"],
         security: AUTH_BOTH,
-        "x-studio-status": "not-implemented",
-        description: "GAP (audit D2): no route module yet.",
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/credits.ts (W4-M) — viewer+; per-org bucket 30 reads/min " +
+          "(grouped scans) fails open. ?from/?to are inclusive UTC calendar " +
+          "days (YYYY-MM-DD); defaults cover the last 30 days; from > to or " +
+          "a window wider than USAGE_MAX_DAYS answers 422. Days are zero-" +
+          "filled across the window.",
         parameters: [
           {
             name: "from",
             in: "query",
             required: false,
-            description: "Inclusive start.",
+            description: "Inclusive start (UTC day, YYYY-MM-DD).",
             schema: { type: "string", format: "date" },
           },
           {
             name: "to",
             in: "query",
             required: false,
-            description: "Inclusive end.",
+            description: "Inclusive end (UTC day, YYYY-MM-DD).",
             schema: { type: "string", format: "date" },
           },
         ],
         responses: {
           "200": jsonResponse(
-            {
-              type: "object",
-              description: "Provisional.",
-              properties: {
-                ok: OK_TRUE,
-                days: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      date: { type: "string", format: "date" },
-                      runs: { type: "integer" },
-                      credits: { type: "number" },
-                    },
-                  },
+            schemaRef("UsageResponseView"),
+            "Merged credit + run rollups, zero-filled per day."
+          ),
+          "401": responseRef("Unauthorized"),
+          "422": responseRef("ValidationFailed"),
+          "429": responseRef("RateLimited"),
+        },
+      },
+    },
+    // --- Audit export/summary (§22; W9-H; added by the W10-G final audit) ----
+    "/v1/workspaces/{id}/audit": {
+      summary: "§22 audit-log export for one workspace (admin+).",
+      get: {
+        summary: "Cursor-paged §22 export — JSON page or RFC 4180 CSV download.",
+        operationId: "getAuditExport",
+        tags: ["Audit"],
+        security: AUTH_BOTH,
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/audit.ts (W9-H) — mounted via mountAuditRoutes(); awaiting " +
+          "the composition-root wiring. RBAC admin+ via the authoritative " +
+          "guard: assertCan(role, "members:manage") — the matrix has no " +
+          "audit row yet, and a permission may never be invented locally " +
+          "(swap AUDIT_GATE_PERMISSION if the matrix grows audit:read). " +
+          "Tenant guard: the trail of workspace :id is tenant-scoped — foreign " +
+          "orgs fail closed with the DISTINCT cross_tenant_denied envelope " +
+          "(§15.1). ?format=csv returns the SAME rows as an RFC 4180 " +
+          "text/csv download (one header row, CRLF, trailing CRLF); the " +
+          "continuation cursor rides the X-Next-Cursor header because the CSV " +
+          "body is raw text. Service failures keep their own typed codes " +
+          "(invalid_org/invalid_window/invalid_cursor → 422; " +
+          "storage_unavailable → 503).",
+        parameters: [
+          pathParam("id", "Workspace id (≤64; §22 tenant scope).", 64),
+          {
+            name: "format",
+            in: "query",
+            required: false,
+            description: "json (default) or csv (RFC 4180 download).",
+            schema: { type: "string", enum: ["json", "csv"], default: "json" },
+          },
+          {
+            name: "from",
+            in: "query",
+            required: false,
+            description: "Inclusive window start (UTC ISO-8601, Z anchor).",
+            schema: { type: "string", format: "date-time" },
+          },
+          {
+            name: "to",
+            in: "query",
+            required: false,
+            description: "Inclusive window end (UTC ISO-8601, Z anchor).",
+            schema: { type: "string", format: "date-time" },
+          },
+          {
+            name: "cursor",
+            in: "query",
+            required: false,
+            description: "Opaque continuation cursor (X-Next-Cursor / next_cursor).",
+            schema: { type: "string", minLength: 1, maxLength: 2048 },
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            description: "Page size 1..500 (services/audit.ts DEFAULT_EXPORT_PAGE_SIZE when absent).",
+            schema: { type: "integer", minimum: 1, maximum: 500 },
+          },
+        ],
+        responses: {
+          "200": {
+            description:
+              "JSON page by default; ?format=csv downloads the same rows as " +
+              "RFC 4180 text (Content-Disposition: attachment; the cursor " +
+              "rides X-Next-Cursor).",
+            content: {
+              "application/json": media({
+                type: "object",
+                required: ["rows"],
+                properties: {
+                  rows: { type: "array", items: schemaRef("AuditExportRow") },
+                  next_cursor: { type: "string", maxLength: 2048 },
+                },
+              }),
+              "text/csv": {
+                schema: {
+                  type: "string",
+                  description:
+                    "RFC 4180 CSV: header row id,organization_id,actor_id," +
+                    "action,target,metadata,created_at + one row per event; " +
+                    "empty pages still download as a header-only file.",
+                  example:
+                    "id,organization_id,actor_id,action,target,metadata,created_at\r\n" +
+                    "evt_1,ws_1,,workspace.created,workspace:ws_1,\"{}\",2026-01-15T10:00:00.000Z\r\n",
                 },
               },
             },
-            "Rollups."
+            headers: {
+              "Content-Disposition": {
+                description: "CSV mode only: attachment filename (no internal ids, §15.2).",
+                schema: { type: "string" },
+              },
+              "X-Next-Cursor": {
+                description:
+                  "CSV mode only: the continuation cursor (absent on the last page).",
+                schema: { type: "string" },
+              },
+            },
+          },
+          "401": responseRef("Unauthorized"),
+          "403": responseRef("Forbidden"),
+          "404": responseRef("NotFound"),
+          "422": responseRef("ValidationFailed"),
+          "503": responseRef("ServiceUnavailable"),
+        },
+      },
+    },
+    "/v1/audit/summary/{id}": {
+      summary: "§22 support card: counts by action, last 30 days (admin+).",
+      get: {
+        summary: "Deterministic counts-by-action summary for one workspace.",
+        operationId: "getAuditSummary",
+        tags: ["Audit"],
+        security: AUTH_BOTH,
+        "x-studio-status": "implemented-awaiting-mount",
+        description:
+          "routes/audit.ts (W9-H) — the §16.3 better-auth admin-plugin " +
+          "consumers' landing card. Same admin+ gate + tenant guard as the " +
+          "export. The summary adapter is fail-closed: malformed entries are " +
+          "dropped, never a 500 (§13.3 envelope hygiene).",
+        parameters: [pathParam("id", "Workspace id (≤64; §22 tenant scope).", 64)],
+        responses: {
+          "200": jsonResponse(
+            schemaRef("AuditSummaryView"),
+            "Counts by action over the fixed 30-day window."
           ),
           "401": responseRef("Unauthorized"),
+          "403": responseRef("Forbidden"),
           "422": responseRef("ValidationFailed"),
         },
       },

@@ -64,19 +64,19 @@ describe("WorkerMetrics run lifecycle counters", () => {
       metrics.observeRunEvent(event);
     }
     const text = metrics.render();
-    expect(text).toContain("# TYPE runs_total counter");
-    expect(text).toContain('runs_total{status="queued",tier="standard"} 1');
-    expect(text).toContain('runs_total{status="running",tier="standard"} 1');
-    expect(text).toContain('runs_total{status="succeeded",tier="standard"} 1');
-    expect(text).toContain("runs_in_flight 0");
-    expect(text).toContain('tool_calls_total{tool="style_apply"} 1');
-    expect(text).toContain('tool_errors_total{tool="style_apply"} 1');
-    expect(text).toContain('validator_reports_total{result="blocked"} 1');
-    expect(text).toContain("validator_blockers_total 2");
-    expect(text).toContain('critic_verdicts_total{verdict="revise"} 1');
-    expect(text).toContain("credits_reserved_total 2");
-    expect(text).toContain("credits_committed_total 2");
-    expect(text).toContain('credits_charged_events_total{partial="false"} 1');
+    expect(text).toContain("# TYPE studio_runs_total counter");
+    expect(text).toContain('studio_runs_total{status="queued",tier="standard"} 1');
+    expect(text).toContain('studio_runs_total{status="running",tier="standard"} 1');
+    expect(text).toContain('studio_runs_total{status="succeeded",tier="standard"} 1');
+    expect(text).toContain("studio_runs_in_flight 0");
+    expect(text).toContain('studio_tool_calls_total{tool="style_apply"} 1');
+    expect(text).toContain('studio_tool_errors_total{tool="style_apply"} 1');
+    expect(text).toContain('studio_validator_reports_total{result="blocked"} 1');
+    expect(text).toContain("studio_validator_blockers_total 2");
+    expect(text).toContain('studio_critic_verdicts_total{verdict="revise"} 1');
+    expect(text).toContain("studio_credits_reserved_total 2");
+    expect(text).toContain("studio_credits_committed_total 2");
+    expect(text).toContain('studio_credits_charged_events_total{partial="false"} 1');
   });
 
   it("labels failed and cancelled terminals with the tier remembered from queued", () => {
@@ -86,17 +86,17 @@ describe("WorkerMetrics run lifecycle counters", () => {
     metrics.observeRunEvent(ev("run.queued", { tier: "complex" }, "run_c"));
     metrics.observeRunEvent(ev("run.cancelled", { reason: "user" }, "run_c"));
     const text = metrics.render();
-    expect(text).toContain('runs_total{status="failed",tier="quick"} 1');
-    expect(text).toContain('runs_total{status="cancelled",tier="complex"} 1');
-    expect(text).toContain("runs_in_flight 0");
+    expect(text).toContain('studio_runs_total{status="failed",tier="quick"} 1');
+    expect(text).toContain('studio_runs_total{status="cancelled",tier="complex"} 1');
+    expect(text).toContain("studio_runs_in_flight 0");
   });
 
   it("renders an untracked terminal (recovery path) as tier=unspecified and never goes negative", () => {
     const metrics = createWorkerMetrics();
     metrics.observeRunEvent(ev("run.succeeded", { revisionAfter: 1, warnings: [] }, "run_ghost"));
     const text = metrics.render();
-    expect(text).toContain('runs_total{status="succeeded",tier="unspecified"} 1');
-    expect(text).toContain("runs_in_flight 0");
+    expect(text).toContain('studio_runs_total{status="succeeded",tier="unspecified"} 1');
+    expect(text).toContain("studio_runs_in_flight 0");
   });
 
   it("counts passing validators and accepted critics (§22 blocker/revise rates)", () => {
@@ -110,9 +110,9 @@ describe("WorkerMetrics run lifecycle counters", () => {
       }, "run_v")
     );
     const text = metrics.render();
-    expect(text).toContain('validator_reports_total{result="pass"} 1');
-    expect(text).toContain("validator_blockers_total 0");
-    expect(text).toContain('critic_verdicts_total{verdict="accept"} 1');
+    expect(text).toContain('studio_validator_reports_total{result="pass"} 1');
+    expect(text).toContain("studio_validator_blockers_total 0");
+    expect(text).toContain('studio_critic_verdicts_total{verdict="accept"} 1');
   });
 
   it("ignores plan/preview events and steps without a tool", () => {
@@ -125,10 +125,10 @@ describe("WorkerMetrics run lifecycle counters", () => {
     const text = metrics.render();
     // Families render their HELP/TYPE headers but no sample line (counters
     // are implicitly 0 until first increment — Prometheus convention).
-    expect(text).toContain("# TYPE runs_total counter");
-    expect(text).not.toContain("runs_total{");
-    expect(text).toContain("# TYPE tool_calls_total counter");
-    expect(text).not.toContain("tool_calls_total{");
+    expect(text).toContain("# TYPE studio_runs_total counter");
+    expect(text).not.toContain("studio_runs_total{");
+    expect(text).toContain("# TYPE studio_tool_calls_total counter");
+    expect(text).not.toContain("studio_tool_calls_total{");
   });
 });
 
@@ -150,20 +150,20 @@ describe("WorkerMetrics usage accumulators", () => {
     };
     metrics.observeUsage(row);
     const text = metrics.render();
-    expect(text).toContain('ai_tokens_total{model="economy",direction="in"} 1200');
-    expect(text).toContain('ai_tokens_total{model="economy",direction="out"} 300');
-    expect(text).toContain('ai_tokens_total{model="economy",direction="cache_read"} 800');
-    expect(text).toContain('ai_cost_usd_total{workspace="ws_9"} 0.012');
+    expect(text).toContain('studio_ai_tokens_total{model="economy",direction="in"} 1200');
+    expect(text).toContain('studio_ai_tokens_total{model="economy",direction="out"} 300');
+    expect(text).toContain('studio_ai_tokens_total{model="economy",direction="cache_read"} 800');
+    expect(text).toContain('studio_ai_cost_usd_total{workspace="ws_9"} 0.012');
   });
 
   it("defaults missing model/workspace labels to unspecified and skips bad numbers", () => {
     const metrics = createWorkerMetrics();
     metrics.observeUsage({ tokensIn: Number.NaN, tokensOut: 5, costUsd: Number.NaN });
     const text = metrics.render();
-    expect(text).toContain('ai_tokens_total{model="unspecified",direction="out"} 5');
+    expect(text).toContain('studio_ai_tokens_total{model="unspecified",direction="out"} 5');
     // NaN deltas are dropped, so the cost family renders headers only.
-    expect(text).toContain("# TYPE ai_cost_usd_total counter");
-    expect(text).not.toContain("ai_cost_usd_total{");
+    expect(text).toContain("# TYPE studio_ai_cost_usd_total counter");
+    expect(text).not.toContain("studio_ai_cost_usd_total{");
   });
 });
 
@@ -202,9 +202,9 @@ describe("metrics http server", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toBe(PROMETHEUS_CONTENT_TYPE);
       const body = await res.text();
-      expect(body).toContain("# TYPE runs_total counter");
-      expect(body).toContain('runs_total{status="succeeded",tier="standard"} 1');
-      expect(body).toContain("runs_in_flight 0");
+      expect(body).toContain("# TYPE studio_runs_total counter");
+      expect(body).toContain('studio_runs_total{status="succeeded",tier="standard"} 1');
+      expect(body).toContain("studio_runs_in_flight 0");
     });
   });
 

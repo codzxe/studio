@@ -34,7 +34,7 @@ describe("registry render (known output string)", () => {
   it("renders counter + histogram + gauge in canonical Prometheus format", () => {
     const registry = createObsMetricRegistry();
     const runs = createLabeledCounter<{ readonly status: string; readonly tier: string }>({
-      name: "runs_total",
+      name: "studio_runs_total",
       help: "Runs by terminal status and tier.",
       labelNames: ["status", "tier"],
       registry,
@@ -42,33 +42,33 @@ describe("registry render (known output string)", () => {
     runs.inc({ status: "succeeded", tier: "standard" }, 2);
     runs.inc({ status: "failed", tier: "quick" });
     const steps = createUnlabeledHistogram({
-      name: "steps_per_run",
+      name: "studio_steps_per_run",
       help: "Steps per run.",
       buckets: [1, 2, 4],
       registry,
     });
     steps.observe(3);
     steps.observe(1);
-    const depth = createUnlabeledGauge({ name: "queue_depth", help: "Pending jobs.", registry });
+    const depth = createUnlabeledGauge({ name: "studio_queue_depth", help: "Pending jobs.", registry });
     depth.set(3);
 
     expect(registry.render()).toBe(
       [
-        "# HELP runs_total Runs by terminal status and tier.",
-        "# TYPE runs_total counter",
-        'runs_total{status="failed",tier="quick"} 1',
-        'runs_total{status="succeeded",tier="standard"} 2',
-        "# HELP steps_per_run Steps per run.",
-        "# TYPE steps_per_run histogram",
-        'steps_per_run_bucket{le="1"} 1',
-        'steps_per_run_bucket{le="2"} 1',
-        'steps_per_run_bucket{le="4"} 2',
-        'steps_per_run_bucket{le="+Inf"} 2',
-        "steps_per_run_sum 4",
-        "steps_per_run_count 2",
-        "# HELP queue_depth Pending jobs.",
-        "# TYPE queue_depth gauge",
-        "queue_depth 3",
+        "# HELP studio_runs_total Runs by terminal status and tier.",
+        "# TYPE studio_runs_total counter",
+        'studio_runs_total{status="failed",tier="quick"} 1',
+        'studio_runs_total{status="succeeded",tier="standard"} 2',
+        "# HELP studio_steps_per_run Steps per run.",
+        "# TYPE studio_steps_per_run histogram",
+        'studio_steps_per_run_bucket{le="1"} 1',
+        'studio_steps_per_run_bucket{le="2"} 1',
+        'studio_steps_per_run_bucket{le="4"} 2',
+        'studio_steps_per_run_bucket{le="+Inf"} 2',
+        "studio_steps_per_run_sum 4",
+        "studio_steps_per_run_count 2",
+        "# HELP studio_queue_depth Pending jobs.",
+        "# TYPE studio_queue_depth gauge",
+        "studio_queue_depth 3",
         "",
       ].join("\n"),
     );
@@ -84,7 +84,7 @@ describe("registry render (known output string)", () => {
   it("escapes label values (backslash, quote, newline) per the text format", () => {
     const registry = createObsMetricRegistry();
     const spend = createLabeledCounter<{ readonly workspace: string }>({
-      name: "ai_cost_usd_per_day",
+      name: "studio_ai_cost_usd_per_day",
       help: "Spend.",
       labelNames: ["workspace"],
       registry,
@@ -92,9 +92,9 @@ describe("registry render (known output string)", () => {
     spend.inc({ workspace: 'ws-"x\\y' });
     expect(registry.render()).toBe(
       [
-        "# HELP ai_cost_usd_per_day Spend.",
-        "# TYPE ai_cost_usd_per_day counter",
-        'ai_cost_usd_per_day{workspace="ws-\\"x\\\\y"} 1',
+        "# HELP studio_ai_cost_usd_per_day Spend.",
+        "# TYPE studio_ai_cost_usd_per_day counter",
+        'studio_ai_cost_usd_per_day{workspace="ws-\\"x\\\\y"} 1',
         "",
       ].join("\n"),
     );
@@ -103,7 +103,7 @@ describe("registry render (known output string)", () => {
   it("labeled histogram renders le FIRST (Go-client parity) with cumulative buckets", () => {
     const registry = createObsMetricRegistry();
     const durations = createLabeledHistogram<{ readonly tier: string }>({
-      name: "run_duration_seconds",
+      name: "studio_run_duration_seconds",
       help: "Duration.",
       labelNames: ["tier"],
       buckets: [1, 10],
@@ -114,13 +114,13 @@ describe("registry render (known output string)", () => {
     durations.observe({ tier: "standard" }, 42);
     expect(registry.render()).toBe(
       [
-        "# HELP run_duration_seconds Duration.",
-        "# TYPE run_duration_seconds histogram",
-        'run_duration_seconds_bucket{le="1",tier="standard"} 1',
-        'run_duration_seconds_bucket{le="10",tier="standard"} 2',
-        'run_duration_seconds_bucket{le="+Inf",tier="standard"} 3',
-        'run_duration_seconds_sum{tier="standard"} 47.5',
-        'run_duration_seconds_count{tier="standard"} 3',
+        "# HELP studio_run_duration_seconds Duration.",
+        "# TYPE studio_run_duration_seconds histogram",
+        'studio_run_duration_seconds_bucket{le="1",tier="standard"} 1',
+        'studio_run_duration_seconds_bucket{le="10",tier="standard"} 2',
+        'studio_run_duration_seconds_bucket{le="+Inf",tier="standard"} 3',
+        'studio_run_duration_seconds_sum{tier="standard"} 47.5',
+        'studio_run_duration_seconds_count{tier="standard"} 3',
         "",
       ].join("\n"),
     );
@@ -128,9 +128,9 @@ describe("registry render (known output string)", () => {
 
   it("reset clears every family (test isolation; never shipped paths)", () => {
     const registry = createObsMetricRegistry();
-    const counter = createUnlabeledCounter({ name: "runs_total", help: "Runs.", registry });
+    const counter = createUnlabeledCounter({ name: "studio_runs_total", help: "Runs.", registry });
     counter.inc();
-    expect(registry.render()).toContain("runs_total 1");
+    expect(registry.render()).toContain("studio_runs_total 1");
     registry.reset();
     expect(registry.render()).toBe("");
   });
@@ -156,16 +156,16 @@ describe("validation (fail fast, typed errors)", () => {
 
   it("rejects duplicate family names in one registry", () => {
     const registry = createObsMetricRegistry();
-    createUnlabeledCounter({ name: "runs_total", help: "one", registry });
+    createUnlabeledCounter({ name: "studio_runs_total", help: "one", registry });
     expect(
-      thrownCode(() => createUnlabeledCounter({ name: "runs_total", help: "two", registry })),
+      thrownCode(() => createUnlabeledCounter({ name: "studio_runs_total", help: "two", registry })),
     ).toBe("duplicate_name");
   });
 
   it("enforces the exact label set (no partial or unknown labels)", () => {
     const registry = createObsMetricRegistry();
     const runs = createLabeledCounter<{ readonly status: string; readonly tier: string }>({
-      name: "runs_total",
+      name: "studio_runs_total",
       help: "Runs.",
       labelNames: ["status", "tier"],
       registry,
@@ -189,14 +189,14 @@ describe("validation (fail fast, typed errors)", () => {
   });
 
   it("rejects bad values and bad bucket sets", () => {
-    const counter = createUnlabeledCounter({ name: "runs_total", help: "Runs." });
+    const counter = createUnlabeledCounter({ name: "studio_runs_total", help: "Runs." });
     expect(thrownCode(() => counter.inc(-1))).toBe("invalid_value");
     expect(thrownCode(() => counter.inc(Number.NaN))).toBe("invalid_value");
 
-    const gauge = createUnlabeledGauge({ name: "queue_depth", help: "Depth." });
+    const gauge = createUnlabeledGauge({ name: "studio_queue_depth", help: "Depth." });
     expect(thrownCode(() => gauge.set(Number.POSITIVE_INFINITY))).toBe("invalid_value");
 
-    const histogram = createUnlabeledHistogram({ name: "steps_per_run", help: "x", buckets: [1, 4] });
+    const histogram = createUnlabeledHistogram({ name: "studio_steps_per_run", help: "x", buckets: [1, 4] });
     expect(thrownCode(() => histogram.observe(-2))).toBe("invalid_value");
 
     expect(
@@ -216,20 +216,20 @@ describe("createObsMetrics — the §22 metric set", () => {
     const metrics: ObsMetrics = createObsMetrics();
     const families = metrics.registry.families.map((family) => `${family.name}:${family.kind}`);
     expect(families).toEqual([
-      "runs_total:counter",
-      "run_duration_seconds:histogram",
-      "steps_per_run:histogram",
-      "tool_errors_total:counter",
-      "validator_blockers_total:counter",
-      "critic_revise_total:counter",
-      "credits_reserved_total:counter",
-      "credits_committed_total:counter",
-      "ai_cost_usd_per_day:counter",
-      "tokens_in_total:counter",
-      "tokens_out_total:counter",
-      "tokens_cache_total:counter",
-      "queue_depth:gauge",
-      "engine_sessions:gauge",
+      "studio_runs_total:counter",
+      "studio_run_duration_seconds:histogram",
+      "studio_steps_per_run:histogram",
+      "studio_tool_errors_total:counter",
+      "studio_validator_blockers_total:counter",
+      "studio_critic_revise_total:counter",
+      "studio_credits_reserved_total:counter",
+      "studio_credits_committed_total:counter",
+      "studio_ai_cost_usd_per_day:counter",
+      "studio_tokens_in_total:counter",
+      "studio_tokens_out_total:counter",
+      "studio_tokens_cache_total:counter",
+      "studio_queue_depth:gauge",
+      "studio_engine_sessions:gauge",
     ]);
     expect(RENDER_CONTENT_TYPE).toBe("text/plain; version=0.0.4; charset=utf-8");
     expect([...RUN_DURATION_SECONDS_BUCKETS]).toEqual([0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600]);
@@ -256,32 +256,32 @@ describe("createObsMetrics — the §22 metric set", () => {
     metrics.engineSessions.set({ state: "idle" }, 1);
 
     const body = metrics.registry.render();
-    expect(body).toContain('runs_total{status="failed",tier="complex"} 1');
-    expect(body).toContain('runs_total{status="succeeded",tier="standard"} 1');
-    expect(body).toContain('run_duration_seconds_bucket{le="30",tier="standard"} 0');
-    expect(body).toContain('run_duration_seconds_bucket{le="60",tier="standard"} 1');
-    expect(body).toContain('run_duration_seconds_count{tier="standard"} 1');
-    expect(body).toContain('steps_per_run_bucket{le="8"} 0');
-    expect(body).toContain('steps_per_run_bucket{le="16"} 1');
-    expect(body).toContain('tool_errors_total{tool="template_apply"} 1');
-    expect(body).toContain("validator_blockers_total 1");
-    expect(body).toContain("critic_revise_total 2");
-    expect(body).toContain("credits_reserved_total 40");
-    expect(body).toContain("credits_committed_total 28");
-    expect(body).toContain('ai_cost_usd_per_day{workspace="ws_1"} 1.5');
-    expect(body).toContain("tokens_in_total 1200");
-    expect(body).toContain("tokens_out_total 300");
-    expect(body).toContain("tokens_cache_total 500");
-    expect(body).toContain("queue_depth 7");
-    expect(body).toContain('engine_sessions{state="active"} 2');
-    expect(body).toContain('engine_sessions{state="idle"} 1');
+    expect(body).toContain('studio_runs_total{status="failed",tier="complex"} 1');
+    expect(body).toContain('studio_runs_total{status="succeeded",tier="standard"} 1');
+    expect(body).toContain('studio_run_duration_seconds_bucket{le="30",tier="standard"} 0');
+    expect(body).toContain('studio_run_duration_seconds_bucket{le="60",tier="standard"} 1');
+    expect(body).toContain('studio_run_duration_seconds_count{tier="standard"} 1');
+    expect(body).toContain('studio_steps_per_run_bucket{le="8"} 0');
+    expect(body).toContain('studio_steps_per_run_bucket{le="16"} 1');
+    expect(body).toContain('studio_tool_errors_total{tool="template_apply"} 1');
+    expect(body).toContain("studio_validator_blockers_total 1");
+    expect(body).toContain("studio_critic_revise_total 2");
+    expect(body).toContain("studio_credits_reserved_total 40");
+    expect(body).toContain("studio_credits_committed_total 28");
+    expect(body).toContain('studio_ai_cost_usd_per_day{workspace="ws_1"} 1.5');
+    expect(body).toContain("studio_tokens_in_total 1200");
+    expect(body).toContain("studio_tokens_out_total 300");
+    expect(body).toContain("studio_tokens_cache_total 500");
+    expect(body).toContain("studio_queue_depth 7");
+    expect(body).toContain('studio_engine_sessions{state="active"} 2');
+    expect(body).toContain('studio_engine_sessions{state="idle"} 1');
   });
 
   it("typed label unions keep callers honest at compile time (type-level)", () => {
     const metrics = createObsMetrics();
     metrics.runsTotal.inc({ status: "cancelled", tier: "quick" });
     metrics.engineSessions.set({ state: "idle" }, 0);
-    expect(metrics.registry.render()).toContain('runs_total{status="cancelled",tier="quick"} 1');
-    expect(metrics.registry.render()).toContain('engine_sessions{state="idle"} 0');
+    expect(metrics.registry.render()).toContain('studio_runs_total{status="cancelled",tier="quick"} 1');
+    expect(metrics.registry.render()).toContain('studio_engine_sessions{state="idle"} 0');
   });
 });

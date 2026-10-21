@@ -1,6 +1,10 @@
 // apps/worker/src/metrics.ts — worker-side Prometheus collector + /metrics
 // server (W9-G, spec §22).
 //
+// W10-E coherence: every series below is studio_-prefixed — the canonical
+// registry (infra/obs/README.md), the dashboards (infra/obs/grafana/*.json)
+// and the alert rules all speak studio_* (closes the W9-D/W9-F prefix gap).
+//
 // Collector (WorkerMetrics): run lifecycle counters by status/tier, tool
 // call/error counters, validator + critic verdict counters, credits
 // reserved/committed accumulators, and AI token/cost accumulators that
@@ -265,37 +269,37 @@ export class WorkerMetrics implements WorkerMetricsLike {
       }
       lines.push(...block);
     };
-    section(this.runs.renderLines("runs_total", "Worker runs by status and tier (§22)."));
+    section(this.runs.renderLines("studio_runs_total", "Worker runs by status and tier (§22)."));
     section([
-      "# HELP runs_in_flight Runs between queued and terminal event (§22).",
-      "# TYPE runs_in_flight gauge",
-      `runs_in_flight ${metricValue(this.inFlight)}`
+      "# HELP studio_runs_in_flight Runs between queued and terminal event (§22).",
+      "# TYPE studio_runs_in_flight gauge",
+      `studio_runs_in_flight ${metricValue(this.inFlight)}`
     ]);
-    section(this.toolCalls.renderLines("tool_calls_total", "Tool steps executed (§22)."));
-    section(this.toolErrors.renderLines("tool_errors_total", "Tool steps that failed (§22)."));
+    section(this.toolCalls.renderLines("studio_tool_calls_total", "Tool steps executed (§22)."));
+    section(this.toolErrors.renderLines("studio_tool_errors_total", "Tool steps that failed (§22)."));
     const validatorHelp = "Validator verdicts (§22).";
-    section(this.validatorReports.renderLines("validator_reports_total", validatorHelp));
+    section(this.validatorReports.renderLines("studio_validator_reports_total", validatorHelp));
     section([
-      "# HELP validator_blockers_total Validator blocker findings (§22).",
-      "# TYPE validator_blockers_total counter",
-      `validator_blockers_total ${metricValue(this.validatorBlockers)}`
+      "# HELP studio_validator_blockers_total Validator blocker findings (§22).",
+      "# TYPE studio_validator_blockers_total counter",
+      `studio_validator_blockers_total ${metricValue(this.validatorBlockers)}`
     ]);
     const criticHelp = "Critic verdicts by outcome (§22).";
-    section(this.criticVerdicts.renderLines("critic_verdicts_total", criticHelp));
+    section(this.criticVerdicts.renderLines("studio_critic_verdicts_total", criticHelp));
     section([
-      "# HELP credits_reserved_total Credits reserved for runs (§22).",
-      "# TYPE credits_reserved_total counter",
-      `credits_reserved_total ${metricValue(this.creditsReserved)}`
+      "# HELP studio_credits_reserved_total Credits reserved for runs (§22).",
+      "# TYPE studio_credits_reserved_total counter",
+      `studio_credits_reserved_total ${metricValue(this.creditsReserved)}`
     ]);
     section([
-      "# HELP credits_committed_total Credits settled at run end (§22).",
-      "# TYPE credits_committed_total counter",
-      `credits_committed_total ${metricValue(this.creditsCommitted)}`
+      "# HELP studio_credits_committed_total Credits settled at run end (§22).",
+      "# TYPE studio_credits_committed_total counter",
+      `studio_credits_committed_total ${metricValue(this.creditsCommitted)}`
     ]);
     const chargeHelp = "Charge events by partial flag (§14.2).";
-    section(this.chargeEvents.renderLines("credits_charged_events_total", chargeHelp));
-    section(this.tokens.renderLines("ai_tokens_total", "Model tokens consumed (§22)."));
-    section(this.cost.renderLines("ai_cost_usd_total", "Model cost settled in USD (§22)."));
+    section(this.chargeEvents.renderLines("studio_credits_charged_events_total", chargeHelp));
+    section(this.tokens.renderLines("studio_ai_tokens_total", "Model tokens consumed (§22)."));
+    section(this.cost.renderLines("studio_ai_cost_usd_total", "Model cost settled in USD (§22)."));
     return `${lines.join("\n")}\n`;
   }
 

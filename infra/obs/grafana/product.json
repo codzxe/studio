@@ -153,7 +153,7 @@
       "id": 4,
       "type": "stat",
       "title": "Edit acceptance — validator pass rate (24h)",
-      "description": "Share of validator checks that pass (24h trailing): studio_validator_checks_total{verdict=\"pass\"} / total. Edit acceptance proxy per §22 (validator blocker rate is the complement). Green ≥ 90%.",
+      "description": "Share of validator checks that pass (24h trailing): studio_validator_reports_total{result=\"pass\"} / total (worker §22 collectors, W10-E-aligned). Edit acceptance proxy per §22 (validator blocker rate is the complement). Green ≥ 90%.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
       "fieldConfig": {
@@ -182,7 +182,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "editorMode": "code",
-          "expr": "sum(increase(studio_validator_checks_total{verdict=\"pass\"}[24h])) / clamp_min(sum(increase(studio_validator_checks_total[24h])), 1e-9)",
+          "expr": "sum(increase(studio_validator_reports_total{result=\"pass\"}[24h])) / clamp_min(sum(increase(studio_validator_reports_total[24h])), 1e-9)",
           "legendFormat": "validator pass rate",
           "range": false,
           "refId": "A"

@@ -18,9 +18,12 @@
 # publishes host ports, secrets via env file 0600, logs rotated via
 # json-file caps (≤ 500 MB box-wide, §17.4).
 #
-# Wave-9 note: the four app services reference Dockerfiles that do NOT exist
-# yet (they land in Wave 9). Until then `docker compose build` fails for
-# gateway/worker/engine-pool/web — expected; infra/README.md tracks it.
+# W10-E note: the four app services build from the REPO-ROOT context (the
+# W9-I Dockerfiles need pnpm-workspace.yaml + packages/* sources): context is
+# `../..` + a repo-relative `dockerfile:` path, and a root .dockerignore
+# guards what enters the build. env_file/volume paths still resolve relative
+# to THIS directory (infra/compose/), so ../../.env is the repo root .env in
+# every case — do not "fix" them to the build context.
 # =============================================================================
 
 name: ${COMPOSE_PROJECT_NAME:-studio}
@@ -89,13 +92,27 @@ services:
   # ports: Caddy proxies {$APP_DOMAIN}/v1/* → gateway:8787.
   # --------------------------------------------------------------------------
   gateway:
-    # TODO(Wave 9): Dockerfile lands there; context is the app package.
+    # Repo-root build context (W9-I→W10-E): the Dockerfile needs
+    # pnpm-workspace.yaml + packages/* sources, so context is the repo root
+    # and dockerfile: is repo-relative.
     build:
-      context: ../../apps/gateway
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/gateway/Dockerfile
+    # IMAGE_TAG (W9-J): deploy-v2.sh pins app:<git-sha> (refuses :latest unless
+    # ALLOW_LATEST); CI (§17.3) pushes GHCR refs — set e.g.
+    # GATEWAY_IMAGE=ghcr.io/<owner>/gateway in ../../.env on the box to pull
+    # those. Defaults = local name + :latest so `docker compose build` works
+    # out of the box and tags what it builds.
+    image: ${GATEWAY_IMAGE:-gateway}:${IMAGE_TAG:-latest}
     restart: unless-stopped
-    # Non-root: the Wave-9 Dockerfile MUST `USER node` (§15.2 least
-    # privilege; node:22-alpine base ships the unprivileged `node` user).
+    # Non-root: the W9-I Dockerfile ships `USER node` (§15.2 least privilege).
+    # MIGRATE=1 entrypoint contract (W9-J migrate.sh, §17.3): one-shot
+    # migrations run `docker compose --env-file ../../.env run --rm --no-deps
+    # -e MIGRATE=1 gateway`; the image entrypoint must honor MIGRATE=1 (exec
+    # drizzle-kit migrate via packages/db/drizzle.config.ts INSTEAD of the API
+    # server). TODO(wiring wave): the W9-I CMD starts the server directly —
+    # add the MIGRATE branch in the image/bootstrap, not here (compose only
+    # injects the flag).
     env_file:
       - ../../.env
     healthcheck:
@@ -108,9 +125,13 @@ services:
     # port 3001 (separate from the 8787 API). `expose` only DOCUMENTS the port
     # on the internal bridge — it does not publish anything; ONLY Caddy
     # publishes host ports (§17.2). Prometheus (profile obs) scrapes
-    # gateway:3001/metrics with the METRICS_TOKEN (Basic-auth; the app seam
-    # ignores the username — infra/obs/compose/prometheus.yml). NEVER move
-    # this to `ports:` — /metrics stays
+    # gateway:3001/metrics (studio_* series, W10-E) with the METRICS_TOKEN
+    # (Basic-auth; the app seam ignores the username —
+    # infra/obs/compose/prometheus.yml). W10-E: the /metrics router IS mounted
+    # (apps/gateway/src/app.ts); the dedicated 3001 listener in src/index.ts is
+    # flagged to the wiring wave (until then it answers on the app listener
+    # behind the same auth seam, and Caddy 404s /metrics at the edge either
+    # way). NEVER move this to `ports:` — /metrics stays
     # unreachable from the internet.
     expose:
       - "3001"
@@ -125,36 +146,55 @@ services:
   # --------------------------------------------------------------------------
   # worker — BullMQ agent loop, critic, exports (§3.1). Two replicas on the
   # 4 GB box (§17.2); each honors WORKER_CONCURRENCY (see .env.example).
-  # No host port: its ops endpoint (127.0.0.1:9876/health, apps/worker
-  # src/health.ts) is in-container only — docker inspect / compose exec reach
-  # it, the internet cannot.
+  # No host port: its ops endpoint (9876: /health + /metrics, apps/worker
+  # src/health.ts + src/metrics.ts) binds the INTERNAL compose bridge only
+  # (WORKER_HEALTH_HOST below) — Prometheus (obs profile) and compose exec
+  # reach it, the internet cannot (§17.2: only Caddy publishes host ports).
   # --------------------------------------------------------------------------
   worker:
-    # TODO(Wave 9): Dockerfile lands there; context is the app package.
     build:
-      context: ../../apps/worker
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+    # IMAGE_TAG (W9-J): see the gateway service note.
+    image: ${WORKER_IMAGE:-worker}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     deploy:
       # §17.2 pins replicas: 2. Compose v2 honors deploy.replicas; keep small
       # on a 4 GB box shared with Postgres + the engine pool.
       replicas: 2
-    # Non-root: see gateway — Wave-9 Dockerfile must `USER node`.
+    # Non-root: the W9-I Dockerfile ships `USER node` (see gateway).
     env_file:
       - ../../.env
+    environment:
+      # W9-M flag → W10-E fix: the ops listeners (health + /metrics) default
+      # to LOOPBACK inside the container; on the compose bridge they must bind
+      # 0.0.0.0 or Prometheus scrapes (obs profile) and cross-container probes
+      # stay down. Still box-private — NEVER `ports:` (§17.2). The worker
+      # bootstrap (wiring wave) must honor WORKER_HEALTH_HOST; flagged to the
+      # config owner to add it to the env schema (ADR-0002).
+      WORKER_HEALTH_HOST: ${WORKER_HEALTH_HOST:-0.0.0.0}
+      WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-9876}
+    volumes:
+      # §3.2 engine binary (W9-I decision, W10-E wiring): the pinned Rust
+      # `photocraft-cli` (ADR-0001) is host-compiled and bind-mounted
+      # read-only — images do NOT bake it. The host dir /engine must contain
+      # the binary at photocraft-cli so the in-container
+      # ENV ENGINE_BINARY_PATH=/engine/photocraft-cli resolves; .env must
+      # never override ENGINE_BINARY_PATH away from /engine.
+      - /engine:/engine:ro
     healthcheck:
       <<: *healthcheck-defaults
-      # Worker ops endpoint (apps/worker/src/health.ts): GET /health, default
-      # WORKER_HEALTH_PORT 9876, bound to loopback inside its own container.
+      # Worker ops endpoint (apps/worker/src/health.ts): GET /health on
+      # WORKER_HEALTH_PORT (default 9876); probed in-container via loopback
+      # regardless of the 0.0.0.0 bridge bind in `environment:` above.
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.WORKER_HEALTH_PORT??'9876')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-    # Metrics (§22): the SAME ops server serves Prometheus-format /metrics at
-    # worker:9876/metrics. INTERNAL NETWORK ONLY — `expose` publishes nothing
-    # (§17.2: only Caddy publishes host ports); Prometheus (profile obs)
-    # scrapes it with the METRICS_TOKEN (Basic-auth; the app seam ignores
-    # the username). NOTE: the comment above
-    # documents the ops endpoint as loopback-bound IN-CONTAINER — the worker
-    # owner must bind it to 0.0.0.0 on the internal bridge (still private to
-    # the box) for cross-container scrapes to succeed. NEVER move this to
+    # Metrics (§22): the ops listener serves Prometheus-format /metrics at
+    # worker:9876/metrics (studio_* series, W10-E). INTERNAL NETWORK ONLY —
+    # `expose` publishes nothing (§17.2: only Caddy publishes host ports);
+    # Prometheus (profile obs) scrapes it with the METRICS_TOKEN (Basic-auth;
+    # the app seam ignores the username). The `environment:` block above binds
+    # the listener to 0.0.0.0 on the internal bridge (W9-M fix — still private
+    # to the box) so cross-container scrapes succeed. NEVER move this to
     # `ports:`.
     expose:
       - "9876"
@@ -174,12 +214,14 @@ services:
   # browser NEVER reaches them (§3.2). No host ports, ever.
   # --------------------------------------------------------------------------
   engine-pool:
-    # TODO(Wave 9): Dockerfile lands there; it must bake the pinned engine
-    # binary (ADR-0001; .env.example: "the compose image bakes its own copy")
-    # so ENGINE_CLI_PATH in .env points at the IN-IMAGE path on the box.
+    # W9-I decision (supersedes the old "bake the binary" note, §3.2): the
+    # pinned Rust `photocraft-cli` (ADR-0001) is NOT baked into the image — it
+    # is host-compiled and bind-mounted read-only below.
     build:
-      context: ../../apps/engine-pool
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/engine-pool/Dockerfile
+    # IMAGE_TAG (W9-J): see the gateway service note.
+    image: ${ENGINE_POOL_IMAGE:-engine-pool}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     deploy:
       resources:
@@ -189,8 +231,12 @@ services:
     volumes:
       # Per-session working dirs / capability roots live here (§3.2, §15.1).
       - engine_work:/work
-    # Non-root: Wave-9 Dockerfile must `USER node` AND the baked engine
-    # binary must be runnable as that user (§15.1 capability roots).
+      # §3.2 engine binary (W9-I/W10-E): read-only host bind-mount; the
+      # in-container ENV ENGINE_BINARY_PATH=/engine/photocraft-cli must
+      # resolve — never override it in .env.
+      - /engine:/engine:ro
+    # Non-root: the W9-I Dockerfile ships `USER node` and chowns /engine +
+    # /work so the mounted binary stays runnable by the app user (§15.1).
     env_file:
       - ../../.env
     healthcheck:
@@ -208,13 +254,14 @@ services:
   # Pages (§17.1) — this service stays as the SSR/app origin either way.
   # --------------------------------------------------------------------------
   web:
-    # TODO(Wave 9): Dockerfile lands there; context is the app package.
     build:
-      context: ../../apps/web
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+    # IMAGE_TAG (W9-J): see the gateway service note.
+    image: ${WEB_IMAGE:-web}:${IMAGE_TAG:-latest}
     restart: unless-stopped
-    # Non-root: Wave-9 Dockerfile must `USER node` (Next.js runs fine
-    # unprivileged; .next cache dir must be owned by that user).
+    # Non-root: the W9-I Dockerfile ships `USER node` (Next.js runs fine
+    # unprivileged; .next cache dir is owned by that user).
     env_file:
       - ../../.env
     healthcheck:

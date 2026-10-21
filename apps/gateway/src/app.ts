@@ -69,6 +69,7 @@ import {
 } from "./services/workspaces.js";
 import { registerRoutes } from "./routes/index.js";
 import type { Probe } from "./routes/health.js";
+import { createGatewayMetrics, httpMetricsMiddleware, metricsRoutes } from "./routes/metrics.js";
 import { createWorkspaceAuth } from "./routes/workspaces.js";
 import type { DocumentRoutesDeps, PrincipalResolver } from "./routes/documents.js";
 import type { RunsDeps } from "./routes/runs.js";
@@ -543,8 +544,9 @@ function op(summary: string): { readonly summary: string } {
  *                        W4-B `requireAuth` (401 code `unauthenticated` — see
  *                        the reconciliation note in src/types.ts).
  * Then the deps.mount hook (test routes win), the /v1 group mounts, the W1-H
- * registry (health + typed 501 catch-all LAST), and the typed 404 for
- * everything else. Bootstrap/shutdown (src/index.ts, graceful drain) is
+ * registry (health + typed 501 catch-all LAST), the INTERNAL-ONLY /metrics
+ * exposition (W10-E, §22 — token-gated, never under /v1), and the typed 404
+ * for everything else. Bootstrap/shutdown (src/index.ts, graceful drain) is
  * unchanged by this wave.
  */
 export function buildApp(deps: AppDeps): Hono<AppEnv> {
@@ -556,6 +558,13 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
   // One documented cast: FullEnv is AppEnv with auth/reqCtx narrowed required;
   // Hono middleware is env-invariant at this boundary (fleet precedent: runs.ts).
   app.use(requestContext<FullEnv>() as unknown as MiddlewareHandler<AppEnv>);
+
+  // §22 HTTP request counters (W10-E): one GatewayMetrics instance per app,
+  // shared by this middleware (counts EVERY request with its final status —
+  // SSE and rate-limited 429s included) and the /metrics exposition mounted
+  // below (the W9-G wiring note in routes/metrics.ts).
+  const httpMetrics = createGatewayMetrics();
+  app.use(httpMetricsMiddleware(httpMetrics));
 
   if (deps.limiter !== undefined) {
     app.use(rateLimit({ limiter: deps.limiter }, RATE_LIMIT_PRESETS.global));
@@ -747,6 +756,29 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
   // catch-all for spec'd-but-unmounted paths LAST (routes/index.ts is not
   // owned by W4-R — do not inline it here).
   registerRoutes(app, deps);
+
+  // --- /metrics (§22): INTERNAL-ONLY Prometheus exposition (W10-E) ---------
+  // Mounted on the app root — NEVER under the public /v1 group (§13.1) —
+  // behind the METRICS_TOKEN Basic-auth seam (W9-G: the Basic PASSWORD must
+  // equal the token, username ignored, timing-safe; UNSET ⇒ fail-closed
+  // 401 — an unconfigured auth seam never exposes operational data).
+  // INTERNAL-ONLY: compose exposes the metrics port on the bridge network
+  // only (gateway "3001", never `ports:` — §17.2) and the Caddyfile answers
+  // public /metrics with 404, so this mount is unreachable from the internet.
+  // TODO(wiring wave, src/index.ts): give /metrics its own 3001 listener and
+  // inject the shared W9-D registry (studio_* series) + queue/enginePool
+  // gauges through MetricsRouteDeps. METRICS_TOKEN is read STRUCTURALLY —
+  // packages/config does not declare it yet (flagged to the config owner;
+  // ADR-0002 wants it in the gateway env schema).
+  app.route(
+    "/metrics",
+    metricsRoutes({
+      version: deps.version,
+      startedAt: deps.startedAt,
+      token: (deps.env as unknown as { readonly METRICS_TOKEN?: string }).METRICS_TOKEN,
+      http: httpMetrics,
+    }),
+  );
 
   app.notFound(notFoundHandler(deps.logger));
   return app;

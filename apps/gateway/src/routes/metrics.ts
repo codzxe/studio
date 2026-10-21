@@ -12,6 +12,10 @@
 //        face, routes/health.ts: sessions=allocated, idle=ready)
 //     5. gateway uptime + build info
 //
+// W10-E coherence: every series below is studio_-prefixed — the canonical
+// registry (infra/obs/README.md), the dashboards and the alert rules all
+// speak studio_* series (closes the W9-D/W9-F prefix gap).
+//
 // INTERNAL-ONLY (§22/§17.2). This router mounts at /metrics — NOT under the
 // public versioned /v1 API (§13.1) — and the compose wiring must bind the
 // listener to the internal compose network only (never route it through the
@@ -124,7 +128,7 @@ function methodLabel(method: string): string {
 }
 
 /**
- * Gateway HTTP request counters (§22): `gateway_http_requests_total` by
+ * Gateway HTTP request counters (§22): `studio_gateway_http_requests_total` by
  * {method,status} + an in-flight gauge. One instance is created by the
  * bootstrap, shared between httpMetricsMiddleware (increments) and
  * metricsRoutes (renders); instances are plain state + render, no timers.
@@ -158,20 +162,20 @@ export class GatewayMetrics {
   /** Prometheus text for the HTTP counter family (deterministic order). */
   render(): string {
     const lines = [
-      "# HELP gateway_http_requests_total Total HTTP requests handled by the gateway.",
-      "# TYPE gateway_http_requests_total counter"
+      "# HELP studio_gateway_http_requests_total Total HTTP requests handled by the gateway.",
+      "# TYPE studio_gateway_http_requests_total counter"
     ];
     const rows = Array.from(this.requests.values()).sort(
       (a, b) => a.method.localeCompare(b.method) || a.status - b.status
     );
     for (const row of rows) {
       const labels = `method="${labelValue(row.method)}",status="${row.status}"`;
-      lines.push(sample("gateway_http_requests_total", labels, row.count));
+      lines.push(sample("studio_gateway_http_requests_total", labels, row.count));
     }
     lines.push(
-      "# HELP gateway_http_requests_in_flight HTTP requests currently in the pipeline.",
-      "# TYPE gateway_http_requests_in_flight gauge",
-      sample("gateway_http_requests_in_flight", "", this.inFlight)
+      "# HELP studio_gateway_http_requests_in_flight HTTP requests currently in the pipeline.",
+      "# TYPE studio_gateway_http_requests_in_flight gauge",
+      sample("studio_gateway_http_requests_in_flight", "", this.inFlight)
     );
     return lines.join("\n");
   }
@@ -206,14 +210,14 @@ const QUEUE_STATES = ["waiting", "active", "delayed", "completed", "failed"] as 
 
 function renderQueueDepths(depths: readonly QueueDepthLike[]): string {
   const lines = [
-    "# HELP queue_depth BullMQ job counts per queue and state (§22 queue depth).",
-    "# TYPE queue_depth gauge"
+    "# HELP studio_queue_depth BullMQ job counts per queue and state (§22 queue depth).",
+    "# TYPE studio_queue_depth gauge"
   ];
   const sorted = Array.from(depths).sort((a, b) => a.queue.localeCompare(b.queue));
   for (const depth of sorted) {
     for (const state of QUEUE_STATES) {
       const labels = `queue="${labelValue(depth.queue)}",state="${state}"`;
-      lines.push(sample("queue_depth", labels, depth[state]));
+      lines.push(sample("studio_queue_depth", labels, depth[state]));
     }
   }
   return lines.join("\n");
@@ -221,22 +225,22 @@ function renderQueueDepths(depths: readonly QueueDepthLike[]): string {
 
 function renderEngineSessions(ping: EnginePoolPing): string {
   return [
-    "# HELP engine_sessions Engine sessions by state (§22 sessions active/idle).",
-    "# TYPE engine_sessions gauge",
-    sample("engine_sessions", 'state="active"', ping.sessions),
-    sample("engine_sessions", 'state="idle"', ping.idle)
+    "# HELP studio_engine_sessions Engine sessions by state (§22 sessions active/idle).",
+    "# TYPE studio_engine_sessions gauge",
+    sample("studio_engine_sessions", 'state="active"', ping.sessions),
+    sample("studio_engine_sessions", 'state="idle"', ping.idle)
   ].join("\n");
 }
 
 function renderProcessInfo(version: string, startedAt: number): string {
   const uptime = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
   return [
-    "# HELP gateway_build_info Gateway build version (value is always 1).",
-    "# TYPE gateway_build_info gauge",
-    sample("gateway_build_info", `version="${labelValue(version)}"`, 1),
-    "# HELP gateway_uptime_seconds Seconds since the gateway process started.",
-    "# TYPE gateway_uptime_seconds gauge",
-    sample("gateway_uptime_seconds", "", uptime)
+    "# HELP studio_gateway_build_info Gateway build version (value is always 1).",
+    "# TYPE studio_gateway_build_info gauge",
+    sample("studio_gateway_build_info", `version="${labelValue(version)}"`, 1),
+    "# HELP studio_gateway_uptime_seconds Seconds since the gateway process started.",
+    "# TYPE studio_gateway_uptime_seconds gauge",
+    sample("studio_gateway_uptime_seconds", "", uptime)
   ].join("\n");
 }
 
