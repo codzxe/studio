@@ -68,7 +68,7 @@ export function Faq() {
       <div className="mt-8 space-y-3">
         {FAQ_ITEMS.map((item) => (
           <details key={item.question} className="group rounded-lg border border-border bg-surface px-5 py-4">
-            <summary className="cursor-pointer list-none text-sm font-semibold">
+            <summary className="list-none text-sm font-semibold underline-offset-4 hover:underline">
               {item.question}
             </summary>
             <div className="mt-3 space-y-2">
