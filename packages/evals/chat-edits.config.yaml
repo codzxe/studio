@@ -1,0 +1,164 @@
+# =============================================================================
+# @studio/evals — chat-edits CURATED gate config (spec §19 Phase 2)
+#
+# Spec refs:
+#   §19 Phase 2 exit gates (verbatim): "eval suite >= 50 briefs with >= 85% pass;
+#          chat edits correct >= 90% on the curated set". The 0.85 full-suite gate
+#          lives in promptfoo.config.yaml; THIS config carries the 0.90 chat gate.
+#          One promptfoo eval produces ONE results file with ONE pass rate, so two
+#          gates need two configs — scripts/eval-gate.mjs runs both and exits with
+#          the strictest failure (exit 1 if EITHER gate is below its threshold).
+#   §19 Phase 2 scope: "Multi-turn chat edits on a document: 'make the headline
+#          shorter', 'warmer palette', 'add a badge' -> quick-edit tier with
+#          document.inspect context" — every brief below is that family, on a
+#          prepared document.
+#   §11.4 / §21 / §1.5-6 — same rationale as the suite config (deterministic
+#          mocked provider, synthetic data, zero model calls in CI).
+#
+# Curated-set composition (14 cases; promptfoo includes test FILES wholesale, so
+# the set is defined at file granularity — see packages/evals/README.md):
+#   - cases/edits.yaml           6 Wave-1 chat edits (incl. the §24.2 verbatim
+#                                chat-edit-subhead-badge)
+#   - cases/expanded/edits.yaml  8 W7-D edits on prepared docs (6 quick §24.2-style
+#                                setVars edits + 2 standard multi-target/asset-swap)
+# Deliberately excluded: edit-intent briefs that live in mixed policy files
+# (failures.yaml §24.4 refund path, injection.yaml §5.7 corpus) — those gate the
+# full suite, not chat-edit correctness. If a future pure-chat-edit file lands,
+# add it here AND to promptfoo.config.yaml (node scripts/eval-gate.mjs --dry
+# re-checks the wiring: every case file on disk is registered in the suite, and
+# every chat file is a subset of it).
+#
+# Gate: >= 0.90 pass over the 14 curated briefs (13/14 minimum), enforced by
+#   node scripts/eval-gate.mjs --chat results/chat-edits.json [--suite results/suite.json]
+# Everything else (provider, prompt, defaultTest) mirrors promptfoo.config.yaml —
+# keep the two defaultTest blocks and schemas/plan.schema.json in sync (the W6
+# shared-source extraction TODO in packages/evals/README.md covers all three).
+# =============================================================================
+
+description: "studio agent evals — chat-edits curated gate (§19 Phase 2: pass-rate >= 0.90)"
+
+# Same prompt under test as the suite (§23.2 planner starter).
+prompts:
+  - prompts/planner.system.txt
+
+providers:
+  # CI default — the same deterministic mocked planner as the suite (§21, §1.5-6).
+  # TODO(W6): replace together with the suite config (real AI-SDK planner, §5.3).
+  - file://providers/mock-planner.mjs
+
+# Shared defaults — IDENTICAL to promptfoo.config.yaml defaultTest (keep in sync).
+# Per-test keys merge over these; every case also carries a compact inline envelope
+# check, so the curated gate still binds the {plan, run} contract even if this copy
+# ever drifts from the suite's.
+defaultTest:
+  vars:
+    # RULES input (§23.2): validator checks + brand tokens the planner must respect.
+    rules: |
+      Validator checks (§11.1): in_bounds, text_overflow, contrast>=4.5 body / >=3
+      display, headline_largest, safe_area, min_font_size, asset_resolution,
+      missing_font, empty_layers, naming (role names only, never "Layer N"),
+      color_out_of_palette, z_order, overlap_text, aspect, editability (no
+      flattening — §1.5 constraint 3), destructive_run.
+      Brand tokens: use the workspace palette and fonts from SNAPSHOT; colours
+      outside the palette are flagged (color_out_of_palette).
+    # BUDGET input (§23.2): standard tier by default (§5.2); the quick-tier chat
+    # edits below override this var per case.
+    budget: "standard — 2 credits, 80k/5k tokens in/out, 12 tool calls, 2 revisions, 5 min wall clock (§5.2)"
+  assert:
+    # plan_valid (schema §5.5/§23.2): same envelope contract as the suite gate.
+    - type: is-json
+      validate:
+        $schema: http://json-schema.org/draft-07/schema#
+        type: object
+        required: [plan, run]
+        additionalProperties: false
+        properties:
+          plan:
+            type: object
+            required: [intent, template, assets, slots, palette, typography, steps, checks, model_tier, notes_for_user]
+            additionalProperties: false
+            properties:
+              intent: { enum: [create_post, edit_layers, resize, variant, export] }
+              template:
+                anyOf:
+                  - { type: string, pattern: '^[a-z0-9][a-z0-9-]*@\d+$' }
+                  - { type: 'null' }
+              assets:
+                type: array
+                items:
+                  type: object
+                  required: [ref, slot]
+                  additionalProperties: false
+                  properties:
+                    ref: { type: string, minLength: 1 }
+                    slot: { type: string, minLength: 1 }
+                    fit: { enum: [cover, contain, fill] }
+                    focal:
+                      type: object
+                      required: [x, y]
+                      additionalProperties: false
+                      properties:
+                        x: { type: number, minimum: 0, maximum: 1 }
+                        y: { type: number, minimum: 0, maximum: 1 }
+              slots: { type: object, additionalProperties: { type: string } }
+              palette:
+                type: array
+                minItems: 1
+                items: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+              typography: { type: object }
+              steps:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  required: [tool, args]
+                  additionalProperties: false
+                  properties:
+                    tool: { type: string, pattern: '^[a-z][a-zA-Z0-9_]*(\.[a-zA-Z0-9_]+)*$' }
+                    args: { type: object }
+              checks:
+                type: array
+                minItems: 1
+                items: { type: string }
+              model_tier: { enum: [quick, standard, complex] }
+              notes_for_user: { type: string, maxLength: 300 }
+          run:
+            type: object
+            required: [status, credits_charged, tool_calls, revisions, validator, layers, undo_entries, rolled_back, reservation_released]
+            additionalProperties: false
+            properties:
+              status: { enum: [succeeded, succeeded_with_warnings, failed] }
+              credits_charged: { type: number, minimum: 0, maximum: 20 }
+              tool_calls: { type: integer, minimum: 0, maximum: 24 }
+              revisions: { type: integer, minimum: 0, maximum: 3 }
+              code: { anyOf: [{ type: string }, { type: 'null' }] }
+              retryable: { anyOf: [{ type: boolean }, { type: 'null' }] }
+              retry_grace: { type: integer, minimum: 0 }
+              validator:
+                anyOf:
+                  - { type: 'null' }
+                  - type: object
+                    required: [ok, blockers, majors, minors]
+                    additionalProperties: false
+                    properties:
+                      ok: { type: boolean }
+                      blockers: { type: integer, minimum: 0 }
+                      majors: { type: integer, minimum: 0 }
+                      minors: { type: integer, minimum: 0 }
+              layers: { type: array, items: { type: string } }
+              undo_entries: { type: integer, minimum: 0, maximum: 1 }
+              rolled_back: { type: boolean }
+              reservation_released: { type: boolean }
+    # TODO(W7) render similarity (§11.4): same TODO as the suite config — no fuzzy
+    # image assertions until the engine renders headlessly in CI.
+
+# The curated chat-edits set (§19 Phase 2): 14 briefs, all edit_layers on prepared
+# documents. These two files are ALSO part of the full suite in
+# promptfoo.config.yaml (the suite gate re-runs them at 0.85 granularity).
+tests:
+  - cases/edits.yaml           # 6 Wave-1 chat edits: §24.2 verbatim subhead+badge, quick text swap, brand recolour ×2, logo swap, template reapply
+  - cases/expanded/edits.yaml  # 8 W7-D edits on prepared docs: 6 quick setVars (§24.2-style) + 2 standard multi-target/asset-swap
+
+evaluate:
+  # 2-CPU box (AGENTS.md): same cap as the suite; the mocked provider is instant.
+  maxConcurrency: 4

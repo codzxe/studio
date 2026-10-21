@@ -4,10 +4,16 @@
 # Spec refs:
 #   §11.4 Evals are CI for prompts: golden briefs asserting plan validity, validator
 #          results, layer names, slot contents, tier cost; block merge on regression.
-#   §21    "Evals" row — promptfoo, 50+ golden briefs at launch (this Wave-1 scaffold
-#          seeds 15 and grows to 50 before the Phase 2 gate). Test data is synthetic.
-#   §19    Phase 2 exit gate: eval suite >= 50 briefs with >= 85% pass. The 0.85
-#          suite pass-rate is enforced by scripts/eval-gate.mjs (exit 1 below gate).
+#   §21    "Evals" row — promptfoo, 50+ golden briefs at launch (15 Wave-1 seeds +
+#          52 W7-D expanded cases = 67 today). Test data is synthetic.
+#   §19    Phase 2 exit gates — BOTH are enforced by scripts/eval-gate.mjs:
+#            1) full suite   >= 0.85 pass  ("eval suite >= 50 briefs with >= 85% pass")
+#               → THIS config (all 12 case files, 67 briefs);
+#            2) chat edits    >= 0.90 on the curated set ("chat edits correct >= 90%")
+#               → chat-edits.config.yaml (one promptfoo eval yields one pass rate,
+#                 so the second gate needs its own config + results file).
+#          CI: node scripts/eval-gate.mjs --suite results/suite.json \
+#                 --chat results/chat-edits.json   (exit 1 = strictest failure)
 #   §1.5-6 Customer content must never flow through free/training LLM tiers: the
 #          deterministic mocked provider below is the CI default; real-model runs are
 #          opt-in with paid API keys only (§5.3 allowlist), never free tiers, never
@@ -153,14 +159,26 @@ defaultTest:
     # evals/fixtures/renders/<template-slug>@<version>/<case-id>.png once the engine
     # renders headlessly in CI. Deliberately no fuzzy image assertions in Wave 1.
 
-# Golden briefs. 15 cases today (§24.1–§24.4 verbatim seeds + 11 invented across
-# intents); grows to 50+ before the §19 Phase 2 exit gate. One prompt per case, so
-# results map 1:1 to cases for the eval-gate pass-rate math.
+# Golden briefs. 67 cases today: 15 Wave-1 seeds (§24.1–§24.4 verbatim + 11
+# invented) + 52 W7-D expanded cases — clears the §19 Phase 2 "≥ 50 briefs" bar.
+# One prompt per case, so results map 1:1 to cases for the eval-gate pass-rate math.
+# The chat-edits curated subset (cases/edits.yaml + cases/expanded/edits.yaml) is
+# ALSO run separately by chat-edits.config.yaml for the §19 0.90 chat gate.
 tests:
-  - cases/creates.yaml      # §24.1 coffee promo (template path), §24.3 freeform card, clarify + injection policy seeds
-  - cases/edits.yaml        # §24.2 chat edit (quick tier) + quick-edit intent coverage
-  - cases/operations.yaml   # resize / variant / export intents (§5.5 enum)
-  - cases/failures.yaml     # §24.4 provider failure + refund; §5.2 budget-cap discipline
+  # ── Wave-1 seeds (15 cases) ──────────────────────────────────────────────────
+  - cases/creates.yaml           # §24.1 coffee promo (template path), §24.3 freeform card, clarify + injection policy seeds
+  - cases/edits.yaml             # §24.2 chat edit (quick tier) + quick-edit intent coverage
+  - cases/operations.yaml        # resize / variant / export intents (§5.5 enum)
+  - cases/failures.yaml          # §24.4 provider failure + refund; §5.2 budget-cap discipline
+  # ── W7-D expanded set (52 cases, cases/expanded/README.md) ────────────────────
+  - cases/expanded/creates.yaml      # create_post ×14 — Wave-1-era templates, all 10 components, complex tier, non-English
+  - cases/expanded/templates.yaml    # 12 happy paths — one per W7-A/B/C template manifest
+  - cases/expanded/freeform.yaml     # freeform create_post ×2 — template=null, planner flags it (§23.2/§24.3)
+  - cases/expanded/edits.yaml        # edit_layers ×8 on prepared docs (6 quick §24.2-style + 2 standard)
+  - cases/expanded/operations.yaml    # resize ×3, variant ×4, export ×3
+  - cases/expanded/clarify.yaml      # ask_user FIRST, zero mutation (§23.2)
+  - cases/expanded/injection.yaml    # sanitize-not-block corpus (§5.7)
+  - cases/expanded/budget.yaml       # §5.2 clean stops, partial credits, cut named for the user
 
 evaluate:
   # 2-CPU box (AGENTS.md): the mocked provider is instant, but keep concurrency low
