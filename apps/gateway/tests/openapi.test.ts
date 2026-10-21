@@ -1,6 +1,6 @@
-// W4-O — OpenAPI contract gate (§13): keeps apps/gateway/src/openapi.ts,
-// apps/gateway/docs/api/openapi-contract.md and apps/gateway/src/routes/*.ts
-// in lockstep. Deterministic, no network, no DB.
+// W4-O — OpenAPI contract gate (§13); extended by the W10-G final audit.
+// Keeps apps/gateway/src/openapi.ts, apps/gateway/docs/api/openapi-contract.md
+// and apps/gateway/src/routes/*.ts in lockstep. Deterministic, no network, no DB.
 //
 //  1. the authored const JSON-parses and is a well-formed OpenAPI 3.1 document
 //     (unique operationIds, every $ref resolves, every operation carries an
@@ -10,24 +10,31 @@
 //  3. the error envelope is the RECONCILED FLAT shape
 //     { ok:false, code, message, hint, retryable, docs_url?, details? }
 //     — §13.3's nested error:{…} sketch was rejected (decision W4-O);
-//  4. no route path in src/routes/ is missing from the spec.
+//  4. no route path in src/routes/ is missing from the spec (W10-G: the scan
+//     table now covers EVERY router file; metrics.ts is the one documented
+//     exemption — the internal-only /metrics surface, never a §13 /v1 path).
+//
+// W10-G additions: the audit export/summary paths (with the text/csv
+// response), the /metrics exclusion, and a routes-dir coverage test so no
+// router file can silently miss the scan.
 //
 // LIMITATIONS of the route scan (4), documented per the task text — it is a
 // COARSE check:
 //   - It scans string literals in router method calls only
 //     (.get/.post/.put/.patch/.delete/.all/.route/.use). Template literals
-//     (e.g. `${path}/*` in runs.ts) and programmatically-built paths are
-//     invisible to it — none exist in routes/ today.
+//     (e.g. `${path}/*` in runs.ts, `${root}/workspaces/:id/templates` in
+//     catalog.ts) and programmatically-built paths are invisible to it.
 //   - Mount prefixes cannot be inferred from the sources, so a small mount
 //     table mirrors the audit doc + each route file's own MOUNTING header
-//     (workspaces.ts exports TWO routers, hence two mounts). If W4-R mounts
-//     elsewhere, this table — and the audit — must move with it.
+//     (workspaces.ts exports TWO routers, hence two mounts). If the
+//     composition root mounts elsewhere, this table — and the audit — must
+//     move with it.
 //   - "*" catch-alls (the 501 placeholder, auth guards) are skipped: they are
 //     not §13 endpoints.
 //   - Comments are stripped before scanning so doc-comment examples (e.g. the
 //     v1.route(...) snippets in file headers) cannot create phantom paths.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
@@ -85,7 +92,7 @@ function flattenOperations(parsed: Record<string, unknown>): FlatOperation[] {
 
 const AUDIT_STATUSES = new Set([
   "implemented",
-  "wired-in-W4-R",
+  "implemented-awaiting-mount",
   "partial",
   "not-implemented",
 ]);
@@ -131,6 +138,27 @@ const ROUTE_MOUNTS: Readonly<Record<string, readonly string[]>> = {
   "runs-events.ts": ["/v1"],
   "uploads.ts": ["/v1"],
   "index.ts": ["/v1"],
+  // --- W10-G: the wave-4…9 modules awaiting the composition-root wiring ---
+  // audit.ts mounts TWO routers (workspaceAuditRoutes + auditSummaryRoutes).
+  "audit.ts": ["/v1/workspaces", "/v1/audit"],
+  "billing.ts": ["/v1/billing", "/v1/webhooks/stripe"],
+  "catalog.ts": ["/v1"],
+  "commands.ts": ["/v1/documents"],
+  // exports.ts mounts TWO routers (exportRoutes + previewRoutes) on literal prefixes.
+  "exports.ts": ["/v1/documents/:id/exports", "/v1/documents/:id/preview"],
+  // credits.ts mounts TWO routers (creditRoutes + usageRoutes).
+  "credits.ts": ["/v1/credits", "/v1/usage"],
+};
+
+/**
+ * Route files deliberately OUTSIDE the spec scan: metrics.ts mounts at
+ * /metrics — the internal-only Prometheus surface (§22/§17.2, W9-G), NEVER
+ * a §13 /v1 path, behind the METRICS_TOKEN Basic-auth seam. The audit doc's
+ * "out-of-band surfaces" section owns that note; any addition here must be
+ * cited there.
+ */
+const ROUTE_SCAN_EXEMPT: Readonly<Record<string, string>> = {
+  "metrics.ts": "internal-only /metrics (W9-G, §22/§17.2) — never a /v1 path",
 };
 
 /** Strip line (//) and block comments, respecting strings and template literals. */
@@ -390,6 +418,57 @@ describe("openapi document (W4-O)", () => {
     expect(typeEnum).toContain("run.resync");
   });
 
+  // --- W10-G: the §22 audit export/summary (W9-H) with the CSV response -----
+
+  it("documents the audit export (JSON + text/csv) and summary paths", () => {
+    const parsed = parseSpec();
+    const paths = asRecord(parsed.paths, "paths");
+
+    const exportPath = asRecord(paths["/v1/workspaces/{id}/audit"], "audit export");
+    const exportGet = asRecord(exportPath.get, "audit export.get");
+    expect(String(exportGet["x-studio-status"])).toBe("implemented-awaiting-mount");
+    const params = asArray(exportGet.parameters, "audit export.parameters");
+    const paramNames = params.map((p) =>
+      String(asRecord(asRecord(p, "param"), "param").name ?? asRecord(p, "param").name),
+    );
+    expect(paramNames).toContain("format");
+    expect(paramNames).toContain("from");
+    expect(paramNames).toContain("to");
+    const responses = asRecord(exportGet.responses, "audit export.responses");
+    const ok = asRecord(responses["200"], "audit export 200");
+    const content = asRecord(ok.content, "audit export 200.content");
+    // §22 "exportable per workspace": the SAME rows as JSON or RFC 4180 CSV.
+    expect(Object.keys(content)).toContain("application/json");
+    expect(Object.keys(content)).toContain("text/csv");
+    const headers = asRecord(ok.headers, "audit export 200.headers");
+    expect(Object.prototype.hasOwnProperty.call(headers, "X-Next-Cursor")).toBe(
+      true,
+    );
+    expect(Object.prototype.hasOwnProperty.call(headers, "Content-Disposition")).toBe(
+      true,
+    );
+
+    const summaryPath = asRecord(paths["/v1/audit/summary/{id}"], "audit summary");
+    const summaryGet = asRecord(summaryPath.get, "audit summary.get");
+    expect(String(summaryGet.operationId)).toBe("getAuditSummary");
+    expect(String(summaryGet["x-studio-status"])).toBe("implemented-awaiting-mount");
+  });
+
+  it("keeps the internal /metrics surface OUT of the /v1 spec (§22/§17.2)", () => {
+    const parsed = parseSpec();
+    const specPaths = Object.keys(asRecord(parsed.paths, "paths"));
+    for (const path of specPaths) {
+      expect(
+        path.startsWith("/metrics"),
+        `internal surface leaked into the §13 spec: ${path}`,
+      ).toBe(false);
+    }
+    // The audit doc owns the out-of-band note (internal-only, METRICS_TOKEN).
+    const doc = readFileSync(AUDIT_DOC, "utf8");
+    expect(doc).toContain("/metrics");
+    expect(doc.toLowerCase()).toContain("out-of-band");
+  });
+
   it("buildOpenApiSpec clones the const and applies overrides", () => {
     const built = buildOpenApiSpec({ version: "9.9.9-test" });
     expect(built.info.version).toBe("9.9.9-test");
@@ -437,7 +516,8 @@ describe("route files ⊆ spec (coarse scan, see header LIMITATIONS)", () => {
 
   it("documents the scan itself: mount table files all exist in the scan", () => {
     // The scan iterates ROUTE_MOUNTS keys; if a new route file lands, the
-    // audit + this table must grow with it (kept honest by the test above).
+    // audit + this table must grow with it (kept honest by the tests above
+    // and the routes-dir coverage test below).
     const literals = scanRouteLiterals();
     const files = new Set(literals.map((l) => l.file));
     for (const file of Object.keys(ROUTE_MOUNTS)) {
@@ -445,6 +525,24 @@ describe("route files ⊆ spec (coarse scan, see header LIMITATIONS)", () => {
       expect(
         isRouter,
         `${file} yielded no route literals — is it still a router?`
+      ).toBe(true);
+    }
+  });
+
+  it("leaves no route file out of the spec scan (mount table ∪ exempt = routes dir)", () => {
+    const files = readdirSync(ROUTES_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+      .map((entry) => entry.name)
+      .sort();
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const known =
+        Object.prototype.hasOwnProperty.call(ROUTE_MOUNTS, file) ||
+        Object.prototype.hasOwnProperty.call(ROUTE_SCAN_EXEMPT, file);
+      expect(
+        known,
+        `${file} is neither in ROUTE_MOUNTS nor ROUTE_SCAN_EXEMPT — extend ` +
+          `the audit + mount table (or document the exemption)`,
       ).toBe(true);
     }
   });

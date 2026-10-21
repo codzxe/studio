@@ -34,6 +34,27 @@ describe('errors: catalog (§13.3 + §24.4)', () => {
     }
   });
 
+  it('contains the W9-N guardrail + W6/W7 swap-point codes (W10-F adoption)', () => {
+    const adopted: ErrorCode[] = [
+      'cost_cap_reached',
+      'disabled_workspace',
+      'demo_disabled',
+      'demo_cap_reached',
+      'providers_disabled',
+      'repair_plan_invalid',
+      'critique_parse_failed',
+      'export_failed',
+      'image_upscale_limit',
+      'unknown_component',
+      'unknown_component_vars',
+      'tool_retry_exhausted',
+    ];
+    for (const code of adopted) {
+      expect(ERROR_CODES, `missing code: ${code}`).toContain(code);
+      expect(ERROR_CODE_SCHEMA.safeParse(code).success).toBe(true);
+    }
+  });
+
   it('rejects unknown codes at the boundary', () => {
     expect(ERROR_CODE_SCHEMA.safeParse('oops_unknown').success).toBe(false);
     expect(ERROR_CODE_SCHEMA.safeParse('rate_limited').success).toBe(true);

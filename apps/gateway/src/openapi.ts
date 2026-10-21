@@ -3435,16 +3435,24 @@ export const OPENAPI_SPEC: OpenApiDocument = {
       },
     },
     "/v1/openapi.json": {
-      summary: "This document (W4-O; served by mountOpenApi, W4-R mounts).",
+      summary: "This document (W4-O; final-audit discrepancy D11).",
       get: {
         summary: "The OpenAPI 3.1 document itself.",
         operationId: "getOpenapi",
         tags: ["Meta"],
         security: [],
-        "x-studio-status": "implemented",
+        "x-studio-status": "partial",
+        description:
+          "MOUNTED, but app.ts:653 serves its own minimal runtime document " +
+          "(openApiDocument(deps.version, openapiPaths) — the actually-mounted " +
+          "paths) at this URL; mountOpenApi()/buildOpenApiSpec() from this " +
+          "module — the audited document — is NOT wired into the app (audit " +
+          "D11). Resolution owed to the composition-root owner: serve the " +
+          "audited spec (or supersede it with a generated one per docs/api/" +
+          "README.md 'OpenAPI').",
         responses: {
           "200": {
-            description: "The OpenAPI 3.1 JSON document (this object).",
+            description: "An OpenAPI 3.1 JSON document (today: the runtime summary).",
             content: { "application/json": media(looseObject("The OpenAPI 3.1 document.")) },
           },
         },

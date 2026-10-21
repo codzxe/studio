@@ -27,6 +27,20 @@ export const ERROR_CODES = [
   // Rate limiting (§13.3: HTTP 429).
   'rate_limited', // Too many requests.
   'quota_exceeded', // Daily/workspace quota cap hit (§14.2 rule 7).
+  // Cost-abuse guardrails (W9-N bridge map; §18.4/§16.2).
+  'cost_cap_reached', // Workspace hit its daily provider-spend cap (§18.4; resets 00:00 UTC).
+  'demo_cap_reached', // Shared demo workspace exhausted its N runs/day budget (§16.2).
+  'disabled_workspace', // Admin kill switch is set for the workspace (§18.4).
+  'demo_disabled', // Demo flow's global kill switch (DEMO_ENABLED) is off (§16.2).
+  'providers_disabled', // Every provider of the routing class disabled, no failover (§5.3).
+  // Agent/tool swap points adopted from the W6/W7 flags (add-only, W10-F).
+  'repair_plan_invalid', // Repair-model output failed the §23.4/§5.5 schema (§5.1 retry rule).
+  'critique_parse_failed', // vision_critique: the model reply was unparseable after its retry.
+  'export_failed', // export_document: the export pipeline failed (retryable per pipeline code).
+  'image_upscale_limit', // §7.3: the image would be upscaled past the 200% hard limit.
+  'unknown_component', // §8.3: no component matches the id (candidates pinned in the hint).
+  'unknown_component_vars', // §8.4: unknown variable names (allowed list in the hint).
+  'tool_retry_exhausted', // §6.3: a tool interaction failed past its retry budget.
   // Engine / providers (§13.3: HTTP 503 engine, §24.4).
   'engine_unavailable', // No engine session can be allocated/served.
   'engine_timeout', // Tool/render/run/session timeout (§3.4).
@@ -109,6 +123,18 @@ export const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<ErrorCode, HttpErrorStat
   conflict: 409,
   rate_limited: 429,
   quota_exceeded: 429,
+  cost_cap_reached: 429, // quota class (§14.2 rule 7 daily cap, W9-N bridge target)
+  demo_cap_reached: 429, // quota class (N runs/day platform-wide)
+  disabled_workspace: 403, // forbidden class (admin kill switch)
+  demo_disabled: 403, // forbidden class (global demo kill switch)
+  providers_disabled: 503, // provider routing failure family (§5.3)
+  repair_plan_invalid: 400, // validation class (§5.1 plan retry rule)
+  critique_parse_failed: 400, // validation class (unparseable model reply)
+  export_failed: 500, // export pipeline failure (retryable per pipeline code)
+  image_upscale_limit: 400, // §7.3 hard-limit refusal (user input validation)
+  unknown_component: 400, // §8.3 catalog lookup refusal
+  unknown_component_vars: 400, // §8.4 variable allow-list refusal
+  tool_retry_exhausted: 503, // §3.4 timeout family (§6.3 retry budget spent)
   engine_unavailable: 503,
   engine_timeout: 503,
   engine_crashed: 503,

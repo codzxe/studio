@@ -1,181 +1,292 @@
-# §13 API contract audit — endpoint table, extras, discrepancies (W4-O)
+# §13 API contract audit — FINAL endpoint table + discrepancy resolutions (W10-G)
 
-Owner: **W4-O** (OpenAPI + contract audit). Companion artifacts:
+Owner: **W10-G** (OpenAPI final audit). This is the **final audit** — it supersedes
+the W4-O wave-4 audit and re-surveys everything that landed since: catalog
+(W4-J), commands (W4-K), exports/preview (W4-L), credits/usage (W4-M),
+billing/webhooks (W4-N), audit export/summary (W9-H), metrics (W9-G).
+
+Companion artifacts:
 
 - `apps/gateway/src/openapi.ts` — the hand-authored OpenAPI 3.1 document (typed
-  const), `buildOpenApiSpec()`, and `mountOpenApi(app)` serving
-  `GET /v1/openapi.json`. W4-R mounts it.
-- `apps/gateway/tests/openapi.test.ts` — vitest gate: the table below and the
-  spec stay in lockstep (paths, flat envelope, route-file path coverage).
+  const), `buildOpenApiSpec()`, and `mountOpenApi(app)`. Every operation's
+  `x-studio-status` mirrors the Status column below — spec and audit cannot
+  drift silently (enforced by the test).
+- `apps/gateway/tests/openapi.test.ts` — the vitest gate: audit table ⇄ spec
+  path-set equality, flat envelope, route-source scan coverage (now including
+  a routes-dir completeness check + the /metrics exclusion), CSV response.
 - `docs/BUILD_PROMPT.md` §13 — the authoritative contract being audited.
 
-**Audit method:** every file in `apps/gateway/src/routes/` was read in full
-(exports, mounted paths, zod input schemas, response bodies) plus the auth
-surface (`src/auth/*`, W4-A) and the §13-relevant middleware (error-mapper,
-auth-context, caps, rate-limit). Survey date: wave 4, post W4-G; only
-`GET /v1/health*` is mounted in `routes/index.ts` today — every other router
-awaits the W4-R wiring pass.
+**Audit method (final survey, wave 10):** every module in
+`apps/gateway/src/routes/` was surveyed (workspaces, documents, runs,
+runs-events, uploads, catalog, commands, exports, credits, billing, audit,
+metrics, health, index) plus the composition root `src/app.ts` (the W4-R
+wiring: `buildApp` mounts five groups) and `src/routes/index.ts` (health + the
+typed 501 catch-all). **app.ts is the mount authority** — `routes/index.ts`
+still mounts only `/v1/health` and the 501 catch-all; the wave-4…9 modules
+below await one mount-helper call each (checklist at the bottom).
 
-**Status vocabulary** (mirrored by `x-studio-status` on every operation in the
-spec, so spec and audit cannot drift):
+## Status vocabulary
 
-| Status | Meaning |
-|---|---|
-| `implemented` | Route module exists **and** is mounted (served today). |
-| `wired-in-W4-R` | Route module exists; the `/v1` registry mount is W4-R's. |
-| `partial` | Exists but with a flagged §13 divergence (see D-notes). |
-| `not-implemented` | Contract-only; no route module yet (see D2/D3). |
+| Status (this table) | `x-studio-status` (spec) | Meaning |
+|---|---|---|
+| IMPLEMENTED+MOUNTED | `implemented` | Route module landed **and** wired by the app.ts composition root (per-group deps gates: absent seams ⇒ the /v1 catch-all answers 501). |
+| IMPLEMENTED-AWAITING-MOUNT | `implemented-awaiting-mount` | Route module + one-call mount helper landed; app.ts does not import/mount it yet — the path answers 501 `not_implemented` until wired. |
+| PARTIAL | `partial` | Served, but with a flagged §13 divergence (D-notes). |
+| NOT-IMPLEMENTED | `not-implemented` | Contract-only; no route module. |
 
-**Reconciled decision (this wave):** the error envelope is the FLAT
-`{ ok:false, code, message, hint, retryable, docs_url?, details? }`. §13.3's
-nested `{ error: { … } }` sketch was **rejected** — `docs/AGENTS.md` code style
-mandates the flat shape repo-wide, the shipped mapper
-(`src/middleware/error-mapper.ts`, W1-H) emits flat, and the reconcile note in
-`docs/api/README.md` ("Error envelope") queued the Wave-4 amendment to this
-wave. See also D5 (422 vs 400 for validation) and D6 (401 code drift).
+Reconciliation: the wave-4 vocabulary `wired-in-W4-R` is **retired** — every
+row that carried it is now IMPLEMENTED+MOUNTED (W4-R happened, in app.ts).
 
-## Endpoint audit table
+## The flat error envelope — DECIDED (decision note + authority pointers)
 
-One row per concrete OpenAPI path. "§13.1 row" quotes the spec's (sometimes
-combined) endpoint text; "Route file" is relative to `apps/gateway/src/`.
+Every error on `/v1` is the FLAT envelope
+`{ ok:false, code, message, hint, retryable, docs_url?, details? }`.
+§13.3's sketch of a nested `{ error: { … } }` shape was **rejected** in wave 4
+(decision W4-O) and is **re-affirmed** by this final audit. Authority chain:
 
-| §13.1 row (spec text) | OpenAPI path | Route file | Status | Notes |
+1. `docs/AGENTS.md` "Code style" (fleet law): *typed result envelopes
+   `{ ok:false, code, message, hint, retryable? }`*.
+2. The shipped mapper: `apps/gateway/src/middleware/error-mapper.ts` (W1-H) —
+   the only error renderer on /v1.
+3. The reconcile note: `docs/api/README.md` → "Error envelope" (queued the
+   wave-4 amendment; also records the 400-vs-422 split, D5).
+4. Recorded in `apps/gateway/src/openapi.ts` RECONCILED DECISIONS #1 and in
+   the served `ErrorEnvelope` schema (test-enforced: the nested shape must NOT
+   appear).
+
+There is **no numbered ADR for this decision yet** — next action: record it as
+`docs/adr/0006-error-envelope.md` (owner: the docs/ADR owner; this wave does
+not create files outside its scope). The only place a nested error shape
+exists in the repo is the internal `/metrics` 401 (out-of-band, below) —
+outside the /v1 contract.
+
+## Final endpoint audit table
+
+One row per concrete OpenAPI path (47). "§13.1 row" quotes the spec's
+(sometimes combined) endpoint text; "Route file · wire fn" is the evidence
+(exported router const / one-call mount helper, and the app.ts mount for
+IMPLEMENTED+MOUNTED rows). Route files are relative to `apps/gateway/src/`.
+
+| §13.1 row (spec text) | OpenAPI path | Route file · wire fn | Status | Notes |
 |---|---|---|---|---|
-| `POST /v1/auth/*` Better Auth handlers | `/v1/auth/{handler}` | `src/auth/server.ts` (no routes/ module) | partial | D1: Better Auth mounts at `/api/auth` basePath, §13.1 pins `/v1/auth/*`. W4-A modules landed; W4-R remounts or proxies. |
-| `GET /v1/me` user + memberships + plan | `/v1/me` | — | not-implemented | D2 gap. |
-| `POST/GET /v1/workspaces` / `GET /v1/workspaces/:id` | `/v1/workspaces` | `src/routes/workspaces.ts` (W4-E, `workspaceRoutes`) | wired-in-W4-R | GET (list mine) + POST (create + trial grant §14.1). Body = `createWorkspaceSchema` (strict). |
-| `POST/GET /v1/workspaces/:id` read | `/v1/workspaces/{id}` | `src/routes/workspaces.ts` | wired-in-W4-R | GET any member; PATCH (rename/brand-tokens, admin+) also implemented — see E2. |
-| *(none — workspace mgmt)* | `/v1/workspaces/{id}/members` | `src/routes/workspaces.ts` | wired-in-W4-R | E2 extra (admin+). |
-| *(none — workspace mgmt)* | `/v1/workspaces/{id}/members/{userId}` | `src/routes/workspaces.ts` | wired-in-W4-R | E2 extra (admin+, last-owner protected). |
-| `POST /v1/workspaces/:id/invites` | `/v1/workspaces/{id}/invites` | `src/routes/workspaces.ts` | wired-in-W4-R | GET (list) + POST (role ∈ admin/editor/viewer, never owner). |
-| *(none — invite mgmt)* | `/v1/workspaces/{id}/invites/{inviteId}` | `src/routes/workspaces.ts` | wired-in-W4-R | E2 extra (cancel, admin+). |
-| *(none — accept flow)* | `/v1/invites/{token}` | `src/routes/workspaces.ts` (`inviteRoutes`) | wired-in-W4-R | E3 extra: GET pre-accept view + DELETE cancel-by-token. |
-| `POST /v1/invites/:token/accept` | `/v1/invites/{token}/accept` | `src/routes/workspaces.ts` (`inviteRoutes`) | wired-in-W4-R | TODO(email): address verification lands with the email wave. |
-| `GET/POST /v1/projects` | `/v1/projects` | — | not-implemented | D3: no project table (W1-D). |
-| `GET/POST /v1/documents` | `/v1/documents` | `src/routes/documents.ts` (W4-F, `documentRoutes` + `withDocumentDeps`) | wired-in-W4-R | Body diverges from §13.1 (D3): required `width`/`height`, no `project_id`, `template` alias of `templateId`. |
-| `GET /v1/documents/:id` | `/v1/documents/{id}` | `src/routes/documents.ts` | wired-in-W4-R | Body = document + `latest_version`; §13.1's preview URL + layer summary absent (D9). PATCH/DELETE also implemented (rename/archive; DELETE = archive). |
-| `GET /v1/documents/:id/versions` | `/v1/documents/{id}/versions` | `src/routes/documents.ts` | wired-in-W4-R | Ascending timeline (§10.4). |
-| `POST /v1/documents/:id/versions/:versionId/restore` | `/v1/documents/{id}/versions/{versionId}/restore` | `src/routes/documents.ts` | wired-in-W4-R | Restore as a NEW version; source bytes untouched. |
-| `GET /v1/documents/:id/layers` | `/v1/documents/{id}/layers` | — | not-implemented | D2 gap (layer.list). |
-| `GET /v1/documents/:id/inspect` | `/v1/documents/{id}/inspect` | — | not-implemented | D2 gap (filtered scene graph). |
-| `POST /v1/documents/:id/runs` | `/v1/documents/{id}/runs` | *(alias absent; canonical = `src/routes/runs.ts`)* | partial | D4: implemented as `POST /v1/runs` (camelCase body, required tier, no `model`); alias + snake_case body reconcile in W4-R. |
-| `POST /v1/documents/:id/commands` | `/v1/documents/{id}/commands` | — | not-implemented | D2 gap; W4-K per `routes/documents.ts` note. §13.4 allowlist, no raw engine ids. |
-| `POST /v1/documents/:id/undo` | `/v1/documents/{id}/undo` | — | not-implemented | D2 gap; W4-K. |
-| `POST /v1/documents/:id/redo` | `/v1/documents/{id}/redo` | — | not-implemented | D2 gap; W4-K. |
-| `POST /v1/documents/:id/exports` | `/v1/documents/{id}/exports` | — | not-implemented | D2 gap (worker-side export exists; route pending). §13.1 body documented. |
-| `GET /v1/documents/:id/preview?w=1024` | `/v1/documents/{id}/preview` | — | not-implemented | D2 gap; `?w` documented. |
-| *(canonical run create + E5)* | `/v1/runs` | `src/routes/runs.ts` (W4-G, `runRoutes` + `mountRunRoutes`) | wired-in-W4-R | POST = implemented §13 run create (Idempotency-Key header-or-body); GET list = E5 extra (org page, `document_id` filter). |
-| `GET /v1/runs/:id` | `/v1/runs/{id}` | `src/routes/runs.ts` | wired-in-W4-R | `RunDetailApiView` (status + plan + steps + cost). |
-| `POST /v1/runs/:id/cancel` | `/v1/runs/{id}/cancel` | `src/routes/runs.ts` | wired-in-W4-R | §3.4 cancel + release; terminal → 409. |
-| `GET /v1/runs/:id/events` (SSE) | `/v1/runs/{id}/events` | `src/routes/runs-events.ts` (W4-H, `runEventRoutes`/`createRunEventRoutes`) | wired-in-W4-R | text/event-stream; Last-Event-ID resume; run.resync sentinel (D8). |
-| `POST /v1/uploads` | `/v1/uploads` | `src/routes/uploads.ts` (W4-I, `uploadRoutes`) | wired-in-W4-R | Multipart branch implemented (D10); 413 + §20.2 gates; byte-idempotent dedupe. |
-| `GET /v1/assets?project_id=` | `/v1/assets` | `src/routes/uploads.ts` | wired-in-W4-R | `project_id` accepted but does not filter yet (D3). |
-| *(none — asset mgmt)* | `/v1/assets/{id}` | `src/routes/uploads.ts` | wired-in-W4-R | E4 extra: GET signed URL (ttl 900 s) + DELETE (editor+). |
-| `GET /v1/templates` | `/v1/templates` | — | not-implemented | D2 gap (no catalog route module). |
-| `GET /v1/components` | `/v1/components` | — | not-implemented | D2 gap (no catalog route module). |
-| `GET /v1/credits` | `/v1/credits` | — | not-implemented | D2 gap (billing wave). |
-| `POST /v1/billing/checkout` | `/v1/billing/checkout` | — | not-implemented | D2 gap (Stripe, §14.3). |
-| `POST /v1/billing/portal` | `/v1/billing/portal` | — | not-implemented | D2 gap (Stripe, §14.3). |
-| `POST /v1/webhooks/stripe` | `/v1/webhooks/stripe` | — | not-implemented | D2 gap; unauthenticated (signature-verified), idempotent by event id. |
-| `GET /v1/usage?from=&to=` | `/v1/usage` | — | not-implemented | D2 gap (daily rollups). |
-| `GET /v1/health` / `/v1/health/deep` | `/v1/health` | `src/routes/health.ts` + `src/routes/index.ts` | implemented | Mounted today; liveness only, no dependencies touched. |
-| `GET /v1/health` / `/v1/health/deep` | `/v1/health/deep` | `src/routes/health.ts` + `src/routes/index.ts` | implemented | Mounted today (same §13.1 row as above; split for one-path-per-row); 503 when a probe is down. |
-| *(W4-O, self-hosting meta)* | `/v1/openapi.json` | `src/openapi.ts` (`mountOpenApi`) | implemented | W4-R mounts; serves the audited spec. |
+| `POST /v1/auth/*` Better Auth handlers | `/v1/auth/{handler}` | `src/auth/server.ts` (`app.all("/api/auth/*{path}")`) — no routes/ module | PARTIAL | D1 OPEN: Better Auth serves `/api/auth` (basePath pinned in `src/auth/client-config.ts`); §13.1 pins `/v1/auth/*`. Remount or gateway rewrite owed to the composition owner. |
+| `GET /v1/me` user + memberships + plan | `/v1/me` | — | NOT-IMPLEMENTED | D2 remainder. |
+| `POST/GET /v1/workspaces` | `/v1/workspaces` | `routes/workspaces.ts` `workspaceRoutes` · app.ts:660 `v1.route("/workspaces", …)` | IMPLEMENTED+MOUNTED | GET list-mine + POST create (+ trial grant §14.1); `createWorkspaceSchema` strict. |
+| `GET /v1/workspaces/:id` (+mgmt) | `/v1/workspaces/{id}` | `routes/workspaces.ts` · app.ts:660 | IMPLEMENTED+MOUNTED | GET any member; PATCH rename/brand-tokens (admin+) — E2. |
+| *(none — workspace mgmt)* | `/v1/workspaces/{id}/members` | `routes/workspaces.ts` · app.ts:660 | IMPLEMENTED+MOUNTED | E2 extra (admin+). |
+| *(none — workspace mgmt)* | `/v1/workspaces/{id}/members/{userId}` | `routes/workspaces.ts` · app.ts:660 | IMPLEMENTED+MOUNTED | E2 extra (admin+, last-owner protected). |
+| `POST /v1/workspaces/:id/invites` | `/v1/workspaces/{id}/invites` | `routes/workspaces.ts` · app.ts:660 | IMPLEMENTED+MOUNTED | GET (list) + POST (role ∈ admin/editor/viewer, never owner). |
+| *(none — invite mgmt)* | `/v1/workspaces/{id}/invites/{inviteId}` | `routes/workspaces.ts` · app.ts:660 | IMPLEMENTED+MOUNTED | E2 extra (cancel, admin+). |
+| *(none — accept flow)* | `/v1/invites/{token}` | `routes/workspaces.ts` `inviteRoutes` · app.ts:663 | IMPLEMENTED+MOUNTED | E3 extra: pre-accept view + DELETE cancel-by-token. |
+| `POST /v1/invites/:token/accept` | `/v1/invites/{token}/accept` | `routes/workspaces.ts` `inviteRoutes` · app.ts:663 | IMPLEMENTED+MOUNTED | TODO(email): address verification lands with the email wave. |
+| `GET/POST /v1/projects` | `/v1/projects` | — | NOT-IMPLEMENTED | D3 OPEN: no project table (W1-D). |
+| `GET/POST /v1/documents` | `/v1/documents` | `routes/documents.ts` `documentRoutes`/`withDocumentDeps` · app.ts:676 | IMPLEMENTED+MOUNTED | Body diverges from §13.1 (D3): required `width`/`height`, no `project_id`, `template` alias of `templateId`. |
+| `GET /v1/documents/:id` | `/v1/documents/{id}` | `routes/documents.ts` · app.ts:676 | IMPLEMENTED+MOUNTED | `document` + `latest_version`; §13.1's preview URL + layer summary not in the DTO (D9). PATCH/DELETE (archive) also implemented. |
+| `GET /v1/documents/:id/versions` | `/v1/documents/{id}/versions` | `routes/documents.ts` · app.ts:676 | IMPLEMENTED+MOUNTED | Ascending timeline (§10.4). |
+| `POST /v1/documents/:id/versions/:versionId/restore` | `/v1/documents/{id}/versions/{versionId}/restore` | `routes/documents.ts` · app.ts:676 | IMPLEMENTED+MOUNTED | Restore as a NEW version; source bytes untouched. |
+| `GET /v1/documents/:id/layers` | `/v1/documents/{id}/layers` | — | NOT-IMPLEMENTED | D2 remainder (layer.list). |
+| `GET /v1/documents/:id/inspect` | `/v1/documents/{id}/inspect` | — | NOT-IMPLEMENTED | D2 remainder (filtered scene graph). |
+| `POST /v1/documents/:id/runs` (§13.1 alias) | `/v1/documents/{id}/runs` | *(alias absent; canonical = `routes/runs.ts`)* | PARTIAL | D4 OPEN: implemented as `POST /v1/runs` (camelCase body, required tier). Alias + snake_case reconcile pending. |
+| *(canonical run create)* | `/v1/runs` | `routes/runs.ts` `runRoutes`/`mountRunRoutes` · app.ts:687 | IMPLEMENTED+MOUNTED | POST = §13 run create (Idempotency-Key header-or-body, replay enforced). GET = E1/E5 org page with `document_id` filter. |
+| `GET /v1/runs/:id` | `/v1/runs/{id}` | `routes/runs.ts` · app.ts:687 | IMPLEMENTED+MOUNTED | `RunDetailApiView` (status + plan + steps + cost). |
+| `POST /v1/runs/:id/cancel` | `/v1/runs/{id}/cancel` | `routes/runs.ts` · app.ts:687 | IMPLEMENTED+MOUNTED | §3.4 cancel + release; terminal → 409. |
+| `GET /v1/runs/:id/events` (SSE) | `/v1/runs/{id}/events` | `routes/runs-events.ts` `createRunEventRoutes` · app.ts:705 | IMPLEMENTED+MOUNTED | text/event-stream; Last-Event-ID resume; `run.resync` sentinel (D8). SSE notes below. |
+| `POST /v1/documents/:id/commands` | `/v1/documents/{id}/commands` | `routes/commands.ts` `commandRoutes`/`mountCommandRoutes` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-K. §13.4 allowlist only (raw engine ids never exposed); idempotency key REQUIRED header-or-body (absent ⇒ 422); §6.1 compact `CommandReply`. |
+| `POST /v1/documents/:id/undo` | `/v1/documents/{id}/undo` | `routes/commands.ts` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-K. ONE step (engine edit.undo); same key rule; same reply. |
+| `POST /v1/documents/:id/redo` | `/v1/documents/{id}/redo` | `routes/commands.ts` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-K. ONE step (engine edit.redo). |
+| `POST /v1/documents/:id/exports` | `/v1/documents/{id}/exports` | `routes/exports.ts` `exportRoutes`/`mountExportRoutes` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-L. POST 202 `{ export_id, status, revision, warnings }` (jobId = key); GET = past-jobs listing (E10). Editor+ / viewer+ per method. |
+| `GET /v1/documents/:id/preview?w=1024` | `/v1/documents/{id}/preview` | `routes/exports.ts` `previewRoutes`/`mountExportRoutes` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-L. Signed URL (ttl 900 s) + Location; 404 `preview_not_rendered` until the worker renders. |
+| `POST /v1/uploads` | `/v1/uploads` | `routes/uploads.ts` `uploadRoutes` · app.ts:740 (auth gate + §20.2 cap + context) | IMPLEMENTED+MOUNTED | Multipart branch (D10); 413 + §20.2 gates; byte-idempotent dedupe. |
+| `GET /v1/assets?project_id=` | `/v1/assets` | `routes/uploads.ts` · app.ts:740 | IMPLEMENTED+MOUNTED | `project_id` accepted but does not filter (D3). |
+| *(none — asset mgmt)* | `/v1/assets/{id}` | `routes/uploads.ts` · app.ts:740 | IMPLEMENTED+MOUNTED | E4 extra: GET signed URL (ttl 900 s) + DELETE (editor+). |
+| `GET /v1/templates` | `/v1/templates` | `routes/catalog.ts` `catalogRoutes`/`mountCatalogRoutes` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-J. Discovery cards (§7.4) — NOT manifests; `?tags` (AND) + `?query`; per-org bucket 120/min fails open. |
+| *(none — manifest fetch)* | `/v1/templates/{id}` | `routes/catalog.ts` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | E6 extra (W4-J): full §7.2 manifest; `?version=N` pin; miss ⇒ 404 `unknown_template`. |
+| `GET /v1/components` | `/v1/components` | `routes/catalog.ts` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-J. Discovery cards (§8.3); same filter semantics. |
+| *(none — manifest fetch)* | `/v1/components/{id}` | `routes/catalog.ts` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | E6 extra (W4-J): full manifest; miss ⇒ 404 `unknown_component`. |
+| *(none — workspace templates)* | `/v1/workspaces/{id}/templates` | `routes/catalog.ts` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | E7 extra (W4-J, §7.2): admin+ registers a workspace-private manifest; Idempotency-Key header REQUIRED; replay ⇒ 200 duplicate. |
+| `GET /v1/credits` | `/v1/credits` | `routes/credits.ts` `creditRoutes`/`mountCreditsRoutes` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-M. Viewer+ (no billing READ row in the matrix); `{ balance, ledger: { rows, next_cursor? } }` (§12.2 sum sanity). |
+| *(none — billing card)* | `/v1/credits/summary` | `routes/credits.ts` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | E8 extra (W4-M): 30d spend, open holds, trial flag. |
+| `GET /v1/usage?from=&to=` | `/v1/usage` | `routes/credits.ts` `usageRoutes`/`mountCreditsRoutes` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-M. Zero-filled UTC-day rollups: per-kind credit sums + run stats + totals; window ≤ USAGE_MAX_DAYS ⇒ 422. |
+| *(none — plans)* | `/v1/billing/plans` | `routes/billing.ts` `billingRoutes`/`mountBillingRoutes` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | E9 extra (W4-N): public plan cards + credit pack from @studio/config. |
+| `POST /v1/billing/checkout` | `/v1/billing/checkout` | `routes/billing.ts` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-N. Owner/admin (ADR-0003 row 8). camelCase body `{ planCode, workspaceId }` (D4). |
+| `POST /v1/billing/portal` | `/v1/billing/portal` | `routes/billing.ts` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-N. Owner/admin; body `{ workspaceId }`. |
+| `POST /v1/webhooks/stripe` | `/v1/webhooks/stripe` | `routes/billing.ts` `stripeWebhookRoutes`/`mountBillingRoutes` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | W4-N. No auth (signature is the auth); RAW-body verify ⇒ 400 `invalid_signature`; idempotent by event id; `{ ok, received, handled, duplicate }`. |
+| *(none — §22 export)* | `/v1/workspaces/{id}/audit` | `routes/audit.ts` `workspaceAuditRoutes`/`mountAuditRoutes` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | E11 extra (W9-H, §22): admin+ cursor-paged export; `?format=csv` = same rows as RFC 4180 download (cursor in `X-Next-Cursor`); D13 RBAC note. |
+| *(none — §22 summary)* | `/v1/audit/summary/{id}` | `routes/audit.ts` `auditSummaryRoutes`/`mountAuditRoutes` — NOT in app.ts | IMPLEMENTED-AWAITING-MOUNT | E11 extra (W9-H, §22): counts by action, last 30 days (admin tooling). |
+| `GET /v1/health` | `/v1/health` | `routes/health.ts` `healthRoutes` · routes/index.ts:44 via `registerRoutes` (app.ts:749) | IMPLEMENTED+MOUNTED | Liveness only; O(1). |
+| `GET /v1/health/deep` | `/v1/health/deep` | `routes/health.ts` · routes/index.ts:44 | IMPLEMENTED+MOUNTED | 503 when a probe is down. |
+| *(W4-O meta)* | `/v1/openapi.json` | app.ts:653 `v1.get("/openapi.json", …)`; `mountOpenApi` (openapi.ts) NOT wired | PARTIAL | D11 (NEW): the endpoint is mounted, but it serves the W4-R minimal runtime document (`openApiDocument()`), not this audited spec. |
 
-## Extras — implemented endpoints absent from §13.1
+**Tally:** 21 IMPLEMENTED+MOUNTED · 19 IMPLEMENTED-AWAITING-MOUNT · 3 PARTIAL ·
+4 NOT-IMPLEMENTED — 47 paths, one audit row each (test-enforced set equality
+with the spec).
 
-- **E1** (folded into E5): paged run listing beyond the single-run `GET /v1/runs/:id`.
-- **E2** Workspace management beyond §13.1's "create/read": `PATCH /v1/workspaces/{id}`
-  (rename/brand-tokens), `GET …/members`, `DELETE …/members/{userId}`,
-  `GET …/invites`, `DELETE …/invites/{inviteId}` — admin+ ladder per ADR-0003.
-- **E3** Invite lifecycle beyond `POST …/accept`: `GET /v1/invites/{token}`
-  (pre-accept view; token = capability) and `DELETE /v1/invites/{token}` (cancel).
-- **E4** Asset management beyond the §13.1 library listing: `GET /v1/assets/{id}`
-  (metadata + short-lived signed URL) and `DELETE /v1/assets/{id}` (editor+,
-  audited, re-delete → 404).
-- **E5** `GET /v1/runs` — org-scoped keyset-paged list with optional
-  `document_id` filter (§12.2 shape), used by the dashboard; not in §13.1.
+## Extras — implemented endpoints absent from §13.1 (amendment candidates)
 
-All extras are documented in the OpenAPI spec with the same rigor as §13.1
-rows (§13 should adopt or explicitly reject them when it is next amended).
+- **E1/E5** `GET /v1/runs` — org-scoped keyset-paged run list with optional
+  `document_id` filter (§12.2 shape), used by the dashboard.
+- **E2** Workspace management: `PATCH /v1/workspaces/{id}`,
+  `GET …/members`, `DELETE …/members/{userId}`, `GET …/invites`,
+  `DELETE …/invites/{inviteId}` — admin+ ladder per ADR-0003.
+- **E3** Invite lifecycle: `GET /v1/invites/{token}` (token = capability),
+  `DELETE /v1/invites/{token}`.
+- **E4** Asset management: `GET /v1/assets/{id}` (signed URL, ttl 900 s),
+  `DELETE /v1/assets/{id}` (editor+, audited).
+- **E6** Catalog item reads: `GET /v1/templates/{id}`,
+  `GET /v1/components/{id}` — full §7.2/§8 manifests with `?version=N` pins.
+- **E7** `POST /v1/workspaces/{id}/templates` — workspace-private template
+  registration (§7.2 license).
+- **E8** `GET /v1/credits/summary` — 30-day spend / open holds / trial flag.
+- **E9** `GET /v1/billing/plans` — public §14.1 plan cards.
+- **E10** `GET /v1/documents/{id}/exports` — past-jobs listing for one
+  document (the §13.1 flow only specced the create).
+- **E11** §22 audit surface (W9-H): `GET /v1/workspaces/{id}/audit` (the
+  "exportable per workspace" requirement, JSON **or** RFC 4180 CSV) +
+  `GET /v1/audit/summary/{id}` (support landing card).
 
-## Discrepancies
+All extras are documented in the spec with the same rigor as §13.1 rows. §13
+should adopt or explicitly reject each when next amended.
 
-- **D1 — auth mount path.** §13.1 pins `POST /v1/auth/*`; the landed auth server
-  (W4-A) is Better Auth at its default basePath `/api/auth`
-  (`src/auth/client-config.ts` pins `basePath: "/api/auth"`). W4-R must remount
-  Better Auth under `/v1/auth` or add a gateway rewrite/proxy. The spec
-  documents the §13.1 path (`/v1/auth/{handler}`) with status `partial`.
-- **D2 — §13.1 endpoints with no route module yet.** `/v1/me`, `…/layers`,
-  `…/inspect`, `…/commands`, `…/undo`, `…/redo`, `…/exports`, `…/preview`,
-  `/v1/templates`, `/v1/components`, `/v1/credits`, `/v1/billing/checkout`,
-  `/v1/billing/portal`, `/v1/webhooks/stripe`, `/v1/usage`. They answer the
-  typed 501 `not_implemented` catch-all in `routes/index.ts` until their waves
-  land (commands/undo/redo are W4-K per in-code notes). The spec documents each
-  with `x-studio-status: not-implemented` and provisional bodies where §13.1 is
-  silent.
-- **D3 — projects.** The landed schema has no project table (W1-D; documents
-  hang off the organization — noted in `src/routes/uploads.ts`). Consequences:
-  `GET/POST /v1/projects` unimplementable as specced; `POST /v1/documents`
-  lost `project_id` and gained required `width`/`height` (`createBodySchema`);
-  `GET /v1/assets?project_id=` validates the parameter but cannot filter yet.
-  §13.1 needs an amendment (either projects as a concept or org-scoped docs).
-- **D4 — run-create path + body spelling.** §13.1 spells
-  `POST /v1/documents/:id/runs` with `{ prompt, tier?, template?,
-  attachment_asset_ids?, model? }` (optional tier). W4-G ships the canonical
-  `POST /v1/runs` with a camelCase body (`documentId` required, `tier` REQUIRED,
-  no `model` field) per its task contract. W4-R/composition must reconcile:
-  alias path, snake_case fields, optional tier, `model` — until then the spec
-  documents BOTH (implemented camelCase body + contract-only alias).
-- **D5 — validation status code.** §13.3 lists 400 for validation; the gateway
-  mapper (W1-H) answers **422** `validation_failed` (ZodError + field
-  `details`), while 400 is kept for malformed request *frames* (bad JSON,
-  bad multipart, malformed Last-Event-ID). This split is now the documented
-  contract in the spec (both statuses appear); clients must treat 422 as the
-  schema-error status. (Flagged originally by W1-H + `docs/api/README.md`.)
-- **D6 — 401 code drift.** `unauthorized` (W1-H catalog + W4-E/W4-G/W4-H
-  routes) vs `unauthenticated` (W4-B `auth-context` middleware). The
-  add-only catalog (W4-C flag #3) should gain one canonical code and the other
-  route layer should adopt it. The spec documents both as observed on 401.
-- **D7 — idempotency enforcement.** §13 preamble: every mutating endpoint
-  requires an `Idempotency-Key`. Today only run creation enforces replay/dedup
-  (header-or-body, must agree); workspaces/documents mutations validate +
-  correlate the key into the audit trail with enforcement deferred to the
-  idempotency store wave (`idempotency_keys`, §12.1). The spec keeps the header
-  REQUIRED on mutations per the contract and notes the enforcement state.
-- **D8 — SSE beyond §13.2.** The stream also emits the `run.resync` gap
-  sentinel (id = last contiguous seq; client reconnects with it as
-  Last-Event-ID) — a 14th wire event type beyond §13.2's 13 — plus 15 s comment
-  heartbeats, a 400 on malformed Last-Event-ID, a 499 pre-stream disconnect
-  guard, and 503 `run_events_unavailable` when the router is unwired.
-  §13.2 should adopt the sentinel when amended.
-- **D9 — `GET /v1/documents/:id` response body.** §13.1 promises metadata +
-  latest version + **preview URL + layer summary**; the DTO ships `document` +
-  `latest_version` only. The preview/layer fields are covered by the (pending)
-  `…/preview` and `…/layers` endpoints (D2) — either add the summary fields to
-  the DTO or amend §13.1 to point at those endpoints.
-- **D10 — uploads pre-signed branch.** §13.1 offers "pre-signed upload (or
-  multipart)"; the multipart branch is implemented (§20.2 gates: magic-byte
-  sniff, 25 MB cap → 413, 60 MP ceiling, EXIF strip in the worker, sha256
-  dedupe). The pre-signed branch is not implemented; the spec documents the
-  multipart contract.
+## Discrepancies — W4-O's list, resolved or explained
 
-## W4-R wiring notes (composition-root checklist)
+- **D1 — auth mount path. OPEN.** §13.1 pins `/v1/auth/*`; the landed auth
+  server (W4-A) serves Better Auth at its default basePath
+  (`src/auth/client-config.ts` pins `"/api/auth"`; `src/auth/server.ts:17`
+  `app.all("/api/auth/*{path}")`). app.ts does not remount it. Resolution owed
+  to the composition owner: remount (basePath) or a gateway rewrite/proxy.
+- **D2 — §13.1 endpoints with no route module. MOSTLY RESOLVED.** Of W4-O's 15
+  gaps, eleven now have route modules (commands/undo/redo = W4-K, exports +
+  preview = W4-L, templates/components + registration = W4-J, credits +
+  summary + usage = W4-M, checkout/portal/webhook + plans = W4-N). Remaining
+  NOT-IMPLEMENTED: `/v1/me`, `/v1/documents/{id}/layers`,
+  `/v1/documents/{id}/inspect` (+ `/v1/projects`, D3). The typed 501
+  catch-all in `routes/index.ts` answers for all of them.
+- **D3 — projects. OPEN.** No project table (W1-D); documents hang off the
+  organization. `POST /v1/documents` has no `project_id`; `?project_id=` on
+  assets validates but does not filter. §13.1 needs an amendment (projects as
+  a concept, or org-scoped documents).
+- **D4 — §13.1 alias + field spelling. OPEN.** `POST /v1/documents/:id/runs`
+  with snake_case `{ prompt, tier?, template?, attachment_asset_ids?, model? }`
+  is still contract-only; the canonical `POST /v1/runs` (W4-G) takes a
+  camelCase body with REQUIRED `tier` and no `model`. The family grew in
+  wave 4: `POST /v1/billing/checkout` also ships a camelCase body
+  (`{ planCode, workspaceId }`, W4-N contract, runs.ts precedent). Both await
+  the §13.1 reconciliation (alias paths + snake_case acceptance).
+- **D5 — validation status code. RESOLVED (documented contract).** 400 =
+  malformed request frames (bad JSON/multipart/Last-Event-ID); 422 =
+  `validation_failed` + field-level `details` (W1-H mapper). Both statuses are
+  documented in the spec on every affected operation; the §13.3 text amendment
+  is pending but the wire contract is decided.
+- **D6 — 401 code drift. OPEN.** `unauthorized` (W1-H catalog + the W4-K/L/M/J
+  auth seam types) vs `unauthenticated` (W4-B `auth-context`; the uploads gate
+  in app.ts; internal /metrics). The add-only @studio/config catalog should
+  gain one canonical code; route layers adopt it. The spec documents both as
+  observed on 401.
+- **D7 — idempotency enforcement. PARTIALLY RESOLVED.** Enforced today (not
+  just correlated): run create (replay, jobId = runId), manual
+  commands/undo/redo (key REQUIRED header-or-body, §3.4 replay), export create
+  (key REQUIRED, jobId = key), workspace template registration (header
+  REQUIRED). Still validate/correlate-only: workspace and document mutations
+  (idempotency store wave pending). Billing checkout/portal accept the header
+  per §13 but route-side validation was not observed (Stripe-side idempotency
+  lives in the service).
+- **D8 — SSE beyond §13.2. OPEN (adoption pending).** The stream emits the
+  `run.resync` gap sentinel (14th wire type; id = last contiguous seq), 15 s
+  comment heartbeats, 400 on malformed Last-Event-ID, a 499 pre-stream
+  disconnect guard, and 503 `run_events_unavailable` when unwired. All are in
+  the spec; §13.2 should adopt the sentinel when amended.
+- **D9 — `GET /v1/documents/:id` body. PARTIALLY RESOLVED.** The DTO ships
+  `document` + `latest_version` only. The §13.1 preview URL is now served by
+  `GET …/preview` (W4-L, awaiting mount); the layer summary needs `…/layers`
+  (still D2). Recommended amendment: §13.1 points at those endpoints instead
+  of inlining the fields.
+- **D10 — uploads pre-signed branch. UNCHANGED (explained).** The multipart
+  branch is the implemented §13.1 offer (§20.2 gates: magic-byte sniff, 25 MB
+  cap → 413, 60 MP ceiling, EXIF strip in the worker, sha256 dedupe). The
+  pre-signed branch is not implemented and not documented.
+- **D11 — `/v1/openapi.json` serves a different document. OPEN (new, found by
+  this audit).** app.ts:653 registers `GET /v1/openapi.json` serving its own
+  minimal runtime document (`openApiDocument(deps.version, openapiPaths)` —
+  the actually-mounted paths). `mountOpenApi()`/`buildOpenApiSpec()` — the
+  audited document — are not wired into the app. Resolution: serve the
+  audited spec (or supersede it with the generated spec planned in
+  `docs/api/README.md` "OpenAPI").
+- **D12 — read-side envelopes omit `ok:true`. EXPLAINED-ACCEPTED (new).** List
+  endpoints answer bare payloads (`{ runs }`, `{ assets }`, `{ templates }`,
+  `{ components }`, `{ balance, ledger }`, `{ from, to, days, totals }`,
+  `{ exports }`, `{ rows }`), while other success bodies carry `ok:true`
+  (billing, commands, preview, registration, restore). §13.1 never pinned
+  `ok` on reads; the spec documents each body as shipped. Amendment should
+  standardize one style (either is defensible — pick one).
+- **D13 — audit RBAC rides `members:manage`. EXPLAINED (new).** ADR-0003's
+  matrix has no audit permission and one may not be invented locally (matrix
+  drift fails CI). W9-H gates admin+ via the matrix-granted
+  `members:manage` capability (assertCan ALSO narrows API-key scopes) with a
+  one-line swap constant (`AUDIT_GATE_PERMISSION`) for when the matrix grows
+  `audit:read`.
 
-1. `mountOpenApi(app)` → serves `GET /v1/openapi.json` (the spec const).
-2. `v1.route("/workspaces", workspaceRoutes(deps))` +
-   `v1.route("/invites", inviteRoutes(deps))` (W4-E exports both; `deps.auth`
-   via `createWorkspaceAuth(resolver)`).
-3. `mountRunRoutes(v1, deps, { path: "/runs" })` (W4-G one-call mount, before
-   the catch-all).
-4. `v1.route("/", createRunEventRoutes({ auth, runLookup, bus }))` — or keep the
-   exported `runEventRoutes` const and call `wireRunEventRoutes(deps)`
-   (W4-H); the bus seam adapts `@studio/agent`'s `RunEventBus` over
-   `DrizzleEventStore`.
-5. `v1.route("/documents", withDocumentDeps(documentRoutesDeps(db, …)))` (W4-F).
-6. Uploads (W4-I): mount `uploadRoutes` on `/v1` with the two context variables
-   set upstream — `uploadsDeps` (service + limits) and `auth`
-   (userId/org/role) — before the router runs.
-7. Resolve D1 (Better Auth under `/v1/auth`), then the D2 waves land their own
-   route modules (commands/undo/redo = W4-K).
-8. Keep the 501 catch-all LAST in `routes/index.ts` so concrete routes win.
+## SSE contract notes (§13.2, as shipped)
+
+- `GET /v1/runs/{id}/events` — `text/event-stream`; frames
+  `id: <seq>`, `event: <type>`,
+  `data: { seq, run_id, at, type, payload }`. Event strings are owned by
+  `@studio/config` (`packages/config/src/constants/events.ts`) — never rename.
+- 13 §13.2 types + the `run.resync` gap sentinel (D8): backfill replays
+  `run_events` rows with `seq > Last-Event-ID`, then live delivery, deduped by
+  `seq` on both sides. The header wins over `?lastEventId=`.
+- A seq gap emits `run.resync` (id = last contiguous seq) and closes the
+  response — reconnect with that Last-Event-ID to re-heal from the durable
+  store. The stream also closes after a terminal event
+  (`run.succeeded|failed|cancelled`). Comment heartbeat (`: hb`) every 15 s.
+- Failure modes: 400 malformed Last-Event-ID; 404 with the SAME envelope for
+  unknown and cross-tenant run ids (§15.1 existence hiding); 503
+  `run_events_unavailable` when the router is unwired; 499-style pre-stream
+  disconnect guard.
+
+## Out-of-band surfaces (documented, deliberately NOT §13 paths)
+
+- **`GET /metrics`** (`routes/metrics.ts`, W9-G) — the internal-only Prometheus
+  exposition (§22/§17.2): gateway HTTP counters, the shared W9-D registry,
+  queue-depth gauges, engine-session gauges, uptime/build. It mounts OUTSIDE
+  `/v1`, the compose wiring must bind it to the internal network only, and it
+  sits behind the METRICS_TOKEN Basic-auth seam (fail-closed 401 when the
+  token is unset — note its 401 uses the nested `error:{…}` shape, which is
+  tolerable ONLY because this surface is out-of-band and not part of the
+  flat-envelope /v1 contract; normalization flagged to the owner). It is
+  deliberately absent from the OpenAPI document (test-enforced).
+- **`/api/auth/*{path}`** — the Better Auth handlers (W4-A), publicly reachable
+  but outside the versioned /v1 surface; see D1.
+
+## Composition-root checklist (the awaiting-mount wiring)
+
+One helper call per landed module — mount BEFORE the /v1 catch-all in
+`routes/index.ts` / the app bootstrap (app.ts):
+
+| One-call mount helper (wire fn) | Route file | Spec paths it covers |
+|---|---|---|
+| `mountAuditRoutes(app, deps)` | `routes/audit.ts` | `/v1/workspaces/{id}/audit`, `/v1/audit/summary/{id}` |
+| `mountCatalogRoutes(app, deps)` | `routes/catalog.ts` | `/v1/templates`, `/v1/templates/{id}`, `/v1/components`, `/v1/components/{id}`, `/v1/workspaces/{id}/templates` |
+| `mountCommandRoutes(app, deps)` | `routes/commands.ts` | `/v1/documents/{id}/commands`, `/v1/documents/{id}/undo`, `/v1/documents/{id}/redo` |
+| `mountExportRoutes(app, deps)` | `routes/exports.ts` | `/v1/documents/{id}/exports`, `/v1/documents/{id}/preview` |
+| `mountCreditsRoutes(app, deps)` | `routes/credits.ts` | `/v1/credits`, `/v1/credits/summary`, `/v1/usage` |
+| `mountBillingRoutes(app, deps)` | `routes/billing.ts` | `/v1/billing/plans`, `/v1/billing/checkout`, `/v1/billing/portal`, `/v1/webhooks/stripe` |
+| `metricsRoutes(deps)` via the bootstrap mount hook | `routes/metrics.ts` | `/metrics` — internal-only, never under /v1 |
+
+Each helper guards its own deps seam (missing seams ⇒ typed 500 `internal_error`
+with a wiring hint, or the 503 `not_configured` placeholder in billing.ts).
+
+## Next actions (owners beyond this wave's scope)
+
+1. **Wire the seven modules** above in the composition root (app.ts bootstrap
+   owner) — that flips 19 IMPLEMENTED-AWAITING-MOUNT rows to
+   IMPLEMENTED+MOUNTED; the audit table + `x-studio-status` values move with
+   them (mechanically).
+2. **D11:** serve the audited spec at `/v1/openapi.json` (call
+   `mountOpenApi(app)` or `buildOpenApiSpec()` from the bootstrap), or land
+   the zod-generated spec per `docs/api/README.md` and retire the const.
+3. **D1:** remount/proxy Better Auth under `/v1/auth/*`.
+4. **Remaining D2 rows:** `/v1/me`, `…/layers`, `…/inspect` — owner waves TBD.
+5. **D6:** canonicalize the 401 code in the add-only @studio/config catalog.
+6. **Record the flat-envelope ADR** (`docs/adr/0006-error-envelope.md`).
+7. **§13 amendment bundle:** adopt/reject E2–E11; resolve D3 (projects), D4
+   (alias + snake_case), D5 (422 text), D8 (sentinel), D12 (ok:true style).
