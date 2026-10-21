@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AssembledContext,
   type AssembledSection,
+  type BriefChatTurnInput,
   CACHED_SECTION_IDS,
   CHARS_PER_TOKEN,
   type ContextInput,
@@ -18,6 +19,7 @@ import {
   MAX_LAYERS_IN_CONTEXT,
   type StyleGuideInput,
   type TemplateManifestInput,
+  type ValidatorReportInput,
   ContextAssembler,
   capText,
   canonicalStringify,
@@ -422,11 +424,10 @@ describe("context: 12-layer compaction table (§5.4 ≤4k tokens)", () => {
       system: SYSTEM,
       documentSummary: { summary: deltaSummary },
     });
-    const parsed = JSON.parse(sectionOf(assembled, "document_summary").content) as Record<
-      string,
-      unknown
-    >;
-    expect((parsed.delta as Record<string, unknown[]>).changed.length).toBe(1);
+    const parsed = JSON.parse(sectionOf(assembled, "document_summary").content) as {
+      delta: { changed: unknown[] };
+    };
+    expect(parsed.delta.changed).toHaveLength(1);
   });
 
   it("caps a 600-row document at 60 id-sorted rows with a warning", () => {
@@ -525,22 +526,26 @@ describe("context: style guide / manifest / brief / validator projections", () =
     expect(warningText(noRef)).toContain("no template ref");
   });
 
-  it("brief: 20 attachments → 16 kept; file:// thumbnails dropped (§6.1)", () => {
+  it("brief: file:// thumbnails dropped, 20 attachments → 16 kept (§6.1)", () => {
     const assembled = assembler().assembleContext({
       system: SYSTEM,
       brief: {
         prompt: "go",
-        attachments: Array.from({ length: 19 }, (_, i) => ({
-          name: `a${i}`,
-          previewUrl: "https://cdn.example/a.png",
-        })).concat([{ name: "bad", previewUrl: "file:///etc/passwd" }]),
+        attachments: [
+          { name: "bad", previewUrl: "file:///etc/passwd" },
+          ...Array.from({ length: 19 }, (_, i) => ({
+            name: `a${i}`,
+            previewUrl: "https://cdn.example/a.png",
+          })),
+        ],
       },
     });
     const parsed = JSON.parse(sectionOf(assembled, "brief").content) as {
-      attachments: { previewUrl?: string }[];
+      attachments: { name?: string; previewUrl?: string }[];
     };
-    expect(parsed.attachments).toHaveLength(16); // 19 https rows capped at 16
-    expect(parsed.attachments.every((row) => row.previewUrl !== undefined)).toBe(true);
+    expect(parsed.attachments).toHaveLength(16); // 20 rows capped at 16
+    expect(parsed.attachments[0]).toEqual({ name: "bad" }); // §6.1 drop, name kept
+    expect(parsed.attachments.slice(1).every((row) => row.previewUrl !== undefined)).toBe(true);
     expect(warningText(assembled)).toContain("attachments limited to first 16 of 20");
     expect(warningText(assembled)).toContain("1 attachment thumbnail url(s) dropped");
   });
@@ -551,9 +556,9 @@ describe("context: style guide / manifest / brief / validator projections", () =
       brief: {
         prompt: "go",
         priorChat: Array.from({ length: 35 }, (_, i) => ({
-          role: i % 2 === 0 ? "user" : (i === 1 ? "system" : "assistant"),
+          role: i % 2 === 0 ? "user" : i === 1 ? "system" : "assistant", // "system" is odd on purpose
           content: `turn ${i}`,
-        })),
+        })) as unknown as BriefChatTurnInput[],
       },
     });
     const parsed = JSON.parse(sectionOf(assembled, "brief").content) as {
@@ -601,7 +606,9 @@ describe("context: style guide / manifest / brief / validator projections", () =
 
     const noVerdict = assembler().assembleContext({
       system: SYSTEM,
-      priorValidatorReport: { issueCounts: { blocker: 0, major: 0, minor: 0 } },
+      priorValidatorReport: {
+        issueCounts: { blocker: 0, major: 0, minor: 0 },
+      } as unknown as ValidatorReportInput,
     });
     expect(noVerdict.sections.map((section) => section.id)).toEqual(["system_prompt"]);
     expect(warningText(noVerdict)).toContain("no ok verdict");

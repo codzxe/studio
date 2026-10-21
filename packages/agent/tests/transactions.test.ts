@@ -242,7 +242,7 @@ function lastRow(h: Harness): WalAppendInput {
 // --- scenarios --------------------------------------------------------------
 
 describe("transactions: §5.6 begin → commands → commit (happy path)", () => {
-  it("writes a begin marker, chained revision-ordered WAL rows and one durable checkpoint", async () => {
+  it("writes a begin marker, chained revision-ordered WAL rows and one checkpoint", async () => {
     const h = makeHarness();
 
     // begin before the first mutating command (§5.6) — engine checkpoint + marker row.
@@ -529,7 +529,7 @@ describe("transactions: §5.6 revision math (monotonic enforcement)", () => {
 });
 
 describe("transactions: §5.6 guards (begin before the first mutating command)", () => {
-  it("refuses tracking before begin, a second begin, and a concurrent begin on the document", async () => {
+  it("refuses tracking before begin, double begin, and a concurrent begin", async () => {
     const h = makeHarness();
 
     const noTxn = unwrapFailure(
@@ -617,7 +617,7 @@ describe("transactions: §3.3 step 6 durability failures", () => {
     expect(h.manager.status(RUN_ID)).toBe("open"); // unknown engine state: stay open
   });
 
-  it("errs checkpoint_write_failed after the engine committed (retry the writes, not commit)", async () => {
+  it("errs checkpoint_write_failed after the commit (retry writes, not commit)", async () => {
     const h = makeHarness();
     unwrapOk(await h.manager.begin(RUN_ID, DOC_ID, "Restyle headline"));
     unwrapOk(await runCommand(h, "type.edit"));
@@ -635,7 +635,7 @@ describe("transactions: §3.3 step 6 durability failures", () => {
     expect(h.checkpoint.saved.length).toBe(0);
   });
 
-  it("errs checkpoint_write_failed when only the checkpoint row fails (pcraft is durable)", async () => {
+  it("checkpoint_write_failed when only the checkpoint row fails (pcraft durable)", async () => {
     const h = makeHarness();
     unwrapOk(await h.manager.begin(RUN_ID, DOC_ID, "Restyle headline"));
     unwrapOk(await runCommand(h, "type.edit"));
@@ -647,10 +647,36 @@ describe("transactions: §3.3 step 6 durability failures", () => {
     expect(h.checkpoint.saved.length).toBe(0);
     expect(h.manager.status(RUN_ID)).toBe("committed");
   });
+
+  it("a failed begin marker still registers the run so rollback reaches the engine", async () => {
+    const h = makeHarness();
+    h.wal.failNext = true;
+
+    const failed = unwrapFailure(await h.manager.begin(RUN_ID, DOC_ID, "Restyle headline"));
+    expect(failed.code).toBe("wal_append_failed");
+    expect(h.manager.status(RUN_ID)).toBe("open");
+
+    // the marker never landed: the rollback marker reuses its seq — no log gap.
+    h.wal.failNext = false;
+    const rolledBack = unwrapOk(await h.manager.rollback(RUN_ID));
+    expect(rolledBack.restored).toBe(true);
+    expect(rolledBack.markerSeq).toBe(1);
+    expect(h.wal.rows.map((row) => row.commandName)).toEqual(["agent.rollback"]);
+  });
+
+  it("maps an engine begin refusal (already_open) to engine_command_failed", async () => {
+    const h = makeHarness();
+    h.engine.txnOpen = true; // a stale engine-side transaction from a crashed run
+
+    const failed = unwrapFailure(await h.manager.begin(RUN_ID, DOC_ID, "Restyle headline"));
+    expect(failed.code).toBe("engine_command_failed");
+    expect(failed.retryable).toBeFalsy();
+    expect(h.wal.rows.length).toBe(0); // nothing logged when the engine refuses
+  });
 });
 
 describe("transactions: §3.4 resume seam", () => {
-  it("continues the WAL at the caller-supplied cursor and validates the engine revision", async () => {
+  it("continues the WAL at the caller-supplied cursor seq", async () => {
     const h = makeHarness();
     h.engine.revision = 40; // replay restored the document to revision 40
 
@@ -671,7 +697,7 @@ describe("transactions: §3.4 resume seam", () => {
     expect(tracked).toEqual({ seq: 41, revisionBefore: 40, revisionAfter: 41 });
   });
 
-  it("rejects a resume cursor that does not match the engine state (wal_slice_mismatch)", async () => {
+  it("rejects a resume cursor that mismatches the engine state", async () => {
     const h = makeHarness(); // engine at revision 6
     const failed = unwrapFailure(
       await h.manager.begin(RUN_ID, DOC_ID, "Resumed run", { seq: 9, revision: 5 }),

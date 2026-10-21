@@ -49,7 +49,9 @@ function callAt(tool: FakeCriticTool, index: number): CriticToolArgs {
 }
 
 /** Unwraps a service AgentResult for hand-typed flow tests (failures rethrow). */
-function unwrap(outcome: { ok: true; value: CritiqueResult } | { ok: false; code: string }): CritiqueResult {
+function unwrap(
+  outcome: { ok: true; value: CritiqueResult } | { ok: false; code: string },
+): CritiqueResult {
   if (!outcome.ok) {
     throw new Error(`critique failed: ${outcome.code}`);
   }
@@ -560,11 +562,23 @@ describe("critic service: summary parsing (compaction-tolerant)", () => {
     ["not JSON", "the design looks great, ship it"],
     ["JSON but wrong shape", '{"hello":"world"}'],
     ["verdict out of enum", { verdict: "ship_it", scores: SCORES_CLEAN, issues: [] }],
-    ["score out of 1-5", { verdict: "accept", scores: { ...SCORES_CLEAN, contrast: 9 }, issues: [] }],
-    ["score not an int", { verdict: "accept", scores: { ...SCORES_CLEAN, balance: 3.5 }, issues: [] }],
+    [
+      "score out of 1-5",
+      { verdict: "accept", scores: { ...SCORES_CLEAN, contrast: 9 }, issues: [] },
+    ],
+    [
+      "score not an int",
+      { verdict: "accept", scores: { ...SCORES_CLEAN, balance: 3.5 }, issues: [] },
+    ],
     ["missing scores", { verdict: "accept", issues: [] }],
-    ["bad severity", { verdict: "accept", scores: SCORES_CLEAN, issues: [{ severity: "fatal", code: "x" }] }],
-    ["empty issue code", { verdict: "accept", scores: SCORES_CLEAN, issues: [{ severity: "minor", code: "" }] }],
+    [
+      "bad severity",
+      { verdict: "accept", scores: SCORES_CLEAN, issues: [{ severity: "fatal", code: "x" }] },
+    ],
+    [
+      "empty issue code",
+      { verdict: "accept", scores: SCORES_CLEAN, issues: [{ severity: "minor", code: "" }] },
+    ],
   ])("unreadable summary (%s) → typed failure, no raw echo", async (_label, badSummary) => {
     const tool = new FakeCriticTool(() =>
       okResult(typeof badSummary === "string" ? badSummary : JSON.stringify(badSummary)),
@@ -580,7 +594,9 @@ describe("critic service: summary parsing (compaction-tolerant)", () => {
   });
 
   it("parseCritiqueSummary unit table", () => {
-    expect(parseCritiqueSummary(critiqueSummary("accept", SCORES_CLEAN, []))?.verdict).toBe("accept");
+    expect(parseCritiqueSummary(critiqueSummary("accept", SCORES_CLEAN, []))?.verdict).toBe(
+      "accept",
+    );
     expect(
       parseCritiqueSummary(
         JSON.stringify({ verdict: "revise", scores: SCORES_CLEAN, issues: [], avg: 4, extra: 1 }),
@@ -654,7 +670,10 @@ describe("critic service + gate: §5.1 flow pins", () => {
     expect(critic.noteRepairCycle()).toBe(false); // no third repair, ever
     // The capped gate surfaces the remaining blocker for manual fixes (§5.1) —
     // the run manager maps this to succeeded_with_warnings.
-    const last = cycleGateForOutcome(unwrap(await critic.critique({ ...BASE_REQUEST })), critic.cycles());
+    const last = cycleGateForOutcome(
+      unwrap(await critic.critique({ ...BASE_REQUEST })),
+      critic.cycles(),
+    );
     expect(last.decision).toBe("finalize_with_warnings");
     expect(last.remainingIssues.map((issue) => issue.code)).toEqual(["contrast"]);
     expect(last.remainingIssues[0]?.fix).toBe("The minimal concrete change"); // suggested manual fix

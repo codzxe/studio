@@ -651,14 +651,9 @@ export class ExecutorService {
       toolCallsExecuted += 1;
       const result = await runToolWithDeadline(tool, parsed.args);
 
-      // A run-level abort during the call ends the walk (§3.4 cancel).
-      if (signal.aborted) {
-        appendCallPair(proposed, result);
-        stopReason ??= "aborted";
-        return;
-      }
+      // The result is recorded whatever the run signal says (the report must
+      // describe reality), THEN a run-level abort ends the walk (§3.4 cancel).
       appendCallPair(proposed, result);
-
       if (result.ok) {
         stepState.succeededTools.push(name);
         if (name === step.tool) {
@@ -667,12 +662,14 @@ export class ExecutorService {
         if (typeof result.documentRevision === "number") {
           lastDocumentRevision = result.documentRevision;
         }
-        return;
+      } else {
+        // §23.1 rule 7 / §6.3: record the failure; the model gets exactly one retry.
+        failedCalls.add(callKey);
+        toolErrors.set(errorKey, errorsSoFar + 1);
       }
-
-      // §23.1 rule 7 / §6.3: record the failure; the model gets exactly one retry.
-      failedCalls.add(callKey);
-      toolErrors.set(errorKey, errorsSoFar + 1);
+      if (signal.aborted) {
+        stopReason ??= "aborted";
+      }
     };
 
     // --- the walk (§5.1 small steps) -------------------------------------------

@@ -545,9 +545,11 @@ export class TransactionManager {
       });
     }
     if (txn.state !== "open") {
-      return transactionErr("transaction_not_open", `The run's transaction is already ${txn.state}`, {
-        hint: "Commands are tracked only while the transaction is open (§5.6).",
-      });
+      return transactionErr(
+        "transaction_not_open",
+        `The run's transaction is already ${txn.state}`,
+        { hint: "Commands are tracked only while the transaction is open (§5.6)." },
+      );
     }
     if (typeof cmd.commandName !== "string" || cmd.commandName.trim().length === 0) {
       return transactionErr("transaction_invalid_input", "The tracked command needs a name");
@@ -852,9 +854,11 @@ export class TransactionManager {
       });
     }
     if (txn.state !== "open") {
-      return transactionErr("transaction_not_open", `The run's transaction is already ${txn.state}`, {
-        hint: `A ${txn.state} transaction never reopens; ${command} is refused (§5.6).`,
-      });
+      return transactionErr(
+        "transaction_not_open",
+        `The run's transaction is already ${txn.state}`,
+        { hint: `A ${txn.state} transaction never reopens; ${command} is refused (§5.6).` },
+      );
     }
     return transactionOk(txn);
   }

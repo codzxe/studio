@@ -24,7 +24,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Every §6 tool named by any fixture plan, so manifest warnings stay opt-in. */
-const manifestTools: readonly { name: string; description: string }[] = [
+const manifestTools = [
   { name: "template_apply", description: "Apply a template to the document." },
   { name: "template_fill", description: "Fill a template's slots." },
   { name: "text_set", description: "Set editable text on a layer." },
@@ -197,7 +197,7 @@ describe("buildPlannerRetryPrompt: §5.1 issues attached", () => {
     expect(retry.startsWith("BASE PLAN PROMPT")).toBe(true);
     expect(retry).toContain("plan.intent: Invalid enum value");
     expect(retry).toContain('plan slot "hero": invented slot name (§23.2)');
-    expect(retry).toContain("JSON only");
+    expect(retry).toContain("the full JSON object only");
   });
 
   it(`caps attached issues at ${MAX_ISSUES_ATTACHED} and reports the rest`, () => {
@@ -225,6 +225,7 @@ describe("extractPlanJson", () => {
       json: { intent: "create_post" },
     },
     { name: "brace inside string is not a closer", text: 'x {"a":"}"} y', json: { a: "}" } },
+    { name: "open fence, balanced object still recovered", text: '```json\n{"a":1}', json: { a: 1 } },
     { name: "valid non-object JSON extracts (validatePlan owns the shape)", text: "[1,2]", json: [1, 2] },
   ];
   for (const { name, text, json } of table) {
@@ -239,7 +240,7 @@ describe("extractPlanJson", () => {
     { name: "whitespace only", text: "   \n\t  " },
     { name: "prose without braces", text: "I cannot comply with that request." },
     { name: "unterminated object", text: '{"intent":"create_post"' },
-    { name: "fence without close", text: '```json\n{"a":1}' },
+    { name: "unterminated object inside open fence", text: '```json\n{"a":1' },
   ];
   for (const { name, text } of badTable) {
     it(`rejects: ${name}`, () => {
@@ -257,15 +258,16 @@ describe("extractPlanJson", () => {
 // ---------------------------------------------------------------------------
 
 describe("rawExcerptOf", () => {
-  it("truncates to ≤500 chars and strips control chars", () => {
-    const nasty = `\u0000\u0007${"A".repeat(600)}\u001f\u007f`;
+  it("truncates to ≤500 chars, replaces control chars with spaces, trims", () => {
+    const nasty = `B\u0001${"A".repeat(600)}\u001f\u007f`;
     const excerpt = rawExcerptOf(nasty);
     expect(excerpt.length).toBeLessThanOrEqual(RAW_EXCERPT_MAX_CHARS);
-    expect(excerpt).toBe("A".repeat(RAW_EXCERPT_MAX_CHARS));
+    expect(excerpt).toBe(`B ${"A".repeat(498)}`); // clip 500 → control chars → space
   });
 
-  it("keeps short, clean text as-is (trimmed)", () => {
+  it("keeps short, clean text as-is (control chars stripped at the edges)", () => {
     expect(rawExcerptOf('  {"intent":"create_post"}  ')).toBe('{"intent":"create_post"}');
+    expect(rawExcerptOf('{"a":"b"}\u0007\u001f')).toBe('{"a":"b"}');
   });
 });
 
@@ -509,7 +511,8 @@ describe("PlannerService.plan", () => {
       expect(result.usage).toEqual({ calls: 2, tokensIn: 190, tokensOut: 40, cacheHits: 12 });
     }
     expect(model.prompts).toHaveLength(2);
-    const [first, second] = model.prompts as readonly [string, string];
+    const first = model.prompts[0] ?? "";
+    const second = model.prompts[1] ?? "";
     expect(second.startsWith(first)).toBe(true); // original prompt kept
     expect(second).toContain("plan.intent"); // validation errors attached
     expect(second).toContain("delete_everything"); // zod echoes the bad value in the issue
@@ -530,8 +533,8 @@ describe("PlannerService.plan", () => {
   });
 
   it("fails with plan_invalid after the retry, carrying sanitized issues + excerpt", async () => {
-    const gibberish = `\u0001I can haz design?\u0007${"x".repeat(700)}`;
-    const { model, service } = serviceWith([{ text: gibberish }, { text: "no json here either" }]);
+    const gibberish = `I can haz design?\u0007${"x".repeat(700)}`;
+    const { model, service } = serviceWith([{ text: gibberish }, { text: gibberish }]);
     const result = await service.plan({ ...sections });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -600,7 +603,7 @@ describe("PlannerService.plan", () => {
 
   it("fails fast on malformed worker input with field paths only (no values)", async () => {
     const { service } = serviceWith([{ text: JSON.stringify(specPlanJson) }]);
-    const bad = { ...sections, budget: { ...sections.budget, tier: "ultra" } };
+    const bad = { ...sections, budget: { ...sections.budget, tier: "ultra" } } as unknown as PlannerInput;
     let message = "";
     try {
       await service.plan(bad);
