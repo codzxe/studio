@@ -1,23 +1,19 @@
-import {
-  applyEvents,
-  INITIAL_RUN_STATE,
-  type StudioStreamEvent,
-} from "@studio/contracts";
+import { INITIAL_RUN_STATE, type StudioStreamEvent, applyEvents } from "@studio/contracts";
 import { describe, expect, it } from "vitest";
 
 import { ApiError, isApiError } from "../src/api-error.js";
 import { createApiClient } from "../src/client.js";
 import {
+  type ChatStreamController,
+  type ChatStreamDoneReason,
   RECONNECT_MAX_AUTO_ATTEMPTS,
   RECONNECT_MAX_DELAY_MS,
   RECONNECT_SCHEDULE_MS,
   STREAM_ERROR_CODE,
+  type SseMessage,
   StreamEventNormalizer,
   createSseParser,
   streamChat,
-  type ChatStreamController,
-  type ChatStreamDoneReason,
-  type SseMessage,
 } from "../src/sse.js";
 import {
   byteChunkArrays,
@@ -77,7 +73,11 @@ const RUN_COMPLETED = { type: "run.completed", runId: RUN_ID, seq: 4, versionId:
 
 describe("createSseParser", () => {
   it("frames events split across arbitrary byte chunk boundaries", () => {
-    const payload = sseLines(RUN_STARTED, { type: "text-delta", delta: "I’ll animate…" }, RUN_COMPLETED);
+    const payload = sseLines(
+      RUN_STARTED,
+      { type: "text-delta", delta: "I’ll animate…" },
+      RUN_COMPLETED,
+    );
     for (const size of [1, 2, 3, 7, 17, 10_000]) {
       const messages: SseMessage[] = [];
       const parser = createSseParser((m) => messages.push(m));
@@ -198,10 +198,7 @@ describe("StreamEventNormalizer", () => {
     expect(first).toHaveLength(2);
     expect(replay.map((e) => e.type)).toEqual(["message.delta"]);
     expect((replay[0] as { delta: string }).delta).toBe("b");
-    const state = [ ...first, ...replay ].reduce(
-      (s, e) => applyEvents(s, e),
-      INITIAL_RUN_STATE,
-    );
+    const state = [...first, ...replay].reduce((s, e) => applyEvents(s, e), INITIAL_RUN_STATE);
     expect(state.text).toBe("ab"); // no duplicated "a"
   });
 
@@ -209,9 +206,7 @@ describe("StreamEventNormalizer", () => {
     const n = new StreamEventNormalizer();
     n.ingest(RUN_STARTED);
     expect(n.ingest({ type: "run.started", runId: "run_other", seq: 0, model: "m" })).toEqual([]);
-    expect(n.ingest({ type: "message.delta", runId: "run_other", seq: 1, delta: "x" })).toEqual(
-      [],
-    );
+    expect(n.ingest({ type: "message.delta", runId: "run_other", seq: 1, delta: "x" })).toEqual([]);
     expect(n.ignoredCount).toBe(2);
   });
 
@@ -228,9 +223,19 @@ describe("StreamEventNormalizer", () => {
         toolCallId: "tc_1",
         toolName: "studio.get_context",
       }),
-      ...n.ingest({ type: "tool-input-delta", id: "m1", toolCallId: "tc_1", inputTextDelta: '{"a":1}' }),
+      ...n.ingest({
+        type: "tool-input-delta",
+        id: "m1",
+        toolCallId: "tc_1",
+        inputTextDelta: '{"a":1}',
+      }),
       ...n.ingest({ type: "tool-input-end", id: "m1", toolCallId: "tc_1" }),
-      ...n.ingest({ type: "tool-output-available", id: "m1", toolCallId: "tc_1", output: { ok: true } }),
+      ...n.ingest({
+        type: "tool-output-available",
+        id: "m1",
+        toolCallId: "tc_1",
+        output: { ok: true },
+      }),
       ...n.ingest({ type: "finish", id: "m1" }),
     ];
     expect(events.map((e) => `${e.type}:${e.seq}`)).toEqual([
@@ -251,7 +256,12 @@ describe("StreamEventNormalizer", () => {
     const n = new StreamEventNormalizer();
     n.ingest(RUN_STARTED);
     const events = [
-      ...n.ingest({ type: "tool-call", toolCallId: "tc_9", toolName: "studio.plan_edit", args: { q: 1 } }),
+      ...n.ingest({
+        type: "tool-call",
+        toolCallId: "tc_9",
+        toolName: "studio.plan_edit",
+        args: { q: 1 },
+      }),
       ...n.ingest({ type: "tool-result", toolCallId: "tc_9", result: { plan: true } }),
     ];
     expect(events.map((e) => e.type)).toEqual(["tool.started", "tool.result"]);
@@ -262,7 +272,11 @@ describe("StreamEventNormalizer", () => {
     const n = new StreamEventNormalizer();
     const events = [
       ...n.ingest({ type: "data-studio", id: "m1", data: RUN_STARTED }),
-      ...n.ingest({ type: "data-studio", id: "m1", data: { type: "plan", runId: RUN_ID, seq: 3, plan: PLAN } }),
+      ...n.ingest({
+        type: "data-studio",
+        id: "m1",
+        data: { type: "plan", runId: RUN_ID, seq: 3, plan: PLAN },
+      }),
       ...n.ingest({ type: "data-other", id: "m1", data: { nope: true } }), // not a §7.4 event
     ];
     expect(events.map((e) => e.type)).toEqual(["run.started", "plan"]);
@@ -314,7 +328,9 @@ function makeChat(
     onReconnect?: (info: { attempt: number; delayMs: number; lastEventId: string | null }) => void;
     onPause?: (info: { attempts: number }) => void;
     onDone?: (summary: { reason: ChatStreamDoneReason }) => void;
-  } & { reconnect?: { enabled?: boolean; maxAutoAttempts?: number; scheduleMs?: readonly number[] } } = {},
+  } & {
+    reconnect?: { enabled?: boolean; maxAutoAttempts?: number; scheduleMs?: readonly number[] };
+  } = {},
   signal?: AbortSignal,
 ): { controller: ChatStreamController; calls: { input: string; init?: RequestInit }[] } {
   const calls: { input: string; init?: RequestInit }[] = [];
@@ -339,7 +355,9 @@ function makeChat(
 function headerOf(call: { init?: RequestInit } | undefined, name: string): string | null {
   const headers = call?.init?.headers;
   if (headers === undefined) return null;
-  return headers instanceof Headers ? headers.get(name) : ((headers as Record<string, string>)[name] ?? null);
+  return headers instanceof Headers
+    ? headers.get(name)
+    : ((headers as Record<string, string>)[name] ?? null);
 }
 
 describe("streamChat — happy path", () => {
@@ -349,10 +367,20 @@ describe("streamChat — happy path", () => {
     const stream = sseResponse([
       sseLines(RUN_STARTED),
       'data: {"type":"text-delta","id":"m1","delta":"I\'ll "}\n\n',
-      sseLines({ type: "data-studio", data: { type: "message.delta", runId: RUN_ID, seq: 1, delta: "animate " } }),
+      sseLines({
+        type: "data-studio",
+        data: { type: "message.delta", runId: RUN_ID, seq: 1, delta: "animate " },
+      }),
       'data: {"type":"text-delta","id":"m1","delta":"the headline."}\n\n',
       sseLines({ type: "plan", runId: RUN_ID, seq: 2, plan: PLAN }),
-      sseLines({ type: "credits", runId: RUN_ID, seq: 3, reserved: 36, committed: 0, balance: 2413 }),
+      sseLines({
+        type: "credits",
+        runId: RUN_ID,
+        seq: 3,
+        reserved: 36,
+        committed: 0,
+        balance: 2413,
+      }),
       sseLines(RUN_COMPLETED),
       "data: [DONE]\n\n",
     ]);
@@ -369,10 +397,14 @@ describe("streamChat — happy path", () => {
     expect(controller.versionId).toBe("ver_4");
     expect(controller.runId).toBe(RUN_ID);
     expect(controller.plan?.intent).toBe("animate");
-    expect(controller.credits).toEqual({ reserved: 36, committed: 0, balance: 2413, seq: 3 });
+    // The reducer snapshot carries the EMITTED event's seq — the local,
+    // strictly-increasing arrival number (the wire seq 3 identifies the
+    // server log entry; lastServerSeq below tracks that).
+    expect(controller.credits).toEqual({ reserved: 36, committed: 0, balance: 2413, seq: 5 });
     expect(controller.lastServerSeq).toBe(4);
-    // Local seqs are strictly increasing (arrival order).
-    expect(events.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4, 5]);
+    // Local seqs are strictly increasing (arrival order): all seven payloads
+    // normalize to events (run.started, 3 deltas, plan, credits, completed).
+    expect(events.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     expect(controller.ignoredParts).toBe(0);
     // The full sequence folds through the contracts reducer from scratch.
     const reduced = events.reduce((s, e) => applyEvents(s, e), INITIAL_RUN_STATE);
@@ -400,8 +432,8 @@ describe("streamChat — happy path", () => {
 
   it("survives a JSON payload split across chunk boundaries", async () => {
     const line = `data: ${JSON.stringify(RUN_STARTED)}\n\n`;
-    const { controller } = makeChat(
-      () => Promise.resolve(sseResponse(byteChunkArrays(line, 3).map((b) => b))),
+    const { controller } = makeChat(() =>
+      Promise.resolve(sseResponse(byteChunkArrays(line, 3).map((b) => b))),
     );
     await controller.done;
     expect(controller.runId).toBe(RUN_ID);
@@ -411,7 +443,12 @@ describe("streamChat — happy path", () => {
   it("drives awaiting_approval from approval.required (§8.1)", async () => {
     const stream = sseResponse([
       sseLines(RUN_STARTED),
-      sseLines({ type: "approval.required", runId: RUN_ID, seq: 2, plan: { ...PLAN, requiresApproval: true, risk: "medium" } }),
+      sseLines({
+        type: "approval.required",
+        runId: RUN_ID,
+        seq: 2,
+        plan: { ...PLAN, requiresApproval: true, risk: "medium" },
+      }),
     ]);
     const { controller } = makeChat(() => Promise.resolve(stream));
     await controller.done;
@@ -422,9 +459,22 @@ describe("streamChat — happy path", () => {
   it("assembles tool-call state from tool events", async () => {
     const stream = sseResponse([
       sseLines(RUN_STARTED),
-      sseLines({ type: "tool.started", runId: RUN_ID, seq: 1, toolCallId: "tc_1", name: "studio.get_context", args: { q: 1 } }),
+      sseLines({
+        type: "tool.started",
+        runId: RUN_ID,
+        seq: 1,
+        toolCallId: "tc_1",
+        name: "studio.get_context",
+        args: { q: 1 },
+      }),
       sseLines({ type: "tool.delta", runId: RUN_ID, seq: 2, toolCallId: "tc_1", delta: '{"a"' }),
-      sseLines({ type: "tool.result", runId: RUN_ID, seq: 3, toolCallId: "tc_1", result: { layers: 42 } }),
+      sseLines({
+        type: "tool.result",
+        runId: RUN_ID,
+        seq: 3,
+        toolCallId: "tc_1",
+        result: { layers: 42 },
+      }),
       sseLines({ type: "run.cancelled", runId: RUN_ID, seq: 4 }),
     ]);
     const { controller } = makeChat(() => Promise.resolve(stream));
@@ -497,12 +547,22 @@ describe("streamChat — request shape", () => {
 
   it("throws client-side (status 0) for an invalid chat body", () => {
     expect(() =>
-      streamChat({ threadId: "thr_1", body: { message: "hi" }, baseUrl: BASE, fetchImpl: async () => {
-        throw new Error("must not be called");
-      } }),
+      streamChat({
+        threadId: "thr_1",
+        body: { message: "hi" },
+        baseUrl: BASE,
+        fetchImpl: async () => {
+          throw new Error("must not be called");
+        },
+      }),
     ).toThrow(ApiError);
     try {
-      streamChat({ threadId: "thr_1", body: {}, baseUrl: BASE, fetchImpl: async () => new Response(null) });
+      streamChat({
+        threadId: "thr_1",
+        body: {},
+        baseUrl: BASE,
+        fetchImpl: async () => new Response(null),
+      });
     } catch (error) {
       expect(isApiError(error)).toBe(true);
       expect((error as ApiError).code).toBe("VALIDATION_FAILED");
@@ -518,7 +578,12 @@ describe("streamChat — cancel & abort (§8.3, pause-on-abort)", () => {
     const { controller, calls } = makeChat(async (input) => {
       if (input === `${BASE}/threads/thr_1/chat`) return Promise.resolve(controlled.response);
       cancelCalls.push({ input, init: undefined });
-      return Promise.resolve(new Response(JSON.stringify({ data: null }), { status: 200, headers: { "content-type": "application/json" } }));
+      return Promise.resolve(
+        new Response(JSON.stringify({ data: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
     });
     controlled.enqueue(sseLines(RUN_STARTED));
     await controller.cancel("changed my mind");
@@ -537,7 +602,9 @@ describe("streamChat — cancel & abort (§8.3, pause-on-abort)", () => {
     const controlled = controlledStream();
     const { controller } = makeChat(async (input) => {
       if (input === `${BASE}/threads/thr_1/chat`) return Promise.resolve(controlled.response);
-      return Promise.resolve(jsonErr(500, { code: "INTERNAL_ERROR", message: "down", retryable: true }));
+      return Promise.resolve(
+        jsonErr(500, { code: "INTERNAL_ERROR", message: "down", retryable: true }),
+      );
     });
     controlled.enqueue(sseLines(RUN_STARTED));
     await controller.cancel();
@@ -604,6 +671,10 @@ describe("streamChat — reconnect (§8.4)", () => {
 
     first.enqueue(sseLines(RUN_STARTED));
     first.enqueue(sseLines({ type: "message.delta", runId: RUN_ID, seq: 1, delta: "Hel" }));
+    // Let the reader consume the buffered events first — ReadableStream
+    // error() RESETS the queue, so failing before the bytes were read would
+    // discard them and no Last-Event-ID could be computed.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     first.fail(new TypeError("network dropped"));
 
     await controller.done;
@@ -632,12 +703,17 @@ describe("streamChat — reconnect (§8.4)", () => {
   it("retries retryable HTTP failures on the chat POST", async () => {
     let calls = 0;
     const errors: ApiError[] = [];
-    const { controller } = makeChat(() => {
-      calls += 1;
-      return calls === 1
-        ? Promise.resolve(jsonErr(429, { code: "RATE_LIMITED", message: "slow", retryable: true }))
-        : Promise.resolve(sseResponse([sseLines(RUN_STARTED), sseLines(RUN_COMPLETED)]));
-    }, { onError: (error) => errors.push(error) });
+    const { controller } = makeChat(
+      () => {
+        calls += 1;
+        return calls === 1
+          ? Promise.resolve(
+              jsonErr(429, { code: "RATE_LIMITED", message: "slow", retryable: true }),
+            )
+          : Promise.resolve(sseResponse([sseLines(RUN_STARTED), sseLines(RUN_COMPLETED)]));
+      },
+      { onError: (error) => errors.push(error) },
+    );
     await controller.done;
     expect(calls).toBe(2);
     expect(errors).toEqual([]);
@@ -645,10 +721,15 @@ describe("streamChat — reconnect (§8.4)", () => {
   });
 
   it("treats a clean close without a terminal event as a dropped stream", async () => {
-    const first = sseResponse([sseLines(RUN_STARTED), sseLines({ type: "message.delta", runId: RUN_ID, seq: 1, delta: "cut" })]);
+    const first = sseResponse([
+      sseLines(RUN_STARTED),
+      sseLines({ type: "message.delta", runId: RUN_ID, seq: 1, delta: "cut" }),
+    ]);
     const second = sseResponse([sseLines({ type: "run.completed", runId: RUN_ID, seq: 2 })]);
     const responses = [first, second];
-    const { controller, calls } = makeChat(() => Promise.resolve(responses.shift() ?? new Response(null, { status: 500 })));
+    const { controller, calls } = makeChat(() =>
+      Promise.resolve(responses.shift() ?? new Response(null, { status: 500 })),
+    );
     await controller.done;
     expect(calls).toHaveLength(2);
     expect(controller.status).toBe("applied");
@@ -659,7 +740,10 @@ describe("streamChat — reconnect (§8.4)", () => {
     const { controller, calls } = makeChat(
       () =>
         Promise.resolve(
-          sseResponse([sseLines(RUN_STARTED), sseLines({ type: "message.delta", runId: RUN_ID, seq: 1, delta: "done?" })]),
+          sseResponse([
+            sseLines(RUN_STARTED),
+            sseLines({ type: "message.delta", runId: RUN_ID, seq: 1, delta: "done?" }),
+          ]),
         ),
       { reconnect: { enabled: false }, onDone: (summary) => done.push(summary.reason) },
     );
@@ -674,10 +758,10 @@ describe("streamChat — reconnect (§8.4)", () => {
       throw new TypeError("network down");
     };
     const pauses: { attempts: number }[] = [];
-    const { controller } = makeChat(
-      (input, init) => handler(),
-      { reconnect: { maxAutoAttempts: 2 }, onPause: (info) => pauses.push(info) },
-    );
+    const { controller } = makeChat((input, init) => handler(), {
+      reconnect: { maxAutoAttempts: 2 },
+      onPause: (info) => pauses.push(info),
+    });
 
     await controller.done;
     expect(controller.paused).toBe(true);
@@ -686,7 +770,11 @@ describe("streamChat — reconnect (§8.4)", () => {
 
     handler = async () =>
       Promise.resolve(
-        sseResponse([sseLines(RUN_STARTED), sseLines({ type: "message.delta", runId: RUN_ID, seq: 1, delta: "back" }), sseLines(RUN_COMPLETED)]),
+        sseResponse([
+          sseLines(RUN_STARTED),
+          sseLines({ type: "message.delta", runId: RUN_ID, seq: 1, delta: "back" }),
+          sseLines(RUN_COMPLETED),
+        ]),
       );
     await controller.reconnect();
     expect(controller.paused).toBe(false);
@@ -737,15 +825,18 @@ describe("streamChat — failure surfaces", () => {
     let calls = 0;
     const errors: ApiError[] = [];
     const done: string[] = [];
-    const { controller } = makeChat(() => {
-      calls += 1;
-      return Promise.resolve(
-        jsonErr(401, { code: "UNAUTHORIZED", message: "Sign in to continue.", retryable: false }),
-      );
-    }, {
-      onError: (error) => errors.push(error),
-      onDone: (summary) => done.push(summary.reason),
-    });
+    const { controller } = makeChat(
+      () => {
+        calls += 1;
+        return Promise.resolve(
+          jsonErr(401, { code: "UNAUTHORIZED", message: "Sign in to continue.", retryable: false }),
+        );
+      },
+      {
+        onError: (error) => errors.push(error),
+        onDone: (summary) => done.push(summary.reason),
+      },
+    );
     await controller.done;
     expect(calls).toBe(1);
     expect(done).toEqual(["error"]);
@@ -807,12 +898,19 @@ describe("streamChat — failure surfaces", () => {
     );
     first.enqueue("id: opaque-17\n");
     first.enqueue(sseLines(RUN_STARTED));
+    // Same as the resume test above: ReadableStream error() resets the queue —
+    // the reader must have consumed the id + run.started before the drop, or
+    // there is no cursor to prefer a seq over.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     first.fail(new TypeError("dropped"));
 
     await controller.done;
     expect(controller.lastEventId).not.toBeNull();
     expect(controller.lastServerSeq).toBe(4);
-    expect(headerOf(calls[1], "Last-Event-ID")).toBe("4"); // seq wins over the opaque id
+    // The reconnect carries the highest SERVER seq seen so far ("0" from
+    // run.started) — the seq wins over the raw opaque `id:` field
+    // ("opaque-17"); run.completed's seq 4 only arrives on the resumed stream.
+    expect(headerOf(calls[1], "Last-Event-ID")).toBe("0");
   });
 });
 

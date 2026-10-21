@@ -104,14 +104,18 @@ describe("GET retry with exponential backoff (250/500/1000 ms)", () => {
     });
 
     const pending = client.me.get();
-    await vi.advanceTimersByTimeAsync(250 + 500 + 1000);
-    await vi.advanceTimersByTimeAsync(0);
-    const error = await pending.then(
+    // Attach the rejection handler BEFORE advancing the timers: the final
+    // attempt settles during the advance, and a promise that rejects with no
+    // handler yet is an unhandled rejection (vitest fails the file on it).
+    const outcome = pending.then(
       () => {
         throw new Error("expected rejection");
       },
       (e: unknown) => e,
     );
+    await vi.advanceTimersByTimeAsync(250 + 500 + 1000);
+    await vi.advanceTimersByTimeAsync(0);
+    const error = await outcome;
     expect(calls).toBe(4);
     expect(isApiError(error)).toBe(true);
     expect((error as { code: string }).code).toBe("INTERNAL_ERROR");
@@ -126,14 +130,12 @@ describe("GET retry with exponential backoff (250/500/1000 ms)", () => {
       );
     });
 
-    const error = await client.workspaces
-      .create({ name: "N", slug: "n" })
-      .then(
-        () => {
-          throw new Error("expected rejection");
-        },
-        (e: unknown) => e,
-      );
+    const error = await client.workspaces.create({ name: "N", slug: "n" }).then(
+      () => {
+        throw new Error("expected rejection");
+      },
+      (e: unknown) => e,
+    );
     expect(calls).toBe(1);
     expect((error as { code: string }).code).toBe("INTERNAL_ERROR");
   });

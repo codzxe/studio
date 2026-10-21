@@ -17,7 +17,14 @@ if (issues.length > 0) {
 console.log("fixtures valid");
 
 const applied = reduceEvents(fixtures.runs.applied.events);
-console.log("applied:", applied.status, "text:", applied.text.slice(0, 40), "version:", applied.versionId);
+console.log(
+  "applied:",
+  applied.status,
+  "text:",
+  applied.text.slice(0, 40),
+  "version:",
+  applied.versionId,
+);
 const undoneState = reduceEvents([
   ...fixtures.runs.undone.events,
   ...fixtures.runs.undone.clientActions,

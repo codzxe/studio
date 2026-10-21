@@ -24,7 +24,10 @@ export function fetchRecorder(handler: FakeFetch): {
 }
 
 /** Scripted responses, one per call (last one repeats). */
-export function queueResponses(...responses: Response[]): { calls: RecordedCall[]; fetch: FakeFetch } {
+export function queueResponses(...responses: Response[]): {
+  calls: RecordedCall[];
+  fetch: FakeFetch;
+} {
   let index = 0;
   return fetchRecorder(() => {
     const response = responses[Math.min(index, responses.length - 1)];
@@ -94,7 +97,10 @@ export function controlledStream(): ControlledStream {
     },
   });
   return {
-    response: new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    response: new Response(stream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }),
     enqueue(text) {
       try {
         sink?.enqueue(encoder.encode(text));

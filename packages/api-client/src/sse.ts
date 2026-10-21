@@ -37,25 +37,26 @@
 // RECONNECT (§8.4): on a dropped stream the reader re-POSTs the SAME body
 // (same idempotency key — a retry never duplicates a run) with
 // `Last-Event-ID` = the highest server seq seen (or the raw SSE `id:` field
-// when the server uses opaque ids), backing off 1s → 2s → 4s → 8s, capped at
-// 30s, with 3 automatic attempts before pausing for a manual `reconnect()`.
+// when the server uses opaque ids), backing off 1s → 2s → 4s → 8s, and every
+// attempt past the schedule waits the §8.4 max (30s), with 3 automatic
+// attempts before pausing for a manual `reconnect()`.
 // User aborts (`signal`, `abort()`, `cancel()`) never auto-reconnect.
 
 import {
   CHAT_REQUEST_SCHEMA,
-  INITIAL_RUN_STATE,
-  STUDIO_STREAM_EVENT_SCHEMA,
-  applyEvents,
-  isErr,
   type ChatRequest,
   type EditPlan,
+  INITIAL_RUN_STATE,
   type RunCreditsState,
   type RunErrorState,
   type RunPreviewState,
   type RunState,
   type RunStatus,
+  STUDIO_STREAM_EVENT_SCHEMA,
   type StudioStreamEvent,
   type ToolCallState,
+  applyEvents,
+  isErr,
 } from "@studio/contracts";
 
 import { ApiError, fromResponse, isApiError, networkError } from "./api-error.js";
@@ -191,7 +192,10 @@ export function createSseParser(onMessage: (message: SseMessage) => void): SsePa
       if (buffer.endsWith("\r")) buffer = `${buffer.slice(0, -1)}\n`;
       buffer += decoder.decode(); // flush any pending multi-byte tail
       drain();
-      buffer = `${buffer}\n`; // force the final block through commitBlock()
+      // Two terminators: the first ends the pending line, the empty line
+      // commits the trailing block (the documented deviation from WHATWG —
+      // a final event without its blank-line terminator is still dispatched).
+      buffer = `${buffer}\n\n`;
       drain();
     },
     get lastEventId(): string | null {
@@ -333,7 +337,12 @@ export class StreamEventNormalizer {
       case "tool-input-start": {
         if (typeof part.toolCallId !== "string" || typeof part.toolName !== "string") return [];
         return [
-          { type: "tool.started", toolCallId: part.toolCallId, name: part.toolName, args: undefined },
+          {
+            type: "tool.started",
+            toolCallId: part.toolCallId,
+            name: part.toolName,
+            args: undefined,
+          },
         ];
       }
       case "tool-input-delta": {
@@ -346,7 +355,12 @@ export class StreamEventNormalizer {
         // AI SDK v4 data stream: one part carries the full call + args.
         if (typeof part.toolCallId !== "string" || typeof part.toolName !== "string") return [];
         return [
-          { type: "tool.started", toolCallId: part.toolCallId, name: part.toolName, args: part.args },
+          {
+            type: "tool.started",
+            toolCallId: part.toolCallId,
+            name: part.toolName,
+            args: part.args,
+          },
         ];
       }
       case "tool-output-available": {
@@ -384,7 +398,7 @@ export class StreamEventNormalizer {
 // streamChat — POST + pump + normalize + reduce + cancel + reconnect
 // ---------------------------------------------------------------------------
 
-/** §8.4 backoff: 1s, 2s, 4s, 8s; later attempts cap at 30s. */
+/** §8.4 backoff: 1s, 2s, 4s, 8s; attempts past the schedule wait the max. */
 export const RECONNECT_SCHEDULE_MS: readonly number[] = [1000, 2000, 4000, 8000];
 /** §8.4: "max 30s". */
 export const RECONNECT_MAX_DELAY_MS = 30_000;
@@ -394,7 +408,7 @@ export const RECONNECT_MAX_AUTO_ATTEMPTS = 3;
 export interface ChatStreamReconnectConfig {
   /** Auto-reconnect dropped streams. Default `true`. */
   readonly enabled?: boolean;
-  /** Backoff schedule; the last entry repeats, capped at `maxDelayMs`. */
+  /** Backoff schedule; attempts past the schedule wait `maxDelayMs` (§8.4 max 30s). */
   readonly scheduleMs?: readonly number[];
   readonly maxDelayMs?: number;
   /** Automatic attempts before pausing. Default 3 (§8.4). */
@@ -579,15 +593,15 @@ export function streamChat(options: StreamChatOptions): ChatStreamController {
   const replayId = (): string | null =>
     normalizer.lastServerSeq >= 0 ? String(normalizer.lastServerSeq) : (lastEventId ?? null);
 
-  const buildHeaders = (isReconnect: boolean): Headers => {
+  const buildHeaders = (): Headers => {
     const headers = new Headers(extraHeaders);
     headers.set("Accept", "text/event-stream");
     headers.set("Content-Type", "application/json");
     headers.set("Idempotency-Key", parsedBody.idempotencyKey);
-    if (isReconnect) {
-      const id = replayId();
-      if (id !== null) headers.set("Last-Event-ID", id);
-    }
+    // §8.4: every (re)POST that has a replay cursor sends it — the server
+    // replays from the run log; the same key means it never duplicates a run.
+    const id = replayId();
+    if (id !== null) headers.set("Last-Event-ID", id);
     return headers;
   };
 
@@ -620,7 +634,8 @@ export function streamChat(options: StreamChatOptions): ChatStreamController {
   };
 
   const backoff = async (): Promise<void> => {
-    const base = schedule[Math.min(attempt, schedule.length - 1)] ?? maxDelay;
+    // §8.4: 1s → 2s → 4s → 8s; attempts past the schedule wait the max.
+    const base = schedule[attempt] ?? maxDelay;
     const delayMs = Math.min(base, maxDelay);
     attempt += 1;
     options.onReconnect?.({ attempt, delayMs, lastEventId: replayId() });
@@ -714,7 +729,7 @@ export function streamChat(options: StreamChatOptions): ChatStreamController {
       try {
         response = await fetchImpl(chatUrl, {
           method: "POST",
-          headers: buildHeaders(attempt > 0),
+          headers: buildHeaders(),
           body: JSON.stringify(parsedBody),
           signal: internalAbort.signal,
         });
@@ -875,7 +890,19 @@ export function streamChat(options: StreamChatOptions): ChatStreamController {
     async cancel(reason) {
       userStopped = true;
       internalAbort.abort();
-      const runId = state.runId;
+      let runId = state.runId;
+      if (runId === null) {
+        // §8.3: the cancel POST targets /runs/:id/cancel, so the runId must
+        // be known. `run.started` may already sit in the stream buffer
+        // unparsed — buffered reads still win over the abort (see pump), so
+        // let the pump drain already-arrived bytes (one macrotask flushes
+        // every pending microtask) before deciding there is nothing to
+        // cancel. If the run genuinely never started, abort-only is correct.
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0);
+        });
+        runId = state.runId;
+      }
       if (runId === null) return;
       try {
         const headers = new Headers(extraHeaders);

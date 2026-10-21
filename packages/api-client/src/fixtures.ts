@@ -16,38 +16,15 @@
 
 import {
   CHAT_REQUEST_SCHEMA,
-  EDIT_PLAN_SCHEMA,
-  STUDIO_STREAM_EVENT_SCHEMA,
   type ChatRequest,
+  EDIT_PLAN_SCHEMA,
   type EditPlan,
   type ProjectLease,
   type RunClientAction,
+  STUDIO_STREAM_EVENT_SCHEMA,
   type ThreadMessage,
 } from "@studio/contracts";
 
-import {
-  ACTIVITY_ENTRY_SCHEMA,
-  ASSET_SCHEMA,
-  CHECKOUT_RESPONSE_SCHEMA,
-  COMMENT_SCHEMA,
-  CREATE_ASSET_RESPONSE_SCHEMA,
-  CREDITS_SUMMARY_SCHEMA,
-  INVITE_SCHEMA,
-  LEDGER_ENTRY_SCHEMA,
-  ME_RESPONSE_SCHEMA,
-  MANIFEST_ASSET_SCHEMA,
-  PAGE_ACTIVITY_SCHEMA,
-  PROJECT_LEASE_SCHEMA,
-  PROJECT_MANIFEST_SCHEMA,
-  PROJECT_SCHEMA,
-  PROJECT_VERSION_SCHEMA,
-  RENDER_JOB_SCHEMA,
-  RUN_RECORD_SCHEMA,
-  THREAD_MESSAGE_SCHEMA,
-  THREAD_SCHEMA,
-  WORKSPACE_SCHEMA,
-} from "./response-schemas.js";
-import { z } from "zod";
 import type {
   AcceptedInvite,
   ActivityEntry,
@@ -68,6 +45,29 @@ import type {
   Thread,
   Workspace,
 } from "@studio/contracts";
+import type { z } from "zod";
+import {
+  ACTIVITY_ENTRY_SCHEMA,
+  ASSET_SCHEMA,
+  CHECKOUT_RESPONSE_SCHEMA,
+  COMMENT_SCHEMA,
+  CREATE_ASSET_RESPONSE_SCHEMA,
+  CREDITS_SUMMARY_SCHEMA,
+  INVITE_SCHEMA,
+  LEDGER_ENTRY_SCHEMA,
+  type MANIFEST_ASSET_SCHEMA,
+  ME_RESPONSE_SCHEMA,
+  PAGE_ACTIVITY_SCHEMA,
+  PROJECT_LEASE_SCHEMA,
+  PROJECT_MANIFEST_SCHEMA,
+  PROJECT_SCHEMA,
+  PROJECT_VERSION_SCHEMA,
+  RENDER_JOB_SCHEMA,
+  RUN_RECORD_SCHEMA,
+  THREAD_MESSAGE_SCHEMA,
+  THREAD_SCHEMA,
+  WORKSPACE_SCHEMA,
+} from "./response-schemas.js";
 
 /**
  * EffectCraft timeline tick rate (editor/crates/time: TICKS_PER_SECOND) —
@@ -328,9 +328,9 @@ function versionIdFor(seed: ProjectSeed, n: 1 | 2 | 3 | 4): string {
 
 /** Agent-run annotations on versions (§9.1 `agent_runs` history). */
 const AGENT_VERSION_RUNS: Readonly<Record<string, string>> = {
-  "ver_demo_launch_film_3": "run_demo_launch_undone",
-  "ver_demo_launch_film_4": "run_demo_launch_applied",
-  "ver_demo_lower_thirds_3": "run_demo_lower_align",
+  ver_demo_launch_film_3: "run_demo_launch_undone",
+  ver_demo_launch_film_4: "run_demo_launch_applied",
+  ver_demo_lower_thirds_3: "run_demo_lower_align",
 };
 
 /** Fixed-length fixture tuples: call sites pass literal 0-3 indices. */
@@ -613,9 +613,7 @@ const PLAN_HEADLINE_SPRING: EditPlan = {
   summary: "Springy scale pop-in on Headline: 20% → 110% → 100%, settle at 0.7s.",
   risk: "low",
   requiresApproval: false,
-  affectedLayers: [
-    { id: 3, name: "Headline", change: "Scale keyframes 20% → 110% → 100%" },
-  ],
+  affectedLayers: [{ id: 3, name: "Headline", change: "Scale keyframes 20% → 110% → 100%" }],
   estimatedCredits: 2,
   steps: [
     {
@@ -1165,7 +1163,14 @@ const DEMO_RENDERS: readonly RenderJob[] = [
     projectId: "prj_demo_launch_film",
     compId: "cmp_demo_launch_main",
     format: "mp4",
-    settings: { timeFrom: 0, timeTo: 30, width: 1920, height: 1080, frameRate: 24, quality: "good" },
+    settings: {
+      timeFrom: 0,
+      timeTo: 30,
+      width: 1920,
+      height: 1080,
+      frameRate: 24,
+      quality: "good",
+    },
     status: "succeeded",
     credits: 14,
     resultUrl: demoUrl("wsp_demo_northlight", "renders", "rnd_demo_launch_mp4.mp4"),
@@ -1179,7 +1184,14 @@ const DEMO_RENDERS: readonly RenderJob[] = [
     projectId: "prj_demo_social_teaser",
     compId: "cmp_demo_social_vertical",
     format: "png-seq",
-    settings: { timeFrom: 0, timeTo: 9, width: 1080, height: 1920, frameRate: 30, quality: "draft" },
+    settings: {
+      timeFrom: 0,
+      timeTo: 9,
+      width: 1080,
+      height: 1920,
+      frameRate: 30,
+      quality: "draft",
+    },
     status: "queued",
     credits: null,
     resultUrl: null,
@@ -1378,3 +1390,460 @@ export function validateFixtures(): string[] {
 
   return issues;
 }
+
+// ---------------------------------------------------------------------------
+// W3-b additions — settings + billing surfaces (docs/UI_DESIGN_SYSTEM.md
+// §8.8/§8.9, docs/PRODUCT_ARCHITECTURE.md §3.3/§10).
+//
+// APPEND-ONLY by the parallel-wave contract: nothing above this marker
+// changes. These rows are plain demo data with no wire schemas yet — the
+// member/api-key/usage/workspace-billing routes land with a later gateway
+// wave; the shapes mirror §7.2 and the §10.1 plan table so the settings and
+// billing pages can be built, tested and demoed today. Reuse note: the
+// settings pages read `fixtures.credits.summary` (canon) for the balance
+// card; only what it does not cover lives here.
+// ---------------------------------------------------------------------------
+
+/** Workspace role — wire-stable names (§3.3). */
+export type FixtureRole = "owner" | "admin" | "editor" | "viewer";
+
+/** API-key scope set offered in v1 (§7.1: scoped, hashed, revocable). */
+export type FixtureScope = "read:projects" | "read:assets" | "write:projects";
+
+export interface FixtureMember {
+  readonly id: string;
+  readonly name: string;
+  readonly email: string;
+  readonly role: FixtureRole;
+  readonly status: "active" | "pending" | "inactive";
+  /** ISO timestamp; null for pending invites that never signed in. */
+  readonly lastActiveAt: string | null;
+  readonly isCurrentUser: boolean;
+}
+
+export interface FixtureApiKey {
+  readonly id: string;
+  readonly name: string;
+  readonly scopes: readonly FixtureScope[];
+  readonly createdAt: string;
+  readonly lastUsedAt: string | null;
+  /** null = never expires. */
+  readonly expiresAt: string | null;
+}
+
+export interface FixtureUsageByProject {
+  readonly projectId: string;
+  readonly name: string;
+  /** Credits spent this cycle, by cost source (§10.2). */
+  readonly model: number;
+  readonly render: number;
+  readonly storage: number;
+}
+
+export interface FixtureUsageCycle {
+  readonly cycleStart: string;
+  readonly cycleEnd: string;
+  readonly model: number;
+  readonly render: number;
+  readonly storage: number;
+  readonly byProject: readonly FixtureUsageByProject[];
+}
+
+export interface FixtureInvoice {
+  readonly id: string;
+  readonly number: string;
+  readonly date: string;
+  readonly description: string;
+  readonly amountUsd: number;
+  readonly status: "paid" | "open" | "void";
+}
+
+export interface FixtureSession {
+  readonly id: string;
+  readonly device: string;
+  readonly location: string;
+  readonly lastActiveAt: string;
+  readonly current: boolean;
+}
+
+/** Plan rank used by the Models page to gate tiers (§10.1). */
+export type FixturePlanId = "trial" | "starter" | "pro" | "studio";
+
+export interface FixtureModelOption {
+  readonly id: "studio-fast" | "studio-smart" | "studio-vision";
+  readonly name: string;
+  readonly tier: string;
+  /** Human credit-rate label (§14: credits, never tokens). */
+  readonly creditRate: string;
+  readonly description: string;
+  /** Lowest plan that unlocks this model (§10.1 model column). */
+  readonly minPlan: FixturePlanId;
+}
+
+export interface FixturePlanCard {
+  readonly id: Exclude<FixturePlanId, "trial">;
+  readonly name: string;
+  readonly priceUsd: number;
+  readonly includedCredits: number;
+  readonly seats: number;
+  readonly models: string;
+}
+
+export interface FixtureCreditPack {
+  readonly id: string;
+  readonly credits: number;
+  readonly priceUsd: number;
+}
+
+export interface FixtureAuditEntry {
+  readonly id: string;
+  readonly actorName: string;
+  /** Stable dotted action, e.g. "member.invited" (§7.1: destructive + role/invite/api-key actions audited). */
+  readonly action: string;
+  readonly targetType: string;
+  /** Human label for the target row (a name, not a raw id). */
+  readonly target: string;
+  readonly createdAt: string;
+}
+
+/**
+ * Settings + billing demo dataset for the Northlight Motion workspace.
+ * Usage rows reconcile with `fixtures.credits.summary`: included 2,500 +
+ * purchased 800 − balance 3,200 = 100 credits spent this cycle (§8.8 Usage).
+ */
+export const SETTINGS_FIXTURES = {
+  /** Demo workspace for every settings surface (owner membership in `fixtures.me`). */
+  workspaceId: WORKSPACE_NORTHLIGHT.id,
+  workspaceName: WORKSPACE_NORTHLIGHT.name,
+  workspaceSlug: WORKSPACE_NORTHLIGHT.slug,
+
+  members: [
+    {
+      id: "usr_demo_maya",
+      name: "Maya Okafor",
+      email: "maya@northlight.example",
+      role: "owner",
+      status: "active",
+      lastActiveAt: "2026-10-21T09:41:00Z",
+      isCurrentUser: true,
+    },
+    {
+      id: "usr_demo_jonas",
+      name: "Jonas Beck",
+      email: "jonas@northlight.example",
+      role: "admin",
+      status: "active",
+      lastActiveAt: "2026-10-21T07:12:00Z",
+      isCurrentUser: false,
+    },
+    {
+      id: "usr_demo_rive",
+      name: "Rive Kowalski",
+      email: "rive@northlight.example",
+      role: "editor",
+      status: "active",
+      lastActiveAt: "2026-10-14T16:03:00Z",
+      isCurrentUser: false,
+    },
+    {
+      id: "usr_demo_priya",
+      name: "Priya Raman",
+      email: "priya@northlight.example",
+      role: "editor",
+      status: "pending",
+      lastActiveAt: null,
+      isCurrentUser: false,
+    },
+  ] as readonly FixtureMember[],
+
+  apiKeys: [
+    {
+      id: "key_demo_ci",
+      name: "CI render trigger",
+      scopes: ["read:projects", "write:projects"],
+      createdAt: "2026-09-12T10:02:00Z",
+      lastUsedAt: "2026-10-20T22:40:00Z",
+      expiresAt: "2026-12-11T10:02:00Z",
+    },
+    {
+      id: "key_demo_metrics",
+      name: "Usage metrics",
+      scopes: ["read:projects", "read:assets"],
+      createdAt: "2026-08-03T14:20:00Z",
+      lastUsedAt: null,
+      expiresAt: null,
+    },
+  ] as readonly FixtureApiKey[],
+
+  /** The one-time secret a freshly created key reveals (obviously fake, sk_test_). */
+  newApiKeySecret: "sk_test_demo_9f4c1a02e7b8d35c",
+
+  usage: {
+    cycleStart: "2026-10-01T00:00:00Z",
+    cycleEnd: "2026-11-01T00:00:00Z",
+    model: 80.4,
+    render: 14,
+    storage: 5.6,
+    byProject: [
+      {
+        projectId: "prj_demo_launch_film",
+        name: "Launch film",
+        model: 55.8,
+        render: 14,
+        storage: 3.3,
+      },
+      {
+        projectId: "prj_demo_title_seq",
+        name: "Title sequence — Brand reel",
+        model: 13.9,
+        render: 0,
+        storage: 1.4,
+      },
+      {
+        projectId: "prj_demo_social_teaser",
+        name: "Social teaser 9:16",
+        model: 7.1,
+        render: 0,
+        storage: 0.5,
+      },
+      {
+        projectId: "prj_demo_lower_thirds",
+        name: "Lower thirds — Podcast",
+        model: 3.6,
+        render: 0,
+        storage: 0.4,
+      },
+    ],
+  } as FixtureUsageCycle,
+
+  invoices: [
+    {
+      id: "in_demo_0102",
+      number: "STU-0102",
+      date: "2026-10-12",
+      description: "Credit pack — 800 credits",
+      amountUsd: 12,
+      status: "paid",
+    },
+    {
+      id: "in_demo_0089",
+      number: "STU-0089",
+      date: "2026-10-01",
+      description: "Pro plan — monthly",
+      amountUsd: 79,
+      status: "paid",
+    },
+    {
+      id: "in_demo_0041",
+      number: "STU-0041",
+      date: "2026-09-02",
+      description: "Pro plan — first month",
+      amountUsd: 79,
+      status: "paid",
+    },
+  ] as readonly FixtureInvoice[],
+
+  paymentMethod: {
+    brand: "Visa",
+    last4: "4242",
+    expiryMonth: 4,
+    expiryYear: 2028,
+  },
+
+  sessions: [
+    {
+      id: "sess_demo_current",
+      device: "MacBook Pro — Chrome",
+      location: "Lisbon, Portugal",
+      lastActiveAt: "2026-10-21T09:30:00Z",
+      current: true,
+    },
+    {
+      id: "sess_demo_render_rig",
+      device: "Windows PC — Edge",
+      location: "Lisbon, Portugal",
+      lastActiveAt: "2026-10-18T18:12:00Z",
+      current: false,
+    },
+    {
+      id: "sess_demo_ipad",
+      device: "iPad — Safari",
+      location: "Porto, Portugal",
+      lastActiveAt: "2026-09-29T08:45:00Z",
+      current: false,
+    },
+  ] as readonly FixtureSession[],
+
+  models: [
+    {
+      id: "studio-fast",
+      name: "Studio Fast",
+      tier: "Fast",
+      creditRate: "≈ 4 credits per request",
+      description: "Drafts, iterations and routine edits at the lowest credit rate.",
+      minPlan: "trial",
+    },
+    {
+      id: "studio-smart",
+      name: "Studio Smart",
+      tier: "Frontier",
+      creditRate: "≈ 12 credits per request",
+      description: "Complex multi-step edits and hard animation problems.",
+      minPlan: "pro",
+    },
+    {
+      id: "studio-vision",
+      name: "Studio Vision",
+      tier: "Vision",
+      creditRate: "≈ 18 credits per request",
+      description: "Reads reference frames and footage to match a look.",
+      minPlan: "studio",
+    },
+  ] as readonly FixtureModelOption[],
+
+  /** §10.1 plan table — illustrative pricing, no free plan. */
+  planCatalog: [
+    {
+      id: "starter",
+      name: "Starter",
+      priceUsd: 29,
+      includedCredits: 1000,
+      seats: 1,
+      models: "Fast model",
+    },
+    {
+      id: "pro",
+      name: "Pro",
+      priceUsd: 79,
+      includedCredits: 3000,
+      seats: 3,
+      models: "Fast + smart models",
+    },
+    {
+      id: "studio",
+      name: "Studio",
+      priceUsd: 199,
+      includedCredits: 8000,
+      seats: 10,
+      models: "Fast + smart + vision models",
+    },
+  ] as readonly FixturePlanCard[],
+
+  trialTerms: {
+    days: 14,
+    credits: 100,
+    cardRequired: true,
+    thenPlan: "Starter",
+    thenPriceUsd: 29,
+  },
+
+  creditPacks: [
+    { id: "pack-500", credits: 500, priceUsd: 8 },
+    { id: "pack-2000", credits: 2000, priceUsd: 30 },
+    { id: "pack-10000", credits: 10000, priceUsd: 120 },
+  ] as readonly FixtureCreditPack[],
+
+  audit: [
+    {
+      id: "aud_demo_01",
+      actorName: "Maya Okafor",
+      action: "workspace.updated",
+      targetType: "workspace",
+      target: "Default project visibility",
+      createdAt: "2026-10-05T11:12:00Z",
+    },
+    {
+      id: "aud_demo_02",
+      actorName: "Maya Okafor",
+      action: "member.invited",
+      targetType: "member",
+      target: "Priya Raman",
+      createdAt: "2026-10-19T10:02:00Z",
+    },
+    {
+      id: "aud_demo_03",
+      actorName: "Maya Okafor",
+      action: "run.applied",
+      targetType: "run",
+      target: "Headline spring pop-in",
+      createdAt: "2026-10-09T18:05:44Z",
+    },
+    {
+      id: "aud_demo_04",
+      actorName: "Maya Okafor",
+      action: "render.completed",
+      targetType: "render",
+      target: "Launch film — mp4",
+      createdAt: "2026-10-10T09:18:00Z",
+    },
+    {
+      id: "aud_demo_05",
+      actorName: "Jonas Beck",
+      action: "comment.created",
+      targetType: "comment",
+      target: "Launch film",
+      createdAt: "2026-10-08T15:41:00Z",
+    },
+    {
+      id: "aud_demo_06",
+      actorName: "Maya Okafor",
+      action: "member.role_changed",
+      targetType: "member",
+      target: "Rive Kowalski → editor",
+      createdAt: "2026-09-10T15:31:00Z",
+    },
+    {
+      id: "aud_demo_07",
+      actorName: "Maya Okafor",
+      action: "apikey.created",
+      targetType: "api-key",
+      target: "CI render trigger",
+      createdAt: "2026-09-12T10:02:00Z",
+    },
+    {
+      id: "aud_demo_08",
+      actorName: "Maya Okafor",
+      action: "apikey.used",
+      targetType: "api-key",
+      target: "CI render trigger",
+      createdAt: "2026-10-20T22:40:00Z",
+    },
+    {
+      id: "aud_demo_09",
+      actorName: "Maya Okafor",
+      action: "asset.uploaded",
+      targetType: "asset",
+      target: "broll-city-dusk.mp4",
+      createdAt: "2026-09-28T16:34:00Z",
+    },
+    {
+      id: "aud_demo_10",
+      actorName: "Maya Okafor",
+      action: "project.created",
+      targetType: "project",
+      target: "Launch film",
+      createdAt: "2026-09-22T09:30:00Z",
+    },
+  ] as readonly FixtureAuditEntry[],
+
+  workspacePreferences: {
+    /** Default sharing state for new projects (§8.9 General). */
+    defaultVisibility: "workspace",
+    defaultModel: "studio-fast",
+    autoApply: false,
+    creditAlertThreshold: 500,
+  },
+
+  /** Slugs the demo treats as taken for the live availability check (§8.3). */
+  takenSlugs: ["northlight-motion", "halo-pictures", "studio"] as readonly string[],
+
+  billing: {
+    plan: "pro",
+    seatsUsed: 3,
+    seatsIncluded: 3,
+    renewalDate: "2026-11-01T00:00:00Z",
+    pastDue: false,
+    /** §8.8 trial banner data — null when the workspace is on a paid plan. */
+    trial: null as null | { readonly daysLeft: number; readonly endsAt: string },
+  },
+} as const;

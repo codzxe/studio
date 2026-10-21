@@ -16,31 +16,22 @@
 import {
   ACQUIRE_LEASE_SCHEMA,
   ACTIVITY_QUERY_SCHEMA,
+  type AcceptedInvite,
+  type AcquireLeaseRequest,
+  type ActivityEntry,
+  type Asset,
   CANCEL_RUN_SCHEMA,
   CHECKOUT_SCHEMA,
   COMMENTS_QUERY_SCHEMA,
   CREATE_ASSET_SCHEMA,
+  CREATE_COMMENT_SCHEMA,
   CREATE_PROJECT_SCHEMA,
   CREATE_THREAD_SCHEMA,
   CREATE_WORKSPACE_SCHEMA,
-  IDEMPOTENCY_KEY_SCHEMA,
-  INVITE_MEMBER_SCHEMA,
-  LEDGER_QUERY_SCHEMA,
-  PATCH_PROJECT_SCHEMA,
-  PATCH_WORKSPACE_SCHEMA,
-  PAGINATION_QUERY_SCHEMA,
-  PORTAL_SCHEMA,
-  QUEUE_RENDER_SCHEMA,
-  RESTORE_VERSION_SCHEMA,
-  RUN_EVENT_REQUEST_SCHEMA,
-  UPLOAD_VERSION_SCHEMA,
-  CREATE_COMMENT_SCHEMA,
-  type AcceptedInvite,
-  type ActivityEntry,
-  type Asset,
   type CancelRunRequest,
   type ChatRequest,
   type CheckoutRequest,
+  type CheckoutResponse,
   type Comment,
   type CreateAssetRequest,
   type CreateAssetResponse,
@@ -50,10 +41,17 @@ import {
   type CreateWorkspaceRequest,
   type CreditsSummary,
   type Err,
+  IDEMPOTENCY_KEY_SCHEMA,
+  INVITE_MEMBER_SCHEMA,
   type Invite,
   type InviteMemberRequest,
+  LEDGER_QUERY_SCHEMA,
   type LedgerEntry,
   type MeResponse,
+  PAGINATION_QUERY_SCHEMA,
+  PATCH_PROJECT_SCHEMA,
+  PATCH_WORKSPACE_SCHEMA,
+  PORTAL_SCHEMA,
   type Page,
   type PatchProjectRequest,
   type PatchWorkspaceRequest,
@@ -63,8 +61,10 @@ import {
   type ProjectLease,
   type ProjectManifest,
   type ProjectVersion,
-  type AcquireLeaseRequest,
+  QUEUE_RENDER_SCHEMA,
   type QueueRenderRequest,
+  RESTORE_VERSION_SCHEMA,
+  RUN_EVENT_REQUEST_SCHEMA,
   type RenderJob,
   type RestoreVersionRequest,
   type RunEventRequest,
@@ -72,10 +72,10 @@ import {
   type SignedUrlResponse,
   type Thread,
   type ThreadMessage,
+  UPLOAD_VERSION_SCHEMA,
   type Workspace,
   isErr,
   isOk,
-  type CheckoutResponse,
 } from "@studio/contracts";
 import type { z } from "zod";
 
@@ -88,7 +88,6 @@ import {
   networkError,
   uploadFailedError,
 } from "./api-error.js";
-import { isAbortError, sleepWithAbort } from "./utils.js";
 import {
   ACCEPTED_INVITE_SCHEMA,
   ACTIVITY_ENTRY_SCHEMA,
@@ -120,15 +119,16 @@ import {
   THREAD_MESSAGE_SCHEMA,
   THREAD_SCHEMA,
   UPLOAD_VERSION_RESPONSE_SCHEMA,
-  WORKSPACE_SCHEMA,
   type UploadVersionResponse,
+  WORKSPACE_SCHEMA,
 } from "./response-schemas.js";
 import {
-  streamChat,
   type ChatStreamController,
   type ChatStreamHandlers,
   type ChatStreamReconnectConfig,
+  streamChat,
 } from "./sse.js";
+import { isAbortError, sleepWithAbort } from "./utils.js";
 
 // ---------------------------------------------------------------------------
 // Options and shapes
@@ -348,7 +348,9 @@ class ApiClientImpl {
       return schema.parse(body);
     } catch (error) {
       if (isApiError(error)) throw error;
-      throw invalidRequestError(Object.assign(new Error(`invalid body for ${path}`), { cause: error }));
+      throw invalidRequestError(
+        Object.assign(new Error(`invalid body for ${path}`), { cause: error }),
+      );
     }
   }
 
@@ -357,7 +359,12 @@ class ApiClientImpl {
   }
 
   // -- GETs don't send Idempotency-Key; mutations always do (auto when absent).
-  async get<T>(path: string, query: Record<string, string | number | boolean | undefined> | undefined, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+  async get<T>(
+    path: string,
+    query: Record<string, string | number | boolean | undefined> | undefined,
+    schema: z.ZodType<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
     return this.request<T>({ method: "GET", path, query, responseSchema: schema, signal });
   }
 
@@ -416,7 +423,11 @@ export interface ApiClient {
     manifest(id: string, options?: CallOptions): Promise<ProjectManifest>;
   };
   readonly versions: {
-    list(projectId: string, query?: PaginationQueryInput, options?: CallOptions): Promise<Page<ProjectVersion>>;
+    list(
+      projectId: string,
+      query?: PaginationQueryInput,
+      options?: CallOptions,
+    ): Promise<Page<ProjectVersion>>;
     /**
      * Two-phase immutable snapshot upload (§9.2/§9.3): POST the JSON
      * descriptor (sha256 + baseVersionId; a stale base returns 409
@@ -436,11 +447,20 @@ export interface ApiClient {
       options?: CallOptions,
     ): Promise<ProjectVersion>;
     /** POST /v1/projects/:id/versions/:version/restore — restores as a NEW version (§9.3). */
-    restore(projectId: string, versionId: string, body?: RestoreVersionRequest, options?: CallOptions): Promise<ProjectVersion>;
+    restore(
+      projectId: string,
+      versionId: string,
+      body?: RestoreVersionRequest,
+      options?: CallOptions,
+    ): Promise<ProjectVersion>;
   };
   readonly leases: {
     /** POST /v1/projects/:id/lease — acquire or renew (§11). */
-    acquire(projectId: string, body: AcquireLeaseRequest, options?: CallOptions): Promise<ProjectLease>;
+    acquire(
+      projectId: string,
+      body: AcquireLeaseRequest,
+      options?: CallOptions,
+    ): Promise<ProjectLease>;
     /** DELETE /v1/projects/:id/lease; returns `null`. */
     release(projectId: string, options?: CallOptions): Promise<null>;
   };
@@ -452,9 +472,17 @@ export interface ApiClient {
     getUrl(id: string, options?: CallOptions): Promise<SignedUrlResponse>;
   };
   readonly threads: {
-    list(projectId: string, query?: PaginationQueryInput, options?: CallOptions): Promise<Page<Thread>>;
+    list(
+      projectId: string,
+      query?: PaginationQueryInput,
+      options?: CallOptions,
+    ): Promise<Page<Thread>>;
     create(projectId: string, body?: CreateThreadRequest, options?: CallOptions): Promise<Thread>;
-    messages(threadId: string, query?: PaginationQueryInput, options?: CallOptions): Promise<Page<ThreadMessage>>;
+    messages(
+      threadId: string,
+      query?: PaginationQueryInput,
+      options?: CallOptions,
+    ): Promise<Page<ThreadMessage>>;
   };
   readonly chat: {
     /** POST /v1/threads/:id/chat — AI SDK UI stream + §7.4 data parts. See ./sse.ts. */
@@ -487,11 +515,19 @@ export interface ApiClient {
     get(id: string, options?: CallOptions): Promise<RenderJob>;
   };
   readonly comments: {
-    list(projectId: string, query?: CommentsQueryInput, options?: CallOptions): Promise<Page<Comment>>;
+    list(
+      projectId: string,
+      query?: CommentsQueryInput,
+      options?: CallOptions,
+    ): Promise<Page<Comment>>;
     create(projectId: string, body: CreateCommentRequest, options?: CallOptions): Promise<Comment>;
   };
   readonly activity: {
-    list(projectId: string, query?: ActivityQueryInput, options?: CallOptions): Promise<Page<ActivityEntry>>;
+    list(
+      projectId: string,
+      query?: ActivityQueryInput,
+      options?: CallOptions,
+    ): Promise<Page<ActivityEntry>>;
   };
 }
 
@@ -536,13 +572,18 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     queryOf(PAGINATION_QUERY_SCHEMA, query);
 
   const client: ApiClient = {
+    // Every namespace method is `async` so client-side validation failures
+    // (query schemas, explicit idempotency keys, bodies) surface as rejections
+    // of the returned promise instead of synchronous throws — callers await.
+    // `chat.stream` is the one synchronous member: it returns the live
+    // controller immediately and throws client-side for an invalid body.
     me: {
-      get: (options) => impl.get("/me", undefined, ME_RESPONSE_SCHEMA, options?.signal),
+      get: async (options) => impl.get("/me", undefined, ME_RESPONSE_SCHEMA, options?.signal),
     },
     workspaces: {
-      list: (query, options) =>
+      list: async (query, options) =>
         impl.get("/workspaces", paginated(query), PAGE_WORKSPACES_SCHEMA, options?.signal),
-      create: (body, options) =>
+      create: async (body, options) =>
         impl.mutate("POST", "/workspaces", {
           body,
           bodySchema: CREATE_WORKSPACE_SCHEMA,
@@ -550,7 +591,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      patch: (id, body, options) =>
+      patch: async (id, body, options) =>
         impl.mutate("PATCH", `/workspaces/${encodeId(id)}`, {
           body,
           bodySchema: PATCH_WORKSPACE_SCHEMA,
@@ -560,7 +601,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         }),
     },
     invites: {
-      create: (workspaceId, body, options) =>
+      create: async (workspaceId, body, options) =>
         impl.mutate("POST", `/workspaces/${encodeId(workspaceId)}/invites`, {
           body,
           bodySchema: INVITE_MEMBER_SCHEMA,
@@ -568,7 +609,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      accept: (token, options) =>
+      accept: async (token, options) =>
         impl.mutate("POST", `/invites/${encodeId(token)}/accept`, {
           responseSchema: ACCEPTED_INVITE_SCHEMA,
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
@@ -576,9 +617,9 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         }),
     },
     projects: {
-      list: (query, options) =>
+      list: async (query, options) =>
         impl.get("/projects", paginated(query), PAGE_PROJECTS_SCHEMA, options?.signal),
-      create: (body, options) =>
+      create: async (body, options) =>
         impl.mutate("POST", "/projects", {
           body,
           bodySchema: CREATE_PROJECT_SCHEMA,
@@ -586,9 +627,9 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      get: (id, options) =>
+      get: async (id, options) =>
         impl.get(`/projects/${encodeId(id)}`, undefined, PROJECT_SCHEMA, options?.signal),
-      patch: (id, body, options) =>
+      patch: async (id, body, options) =>
         impl.mutate("PATCH", `/projects/${encodeId(id)}`, {
           body,
           bodySchema: PATCH_PROJECT_SCHEMA,
@@ -596,12 +637,12 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      delete: (id, options) =>
+      delete: async (id, options) =>
         impl.mutate("DELETE", `/projects/${encodeId(id)}`, {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      manifest: (id, options) =>
+      manifest: async (id, options) =>
         impl.get(
           `/projects/${encodeId(id)}/manifest`,
           undefined,
@@ -610,15 +651,15 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         ),
     },
     versions: {
-      list: (projectId, query, options) =>
+      list: async (projectId, query, options) =>
         impl.get(
           `/projects/${encodeId(projectId)}/versions`,
           paginated(query),
           PAGE_VERSIONS_SCHEMA,
           options?.signal,
         ),
-      upload: (projectId, input, options) => uploadVersion(impl, projectId, input, options),
-      restore: (projectId, versionId, body, options) =>
+      upload: async (projectId, input, options) => uploadVersion(impl, projectId, input, options),
+      restore: async (projectId, versionId, body, options) =>
         impl.mutate(
           "POST",
           `/projects/${encodeId(projectId)}/versions/${encodeId(versionId)}/restore`,
@@ -632,7 +673,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         ),
     },
     leases: {
-      acquire: (projectId, body, options) =>
+      acquire: async (projectId, body, options) =>
         impl.mutate("POST", `/projects/${encodeId(projectId)}/lease`, {
           body,
           bodySchema: ACQUIRE_LEASE_SCHEMA,
@@ -640,16 +681,16 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      release: (projectId, options) =>
+      release: async (projectId, options) =>
         impl.mutate("DELETE", `/projects/${encodeId(projectId)}/lease`, {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
     },
     assets: {
-      list: (query, options) =>
+      list: async (query, options) =>
         impl.get("/assets", paginated(query), PAGE_ASSETS_SCHEMA, options?.signal),
-      createDescriptor: (body, options) =>
+      createDescriptor: async (body, options) =>
         impl.mutate("POST", "/assets", {
           body,
           bodySchema: CREATE_ASSET_SCHEMA,
@@ -657,7 +698,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      getUrl: (id, options) =>
+      getUrl: async (id, options) =>
         impl.get(
           `/assets/${encodeId(id)}/url`,
           undefined,
@@ -666,14 +707,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         ),
     },
     threads: {
-      list: (projectId, query, options) =>
+      list: async (projectId, query, options) =>
         impl.get(
           `/projects/${encodeId(projectId)}/threads`,
           paginated(query),
           PAGE_THREADS_SCHEMA,
           options?.signal,
         ),
-      create: (projectId, body, options) =>
+      create: async (projectId, body, options) =>
         impl.mutate("POST", `/projects/${encodeId(projectId)}/threads`, {
           body: body ?? {},
           bodySchema: CREATE_THREAD_SCHEMA,
@@ -681,7 +722,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      messages: (threadId, query, options) =>
+      messages: async (threadId, query, options) =>
         impl.get(
           `/threads/${encodeId(threadId)}/messages`,
           paginated(query),
@@ -709,16 +750,16 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         }),
     },
     runs: {
-      get: (runId, options) =>
+      get: async (runId, options) =>
         impl.get(`/runs/${encodeId(runId)}`, undefined, RUN_RECORD_SCHEMA, options?.signal),
-      cancel: (runId, body, options) =>
+      cancel: async (runId, body, options) =>
         impl.mutate("POST", `/runs/${encodeId(runId)}/cancel`, {
           body: body ?? {},
           bodySchema: CANCEL_RUN_SCHEMA,
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      postEvent: (runId, body, options) =>
+      postEvent: async (runId, body, options) =>
         impl.mutate("POST", `/runs/${encodeId(runId)}/events`, {
           body,
           bodySchema: RUN_EVENT_REQUEST_SCHEMA,
@@ -727,12 +768,18 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         }),
     },
     credits: {
-      get: (options) => impl.get("/credits", undefined, CREDITS_SUMMARY_SCHEMA, options?.signal),
-      ledger: (query, options) =>
-        impl.get("/credits/ledger", queryOf(LEDGER_QUERY_SCHEMA, query), PAGE_LEDGER_SCHEMA, options?.signal),
+      get: async (options) =>
+        impl.get("/credits", undefined, CREDITS_SUMMARY_SCHEMA, options?.signal),
+      ledger: async (query, options) =>
+        impl.get(
+          "/credits/ledger",
+          queryOf(LEDGER_QUERY_SCHEMA, query),
+          PAGE_LEDGER_SCHEMA,
+          options?.signal,
+        ),
     },
     billing: {
-      checkout: (body, options) =>
+      checkout: async (body, options) =>
         impl.mutate("POST", "/billing/checkout", {
           body,
           bodySchema: CHECKOUT_SCHEMA,
@@ -740,7 +787,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      portal: (body, options) =>
+      portal: async (body, options) =>
         impl.mutate("POST", "/billing/portal", {
           body: body ?? {},
           bodySchema: PORTAL_SCHEMA,
@@ -750,7 +797,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         }),
     },
     renders: {
-      create: (body, options) =>
+      create: async (body, options) =>
         impl.mutate("POST", "/renders", {
           body,
           bodySchema: QUEUE_RENDER_SCHEMA,
@@ -758,18 +805,18 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
-      get: (id, options) =>
+      get: async (id, options) =>
         impl.get(`/renders/${encodeId(id)}`, undefined, RENDER_JOB_SCHEMA, options?.signal),
     },
     comments: {
-      list: (projectId, query, options) =>
+      list: async (projectId, query, options) =>
         impl.get(
           `/projects/${encodeId(projectId)}/comments`,
           queryOf(COMMENTS_QUERY_SCHEMA, query),
           PAGE_COMMENTS_SCHEMA,
           options?.signal,
         ),
-      create: (projectId, body, options) =>
+      create: async (projectId, body, options) =>
         impl.mutate("POST", `/projects/${encodeId(projectId)}/comments`, {
           body,
           bodySchema: CREATE_COMMENT_SCHEMA,
@@ -779,7 +826,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         }),
     },
     activity: {
-      list: (projectId, query, options) =>
+      list: async (projectId, query, options) =>
         impl.get(
           `/projects/${encodeId(projectId)}/activity`,
           queryOf(ACTIVITY_QUERY_SCHEMA, query),

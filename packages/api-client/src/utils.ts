@@ -3,9 +3,7 @@
 
 /** `true` when the error is an abort (user cancelled the request/stream). */
 export function isAbortError(error: unknown): boolean {
-  return (
-    error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")
-  );
+  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
 /** Abort reason for a signal (browsers: DOMException; node: Error or custom). */
@@ -14,9 +12,11 @@ export function getAbortError(signal: AbortSignal): unknown {
 }
 
 /**
- * Sleeps for `ms`, rejecting immediately when `signal` aborts — so backoff
- * waits never outlive a cancelled request. The abort error propagates as-is
- * (never wrapped in an ApiError: the caller asked for it).
+ * Sleeps for `ms` via the injected `sleep` (the test seam — real timers,
+ * fake timers or zero-delay stubs), rejecting immediately when `signal`
+ * aborts — so backoff waits never outlive a cancelled request and never
+ * ignore the seam. The abort error propagates as-is (never wrapped in an
+ * ApiError: the caller asked for it).
  */
 export function sleepWithAbort(
   sleep: (ms: number) => Promise<void>,
@@ -26,15 +26,22 @@ export function sleepWithAbort(
   if (signal === undefined) return sleep(ms);
   if (signal.aborted) return Promise.reject(getAbortError(signal));
   return new Promise<void>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const onAbort = () => {
-      if (timer !== undefined) clearTimeout(timer);
+    const onAbort = (): void => {
       reject(getAbortError(signal));
     };
-    timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
     signal.addEventListener("abort", onAbort, { once: true });
+    let settled = false;
+    const settle =
+      (settleFn: (error?: unknown) => void): ((error?: unknown) => void) =>
+      (error?: unknown) => {
+        if (settled) return; // first settlement wins, the other is a no-op
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        settleFn(error);
+      };
+    sleep(ms).then(
+      settle(() => resolve()),
+      settle((error?: unknown) => reject(error)),
+    );
   });
 }
