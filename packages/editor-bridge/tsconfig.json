@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // Fleet precedent (W2-Q): no rootDir/outDir — the program pulls sibling
+    // workspace sources (@studio/contracts) through pnpm links, and an explicit
+    // rootDir would trip TS6059. `tsc --noEmit` is the gate.
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}
