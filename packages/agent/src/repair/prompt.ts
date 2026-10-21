@@ -115,7 +115,8 @@ export type RepairContext = z.infer<typeof repairContextSchema>;
 // --- §23.4 text, verbatim -----------------------------------------------------------
 
 /** §23.4 opening line, verbatim. */
-export const REPAIR_INTRO_LINE = "A validated render has issues. Apply the minimum fixes; change nothing else.";
+export const REPAIR_INTRO_LINE =
+  "A validated render has issues. Apply the minimum fixes; change nothing else.";
 
 /** §23.4 section headers, verbatim. */
 export const REPAIR_FIXES_HEADER = "FIXES:";

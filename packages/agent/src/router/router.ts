@@ -20,25 +20,25 @@
 // `model_route jsonb`, §11 schema) and reserved for §14 plan-gated features:
 // the router NEVER downgrades a §5.2 tier row by plan — a premium-tier run
 // gets Sonnet-class on every plan; affordability is credit-side (§14.2).
-import { PLAN_ID_SCHEMA, RUN_TIER_ID_SCHEMA, type PlanId, type RunTierId } from "@studio/config";
+import { PLAN_ID_SCHEMA, type PlanId, RUN_TIER_ID_SCHEMA, type RunTierId } from "@studio/config";
 import { z } from "zod";
 import type { Clock } from "../budgets.js";
 import type { AgentFailure } from "../errors.js";
 import {
+  type CircuitBreakerState,
   MODEL_PROVIDER_IDS,
   MODEL_ROUTE_ROLES,
+  type ModelClass,
+  type ModelProviderId,
+  type ModelRoute,
+  type ModelRouteRole,
+  type ProviderFailure,
   freshCircuitBreaker,
   halfOpenBreaker,
   resetBreaker,
   routeChain,
   shouldAttemptRequest,
   tripBreaker,
-  type CircuitBreakerState,
-  type ModelClass,
-  type ModelProviderId,
-  type ModelRoute,
-  type ModelRouteRole,
-  type ProviderFailure,
 } from "../models.js";
 
 // --- Policy defaults (§5.3; worker-tunable, never secrets) ------------------------
@@ -489,13 +489,8 @@ function providerUnhealthyFailure(
   return {
     ok: false,
     code: "provider_unhealthy",
-    message:
-      `No model provider is available for the ${role} route on the ${tier} tier ` +
-      `(${modelClass} class): every same-class provider is unconfigured or has an ` +
-      "open circuit breaker (§5.3).",
-    hint:
-      `Retry after the ${cooldownMs} ms breaker cooldown, or configure a second ` +
-      "provider of the same class.",
+    message: `No model provider is available for the ${role} route on the ${tier} tier (${modelClass} class): every same-class provider is unconfigured or has an open circuit breaker (§5.3).`,
+    hint: `Retry after the ${cooldownMs} ms breaker cooldown, or configure a second provider of the same class.`,
     retryable: true,
   };
 }

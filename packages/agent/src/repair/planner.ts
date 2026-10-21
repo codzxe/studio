@@ -20,19 +20,23 @@
 //         unknown issue codes dropped, no provider message ever echoed.
 //
 // W6-B contract: the emitted `steps` are §5.5 PlanStep-shaped (validated
-// against plan.ts's planStepSchema at build time) so the executor service runs
-// them like any plan steps; `stepIssues` keeps the issue-code traceability
-// parallel to `steps` without polluting the executor-facing shape.
+// against plan.ts's planStepSchema at build time) so the executor service
+// (src/executor — ExecuteInput.plan: Plan, phase "repairing") can run them;
+// `buildRepairMiniPlan` wraps the steps into a full §5.5-validated Plan (the
+// executor takes a whole plan, so the worker assembles
+// { plan: buildRepairMiniPlan(plan.steps, run.tier), phase: "repairing" }).
+// `stepIssues` keeps the issue-code traceability parallel to `steps` without
+// polluting the executor-facing shape.
 import { PLAN_RETRY_LIMIT } from "@studio/config";
 import { z } from "zod";
 import type { AgentErrorCode, AgentResult } from "../errors.js";
 import { agentErr, agentOk } from "../errors.js";
-import { type PlanStep, planStepSchema } from "../plan.js";
+import { type Plan, type PlanStep, type PlanModelTier, planStepSchema, validatePlan } from "../plan.js";
 import {
-  buildRepairPrompt,
   MAX_REPAIR_FIXES,
   type RepairContext,
   type RepairFix,
+  buildRepairPrompt,
   repairContextSchema,
 } from "./prompt.js";
 
@@ -46,6 +50,10 @@ import {
  * AGENT_TO_WIRE_ERROR_CODE, then flip this one-line constant. Tests import it.
  */
 export const REPAIR_PLAN_INVALID_CODE: AgentErrorCode = "plan_invalid";
+
+/** §5.5 intent for a repair cycle: repairs edit existing layers, nothing else. */
+export const REPAIR_MINI_PLAN_NOTE =
+  "Repair cycle (§5.1): minimum fixes for the reported blocker/major issues, nothing else.";
 
 // --- Input issues (validator §11.1 shape ∪ critic §23.3 shape) ---------------------
 
@@ -221,7 +229,8 @@ export const repairAppliedEntrySchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["tool"],
-        message: "tool is required (one of text_set, layer_ops, style_apply, layout_apply) unless impossible:true",
+        message:
+          "tool is required (one of text_set, layer_ops, style_apply, layout_apply) unless impossible:true",
       });
       return;
     }
@@ -405,7 +414,10 @@ export interface PlanRepairsInput {
   readonly signal?: AbortSignal;
 }
 
-function addUsage(total: RepairUsage | undefined, added: RepairUsage | undefined): RepairUsage | undefined {
+function addUsage(
+  total: RepairUsage | undefined,
+  added: RepairUsage | undefined,
+): RepairUsage | undefined {
   if (added === undefined) {
     return total;
   }
@@ -469,7 +481,10 @@ function buildPlan(
       return agentErr(
         REPAIR_PLAN_INVALID_CODE,
         "a repair step failed the §5.5 plan-step schema (plan.ts contract drift?)",
-        { hint: "Re-run with the current planStepSchema or report to the plan.ts owner.", retryable: false },
+        {
+          hint: "Re-run with the current planStepSchema or report to the plan.ts owner.",
+          retryable: false,
+        },
       );
     }
     seen.add(entry.issue);
@@ -500,7 +515,10 @@ export async function planRepairs(input: PlanRepairsInput): Promise<AgentResult<
     return agentErr(
       REPAIR_PLAN_INVALID_CODE,
       `repair planning input failed schema validation: ${formatSchemaIssues(issues.error).join("; ")}`,
-      { hint: "Pass §11.1 validator rows and/or §23.3 critic rows (level|severity, code, layer?, fix).", retryable: false },
+      {
+        hint: "Pass §11.1 validator rows and/or §23.3 critic rows (level|severity, code, layer?, fix).",
+        retryable: false,
+      },
     );
   }
   const context = repairContextSchema.safeParse(input.context);
@@ -508,7 +526,10 @@ export async function planRepairs(input: PlanRepairsInput): Promise<AgentResult<
     return agentErr(
       REPAIR_PLAN_INVALID_CODE,
       `repair context failed schema validation: ${formatSchemaIssues(context.error).join("; ")}`,
-      { hint: "CONTEXT = layerTree (required), manifest?, palette?, validatorReport (§23.4).", retryable: false },
+      {
+        hint: "CONTEXT = layerTree (required), manifest?, palette?, validatorReport (§23.4).",
+        retryable: false,
+      },
     );
   }
 
@@ -549,7 +570,10 @@ export async function planRepairs(input: PlanRepairsInput): Promise<AgentResult<
       return agentErr(
         "provider_unhealthy",
         "the repair model call failed before any output was produced",
-        { hint: "Worker: fail over to the next same-class provider (§5.3) and retry the cycle.", retryable: true },
+        {
+          hint: "Worker: fail over to the next same-class provider (§5.3) and retry the cycle.",
+          retryable: true,
+        },
       );
     }
     modelCalls += 1;
@@ -571,6 +595,42 @@ export async function planRepairs(input: PlanRepairsInput): Promise<AgentResult<
       retryable: false,
     },
   );
+}
+
+/**
+ * Wraps validated repair steps into a FULL §5.5 Plan (W6-B's ExecutorService
+ * takes `ExecuteInput.plan: Plan`, phase "repairing"): intent `edit_layers`,
+ * template null, empty assets/slots/palette/typography/checks, the repair
+ * steps, and the run's tier. Only meaningful with ≥1 step (§5.5 steps min 1);
+ * the worker skips repair execution entirely when a cycle produced none.
+ */
+export function buildRepairMiniPlan(
+  steps: readonly PlanStep[],
+  modelTier: PlanModelTier,
+): AgentResult<Plan> {
+  const validated = validatePlan({
+    intent: "edit_layers",
+    template: null,
+    assets: [],
+    slots: {},
+    palette: [],
+    typography: {},
+    steps: [...steps],
+    checks: [],
+    model_tier: modelTier,
+    notes_for_user: REPAIR_MINI_PLAN_NOTE,
+  });
+  if (!validated.ok) {
+    return agentErr(
+      REPAIR_PLAN_INVALID_CODE,
+      `repair mini-plan failed the §5.5 schema: ${validated.issues.join("; ")}`,
+      {
+        hint: "Repair steps come from planRepairs; check plan.ts contract drift (steps min 1, model_tier enum).",
+        retryable: false,
+      },
+    );
+  }
+  return agentOk(validated.plan);
 }
 
 /**
