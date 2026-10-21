@@ -10,8 +10,14 @@ fixture assets/golden renders live in the repo-root `evals/fixtures/` (see its R
 
 ```
 packages/evals/
-  promptfoo.config.yaml   suite config: providers (mocked planner for CI), prompts pointer,
-                          defaultTest (envelope schema + shared vars), tests, eval settings
+  promptfoo.config.yaml   suite config (GATE 1, §19 Phase 2 ≥ 0.85): providers (mocked
+                          planner for CI), prompts pointer, defaultTest (envelope schema
+                          + shared vars), tests (all 12 case files), eval settings
+  chat-edits.config.yaml  GATE 2 config (§19 Phase 2 "chat edits correct ≥ 90% on the
+                          curated set"): the 14-brief curated chat-edit set
+                          (cases/edits.yaml + cases/expanded/edits.yaml); same
+                          provider/prompt/defaultTest as the suite config — one
+                          promptfoo eval yields one pass rate, hence two configs
   prompts/                promptfoo-facing STARTER mirrors of spec §23.1–§23.3
                           (template vars {{brief}}/{{snapshot}}/{{catalog}}/…).
                           The canonical, versioned prompts land in packages/agent/prompts
@@ -25,9 +31,11 @@ packages/evals/
   cases/                  golden briefs (YAML): §24.1–§24.4 verbatim seeds + 11 invented
   schemas/
     plan.schema.json      the {plan, run} envelope contract (§5.5/§23.2 + §24 trace fields);
-                          the eval-binding copy is inlined in promptfoo.config.yaml — keep in sync
+                          the eval-binding copy is inlined in BOTH configs — keep in sync
   scripts/
-    eval-gate.mjs         suite pass-rate gate: exit 1 below threshold (§19 Phase 2: 0.85)
+    eval-gate.mjs         two-gate pass-rate gate: --suite (≥ 0.85, §19 Phase 2) and/or
+                          --chat (≥ 0.90 curated chat-edits, §19 Phase 2); exits with the
+                          strictest failure; --dry = offline self-test; exit 0/1/2
 ```
 
 ## The envelope contract
@@ -52,11 +60,24 @@ schema is enforced once in `defaultTest` (`is-json`), so a case's inline compact
 # once, from the repo root (this box never installs during agent waves — CI installs):
 pnpm install
 
-# deterministic suite — no LLM keys, no engine, no network (§21: deterministic tests):
+# deterministic full suite — no LLM keys, no engine, no network (§21: deterministic tests):
 pnpm --filter @studio/evals eval
+
+# deterministic chat-edits curated gate alone (§19 Phase 2: ≥ 0.90):
+pnpm --filter @studio/evals exec promptfoo eval --config chat-edits.config.yaml
 
 # browse the local run matrix / scoreboard:
 pnpm --filter @studio/evals eval:view
+
+# CI-style gating over results files (strictest failure wins):
+pnpm --filter @studio/evals exec promptfoo eval --config promptfoo.config.yaml \
+  --no-cache --output results/suite.json
+pnpm --filter @studio/evals exec promptfoo eval --config chat-edits.config.yaml \
+  --no-cache --output results/chat-edits.json
+node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json
+
+# offline wiring/logic self-test — no promptfoo install needed (agents use this):
+node scripts/eval-gate.mjs --dry
 ```
 
 ### Real-model runs (optional; local only)
@@ -78,19 +99,54 @@ point the config gains an env-gated real provider row alongside the mock.
 
 ## CI + threshold policy
 
-- `pnpm --filter @studio/evals eval:ci` = `promptfoo eval --no-cache --output results/eval.json`
-  followed by `node scripts/eval-gate.mjs results/eval.json 0.85`.
-- **Gate: suite pass-rate ≥ 0.85** (§19 Phase 2 exit: "eval suite ≥ 50 briefs with
-  ≥ 85% pass"). Below threshold the gate exits 1 and the build is red — that is the
-  §11.4 "block merge on regression beyond threshold" rule.
-- Note for the CI owner (`.github/workflows/ci.yml` is not owned by this package): add
-  `pnpm --filter @studio/evals eval:ci` as a step once Wave 6 wires the real planner;
-  the mocked suite is green-by-construction today, so wiring it now is also fine.
-- **Critic-drift human review (§21 evals row / §11.4):** sample 10 runs/week and score
-  them with the §11.2 rubric; a monthly review compares human scores to the critic to
-  detect drift and gaming. TODO(W7): critic eval cases + scoreboard page under `docs/`.
+Two §19 Phase 2 exit gates, BOTH enforced by `scripts/eval-gate.mjs`:
 
-## Case map — §24 seeds and coverage (15 cases today)
+| Gate | Config | Threshold | Scope |
+|---|---|---|---|
+| suite | `promptfoo.config.yaml` | ≥ 0.85 | all 67 briefs (12 case files) — §19 "eval suite ≥ 50 briefs with ≥ 85% pass" |
+| chat-edits | `chat-edits.config.yaml` | ≥ 0.90 | curated 14 chat-edit briefs (`cases/edits.yaml` + `cases/expanded/edits.yaml`) — §19 "chat edits correct ≥ 90% on the curated set" |
+
+One promptfoo eval produces one results file with one pass rate, so the second
+gate has its own config; the gate script reads both outputs and exits with the
+STRICTEST failure:
+
+```bash
+node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json
+```
+
+**Exit codes (CI contract, documented in the script header):**
+- `0` — every gate passed;
+- `1` — at least one gate below threshold (red build — §11.4 "block merge on
+  regression beyond threshold");
+- `2` — usage/input error (missing file, unparseable or empty results).
+
+**CI note for the `infra/ci-staged/ci.yml` owner** (that workflow is not owned by
+this package): add a step after the turbo job —
+
+```yaml
+- name: Golden-brief eval gates (§11.4/§19)
+  run: pnpm --filter @studio/evals eval:ci
+```
+
+`pnpm --filter @studio/evals eval` alone already runs the deterministic full
+suite in CI (mocked provider, zero model calls, §1.5-6); the gating form above
+needs `eval:ci` to cover BOTH configs — flagged below for the package.json owner.
+thresholds default to the §19 law inside the gate script (0.85 / 0.90), so the
+step needs no extra arguments. promptfoo itself is the authoritative YAML
+validator for both configs; `node scripts/eval-gate.mjs --dry` re-checks the
+wiring offline (every case file registered in the suite, chat set ⊆ suite,
+strictest-exit math).
+
+- **Critic-drift human review (§21 evals row / §11.4):** sample 10 runs/week,
+  score them with the same §11.2 rubric; the **monthly** review compares human
+  scores to the critic to detect drift and gaming. TODO(W7): critic eval cases +
+  scoreboard page under `docs/`.
+
+## Case map — §24 seeds and coverage (67 cases today)
+
+15 Wave-1 seeds below + **52 W7-D expanded cases** in `cases/expanded/` (its
+README carries the full case map, intent matrix and per-template/component
+coverage tables). The §19 Phase 2 "≥ 50 briefs" bar is cleared at 67.
 
 | Case | Seed | Tier / credits (§5.2) | Intent |
 |---|---|---|---|
@@ -116,9 +172,13 @@ validator results and layer/slot assertions where the seed demands them. **Rende
 similarity (SSIM/DISTS vs golden renders, §11.4) is TODO Wave 7** — deliberately no
 fuzzy image assertions in this scaffold.
 
-**Growth plan (§19 Phase 2 gate):** 15 seeds now → ≥50 before Phase 2 exit (add
-thumbnail, slide, invitation and simple-ad briefs per §11.4; a batch of non-English
-briefs; more failure paths). Copy an existing case file, keep the assertion categories.
+**Growth plan (§19 Phase 2 gate):** 15 seeds → ≥50 before Phase 2 exit — **done in
+Wave 7** (W7-D's `cases/expanded/` added 52; total 67; §11.4's longer-term 200-brief
+target stays open). New cases copy an existing case file, keep the assertion
+categories, and register the new file under `tests:` in `promptfoo.config.yaml`
+(pure chat-edit files also go into `chat-edits.config.yaml`; `node
+scripts/eval-gate.mjs --dry` fails loudly if a case file on disk is ever left
+unregistered).
 
 ## Hardening notes (pinned promptfoo ^0.103)
 
@@ -136,11 +196,26 @@ promptfoo behaviors should be confirmed on the first CI run and hardened if need
    export plus a default object. If the pin expects a different export shape, adjust
    the export in that one file.
 3. **`is-json` inline `validate`** — the envelope schema is inlined in `defaultTest`
-   (and a compact per-case copy in every case) so no file-path resolution is involved;
-   the standalone `schemas/plan.schema.json` is the human/codegen mirror — keep in sync
-   (TODO W6: extract both to one shared source).
+   (and a compact per-case copy in every case) so no file-path resolution is involved.
+   It now lives in **three places** — `promptfoo.config.yaml`, `chat-edits.config.yaml`
+   and the standalone `schemas/plan.schema.json` (human/codegen mirror) — keep all
+   three in sync (TODO W6: extract to one shared source).
+4. **Two configs, one gate script** — `chat-edits.config.yaml` duplicates the suite's
+   provider/prompt/defaultTest so each gate is a standalone, CI-runnable config. The
+   curated set is defined at file granularity (promptfoo includes test files
+   wholesale); edit-intent briefs in mixed policy files (`failures.yaml` §24.4,
+   `injection.yaml` §5.7) deliberately gate the full suite only. A future
+   pure-chat-edit file joins BOTH configs' `tests:`.
 
 ## Fleet flags (for Wave 6 / other owners)
+
+- **@studio/evals `package.json` owner:** `eval:ci` still runs only the suite config +
+  legacy single-gate form. Extend it to the two-gate CI pipeline —
+  `promptfoo eval --config promptfoo.config.yaml --no-cache --output results/suite.json &&
+  promptfoo eval --config chat-edits.config.yaml --no-cache --output results/chat-edits.json &&
+  node scripts/eval-gate.mjs --suite results/suite.json --chat results/chat-edits.json`
+  (legacy `node scripts/eval-gate.mjs <file> [threshold]` remains supported for
+  compatibility; consider an `eval:chat` script for the curated gate).
 
 - Tool-name style is inconsistent in the spec (`template_apply` in §23.2 vs
   `template.apply` in §5.5/§24 traces). Cases use the dotted §5.5 style; the tool

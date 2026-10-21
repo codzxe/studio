@@ -141,7 +141,7 @@ the engine, not the model) and a validation consequence — this is why the fiel
 | `bounds` `[x,y,w,h]` | The design box. Image slots: the placed layer is transformed into it (with the slot's fit mode/focal). Text slots: the paragraph box. `validate` checks the layer inside its box (`slot_bounds`, major, 0.5 px eps). Numbers finite, within ±1e7, size 0..=1e7. **Must equal the document layer's bounds.** |
 | `font` (text) | A workspace font role token (§5.5). `fill` compiles to `type.edit`/`type.setStyle`; a font absent from the registry at render time is a `missing_font` **blocker** with an install hint (§7.5) — never a silent substitution. 1..=256 chars. |
 | `size` (text) | Declared type size in pt, 0 < size ≤ 1e5; clamped into the `autoFit` range when one is declared. |
-| `autoFit` `{minSize, maxSize}` | The shrink range: `layout.fitText` (§9.3) shrinks within `[minSize, maxSize]` and wraps before overflowing; the chosen size is written back via `type.setStyle`. Parse rule: 0 < minSize ≤ maxSize ≤ 1e5. **Declare the declared `size` inside the range.** If `fitText` still cannot fit, it trims only at user-visible boundaries and warns — it never paints outside the box. |
+| `autoFit` `{minSize, maxSize}` | The shrink range: `layout.fitText` (§9.3) shrinks within `[minSize, maxSize]` and wraps before overflowing; the chosen size is written back via `type.setStyle`. Parse rule: 0 < minSize ≤ maxSize ≤ 1e5. **Keep the declared `size` inside the range.** If `fitText` still cannot fit, it trims only at user-visible boundaries and warns — it never paints outside the box. |
 | `maxChars` (text) | The character budget: longer text is trimmed at a user-visible boundary and reported as a `text_trimmed` **warning**, never silently (§7.3). ≥ 1. Placeholder copy in `document.json` must fit it. |
 | `maxLines` (text) | Wrap budget, ≥ 1; overflow surfaces as the `text_overflow` warning relayed from `layout.fitText`. |
 | `lineHeight`, `weight`, `align`, `color` (text) | Written via `type.setStyle` — `align` ∈ `left\|center\|right\|justify`, `color` `#rrggbb(/aa)`, `lineHeight` 0 < lh ≤ 100, `weight` 1..=64 chars. Declared colors must clear `rules.minContrast` against the declared background (`contrast`, **blocker**). |
@@ -219,8 +219,11 @@ template data. Generation note:
 1. `template.apply` the template **with its synthetic demo fills** (§7.4, step 6 below).
 2. Render once through the engine: `doc.render` at a preview scale of **≤ 512 px on the
    long edge**, PNG.
-3. Store the PNG at the `thumbnail` path declared in the manifest (PNG is committable
-   template data; the repo's no-binary rule is for *fixtures*, which generate at CI time).
+3. Store the PNG at the `thumbnail` path declared in the manifest. It is the **one
+   binary a template directory carries**: generated, committed, regenerated on every
+   bump — never hand-authored, never a flattened stand-in for the layered document
+   (§25: editability is the product). (Template *assets* are the opposite: no binaries
+   committed — the fixture generator materializes those at CI time, §6 below.)
 4. **Never commit font files** (`CRAFT_FONTS_DIR`, §1.5 rule 9): the thumbnail embeds
    rendered pixels, but the template data itself must stay font-free; fonts come from the
    workspace registry at render time. If a workspace font changes, re-render the
@@ -259,7 +262,7 @@ eval fixtures.* The shipped mechanism (W7-E generator + seed precedent):
   `evals/fixtures/generated/<id>@<version>/` at test/CI time (committed fixtures, ≤ 50 KB
   per PNG enforced; `--allow-oversize` is the escape hatch). A prose-only note means the
   generator keeps a machine mirror spec under `generator/specs/`; **new notes should
-  embed the documented ```json spec block** so no mirror is needed.
+  embed the documented `json` spec block** so no mirror is needed.
 - The **golden render** is `template.apply` + `template.fill` with the demo assets →
   render once → store under `evals/fixtures/renders/<id>@<version>/` (downscaled
   ≤ 1024 px, §5.4; compared by **perceptual distance, never pixel equality**, §11.4).
@@ -312,7 +315,7 @@ Template pre-submit checklist (spec §7.5) — id@version: ____
 [ ] description carries the anti-pattern self-check (slot count + named-layers-only)
 [ ] license is "workspace" or "public" (not the placeholder), author set
 [ ] assets-note.md: deterministic synthetic demo asset spec only (no binaries,
-    no fonts, no PII); fixtures generator mirror spec in sync (or ```json block)
+    no fonts, no PII); fixtures generator mirror spec in sync (or embedded json block)
 [ ] version bumped to a NEW id@<version+1>/ dir (shipped versions untouched)
 [ ] thumbnail path declared; PNG (≤512 px) rendered at the path; no fonts committed
 [ ] template.validate on the shipped document: ok=true (zero blockers, zero majors)
