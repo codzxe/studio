@@ -4,10 +4,10 @@
 // names (TS: TS2308) — so a collision that slips past the barrel would show up
 // here as a missing/undefined symbol, and a wrong precedence as a wrong value.
 //
-// Not asserted (yet): ToolCallGate — guards/ landed MID-ASSEMBLY with
-// injection.ts still being written (38 parse errors at assembly time), so the
-// barrel deliberately does not export it. When the module is whole, its owner
-// adds the barrel export line AND rows here (fleet convention).
+// Not asserted (yet): nothing — W7-M wired the last extension point: guards/
+// (ToolCallGate + injection helpers, W6-K) and brand/ (W7-F) are exported from
+// src/index.ts and pinned by the rows below (fleet convention: the wiring owner
+// adds the barrel export line AND the rows).
 //
 // Deterministic by construction: importing the barrel evaluates only module
 // top-levels (zod schemas, config-alignment loops) — no network, no clock use,
@@ -54,6 +54,8 @@ describe("W6-P barrel: curated public surface resolves", () => {
       "ChatEditClassifier",
       "RunStateMachine",
       "CancellationCoordinator",
+      "BrandTokensService", // W7-F brand tokens (§7.5)
+      "ToolCallGate", // W6-K §5.7 gate (wired by W7-M)
     ];
     for (const name of classes) {
       expect(typeof agent[name as keyof typeof agent], name).toBe("function");
@@ -110,6 +112,14 @@ describe("W6-P barrel: curated public surface resolves", () => {
       "runStateFailure", // W6-J run-state machine
       "timeoutErrorEnvelope",
       "defaultPcraftStorageKey", // W6-I transactions
+      "sanitizeUserContent", // W6-K §5.7 injection stance
+      "scanForInjectionFlags",
+      "stripUnsafeControls",
+      "normalizeHomoglyphs",
+      "wrapAsDataBlock",
+      "mutatingCommandCapFromTier", // W6-K §5.7/§5.2 tier cap
+      "buildStyleGuidePayload", // W7-F §5.4 style-guide block
+      "normalizeHex",
     ];
     for (const name of functions) {
       expect(typeof agent[name as keyof typeof agent], name).toBe("function");
@@ -143,6 +153,14 @@ describe("W6-P barrel: curated public surface resolves", () => {
       ["RUN_STATE_ERROR_CODES", "object"], // W6-J run-state catalog
       ["DEFAULT_CANCEL_REASON", "string"],
       ["CACHE_HIT_TARGET", "number"], // W6-H §5.3 >=60%
+      ["DEFAULT_BRAND", "object"], // W7-F §7.5 fallback tokens
+      ["FONT_ROLES", "object"],
+      ["brandTokensSchema", "object"],
+      ["STYLE_GUIDE_SECTION_ID", "string"],
+      ["INJECTION_FLAG_PATTERNS", "object"], // W6-K §5.7 catalog
+      ["USER_CONTENT_MAX_CHARS", "object"],
+      ["DEFAULT_MUTATING_TOOLS", "object"], // W6-K §6 mutating set
+      ["GATE_DEFAULT_ARG_CAPS", "object"],
     ];
     for (const [name, kind] of consts) {
       expect(typeof agent[name as keyof typeof agent], name).toBe(kind);

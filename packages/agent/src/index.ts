@@ -44,11 +44,14 @@
 //
 // Extension points (checked against `ls src/` + git status at assembly time):
 //   - guards/ (W6-K: injection.ts + tool-gate.ts, ToolCallGate) landed
-//     MID-ASSEMBLY and was still being written — NOT wired here yet; its
-//     index.ts notes it is collision-checked, so the owner adds
-//     `export * from "./guards/index.js"` + a tests/barrel.test.ts row when
-//     injection.ts is whole.
-// Each wave-6 owner collision-checks before their module goes public here.
+//     MID-ASSEMBLY and was still being written; wired by W7-M below via
+//     `export * from "./guards/index.js"` (guards/index.ts is W6-K's own
+//     collision-checked barrel re-exporting injection.js + tool-gate.js)
+//     + tests/barrel.test.ts rows, per the note in guards/index.ts.
+//   - brand/ (W7-F: tokens.ts + service.ts) wired by W7-M the same way;
+//     collision-audited by its owner, re-audited here at wiring time (zero
+//     clashes with the full barrel surface).
+// Each wave-6/7 owner collision-checks before their module goes public here.
 
 // --- W1 core (W1-P budgets/models/plan/state/errors/events, W2-P eventbus) -----
 export * from "./budgets.js";
@@ -79,6 +82,13 @@ export * from "./router/index.js";
 export * from "./classifier/index.js";
 export * from "./run-state/machine.js";
 export * from "./run-state/cancellation.js";
+
+// --- wave-7 additions (W7-M barrel completion; owners: W7-F brand, W6-K guards)
+// brand/: BrandTokensService/DEFAULT_BRAND/brandTokensSchema… (§7.5 tokens);
+// guards/: ToolCallGate + the §5.7 injection-stance helpers, via W6-K's own
+// collision-checked guards/index.ts (re-exports injection.js + tool-gate.js).
+export * from "./brand/index.js";
+export * from "./guards/index.js";
 
 // --- star-export collision disambiguation (explicit beats star) ----------------
 // (1) RUN_PHASES / RunPhase — state.ts's §5.1 phases stay canonical:

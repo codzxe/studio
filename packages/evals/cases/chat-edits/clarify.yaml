@@ -1,0 +1,286 @@
+# =============================================================================
+# packages/evals/cases/chat-edits/clarify.yaml — the curated chat-edit
+# classifier eval set (W7-H): 4 AMBIGUOUS requests -> action "clarify".
+#
+# Spec anchors:
+#   §23.5   "If the target is ambiguous, list candidates and set action
+#           'clarify' with one question." Candidates ride args.candidates, the
+#           ONE question rides args.question (worker convention,
+#           CHAT_EDIT_COMPOSITE_CONVENTIONS in packages/agent/src/classifier/
+#           prompt.ts); "clarify" never composes with other atoms.
+#   §23.2   the ask-user stance: never guess, ask first — zero mutation.
+#   §5.2    a clarify pass is the cheapest possible run: 1 call (ask_user), no
+#           render/validate/commit tail -> always quick = 1 credit.
+#
+# Assert teeth: the expected candidates are a REQUIRED SUBSET of
+# args.candidates, every candidate must be a REAL layer name from the case's
+# layerSummary (never-invented rule §23.5), and the question is one
+# non-empty string within the 300-char ask_user budget. target_layers stays
+# empty — the edit pauses until the user answers (§23.2).
+# =============================================================================
+
+# ── clarify #1: "make it pop" — no target at all ─────────────────────────────
+- id: ce-clarify-pop
+  description: >-
+    "Make it pop." names no layer and no property: §23.5 says list candidates
+    and ask ONE question. Golden candidates = the three visible content
+    layers (Headline/Subhead/Photo); required subset pins Headline + Photo (a
+    defensible clarification must name them); extra REAL layers are fine,
+    invented names fail. Quick tier = 1 credit; zero mutation (§23.2).
+  vars:
+    userRequest: "Make it pop."
+    doc:
+      template: instagram-post@3
+      canvas: { w: 1080, h: 1080 }
+      layerSummary:
+        - { name: Background, kind: fill, fill: '#F4E7D3', opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812 }
+        - { name: Headline, kind: text, size: 88, text: 'Fresh roasted, every morning' }
+        - { name: Subhead, kind: text, size: 36, text: 'Open 7–5 · Main St' }
+      palette: ['#F4E7D3', '#3B2A20', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: [{ id: instagram-post@3 }]
+      components: []
+      assets: [{ id: asset_812, name: 'latte-hero.jpg', kind: photo }]
+    classification:                        # golden §23.5 output (mock provider echoes)
+      action: clarify
+      target_layers: []                   # nothing mutated until the user answers
+      args:
+        candidates: [Headline, Subhead, Photo]
+        question: "Which part should pop — the headline, the subhead, or the photo?"
+      cost_tier: quick
+      needs_template_reapply: false
+    expected:
+      action: clarify
+      target_layers: []
+      required_candidates: [Headline, Photo]   # subset of args.candidates
+      cost_tier: quick
+      credits: 1
+      needs_template_reapply: false
+  assert:
+    - type: is-json            # §23.5 classification contract — strict key set
+      validate:
+        type: object
+        required: [action, target_layers, args, cost_tier, needs_template_reapply]
+        additionalProperties: false
+        properties:
+          action: { type: string, minLength: 1, maxLength: 120 }
+          target_layers: { type: array, maxItems: 10, items: { type: string, minLength: 1, maxLength: 200 } }
+          args: { type: object }
+          cost_tier: { enum: [quick, standard, complex] }
+          needs_template_reapply: { type: boolean }
+    - type: javascript          # action match: clarify, never composed (§23.5)
+      value: "return ((a) => a.length === 1 && a.includes('clarify'))(JSON.parse(output).action.split('+').map((s) => s.trim()).filter(Boolean))"
+    - type: javascript          # the edit pauses: no target named before the answer (§23.2)
+      value: "return JSON.parse(output).target_layers.length === 0"
+    - type: javascript          # candidates: required subset present, all REAL layers (§23.5)
+      value: "return ((c) => Array.isArray(c) && ['Headline','Photo'].every((x) => c.includes(x)) && c.every((x) => ['Background','Photo','Headline','Subhead'].includes(x)))(JSON.parse(output).args.candidates)"
+    - type: javascript          # tier match: §14.1 credits of cost_tier (quick = 1)
+      value: "return ({quick:1, standard:2, complex:5})[JSON.parse(output).cost_tier] === 1"
+    - type: javascript          # needs_template_reapply match (§23.5)
+      value: "return JSON.parse(output).needs_template_reapply === false"
+    - type: javascript          # ONE question, non-empty, within the 300-char ask_user budget
+      value: "return ((q) => typeof q === 'string' && q.trim().length > 0 && q.length <= 300)(JSON.parse(output).args.question)"
+
+# ── clarify #2: "move it up" — every content layer is a candidate ─────────────
+- id: ce-clarify-move-it
+  description: >-
+    "Move it up a bit." on the business-card doc: "it" could be any movable
+    content layer — the name, the title, the contact block, the logo or the
+    accent band. §23.5: list candidates + one question; required subset pins
+    the three text layers (Headline/Subhead/Body); quick tier = 1 credit.
+  vars:
+    userRequest: "Move it up a bit."
+    doc:
+      template: business-card@1
+      canvas: { w: 1063, h: 652 }
+      layerSummary:
+        - { name: Background, kind: fill, fill: '#F4E7D3', opacity: 100 }
+        - { name: Accent Band, kind: fill, fill: '#D96C3B', opacity: 100 }
+        - { name: Logo, kind: smart_object, asset: asset_201, bounds: [783, 60, 220, 80] }
+        - { name: Headline, kind: text, size: 84, text: 'Riley Acme' }
+        - { name: Subhead, kind: text, size: 44, text: 'Principal Designer' }
+        - { name: Body, kind: text, size: 36, text: 'riley@acme.coffee · @acme.kitchen' }
+      palette: ['#F4E7D3', '#3B2A20', '#6B5748', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: [{ id: business-card@1 }]
+      components: []
+      assets: [{ id: asset_201, name: 'logo-dark.png', kind: logo }]
+    classification:
+      action: clarify
+      target_layers: []
+      args:
+        candidates: [Headline, Subhead, Body, Logo, Accent Band]
+        question: "Which element should move up — the name, the title, the contact block, the logo, or the accent band?"
+      cost_tier: quick
+      needs_template_reapply: false
+    expected:
+      action: clarify
+      target_layers: []
+      required_candidates: [Headline, Subhead, Body]
+      cost_tier: quick
+      credits: 1
+      needs_template_reapply: false
+  assert:
+    - type: is-json            # §23.5 classification contract — strict key set
+      validate:
+        type: object
+        required: [action, target_layers, args, cost_tier, needs_template_reapply]
+        additionalProperties: false
+        properties:
+          action: { type: string, minLength: 1, maxLength: 120 }
+          target_layers: { type: array, maxItems: 10, items: { type: string, minLength: 1, maxLength: 200 } }
+          args: { type: object }
+          cost_tier: { enum: [quick, standard, complex] }
+          needs_template_reapply: { type: boolean }
+    - type: javascript          # action match: clarify, never composed (§23.5)
+      value: "return ((a) => a.length === 1 && a.includes('clarify'))(JSON.parse(output).action.split('+').map((s) => s.trim()).filter(Boolean))"
+    - type: javascript          # the edit pauses before any mutation (§23.2)
+      value: "return JSON.parse(output).target_layers.length === 0"
+    - type: javascript          # candidates: the three text layers required, nothing invented (§23.5)
+      value: "return ((c) => Array.isArray(c) && ['Headline','Subhead','Body'].every((x) => c.includes(x)) && c.every((x) => ['Background','Accent Band','Logo','Headline','Subhead','Body'].includes(x)))(JSON.parse(output).args.candidates)"
+    - type: javascript          # tier match: §14.1 credits of cost_tier (quick = 1)
+      value: "return ({quick:1, standard:2, complex:5})[JSON.parse(output).cost_tier] === 1"
+    - type: javascript          # needs_template_reapply match (§23.5)
+      value: "return JSON.parse(output).needs_template_reapply === false"
+    - type: javascript          # ONE question within the 300-char ask_user budget
+      value: "return ((q) => typeof q === 'string' && q.trim().length > 0 && q.length <= 300)(JSON.parse(output).args.question)"
+
+# ── clarify #3: "change the text" — four text layers, none named ─────────────
+- id: ce-clarify-change-text
+  description: >-
+    "Change the text." on the event-flyer doc names neither the text nor the
+    layer: the flyer carries FOUR text layers (Headline, Subhead — Date,
+    Body — Venue, Caption — Footer), all enumerable by kind — a defensible
+    clarification lists ALL of them (required subset = all four); quick tier
+    = 1 credit; nothing mutated.
+  vars:
+    userRequest: "Change the text."
+    doc:
+      template: event-flyer@1
+      canvas: { w: 1748, h: 2480 }
+      layerSummary:
+        - { name: Background, kind: fill, fill: '#F4E7D3', opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_815, bounds: [150, 150, 1448, 980] }
+        - { name: Footer Strip, kind: fill, fill: '#D96C3B', opacity: 100 }
+        - { name: Content, kind: group }
+        - { name: Headline, kind: text, size: 140, text: 'Summer Street Fair' }
+        - { name: 'Subhead — Date', kind: text, size: 64, text: 'Sat 10–6' }
+        - { name: 'Body — Venue', kind: text, size: 64, text: 'Main Street Plaza' }
+        - { name: 'Caption — Footer', kind: text, size: 60, text: 'Coffee · Beats · Local Makers' }
+      palette: ['#F4E7D3', '#3B2A20', '#6B5748', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: [{ id: event-flyer@1 }]
+      components: []
+      assets: [{ id: asset_815, name: 'street-fair.jpg', kind: photo }]
+    classification:
+      action: clarify
+      target_layers: []
+      args:
+        candidates: [Headline, 'Subhead — Date', 'Body — Venue', 'Caption — Footer']
+        question: "Which text should change — the headline, the date, the venue, or the footer line? (And to what?)"
+      cost_tier: quick
+      needs_template_reapply: false
+    expected:
+      action: clarify
+      target_layers: []
+      required_candidates: [Headline, 'Subhead — Date', 'Body — Venue', 'Caption — Footer']
+      cost_tier: quick
+      credits: 1
+      needs_template_reapply: false
+  assert:
+    - type: is-json            # §23.5 classification contract — strict key set
+      validate:
+        type: object
+        required: [action, target_layers, args, cost_tier, needs_template_reapply]
+        additionalProperties: false
+        properties:
+          action: { type: string, minLength: 1, maxLength: 120 }
+          target_layers: { type: array, maxItems: 10, items: { type: string, minLength: 1, maxLength: 200 } }
+          args: { type: object }
+          cost_tier: { enum: [quick, standard, complex] }
+          needs_template_reapply: { type: boolean }
+    - type: javascript          # action match: clarify, never composed (§23.5)
+      value: "return ((a) => a.length === 1 && a.includes('clarify'))(JSON.parse(output).action.split('+').map((s) => s.trim()).filter(Boolean))"
+    - type: javascript          # the edit pauses before any mutation (§23.2)
+      value: "return JSON.parse(output).target_layers.length === 0"
+    - type: javascript          # candidates: ALL four text layers, nothing invented (§23.5)
+      value: "return ((c) => Array.isArray(c) && ['Headline','Subhead — Date','Body — Venue','Caption — Footer'].every((x) => c.includes(x)) && c.every((x) => ['Background','Photo','Footer Strip','Content','Headline','Subhead — Date','Body — Venue','Caption — Footer'].includes(x)))(JSON.parse(output).args.candidates)"
+    - type: javascript          # tier match: §14.1 credits of cost_tier (quick = 1)
+      value: "return ({quick:1, standard:2, complex:5})[JSON.parse(output).cost_tier] === 1"
+    - type: javascript          # needs_template_reapply match (§23.5)
+      value: "return JSON.parse(output).needs_template_reapply === false"
+    - type: javascript          # ONE question within the 300-char ask_user budget
+      value: "return ((q) => typeof q === 'string' && q.trim().length > 0 && q.length <= 300)(JSON.parse(output).args.question)"
+
+# ── clarify #4: "swap the image" — two images, two newer uploads ────────────
+- id: ce-clarify-swap-image
+  description: >-
+    "Swap the image for the newer upload." on a doc with TWO image layers
+    (Photo + Logo) and TWO newer uploads in the catalog (asset_813 photo,
+    asset_202 logo): "the image" is genuinely ambiguous — §23.5 forbids
+    guessing, so the classifier lists both image layers as candidates; both
+    are REQUIRED; quick tier = 1 credit.
+  vars:
+    userRequest: "Swap the image for the newer upload."
+    doc:
+      template: instagram-post@3
+      canvas: { w: 1080, h: 1080 }
+      layerSummary:
+        - { name: Background, kind: fill, fill: '#F4E7D3', opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812, bounds: [0, 0, 1080, 700] }
+        - { name: Headline, kind: text, size: 88, text: 'Fresh roasted, every morning' }
+        - { name: Subhead, kind: text, size: 36, text: 'Open 7–5 · Main St' }
+        - { name: Logo, kind: smart_object, asset: asset_201, bounds: [888, 984, 120, 40] }
+      palette: ['#F4E7D3', '#3B2A20', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: [{ id: instagram-post@3 }]
+      components: []
+      assets:
+        - { id: asset_812, name: 'latte-hero.jpg', kind: photo }
+        - { id: asset_813, name: 'latte-hero-alt.jpg', kind: photo }
+        - { id: asset_201, name: 'logo-dark.png', kind: logo }
+        - { id: asset_202, name: 'logo-light.png', kind: logo }
+    classification:
+      action: clarify
+      target_layers: []
+      args:
+        candidates: [Photo, Logo]
+        question: "There are two images — swap the photo or the logo? (Both have a newer upload waiting.)"
+      cost_tier: quick
+      needs_template_reapply: false
+    expected:
+      action: clarify
+      target_layers: []
+      required_candidates: [Photo, Logo]
+      cost_tier: quick
+      credits: 1
+      needs_template_reapply: false
+  assert:
+    - type: is-json            # §23.5 classification contract — strict key set
+      validate:
+        type: object
+        required: [action, target_layers, args, cost_tier, needs_template_reapply]
+        additionalProperties: false
+        properties:
+          action: { type: string, minLength: 1, maxLength: 120 }
+          target_layers: { type: array, maxItems: 10, items: { type: string, minLength: 1, maxLength: 200 } }
+          args: { type: object }
+          cost_tier: { enum: [quick, standard, complex] }
+          needs_template_reapply: { type: boolean }
+    - type: javascript          # action match: clarify, never composed (§23.5)
+      value: "return ((a) => a.length === 1 && a.includes('clarify'))(JSON.parse(output).action.split('+').map((s) => s.trim()).filter(Boolean))"
+    - type: javascript          # the edit pauses before any mutation (§23.2)
+      value: "return JSON.parse(output).target_layers.length === 0"
+    - type: javascript          # candidates: BOTH image layers, nothing invented (§23.5)
+      value: "return ((c) => Array.isArray(c) && ['Photo','Logo'].every((x) => c.includes(x)) && c.every((x) => ['Background','Photo','Headline','Subhead','Logo'].includes(x)))(JSON.parse(output).args.candidates)"
+    - type: javascript          # tier match: §14.1 credits of cost_tier (quick = 1)
+      value: "return ({quick:1, standard:2, complex:5})[JSON.parse(output).cost_tier] === 1"
+    - type: javascript          # needs_template_reapply match (§23.5)
+      value: "return JSON.parse(output).needs_template_reapply === false"
+    - type: javascript          # ONE question within the 300-char ask_user budget
+      value: "return ((q) => typeof q === 'string' && q.trim().length > 0 && q.length <= 300)(JSON.parse(output).args.question)"

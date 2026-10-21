@@ -18,6 +18,10 @@
 //   §5.7  every model-proposed tool name and argument is UNTRUSTED: names are
 //          checked against the registry (unknown → skipped + logged), args are
 //          parsed against the tool's Zod schema at the boundary (parseToolArgs).
+//          When the run manager wires a ToolCallGate (W6-K: manifest allowlist +
+//          §5.7 arg caps + §5.2/§5.7 mutating-command budget), the gate runs
+//          FIRST — before registry dispatch (W7-M wiring) — so the run-start
+//          manifest and the mutating cap bind even registry-known tools.
 //   §6.3  "the agent must read the error, fix the argument, and retry (the
 //          worker enforces a retry budget)" + §23.1 rule 7: an identical failed
 //          call is NEVER executed twice, and each tool error grants exactly
@@ -45,6 +49,7 @@ import {
 import { z } from "zod";
 import type { BudgetExceeded, BudgetSnapshot, BudgetTracker, Clock } from "../budgets.js";
 import type { StepFinishedPayload, StepStartedPayload } from "../events.js";
+import type { ToolCallGate } from "../guards/tool-gate.js";
 import type { Plan, PlanStep } from "../plan.js";
 import type { RunPhase } from "../state.js";
 import { buildExecutorSystemPrompt } from "./prompt.js";
@@ -207,6 +212,7 @@ export const EXECUTOR_DEVIATION_KINDS = [
   "plan_mismatch",
   "repeated_failed_call",
   "retry_budget_exhausted",
+  "mutating_budget", // W7-M: ToolCallGate refused a mutating call (§5.7 cap)
 ] as const;
 
 export type ExecutorDeviationKind = (typeof EXECUTOR_DEVIATION_KINDS)[number];
@@ -309,6 +315,14 @@ export interface ExecutorServiceOptions {
   readonly toolContext: ToolContext;
   /** §13.2 step.started / step.finished sink (worker wires the durable event bus). */
   readonly emit: EmitExecutorStepEvent;
+  /**
+   * OPTIONAL §5.7 gate (W6-K seam, wired by W7-M): manifest allowlist + arg
+   * caps + strict schema parse + §5.2/§5.7 mutating-command budget for every
+   * model-proposed call. Build with `new ToolCallGate({ tools, manifest,
+   * mutatingCommandCap: mutatingCommandCapFromTier(tier) })`; omit to keep the
+   * executor's own registry/schema-only enforcement (pre-W7-M behavior).
+   */
+  readonly gate?: ToolCallGate;
   /** Injectable wall clock (deterministic tests); defaults to Date.now(). */
   readonly clock?: Clock;
   /** Overrides the §5.1/§3.4 defaults. */
@@ -388,6 +402,7 @@ export class ExecutorService {
   private readonly emit: EmitExecutorStepEvent;
   private readonly clock: Clock;
   private readonly limits: ExecutorLimits;
+  private readonly gate: ToolCallGate | undefined;
 
   constructor(options: ExecutorServiceOptions) {
     if (options == null || typeof options.model?.streamToolLoop !== "function") {
@@ -420,11 +435,18 @@ export class ExecutorService {
     if (typeof options.emit !== "function") {
       throw new Error("[agent/executor] options.emit is required (§13.2 step events)");
     }
+    if (
+      options.gate !== undefined &&
+      typeof options.gate?.validateModelToolCall !== "function"
+    ) {
+      throw new Error("[agent/executor] options.gate must be a ToolCallGate (§5.7 seam)");
+    }
     this.model = options.model;
     this.tools = Object.freeze({ ...tools });
     this.manifest = [...options.manifest];
     this.toolContext = options.toolContext;
     this.emit = options.emit;
+    this.gate = options.gate;
     this.clock = options.clock ?? (() => Date.now());
     // Fail fast on wiring nonsense (mirrors BudgetTracker's zod boundary).
     this.limits = EXECUTOR_LIMITS_SCHEMA.parse({
@@ -562,6 +584,39 @@ export class ExecutorService {
         stopReason ??= "budget_exceeded";
         budgetExceeded ??= exceededNow;
         return;
+      }
+
+      // §5.7 ToolCallGate (W6-K seam, wired by W7-M): when the run manager wires
+      // one, every untrusted call passes its manifest allowlist (fixed at run
+      // start), structural arg caps, strict schema parse and §5.2/§5.7
+      // mutating-command budget BEFORE dispatch. An ok verdict already reserved
+      // any mutating slot (the reservation never unwinds — see the gate header;
+      // a later §23.1/§6.3 refusal still conserves the cap); the parse below is
+      // idempotent on gate-accepted args. Rejections follow the executor's own
+      // conventions: unknown_tool/mutating_budget → skip + §5.5 deviation log;
+      // args_cap/invalid_args → §23.1-rule-7 identity + §6.3 retry accounting
+      // (the model gets its one fix-and-retry), error fed back either way.
+      if (this.gate !== undefined) {
+        const verdict = this.gate.validateModelToolCall({ name, args });
+        if (!verdict.ok) {
+          if (verdict.kind === "args_cap" || verdict.kind === "invalid_args") {
+            failedCalls.add(canonicalCallKey(name, args));
+            const gateErrorKey = `${stepSeq}:${name}`;
+            toolErrors.set(gateErrorKey, (toolErrors.get(gateErrorKey) ?? 0) + 1);
+            appendCallPair(proposed, verdict.rejection);
+            return;
+          }
+          stepState.deviated = true;
+          recordDeviation(
+            stepSeq,
+            verdict.kind === "unknown_tool" ? "unknown_tool" : "mutating_budget",
+            step.tool,
+            name,
+            `ToolCallGate rejected "${truncate(name, 64)}" (§5.7): ${verdict.rejection.message}`,
+          );
+          appendCallPair(proposed, verdict.rejection);
+          return;
+        }
       }
 
       // §5.7: untrusted tool name — registry membership gate (skip + deviation log).

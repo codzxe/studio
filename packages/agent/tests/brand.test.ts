@@ -5,13 +5,13 @@
 // timers). The §5.4 parity test runs the REAL ContextAssembler (the
 // style-guide consumer) and asserts byte-identical section output.
 
-import { ContextAssembler } from "../../src/observer/context.js";
+import { ContextAssembler } from "../src/observer/context.js";
 import {
   BRAND_ERROR_CODES,
   type BrandSeams,
   BrandTokensService,
   buildStyleGuidePayload,
-} from "../../src/brand/service.js";
+} from "../src/brand/service.js";
 import {
   type BrandTokens,
   type FontRole,
@@ -22,7 +22,7 @@ import {
   brandTokensSchema,
   hexColorSchema,
   normalizeHex,
-} from "../../src/brand/tokens.js";
+} from "../src/brand/tokens.js";
 import { describe, expect, it } from "vitest";
 
 const ORG_ID = "org-1";

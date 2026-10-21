@@ -1,0 +1,213 @@
+# =============================================================================
+# packages/evals/cases/chat-edits/reapply.yaml — the curated chat-edit
+# classifier eval set (W7-H): 3 TEMPLATE-SLOT-CHANGE requests ->
+# needs_template_reapply: true.
+#
+# Spec anchors:
+#   §23.5   needs_template_reapply rides the classification when the ask
+#           changes TEMPLATE SLOTS (layout swap / slot spec change): the run
+#           then re-executes template.apply + template.fill (the classifier's
+#           +2 REAPPLY_CALLS in resolveCostTier) before the edit lands.
+#   §5.2    reapply pricing: mutating calls + 3-call tail + 2 reapply calls.
+#           -> #15 (3 carried slots) = 8 calls -> STANDARD = 2 credits;
+#             #16/#17 (ONE slot) = 6 calls = exactly the quick cap -> quick
+#             = 1 credit. Reapply does NOT imply standard.
+#   §23.2   target discipline holds: targets are the CURRENT document's slot
+#           layers (never the not-yet-applied template's layers — naming a
+#           layer that is not in layerSummary is an invented target, §23.5).
+#
+# Golden action for all three: replace_field (the §23.5 atom whose primary
+# tool is template_fill — slot/field replacement, §6 row 5).
+# =============================================================================
+
+# ── reapply #1: layout swap, copy + palette carried (standard tier) ──────────
+- id: ce-reapply-layout-swap
+  description: >-
+    "Rebuild this promo on the event-flyer layout — keep the copy and the
+    colors": a template-slot change across the whole doc — replace_field with
+    needs_template_reapply TRUE (the run re-executes template.apply +
+    template.fill, §23.5). Targets = the three carried slot layers that exist
+    in the CURRENT doc (Headline/Subhead/Photo); the flyer's date/venue layers
+    do not exist yet and may not be named (§23.5 never-invented). Guard math:
+    3 targets + 3-call tail + 2 reapply = 8 calls -> standard = 2 credits.
+  vars:
+    userRequest: "Rebuild this promo on the event-flyer layout — keep the copy and the colors."
+    doc:
+      template: instagram-post@3          # starting doc: the §24.1 coffee promo
+      canvas: { w: 1080, h: 1080 }
+      layerSummary:
+        - { name: Background, kind: fill, fill: '#F4E7D3', opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812 }
+        - { name: Headline, kind: text, size: 88, text: 'Fresh roasted, every morning' }
+        - { name: Subhead, kind: text, size: 36, text: 'Open 7–5 · Main St' }
+      palette: ['#F4E7D3', '#3B2A20', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates:
+        - { id: instagram-post@3, tags: [social, promo, square] }
+        - { id: event-flyer@1, tags: [print, flyer, event], canvas: { w: 1748, h: 2480 } }
+      components: []
+      assets: [{ id: asset_812, name: 'latte-hero.jpg', kind: photo }]
+    classification:                        # golden §23.5 output (mock provider echoes)
+      action: replace_field
+      target_layers: [Headline, Subhead, Photo]   # carried slots, current doc layers only
+      args:
+        template: event-flyer@1            # the catalog template being applied
+        keep_existing_copy: true           # copy + palette carried over (§5.5 notes)
+      cost_tier: standard                  # resolved: 8 estimated calls (§5.2)
+      needs_template_reapply: true         # §23.5: slot changes re-run the template
+    expected:
+      action: replace_field
+      target_layers: [Headline, Subhead, Photo]
+      cost_tier: standard
+      credits: 2                           # §14.1 price of the resolved tier
+      needs_template_reapply: true
+  assert:
+    - type: is-json            # §23.5 classification contract — strict key set
+      validate:
+        type: object
+        required: [action, target_layers, args, cost_tier, needs_template_reapply]
+        additionalProperties: false
+        properties:
+          action: { type: string, minLength: 1, maxLength: 120 }
+          target_layers: { type: array, maxItems: 10, items: { type: string, minLength: 1, maxLength: 200 } }
+          args: { type: object }
+          cost_tier: { enum: [quick, standard, complex] }
+          needs_template_reapply: { type: boolean }
+    - type: javascript          # action match: exactly the replace_field atom (§23.5)
+      value: "return ((a) => a.length === 1 && a.includes('replace_field'))(JSON.parse(output).action.split('+').map((s) => s.trim()).filter(Boolean))"
+    - type: javascript          # target_layers subset: the three carried slots, nothing invented (§23.5)
+      value: "return ((t) => ['Headline','Subhead','Photo'].every((x) => t.includes(x)) && t.every((x) => ['Background','Photo','Headline','Subhead'].includes(x)))(JSON.parse(output).target_layers)"
+    - type: javascript          # tier match: §14.1 credits of cost_tier (standard = 2)
+      value: "return ({quick:1, standard:2, complex:5})[JSON.parse(output).cost_tier] === 2"
+    - type: javascript          # needs_template_reapply match — TRUE: slots change (§23.5)
+      value: "return JSON.parse(output).needs_template_reapply === true"
+    - type: javascript          # reapply pins the CATALOG template — never invented (§23.2)
+      value: "return ((a) => a.template === 'event-flyer@1' && ['instagram-post@3','event-flyer@1'].includes(a.template))(JSON.parse(output).args)"
+
+# ── reapply #2: accent color-slot change (single slot stays quick) ───────────
+- id: ce-reapply-accent-color
+  description: >-
+    "Switch the accent band to deep brown and re-apply the template so the
+    color slot refills": business-card@1 carries a COLOR slot ("accent" -> the
+    Accent Band layer, fill.rs compile_color_slot contract) — changing it is a
+    template-slot change, needs_template_reapply TRUE; but ONE slot is cheap:
+    1 + 3-call tail + 2 reapply = 6 calls = the quick cap, so the tier stays
+    QUICK = 1 credit (reapply does not imply standard). Deep brown #3B2A20 is
+    a business-card palette token (§23.2).
+  vars:
+    userRequest: "Switch the accent band to deep brown and re-apply the template so the color slot refills."
+    doc:
+      template: business-card@1
+      canvas: { w: 1063, h: 652 }
+      layerSummary:
+        - { name: Background, kind: fill, fill: '#F4E7D3', opacity: 100 }
+        - { name: Accent Band, kind: fill, fill: '#D96C3B', opacity: 100 }
+        - { name: Logo, kind: smart_object, asset: asset_201, bounds: [783, 60, 220, 80] }
+        - { name: Headline, kind: text, size: 84, text: 'Riley Acme' }
+        - { name: Subhead, kind: text, size: 44, text: 'Principal Designer' }
+        - { name: Body, kind: text, size: 36, text: 'riley@acme.coffee · @acme.kitchen' }
+      palette: ['#F4E7D3', '#3B2A20', '#6B5748', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: [{ id: business-card@1 }]
+      components: []
+      assets: [{ id: asset_201, name: 'logo-dark.png', kind: logo }]
+    classification:
+      action: replace_field
+      target_layers: [Accent Band]
+      args:
+        slot: accent
+        color: '#3B2A20'                   # palette brand token, never invented (§23.2)
+      cost_tier: quick                     # 6 estimated calls = quick cap (§5.2)
+      needs_template_reapply: true
+    expected:
+      action: replace_field
+      target_layers: [Accent Band]
+      cost_tier: quick
+      credits: 1
+      needs_template_reapply: true
+  assert:
+    - type: is-json            # §23.5 classification contract — strict key set
+      validate:
+        type: object
+        required: [action, target_layers, args, cost_tier, needs_template_reapply]
+        additionalProperties: false
+        properties:
+          action: { type: string, minLength: 1, maxLength: 120 }
+          target_layers: { type: array, maxItems: 10, items: { type: string, minLength: 1, maxLength: 200 } }
+          args: { type: object }
+          cost_tier: { enum: [quick, standard, complex] }
+          needs_template_reapply: { type: boolean }
+    - type: javascript          # action match: exactly the replace_field atom (§23.5)
+      value: "return ((a) => a.length === 1 && a.includes('replace_field'))(JSON.parse(output).action.split('+').map((s) => s.trim()).filter(Boolean))"
+    - type: javascript          # target_layers subset: Accent Band named, nothing invented (§23.5)
+      value: "return ((t) => t.includes('Accent Band') && t.every((x) => ['Background','Accent Band','Logo','Headline','Subhead','Body'].includes(x)))(JSON.parse(output).target_layers)"
+    - type: javascript          # tier match: §14.1 credits of cost_tier (quick = 1)
+      value: "return ({quick:1, standard:2, complex:5})[JSON.parse(output).cost_tier] === 1"
+    - type: javascript          # needs_template_reapply match — TRUE: slot change (§23.5)
+      value: "return JSON.parse(output).needs_template_reapply === true"
+    - type: javascript          # slot pin: the manifest's color slot + a palette token
+      value: "return ((a) => a.slot === 'accent' && ['#F4E7D3','#3B2A20','#6B5748','#D96C3B'].includes(a.color))(JSON.parse(output).args)"
+
+# ── reapply #3: photo slot-fit change (single slot stays quick) ──────────────
+- id: ce-reapply-photo-fit
+  description: >-
+    "The photo slot should use 'contain' instead of 'cover' — re-apply the
+    template with that slot change": the FIT spec lives on the template slot
+    (instagram-post@3 photo slot, §7.2 fit enum cover/contain/fill), so
+    changing it is a slot change -> needs_template_reapply TRUE; one slot =
+    6 estimated calls = quick cap -> QUICK = 1 credit. The Photo layer stays
+    the single target (in place, same bounds).
+  vars:
+    userRequest: "The photo slot should use 'contain' instead of 'cover' — re-apply the template with that slot change."
+    doc:
+      template: instagram-post@3
+      canvas: { w: 1080, h: 1080 }
+      layerSummary:
+        - { name: Background, kind: fill, fill: '#F4E7D3', opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812, bounds: [0, 0, 1080, 700] }
+        - { name: Headline, kind: text, size: 88, text: 'Fresh roasted, every morning' }
+        - { name: Subhead, kind: text, size: 36, text: 'Open 7–5 · Main St' }
+      palette: ['#F4E7D3', '#3B2A20', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates: [{ id: instagram-post@3 }]
+      components: []
+      assets: [{ id: asset_812, name: 'latte-hero.jpg', kind: photo }]
+    classification:
+      action: replace_field
+      target_layers: [Photo]
+      args:
+        slot: photo
+        fit: contain                        # §7.2 fit enum value on the slot spec
+      cost_tier: quick                      # 6 estimated calls = quick cap (§5.2)
+      needs_template_reapply: true
+    expected:
+      action: replace_field
+      target_layers: [Photo]
+      cost_tier: quick
+      credits: 1
+      needs_template_reapply: true
+  assert:
+    - type: is-json            # §23.5 classification contract — strict key set
+      validate:
+        type: object
+        required: [action, target_layers, args, cost_tier, needs_template_reapply]
+        additionalProperties: false
+        properties:
+          action: { type: string, minLength: 1, maxLength: 120 }
+          target_layers: { type: array, maxItems: 10, items: { type: string, minLength: 1, maxLength: 200 } }
+          args: { type: object }
+          cost_tier: { enum: [quick, standard, complex] }
+          needs_template_reapply: { type: boolean }
+    - type: javascript          # action match: exactly the replace_field atom (§23.5)
+      value: "return ((a) => a.length === 1 && a.includes('replace_field'))(JSON.parse(output).action.split('+').map((s) => s.trim()).filter(Boolean))"
+    - type: javascript          # target_layers subset: Photo named, nothing invented (§23.5)
+      value: "return ((t) => t.includes('Photo') && t.every((x) => ['Background','Photo','Headline','Subhead'].includes(x)))(JSON.parse(output).target_layers)"
+    - type: javascript          # tier match: §14.1 credits of cost_tier (quick = 1)
+      value: "return ({quick:1, standard:2, complex:5})[JSON.parse(output).cost_tier] === 1"
+    - type: javascript          # needs_template_reapply match — TRUE: slot spec change (§23.5)
+      value: "return JSON.parse(output).needs_template_reapply === true"
+    - type: javascript          # slot pin: the photo slot's fit flips cover -> contain (§7.2)
+      value: "return ((a) => a.slot === 'photo' && a.fit === 'contain')(JSON.parse(output).args)"
