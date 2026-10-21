@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@import "@studio/ui/src/styles/theme.css";
+@source "../../../../packages/ui/src";
+
+/*
+ * Font contract (packages/ui/README.md §2): next/font loads the three faces
+ * in src/app/layout.tsx and exports the --font-* variables below; we map them
+ * onto the design-system stacks. The @fontsource fallback (see apps/web
+ * README.md "Fonts") replaces these three values with direct family names —
+ * same variable names, no other file changes.
+ */
+:root {
+  --font-display-stack: var(--font-instrument-serif), Georgia, serif;
+  --font-sans-stack: var(--font-instrument-sans), system-ui, -apple-system, sans-serif;
+  --font-mono-stack: var(--font-jetbrains-mono), ui-monospace, "SF Mono", monospace;
+}
+
+/*
+ * Skip link (§12): visually hidden until focused, then a real affordance.
+ */
+.skip-link {
+  position: fixed;
+  top: var(--space-12);
+  left: var(--space-12);
+  z-index: 100;
+  transform: translateY(calc(-100% - var(--space-12)));
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/*
+ * Editor viewport construction lines (§8.1 editor section): 1px hairlines on
+ * ink-0 via hard-stop repeating-linear-gradients — these are solid lines, not
+ * a colour gradient wash (§3.1 bans gradient fills; this draws hairlines).
+ */
+.editor-grid {
+  background-image: repeating-linear-gradient(
+      to right,
+      color-mix(in srgb, var(--line-subtle) 60%, transparent) 0,
+      color-mix(in srgb, var(--line-subtle) 60%, transparent) 1px,
+      transparent 1px,
+      transparent 48px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--line-subtle) 60%, transparent) 0,
+      color-mix(in srgb, var(--line-subtle) 60%, transparent) 1px,
+      transparent 1px,
+      transparent 48px
+    );
+}
+
+/* One shared connector line style for the editor callouts (1px, --border-strong). */
+.callout-line {
+  background: var(--border-strong);
+}

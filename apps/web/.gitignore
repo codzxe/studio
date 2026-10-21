@@ -1,0 +1,6 @@
+# Root .gitignore already covers node_modules/, .next/, .env*, logs and
+# *.tsbuildinfo — this file only pins the package-specific entries so the
+# folder can stand alone if copied out.
+.next/
+node_modules/
+.vercel/
