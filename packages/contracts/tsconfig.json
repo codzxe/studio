@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Fleet normalization (W2-Q precedent): no rootDir/outDir; tests/ sit next
+    // to src/ and `tsc --noEmit` is the gate. Base sets NodeNext; relative
+    // imports use the .js extension, which vitest resolves back to .ts.
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}
