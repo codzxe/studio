@@ -7,3 +7,11 @@
 export * from "./ledger.js";
 export * from "./plans.js";
 export * from "./policy.js";
+// limits/ (W9-B: PlanLimitsService seats/sessions/canvas/runs gates + trial
+// rules) — re-exported from the package barrel per W9-B's fleet flag
+// ("billing package owner should re-export limits from src/index.ts").
+// Collision audit at wiring time: none of the limits names (PlanLimitsService,
+// RUN_INTAKE_SCHEMA, TRIAL_*, checkTrial*/isTrial*/trialEligibility,
+// InviteOptions, LimitsSeams, RunIntake*, UploadCeiling) appear in
+// ledger/plans/policy — no disambiguation needed.
+export * from "./limits/index.js";

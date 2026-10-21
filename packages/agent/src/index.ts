@@ -90,6 +90,23 @@ export * from "./run-state/cancellation.js";
 export * from "./brand/index.js";
 export * from "./guards/index.js";
 
+// --- wave-9 additions (W9-P barrel completion; owners: W9-C metering, --------
+// --- W9-D obs kit, W9-E langfuse) ---------------------------------------------
+// metering/: Appendix C cost model (14 rates, micro-USD bigint math), run
+// usage accumulator, daily workspace attribution (§22 cost pipeline);
+// obs/: the zero-dep §22 kit — correlated logger (child bindings + §15.3
+// redaction), tracer (sampling + W3C traceparent), Prometheus text metrics
+// (§22 constructors); obs/langfuse.ts: §22 LLM trace sink (W9-E flagged the
+// missing re-export; the worker deep-imported meanwhile).
+// Collision audit at wiring time (217 wave-9 candidate names vs the 562-name
+// pre-wave-9 surface): exactly ONE clash — RedactionContext (eventbus.ts's
+// §22 delivery-time context vs obs/langfuse.ts's masker context) — resolved
+// in the disambiguation block below. obs/index.ts itself stays untouched
+// (W9-D's collision-checked barrel: logger/tracer/metrics have no clashes).
+export * from "./metering/index.js";
+export * from "./obs/index.js";
+export * from "./obs/langfuse.js";
+
 // --- star-export collision disambiguation (explicit beats star) ----------------
 // (1) RUN_PHASES / RunPhase — state.ts's §5.1 phases stay canonical:
 export { RUN_PHASES, type RunPhase } from "./state.js";
@@ -106,3 +123,10 @@ export type { CritiqueIssue as CriticIssue } from "./critic/service.js";
 export type { AbortSignalLike } from "./planner/planner.js";
 // ...and run-state/cancellation.ts's cooperative-cancel shape rides aliased:
 export type { AbortSignalLike as RunAbortSignalLike } from "./run-state/cancellation.js";
+// (4) RedactionContext — eventbus.ts's §22 delivery-time context (W2-P core,
+// organizationId+runId, already public) stays canonical:
+export type { RedactionContext } from "./eventbus.js";
+// ...and obs/langfuse.ts's masking context (kind+runId+optedIn, W9-E) rides
+// aliased as LangfuseRedactionContext (no external importer of either name
+// at wiring time — verified by grep across the repo):
+export type { RedactionContext as LangfuseRedactionContext } from "./obs/langfuse.js";

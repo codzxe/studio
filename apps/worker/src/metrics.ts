@@ -120,7 +120,7 @@ class LabeledSamples {
 
   renderLines(name: string, help: string): string[] {
     const lines = [`# HELP ${name} ${help}`, `# TYPE ${name} counter`];
-    const rows = Array.from(this.rows.entries()).sort(([a], [b]) => (a < b ? -1 : a === b ? 0 : 1));
+    const rows = Array.from(this.rows.entries()).sort(([a], [b]) => a.localeCompare(b));
     for (const [rendered, row] of rows) {
       lines.push(
         rendered.length > 0

@@ -56,6 +56,13 @@ describe("W6-P barrel: curated public surface resolves", () => {
       "CancellationCoordinator",
       "BrandTokensService", // W7-F brand tokens (§7.5)
       "ToolCallGate", // W6-K §5.7 gate (wired by W7-M)
+      "MeteringError", // W9-C money-path typed error (wired by W9-P)
+      "RunUsage", // W9-C run usage accumulator
+      "StepUsage", // W9-C step scope accumulator
+      "ObsMetricError", // W9-D metrics validation error
+      "LoggerSetupError", // W9-D logger seam error
+      "TracerSetupError", // W9-D tracer seam error
+      "LangfuseTraceSink", // W9-E §22 LLM trace sink
     ];
     for (const name of classes) {
       expect(typeof agent[name as keyof typeof agent], name).toBe("function");
@@ -120,6 +127,34 @@ describe("W6-P barrel: curated public surface resolves", () => {
       "mutatingCommandCapFromTier", // W6-K §5.7/§5.2 tier cap
       "buildStyleGuidePayload", // W7-F §5.4 style-guide block
       "normalizeHex",
+      "computeCost", // W9-C Appendix C cost (wired by W9-P)
+      "imageCost", // W9-C §5.2 image COGS + credits
+      "resolveModelRates", // W9-C MODEL_RATES_JSON override (fail-fast)
+      "parseModelRatesEnv",
+      "hasModelRate",
+      "microToSafeNumber", // W9-C bigint → safe number
+      "margin", // W9-C §0 60–75% COGS band
+      "utcDayOf", // W9-C daily attribution
+      "attributeDailyCosts",
+      "createObsLogger", // W9-D correlated logger
+      "redactDeep", // W9-D §15.3 redaction
+      "correlationFields",
+      "resolveLogLevel",
+      "createTracer", // W9-D sampling + traceparent kit
+      "createNoopTracer",
+      "samplingRatesFromEnv",
+      "createSamplingPolicy",
+      "formatTraceparent",
+      "parseTraceparent",
+      "injectTraceparent",
+      "extractTraceparent",
+      "createObsMetricRegistry", // W9-D Prometheus text registry
+      "createObsMetrics", // W9-D §22 metric set
+      "isRunSampled", // W9-E deterministic run sampling
+      "formatPromptVersion",
+      "defaultPromptMasker",
+      "noopLangfuse",
+      "readLangfuseEnv",
     ];
     for (const name of functions) {
       expect(typeof agent[name as keyof typeof agent], name).toBe("function");
@@ -161,6 +196,21 @@ describe("W6-P barrel: curated public surface resolves", () => {
       ["USER_CONTENT_MAX_CHARS", "object"],
       ["DEFAULT_MUTATING_TOOLS", "object"], // W6-K §6 mutating set
       ["GATE_DEFAULT_ARG_CAPS", "object"],
+      ["MODEL_RATES", "object"], // W9-C 14 Appendix C rates (wired by W9-P)
+      ["GROSS_MARGIN_TARGET", "object"], // W9-C §0 margin band
+      ["CACHE_READ_PRICE_NUMERATOR", "bigint"], // W9-C cache-read 10%
+      ["CACHE_READ_PRICE_DENOMINATOR", "bigint"],
+      ["CREDIT_LIST_USD", "number"], // W9-C 1 credit = $0.10
+      ["REDACTED_MARKER", "string"], // W9-D §15.3 fail-closed marker
+      ["LOG_LEVELS", "object"],
+      ["TRACEPARENT_HEADER", "string"], // W9-D W3C propagation
+      ["SAMPLED_FLAG", "number"],
+      ["RENDER_CONTENT_TYPE", "string"], // W9-D Prometheus text 0.0.4
+      ["RUN_DURATION_SECONDS_BUCKETS", "object"], // W9-D §22 histogram
+      ["STEPS_PER_RUN_BUCKETS", "object"],
+      ["NOOP_LANGFUSE", "object"], // W9-E noop client
+      ["DEFAULT_TRACE_SUCCESS_SAMPLE_RATE", "number"], // W9-E 10% default
+      ["PROMPT_REDACTED", "string"], // W9-E masking token
     ];
     for (const [name, kind] of consts) {
       expect(typeof agent[name as keyof typeof agent], name).toBe(kind);
@@ -235,6 +285,20 @@ describe("W6-P barrel: star-export collisions resolve as documented", () => {
       "prompt_injection_suspected",
       "invalid_transition",
     ]);
+  });
+
+  it("wave-9 RedactionContext: eventbus keeps the canonical name; langfuse rides aliased", () => {
+    // W9-P wiring: eventbus.ts's §22 delivery-time context (organizationId+
+    // runId, public since W2-P) stays `RedactionContext`; obs/langfuse.ts's
+    // masking context (kind+runId+optedIn) rides as LangfuseRedactionContext.
+    expectTypeOf<agent.RedactionContext>().toEqualTypeOf<
+      import("../src/eventbus.js").RedactionContext
+    >();
+    expectTypeOf<agent.LangfuseRedactionContext>().toEqualTypeOf<
+      import("../src/obs/langfuse.js").RedactionContext
+    >();
+    // Prove the alias did not silently collapse onto the canonical shape.
+    expectTypeOf<agent.LangfuseRedactionContext>().not.toEqualTypeOf<agent.RedactionContext>();
   });
 
   it("cross-module invariants survive the merge", () => {
