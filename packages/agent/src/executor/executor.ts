@@ -34,19 +34,19 @@
 import { type RunTierId, resolveTierConfig } from "@studio/config";
 import {
   type AnyTool,
-  err as buildToolErr,
   type ToolContext,
   type ToolErrorCode,
   type ToolListing,
   type ToolResult,
+  err as buildToolErr,
   parseToolArgs,
   toToolErr,
 } from "@studio/tools";
 import { z } from "zod";
-import { type BudgetExceeded, BudgetTracker, type BudgetSnapshot, type Clock } from "../budgets.js";
-import { type StepFinishedPayload, type StepStartedPayload } from "../events.js";
-import { type Plan, type PlanStep } from "../plan.js";
-import { type RunPhase } from "../state.js";
+import type { BudgetExceeded, BudgetSnapshot, BudgetTracker, Clock } from "../budgets.js";
+import type { StepFinishedPayload, StepStartedPayload } from "../events.js";
+import type { Plan, PlanStep } from "../plan.js";
+import type { RunPhase } from "../state.js";
 import { buildExecutorSystemPrompt } from "./prompt.js";
 
 // ---------------------------------------------------------------------------
@@ -110,7 +110,12 @@ export type ExecutorMessage =
       readonly text: string;
       readonly toolCalls?: readonly ProposedToolCall[];
     }
-  | { readonly role: "tool"; readonly callId: string; readonly name: string; readonly result: ToolResult };
+  | {
+      readonly role: "tool";
+      readonly callId: string;
+      readonly name: string;
+      readonly result: ToolResult;
+    };
 
 /**
  * The append-only conversation. The seam MUST re-read `messages()` before each
@@ -141,7 +146,12 @@ export interface ExecutorModelUsage {
 export type ExecutorEvent =
   | { readonly type: "turn_started" }
   | { readonly type: "text"; readonly text: string }
-  | { readonly type: "tool_call"; readonly callId: string; readonly name: string; readonly args: unknown }
+  | {
+      readonly type: "tool_call";
+      readonly callId: string;
+      readonly name: string;
+      readonly args: unknown;
+    }
   | { readonly type: "usage"; readonly usage: ExecutorModelUsage }
   | { readonly type: "step_done"; readonly text?: string };
 
@@ -389,7 +399,9 @@ export class ExecutorService {
       typeof tools !== "object" ||
       Object.keys(tools).some((name) => typeof tools[name]?.run !== "function")
     ) {
-      throw new Error("[agent/executor] options.tools must be a non-empty name→tool map (§6 registry)");
+      throw new Error(
+        "[agent/executor] options.tools must be a non-empty name→tool map (§6 registry)",
+      );
     }
     if (
       !Array.isArray(options.manifest) ||
@@ -417,8 +429,7 @@ export class ExecutorService {
     // Fail fast on wiring nonsense (mirrors BudgetTracker's zod boundary).
     this.limits = EXECUTOR_LIMITS_SCHEMA.parse({
       maxRoundTrips: options.limits?.maxRoundTrips ?? EXECUTOR_DEFAULT_MAX_ROUND_TRIPS,
-      toolCallTimeoutMs:
-        options.limits?.toolCallTimeoutMs ?? EXECUTOR_DEFAULT_TOOL_CALL_TIMEOUT_MS,
+      toolCallTimeoutMs: options.limits?.toolCallTimeoutMs ?? EXECUTOR_DEFAULT_TOOL_CALL_TIMEOUT_MS,
     });
   }
 
@@ -703,15 +714,15 @@ export class ExecutorService {
 
       transcript.append({
         role: "user",
-        text:
-          `Plan step ${stepSeq + 1} of ${plan.steps.length}: call the "${step.tool}" tool now. ` +
-          `Planned arguments (JSON, adapt to the current document): ${JSON.stringify(step.args)}. ` +
-          "Finish the turn when the step is done.",
+        text: `Plan step ${stepSeq + 1} of ${plan.steps.length}: call the "${step.tool}" tool now. Planned arguments (JSON, adapt to the current document): ${JSON.stringify(step.args)}. Finish the turn when the step is done.`,
       });
 
-      const stepState = { succeededTools: [] as string[], plannedToolSucceeded: false, deviated: false };
+      const stepState = {
+        succeededTools: [] as string[],
+        plannedToolSucceeded: false,
+        deviated: false,
+      };
       let countedFirstTurn = false;
-      let stepEnded = false;
 
       const stream = this.model.streamToolLoop(
         system,
@@ -768,7 +779,6 @@ export class ExecutorService {
             transcript.append({ role: "assistant", text: event.text });
             finalAssistantText = event.text; // §23.1 rule 8 closing paragraph
           }
-          stepEnded = true;
           break;
         }
       }

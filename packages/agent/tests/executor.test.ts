@@ -10,45 +10,45 @@
 // land in the transcript BETWEEN the fake's yields — exactly how the worker's
 // AI-SDK loop will observe them.
 import {
-  type BudgetTracker as ToolBudgetTracker,
-  defineTool,
-  err as toolErr,
-  ok as toolOk,
   type AnyTool,
   type AssetStoreLike,
   type DbLike,
   type EngineFailure,
   type EngineLike,
   type TemplateCatalogLike,
+  type BudgetTracker as ToolBudgetTracker,
   type ToolContext,
   type ToolListing,
   type ToolLogger,
   type ToolResult,
+  defineTool,
+  err as toolErr,
+  ok as toolOk,
 } from "@studio/tools";
-import { z } from "zod";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { BudgetTracker, type Clock } from "../src/budgets.js";
 import {
-  canonicalCallKey,
-  type EmitExecutorStepEvent,
   EXECUTOR_DEFAULT_MAX_ROUND_TRIPS,
   EXECUTOR_DEFAULT_TOOL_CALL_TIMEOUT_MS,
+  type EmitExecutorStepEvent,
   type ExecuteInput,
   type ExecuteModelLike,
-  ExecutorService,
   type ExecutorBudgetView,
   type ExecutorEvent,
   type ExecutorLimits,
   type ExecutorMessage,
-  type ExecutorStepEvent,
-  executorLimitsFromTier,
+  ExecutorService,
   type ExecutorStatus,
+  type ExecutorStepEvent,
   TOOL_RETRY_EXHAUSTED_FEEDBACK_CODE,
+  canonicalCallKey,
+  executorLimitsFromTier,
 } from "../src/executor/index.js";
 import {
-  buildExecutorSystemPrompt,
   EXECUTOR_SYSTEM_PROMPT_TEMPLATE,
   TOOLS_BLOCK_HEADER,
+  buildExecutorSystemPrompt,
 } from "../src/executor/prompt.js";
 import { type Plan, validatePlan } from "../src/plan.js";
 
@@ -270,7 +270,10 @@ function scriptedModel(
         }
         if (scripted.done !== undefined) {
           snap();
-          yield { type: "step_done", text: typeof scripted.done === "string" ? scripted.done : undefined };
+          yield {
+            type: "step_done",
+            text: typeof scripted.done === "string" ? scripted.done : undefined,
+          };
           return;
         }
       }
@@ -399,7 +402,9 @@ describe("prompt: §23.1 executor system prompt (verbatim)", () => {
       .split("{max_tokens}")
       .join("85000");
     expect(prompt.startsWith(expectedBody)).toBe(true);
-    expect(prompt).toContain("6. Stay inside your budget: 12 tool calls, 2 revisions,\n85000 tokens.");
+    expect(prompt).toContain(
+      "6. Stay inside your budget: 12 tool calls, 2 revisions,\n85000 tokens.",
+    );
     // 10 non-negotiable rules + the output protocol note are all present, in order.
     expect(prompt).toContain("Non-negotiable rules:");
     expect(prompt).toContain("1. Inspect before you edit.");
@@ -414,17 +419,19 @@ describe("prompt: §23.1 executor system prompt (verbatim)", () => {
       maxTokens: 85_000,
       toolsManifest: manifest,
     });
-    expect(prompt).toContain(`${TOOLS_BLOCK_HEADER}\n- workspace_snapshot — One-call context: canvas, layers, slots.`);
-    expect(prompt.endsWith("- text_set — Create or rewrite editable text (fits to box).")).toBe(true);
+    expect(prompt).toContain(
+      `${TOOLS_BLOCK_HEADER}\n- workspace_snapshot — One-call context: canvas, layers, slots.`,
+    );
+    expect(prompt.endsWith("- text_set — Create or rewrite editable text (fits to box).")).toBe(
+      true,
+    );
   });
 
   it("is byte-stable per input and changes with the numbers (§5.3 cache anchor)", () => {
     const input = { maxToolCalls: 6, maxRevisions: 1, maxTokens: 20_000, toolsManifest: manifest };
     const again = buildExecutorSystemPrompt(input);
     expect(buildExecutorSystemPrompt(input)).toBe(again);
-    expect(again).not.toBe(
-      buildExecutorSystemPrompt({ ...input, maxToolCalls: 24 }),
-    );
+    expect(again).not.toBe(buildExecutorSystemPrompt({ ...input, maxToolCalls: 24 }));
   });
 
   it("omits the tools block for an empty manifest and rejects nonsense inputs (zod boundary)", () => {
@@ -476,15 +483,22 @@ describe("executor service: construction gates (wiring bugs fail fast)", () => {
   const { model } = scriptedModel([]);
 
   it("requires every seam", () => {
-    expect(() => new ExecutorService({
-      model: { streamToolLoop: undefined } as unknown as ExecuteModelLike,
-      tools: defaultFakeTools(),
-      manifest: [{ name: "text_set", description: "Set text." }],
-      toolContext: fakeContext(),
-      emit: () => {},
-    })).toThrow();
+    expect(
+      () =>
+        new ExecutorService({
+          model: { streamToolLoop: undefined } as unknown as ExecuteModelLike,
+          tools: defaultFakeTools(),
+          manifest: [{ name: "text_set", description: "Set text." }],
+          toolContext: fakeContext(),
+          emit: () => {},
+        }),
+    ).toThrow();
     expect(() => makeService(model, { tools: {} })).toThrow(/non-empty/);
-    expect(() => makeService(model, { tools: { ...defaultFakeTools(), ghost: undefined as unknown as AnyTool } })).toThrow();
+    expect(() =>
+      makeService(model, {
+        tools: { ...defaultFakeTools(), ghost: undefined as unknown as AnyTool },
+      }),
+    ).toThrow();
   });
 
   it("requires a non-empty manifest, an emit function, and sane limits (zod)", () => {
@@ -520,7 +534,11 @@ describe("executor service: construction gates (wiring bugs fail fast)", () => {
 
 describe("executor: happy plan walk (§5.1 small steps)", () => {
   it("walks every step, executes each planned tool, emits step.started/finished, reports usage", async () => {
-    const plan = makePlan([{ tool: "template_apply" }, { tool: "template_fill" }, { tool: "render_preview" }]);
+    const plan = makePlan([
+      { tool: "template_apply" },
+      { tool: "template_fill" },
+      { tool: "render_preview" },
+    ]);
     const { model, state } = scriptedModel([
       {
         usage: { tokensIn: 100, tokensOut: 20, cacheHits: 1 },
@@ -542,7 +560,9 @@ describe("executor: happy plan walk (§5.1 small steps)", () => {
       "template_fill",
       "render_preview",
     ]);
-    expect(report.steps.every((step) => step.ok && step.plannedToolSucceeded && !step.deviationFromPlan)).toBe(true);
+    expect(
+      report.steps.every((step) => step.ok && step.plannedToolSucceeded && !step.deviationFromPlan),
+    ).toBe(true);
     expect(report.deviations).toEqual([]);
     expect(report.roundTripsUsed).toBe(3);
     expect(report.maxRoundTrips).toBe(8);
@@ -599,7 +619,9 @@ describe("executor: happy plan walk (§5.1 small steps)", () => {
 
   it("labels step events with the repairing phase when the repair driver reuses the executor", async () => {
     const plan = makePlan([{ tool: "text_set", args: { size: 40 } }]);
-    const { model } = scriptedModel([{ calls: [{ name: "text_set", args: { size: 40 } }], done: true }]);
+    const { model } = scriptedModel([
+      { calls: [{ name: "text_set", args: { size: 40 } }], done: true },
+    ]);
     const { service, events } = makeService(model);
     const report = await service.execute(
       makeInput(plan, makeBudget(), "repairing"),
@@ -624,7 +646,10 @@ describe("executor: unknown tools are skipped + logged (§5.7)", () => {
       },
     ]);
     const { service, events } = makeService(model);
-    const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
 
     // The unknown call was NOT executed (no §5.2 tool-call charge), only logged.
     expect(report.toolCallsExecuted).toBe(1);
@@ -671,7 +696,10 @@ describe("executor: planned-vs-actual deviation detection (§5.5)", () => {
       },
     ]);
     const { service, events } = makeService(model);
-    const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
 
     expect(report.status).toBe("completed");
     expect(report.steps[0]?.succeededTools).toEqual(["workspace_snapshot", "text_set"]);
@@ -683,7 +711,8 @@ describe("executor: planned-vs-actual deviation detection (§5.5)", () => {
         kind: "plan_mismatch",
         plannedTool: "text_set",
         actualTool: "workspace_snapshot",
-        detail: 'Planned "text_set" but the model called "workspace_snapshot" (§5.5: deviations only to fix errors)',
+        detail:
+          'Planned "text_set" but the model called "workspace_snapshot" (§5.5: deviations only to fix errors)',
       },
     ]);
     const finished = events.find((event) => event.type === "step.finished");
@@ -704,7 +733,10 @@ describe("executor: no identical failed call twice (§23.1 rule 7)", () => {
       { calls: [{ name: "text_set", args: { size: 72 } }], done: true }, // fixed → ok
     ]);
     const { service } = makeService(model);
-    const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
 
     expect(report.status).toBe("completed");
     expect(report.steps[0]?.succeededTools).toEqual(["text_set"]);
@@ -720,11 +752,17 @@ describe("executor: no identical failed call twice (§23.1 rule 7)", () => {
         detail: 'Identical failed call "text_set" refused (§23.1 rule 7)',
       },
     ]);
-    expect(toolResultCodes(state.snapshots.slice(-1))).toEqual(["text_overflow", "invalid_args", "ok"]);
+    expect(toolResultCodes(state.snapshots.slice(-1))).toEqual([
+      "text_overflow",
+      "invalid_args",
+      "ok",
+    ]);
   });
 
   it("canonicalCallKey: sorted keys make failed-call identity order-insensitive", () => {
-    expect(canonicalCallKey("text_set", { b: 2, a: 1 })).toBe(canonicalCallKey("text_set", { a: 1, b: 2 }));
+    expect(canonicalCallKey("text_set", { b: 2, a: 1 })).toBe(
+      canonicalCallKey("text_set", { a: 1, b: 2 }),
+    );
     expect(canonicalCallKey("text_set", { a: 1 })).not.toBe(canonicalCallKey("text_set", { a: 2 }));
     expect(canonicalCallKey("text_set", [1, 2])).not.toBe(canonicalCallKey("text_set", [2, 1]));
     expect(canonicalCallKey("a", {})).not.toBe(canonicalCallKey("b", {}));
@@ -738,7 +776,10 @@ describe("executor: no identical failed call twice (§23.1 rule 7)", () => {
       { calls: [{ name: "text_set", args: { size: 72 } }], done: true }, // fixed → ok
     ]);
     const { service } = makeService(model);
-    const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
 
     expect(report.steps[1]?.ok).toBe(true);
     expect(report.deviations.map((deviation) => deviation.kind)).toEqual(["repeated_failed_call"]);
@@ -818,7 +859,10 @@ describe("executor: retry budget is exactly one per tool error (§6.3, §23.1 ru
       const plan = makePlan(testCase.plan);
       const { model, state } = scriptedModel(testCase.turns);
       const { service } = makeService(model);
-      const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+      const report = await service.execute(
+        makeInput(plan, makeBudget()),
+        new AbortController().signal,
+      );
 
       expect(report.status).toBe("completed"); // tool errors are feedback, never a stop
       expect(report.toolCallsExecuted).toBe(testCase.executed);
@@ -840,13 +884,18 @@ describe("executor: retry budget is exactly one per tool error (§6.3, §23.1 ru
       { calls: [{ name: "text_set", args: { size: 60 } }], done: true },
     ]);
     const { service } = makeService(model);
-    const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
 
     expect(report.toolCallsExecuted).toBe(3); // 2 in step 0 + 1 in step 1
     expect(report.steps[0]?.ok).toBe(false);
     expect(report.steps[1]?.ok).toBe(true);
     expect(report.steps[1]?.plannedToolSucceeded).toBe(true);
-    expect(report.deviations.map((deviation) => deviation.kind)).toEqual(["retry_budget_exhausted"]);
+    expect(report.deviations.map((deviation) => deviation.kind)).toEqual([
+      "retry_budget_exhausted",
+    ]);
   });
 
   it("exposes the retry-exhausted swap-point code for the catalog owner to flip", () => {
@@ -860,7 +909,11 @@ describe("executor: retry budget is exactly one per tool error (§6.3, §23.1 ru
 
 describe("executor: §5.2 budget stops are clean stops (feature, not error)", () => {
   it("stops between steps when the tool-call cap is spent and reports what was cut", async () => {
-    const plan = makePlan([{ tool: "template_apply" }, { tool: "template_fill" }, { tool: "render_preview" }]);
+    const plan = makePlan([
+      { tool: "template_apply" },
+      { tool: "template_fill" },
+      { tool: "render_preview" },
+    ]);
     const { model, state } = scriptedModel([
       { calls: [{ name: "template_apply" }], done: true },
       { calls: [{ name: "template_fill" }], done: true },
@@ -895,7 +948,10 @@ describe("executor: §5.2 budget stops are clean stops (feature, not error)", ()
   it("stops mid-step on the between-calls budget check and reports the in-flight step", async () => {
     const plan = makePlan([{ tool: "template_apply" }]);
     const { model } = scriptedModel([
-      { calls: [{ name: "template_apply" }, { name: "template_apply" }, { name: "template_apply" }], done: true },
+      {
+        calls: [{ name: "template_apply" }, { name: "template_apply" }, { name: "template_apply" }],
+        done: true,
+      },
     ]);
     const { service, events } = makeService(model);
     const budget = makeBudget({ toolCallCap: 2 });
@@ -938,7 +994,10 @@ describe("executor: max 8 model↔tool round trips per phase (§5.1)", () => {
     const { model, state } = scriptedModel(turns);
     const { service } = makeService(model, { tools });
 
-    const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
 
     expect(report.status).toBe("round_trip_stopped");
     expect(report.roundTripsUsed).toBe(8);
@@ -965,14 +1024,21 @@ describe("executor: max 8 model↔tool round trips per phase (§5.1)", () => {
     ]);
     const { service, events } = makeService(model, { limits: { maxRoundTrips: 2 } });
 
-    const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
 
     expect(report.status).toBe("round_trip_stopped");
     expect(report.roundTripsUsed).toBe(2);
     expect(report.toolCallsExecuted).toBe(2);
     expect(report.steps).toHaveLength(1);
     expect(report.steps[0]?.ok).toBe(true);
-    expect(report.cut).toMatchObject({ inFlightStep: 0, completedSteps: 0, cutStepTools: ["template_fill"] });
+    expect(report.cut).toMatchObject({
+      inFlightStep: 0,
+      completedSteps: 0,
+      cutStepTools: ["template_fill"],
+    });
     expect(events.map((event) => event.type)).toEqual(["step.started", "step.finished"]);
   });
 
@@ -985,7 +1051,10 @@ describe("executor: max 8 model↔tool round trips per phase (§5.1)", () => {
       { omitTurnStarted: true },
     );
     const { service } = makeService(model);
-    const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
     expect(report.roundTripsUsed).toBe(1);
     expect(report.toolCallsExecuted).toBe(2);
   });
@@ -1072,7 +1141,10 @@ describe("executor: §3.4 per-call deadline becomes a retryable tool error", () 
     ]);
     const { service } = makeService(model, { tools, limits: { toolCallTimeoutMs: 5 } });
 
-    const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
 
     expect(report.status).toBe("completed"); // §23.1 rule 7: a tool error is feedback, not a stop
     expect(report.toolCallsExecuted).toBe(1);
@@ -1101,7 +1173,10 @@ describe("executor: §3.4 per-call deadline becomes a retryable tool error", () 
     });
     const { model } = scriptedModel([{ calls: [{ name: "template_apply" }], done: true }]);
     const { service } = makeService(model, { tools, limits: { toolCallTimeoutMs: 5000 } });
-    const report = await service.execute(makeInput(plan, makeBudget()), new AbortController().signal);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
     expect(report.status).toBe("completed");
     expect(report.steps[0]?.ok).toBe(true);
   });

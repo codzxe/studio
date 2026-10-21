@@ -37,7 +37,9 @@ const promptInputSchema = z.strictObject({
   maxRevisions: z.number().int().min(0),
   maxTokens: z.number().int().min(0),
   toolsManifest: z
-    .array(z.strictObject({ name: z.string().min(1).max(64), description: z.string().min(1).max(500) }))
+    .array(
+      z.strictObject({ name: z.string().min(1).max(64), description: z.string().min(1).max(500) }),
+    )
     .max(64),
 });
 
