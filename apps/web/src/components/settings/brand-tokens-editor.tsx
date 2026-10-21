@@ -549,8 +549,8 @@ function BrandPreviewCard({
           </span>
         ) : (
           // Signed asset URLs are one-off (§15.1) and expire in ≤ 15 min — a
-          // plain <img> keeps the preview simple; next/image gains nothing.
-          // biome-ignore lint/security/noImgElement: one-off signed asset preview
+          // plain <img> keeps the preview simple (asset-card.tsx precedent);
+          // next/image gains nothing for a single short-lived URL.
           <img src={logoUrl} alt="" className="size-10 rounded-md object-contain" />
         )}
         <span

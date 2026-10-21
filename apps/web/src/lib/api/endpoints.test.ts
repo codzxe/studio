@@ -49,13 +49,9 @@ describe("fixed endpoint paths (pinned to apps/gateway/src/openapi.ts)", () => {
     expect(endpoints.workspaces.list).toBe("/workspaces");
     expect(endpoints.workspaces.detail("ws_1")).toBe("/workspaces/ws_1");
     expect(endpoints.workspaces.members("ws_1")).toBe("/workspaces/ws_1/members");
-    expect(endpoints.workspaces.member("ws_1", "user_2")).toBe(
-      "/workspaces/ws_1/members/user_2",
-    );
+    expect(endpoints.workspaces.member("ws_1", "user_2")).toBe("/workspaces/ws_1/members/user_2");
     expect(endpoints.workspaces.invites("ws_1")).toBe("/workspaces/ws_1/invites");
-    expect(endpoints.workspaces.invite("ws_1", "inv_3")).toBe(
-      "/workspaces/ws_1/invites/inv_3",
-    );
+    expect(endpoints.workspaces.invite("ws_1", "inv_3")).toBe("/workspaces/ws_1/invites/inv_3");
     expect(endpoints.workspaces.inviteByToken("tok_9")).toBe("/invites/tok_9");
     expect(endpoints.workspaces.acceptInvite("tok_9")).toBe("/invites/tok_9/accept");
   });

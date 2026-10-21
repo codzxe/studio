@@ -7,7 +7,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CHECKLIST_STEPS,
   type ChecklistStepMeta,
@@ -71,7 +71,10 @@ export function FirstSuccessChecklist({
   dismissible = false,
   className = "",
 }: FirstSuccessChecklistProps) {
-  const store = storage !== undefined ? storage : getBrowserStorage();
+  const store = useMemo<SafeStorage | null>(
+    () => (storage !== undefined ? storage : getBrowserStorage()),
+    [storage],
+  );
   const {
     steps: completed,
     progress,
@@ -87,11 +90,15 @@ export function FirstSuccessChecklist({
   useEffect(() => {
     celebratedRef.current = onCelebrated;
   }, [onCelebrated]);
+  const celebratedThisMountRef = useRef(false);
 
   // Celebration fires exactly once per browser profile; after that the card
-  // stays out of the way.
+  // stays out of the way. The mount-local guard keeps React StrictMode's
+  // double effect pass from hiding the party immediately after showing it.
   useEffect(() => {
     if (!complete) return;
+    if (celebratedThisMountRef.current) return;
+    celebratedThisMountRef.current = true;
     if (readCelebratedAt(store) !== null) {
       setView("hidden");
       return;
@@ -254,7 +261,7 @@ export function FirstSuccessChecklist({
                     {meta.title}
                   </p>
                   <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{detail}</p>
-                  {failed ? (
+                  {failed && trialGrantFailure ? (
                     <p className="mt-0.5 text-xs text-zinc-400 dark:text-zinc-500">
                       {trialGrantFailure.hint}
                     </p>

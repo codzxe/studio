@@ -287,7 +287,7 @@ describe("SseParser chunk parsing", () => {
 
 describe("readSseStream", () => {
   it("reassembles a run-event JSON payload split across five chunks", async () => {
-    const messages = [];
+    const messages: SseMessage[] = [];
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         const encoder = new TextEncoder();
@@ -350,7 +350,7 @@ describe("RunEventStream resume + dedupe", () => {
     const { fetch, calls } = queuedFetch([
       sseResponse([
         runEventBlock(1, "run.queued", { tier: "standard" }),
-        runEventBlock(3, "run.plan", { plan: { intent: "create_post" } }), // gap at 2
+        runEventBlock(3, "run.plan", { plan: { intent: "create_post", template: null } }), // gap at 2
       ]),
       sseResponse([
         runEventBlock(1, "run.queued", { tier: "standard" }), // replay — dropped (≤ 3)
@@ -379,7 +379,7 @@ describe("RunEventStream resume + dedupe", () => {
     const { fetch, calls } = queuedFetch([
       sseResponse([
         runEventBlock(1, "run.queued", { tier: "standard" }, { id: "evt-1" }),
-        runEventBlock(2, "run.plan", { plan: { intent: "create_post" } }, { id: "evt-2" }),
+        runEventBlock(2, "run.plan", { plan: { intent: "create_post", template: null } }, { id: "evt-2" }),
       ]),
       sseResponse([
         runEventBlock(3, "run.succeeded", { revisionAfter: 1, warnings: [] }),

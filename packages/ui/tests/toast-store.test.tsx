@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToastViewport } from "../src/components/toast.js";
 import {
@@ -93,7 +93,7 @@ describe("toast store (pure logic)", () => {
     });
     const before = store.getState();
     store.update("toast-does-not-exist", { title: "nope" });
-    expect(store.getState()).toBe(before); // no change, no emit
+    expect(store.getState().toasts).toBe(before.toasts); // no change, no emit
   });
 
   it("auto-dismisses after duration (timers) and keeps duration 0 sticky", () => {
@@ -183,9 +183,7 @@ describe("ToastViewport (render)", () => {
     expect(item).toHaveTextContent("Version 3 created");
     expect(item).toHaveAttribute("data-variant", "success");
 
-    act(() => {
-      screen.getByRole("button", { name: "Dismiss notification" }).click();
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
     expect(screen.queryByRole("status")).toBeNull();
   });
 

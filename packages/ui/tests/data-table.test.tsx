@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { EmptyState } from "../src/components/empty-state.js";
 import {
@@ -123,7 +123,7 @@ describe("DataTable (render)", () => {
     const nameHeader = screen.getByRole("columnheader", { name: "Document" });
     expect(nameHeader).toHaveAttribute("aria-sort", "none");
 
-    screen.getByRole("button", { name: "Document" }).click();
+    fireEvent.click(screen.getByRole("button", { name: "Document" }));
     expect(nameHeader).toHaveAttribute("aria-sort", "ascending");
     expect(cellTexts().map((line) => line.split("|")[0])).toEqual([
       "Banner set",
@@ -133,7 +133,7 @@ describe("DataTable (render)", () => {
       "Thumb A/B",
     ]);
 
-    screen.getByRole("button", { name: "Document" }).click();
+    fireEvent.click(screen.getByRole("button", { name: "Document" }));
     expect(nameHeader).toHaveAttribute("aria-sort", "descending");
     expect(cellTexts().map((line) => line.split("|")[0])).toEqual([
       "Thumb A/B",
@@ -152,7 +152,7 @@ describe("DataTable (render)", () => {
       "aria-sort",
       "descending",
     );
-    screen.getByRole("button", { name: "Credits" }).click();
+    fireEvent.click(screen.getByRole("button", { name: "Credits" }));
     expect(onSortChange).toHaveBeenCalledWith({ columnId: "credits", direction: "asc" });
   });
 
@@ -165,17 +165,17 @@ describe("DataTable (render)", () => {
     expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
     expect(cellTexts()).toHaveLength(2);
 
-    screen.getByRole("button", { name: "Next page" }).click();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(screen.getByText("Page 2 of 3")).toBeDefined();
     expect(cellTexts().map((line) => line.split("|")[0])).toEqual(["Menu redo", "Deck cover"]);
 
-    screen.getByRole("button", { name: "Next page" }).click();
-    screen.getByRole("button", { name: "Next page" }).click(); // clamped at last page
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next page" })); // clamped at last page
     expect(screen.getByText("Page 3 of 3")).toBeDefined();
     expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Previous page" })).not.toBeDisabled();
 
-    screen.getByRole("button", { name: "Previous page" }).click();
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
     expect(screen.getByText("Page 2 of 3")).toBeDefined();
   });
 
@@ -191,7 +191,7 @@ describe("DataTable (render)", () => {
       />,
     );
     expect(screen.getByText("Page 3 of 3")).toBeDefined();
-    screen.getByRole("button", { name: "Previous page" }).click();
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
     expect(onPageIndexChange).toHaveBeenCalledWith(1);
   });
 

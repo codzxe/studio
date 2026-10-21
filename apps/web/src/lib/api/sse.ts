@@ -8,7 +8,7 @@
 // at module-evaluation time), which ESM, webpack and Vitest all handle.
 
 import { z } from "zod";
-import { ApiError, isApiError, readJsonBody, toApiError, type FetchLike } from "./client";
+import { ApiError, type FetchLike, isApiError, readJsonBody, toApiError } from "./client";
 
 // ---------------------------------------------------------------------------
 // SSE — WHATWG parsing core (pure; unit-tested in tests/api.test.ts)

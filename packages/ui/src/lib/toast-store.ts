@@ -76,6 +76,10 @@ function toInput(content: ToastContent): ToastInput {
  */
 export function createToastStore(now: () => number = Date.now): ToastStore {
   let toasts: readonly Toast[] = [];
+  // getSnapshot MUST be referentially stable between mutations — useSyncExternalStore
+  // re-renders (and with a fresh object would loop forever). We keep one cached
+  // snapshot object and swap it only when `toasts` changes.
+  let snapshot: ToastSnapshot = { toasts };
   const listeners = new Set<() => void>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -85,7 +89,14 @@ export function createToastStore(now: () => number = Date.now): ToastStore {
     }
   };
 
-  const getState = (): ToastSnapshot => ({ toasts });
+  const commit = (next: readonly Toast[]): void => {
+    if (next === toasts) return;
+    toasts = next;
+    snapshot = { toasts: next };
+    emit();
+  };
+
+  const getState = (): ToastSnapshot => snapshot;
 
   const subscribe = (listener: () => void): (() => void) => {
     listeners.add(listener);
@@ -102,8 +113,7 @@ export function createToastStore(now: () => number = Date.now): ToastStore {
     }
     const next = toasts.filter((toast) => toast.id !== id);
     if (next.length !== toasts.length) {
-      toasts = next;
-      emit();
+      commit(next);
     }
   };
 
@@ -113,8 +123,7 @@ export function createToastStore(now: () => number = Date.now): ToastStore {
     }
     timers.clear();
     if (toasts.length > 0) {
-      toasts = [];
-      emit();
+      commit([]);
     }
   };
 
@@ -127,23 +136,22 @@ export function createToastStore(now: () => number = Date.now): ToastStore {
       ...(input.description === undefined ? {} : { description: input.description }),
       duration: input.duration ?? TOAST_DEFAULT_DURATION_MS,
     };
-    toasts = [...toasts, toast];
+    commit([...toasts, toast]);
     if (toast.duration > 0) {
       // Bare global so fake timers (vitest) patch this at call time.
       timers.set(toast.id, setTimeout(() => dismiss(toast.id), toast.duration));
     }
-    emit();
     return toast.id;
   };
 
   const update = (id: string, patch: Partial<Omit<Toast, "id">>): void => {
     let changed = false;
-    toasts = toasts.map((toast) => {
+    const next = toasts.map((toast) => {
       if (toast.id !== id) return toast;
       changed = true;
       return { ...toast, ...patch };
     });
-    if (changed) emit();
+    if (changed) commit(next);
   };
 
   return { getState, subscribe, push, dismiss, dismissAll, update };

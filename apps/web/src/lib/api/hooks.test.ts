@@ -52,9 +52,7 @@ describe("queryKeys.documents", () => {
   });
 
   it("has detail keys that extend their prefix (invalidation reach)", () => {
-    expect(queryKeys.documents.detail("doc_1").slice(0, 2)).toEqual(
-      queryKeys.documents.details,
-    );
+    expect(queryKeys.documents.detail("doc_1").slice(0, 2)).toEqual(queryKeys.documents.details);
   });
 });
 

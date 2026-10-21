@@ -67,7 +67,11 @@ describe("coerceBrandTokens", () => {
   it("keeps valid pieces, drops invalid ones, dedupes, caps", () => {
     const coerced = coerceBrandTokens({
       palette: ["#111111", "#111", "not-hex", "#222222", "#222222", 7],
-      fonts: { display: "  Playfair Display  ", sans: "", mono: "x".repeat(MAX_FONT_NAME_CHARS + 1) },
+      fonts: {
+        display: "  Playfair Display  ",
+        sans: "",
+        mono: "x".repeat(MAX_FONT_NAME_CHARS + 1),
+      },
       toneWords: [" bold ", "", "bold", "calm"],
       logoAssetId: "  asset-1  ",
       extraIgnored: true,

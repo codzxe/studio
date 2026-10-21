@@ -80,7 +80,7 @@ type ListOutcome =
   | { readonly ok: true; readonly items: readonly ExportListItem[] }
   | { readonly ok: false; readonly error: unknown };
 
-/** Aborts an in-flight poll loop on unmount (no setState after teardown). */
+/** Abortable delay — the poll loop's clock; resolves early when aborted. */
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const done = (): void => {
@@ -194,7 +194,7 @@ export function useExports(options: UseExportsOptions): UseExportsResult {
               patchJob(exportId, (job) => ({
                 ...job,
                 error: isPsd
-                  ? "The export failed — PSD is experimental and the render service can refuse it (§2.3)."
+                  ? "The export failed — PSD is experimental and the render can refuse it."
                   : "The export failed — try again, or pick another format.",
               }));
             } else if (decision === "stop-budget") {

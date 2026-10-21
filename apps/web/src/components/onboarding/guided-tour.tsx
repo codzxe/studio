@@ -101,7 +101,17 @@ export function GuidedTour({
     };
     if (persisted.status === "active") {
       resume(persisted.stepIndex);
-    } else if (autoStart || startPolicy === "always") {
+    } else if (startPolicy === "always") {
+      // Forced restart ("Show me around"): history is kept for completeness.
+      writeTourState(store, {
+        status: "active",
+        stepIndex: 0,
+        dismissedAt: persisted.dismissedAt,
+        completedAt: persisted.completedAt,
+      });
+      resume(0);
+    } else if (autoStart && persisted.status === "idle") {
+      // First-ever visit: start the tour once, never again on its own.
       writeTourState(store, {
         status: "active",
         stepIndex: 0,
@@ -162,7 +172,7 @@ export function GuidedTour({
   // picked up (poll until found), and re-measure on any resize/scroll.
   useEffect(() => {
     if (!open) return;
-    const step = steps.at(index);
+    const step = steps[index];
     if (!step) return;
     let stopped = false;
     let poll: ReturnType<typeof setInterval> | null = null;
@@ -194,10 +204,11 @@ export function GuidedTour({
     };
   }, [open, index, steps]);
 
-  // Focus management: focus the primary button on open/step change, restore
-  // focus to the pre-tour element on close.
+  // Focus management: focus the primary button once the overlay is actually
+  // rendered, restore focus to the pre-tour element on close.
+  const overlayReady = layout !== null;
   useEffect(() => {
-    if (open) {
+    if (open && overlayReady) {
       if (restoreFocusRef.current === null) {
         restoreFocusRef.current =
           document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -205,9 +216,11 @@ export function GuidedTour({
       nextRef.current?.focus();
       return;
     }
-    restoreFocusRef.current?.focus();
-    restoreFocusRef.current = null;
-  }, [open, index]);
+    if (!open) {
+      restoreFocusRef.current?.focus();
+      restoreFocusRef.current = null;
+    }
+  }, [open, overlayReady, index]);
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
@@ -240,7 +253,7 @@ export function GuidedTour({
 
   if (!open) return null;
 
-  const step = steps.at(index);
+  const step = steps[index];
   if (!step || !layout) return null;
 
   const isLast = index >= steps.length - 1;

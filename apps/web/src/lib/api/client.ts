@@ -225,8 +225,8 @@ export function createIdempotencyKey(): string {
       bytes[index] = Math.floor(Math.random() * 256);
     }
   }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
-  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40; // version 4
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80; // RFC 4122 variant
   const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
   const group = (from: number, to: number) => hex.slice(from, to).join("");
   return `${group(0, 4)}-${group(4, 6)}-${group(6, 8)}-${group(8, 10)}-${group(10, 16)}`;
@@ -400,8 +400,8 @@ let defaultClient: GatewayClient | undefined;
 /**
  * W8-O: one lazily-built gateway client per runtime context (memoized — the
  * env read happens on first CALL, never at import/prerender time, per the
- * src/lib/env.ts contract). The shared hooks layer (./hooks.ts) builds its
- * query/mutation closures on this accessor.
+ * src/lib/env.ts contract). Available to the hooks layer (./hooks.ts) and
+ * future adopters so per-hook module-scope singletons can retire one by one.
  */
 export function getDefaultGatewayClient(): GatewayClient {
   defaultClient ??= createGatewayClientFromEnv();

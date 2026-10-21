@@ -86,22 +86,22 @@ export function EditorActions({
     dialogNotice !== null && (notice === null || dialogNotice.at >= notice.at)
       ? dialogNotice
       : notice;
+  const toastId = toast === null ? null : toast.id;
 
   useEffect(() => {
-    const toastId = toast?.id ?? null;
     if (toastId === null) {
       return;
     }
     const timer = setTimeout(() => {
       // The timer is keyed on the toast id — a newer notice cancels it.
-      if (undoNoticeId !== null && toastId === undoNoticeId) {
+      if (toastId === undoNoticeId) {
         dismissNotice();
       } else {
         setDialogNotice(null);
       }
     }, NOTICE_AUTO_DISMISS_MS);
     return () => clearTimeout(timer);
-  }, [toast?.id, undoNoticeId, dismissNotice]);
+  }, [toastId, undoNoticeId, dismissNotice]);
 
   return (
     <>

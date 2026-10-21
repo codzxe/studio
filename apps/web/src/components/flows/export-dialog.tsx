@@ -81,8 +81,7 @@ export function ExportDialog({
           <DialogTitle>Export</DialogTitle>
           <DialogDescription>
             The layered .pcraft format is the primary output — lossless and
-            round-trip-perfect. Re-downloading an existing export is free
-            (§10.3).
+            round-trip-perfect. Re-downloading an existing export is free.
           </DialogDescription>
         </DialogHeader>
         <ExportDialogForm
@@ -178,6 +177,7 @@ function ExportDialogForm({
                 <input
                   type="radio"
                   name={radioGroupName}
+                  value={option.format}
                   className="mt-1"
                   checked={checked}
                   onChange={() => pickFormat(option.format)}
@@ -197,7 +197,9 @@ function ExportDialogForm({
                     {disabled ? " · behind a feature flag" : ""}
                   </span>
                   {option.experimental === true ? (
-                    <span className="mt-1 inline-flex w-fit rounded-full bg-warning/15 px-2 py-0.5 text-xs text-warning">
+                    <span
+                      className="mt-1 inline-flex w-fit rounded-full bg-warning/15 px-2 py-0.5 text-xs text-warning"
+                    >
                       Experimental
                     </span>
                   ) : null}
@@ -210,8 +212,7 @@ function ExportDialogForm({
 
       {format === "pcraft" ? (
         <p className="text-xs text-muted-foreground">
-          Lossless and replayable — reopens with the same layer tree
-          (§20-#9 hash-verified replay).
+          Lossless and replayable — reopens with the same layer tree.
         </p>
       ) : null}
 
@@ -314,7 +315,7 @@ function ExportDialogForm({
         <p className="text-xs text-muted-foreground">
           Ready exports download automatically while this dialog is open. Signed
           links expire after 15 minutes — re-download any time; re-downloading an
-          existing export is free (§10.3).
+          existing export is free.
         </p>
       </section>
     </div>
@@ -345,6 +346,12 @@ function ExportJobRow({ job }: { readonly job: ExportJobView }) {
         {job.pollBudgetExhausted ? (
           <p className="text-muted-foreground">
             Still processing — reopen this dialog later to check on it.
+          </p>
+        ) : null}
+        {job.phase === "ready" && job.url === null ? (
+          <p className="text-muted-foreground">
+            The download link is unavailable — reopen this dialog to get a fresh
+            one.
           </p>
         ) : null}
         {job.url === null ? null : (

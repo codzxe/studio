@@ -108,7 +108,8 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
     return null;
   }, [members.data, directory.data]);
 
-  const listForbidden = members.isError && isApiError(members.error) && members.error.status === 403;
+  const listForbidden =
+    members.isError && isApiError(members.error) && members.error.status === 403;
   const listError = members.isError ? toSettingsError(members.error) : null;
   const directoryError = directory.isError ? toSettingsError(directory.error) : null;
 
@@ -119,7 +120,8 @@ export function MembersTable({ workspaceId, role }: MembersTableProps) {
     <div className="flex flex-col gap-6">
       {!canManage ? (
         <p className="rounded-md border border-border bg-surface-muted p-3 text-sm text-muted-foreground">
-          Managing members requires the admin role. Permissions are enforced server-side (§15.2) —
+          Managing members requires the admin role. Permissions are enforced server-side
+          (§15.2) —
           you have the <strong>{role}</strong> role, so the roster is read-only for you.
         </p>
       ) : (
@@ -438,7 +440,9 @@ function MemberTableRow({
         <tr>
           <td colSpan={5} className="pb-2">
             <p role="alert" className="text-xs text-red-600">
-              {rowError.hint === undefined ? rowError.message : `${rowError.message} ${rowError.hint}`}
+              {rowError.hint === undefined
+                ? rowError.message
+                : `${rowError.message} ${rowError.hint}`}
             </p>
           </td>
         </tr>

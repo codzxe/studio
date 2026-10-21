@@ -29,18 +29,17 @@ describe("Select (native)", () => {
     expect(select.className).toContain("disabled:opacity-50");
   });
 
-  it("applies size variants; consumer className wins conflicts", () => {
+  it("applies size variants; consumer className wins conflicts (tailwind-merge)", () => {
     render(
       <Select size="sm" className="h-10" aria-label="Size" data-testid="ui-select-size">
         <option value="a">A</option>
       </Select>,
     );
     const select = screen.getByTestId("ui-select-size");
-    expect(select.className).toContain("h-8");
     expect(select.className).toContain("text-xs");
-    // tailwind-merge: later h-10 replaces the variant's h-8
+    // tailwind-merge: the later h-10 replaces the sm variant's h-8
     expect(select.className).toContain("h-10");
-    expect(select.className).not.toContain("h-8 ");
+    expect(select.className).not.toContain("h-8");
   });
 
   it("aria-invalid drives the destructive error styles (Input convention)", () => {
@@ -72,8 +71,8 @@ describe("Select (native)", () => {
     expect(wrapper).not.toBeNull();
     expect(wrapper?.className).toContain("w-40");
     expect(wrapper?.className).toContain("relative");
-    const chevron = wrapper?.querySelector("svg[aria-hidden='true']");
-    expect(chevron?.className).toContain("pointer-events-none");
+    const chevron = wrapper?.querySelector("svg");
+    expect(chevron?.getAttribute("class")).toContain("pointer-events-none");
   });
 
   it("exposes selectVariants for consumers composing their own controls", () => {

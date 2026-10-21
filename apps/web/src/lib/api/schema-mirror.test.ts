@@ -5,12 +5,12 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  RUN_STATUSES,
   componentCardSchema,
   creditsSchema,
   documentCardSchema,
   documentDetailEnvelopeSchema,
   documentListEnvelopeSchema,
-  RUN_STATUSES,
   runCardSchema,
   runStatusPayloadSchema,
   templateCardSchema,
@@ -37,9 +37,7 @@ describe("document mirrors", () => {
   });
 
   it("rejects a drifted card (wrong types are a typed error, never a guess)", () => {
-    expect(documentCardSchema.safeParse({ ...DOCUMENT_CARD, width_px: "big" }).success).toBe(
-      false,
-    );
+    expect(documentCardSchema.safeParse({ ...DOCUMENT_CARD, width_px: "big" }).success).toBe(false);
     expect(documentCardSchema.safeParse({ name: "no id" }).success).toBe(false);
   });
 

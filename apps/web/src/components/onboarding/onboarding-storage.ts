@@ -6,7 +6,6 @@
 import {
   CHECKLIST_CELEBRATED_KEY,
   CHECKLIST_STORAGE_KEY,
-  emptyChecklistSteps,
   markChecklistStep,
   parseChecklistSteps,
   serializeChecklistSteps,
@@ -65,7 +64,7 @@ export function markChecklistStepDone(
   step: ChecklistStepId,
   storage: SafeStorage | null = getBrowserStorage(),
 ): ChecklistSteps {
-  const next = markChecklistStep(readChecklistSteps(storage) ?? emptyChecklistSteps(), step, true);
+  const next = markChecklistStep(readChecklistSteps(storage), step, true);
   writeChecklistSteps(storage, next);
   return next;
 }

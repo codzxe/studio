@@ -253,10 +253,12 @@ export interface ApiKeyRow {
 
 export const settingsKeys = {
   all: ["settings"] as const,
-  workspace: (workspaceId: string | null) => [...settingsKeys.all, "workspace", workspaceId] as const,
+  workspace: (workspaceId: string | null) =>
+    [...settingsKeys.all, "workspace", workspaceId] as const,
   members: (workspaceId: string | null) => [...settingsKeys.all, "members", workspaceId] as const,
   invites: (workspaceId: string | null) => [...settingsKeys.all, "invites", workspaceId] as const,
-  directory: (workspaceId: string | null) => [...settingsKeys.all, "directory", workspaceId] as const,
+  directory: (workspaceId: string | null) =>
+    [...settingsKeys.all, "directory", workspaceId] as const,
   apiKeys: (workspaceId: string | null) => [...settingsKeys.all, "api-keys", workspaceId] as const,
 };
 
@@ -292,7 +294,12 @@ export interface SettingsError {
  */
 export function toSettingsError(error: unknown): SettingsError {
   if (isApiError(error)) {
-    return { code: error.code, message: error.message, hint: error.hint, retryable: error.retryable };
+    return {
+      code: error.code,
+      message: error.message,
+      hint: error.hint,
+      retryable: error.retryable,
+    };
   }
   return {
     code: "unexpected_error",
@@ -412,7 +419,11 @@ export function useWorkspace(workspaceId: string | null) {
   });
   return {
     workspace: query.data ?? null,
-    status: query.isPending ? ("loading" as const) : query.isError ? ("error" as const) : ("ready" as const),
+    status: query.isPending
+      ? ("loading" as const)
+      : query.isError
+        ? ("error" as const)
+        : ("ready" as const),
     message: query.isError ? toSettingsError(query.error).message : null,
     error: query.isError ? toSettingsError(query.error) : null,
     refetch: query.refetch,
@@ -445,7 +456,7 @@ export function useMembers(workspaceId: string | null) {
   });
 }
 
-/** GET /v1/workspaces/:id/invites — admin+ (all statuses; pending first). */
+/** GET /v1/workspaces/:id/invites — admin+ (every status is listed). */
 export function useInvites(workspaceId: string | null) {
   return useQuery({
     queryKey: settingsKeys.invites(workspaceId),
@@ -589,10 +600,17 @@ export function useChangeMemberRole(workspaceId: string | null) {
       readonly memberId: string;
       readonly role: Exclude<WorkspaceRole, "owner">;
     }): Promise<void> => {
+      // CLIENT-PLUGIN ROLE-TYPE SEAM (flag → src/lib/auth.ts owner): the
+      // organizationClient() (W8-B) is not configured with our §15.2 role
+      // set, so its inferred `role` union is better-auth's default
+      // ("admin" | "member" | "owner") even though the SERVER plugin
+      // registers viewer/editor/admin/owner (auth/roles.ts) and validates
+      // them on the wire. Narrow documented cast — drop it once
+      // organizationClient gains ac/roles mirrors.
       const { error } = await authClient.organization.updateMemberRole({
         memberId: input.memberId,
-        role: input.role,
         organizationId: workspaceId as string,
+        role: input.role as "admin" | "member" | "owner",
       });
       if (error !== null && error !== undefined) {
         throw authFailure(error);
@@ -615,7 +633,9 @@ export function useRemoveMember(workspaceId: string | null) {
   return useMutation({
     mutationFn: async (userId: string): Promise<void> => {
       await gateway().request(
-        `/workspaces/${encodeURIComponent(workspaceId as string)}/members/${encodeURIComponent(userId)}`,
+        `/workspaces/${encodeURIComponent(workspaceId as string)}/members/${encodeURIComponent(
+          userId,
+        )}`,
         { method: "DELETE", schema: okResponseSchema },
       );
     },
@@ -660,7 +680,9 @@ export function useCancelInvite(workspaceId: string | null) {
   return useMutation({
     mutationFn: async (inviteToken: string): Promise<void> => {
       await gateway().request(
-        `/workspaces/${encodeURIComponent(workspaceId as string)}/invites/${encodeURIComponent(inviteToken)}`,
+        `/workspaces/${encodeURIComponent(workspaceId as string)}/invites/${encodeURIComponent(
+          inviteToken,
+        )}`,
         { method: "DELETE", schema: okResponseSchema },
       );
     },

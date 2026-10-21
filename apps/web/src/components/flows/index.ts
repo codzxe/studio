@@ -1,8 +1,11 @@
+"use client";
+
 // apps/web/src/components/flows/index.ts (W8-P)
 //
 // Public surface of the undo/redo + export flows. Editor panels import from
 // here (or the individual modules — both are supported; this barrel exists so
 // the toolbar mount is a one-liner and the exports stay prune-friendly).
+// "use client" at the top keeps the re-exported hooks a client boundary.
 
 export { EditorActions, type EditorActionsProps } from "./editor-actions";
 export { ExportDialog, type ExportDialogProps } from "./export-dialog";
@@ -27,7 +30,9 @@ export {
   DEFAULT_EXPORT_QUALITY,
   EXPORT_FILE_SUFFIX,
   EXPORT_FORMAT_OPTIONS,
+  EXPORT_FORMATS,
   EXPORT_HISTORY_LIMIT,
+  EXPORT_JOB_STATUSES,
   EXPORT_PHASES,
   EXPORT_PHASE_BADGE_VARIANT,
   EXPORT_PHASE_LABEL,

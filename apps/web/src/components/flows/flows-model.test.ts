@@ -197,7 +197,11 @@ describe("nextExportPollAction", () => {
       { item: { ...queuedItem, status: "succeeded" }, error: null },
       "stop-ready",
     ],
-    ["failed row stops failed", { item: { ...queuedItem, status: "failed" }, error: null }, "stop-failed"],
+    [
+      "failed row stops failed",
+      { item: { ...queuedItem, status: "failed" }, error: null },
+      "stop-failed",
+    ],
     ["queued row keeps polling within budget", { item: queuedItem, error: null }, "continue"],
     [
       "4xx (not 429) stops with the hard error",
@@ -211,7 +215,10 @@ describe("nextExportPollAction", () => {
     ],
     [
       "5xx is transient — keep polling",
-      { item: null, error: new ApiError({ code: "engine_unavailable", message: "down", status: 503 }) },
+      {
+        item: null,
+        error: new ApiError({ code: "engine_unavailable", message: "down", status: 503 }),
+      },
       "continue",
     ],
     ["exhausted budget stops with stop-budget", { item: null, error: null }, "stop-budget"],
@@ -302,7 +309,11 @@ describe("job views", () => {
 
   it("upsertExportJob replaces in place and sorts newest first", () => {
     const older = baseJob;
-    const newer: ExportJobView = { ...baseJob, exportId: "exp_9", createdAt: "2026-10-02T00:00:00.000Z" };
+    const newer: ExportJobView = {
+      ...baseJob,
+      exportId: "exp_9",
+      createdAt: "2026-10-02T00:00:00.000Z",
+    };
     const updated: ExportJobView = { ...baseJob, phase: "ready", url: "u" };
     expect(upsertExportJob([], newer)).toEqual([newer]);
     expect(upsertExportJob([older], newer)).toEqual([newer, older]);

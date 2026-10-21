@@ -19,5 +19,5 @@
 
 export * from "./api/client";
 export * from "./api/endpoints";
-export * from "./api/sse";
 export * from "./api/schema-mirror";
+export * from "./api/sse";

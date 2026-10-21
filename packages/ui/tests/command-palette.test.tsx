@@ -96,8 +96,14 @@ describe("CommandPalette (render + keyboard)", () => {
 
     fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(input.getAttribute("aria-activedescendant")).toBe(options[1]?.id);
+    fireEvent.keyDown(input, { key: "ArrowUp" }); // back to the first option
+    expect(input.getAttribute("aria-activedescendant")).toBe(options[0]?.id);
     fireEvent.keyDown(input, { key: "ArrowUp" }); // wraps to the last option
     expect(input.getAttribute("aria-activedescendant")).toBe(options[2]?.id);
+    fireEvent.keyDown(input, { key: "End" });
+    expect(input.getAttribute("aria-activedescendant")).toBe(options[2]?.id);
+    fireEvent.keyDown(input, { key: "Home" });
+    expect(input.getAttribute("aria-activedescendant")).toBe(options[0]?.id);
   });
 
   it("runs the active command on Enter, reports via onOpenChange, and closes", () => {

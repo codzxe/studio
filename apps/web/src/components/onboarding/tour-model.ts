@@ -35,8 +35,10 @@ export const DEFAULT_TOUR_STEPS: readonly TourStepDef[] = [
     target: "timeline",
     title: "Watch it build",
     body: "Every step streams here — the plan, the edits, live previews. One undo reverts a whole run.",
-    href: "/runs",
-    linkLabel: "Open the latest run",
+    // The timeline lives on the run page (/runs/[id]); the fallback link
+    // starts a run, which is how you get there.
+    href: "/compose",
+    linkLabel: "Start a run",
   },
   {
     target: "layers",

@@ -108,7 +108,7 @@ export const PSD_EXPERIMENTAL_WARNING =
 /** §10.3: PSD ships best-effort with a report listing unsupported features. */
 export const PSD_FIDELITY_NOTE =
   "A fidelity report lists any features the export could not preserve — PSD is " +
-  "best-effort and never promised round-trip-perfect (§10.3).";
+  "best-effort and never promised round-trip-perfect.";
 
 /** Format picker metadata (§10.3 table, one row per format). */
 export interface ExportFormatOption {
@@ -318,7 +318,7 @@ export function buildExportRequest(draft: ExportRequestDraft): ExportRequestResu
       ok: false,
       code: "psd_disabled",
       message: "PSD export is experimental and currently disabled.",
-      hint: "PSD ships best-effort with a fidelity report (§2.3) behind a feature flag.",
+      hint: "PSD ships best-effort with a fidelity report behind a feature flag.",
     };
   }
   const width = parsePixelSide(draft.width);
