@@ -100,7 +100,9 @@ export type BrandFontCheck = BrandFontResolution | BrandFailure;
 /** Minimal seams over packages/db (organization row, asset existence). */
 export interface BrandSeams {
   /** The organization (workspace) row's metadata TEXT column, or null. */
-  orgLookup(organizationId: string): Promise<{ readonly metadata: string | null | undefined } | null>;
+  orgLookup(
+    organizationId: string,
+  ): Promise<{ readonly metadata: string | null | undefined } | null>;
   /** The workspace asset row (logo existence check), or null. */
   assetLookup(assetId: string): Promise<{ readonly id: string } | null>;
 }
