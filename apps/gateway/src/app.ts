@@ -15,15 +15,32 @@
 //
 // Sibling files are READ-ONLY for this module: routes/, services/, middleware/,
 // auth/, authz/ export their own seams; the wiring wave owns only src/app.ts +
-// src/types.ts (task W4-R).
+// src/types.ts (task W4-R; final composition pass W10-R).
+//
+// W10-R (final integration) note: this file is the MOUNT AUTHORITY for every
+// /v1 group (the W10-G final audit's checklist) — buildApp now wires ALL
+// landed route modules through their documented one-call mount helpers:
+//   - seam-built deps for credits/billing/audit (drizzle adapters below),
+//   - pre-baked deps for catalog/commands/exports (their service seams are
+//     env/worker-driven — the §7 catalog boots from a manifests dir, the
+//     command executor needs the engine bus, the export pipeline needs the
+//     BullMQ producer + signer — so tests/bootstrap inject the built deps),
+//   - GET /v1/openapi.json serves the AUDITED spec (mountOpenApi, D11),
+//   - Better Auth handlers mount at /api/auth/* AND the §13.1 /v1/auth/*
+//     alias (D1: same handler, URL-rewritten by the proxy below),
+//   - absent deps ⇒ the group stays behind routes/index.ts's typed 501
+//     catch-all (the W8-K degrade contract — never a silent 404).
 
-import { eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lt, or, sql, type SQL } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { RunEventBus } from "@studio/agent";
 import { err, ok, type GatewayEnv, type PlanId, type Result } from "@studio/config";
 import {
   agentRuns,
+  auditLog,
   createDb,
+  creditReservations,
+  creditsLedger,
   plans as plansTable,
   subscriptions,
   type Db,
@@ -33,6 +50,7 @@ import { createStorageFromEnv, type Storage, type StorageEnvInput } from "@studi
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { Logger } from "pino";
+import { getAuthServer } from "./auth/server.js";
 import { createAuthResolvers } from "./auth/api-keys.js";
 import {
   createDefaultAuthProvider,
@@ -69,10 +87,36 @@ import {
 } from "./services/workspaces.js";
 import { registerRoutes } from "./routes/index.js";
 import type { Probe } from "./routes/health.js";
-import type { AuditRoutesDeps } from "./routes/audit.js";
+import type {
+  AuditActionCountsLike,
+  AuditAuthLike,
+  AuditRoutesDeps,
+} from "./routes/audit.js";
 import type { BillingRoutesDeps } from "./routes/billing.js";
-import type { CreditsDeps } from "./routes/credits.js";
+import type {
+  BillingSummaryLike,
+  CreditsAuthLike,
+  CreditsDeps,
+  LedgerLike,
+  LedgerPage,
+  LedgerPageCursor,
+  WorkspaceBillingSummary,
+} from "./routes/credits.js";
+import type { CommandRoutesDeps } from "./routes/commands.js";
+import type { ExportRoutesDeps } from "./routes/exports.js";
+import type { CatalogDeps } from "./services/catalog.js";
+import { AuditService, DrizzleAuditStore } from "./services/audit.js";
+import { drizzleUsageQueries } from "./services/usage.js";
+import {
+  NoopStripe,
+  createDrizzleBillingDb,
+  createStripeBillingService,
+  drizzleWithTransaction,
+  ledgerFromStore,
+  priceMapFromEnv,
+} from "./services/stripe.js";
 import { createGatewayMetrics, httpMetricsMiddleware, metricsRoutes } from "./routes/metrics.js";
+import { mountOpenApi } from "./openapi.js";
 import { createWorkspaceAuth } from "./routes/workspaces.js";
 import type { DocumentRoutesDeps, PrincipalResolver } from "./routes/documents.js";
 import type { RunsDeps } from "./routes/runs.js";
@@ -85,7 +129,6 @@ import type {
   EngineSessionRef,
   GatewayDeps,
   SessionResolver,
-  StripeLike,
 } from "./types.js";
 
 // Route modules as namespaces — the defensive-import seam: every mount below
@@ -96,6 +139,9 @@ import * as documentsRoutesModule from "./routes/documents.js";
 import * as runsRoutesModule from "./routes/runs.js";
 import * as runEventsRoutesModule from "./routes/runs-events.js";
 import * as uploadsRoutesModule from "./routes/uploads.js";
+import * as catalogRoutesModule from "./routes/catalog.js";
+import * as commandsRoutesModule from "./routes/commands.js";
+import * as exportsRoutesModule from "./routes/exports.js";
 
 // ---------------------------------------------------------------------------
 // Rate-limit presets (§1.5 rule 5, §15.2 "rate limits per IP/user/workspace")
@@ -147,14 +193,24 @@ export interface AppDeps extends Partial<GatewayDeps> {
   readonly runsDeps?: RunsDeps;
   readonly runEventsDeps?: RunEventsDeps;
   readonly uploadsDeps?: UploadsDeps;
-  // W8-K/W9-H fleet flags → W10-F: the credits/billing/audit groups mount
-  // through the routes/index.ts registry when these are present (same
-  // pre-baked pattern — absent deps leave the group behind the typed 501
-  // catch-all, the W8-K degrade contract). /metrics needs no field: app.ts
-  // (W10-E) builds its MetricsRouteDeps from env + the shared HTTP counters.
+  // W8-K/W9-H fleet flags → W10-F/W10-R: the credits/billing/audit groups mount
+  // through the routes/index.ts registry when these are present OR when their
+  // seams resolve (buildCreditsDeps/buildBillingDeps/buildAuditDeps below — the
+  // pre-baked deps win over the seam-built ones). /metrics needs no field:
+  // app.ts (W10-E) builds its MetricsRouteDeps from env + the shared counters.
   readonly creditsDeps?: CreditsDeps;
   readonly billingDeps?: BillingRoutesDeps;
   readonly auditDeps?: AuditRoutesDeps;
+  // W4-J/W4-K/W4-L groups (W10-R): PRE-BAKED ONLY — their service seams are
+  // env/worker-driven, not GatewayDeps (the §7 TemplateCatalog boots from a
+  // manifests dir, the command executor needs the engine session/command
+  // seams, the export pipeline needs the BullMQ producer + URL signer + the
+  // worker-owned preview cache). Tests inject fakes; the bootstrap composes
+  // the real services per each route file's WIRING header. Absent deps leave
+  // the group behind the typed 501 catch-all (same W8-K degrade contract).
+  readonly catalogDeps?: CatalogDeps;
+  readonly commandDeps?: CommandRoutesDeps;
+  readonly exportDeps?: ExportRoutesDeps;
 }
 
 /** Env with the auth/reqCtx variables narrowed non-optional (mount-time only). */
@@ -477,27 +533,13 @@ export class EmptyTemplateCatalog {
   }
 }
 
-/** Stripe default (§14.3): typed not-configured failures, never pretend-success. */
-export class NoopStripe implements StripeLike {
-  readonly configured = false;
-  private fail(): Result<never> {
-    return err("internal_error", "Stripe billing is not configured in this deployment.", {
-      hint: "Set STRIPE_SECRET_KEY and inject a real StripeLike adapter " +
-        "(billing-routes wave, §14.3).",
-      retryable: false,
-    });
-  }
-  createCheckoutSession(): Promise<Result<{ readonly url: string }>> {
-    return Promise.resolve(this.fail() as Result<{ readonly url: string }>);
-  }
-  createPortalSession(): Promise<Result<{ readonly url: string }>> {
-    return Promise.resolve(this.fail() as Result<{ readonly url: string }>);
-  }
-  constructWebhookEvent(): Promise<Result<unknown>> {
-    return Promise.resolve(this.fail());
-  }
-}
-
+/**
+ * Stripe default — W10-R reconcile: RETIRED the W4-R placeholder class here and
+ * adopted services/stripe.ts's own NoopStripe (the W4-N authoritative shape —
+ * deterministic ids, no network, REAL HMAC webhook verification) as the
+ * GatewayDeps.stripe default in createDefaultDeps. Production must inject
+ * createStripeSdk (the wiring-check wave fails fast on NoopStripe there).
+ */
 /** Engine-session seam default: [] until the engine-pool probe surface ships. */
 export class NotWiredSessionResolver implements SessionResolver {
   async listActive(): Promise<readonly EngineSessionRef[]> {
@@ -506,33 +548,14 @@ export class NotWiredSessionResolver implements SessionResolver {
 }
 
 // ---------------------------------------------------------------------------
-// /v1/openapi.json — honest placeholder document of the MOUNTED surface
+// GET /v1/openapi.json — the AUDITED spec (D11, W10-R)
 // ---------------------------------------------------------------------------
-
-type OpenApiOperations = Record<string, { readonly summary: string }>;
-
-/** Minimal OpenAPI 3.1 skeleton; the API-contract wave owns the full schema. */
-function openApiDocument(
-  version: string,
-  paths: Record<string, OpenApiOperations>,
-): Record<string, unknown> {
-  return {
-    openapi: "3.1.0",
-    info: {
-      title: "Studio Gateway API",
-      version,
-      summary:
-        "REST + SSE surface (spec §13.1). Placeholder generated from the mounted " +
-        "route groups; the API-contract wave owns the authoritative schema.",
-    },
-    servers: [{ url: "/v1" }],
-    paths,
-  };
-}
-
-function op(summary: string): { readonly summary: string } {
-  return { summary };
-}
+// The W4-R minimal runtime document (openApiDocument + the mounted-paths
+// accumulator) was RETIRED per the W10-G final audit's D11 resolution: the
+// endpoint now serves the audited OpenAPI 3.1 document from src/openapi.ts
+// via mountOpenApi(app, { version }) — same bytes as OPENAPI_SPEC with the
+// running service version stamped into info.version (test-enforced ⇔ the
+// audit table in docs/api/openapi-contract.md).
 
 // ---------------------------------------------------------------------------
 // buildApp — the pure app factory
@@ -554,11 +577,13 @@ function op(summary: string): { readonly summary: string } {
  *                        (never a global auth wall). The uploads group mounts
  *                        W4-B `requireAuth` (401 code `unauthenticated` — see
  *                        the reconciliation note in src/types.ts).
- * Then the deps.mount hook (test routes win), the /v1 group mounts, the W1-H
- * registry (health + typed 501 catch-all LAST), the INTERNAL-ONLY /metrics
- * exposition (W10-E, §22 — token-gated, never under /v1), and the typed 404
- * for everything else. Bootstrap/shutdown (src/index.ts, graceful drain) is
- * unchanged by this wave.
+ * Then the deps.mount hook (test routes win), the D11 audited-spec + D1 auth
+ * mounts (W10-R), the /v1 group mounts (ALL landed groups — W4-R's five plus
+ * catalog/commands/exports via their one-call helpers), the W1-H registry
+ * (health + the seam-built credits/billing/audit mounts + typed 501 catch-all
+ * LAST), the INTERNAL-ONLY /metrics exposition (W10-E, §22 — token-gated,
+ * never under /v1), and the typed 404 for everything else. Bootstrap/shutdown
+ * (src/index.ts, graceful drain) is unchanged by this wave.
  */
 export function buildApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -585,6 +610,29 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
     deps.mount(app);
   }
 
+  // --- D11 (W10-G final audit): serve the AUDITED OpenAPI spec -------------
+  // mountOpenApi registers GET /v1/openapi.json on the ROOT app (before the
+  // /v1 sub-apps + the registry catch-all, so it always wins) and stamps the
+  // running version — the W4-R minimal runtime document was retired.
+  mountOpenApi(app, { version: deps.version });
+
+  // --- D1 (W10-G final audit): the Better Auth handlers --------------------
+  // §13.1 pins /v1/auth/*; W4-A landed the handlers at the /api/auth basePath
+  // (client-config.ts pin). The recipe lives in auth/server.ts's header — the
+  // composition root executes it verbatim, plus the versioned alias: the /v1
+  // mount URL-rewrites the basePath portion (method/headers/body verbatim) so
+  // ONE handler serves both prefixes. getAuthServer() resolves env LAZILY on
+  // the first auth request (the createAuthResolvers precedent — §4 fail-fast
+  // happens then, surfaced as a typed 500 envelope by the error mapper when a
+  // deployment forgets BETTER_AUTH_URL). Registered before the /v1 sub-apps so
+  // concrete handlers beat the registry's 501 catch-all.
+  app.all("/api/auth/*{path}", (c) => getAuthServer().handler(c.req.raw));
+  app.all("/v1/auth/*{path}", (c) => {
+    const url = new URL(c.req.url);
+    url.pathname = url.pathname.replace(/^\/v1\/auth/, "/api/auth");
+    return getAuthServer().handler(new Request(url, c.req.raw));
+  });
+
   // --- resolve the group deps (pre-baked overrides win over seam-built) -----
   const resolver = deps.auth !== undefined ? makeSessionResolver(deps.auth) : undefined;
   const workspaces = deps.workspacesDeps ?? buildWorkspacesDeps(deps, resolver);
@@ -593,67 +641,46 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
   const runEvents = deps.runEventsDeps ?? buildRunEventsDeps(deps, resolver);
   const uploads = deps.uploadsDeps ?? buildUploadsDeps(deps);
   const uploadsMounted = deps.auth !== undefined; // router gates itself; store may 503
+  // W10-R: the registry groups — pre-baked deps win, else seam-built adapters.
+  const credits = deps.creditsDeps ?? buildCreditsDeps(deps, resolver);
+  const billing = deps.billingDeps ?? buildBillingDeps(deps, resolver);
+  const audit = deps.auditDeps ?? buildAuditDeps(deps, resolver);
+  // W10-R: pre-baked-only groups (see the AppDeps field docs — their service
+  // seams are env/worker-driven, so buildApp never synthesizes them).
+  const catalog = deps.catalogDeps;
+  const commands = deps.commandDeps;
+  const exportRoutesDeps = deps.exportDeps;
 
   // --- the /v1 sub-app ------------------------------------------------------
   const v1 = new Hono<AppEnv>();
-  const openapiPaths: Record<string, OpenApiOperations> = {
-    "/health": { get: op("Liveness") },
-    "/health/deep": { get: op("Dependency checks") },
-    "/openapi.json": { get: op("This document") },
-  };
+  // Authenticated-group prefixes (§15.2 org-keyed preset below). Commands and
+  // exports live under /documents/*, so they ride the documents prefix; the
+  // catalog charges its own per-org bucket in catalogMiddleware (W4-J) — its
+  // prefixes are only primed here so the org preset applies. credits/billing/
+  // audit mount through the routes/index.ts registry sub-app (their modules
+  // own their per-org buckets; audit documents "intentionally none").
   const authedPrefixes = new Set<string>();
 
   if (workspaces !== undefined) {
     authedPrefixes.add("/workspaces");
     authedPrefixes.add("/invites");
-    openapiPaths["/workspaces"] = { get: op("List my workspaces"), post: op("Create a workspace") };
-    openapiPaths["/workspaces/{id}"] = {
-      get: op("Read workspace"),
-      patch: op("Rename / brand tokens"),
-    };
-    openapiPaths["/workspaces/{id}/members"] = { get: op("List members") };
-    openapiPaths["/workspaces/{id}/members/{userId}"] = { delete: op("Remove member") };
-    openapiPaths["/workspaces/{id}/invites"] = {
-      get: op("List invites"),
-      post: op("Create invite"),
-    };
-    openapiPaths["/workspaces/{id}/invites/{inviteId}"] = { delete: op("Cancel invite") };
-    openapiPaths["/invites/{token}"] = {
-      get: op("View invite"),
-      delete: op("Cancel invite by token"),
-    };
-    openapiPaths["/invites/{token}/accept"] = { post: op("Accept invite") };
   }
   if (documents !== undefined) {
     authedPrefixes.add("/documents");
-    openapiPaths["/documents"] = { get: op("Page documents"), post: op("Create document") };
-    openapiPaths["/documents/{id}"] = {
-      get: op("Read document"),
-      patch: op("Rename / archive"),
-      delete: op("Archive (soft delete)"),
-    };
-    openapiPaths["/documents/{id}/versions"] = { get: op("Version timeline") };
-    openapiPaths["/documents/{id}/versions/{versionId}/restore"] = {
-      post: op("Restore as new version"),
-    };
   }
   if (runs !== undefined || runEvents !== undefined) {
     authedPrefixes.add("/runs");
   }
-  if (runs !== undefined) {
-    openapiPaths["/runs"] = { get: op("Page runs"), post: op("Create run") };
-    openapiPaths["/runs/{id}"] = { get: op("Run detail") };
-    openapiPaths["/runs/{id}/cancel"] = { post: op("Cancel run") };
-  }
-  if (runEvents !== undefined) {
-    openapiPaths["/runs/{id}/events"] = { get: op("SSE run-event stream (§13.2)") };
-  }
   if (uploadsMounted) {
     authedPrefixes.add("/uploads");
     authedPrefixes.add("/assets");
-    openapiPaths["/uploads"] = { post: op("Upload an asset (multipart)") };
-    openapiPaths["/assets"] = { get: op("Asset library page") };
-    openapiPaths["/assets/{id}"] = { get: op("Asset + signed URL"), delete: op("Delete asset") };
+  }
+  if (commands !== undefined || exportRoutesDeps !== undefined) {
+    authedPrefixes.add("/documents");
+  }
+  if (catalog !== undefined) {
+    authedPrefixes.add("/templates");
+    authedPrefixes.add("/components");
   }
 
   // Session-prime + the org-keyed preset for authenticated groups (§15.2).
@@ -669,8 +696,6 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
       v1.use(`${prefix}/*`, orgLimit);
     }
   }
-
-  v1.get("/openapi.json", (c) => c.json(openApiDocument(deps.version, openapiPaths)));
 
   // --- group mounts: defensive import shape (factory OR const, per module) --
   const wsMod = shape(workspacesRoutesModule);
@@ -761,12 +786,59 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
     }
   }
 
+  // --- W10-R: catalog / commands / exports (the awaiting-mount checklist) --
+  // One documented one-call helper per module (W4-J/W4-K/W4-L), mounted on the
+  // /v1 sub-app so the concrete routes beat the registry catch-all. Each
+  // helper injects its own middleware BEFORE its routers (their own contracts).
+  if (catalog !== undefined) {
+    const catalogMod = shape(catalogRoutesModule);
+    const mount = helperOf(catalogMod, "mountCatalogRoutes");
+    if (mount !== undefined) {
+      (mount as (app: Hono<AppEnv>, deps: CatalogDeps, options?: { readonly path?: string }) => void)(
+        v1,
+        catalog,
+        { path: "" },
+      );
+    }
+  }
+
+  if (commands !== undefined) {
+    const commandsMod = shape(commandsRoutesModule);
+    const mount = helperOf(commandsMod, "mountCommandRoutes");
+    if (mount !== undefined) {
+      (mount as (
+        app: Hono<AppEnv>,
+        deps: CommandRoutesDeps,
+        options?: { readonly path?: string },
+      ) => void)(v1, commands, { path: "/documents" });
+    }
+  }
+
+  if (exportRoutesDeps !== undefined) {
+    const exportsMod = shape(exportsRoutesModule);
+    const mount = helperOf(exportsMod, "mountExportRoutes");
+    if (mount !== undefined) {
+      (mount as (
+        app: Hono<AppEnv>,
+        deps: ExportRoutesDeps,
+        options?: { readonly documentsPath?: string },
+      ) => void)(v1, exportRoutesDeps, { documentsPath: "/documents" });
+    }
+  }
+
   app.route("/v1", v1);
 
   // W1-H registry: mounts /v1/health from this deps and keeps the typed 501
   // catch-all for spec'd-but-unmounted paths LAST (routes/index.ts is not
-  // owned by W4-R — do not inline it here).
-  registerRoutes(app, deps);
+  // owned by W4-R — do not inline it here). W10-R: the seam-built credits/
+  // billing/audit deps ride along (pre-baked deps on AppDeps keep winning), so
+  // the registry's one-call mounts light up without duplicating its wiring.
+  registerRoutes(app, {
+    ...deps,
+    ...(credits !== undefined ? { creditsDeps: credits } : {}),
+    ...(billing !== undefined ? { billingDeps: billing } : {}),
+    ...(audit !== undefined ? { auditDeps: audit } : {}),
+  });
 
   // --- /metrics (§22): INTERNAL-ONLY Prometheus exposition (W10-E) ---------
   // Mounted on the app root — NEVER under the public /v1 group (§13.1) —
@@ -910,6 +982,235 @@ function buildUploadsDeps(deps: AppDeps): UploadsDeps | undefined {
     ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
   });
   return { service, limits: deps.uploadLimits ?? DEFAULT_UPLOAD_LIMITS };
+}
+
+// ---------------------------------------------------------------------------
+// W10-R adapters — the seam-built deps for the registry groups (credits /
+// billing / audit). Each mirrors the production adapter its route file's WIRING
+// header sketched (credits.ts “~15-line LedgerLike”, audit.README.md “~10-line
+// countsByAction”, billing.ts “createStripeBillingService + drizzle seams”).
+// ---------------------------------------------------------------------------
+
+/** W4-M seam: CreditsAuthLike — Result<CreditsCaller>, catalog `unauthorized`. */
+function creditsAuth(resolver: RequestSessionResolver): CreditsAuthLike {
+  return {
+    async authenticate(request) {
+      const session = await resolver.resolve(request);
+      if (session === null) {
+        return err("unauthorized", "Authentication is required.", { retryable: false });
+      }
+      return ok({
+        userId: session.userId,
+        organizationId: session.organizationId,
+        role: session.role,
+      });
+    },
+  };
+}
+
+/**
+ * W4-M seam: the credits LedgerLike — balanceAfter rides the injected
+ * @studio/billing LedgerStore shape-for-shape (the route header's note); only
+ * `page` is gateway-local: the keyset walk over credit_ledger newest-first,
+ * served by credit_ledger_org_created_idx (§12.2).
+ */
+function ledgerPageFromStore(store: LedgerStore, db: Db): LedgerLike {
+  return {
+    async balanceAfter(organizationId: string): Promise<number> {
+      return store.balanceAfter(organizationId);
+    },
+    async page(query: {
+      readonly organizationId: string;
+      readonly limit: number;
+      readonly before?: LedgerPageCursor;
+    }): Promise<LedgerPage> {
+      const newer: SQL | undefined =
+        query.before === undefined
+          ? undefined
+          : or(
+              lt(creditsLedger.createdAt, query.before.createdAt),
+              and(
+                eq(creditsLedger.createdAt, query.before.createdAt),
+                lt(creditsLedger.id, query.before.id),
+              ),
+            );
+      const rows = await db
+        .select()
+        .from(creditsLedger)
+        .where(and(eq(creditsLedger.organizationId, query.organizationId), newer))
+        .orderBy(desc(creditsLedger.createdAt), desc(creditsLedger.id))
+        .limit(query.limit + 1);
+      const pageRows = rows.slice(0, query.limit);
+      const last = pageRows.length > 0 ? pageRows[pageRows.length - 1] : undefined;
+      const next =
+        rows.length > query.limit && last !== undefined
+          ? { createdAt: last.createdAt, id: last.id }
+          : undefined;
+      return { rows: pageRows, ...(next !== undefined ? { next } : {}) };
+    },
+  };
+}
+
+/**
+ * W4-M seam: the credits summary — ONE composite read per the route header:
+ * spend = −Σ delta over kinds reserve/commit/refund since `since` (§14.2
+ * one-append-per-phase ⇒ that net IS the charged spend + still-open holds);
+ * openHolds = held credit_reservations (§14.2 rule 1); trial = no ACTIVE
+ * subscription row (§14.1/§14.3 — the internal 'holding' grace state and a
+ * canceled row both read as trial for the summary card).
+ */
+function drizzleBillingSummary(db: Db): BillingSummaryLike {
+  return {
+    async summary(query: {
+      readonly organizationId: string;
+      readonly since: Date;
+    }): Promise<WorkspaceBillingSummary> {
+      const spendRows = await db
+        .select({ total: sql<string | null>`coalesce(sum(${creditsLedger.delta}), 0)` })
+        .from(creditsLedger)
+        .where(
+          and(
+            eq(creditsLedger.organizationId, query.organizationId),
+            gte(creditsLedger.createdAt, query.since),
+            inArray(creditsLedger.kind, ["reserve", "commit", "refund"]),
+          ),
+        );
+      const holdRows = await db
+        .select({ held: count() })
+        .from(creditReservations)
+        .where(
+          and(
+            eq(creditReservations.organizationId, query.organizationId),
+            eq(creditReservations.status, "held"),
+          ),
+        );
+      const subRows = await db
+        .select({ status: subscriptions.status })
+        .from(subscriptions)
+        .where(
+          and(
+            eq(subscriptions.organizationId, query.organizationId),
+            eq(subscriptions.status, "active"),
+          ),
+        )
+        .limit(1);
+      return {
+        spendCredits: -Number(spendRows[0]?.total ?? 0),
+        openHolds: Number(holdRows[0]?.held ?? 0),
+        trial: subRows.length === 0,
+      };
+    },
+  };
+}
+
+/** Registry group deps: credits/usage (W4-M) from the shared seams. */
+function buildCreditsDeps(
+  deps: AppDeps,
+  resolver: RequestSessionResolver | undefined,
+): CreditsDeps | undefined {
+  if (
+    resolver === undefined ||
+    deps.db === undefined ||
+    deps.ledger === undefined ||
+    deps.limiter === undefined
+  ) {
+    return undefined; // group stays behind the typed 501 catch-all (W8-K)
+  }
+  return {
+    auth: creditsAuth(resolver),
+    ledger: ledgerPageFromStore(deps.ledger, deps.db),
+    summary: drizzleBillingSummary(deps.db),
+    usage: drizzleUsageQueries(deps.db),
+    limiter: deps.limiter,
+  };
+}
+
+/** Registry group deps: billing + Stripe webhook (W4-N) from the seams. */
+function buildBillingDeps(
+  deps: AppDeps,
+  resolver: RequestSessionResolver | undefined,
+): BillingRoutesDeps | undefined {
+  if (
+    resolver === undefined ||
+    deps.db === undefined ||
+    deps.ledger === undefined ||
+    deps.audit === undefined ||
+    deps.stripe === undefined ||
+    deps.billingWiring === undefined
+  ) {
+    // billingWiring is the ONLY seam with no default (§4: prices are env-only,
+    // see GatewayDeps.billingWiring) — an unconfigured deployment keeps the
+    // billing group behind the typed 501 catch-all, never a pretend-success.
+    return undefined;
+  }
+  return {
+    billing: createStripeBillingService({
+      stripe: deps.stripe,
+      db: createDrizzleBillingDb(deps.db),
+      ledger: ledgerFromStore(deps.ledger), // @studio/billing LedgerStore → §14.2 grants
+      audit: deps.audit, // workspaces.ts AuditLike ≡ stripe.ts AuditLike, structural
+      prices: deps.billingWiring.prices,
+      webhookSecret: deps.billingWiring.webhookSecret,
+      appUrl: deps.billingWiring.appUrl,
+      withTransaction: drizzleWithTransaction(deps.db),
+      logger: deps.logger,
+    }),
+    auth: workspacesAuth(resolver), // the SAME W4-E seam the workspaces group uses
+  };
+}
+
+/** W9-H seam: AuditAuthLike — Result<AuditRouteCaller> (the authz mirror). */
+function auditAuth(resolver: RequestSessionResolver): AuditAuthLike {
+  return {
+    async authenticate(request) {
+      const session = await resolver.resolve(request);
+      if (session === null) {
+        return err("unauthorized", "Authentication is required.", { retryable: false });
+      }
+      // SessionContext ≡ GuardContext field-for-field (W4-B mirror): the route
+      // feeds it straight into guard.assertCan / assertTenant (§15.1/§15.2).
+      return ok(session);
+    },
+  };
+}
+
+/**
+ * W9-H seam: the 30-day counts-by-action card — the ~10-line Drizzle adapter
+ * sketched in routes/audit.README.md (grouped read over audit_log, §22).
+ */
+function drizzleAuditCounts(db: Db): AuditActionCountsLike {
+  return {
+    async countsByAction(query: {
+      readonly organizationId: string;
+      readonly since: Date;
+    }): Promise<Readonly<Record<string, number>>> {
+      const rows = await db
+        .select({ action: auditLog.action, n: count() })
+        .from(auditLog)
+        .where(
+          and(eq(auditLog.organizationId, query.organizationId), gte(auditLog.createdAt, query.since)),
+        )
+        .groupBy(auditLog.action);
+      return Object.fromEntries(rows.map((row) => [row.action, Number(row.n)]));
+    },
+  };
+}
+
+/** Registry group deps: §22 audit export + summary (W9-H) from the seams. */
+function buildAuditDeps(
+  deps: AppDeps,
+  resolver: RequestSessionResolver | undefined,
+): AuditRoutesDeps | undefined {
+  if (resolver === undefined || deps.db === undefined) {
+    return undefined;
+  }
+  return {
+    auth: auditAuth(resolver),
+    // The SAME W4-Q service instance shape the rest of the gateway appends
+    // through (routes/audit.ts header contract) over the drizzle store.
+    audit: new AuditService({ store: new DrizzleAuditStore(deps.db) }),
+    summary: drizzleAuditCounts(deps.db),
+  };
 }
 
 // ---------------------------------------------------------------------------

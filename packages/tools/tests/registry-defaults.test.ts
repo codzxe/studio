@@ -10,7 +10,7 @@
 // gap stays explicit). When a new tool file lands, add it to
 // registry-defaults.ts AND extend EXPECTED_DEFAULT_TOOLS here.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { z } from "zod";
 import { echoTool } from "../src/example/echo.js";
 import * as barrel from "../src/index.js";
@@ -312,17 +312,39 @@ describe("src/index.ts barrel — re-exports the full assembly", () => {
     expect(exportedNames).not.toContain("MAX_TAG_CHARS");
     // ComponentVarKind/VarValue/VarSpec + VarsValidation (component-set-vars
     // keeps the unaliased names — §6 row 13 owns the vars surface — while
-    // component-place's copies ride as ComponentPlace* aliases)
-    expect(exportedNames).toContain("ComponentVarKind");
-    expect(exportedNames).toContain("ComponentVarValue");
-    expect(exportedNames).toContain("ComponentVariableSpec");
-    expect(exportedNames).toContain("VarsValidation");
-    expect(exportedNames).toContain("ComponentPlaceVarKind");
-    expect(exportedNames).toContain("ComponentPlaceVarSpec");
-    expect(exportedNames).toContain("ComponentPlaceVarsValidation");
+    // component-place's copies ride as ComponentPlace* aliases). These are
+    // TYPE-only re-exports since the W10-O TS1205 sweep (the barrel routes
+    // them through `export type` blocks), so they are no longer runtime
+    // namespace keys — assert them at the type level instead, each against
+    // its own source module so the aliases cannot silently collapse.
+    expectTypeOf<barrel.ComponentVarKind>().toEqualTypeOf<
+      import("../src/tools/component-set-vars.js").ComponentVarKind
+    >();
+    expectTypeOf<barrel.ComponentVarValue>().toEqualTypeOf<
+      import("../src/tools/component-set-vars.js").ComponentVarValue
+    >();
+    expectTypeOf<barrel.ComponentVariableSpec>().toEqualTypeOf<
+      import("../src/tools/component-set-vars.js").ComponentVariableSpec
+    >();
+    expectTypeOf<barrel.VarsValidation>().toEqualTypeOf<
+      import("../src/tools/component-set-vars.js").VarsValidation
+    >();
+    expectTypeOf<barrel.ComponentPlaceVarKind>().toEqualTypeOf<
+      import("../src/tools/component-place.js").ComponentVarKind
+    >();
+    expectTypeOf<barrel.ComponentPlaceVarSpec>().toEqualTypeOf<
+      import("../src/tools/component-place.js").ComponentVariableSpec
+    >();
+    expectTypeOf<barrel.ComponentPlaceVarsValidation>().toEqualTypeOf<
+      import("../src/tools/component-place.js").VarsValidation
+    >();
     // ResolvedTarget (asset-place keeps the name; image-generate is aliased)
-    expect(exportedNames).toContain("ResolvedTarget");
-    expect(exportedNames).toContain("ImageGenerateResolvedTarget");
+    expectTypeOf<barrel.ResolvedTarget>().toEqualTypeOf<
+      import("../src/tools/asset-place.js").ResolvedTarget
+    >();
+    expectTypeOf<barrel.ImageGenerateResolvedTarget>().toEqualTypeOf<
+      import("../src/tools/image-generate.js").ResolvedTarget
+    >();
     expect(typeof barrel.LAYOUT_APPLY_ENGINE_PATCH_HINT).toBe("string");
   });
 });

@@ -7,7 +7,7 @@
 // Import direction: siblings import `AppEnv` from here; this file imports sibling
 // TYPES only (`import type` — erased at runtime, so no module cycles on the wire).
 
-import type { PlanId, Result } from "@studio/config";
+import type { PlanId } from "@studio/config";
 import type { Db } from "@studio/db";
 import type { LedgerStore } from "@studio/billing";
 import type { RunEventBus } from "@studio/agent";
@@ -22,6 +22,10 @@ import type { KVLike, RateLimiter } from "./services/limiter.js";
 import type { TemplateCatalogLike } from "./services/documents.js";
 import type { AssetsStore, UploadLimitsConfig } from "./services/assets.js";
 import type { AuditLike } from "./services/workspaces.js";
+// §14.3 (W10-R reconcile): the billing wave's authoritative Stripe shapes —
+// imported as types AND re-exported below so sibling modules can keep importing
+// `StripeLike` from types.js while the runtime shape lives in services/stripe.ts.
+import type { StripeLike, StripePriceMap } from "./services/stripe.js";
 
 // ---------------------------------------------------------------------------
 // AppEnv — Hono context variables shared by middleware and routes
@@ -65,35 +69,17 @@ export interface AppEnv {
 // add `unauthenticated` to the add-only catalog, or alias it there.
 
 // ---------------------------------------------------------------------------
-// Stripe seam (placeholder surface for the billing-routes wave, §14.3)
+// Stripe seam (§14.3) — RECONCILED (W10-R) onto the billing wave's shape
 // ---------------------------------------------------------------------------
 
-/**
- * The minimal Stripe surface the future billing/webhook routes need (§14.3).
- * `NoopStripe` (src/app.ts) is the fail-loud default until that wave lands;
- * bootstrap injects a real client adapter when STRIPE_SECRET_KEY is configured.
- * The billing wave OWNS the authoritative shape — extend via GatewayDeps.stripe.
- */
-export interface StripeLike {
-  /** False for the no-op default — routes answer a typed 503, never pretend. */
-  readonly configured: boolean;
-  /** Checkout session for a plan change / credit pack (idempotency-keyed, §14.2). */
-  createCheckoutSession(input: {
-    readonly organizationId: string;
-    readonly planId: PlanId;
-    readonly idempotencyKey: string;
-  }): Promise<Result<{ readonly url: string }>>;
-  /** Customer-portal session URL (§14.3). */
-  createPortalSession(input: {
-    readonly organizationId: string;
-    readonly idempotencyKey: string;
-  }): Promise<Result<{ readonly url: string }>>;
-  /** Verify a webhook signature + parse the event (§14.3 idempotent fan-in). */
-  constructWebhookEvent(input: {
-    readonly payload: string;
-    readonly signature: string;
-  }): Promise<Result<unknown>>;
-}
+// The W4-R placeholder interface (checkout/portal/constructWebhookEvent over
+// Result) was RETIRED when W4-N shipped the authoritative surface in
+// services/stripe.ts (constructEvent + upsertCustomer + typed StripeEvent
+// bodies). `GatewayDeps.stripe` now carries THAT shape — the one
+// createStripeBillingService consumes — and the default is stripe.ts's own
+// NoopStripe (real HMAC verification, no network). Type-only re-export, so
+// this file still imports sibling TYPES exclusively (no runtime cycles).
+export type { StripeLike, StripePriceMap } from "./services/stripe.js";
 
 // ---------------------------------------------------------------------------
 // Engine-session seam (engine-pool view for deep health / run detail, §3.1)
@@ -150,7 +136,11 @@ export interface SessionResolver {
  *   audit          → createDrizzleAudit(db) — append-only audit_log rows (§22).
  *   catalog        → EmptyTemplateCatalog — services/catalog.ts does not exist
  *                    yet; template refs resolve "not found" until it lands.
- *   stripe         → NoopStripe (§14.3) — typed not-configured failures.
+ *   stripe         → NoopStripe (services/stripe.ts, §14.3) — deterministic
+ *                    dev/test provider with REAL HMAC signature verification;
+ *                    bootstrap injects createStripeSdk in production.
+ *   billingWiring  → NO default (field doc below): the billing group mounts
+ *                    only when the Stripe price ids are wired.
  *   engineSessions → NotWiredSessionResolver — [] until the engine-pool probe
  *                    surface (ENGINE_POOL_URL) ships.
  *   resolvePlan     → drizzle lookup on subscriptions ⋈ plans, falling back to
@@ -188,8 +178,28 @@ export interface GatewayDeps {
   readonly audit: AuditLike;
   /** Template catalog (§7) — EmptyTemplateCatalog default until services/catalog. */
   readonly catalog: TemplateCatalogLike;
-  /** Stripe client seam (§14.3) — NoopStripe default. */
+  /**
+   * Stripe client seam (§14.3) — the W4-N authoritative shape
+   * (services/stripe.ts): NoopStripe default in dev/test, createStripeSdk in
+   * production (the wiring-check wave fails fast on NoopStripe in production).
+   */
   readonly stripe: StripeLike;
+  /**
+   * §14.3 wiring inputs for POST /v1/billing/* + the Stripe webhook. NO DEFAULT
+   * by design (§4 fail-fast): the parsed GatewayEnv carries STRIPE_WEBHOOK_SECRET
+   * + APP_URL but NOT the price ids (the gateway schema is .strict();
+   * STRIPE_PRICE_* travels only via the raw env source), so createDefaultDeps
+   * fills this only when the bootstrap passes the price env
+   * (CreateDefaultDepsOptions.stripePriceEnv → priceMapFromEnv) or an explicit
+   * override. Absent ⇒ buildApp leaves the billing group behind the typed 501
+   * catch-all (W8-K degrade contract); the wiring-check wave (§4) refuses to
+   * START a production process on a missing STRIPE_PRICE_*.
+   */
+  readonly billingWiring?: {
+    readonly webhookSecret: string;
+    readonly appUrl: string;
+    readonly prices: StripePriceMap;
+  };
   /** Engine-session view for deep health (§13.1) — not-wired default. */
   readonly engineSessions: SessionResolver;
   /** Plan code for a workspace (§14.1) — drives canvas/concurrency caps. */
