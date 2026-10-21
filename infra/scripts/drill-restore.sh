@@ -39,7 +39,7 @@ env_get() {
 
 log() { printf '[drill] %s %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
 die() { log "FATAL: $*"; exit 1; }
-usage() { grep -E '^# (Usage:|  infra/scripts/drill-restore)' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; }
+usage() { grep -E '^[[:space:]]*#[[:space:]]*(Usage:|infra/scripts/drill-restore)' "${BASH_SOURCE[0]}" | sed 's/^[[:space:]]*#[[:space:]]\{0,1\}//' >&2; }
 
 POSTGRES_USER="${POSTGRES_USER:-$(env_get POSTGRES_USER)}"; POSTGRES_USER="${POSTGRES_USER:-studio}"
 POSTGRES_DB="${POSTGRES_DB:-$(env_get POSTGRES_DB)}";       POSTGRES_DB="${POSTGRES_DB:-studio}"
@@ -110,7 +110,7 @@ report_and_log() {
   RTO_OK=ok; [ "$RTO_SECS" -le $(( 4 * 3600 )) ] || RTO_OK=OVER
   [ "$RPO_OK" = ok ] || NOTES="$NOTES RPO over 24 h budget"
   [ "$RTO_OK" = ok ] || NOTES="$NOTES RTO over 4 h budget"
-  NOTES="$(printf '%s' "$NOTES" | sed 's/^ *//' | tr '|' '/'; [ -n "$NOTES" ] || true)"
+  NOTES="$(printf '%s' "$NOTES" | sed 's/^ *//' | tr '|' '/')"
   NOTES="${NOTES:-budgets ok}"
   if [ ! -f "$DRILL_LOG" ]; then
     mkdir -p "$(dirname "$DRILL_LOG")"

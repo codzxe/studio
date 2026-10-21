@@ -125,10 +125,18 @@ if [ -n "$STAMP_EPOCH" ]; then BACKUP_EPOCH="$STAMP_EPOCH"; fi
 # --- 2. checksum + gzip integrity --------------------------------------------
 SHA_FILE="${DUMP_LOCAL}.sha256"
 if [ -r "$SHA_FILE" ]; then
-  if sha256sum -c "$SHA_FILE" >/dev/null 2>&1 || (cd "$(dirname "$DUMP_LOCAL")" && sha256sum -c "$(basename "$SHA_FILE")" >/dev/null 2>&1); then
-    log "sha256 ok ($(head -c 16 "$SHA_FILE")…)"
-  elif command -v shasum >/dev/null 2>&1 && (cd "$(dirname "$DUMP_LOCAL")" && shasum -a 256 -c "$(basename "$SHA_FILE")" >/dev/null 2>&1); then
-    log "sha256 ok (shasum)"
+  EXPECTED="$(awk '{print $1}' "$SHA_FILE")"
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL="$(sha256sum "$DUMP_LOCAL" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL="$(shasum -a 256 "$DUMP_LOCAL" | awk '{print $1}')"
+  else
+    ACTUAL=""
+  fi
+  if [ -z "$ACTUAL" ]; then
+    warn "no sha256 tool available — checksum not verified"
+  elif [ "$ACTUAL" = "$EXPECTED" ]; then
+    log "sha256 ok (${EXPECTED:0:16}…)"
   else
     fail "sha256 mismatch for $FNAME — the dump is corrupt; treat as an incident (§17.4)"
   fi
@@ -162,11 +170,8 @@ docker exec "$CNAME" pg_isready -U postgres >/dev/null 2>&1 \
 
 VDB="studio_verify"
 T_RESTORE_START="$(date +%s)"
-if [ "$SOURCE" != "s3" ]; then
-  # a local dump has no live stack necessarily; still pre-create the app role
-  # referenced by GRANTs so they do not error (POSTGRES_USER validated below).
-  true
-fi
+# pre-create the app role the dump's GRANTs reference, so those warnings are
+# the only restore noise (POSTGRES_USER is validated as a safe identifier).
 [[ "$POSTGRES_USER" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || POSTGRES_USER="studio"
 docker exec "$CNAME" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE DATABASE studio_verify;' >/dev/null 2>&1 \
@@ -182,14 +187,14 @@ RC=$?
 set -e
 T_RESTORE=$(( $(date +%s) - T_RESTORE_START ))
 if [ "$RC" -ne 0 ]; then
-  # tolerate only GRANT/OWNER references to roles that do not exist locally;
+  # tolerate only GRANT references to roles that do not exist locally;
   # anything else is a real restore error (§17.4: the restore path must be real)
-  REAL_ERRS="$(grep -c 'error:' "$RESTORE_ERR" 2>/dev/null || echo 0)"
-  ROLE_ERRS="$(grep 'error:' "$RESTORE_ERR" 2>/dev/null | grep -c 'role .* does not exist' || true)"
-  if [ "$REAL_ERRS" -gt "${ROLE_ERRS:-0}" ]; then
-    fail "pg_restore reported real errors (see below); first: $(grep -m1 'error:' "$RESTORE_ERR" || true)"
+  REAL_ERRS="$(grep -c 'error:' "$RESTORE_ERR" 2>/dev/null || true)"; REAL_ERRS="${REAL_ERRS:-0}"
+  ROLE_ERRS="$(grep 'error:' "$RESTORE_ERR" 2>/dev/null | grep -c 'role .* does not exist' || true)"; ROLE_ERRS="${ROLE_ERRS:-0}"
+  if [ "$REAL_ERRS" -gt "$ROLE_ERRS" ]; then
+    fail "pg_restore reported real errors; first: $(grep -m1 'error:' "$RESTORE_ERR" || true)"
   else
-    warn "pg_restore exit ${RC}: only missing-role GRANT warnings ($(grep -c 'role .* does not exist' "$RESTORE_ERR" || true)) — tolerated"
+    warn "pg_restore exit ${RC}: only ${ROLE_ERRS} missing-role GRANT warning(s) — tolerated"
   fi
 fi
 log "restore finished in ${T_RESTORE}s"
