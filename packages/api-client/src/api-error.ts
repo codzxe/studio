@@ -18,7 +18,7 @@
 // safe strings. `cause` keeps the original failure for logging, and `toJSON()`
 // serializes the safe fields only.
 
-import { isErr, type Err } from "@studio/contracts";
+import { type Err, isErr } from "@studio/contracts";
 
 /** HTTP status `0` marks a client-local failure (no §7.3 body exists). */
 export const CLIENT_SIDE_STATUS = 0;

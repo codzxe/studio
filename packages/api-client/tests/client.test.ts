@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { ApiError, isApiError } from "../src/api-error.js";
+import { type ApiError, isApiError } from "../src/api-error.js";
 import { createApiClient } from "../src/client.js";
-import { jsonErr, jsonOk, textResponse, type RecordedCall } from "./helpers.js";
+import { type RecordedCall, jsonErr, jsonOk, textResponse } from "./helpers.js";
 
 function header(call: RecordedCall, name: string): string | null {
   if (call.init?.headers === undefined) return null;
@@ -12,6 +12,15 @@ function header(call: RecordedCall, name: string): string | null {
 }
 
 const BASE = "https://api.studio.test/v1";
+
+// A §7.2-valid `GET /me` payload — /me responses are schema-validated, so
+// tests that await `me.get()` must feed it a real MeResponse (the
+// MALFORMED_RESPONSE tests pin the validation itself).
+const ME = {
+  user: { id: "usr_1", name: null, email: "maya@example.com" },
+  memberships: [],
+  plan: { plan: "pro", creditsBalance: 3200, includedCredits: 2500, renewsAt: null },
+};
 
 function makeClient(handler: (input: string, init?: RequestInit) => Promise<Response>) {
   const calls: RecordedCall[] = [];
@@ -63,12 +72,17 @@ describe("createApiClient — envelope unwrap", () => {
   it("treats a 2xx body carrying an Err envelope as a failure (§7.3 decides)", async () => {
     const { client } = makeClient(() =>
       Promise.resolve(
-        new Response(JSON.stringify({ error: {
-          code: "INSUFFICIENT_CREDITS",
-          message: "out of credits",
-          retryable: false,
-          requestId: "req_x",
-        } }), { status: 200, headers: { "content-type": "application/json" } }),
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "INSUFFICIENT_CREDITS",
+              message: "out of credits",
+              retryable: false,
+              requestId: "req_x",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
       ),
     );
     await expectAsyncFail(client.credits.get(), (error) => {
@@ -98,7 +112,9 @@ describe("createApiClient — envelope unwrap", () => {
   });
 
   it("returns null for an empty 2xx body on void mutations (soft delete)", async () => {
-    const { client, calls } = makeClient(() => Promise.resolve(new Response(null, { status: 204 })));
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(new Response(null, { status: 204 })),
+    );
     const result = await client.projects.delete("prj_1");
     expect(result).toBeNull();
     expect(calls[0]?.input).toBe(`${BASE}/projects/prj_1`);
@@ -109,7 +125,15 @@ describe("createApiClient — envelope unwrap", () => {
 describe("createApiClient — idempotency keys (§7.2)", () => {
   it("auto-derives an Idempotency-Key on mutations", async () => {
     const { client, calls } = makeClient(() =>
-      Promise.resolve(jsonOk({ id: "wsp_1", name: "N", slug: "n", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" })),
+      Promise.resolve(
+        jsonOk({
+          id: "wsp_1",
+          name: "N",
+          slug: "n",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        }),
+      ),
     );
     await client.workspaces.create({ name: "Northlight Motion", slug: "northlight-motion" });
     const key = header(calls[0] ?? ({} as RecordedCall), "Idempotency-Key");
@@ -123,7 +147,16 @@ describe("createApiClient — idempotency keys (§7.2)", () => {
 
   it("uses the caller's explicit key and rejects short ones client-side", async () => {
     const { client, calls } = makeClient(() =>
-      Promise.resolve(jsonOk({ id: "thr_1", projectId: "p", title: null, createdBy: "u", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" })),
+      Promise.resolve(
+        jsonOk({
+          id: "thr_1",
+          projectId: "p",
+          title: null,
+          createdBy: "u",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+        }),
+      ),
     );
     await client.threads.create("prj_1", {}, { idempotencyKey: "idem-explicit-0001" });
     expect(header(calls[0] ?? ({} as RecordedCall), "Idempotency-Key")).toBe("idem-explicit-0001");
@@ -139,7 +172,9 @@ describe("createApiClient — idempotency keys (§7.2)", () => {
   });
 
   it("never sends Idempotency-Key on GETs", async () => {
-    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({ items: [], nextCursor: null })));
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ items: [], nextCursor: null })),
+    );
     await client.projects.list({ limit: 10 });
     expect(header(calls[0] ?? ({} as RecordedCall), "Idempotency-Key")).toBeNull();
   });
@@ -147,19 +182,25 @@ describe("createApiClient — idempotency keys (§7.2)", () => {
 
 describe("createApiClient — query params", () => {
   it("serializes cursor/limit and skips undefined", async () => {
-    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({ items: [], nextCursor: null })));
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ items: [], nextCursor: null })),
+    );
     await client.projects.list({ cursor: "cur_abc", limit: 7 });
     expect(calls[0]?.input).toBe(`${BASE}/projects?cursor=cur_abc&limit=7`);
   });
 
   it("defaults limit to 50 (§7.2 pagination)", async () => {
-    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({ items: [], nextCursor: null })));
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ items: [], nextCursor: null })),
+    );
     await client.workspaces.list();
     expect(calls[0]?.input).toBe(`${BASE}/workspaces?limit=50`);
   });
 
   it("passes route filters through (comments compId/resolved)", async () => {
-    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({ items: [], nextCursor: null })));
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ items: [], nextCursor: null })),
+    );
     await client.comments.list("prj_1", { compId: "cmp_main", resolved: false });
     const url = calls[0]?.input ?? "";
     expect(url).toContain("compId=cmp_main");
@@ -168,7 +209,9 @@ describe("createApiClient — query params", () => {
   });
 
   it("rejects limit > 100 client-side (contracts bound)", async () => {
-    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({ items: [], nextCursor: null })));
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ items: [], nextCursor: null })),
+    );
     await expectAsyncFail(client.projects.list({ limit: 101 }), (error) => {
       expect(error.code).toBe("VALIDATION_FAILED");
     });
@@ -180,7 +223,6 @@ describe("createApiClient — request bodies", () => {
   it("validates bodies client-side with the contracts schemas", async () => {
     const { client, calls } = makeClient(() => Promise.resolve(jsonOk({})));
     await expectAsyncFail(
-      // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid body
       client.workspaces.create({ name: "x", slug: "NOT-URL-SAFE" } as never),
       (error) => {
         expect(error.code).toBe("VALIDATION_FAILED");
@@ -200,13 +242,29 @@ describe("createApiClient — request bodies", () => {
 
   it("serializes the validated body as JSON with content-type", async () => {
     const { client, calls } = makeClient(() =>
-      Promise.resolve(jsonOk({ id: "p", workspaceId: "w", name: "n", slug: "s", thumbnailUrl: null, currentVersionId: null, createdBy: "u", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", deletedAt: null })),
+      Promise.resolve(
+        jsonOk({
+          id: "p",
+          workspaceId: "w",
+          name: "n",
+          slug: "s",
+          thumbnailUrl: null,
+          currentVersionId: null,
+          createdBy: "u",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          deletedAt: null,
+        }),
+      ),
     );
     await client.projects.create({ name: "Launch film", description: "Q4 launch" });
     const call = calls[0];
     expect(call?.input).toBe(`${BASE}/projects`);
     expect(header(call ?? ({} as RecordedCall), "Content-Type")).toBe("application/json");
-    expect(JSON.parse(String(call?.init?.body))).toEqual({ name: "Launch film", description: "Q4 launch" });
+    expect(JSON.parse(String(call?.init?.body))).toEqual({
+      name: "Launch film",
+      description: "Q4 launch",
+    });
   });
 
   it("runs.postEvent enforces the apply.result sha256/errorCode refine", async () => {
@@ -230,7 +288,7 @@ describe("createApiClient — request bodies", () => {
 describe("createApiClient — abortSignal", () => {
   it("forwards the signal to fetch", async () => {
     const controller = new AbortController();
-    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({})));
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk(ME)));
     await client.me.get({ signal: controller.signal });
     expect(calls[0]?.init?.signal).toBe(controller.signal);
   });
@@ -263,18 +321,22 @@ describe("createApiClient — extra headers + paths", () => {
   });
 
   it("encodes path ids", async () => {
-    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({ url: "https://x", expiresAt: "2026-01-01T00:00:00Z" })));
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ url: "https://x", expiresAt: "2026-01-01T00:00:00Z" })),
+    );
     await client.assets.getUrl("ast/1");
     expect(calls[0]?.input).toBe(`${BASE}/assets/ast%2F1/url`);
   });
 
   it("trims a trailing slash from baseUrl", async () => {
-    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({ items: [], nextCursor: null })));
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ items: [], nextCursor: null })),
+    );
     const trailing = createApiClient({
       baseUrl: `${BASE}/`,
       fetch: async (input, init) => {
         calls.push({ input, init });
-        return jsonOk({ items: [], nextCursor: null });
+        return jsonOk(ME);
       },
     });
     await trailing.me.get();
@@ -339,7 +401,12 @@ describe("createApiClient — versions.upload (two-phase)", () => {
       if (input === `${BASE}/projects/prj_1/versions`) {
         return jsonOk({
           version: versionRow,
-          upload: { url: "https://cdn.studio.test/blob", method: "PUT", expiresAt: "2026-01-01T00:05:00Z", headers: {} },
+          upload: {
+            url: "https://cdn.studio.test/blob",
+            method: "PUT",
+            expiresAt: "2026-01-01T00:05:00Z",
+            headers: {},
+          },
         });
       }
       return new Response(null, { status: 200 });
@@ -360,7 +427,12 @@ describe("createApiClient — versions.upload (two-phase)", () => {
       if (input === `${BASE}/projects/prj_1/versions`) {
         return jsonOk({
           version: versionRow,
-          upload: { url: "https://cdn.studio.test/fail", method: "PUT", expiresAt: "2026-01-01T00:05:00Z", headers: {} },
+          upload: {
+            url: "https://cdn.studio.test/fail",
+            method: "PUT",
+            expiresAt: "2026-01-01T00:05:00Z",
+            headers: {},
+          },
         });
       }
       return new Response("Forbidden", { status: 403 });
@@ -381,8 +453,11 @@ describe("createApiClient — versions.upload (two-phase)", () => {
   it("rejects non-Blob/non-Uint8Array bytes before sending", async () => {
     const { client, calls } = makeClient(() => Promise.resolve(jsonOk(null)));
     await expectAsyncFail(
-      // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input
-      client.versions.upload("prj_1", { baseVersionId: "v", sha256: "b".repeat(64), bytes: "not bytes" as never }),
+      client.versions.upload("prj_1", {
+        baseVersionId: "v",
+        sha256: "b".repeat(64),
+        bytes: "not bytes" as never,
+      }),
       (error) => expect(error.code).toBe("VALIDATION_FAILED"),
     );
     expect(calls).toHaveLength(0);
@@ -399,9 +474,16 @@ describe("createApiClient — surface map", () => {
         () => undefined,
         () => undefined,
       );
-    const page = jsonOk({ items: [], nextCursor: null });
     const recorder = client;
-    const okFetch = async (): Promise<Response> => page;
+    // A Response body is single-use: every paginated GET needs a FRESH page
+    // response (a reused one rejects on the second read as a network error,
+    // and the GET retry backoff — real sleeps, no injected seam here — burns
+    // seconds per call). okFetch records into the same call log so the
+    // paginated paths appear in await order.
+    const okFetch = async (input: string, init?: RequestInit): Promise<Response> => {
+      calls.push({ input, init });
+      return jsonOk({ items: [], nextCursor: null });
+    };
     const paginated = createApiClient({ baseUrl: BASE, fetch: okFetch });
 
     await ignore(recorder.me.get());
@@ -435,7 +517,9 @@ describe("createApiClient — surface map", () => {
     await ignore(paginated.threads.messages("thr_1"));
     await ignore(recorder.runs.get("run_1"));
     await ignore(recorder.runs.cancel("run_1", { reason: "stop" }));
-    await ignore(recorder.runs.postEvent("run_1", { type: "tool.result", toolCallId: "tc_1", result: 1 }));
+    await ignore(
+      recorder.runs.postEvent("run_1", { type: "tool.result", toolCallId: "tc_1", result: 1 }),
+    );
     await ignore(recorder.credits.get());
     await ignore(paginated.credits.ledger());
     await ignore(recorder.billing.checkout({ planId: "pro" }));
