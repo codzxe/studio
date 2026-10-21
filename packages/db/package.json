@@ -1,0 +1,36 @@
+{
+  "name": "@studio/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio DB package: Drizzle (Postgres) schema, Better Auth factory, tenant-scoped repositories, migrations, seed.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts",
+    "./auth": "./src/auth.ts",
+    "./permissions": "./src/permissions.ts",
+    "./errors": "./src/errors-lite.ts"
+  },
+  "scripts": {
+    "generate": "drizzle-kit generate",
+    "migrate": "tsx src/migrate.ts",
+    "seed": "tsx scripts/seed.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src tests scripts drizzle.config.ts"
+  },
+  "dependencies": {
+    "@better-auth/api-key": "^1.7.12",
+    "better-auth": "^1.7.12",
+    "drizzle-orm": "^0.45.4",
+    "postgres": "^3.4.9",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
+    "vitest": "^2.1.8"
+  }
+}
