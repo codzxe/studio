@@ -195,4 +195,5 @@ live environment.
   guards (60 MP ceiling), all fuzzed by a 39-case adversarial corpus with pinned
   verdicts.
 
-[0.1.0-beta.0]: https://github.com/TODO/studio/releases/tag/v0.1.0-beta.0
+<!-- Link references for release compare URLs are added when the GitHub remote
+     owner/org is finalized; tags are created by the release captain. -->
