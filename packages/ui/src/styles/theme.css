@@ -1,0 +1,208 @@
+/**
+ * Studio UI — Tailwind v4 theme mapping + base layer.
+ *
+ * APP IMPORT CONTRACT (docs/UI_DESIGN_SYSTEM.md §15):
+ *   The app's globals.css must contain exactly:
+ *
+ *     @import "tailwindcss";
+ *     @import "@studio/ui/src/styles/theme.css";
+ *     @source "<path-to>/packages/ui/src";   // Tailwind skips node_modules by
+ *                                             // default — point it at our sources
+ *
+ *   theme.css pulls in tokens.css and utilities.css itself. That single import
+ *   gives the app every semantic utility used by @studio/ui components:
+ *   bg-page/bg-app/bg-panel/bg-elevated/bg-input, text-primary/secondary/muted/
+ *   disabled, border/subtle/strong, signal/success/warning/danger/ice,
+ *   rounded-xs/sm/md/lg/pill, font-display/font-sans/font-mono,
+ *   text-display-xl…text-hint, shadow-pop/shadow-modal, duration-120/180/240,
+ *   ease-out, animate-* (Radix data-state entrances/exits).
+ *
+ * Fonts: apps load Instrument Serif / Instrument Sans / JetBrains Mono via
+ * next/font and override the three *-stack variables — see packages/ui/README.md.
+ */
+@import "./tokens.css";
+@import "./utilities.css";
+
+@theme inline {
+  /* ---------------------------------------------------------------- Surfaces (§3.2) */
+  --color-page: var(--bg-page);
+  --color-app: var(--bg-app);
+  --color-panel: var(--bg-panel);
+  --color-elevated: var(--bg-elevated);
+  --color-input: var(--bg-input);
+
+  /* ------------------------------------------------------------------- Text (§3.2) */
+  --color-primary: var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-muted: var(--text-muted);
+  --color-disabled: var(--text-disabled);
+
+  /* ------------------------------------------------------- Lines / borders (§5.4) */
+  --color-border: var(--border);
+  --color-subtle: var(--line-subtle);
+  --color-strong: var(--line-strong);
+
+  /* --------------------------------------------------- Accent + status (§3.1) */
+  --color-signal: var(--signal);
+  --color-signal-hover: var(--signal-hover);
+  --color-signal-press: var(--signal-press);
+  --color-signal-ink: var(--signal-ink);
+  --color-ice: var(--ice);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-violet: var(--violet);
+  --color-overlay: var(--overlay);
+  --color-focus: var(--focus-ring);
+
+  /* Raw palette escape hatch (prefer the semantic tokens above) */
+  --color-ink-0: var(--ink-0);
+  --color-ink-1: var(--ink-1);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-paper: var(--paper);
+  --color-paper-dim: var(--paper-dim);
+  --color-ash: var(--ash);
+  --color-ash-dim: var(--ash-dim);
+
+  /* ---------------------------------------------------- Spacing (§5.1 — identity) */
+  /* Tailwind v4's default 4px-based numeric spacing scale IS the doc's scale
+     (4,8,12,16,20,24,32,40,48,64,80,96,128 → p-1…p-32), so utilities map 1:1
+     with §5.1. The --space-* custom properties in tokens.css stay available
+     for raw CSS (used by .frame-line / .slate) and are deliberately NOT
+     remapped here — remapping --spacing-<n> to <n>px would silently break
+     Tailwind's default semantics (p-6 must stay 24px, gap-12 48px, …). */
+
+  /* ------------------------------------------------------------------ Radii (§5.3) */
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-pill: var(--radius-pill);
+
+  /* ----------------------------------------------------------- Fonts (§4.1) */
+  --font-display: var(--font-display-stack);
+  --font-sans: var(--font-sans-stack);
+  --font-mono: var(--font-mono-stack);
+
+  /* -------------------------------------------------------- Type scale (§4.2) */
+  --text-display-xl: var(--text-display-xl);
+  --text-display-xl--line-height: var(--text-display-xl--line-height);
+  --text-display-xl--letter-spacing: var(--text-display-xl--letter-spacing);
+  --text-display-l: var(--text-display-l);
+  --text-display-l--line-height: var(--text-display-l--line-height);
+  --text-display-l--letter-spacing: var(--text-display-l--letter-spacing);
+  --text-display-m: var(--text-display-m);
+  --text-display-m--line-height: var(--text-display-m--line-height);
+  --text-display-m--letter-spacing: var(--text-display-m--letter-spacing);
+  --text-title-l: var(--text-title-l);
+  --text-title-l--line-height: var(--text-title-l--line-height);
+  --text-title-l--letter-spacing: var(--text-title-l--letter-spacing);
+  --text-title-m: var(--text-title-m);
+  --text-title-m--line-height: var(--text-title-m--line-height);
+  --text-body-l: var(--text-body-l);
+  --text-body-l--line-height: var(--text-body-l--line-height);
+  --text-body: var(--text-body);
+  --text-body--line-height: var(--text-body--line-height);
+  --text-body-s: var(--text-body-s);
+  --text-body-s--line-height: var(--text-body-s--line-height);
+  --text-label: var(--text-label);
+  --text-label--line-height: var(--text-label--line-height);
+  --text-label--letter-spacing: var(--text-label--letter-spacing);
+  --text-caption: var(--text-caption);
+  --text-caption--line-height: var(--text-caption--line-height);
+  --text-mono: var(--text-mono);
+  --text-mono--line-height: var(--text-mono--line-height);
+  --text-hint: var(--text-hint);
+  --text-hint--line-height: var(--text-hint--line-height);
+
+  /* ---------------------------------------------------------- Elevation (§5.4) */
+  --shadow-pop: var(--elevation-pop);
+  --shadow-modal: var(--elevation-modal);
+
+  /* ------------------------------------------------------------- Easings (§6.1) */
+  /* Overrides Tailwind's default ease-out/ease-in-out with the Studio curves. */
+  --ease-out: var(--ease-out);
+  --ease-in-out: var(--ease-in-out);
+
+  /* ---------------------------------------------- Signature motion (§6.2/6.3) */
+  /* Keyframes live in utilities.css so they are always emitted. */
+  --animate-fade-in: fade-in var(--motion-fast) var(--ease-out);
+  --animate-fade-out: fade-out var(--motion-fast) var(--ease-out);
+  --animate-pop-in: pop-in var(--motion-base) var(--ease-out);
+  --animate-pop-out: pop-out var(--motion-fast) var(--ease-out);
+  --animate-overlay-in: fade-in var(--motion-slow) var(--ease-out);
+  --animate-overlay-out: fade-out var(--motion-fast) var(--ease-out);
+  --animate-toast-in: toast-in var(--motion-base) var(--ease-out);
+  --animate-toast-out: toast-out var(--motion-fast) var(--ease-out);
+  --animate-slate-in: slate-in var(--motion-base) var(--ease-out);
+  --animate-shimmer: shimmer 1.4s linear infinite; /* §7.13: 1.4s at 6% opacity */
+  --animate-pulse-dot: pulse-dot 1.2s ease-in-out infinite; /* §6.3 agent pulse */
+  --animate-caret-blink: caret-blink 1.06s step-end infinite; /* §9 streaming caret */
+  --animate-frame-draw: frame-draw var(--motion-slow) var(--ease-out); /* §6.3 */
+}
+
+@layer base {
+  :root {
+    color-scheme: dark; /* dark is the only theme in v1 (§17) */
+  }
+
+  body {
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    font-family: var(--font-sans-stack);
+    font-size: var(--text-body);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* §5.4 — default hairline on any border drawn without an explicit colour. */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+
+  /* §12 — focus ring: 2px signal, 2px offset. Never `outline: none` elsewhere. */
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: var(--signal);
+    color: var(--signal-ink);
+  }
+
+  /* §9 / §13 — scrollbars: 8px, ink-3 thumb, transparent track, visible on hover. */
+  * {
+    scrollbar-color: var(--bg-elevated) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: var(--scrollbar-w);
+    height: var(--scrollbar-w);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--ink-3);
+    border-radius: var(--radius-pill);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-4);
+  }
+
+  /* §6.2 — prefers-reduced-motion: remove transforms, keep opacity ≤ 100ms. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

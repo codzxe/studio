@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // UI package: TSX components consumed via workspace source imports.
+    // Bundler resolution (Vite/Next) + react-jsx per fleet convention for UI code.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // No rootDir/outDir: tests sit beside components and `tsc --noEmit` is the gate
+    // (fleet precedent — packages/storage, packages/billing).
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vitest.config.ts", "vitest.setup.ts"]
+}

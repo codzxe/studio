@@ -1,0 +1,154 @@
+/**
+ * Studio UI — design tokens (single source of truth).
+ *
+ * Mirrors docs/UI_DESIGN_SYSTEM.md §3–§6 and §9 exactly:
+ *   §3.1 core palette · §3.2 semantic tokens · §4 typography
+ *   §5.1 spacing · §5.3 radii · §5.4 elevations
+ *   §6 motion · §9 chat overlay measurements
+ *
+ * Rules enforced downstream:
+ *   - Components consume SEMANTIC tokens only (§3.2) — never raw hex.
+ *   - No pure #000/#FFF. Dark is the only theme in v1 (§17).
+ *   - Status is never colour-only: pair with an icon and a label (§3.1).
+ *
+ * The app imports this file transitively via theme.css:
+ *   @import "@studio/ui/src/styles/theme.css";
+ */
+
+:root {
+  /* --------------------------------------------------------------- §3.1 Core palette */
+  --ink-0: #070809; /* page background, editor surround */
+  --ink-1: #0c0e10; /* app background */
+  --ink-2: #121517; /* panel / card */
+  --ink-3: #181c1f; /* elevated surface, hover */
+  --ink-4: #20262a; /* input, pressed */
+  --line-subtle: #232a2e; /* hairlines, dividers */
+  --line-strong: #333c41; /* focused borders, strong dividers */
+  --paper: #f3f0e8; /* primary text */
+  --paper-dim: #c9c6be; /* secondary text */
+  --ash: #8e969c; /* muted text, metadata */
+  --ash-dim: #5e686e; /* disabled text */
+  --signal: #ff6a3d; /* primary action, live state, selection */
+  --signal-hover: #ff805c; /* hover */
+  --signal-press: #e8562b; /* pressed */
+  --signal-ink: #1a0b06; /* text on signal */
+  --ice: #8fd3e8; /* informational, links, focus alternative */
+  --success: #7bd88f; /* applied, saved, healthy */
+  --warning: #f2c14e; /* warning, credit low */
+  --danger: #ff6b6b; /* destructive, failed */
+  --violet: #b8a1ff; /* reserved: version/comment accents only */
+
+  /* ------------------------------------------------------------ §3.2 Semantic tokens */
+  --bg-page: var(--ink-0);
+  --bg-app: var(--ink-1);
+  --bg-panel: var(--ink-2);
+  --bg-elevated: var(--ink-3);
+  --bg-input: var(--ink-4);
+  --text-primary: var(--paper);
+  --text-secondary: var(--paper-dim);
+  --text-muted: var(--ash);
+  --text-disabled: var(--ash-dim);
+  --border: var(--line-subtle);
+  --border-strong: var(--line-strong);
+  --focus-ring: var(--signal);
+  --overlay: rgb(0 0 0 / 0.65);
+
+  /* -------------------------------------------------- §4.1 Font stacks (reference by CSS var) */
+  /* Apps load the real faces via next/font and override these three stacks
+     with the next/font variables — see packages/ui/README.md. */
+  --font-display-stack: "Instrument Serif", Georgia, serif;
+  --font-sans-stack: "Instrument Sans", system-ui, -apple-system, sans-serif;
+  --font-mono-stack: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", monospace;
+
+  /* --------------------------------------------------------------- §4.2 Type scale */
+  --text-display-xl: 72px;
+  --text-display-xl--line-height: 0.95;
+  --text-display-xl--letter-spacing: -0.03em;
+  --text-display-l: 56px;
+  --text-display-l--line-height: 1;
+  --text-display-l--letter-spacing: -0.02em;
+  --text-display-m: 40px;
+  --text-display-m--line-height: 1.05;
+  --text-display-m--letter-spacing: -0.02em;
+  --text-title-l: 28px;
+  --text-title-l--line-height: 1.15;
+  --text-title-l--letter-spacing: -0.01em;
+  --text-title-m: 20px;
+  --text-title-m--line-height: 1.25;
+  --text-body-l: 17px;
+  --text-body-l--line-height: 1.6;
+  --text-body: 15px;
+  --text-body--line-height: 1.6;
+  --text-body-s: 13px;
+  --text-body-s--line-height: 1.5;
+  --text-label: 12px;
+  --text-label--line-height: 1.2;
+  --text-label--letter-spacing: 0.06em; /* pair with `uppercase` — labels/overlines only */
+  --text-caption: 12px; /* plain 12px: helper text, tooltip, metadata (§7.2/7.6) */
+  --text-caption--line-height: 1.4;
+  --text-mono: 12px; /* timecode, code */
+  --text-mono--line-height: 1.5;
+  --text-hint: 11px; /* keyboard hints only (§4.2 — never smaller in app copy) */
+  --text-hint--line-height: 1.2;
+
+  /* --------------------------------------------------------- §5.1 Spacing scale (4px base) */
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-40: 40px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-80: 80px;
+  --space-96: 96px;
+  --space-128: 128px;
+  /* Page gutters (§5.1) */
+  --gutter-mobile: 20px;
+  --gutter-tablet: 32px;
+  --gutter-desktop: 48px;
+  --gutter-wide: 64px;
+  /* Layout max widths (§5.1) */
+  --width-marketing-max: 1200px;
+  --width-app-max: 1440px;
+  --width-prose-max: 720px;
+
+  /* ------------------------------------------------------------------------ §5.3 Radii */
+  --radius-xs: 3px; /* badges, keys */
+  --radius-sm: 6px; /* inputs, buttons, tool cards */
+  --radius-md: 10px; /* cards, popovers */
+  --radius-lg: 14px; /* modals, large panels */
+  --radius-pill: 999px; /* pills, avatars */
+
+  /* ------------------------------------------------------- §5.4 Borders and elevation */
+  /* Default border: 1px solid var(--border) — applied in theme.css base layer. */
+  --elevation-pop: 0 8px 24px rgb(0 0 0 / 0.35); /* elevation 1: popovers, menus */
+  --elevation-modal: 0 24px 64px rgb(0 0 0 / 0.55); /* elevation 2: modals, chat panel */
+
+  /* --------------------------------------------------------------------------------- §6 Motion */
+  --motion-fast: 120ms; /* hover, press, focus */
+  --motion-base: 180ms; /* menus, popovers, tab changes */
+  --motion-slow: 240ms; /* sheets, page transitions */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); /* entrances */
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1); /* moves */
+
+  /* ------------------------------------------------- §9 Chat overlay measurements */
+  --chat-header-h: 48px;
+  --chat-context-h: 32px;
+  --chat-composer-min-h: 96px;
+  --chat-composer-max-h: 160px;
+  --chat-panel-max-w: 720px; /* ≥1440px floating: max 720×900 */
+  --chat-panel-max-h: 900px;
+  --chat-message-radius: 8px; /* user message surface */
+  --chat-caret-w: 6px; /* streaming caret: 6×14px signal block, 1s step blink */
+  --chat-caret-h: 14px;
+
+  /* ------------------------------------------------------ Component measurements (§7) */
+  --palette-w: 560px; /* command palette (§7.10) */
+  --palette-top: 20vh;
+  --dialog-w: 560px; /* dialog max (§7.5) */
+  --dialog-w-large: 720px;
+  --scrollbar-w: 8px; /* §9: 8px, ink-3 thumb, transparent track */
+}

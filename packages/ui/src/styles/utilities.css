@@ -1,0 +1,212 @@
+/**
+ * Studio UI — utility helpers + signature keyframes.
+ *
+ * Imported transitively by theme.css (which the app imports once), so these
+ * are guaranteed present wherever the design system is used.
+ *
+ * Keyframes animate transform/opacity only (§6.2). The global
+ * prefers-reduced-motion override in theme.css removes them.
+ */
+
+/* --------------------------------------------------------------------- Keyframes */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes pop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.99);
+  }
+}
+
+@keyframes toast-in {
+  /* §6.2 — toasts: slide 8px + fade, 180ms */
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* §6.3 — slate shuffle: thumbnails reveal with a 4px upward fade (40ms stagger
+   is applied by the parent grid via the ProjectCard `stagger` prop). */
+@keyframes slate-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* §7.13 — skeleton shimmer: 1.4s at 6% opacity (transform-only). */
+@keyframes shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(200%);
+  }
+}
+
+/* §6.3 — agent pulse: 1.2s opacity pulse on the signal dot while streaming. */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* §9 — streaming caret: 6×14px signal block, 1s step blink. */
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* §6.3 — frame line draw: 240ms scaleX 0 → 1, once (scroll into view). */
+@keyframes frame-draw {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@layer components {
+  /**
+   * §2.3 signature element — the frame line.
+   * A thin horizontal rule with a small timecode label, used as a section
+   * divider: `00:00:12 — WORKFLOW`. Compose with the <FrameLine /> component.
+   *
+   * Add `data-draw` to play the 240ms scaleX draw once (§6.3).
+   */
+  .frame-line {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+  }
+
+  .frame-line::after {
+    content: "";
+    flex: 1 1 auto;
+    height: 1px;
+    background: var(--border-strong);
+    transform-origin: 0 50%;
+  }
+
+  .frame-line[data-draw]::after {
+    animation: frame-draw var(--motion-slow) var(--ease-out) both;
+  }
+
+  .frame-line-label {
+    font-family: var(--font-mono-stack);
+    font-size: var(--text-mono);
+    line-height: 1.5;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /**
+   * §2.3 signature element — the slate.
+   * A compact project header card: name, duration and comp count, like a film
+   * slate. Compose with the <Slate /> component.
+   */
+  .slate {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-12) var(--space-16);
+  }
+
+  /**
+   * §3.1 — the ONE allowed gradient: a single low-opacity radial atmosphere for
+   * the landing hero only. Never use gradients anywhere else.
+   */
+  .hero-atmosphere {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(
+      ellipse 62% 46% at 50% 0%,
+      color-mix(in srgb, var(--signal) 7%, transparent),
+      transparent 70%
+    );
+  }
+}
+
+@layer utilities {
+  /* §4.2 — stats use tabular numerals. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* §9 — chat-panel scrollbar: 8px, ink-3 thumb, transparent track. */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--bg-elevated) transparent;
+  }
+
+  /* Headlines wrap nicely; used sparingly on display sizes. */
+  .text-balance {
+    text-wrap: balance;
+  }
+}
