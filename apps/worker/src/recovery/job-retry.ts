@@ -48,7 +48,9 @@ export const RETRY_BACKOFF_TYPE = JOB_RETRY.backoff.type; // "exponential"
 /** Programmer-error guard for 1-based BullMQ attempt numbers. */
 export class InvalidJobAttemptError extends Error {
   constructor(attempt: number) {
-    super(`invalid BullMQ attempt ${attempt} (attempts are 1-based; budget: ${MAX_JOB_ATTEMPTS}, §3.4)`);
+    super(
+      `invalid BullMQ attempt ${attempt} (attempts are 1-based; budget: ${MAX_JOB_ATTEMPTS}, §3.4)`,
+    );
     this.name = "InvalidJobAttemptError";
   }
 }
@@ -96,7 +98,8 @@ export function classifyJobAttempt(attempt: number): JobAttemptPlan {
     action: withinBudget ? "execute" : "terminal",
     attempt,
     remainingRetries: Math.max(0, MAX_JOB_ATTEMPTS - attempt),
-    backoffBeforeMs: attempt === 1 ? undefined : backoffDelayMsAfter(attempt - 1),
+    // A terminal attempt never runs, so no backoff was ever applied for it.
+    backoffBeforeMs: withinBudget && attempt > 1 ? backoffDelayMsAfter(attempt - 1) : undefined,
     exhausted: !withinBudget,
   };
 }

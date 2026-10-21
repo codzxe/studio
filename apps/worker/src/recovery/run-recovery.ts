@@ -106,6 +106,7 @@ export type RunRecoveryFailReason =
   | "invalid_recovery_request"
   | "resume_already_attempted"
   | "wal_slice_unavailable"
+  | "wal_invalid_input"
   | "wal_gap_detected"
   | "wal_monotonicity_violation"
   | "wal_slice_mismatch"
@@ -207,11 +208,20 @@ export function filterReplayableRows(
     .sort((a, b) => a.seq - b.seq);
 }
 
+/** Codes the WAL verification can produce — each doubles as its own fail reason. */
+export const WAL_FAIL_CODES = [
+  "wal_invalid_input",
+  "wal_gap_detected",
+  "wal_monotonicity_violation",
+  "wal_slice_mismatch",
+] as const;
+export type WalFailCode = (typeof WAL_FAIL_CODES)[number];
+
 export type WALVerificationResult =
   | { readonly ok: true; readonly replayable: readonly ReplayCommand[] }
   | {
       readonly ok: false;
-      readonly code: RunRecoveryErrorCode;
+      readonly code: WalFailCode;
       readonly message: string;
       readonly hint?: string;
     };
@@ -675,19 +685,18 @@ export async function recoverRun(
   const plan = planRecoveryAttach(checkpointRevision, verified.replayable.length);
   let attached: AttachOutcome;
   try {
-    attached = await deps.attach.executePlan(
-      fresh,
-      request.documentId,
-      plan,
-      verified.replayable,
-    );
+    attached = await deps.attach.executePlan(fresh, request.documentId, plan, verified.replayable);
   } catch {
     return failTerminal(
       "attach_plan_failed",
-      envelope("engine_session_lost", "Replaying the command log onto the replacement session failed", {
-        hint: REFUND_HINT,
-        retryable: false,
-      }),
+      envelope(
+        "engine_session_lost",
+        "Replaying the command log onto the replacement session failed",
+        {
+          hint: REFUND_HINT,
+          retryable: false,
+        },
+      ),
     );
   }
   if (!attached.ok) {

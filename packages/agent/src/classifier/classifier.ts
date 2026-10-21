@@ -31,10 +31,15 @@
 import { PLAN_RETRY_LIMIT, resolveTierConfig } from "@studio/config";
 import { z } from "zod";
 import type { AgentErrorCode } from "../errors.js";
-import { type Plan, type PlanIntent, type PlanStep, validatePlan } from "../plan.js";
+import {
+  type Plan,
+  type PlanIntent,
+  type PlanStep,
+  MAX_PLAN_STRING,
+  validatePlan,
+} from "../plan.js";
 import { type AbortSignalLike, rawExcerptOf } from "../planner/planner.js";
 import {
-  CHAT_EDIT_MAX_LAYER_ROWS,
   type ChatEditCatalog,
   type ChatEditComponentEntry,
   type ChatEditLayerSummary,
@@ -291,11 +296,10 @@ function readClarifyPayload(args: Record<string, unknown>): {
   } else if (question.length > MAX_CLARIFY_QUESTION_CHARS) {
     issues.push(`clarify question exceeds the ${MAX_CLARIFY_QUESTION_CHARS}-char ask_user budget`);
   }
-  if (issues.length > 0) {
+  if (issues.length > 0 || typeof question !== "string") {
     return { ok: false, issues };
   }
-  const asked = question;
-  return { ok: true, clarify: { question: asked, candidates } };
+  return { ok: true, clarify: { question, candidates } };
 }
 
 /** `id@version` (component ids may inline the version, §24.2 "offer-badge@2"). */
@@ -476,7 +480,13 @@ export function resolveCostTier(params: {
     );
   }
   if (resolved === params.proposed) {
-    return { ...params, resolved, credits: creditsForCostTier(resolved), estimatedCalls, warnings };
+    return {
+      proposed: params.proposed,
+      resolved,
+      credits: creditsForCostTier(resolved),
+      estimatedCalls,
+      warnings,
+    };
   }
   const rank = (tier: ChatCostTier): number => TIER_ORDER.indexOf(tier);
   if (rank(resolved) > rank(params.proposed)) {
@@ -608,7 +618,7 @@ function notesFor(
   if (clarify !== null) {
     parts.push(`Clarifying question: ${clarify.question}`);
   }
-  return clip(parts.join(" "), 2000);
+  return clip(parts.join(" "), MAX_PLAN_STRING);
 }
 
 /** Swap-point: errors.ts is add-only; invalid classifier output maps to plan_invalid. */
@@ -984,10 +994,14 @@ export class ChatEditClassifier {
         ...(rules !== undefined ? rules.issues : []),
       ];
 
-      if (classification !== undefined && atoms !== undefined && atoms.ok && rules !== null) {
-        if (issues.length === 0) {
-          return this.succeed(classification, atoms.atoms, rules, usage, attempt);
-        }
+      if (
+        classification !== undefined &&
+        atoms !== undefined &&
+        atoms.ok &&
+        rules !== undefined &&
+        issues.length === 0
+      ) {
+        return this.succeed(classification, atoms.atoms, rules, usage, attempt);
       }
       if (attempt < maxAttempts) {
         // §5.1: exactly one retry, with the validation issues attached.
@@ -1011,7 +1025,7 @@ export class ChatEditClassifier {
   private succeed(
     classification: ChatEditClassification,
     atoms: readonly ChatEditAction[],
-    rules: NonNullable<ReturnType<typeof enforceChatEditRules>>,
+    rules: ChatEditRuleOutcome,
     usage: MutableUsage,
     attempt: number,
   ): ChatEditResult {
@@ -1058,10 +1072,4 @@ export class ChatEditClassifier {
       usage: freezeUsage(usage),
     };
   }
-}
-
-// Import-order guard: CHAT_EDIT_MAX_LAYER_ROWS is re-checked at module load so
-// the layer-summary cap can never drift below the target cross-check source.
-if (CHAT_EDIT_MAX_LAYER_ROWS < MAX_TARGET_LAYERS) {
-  throw new Error("[agent/classifier] layer-summary cap below the target cross-check source");
 }

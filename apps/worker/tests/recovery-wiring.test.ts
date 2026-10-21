@@ -13,9 +13,23 @@
 import { describe, expect, it } from "vitest";
 import { JOB_RETRY } from "../src/queues.js";
 import {
-  MAX_RESUME_ATTEMPTS_PER_RUN,
+  InvalidJobAttemptError,
+  InvalidRunJobIdError,
+  JOB_FAILURE_CAUSES,
+  type JobFailureCause,
+  MAX_JOB_ATTEMPTS,
+  RETRY_BACKOFF_BASE_MS,
+  RETRY_BACKOFF_TYPE,
+  backoffDelayMsAfter,
+  classifyJobAttempt,
+  recoveryActionForJob,
+  runJobId,
+  shouldResume,
+} from "../src/recovery/job-retry.js";
+import {
   type AttachExecutorLike,
   type AttachOutcome,
+  MAX_RESUME_ATTEMPTS_PER_RUN,
   type PoolLike,
   type ReallocationRequest,
   type RecoveryAttachPlan,
@@ -29,29 +43,15 @@ import {
   type RunRecoveryDeps,
   type RunRecoveryOutcome,
   type RunRecoveryRequest,
-  type WorkerWalEntry,
+  RunRecoveryService,
   WAL_ROLLED_BACK_FLAG,
+  type WorkerWalEntry,
   createInMemoryResumeGate,
   filterReplayableRows,
   planRecoveryAttach,
   recoverRun,
-  RunRecoveryService,
   verifyWALSinceCheckpoint,
 } from "../src/recovery/run-recovery.js";
-import {
-  type JobFailureCause,
-  InvalidJobAttemptError,
-  InvalidRunJobIdError,
-  JOB_FAILURE_CAUSES,
-  MAX_JOB_ATTEMPTS,
-  RETRY_BACKOFF_BASE_MS,
-  RETRY_BACKOFF_TYPE,
-  backoffDelayMsAfter,
-  classifyJobAttempt,
-  recoveryActionForJob,
-  runJobId,
-  shouldResume,
-} from "../src/recovery/job-retry.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures + fakes
@@ -238,7 +238,11 @@ describe("filterReplayableRows — W6-I markers never replay", () => {
 describe("verifyWALSinceCheckpoint — never silently skip (§5.6)", () => {
   it("accepts a dense +1 chain rooted at the checkpoint", () => {
     const verified = verifyWALSinceCheckpoint(
-      [row(11, "agent.begin", 10, 10), row(12, "layer.new.layer", 10, 11), row(13, "edit.fill", 11, 12)],
+      [
+        row(11, "agent.begin", 10, 10),
+        row(12, "layer.new.layer", 10, 11),
+        row(13, "edit.fill", 11, 12),
+      ],
       10,
     );
     expect(verified.ok).toBe(true);
@@ -250,13 +254,31 @@ describe("verifyWALSinceCheckpoint — never silently skip (§5.6)", () => {
     }
   });
 
-  const violationCases: Array<
-    [string, readonly WorkerWalEntry[], number | null, string]
-  > = [
-    ["raw seq gap", [row(11, "layer.new.layer", 10, 11), row(13, "edit.fill", 11, 12)], 10, "wal_gap_detected"],
-    ["checkpoint does not precede the slice", [row(11, "layer.new.layer", 9, 10)], 10, "wal_slice_mismatch"],
-    ["broken revision chain", [row(11, "layer.new.layer", 10, 11), row(12, "edit.fill", 12, 13)], 10, "wal_monotonicity_violation"],
-    ["revision rewind", [row(11, "layer.new.layer", 10, 11), row(12, "edit.fill", 11, 11)], 10, "wal_monotonicity_violation"],
+  const violationCases: Array<[string, readonly WorkerWalEntry[], number | null, string]> = [
+    [
+      "raw seq gap",
+      [row(11, "layer.new.layer", 10, 11), row(13, "edit.fill", 11, 12)],
+      10,
+      "wal_gap_detected",
+    ],
+    [
+      "checkpoint does not precede the slice",
+      [row(11, "layer.new.layer", 9, 10)],
+      10,
+      "wal_slice_mismatch",
+    ],
+    [
+      "broken revision chain",
+      [row(11, "layer.new.layer", 10, 11), row(12, "edit.fill", 12, 13)],
+      10,
+      "wal_monotonicity_violation",
+    ],
+    [
+      "revision rewind",
+      [row(11, "layer.new.layer", 10, 11), row(12, "edit.fill", 11, 11)],
+      10,
+      "wal_monotonicity_violation",
+    ],
     ["invalid seq position", [row(0, "layer.new.layer", 10, 11)], 10, "wal_invalid_input"],
   ];
   for (const [label, entries, checkpoint, code] of violationCases) {
@@ -272,10 +294,30 @@ describe("verifyWALSinceCheckpoint — never silently skip (§5.6)", () => {
 
 describe("planRecoveryAttach — mirror of engine-pool decideAttachPlan", () => {
   const cases: Array<[string, number | null, number, RecoveryAttachPlan]> = [
-    ["no checkpoint, empty log → fresh", null, 0, { kind: "fresh", fromRevision: 0, commandCount: 0 }],
-    ["no checkpoint, rows → full replay", null, 3, { kind: "replay", fromRevision: 0, commandCount: 3 }],
-    ["checkpoint @R, nothing after → checkpoint", 10, 0, { kind: "checkpoint", fromRevision: 10, commandCount: 0 }],
-    ["checkpoint @R, rows after → replay", 10, 2, { kind: "replay", fromRevision: 10, commandCount: 2 }],
+    [
+      "no checkpoint, empty log → fresh",
+      null,
+      0,
+      { kind: "fresh", fromRevision: 0, commandCount: 0 },
+    ],
+    [
+      "no checkpoint, rows → full replay",
+      null,
+      3,
+      { kind: "replay", fromRevision: 0, commandCount: 3 },
+    ],
+    [
+      "checkpoint @R, nothing after → checkpoint",
+      10,
+      0,
+      { kind: "checkpoint", fromRevision: 10, commandCount: 0 },
+    ],
+    [
+      "checkpoint @R, rows after → replay",
+      10,
+      2,
+      { kind: "replay", fromRevision: 10, commandCount: 2 },
+    ],
   ];
   for (const [label, checkpoint, count, expected] of cases) {
     it(label, () => {
@@ -321,9 +363,7 @@ describe("recoverRun — §3.4 crash recovery wiring", () => {
     // (a) the slice was fetched since the last checkpoint…
     expect(calls.wal).toEqual([{ documentId: "doc_1", fromRevision: 10 }]);
     // (b) …a replacement session was reallocated for the same tenant + document…
-    expect(calls.pool).toEqual([
-      { organizationId: "org_1", documentId: "doc_1", runId: "run_1" },
-    ]);
+    expect(calls.pool).toEqual([{ organizationId: "org_1", documentId: "doc_1", runId: "run_1" }]);
     // …and the replay plan carried ONLY the filtered content commands.
     expect(calls.attach).toHaveLength(1);
     const attachCall = calls.attach[0];
@@ -378,9 +418,7 @@ describe("recoverRun — §3.4 crash recovery wiring", () => {
       row(12, "text.set", 7, 8),
     ];
     const { deps, calls } = makeFakes({ rows, checkpoint: { revision: 4 } });
-    const outcome = expectResumed(
-      await recoverRun({ ...REQUEST, crashCause: "manual" }, deps),
-    );
+    const outcome = expectResumed(await recoverRun({ ...REQUEST, crashCause: "manual" }, deps));
     expect(outcome.reason).toBe("manual_stop_replayed");
     expect(outcome.replayedCount).toBe(4);
     expect(outcome.revision).toBe(8);
@@ -500,9 +538,7 @@ describe("recoverRun — §3.4 crash recovery wiring", () => {
 
   it("invalid request: typed envelope, no side effects (ids untrusted)", async () => {
     const { deps, calls } = makeFakes();
-    const outcome = expectFailedClean(
-      await recoverRun({ ...REQUEST, runId: "" }, deps),
-    );
+    const outcome = expectFailedClean(await recoverRun({ ...REQUEST, runId: "" }, deps));
     expect(outcome.reason).toBe("invalid_recovery_request");
     expect(outcome.error.code).toBe("invalid_recovery_request");
     expect(outcome.refund).toBeUndefined();
@@ -527,9 +563,7 @@ describe("job-retry glue — §3.4 queue retries the JOB, coordinator resumes th
   });
 
   it("classifies attempts 1–3 as exponential-backoff retries and >3 as terminal", () => {
-    const table: Array<
-      [number, "execute" | "terminal", number | undefined, number, boolean]
-    > = [
+    const table: Array<[number, "execute" | "terminal", number | undefined, number, boolean]> = [
       [1, "execute", undefined, 2, false],
       [2, "execute", 5_000, 1, false],
       [3, "execute", 10_000, 0, false],
@@ -583,7 +617,7 @@ describe("job-retry glue — §3.4 queue retries the JOB, coordinator resumes th
     expect(() => runJobId("")).toThrow(InvalidRunJobIdError);
   });
 
-  it("maps recovery outcomes onto BullMQ actions (recovery-contract.md)", () => {
+  it("maps recovery outcomes onto BullMQ actions (recovery-contract.md)", async () => {
     const resumed: RunRecoveryOutcome = {
       kind: "resumed",
       reason: "pool_crash_replayed",
