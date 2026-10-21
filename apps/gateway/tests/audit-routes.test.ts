@@ -18,11 +18,11 @@
 //   §15.2  RBAC enforced server-side (admin+ via the authz guard)
 //   §13.3  typed envelopes on every failure
 
-import type { NewAuditLog } from "@studio/db";
 import type { Result } from "@studio/config";
-import { randomUUID } from "node:crypto";
+import type { NewAuditLog } from "@studio/db";
 import { Hono } from "hono";
-import { pino } from "pino";
+import { randomUUID } from "node:crypto";
+import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { PERMISSIONS, type Role } from "../src/authz/roles.js";
 import { errorMapper } from "../src/middleware/error-mapper.js";
@@ -549,7 +549,16 @@ describe("CSV export", () => {
     const [line] = csvLines(await res.text()).slice(1);
     const json = JSON.stringify({ note: 'say "hi", ok' });
     const expectedCell = `"${json.replace(/"/g, '""')}"`;
-    expect(line).toBe(`m-1,${ORG},user-actor,credit.adjustment,ledger:abc,${expectedCell},${NOW.toISOString()}`);
+    const expectedLine = [
+      "m-1",
+      ORG,
+      "user-actor",
+      "credit.adjustment",
+      "ledger:abc",
+      expectedCell,
+      NOW.toISOString(),
+    ].join(",");
+    expect(line).toBe(expectedLine);
   });
 
   it("pages via the X-Next-Cursor header (raw CSV body carries no envelope)", async () => {

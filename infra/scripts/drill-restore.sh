@@ -110,6 +110,7 @@ report_and_log() {
   RTO_OK=ok; [ "$RTO_SECS" -le $(( 4 * 3600 )) ] || RTO_OK=OVER
   [ "$RPO_OK" = ok ] || NOTES="$NOTES RPO over 24 h budget"
   [ "$RTO_OK" = ok ] || NOTES="$NOTES RTO over 4 h budget"
+  OPERATOR="$(printf '%s' "$OPERATOR" | tr '|' '/')"
   NOTES="$(printf '%s' "$NOTES" | sed 's/^ *//' | tr '|' '/')"
   NOTES="${NOTES:-budgets ok}"
   if [ ! -f "$DRILL_LOG" ]; then
@@ -177,12 +178,11 @@ if [ -n "${BACKUP_OVERRIDE:-}" ] && [ "${BACKUP_OVERRIDE#s3://}" = "${BACKUP_OVE
   [ -r "$BACKUP_OVERRIDE" ] || die "provided backup not readable: $BACKUP_OVERRIDE"
   DUMP_LOCAL="$BACKUP_OVERRIDE"
 else
-  KEY="${DUMP_LABEL#s3://${S3_BACKUP_BUCKET}/}"
-  DUMP_LOCAL="$TMP/$(basename "$KEY")"
+  DUMP_LOCAL="$TMP/$(basename "$DUMP_LABEL")"
   log "fetching ${DUMP_LABEL} …"
-  aws s3 cp "s3://${S3_BACKUP_BUCKET}/${KEY}" "$DUMP_LOCAL" --only-show-errors \
+  aws s3 cp "$DUMP_LABEL" "$DUMP_LOCAL" --only-show-errors \
     || die "could not fetch ${DUMP_LABEL} (credentials? RB-06 §Fix)"
-  aws s3 cp "s3://${S3_BACKUP_BUCKET}/${KEY}.sha256" "$TMP/" --only-show-errors 2>/dev/null || true
+  aws s3 cp "${DUMP_LABEL}.sha256" "$TMP/" --only-show-errors 2>/dev/null || true
 fi
 T_FETCH=$(( $(date +%s) - T ))
 FNAME="$(basename "$DUMP_LOCAL")"

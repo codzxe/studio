@@ -380,9 +380,7 @@ auditSummaryRoutes.get("/summary/:id", async (c) => {
   const entries = Object.entries(counts)
     .filter(([, value]) => typeof value === "number" && Number.isFinite(value) && value >= 0)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(
-      ([action, value]): [string, number] => [action, Math.floor(value as number)]
-    );
+    .map(([action, value]): [string, number] => [action, Math.floor(value)]);
   const total = entries.reduce((sum, [, count]) => sum + count, 0);
 
   return c.json({

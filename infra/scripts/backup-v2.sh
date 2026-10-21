@@ -63,6 +63,7 @@ S3_ASSETS_BUCKET="${S3_ASSETS_BUCKET:-$(env_get S3_ASSETS_BUCKET)}"   # .pcraft 
 S3_OBJECTS_REPLICA_BUCKET="${S3_OBJECTS_REPLICA_BUCKET:-}"            # opt-in, see header
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/studio}"
 KEEP_LOCAL_DAYS="${KEEP_LOCAL_DAYS:-1}"    # 1 = keep yesterday's dump for fast drills; 0 = v1 behaviour
+[[ "$KEEP_LOCAL_DAYS" =~ ^[0-9]+$ ]] || die "KEEP_LOCAL_DAYS must be a non-negative integer"
 ALLOW_LOCAL_ONLY="${ALLOW_LOCAL_ONLY:-0}"  # 1 = a kept-local backup is a PASS (dev boxes)
 LOCK_FILE="${LOCK_FILE:-$BACKUP_DIR/.backup-v2.lock}"
 LOCK_DIR="${LOCK_DIR:-$BACKUP_DIR/.backup-v2.lockdir}"
@@ -202,6 +203,7 @@ if [ -n "$S3_BACKUP_BUCKET" ]; then
       "s3://${S3_BACKUP_BUCKET}/${PREFIX_ROOT}/_freshness.json" --only-show-errors \
       || die "backup uploaded but the 26 h marker failed — §22 alert will fire; re-run the cp by hand"
     UPLOADED=1
+    rm -f "$STAGE/_freshness.json"   # uploaded — keep staging clean for the exit trap
     log "uploaded to s3://${S3_BACKUP_BUCKET}/${PREFIX}/ (bucket MUST be versioned, §17.4)"
   else
     log "WARN: aws cli missing — rclone equivalent (configure the remote first; creds via env):"

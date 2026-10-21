@@ -146,9 +146,9 @@ describe("UTC reset windows", () => {
 // ---------------------------------------------------------------------------
 
 describe("DailySpendGuard.enforceDailyCap (§18.4 hard cap)", () => {
-  it("allows a run under the cap and reports facts for headers/telemetry", () => {
+  it("allows a run under the cap and reports facts for headers/telemetry", async () => {
     const { guard, seams } = makeGuard({ spend: 120 });
-    const facts = expectOk(guard.enforceDailyCap(ORG, { capUsdCents: CAP }));
+    const facts = expectOk(await guard.enforceDailyCap(ORG, { capUsdCents: CAP }));
     expect(facts).toEqual({
       spentUsdCents: 120,
       capUsdCents: 600,
@@ -170,9 +170,11 @@ describe("DailySpendGuard.enforceDailyCap (§18.4 hard cap)", () => {
   });
 
   it("blocks above the cap, and a $0 cap blocks all spend", async () => {
-    const over = expectErr(makeGuard({ spend: CAP + 1 }).guard.enforceDailyCap(ORG, { capUsdCents: CAP }));
+    const over = expectErr(
+      await makeGuard({ spend: CAP + 1 }).guard.enforceDailyCap(ORG, { capUsdCents: CAP }),
+    );
     expect(over.code).toBe("cost_cap_reached");
-    const zero = expectErr(makeGuard().guard.enforceDailyCap(ORG, { capUsdCents: 0 }));
+    const zero = expectErr(await makeGuard().guard.enforceDailyCap(ORG, { capUsdCents: 0 }));
     expect(zero.code).toBe("cost_cap_reached");
     expect(zero.hint).toContain("$0.00");
   });
@@ -269,12 +271,11 @@ describe("guardrail envelope bridge to the §13.3 catalog", () => {
     expect(guardrailCodeToErrorCode("providers_disabled")).toBe("provider_unhealthy");
   });
 
-  it("the demo org is not special-cased by the spend guard — caps apply per org", () => {
+  it("the demo org is not special-cased by the spend guard — caps apply per org", async () => {
     const seams = new InMemoryDailySpendSeams();
     seams.spend.set(DEMO_ORG_ID, CAP);
     const guard = new DailySpendGuard(seams);
-    expect(expectErr(await guard.enforceDailyCap(DEMO_ORG_ID, { capUsdCents: CAP })).code).toBe(
-      "cost_cap_reached",
-    );
+    const failure = expectErr(await guard.enforceDailyCap(DEMO_ORG_ID, { capUsdCents: CAP }));
+    expect(failure.code).toBe("cost_cap_reached");
   });
 });
