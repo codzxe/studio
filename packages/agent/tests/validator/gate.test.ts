@@ -7,11 +7,11 @@ import { describe, expect, it } from "vitest";
 import {
   BLOCKERS_GATE_RULE,
   CLEAN_PROCEED_RULE,
-  criticValidatorReport,
   GATE_RULES,
   MAJORS_CRITIQUE_RULE,
   MAX_REPAIR_TARGETS,
   MINORS_PROCEED_RULE,
+  criticValidatorReport,
   renderRepairFixes,
   repairTargetsFor,
   validateGate,
@@ -56,9 +56,11 @@ function makeReport(spec: ReportSpec = {}): ValidatorReport {
     major: majors.length,
     minor: minors.length,
   };
-  const total = counts.blocker + counts.major + counts.minor;
+  let verdict: ValidatorReport["verdict"] = "pass";
+  if (counts.blocker > 0) verdict = "blockers";
+  else if (counts.major + counts.minor > 0) verdict = "warnings";
   return {
-    verdict: counts.blocker > 0 ? "blockers" : total > 0 ? "warnings" : "pass",
+    verdict,
     documentId: DOC_ID,
     revision: 7,
     expectedRevision: spec.stale === true ? 9 : 7,

@@ -18,6 +18,7 @@ import {
   type EngineReply,
   type EngineTxLike,
   type StorageLike,
+  type TrackOutcome,
   type TrackedCommand,
   type TransactionFailure,
   type TransactionResult,
@@ -219,7 +220,7 @@ async function runCommand(
   h: Harness,
   commandName: string,
   params: Record<string, unknown> = {},
-): Promise<TransactionResult<ReturnType<TransactionManager["trackCommand"]> extends Promise<infer O> ? (O extends TransactionResult<infer V> ? V : never) : never>> {
+): Promise<TransactionResult<TrackOutcome>> {
   await h.engine.bumpRevision();
   const cmd: TrackedCommand = {
     runId: RUN_ID,
@@ -317,10 +318,10 @@ describe("transactions: §5.6 begin → commands → commit (happy path)", () =>
     unwrapOk(await h.manager.commit(RUN_ID));
 
     const second = unwrapOk(await h.manager.begin(OTHER_RUN_ID, DOC_ID, "Second run"));
-    expect(second.seq).toBe(4); // seq 3 was the first run's command row
+    expect(second.seq).toBe(3); // the first run wrote seq 1 (begin) + 2 (command)
     expect(second.revisionBefore).toBe(8); // 6 + one command + the commit fold bump
     const tracked = unwrapOk(await runCommand(h, "layer.new.pixel"));
-    expect(tracked.seq).toBe(5);
+    expect(tracked.seq).toBe(4);
     expect(tracked.revisionBefore).toBe(8);
   });
 
@@ -576,8 +577,16 @@ describe("transactions: §3.3 step 6 durability failures", () => {
     expect(failed.retryable).toBe(true);
     expect(h.wal.rows.length).toBe(1); // only the begin marker
 
-    // the row never landed, so the retry reuses the same seq (idempotent retry).
-    const retried = unwrapOk(await runCommand(h, "type.edit"));
+    // the engine already applied the command (revision 7): the retry re-appends the
+    // same echo — the row never landed, so the same seq is safe to reuse.
+    const retried = unwrapOk(
+      await h.manager.trackCommand({
+        runId: RUN_ID,
+        commandName: "type.edit",
+        params: {},
+        revisionAfter: 7,
+      }),
+    );
     expect(retried.seq).toBe(2);
   });
 

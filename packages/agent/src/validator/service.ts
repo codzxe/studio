@@ -195,6 +195,13 @@ export interface ClassifiedOutcome {
   readonly coherent: boolean;
 }
 
+/** §5.1 verdict ladder: any blocker gates; else any issue warns; else pass. */
+function verdictFor(counts: ValidatorIssueCounts): ValidatorVerdict {
+  if (counts.blocker > 0) return "blockers";
+  if (counts.major + counts.minor > 0) return "warnings";
+  return "pass";
+}
+
 /**
  * Classifies a parsed §11.1 report per §5.1:
  *   - any blocker ⇒ verdict "blockers" (gates the pipeline);
@@ -218,9 +225,7 @@ export function classifyOutcome(parsed: ParsedValidateSummary): ClassifiedOutcom
     blockers.length <= parsed.issueCounts.blocker &&
     majors.length <= parsed.issueCounts.major &&
     minors.length <= parsed.issueCounts.minor;
-  const verdict: ValidatorVerdict =
-    counts.blocker > 0 ? "blockers" : counts.major + counts.minor > 0 ? "warnings" : "pass";
-  return { verdict, counts, blockers, majors, minors, coherent };
+  return { verdict: verdictFor(counts), counts, blockers, majors, minors, coherent };
 }
 
 // ---------------------------------------------------------------------------

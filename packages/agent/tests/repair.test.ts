@@ -4,10 +4,11 @@
 //
 // The fake model scripts raw replies; every test is deterministic, offline.
 import { describe, expect, it } from "vitest";
-import { type PlanStep, planStepSchema } from "../src/plan.js";
+import { type PlanStep, planSchema, planStepSchema } from "../src/plan.js";
 import {
   MAX_REPAIR_INPUT_ISSUES,
   type NormalizedRepairIssue,
+  REPAIR_MINI_PLAN_NOTE,
   REPAIR_PLANNING_CONTRACT,
   REPAIR_PLAN_INVALID_CODE,
   REPAIR_RETRY_INSTRUCTION,
@@ -18,6 +19,7 @@ import {
   type RepairPlan,
   RepairPlanner,
   buildFixList,
+  buildRepairMiniPlan,
   isBlockedLayerOp,
   parseRepairPlanRaw,
   planRepairs,
@@ -482,6 +484,35 @@ describe("planRepairs: happy path", () => {
     if (!result.ok) throw new Error(result.message);
     const plan: RepairPlan = result.value;
     expect(plan.steps).toHaveLength(2);
+  });
+});
+
+describe("buildRepairMiniPlan: the W6-B executor wrapper", () => {
+  it("wraps repair steps into a §5.5-validated Plan the ExecutorService accepts", async () => {
+    const result = await planRepairs({
+      issues: [BLOCKER, MAJOR],
+      context: CONTEXT,
+      model: new FakeRepairModel([HAPPY_REPLY]),
+    });
+    if (!result.ok) throw new Error(result.message);
+    const mini = buildRepairMiniPlan(result.value.steps, "standard");
+    if (!mini.ok) throw new Error(mini.message);
+    expect(mini.value.intent).toBe("edit_layers");
+    expect(mini.value.template).toBeNull();
+    expect(mini.value.model_tier).toBe("standard");
+    expect(mini.value.notes_for_user).toBe(REPAIR_MINI_PLAN_NOTE);
+    expect(mini.value.steps).toEqual(result.value.steps);
+    // The mini plan itself passes the §5.5 schema (drift guard).
+    expect(planSchema.safeParse(mini.value).success).toBe(true);
+  });
+
+  it("rejects an empty step list (§5.5 steps min 1) with a typed envelope", () => {
+    const empty = buildRepairMiniPlan([], "standard");
+    expect(empty.ok).toBe(false);
+    if (!empty.ok) {
+      expect(empty.code).toBe(REPAIR_PLAN_INVALID_CODE);
+      expect(empty.message).toContain("repair mini-plan failed the §5.5 schema");
+    }
   });
 });
 

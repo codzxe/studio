@@ -8,25 +8,25 @@
 // renderSummary output through the parser.
 
 import {
-  buildReport,
-  renderSummary,
   type ToolErr,
   type ToolOk,
   type ToolResult,
   type ValidateDocumentArgs,
   type ValidationIssue,
+  buildReport,
+  renderSummary,
 } from "@studio/tools";
 import { describe, expect, it } from "vitest";
 import type { AgentResult } from "../../src/errors.js";
 import {
   DEFAULT_MAX_TOOL_RETRIES,
+  type RunValidateInput,
   RunValidator,
+  type ValidateToolLike,
+  type ValidatorReport,
   classifyOutcome,
   parseValidateSummary,
-  type RunValidateInput,
-  type ValidatorReport,
 } from "../../src/validator/service.js";
-import type { ValidateToolLike } from "../../src/validator/service.js";
 
 const DOC_ID = "d0a1b2c3-1111-4222-8333-444455556666";
 const TEMPLATE_PIN = "instagram-post@3";
