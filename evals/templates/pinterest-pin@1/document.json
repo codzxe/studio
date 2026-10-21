@@ -1,0 +1,53 @@
+{
+  "format": "studio-template-document/1",
+  "template": "pinterest-pin@1",
+  "name": "Pinterest Pin — Food & Lifestyle",
+  "width": 1000,
+  "height": 1500,
+  "background": "#FFF7EE",
+  "layers": [
+    {
+      "name": "Background",
+      "kind": "Fill",
+      "bounds": [0, 0, 1000, 1500],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#FFF7EE"
+    },
+    {
+      "name": "Photo",
+      "kind": "Pixel",
+      "bounds": [0, 0, 1000, 900],
+      "visible": true,
+      "opacity": 1.0,
+      "placeholder": "photo placeholder — synthetic gradient PNG (see assets-note.md); replaced by the placed image on template.fill, never deleted"
+    },
+    {
+      "name": "Headline",
+      "kind": "Type",
+      "bounds": [64, 972, 872, 216],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "One-pan lemon garlic dinner",
+        "font": "display",
+        "weight": "bold",
+        "size": 88,
+        "lineHeight": 1.08,
+        "color": "#3B2A20",
+        "align": "left"
+      }
+    },
+    {
+      "name": "Footer",
+      "kind": "Group",
+      "bounds": [64, 1380, 280, 48],
+      "visible": true,
+      "opacity": 1.0,
+      "component": {
+        "id": "social-handle@1",
+        "vars": { "handle": "@acme.kitchen" }
+      }
+    }
+  ]
+}

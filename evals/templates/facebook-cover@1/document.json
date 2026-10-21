@@ -1,0 +1,50 @@
+{
+  "format": "studio-template-document/1",
+  "template": "facebook-cover@1",
+  "name": "Facebook Cover — Photo",
+  "width": 820,
+  "height": 312,
+  "background": "#101418",
+  "layers": [
+    {
+      "name": "Background",
+      "kind": "Fill",
+      "bounds": [0, 0, 820, 312],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#101418"
+    },
+    {
+      "name": "Photo",
+      "kind": "Pixel",
+      "bounds": [0, 0, 820, 312],
+      "visible": true,
+      "opacity": 1.0,
+      "placeholder": "full-bleed photo placeholder — synthetic gradient PNG (see assets-note.md); replaced by the placed cover image on template.fill, never deleted"
+    },
+    {
+      "name": "Headline",
+      "kind": "Type",
+      "bounds": [48, 132, 524, 96],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "Small batch, big flavour",
+        "font": "display",
+        "weight": "bold",
+        "size": 60,
+        "lineHeight": 1.05,
+        "color": "#FFFFFF",
+        "align": "left"
+      }
+    },
+    {
+      "name": "Logo",
+      "kind": "Pixel",
+      "bounds": [48, 48, 64, 64],
+      "visible": true,
+      "opacity": 1.0,
+      "placeholder": "logo placeholder — synthetic wordmark gradient PNG (see assets-note.md); optional slot stays present but hidden when unfilled"
+    }
+  ]
+}

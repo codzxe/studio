@@ -1,0 +1,50 @@
+{
+  "format": "studio-template-document/1",
+  "template": "x-post@1",
+  "name": "X Post — Big Statement",
+  "width": 1600,
+  "height": 900,
+  "background": "#0A0A0A",
+  "layers": [
+    {
+      "name": "Background",
+      "kind": "Fill",
+      "bounds": [0, 0, 1600, 900],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#0A0A0A"
+    },
+    {
+      "name": "Photo",
+      "kind": "Pixel",
+      "bounds": [0, 0, 1600, 900],
+      "visible": true,
+      "opacity": 1.0,
+      "placeholder": "full-bleed background photo placeholder — synthetic gradient PNG (see assets-note.md); replaced by the placed cover image on template.fill, never deleted"
+    },
+    {
+      "name": "Scrim",
+      "kind": "Fill",
+      "bounds": [0, 0, 1600, 900],
+      "visible": true,
+      "opacity": 0.55,
+      "fill": "#0A0A0A"
+    },
+    {
+      "name": "Headline",
+      "kind": "Type",
+      "bounds": [128, 302, 1344, 296],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "Make the thing you keep talking about",
+        "font": "display",
+        "weight": "bold",
+        "size": 120,
+        "lineHeight": 1.02,
+        "color": "#FFFFFF",
+        "align": "center"
+      }
+    }
+  ]
+}

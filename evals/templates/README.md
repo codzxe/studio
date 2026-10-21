@@ -1,7 +1,9 @@
 # evals/templates — template seed data (spec §7.2/§7.4)
 
-The three starter templates, shipped **as data** (no recompile): `instagram-post@3`,
-`youtube-thumbnail@1`, `presentation-slide@1` (§7.4: start with these three, grow to 10 by beta).
+The templates, shipped **as data** (no recompile): the three §7.4 starters —
+`instagram-post@3`, `youtube-thumbnail@1`, `presentation-slide@1` (§7.4: start with these three,
+grow to 10 by beta) — plus the social set v1: `instagram-story@1`, `facebook-cover@1`,
+`x-post@1`, `linkedin-banner@1`, `pinterest-pin@1`.
 Each template must include a synthetic demo asset and a golden render in the eval fixtures.
 
 ## Layout conventions

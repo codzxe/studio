@@ -1,0 +1,38 @@
+{
+  "id": "instagram-story",
+  "version": 1,
+  "name": "Instagram Story — Promo",
+  "description": "A vertical 9:16 story: a full-width cover photo across the top two-thirds, an auto-fit headline and subhead below, and an optional swipe-up offer badge; the 128 px safe area clears the platform's top and bottom chrome. §7.5 self-check: 5 slots (≤12), named layers only, no hidden pixel dumps or flattened art, fonts from the workspace registry with these palette colours as fallback defaults.",
+  "tags": ["social", "promo", "story", "vertical"],
+  "canvas": { "width": 1080, "height": 1920, "background": "#FFF7EE" },
+  "slots": {
+    "photo":    { "kind": "image", "layer": "Photo",    "bounds": [0, 0, 1080, 1280],
+                  "fit": "cover", "minPixels": [1080, 1280], "optional": false },
+    "headline": { "kind": "text",  "layer": "Headline", "bounds": [128, 1360, 824, 256],
+                  "font": "display", "weight": "bold", "size": 96, "lineHeight": 1.05,
+                  "maxLines": 2, "maxChars": 40, "align": "left",
+                  "color": "#3B2A20", "autoFit": { "minSize": 72, "maxSize": 120 } },
+    "subhead":  { "kind": "text",  "layer": "Subhead",  "bounds": [128, 1680, 640, 56],
+                  "font": "sans", "size": 40, "maxLines": 1, "maxChars": 40, "color": "#6B5748" },
+    "swipeUp":  { "kind": "component", "component": "offer-badge@2", "layer": "Badge",
+                  "bounds": [816, 1648, 136, 136], "optional": true,
+                  "vars": { "label": "SWIPE UP" } }
+  },
+  "rules": {
+    "safeArea": 128,
+    "minContrast": 4.5,
+    "mustLayers": ["Background", "Photo", "Headline"],
+    "maxTextLayers": 4,
+    "palette": ["#FFF7EE", "#3B2A20", "#6B5748", "#D96C3B"]
+  },
+  "layerMap": {
+    "Background": { "role": "background", "fill": "#FFF7EE" },
+    "Photo":      { "role": "image" },
+    "Headline":   { "role": "headline" },
+    "Subhead":    { "role": "supporting-text" },
+    "Badge":      { "role": "component", "component": "offer-badge@2" }
+  },
+  "thumbnail": "thumbnails/instagram-story@1.png",
+  "license": "public",
+  "author": "studio"
+}

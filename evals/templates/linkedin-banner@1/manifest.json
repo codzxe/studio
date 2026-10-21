@@ -1,0 +1,33 @@
+{
+  "id": "linkedin-banner",
+  "version": 1,
+  "name": "LinkedIn Banner — Professional",
+  "description": "A professional 1584×396 profile banner: the member name and title sit over a calm neutral field, with an accent bar that takes the workspace accent colour (template default shown). The 96 px safe area keeps both text slots clear of the crop-happy edges. §7.5 self-check: 3 slots (≤12), named layers only, brand-agnostic palette defaults, fonts from the workspace registry.",
+  "tags": ["social", "linkedin", "banner", "professional"],
+  "canvas": { "width": 1584, "height": 396, "background": "#F6F5F2" },
+  "slots": {
+    "name":    { "kind": "text",  "layer": "Headline",   "bounds": [96, 128, 944, 88],
+                 "font": "display", "weight": "bold", "size": 64, "lineHeight": 1.1,
+                 "maxLines": 1, "maxChars": 32, "align": "left",
+                 "color": "#1A1A1A", "autoFit": { "minSize": 44, "maxSize": 72 } },
+    "title":   { "kind": "text",  "layer": "Subhead",    "bounds": [96, 232, 944, 44],
+                 "font": "sans", "size": 32, "maxLines": 1, "maxChars": 48, "color": "#52504B" },
+    "accent":  { "kind": "color", "layer": "Accent Bar", "color": "#0A66C2", "optional": false }
+  },
+  "rules": {
+    "safeArea": 96,
+    "minContrast": 4.5,
+    "mustLayers": ["Background", "Accent Bar", "Headline"],
+    "maxTextLayers": 4,
+    "palette": ["#F6F5F2", "#1A1A1A", "#52504B", "#0A66C2"]
+  },
+  "layerMap": {
+    "Background": { "role": "background", "fill": "#F6F5F2" },
+    "Accent Bar": { "role": "accent" },
+    "Headline":   { "role": "headline" },
+    "Subhead":    { "role": "supporting-text" }
+  },
+  "thumbnail": "thumbnails/linkedin-banner@1.png",
+  "license": "public",
+  "author": "studio"
+}

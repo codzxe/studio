@@ -1,0 +1,67 @@
+{
+  "format": "studio-template-document/1",
+  "template": "instagram-story@1",
+  "name": "Instagram Story — Promo",
+  "width": 1080,
+  "height": 1920,
+  "background": "#FFF7EE",
+  "layers": [
+    {
+      "name": "Background",
+      "kind": "Fill",
+      "bounds": [0, 0, 1080, 1920],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#FFF7EE"
+    },
+    {
+      "name": "Photo",
+      "kind": "Pixel",
+      "bounds": [0, 0, 1080, 1280],
+      "visible": true,
+      "opacity": 1.0,
+      "placeholder": "photo placeholder — synthetic gradient PNG (see assets-note.md); replaced by the placed image on template.fill, never deleted"
+    },
+    {
+      "name": "Headline",
+      "kind": "Type",
+      "bounds": [128, 1360, 824, 256],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "New season, new drops",
+        "font": "display",
+        "weight": "bold",
+        "size": 96,
+        "lineHeight": 1.05,
+        "color": "#3B2A20",
+        "align": "left"
+      }
+    },
+    {
+      "name": "Subhead",
+      "kind": "Type",
+      "bounds": [128, 1680, 640, 56],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "Tap the link to shop",
+        "font": "sans",
+        "size": 40,
+        "color": "#6B5748",
+        "align": "left"
+      }
+    },
+    {
+      "name": "Badge",
+      "kind": "Group",
+      "bounds": [816, 1648, 136, 136],
+      "visible": true,
+      "opacity": 1.0,
+      "component": {
+        "id": "offer-badge@2",
+        "vars": { "label": "SWIPE UP" }
+      }
+    }
+  ]
+}

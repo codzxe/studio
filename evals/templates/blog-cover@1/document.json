@@ -1,0 +1,70 @@
+{
+  "format": "studio-template-document/1",
+  "template": "blog-cover@1",
+  "name": "Blog Cover — OG Image",
+  "width": 1200,
+  "height": 630,
+  "background": "#F4E7D3",
+  "layers": [
+    {
+      "name": "Background",
+      "kind": "Fill",
+      "bounds": [0, 0, 1200, 630],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#F4E7D3"
+    },
+    {
+      "name": "Ribbon Banner",
+      "kind": "Group",
+      "bounds": [64, 72, 420, 96],
+      "visible": true,
+      "opacity": 1.0,
+      "component": {
+        "id": "ribbon-banner@1",
+        "vars": { "label": "Design", "bg": "#3B2A20", "textColor": "#FFF7EE", "corner": true }
+      }
+    },
+    {
+      "name": "Headline",
+      "kind": "Type",
+      "bounds": [64, 216, 900, 240],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "How we rebuilt our design system",
+        "font": "display",
+        "weight": "bold",
+        "size": 64,
+        "lineHeight": 1.1,
+        "color": "#3B2A20",
+        "align": "left"
+      }
+    },
+    {
+      "name": "Author",
+      "kind": "Type",
+      "bounds": [64, 496, 600, 64],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "By the Acme Coffee team",
+        "font": "sans",
+        "size": 32,
+        "color": "#6B5748",
+        "align": "left"
+      }
+    },
+    {
+      "name": "Avatar Circle",
+      "kind": "Group",
+      "bounds": [688, 480, 96, 96],
+      "visible": true,
+      "opacity": 1.0,
+      "component": {
+        "id": "avatar-circle@1",
+        "vars": { "initials": "AC", "bg": "#3B2A20", "textColor": "#FFF7EE" }
+      }
+    }
+  ]
+}

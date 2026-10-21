@@ -1,0 +1,32 @@
+{
+  "id": "x-post",
+  "version": 1,
+  "name": "X Post — Big Statement",
+  "description": "A big-statement 1600×900 post for X: one bold centred headline of up to 60 characters over a full-bleed background photo, with an editable scrim fill layer that holds text contrast above 4.5:1 whatever the photo. §7.5 self-check: 2 slots (≤12), named layers only, nothing baked or flattened — the scrim is a live fill layer, palette defaults yield to workspace brand tokens.",
+  "tags": ["social", "x", "statement", "wide"],
+  "canvas": { "width": 1600, "height": 900, "background": "#0A0A0A" },
+  "slots": {
+    "photo":    { "kind": "image", "layer": "Photo",    "bounds": [0, 0, 1600, 900],
+                  "fit": "cover", "minPixels": [1600, 900], "optional": false },
+    "headline": { "kind": "text",  "layer": "Headline", "bounds": [128, 302, 1344, 296],
+                  "font": "display", "weight": "bold", "size": 120, "lineHeight": 1.02,
+                  "maxLines": 2, "maxChars": 60, "align": "center",
+                  "color": "#FFFFFF", "autoFit": { "minSize": 72, "maxSize": 144 } }
+  },
+  "rules": {
+    "safeArea": 64,
+    "minContrast": 4.5,
+    "mustLayers": ["Background", "Photo", "Headline"],
+    "maxTextLayers": 2,
+    "palette": ["#0A0A0A", "#FFFFFF", "#1D9BF0"]
+  },
+  "layerMap": {
+    "Background": { "role": "background", "fill": "#0A0A0A" },
+    "Photo":      { "role": "image" },
+    "Scrim":      { "role": "decoration" },
+    "Headline":   { "role": "headline" }
+  },
+  "thumbnail": "thumbnails/x-post@1.png",
+  "license": "public",
+  "author": "studio"
+}

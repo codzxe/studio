@@ -1,0 +1,56 @@
+{
+  "format": "studio-template-document/1",
+  "template": "linkedin-banner@1",
+  "name": "LinkedIn Banner — Professional",
+  "width": 1584,
+  "height": 396,
+  "background": "#F6F5F2",
+  "layers": [
+    {
+      "name": "Background",
+      "kind": "Fill",
+      "bounds": [0, 0, 1584, 396],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#F6F5F2"
+    },
+    {
+      "name": "Accent Bar",
+      "kind": "Fill",
+      "bounds": [96, 96, 240, 10],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#0A66C2"
+    },
+    {
+      "name": "Headline",
+      "kind": "Type",
+      "bounds": [96, 128, 944, 88],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "Riley Acme",
+        "font": "display",
+        "weight": "bold",
+        "size": 64,
+        "lineHeight": 1.1,
+        "color": "#1A1A1A",
+        "align": "left"
+      }
+    },
+    {
+      "name": "Subhead",
+      "kind": "Type",
+      "bounds": [96, 232, 944, 44],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "Principal Designer, Acme Coffee",
+        "font": "sans",
+        "size": 32,
+        "color": "#52504B",
+        "align": "left"
+      }
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "format": "studio-template-document/1",
+  "template": "email-header@1",
+  "name": "Email Header — Announcement",
+  "width": 1200,
+  "height": 400,
+  "background": "#FFF7EE",
+  "layers": [
+    {
+      "name": "Background",
+      "kind": "Fill",
+      "bounds": [0, 0, 1200, 400],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#FFF7EE"
+    },
+    {
+      "name": "Logo",
+      "kind": "Pixel",
+      "bounds": [64, 160, 160, 80],
+      "visible": true,
+      "opacity": 1.0,
+      "placeholder": "logo placeholder — synthetic wordmark gradient PNG (see assets-note.md); replaced by the placed contain-fit image on template.fill, never deleted"
+    },
+    {
+      "name": "Headline",
+      "kind": "Type",
+      "bounds": [288, 100, 560, 200],
+      "visible": true,
+      "opacity": 1.0,
+      "text": {
+        "content": "Autumn release is live",
+        "font": "display",
+        "weight": "bold",
+        "size": 64,
+        "lineHeight": 1.1,
+        "color": "#3B2A20",
+        "align": "left"
+      }
+    },
+    {
+      "name": "CTA Button",
+      "kind": "Group",
+      "bounds": [900, 168, 240, 64],
+      "visible": true,
+      "opacity": 1.0,
+      "component": {
+        "id": "button-cta@1",
+        "vars": { "label": "Read the story", "bg": "#3B2A20", "textColor": "#FFF7EE", "rounded": true }
+      }
+    }
+  ]
+}

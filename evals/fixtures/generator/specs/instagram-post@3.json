@@ -1,0 +1,32 @@
+{
+  "template": "instagram-post@3",
+  "note": "evals/templates/instagram-post@3/assets-note.md",
+  "assets": [
+    {
+      "kind": "gradient",
+      "file": "asset_photo_1080x700.png",
+      "w": 1080,
+      "h": 700,
+      "alpha": false,
+      "from": "#F4E7D3",
+      "to": "#D96C3B",
+      "axis": "y",
+      "shapes": [
+        { "type": "circle", "cx": 270, "cy": 200, "r": 140, "color": "#3B2A20", "blend": "screen", "amount": 0.25 },
+        { "type": "circle", "cx": 540, "cy": 400, "r": 170, "color": "#3B2A20", "blend": "screen", "amount": 0.25 },
+        { "type": "circle", "cx": 810, "cy": 230, "r": 120, "color": "#3B2A20", "blend": "screen", "amount": 0.25 }
+      ]
+    },
+    {
+      "kind": "gradient",
+      "file": "asset_logo_240x80.png",
+      "w": 240,
+      "h": 80,
+      "alpha": true,
+      "band": { "x": 8, "y": 24, "w": 224, "h": 32 },
+      "from": "#3B2A20",
+      "to": "#D96C3B",
+      "axis": "x"
+    }
+  ]
+}

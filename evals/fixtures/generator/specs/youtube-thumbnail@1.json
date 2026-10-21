@@ -1,0 +1,20 @@
+{
+  "template": "youtube-thumbnail@1",
+  "note": "evals/templates/youtube-thumbnail@1/assets-note.md",
+  "assets": [
+    {
+      "kind": "gradient",
+      "file": "asset_photo_1280x720.png",
+      "w": 1280,
+      "h": 720,
+      "alpha": false,
+      "from": "#101418",
+      "to": "#E5484D",
+      "axis": "xy",
+      "shapes": [
+        { "type": "rect", "x": 96, "y": 480, "w": 192, "h": 192, "color": "#FFFFFF", "blend": "screen", "amount": 0.2 },
+        { "type": "rect", "x": 320, "y": 480, "w": 160, "h": 192, "color": "#FFFFFF", "blend": "screen", "amount": 0.2 }
+      ]
+    }
+  ]
+}

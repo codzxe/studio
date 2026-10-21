@@ -1,0 +1,41 @@
+{
+  "id": "blog-cover",
+  "version": 1,
+  "name": "Blog Cover — OG Image",
+  "description": "A 1200×630 Open Graph cover: category ribbon top-left, a large auto-fit title, an author byline with an optional circular avatar on warm paper.",
+  "tags": ["blog", "cover", "og-image", "social"],
+  "canvas": { "width": 1200, "height": 630, "background": "#F4E7D3" },
+  "slots": {
+    "badge":  { "kind": "component", "component": "ribbon-banner@1", "layer": "Ribbon Banner",
+                "bounds": [64, 72, 420, 96], "optional": false,
+                "vars": { "label": "Design", "bg": "#3B2A20",
+                          "textColor": "#FFF7EE", "corner": true } },
+    "title":  { "kind": "text", "layer": "Headline", "bounds": [64, 216, 900, 240],
+                "font": "display", "weight": "bold", "size": 64, "lineHeight": 1.1,
+                "maxLines": 3, "maxChars": 70, "align": "left",
+                "color": "#3B2A20", "autoFit": { "minSize": 48, "maxSize": 84 } },
+    "author": { "kind": "text", "layer": "Author", "bounds": [64, 496, 600, 64],
+                "font": "sans", "size": 32, "maxLines": 1, "maxChars": 60, "align": "left",
+                "color": "#6B5748" },
+    "avatar": { "kind": "component", "component": "avatar-circle@1", "layer": "Avatar Circle",
+                "bounds": [688, 480, 96, 96], "optional": true,
+                "vars": { "initials": "AC", "bg": "#3B2A20", "textColor": "#FFF7EE" } }
+  },
+  "rules": {
+    "safeArea": 48,
+    "minContrast": 4.5,
+    "mustLayers": ["Background", "Headline", "Ribbon Banner"],
+    "maxTextLayers": 4,
+    "palette": ["#F4E7D3", "#3B2A20", "#6B5748", "#FFF7EE"]
+  },
+  "layerMap": {
+    "Background":    { "role": "background", "fill": "#F4E7D3" },
+    "Ribbon Banner": { "role": "component", "component": "ribbon-banner@1" },
+    "Headline":      { "role": "headline" },
+    "Author":        { "role": "author" },
+    "Avatar Circle": { "role": "component", "component": "avatar-circle@1" }
+  },
+  "thumbnail": "thumbnails/blog-cover@1.png",
+  "license": "public",
+  "author": "studio"
+}
