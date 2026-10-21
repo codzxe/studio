@@ -208,7 +208,7 @@ interface ParserCase {
 
 const parserCases: readonly ParserCase[] = [
   {
-    name: "event name and data split across three chunks",
+    name: "event name and data split mid-token across four chunks",
     pushes: ["event: run.pl", "an\ndata: ", "{\"seq\":1}", "\n\n"],
     afterPush: [msg("run.plan", '{"seq":1}', null)],
     afterFlush: [],

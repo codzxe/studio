@@ -240,7 +240,9 @@ export function canonicalBrandDraft(draft: BrandTokensDraft): CanonicalBrandDraf
     return { ok: false, validation };
   }
 
-  const boundFonts: BrandFontSet = {};
+  // Mutable accumulator — BrandFontSet's fields are readonly on the wire
+  // interface, so the build happens on a Partial record first.
+  const boundFonts: Partial<Record<FontRole, string>> = {};
   for (const role of FONT_ROLES) {
     const name = draft.fonts[role].trim();
     if (name !== "") {
@@ -292,7 +294,7 @@ export function coerceBrandTokens(raw: unknown): BrandTokens {
     }
   }
 
-  const fonts: BrandFontSet = {};
+  const fonts: Partial<Record<FontRole, string>> = {};
   if (typeof source.fonts === "object" && source.fonts !== null) {
     const fontsRaw = source.fonts as Record<string, unknown>;
     for (const role of FONT_ROLES) {
