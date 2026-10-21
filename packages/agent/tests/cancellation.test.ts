@@ -2,18 +2,20 @@
 // propagation, idempotency, terminal rejections, and the run-manager path.
 import { describe, expect, it } from "vitest";
 import type { Clock } from "../src/budgets.js";
+import type { RunEventType } from "../src/events.js";
 import type { Plan } from "../src/plan.js";
-import type { RunStatus } from "../src/state.js";
-import { RunStateMachine, type EmitLike, type RunEventType } from "../src/run-state/machine.js";
 import {
-  CancellationCoordinator,
   type AbortControllerFactory,
   type AbortControllerLike,
   type AbortSignalLike,
-  type CancellationMachineLike,
   type CancelRequest,
+  CancellationCoordinator,
+  type CancellationCoordinatorOptions,
+  type CancellationMachineLike,
   type RunSnapshot,
 } from "../src/run-state/cancellation.js";
+import { type EmitLike, RunStateMachine } from "../src/run-state/machine.js";
+import type { RunStatus } from "../src/state.js";
 
 interface CapturedEvent {
   readonly runId: string;
@@ -101,7 +103,10 @@ function fakeControllerFactory(): {
 }
 
 /** Machine + coordinator wired together, run driven to an active status. */
-function setupActive(startAtMs = 0, status: RunStatus = "executing"): {
+function setupActive(
+  startAtMs = 0,
+  status: RunStatus = "executing",
+): {
   clock: { clock: Clock; set: (ms: number) => void };
   machine: RunStateMachine;
   coordinator: CancellationCoordinator;
@@ -117,11 +122,11 @@ function setupActive(startAtMs = 0, status: RunStatus = "executing"): {
     },
   };
   const machine = new RunStateMachine({ clock: clock.clock, emit });
-  const controllers = fakeControllerFactory();
+  const controllerKit = fakeControllerFactory();
   const coordinator = new CancellationCoordinator({
     machine,
     clock: clock.clock,
-    controllerFactory: controllers.factory,
+    controllerFactory: controllerKit.factory,
   });
   const runId = "run_cancel";
   const created = machine.createRun(runId, { tier: "standard" });
@@ -129,6 +134,10 @@ function setupActive(startAtMs = 0, status: RunStatus = "executing"): {
     throw new Error(`createRun failed: ${created.message}`);
   }
   clock.set(startAtMs + 1000);
+  if (status === "queued") {
+    // stay queued: the run was never picked up
+    return { clock, machine, coordinator, controllers: controllerKit.controllers, events, runId };
+  }
   machine.transition(runId, "planning", { revisionBefore: 3 });
   if (status === "executing") {
     machine.transition(runId, "executing", { plan: PLAN });
@@ -144,12 +153,10 @@ function setupActive(startAtMs = 0, status: RunStatus = "executing"): {
     machine.transition(runId, "rendering", {});
     machine.transition(runId, "validating", {});
     machine.transition(runId, "finalizing", {});
-  } else if (status === "queued") {
-    // stay queued: the run was never picked up
   } else {
     throw new Error(`setupActive: unsupported status '${status}'`);
   }
-  return { clock, machine, coordinator, controllers, events, runId };
+  return { clock, machine, coordinator, controllers: controllerKit.controllers, events, runId };
 }
 
 function snapshotOf(runId: string, status: RunStatus): RunSnapshot {
@@ -200,7 +207,9 @@ describe("CancellationCoordinator signal seam", () => {
   });
 
   it("the constructor fails fast without a machine seam", () => {
-    expect(() => new CancellationCoordinator({} as unknown as CancellationMachineLike)).toThrow();
+    expect(
+      () => new CancellationCoordinator({} as unknown as CancellationCoordinatorOptions),
+    ).toThrow();
   });
 });
 
@@ -402,7 +411,7 @@ describe("CancellationCoordinator default controller factory", () => {
     // No @types/node peer in this package: identity is checked structurally.
     const ctor = (signal as { constructor?: { name?: string } }).constructor?.name;
     if (ctor !== undefined) {
-      expect(ctor).toBe("AbortController");
+      expect(ctor).toBe("AbortSignal"); // the SIGNAL seam is what executors observe
     }
   });
 

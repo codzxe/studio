@@ -52,6 +52,9 @@ export interface CancellationMachineLike {
   snapshot(runId: string): RunSnapshot | null;
 }
 
+/** Convenience re-export: seam users need not import machine.js as well. */
+export type { RunSnapshot } from "./machine.js";
+
 export interface CancelRequestOptions {
   /** Surfaced on `run.cancelled` + the run timeline. Empty → DEFAULT_CANCEL_REASON. */
   readonly reason?: string;
@@ -94,7 +97,9 @@ const defaultClock: Clock = () => Date.now();
 /** Node/DOM AbortController probed without a @types/node peer (planner precedent). */
 function globalAbortController(): AbortControllerLike | null {
   const candidate = (globalThis as unknown as { AbortController?: unknown }).AbortController;
-  return typeof candidate === "function" ? new (candidate as new () => AbortControllerLike)() : null;
+  return typeof candidate === "function"
+    ? new (candidate as new () => AbortControllerLike)()
+    : null;
 }
 
 /** Deterministic fallback for runtimes without a global AbortController. */
@@ -172,7 +177,9 @@ export class CancellationCoordinator {
     ) {
       // Fail fast on a wiring bug (BudgetTracker precedent): the constructor
       // takes code, not runtime data.
-      throw new Error("[run-state] CancellationCoordinator requires a machine seam with snapshot(runId)");
+      throw new Error(
+        "[run-state] CancellationCoordinator requires a machine seam with snapshot(runId)",
+      );
     }
     this.#machine = options.machine;
     this.#clock = options.clock ?? defaultClock;
@@ -203,10 +210,14 @@ export class CancellationCoordinator {
   cancel(runId: string, options: CancelRequestOptions = {}): CancelResult {
     const snapshot = this.#machine.snapshot(runId);
     if (snapshot === null) {
-      return runStateFailure("run_not_found", `Run '${runId}' is not registered in the run state machine.`, {
-        hint: "The run manager registers runs (machine.createRun) before executors observe signals.",
-        retryable: false,
-      });
+      return runStateFailure(
+        "run_not_found",
+        `Run '${runId}' is not registered in the run state machine.`,
+        {
+          hint: "The run manager registers runs (machine.createRun) before executors observe signals.",
+          retryable: false,
+        },
+      );
     }
     const controller = this.#controllerFor(runId);
     if (snapshot.status === "cancelled") {

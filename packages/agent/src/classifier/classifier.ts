@@ -32,10 +32,10 @@ import { PLAN_RETRY_LIMIT, resolveTierConfig } from "@studio/config";
 import { z } from "zod";
 import type { AgentErrorCode } from "../errors.js";
 import {
+  MAX_PLAN_STRING,
   type Plan,
   type PlanIntent,
   type PlanStep,
-  MAX_PLAN_STRING,
   validatePlan,
 } from "../plan.js";
 import { type AbortSignalLike, rawExcerptOf } from "../planner/planner.js";
@@ -264,10 +264,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readClarifyPayload(args: Record<string, unknown>): {
-  ok: true;
-  clarify: ClarifyRequest;
-} | { ok: false; issues: string[] } {
+function readClarifyPayload(args: Record<string, unknown>):
+  | {
+      ok: true;
+      clarify: ClarifyRequest;
+    }
+  | { ok: false; issues: string[] } {
   const issues: string[] = [];
   const rawCandidates = args.candidates;
   const candidates: string[] = [];
@@ -277,22 +279,24 @@ function readClarifyPayload(args: Record<string, unknown>): {
         if (candidate.length <= 200) {
           candidates.push(candidate);
         } else {
-          issues.push('clarify candidate exceeds the 200-char layer-name budget (§23.5)');
+          issues.push("clarify candidate exceeds the 200-char layer-name budget (§23.5)");
         }
       }
     }
     if (candidates.length === 0) {
-      issues.push('clarify args.candidates must list the candidate targets as strings (§23.5)');
+      issues.push("clarify args.candidates must list the candidate targets as strings (§23.5)");
     }
     if (rawCandidates.length > MAX_CLARIFY_CANDIDATES) {
-      issues.push(`clarify lists ${rawCandidates.length} candidates (max ${MAX_CLARIFY_CANDIDATES})`);
+      issues.push(
+        `clarify lists ${rawCandidates.length} candidates (max ${MAX_CLARIFY_CANDIDATES})`,
+      );
     }
   } else {
-    issues.push('clarify requires args.candidates with the ambiguous target candidates (§23.5)');
+    issues.push("clarify requires args.candidates with the ambiguous target candidates (§23.5)");
   }
   const question = args.question;
   if (typeof question !== "string" || question.trim().length === 0) {
-    issues.push('clarify requires args.question with the ONE question to ask (§23.5)');
+    issues.push("clarify requires args.question with the ONE question to ask (§23.5)");
   } else if (question.length > MAX_CLARIFY_QUESTION_CHARS) {
     issues.push(`clarify question exceeds the ${MAX_CLARIFY_QUESTION_CHARS}-char ask_user budget`);
   }
@@ -303,10 +307,7 @@ function readClarifyPayload(args: Record<string, unknown>): {
 }
 
 /** `id@version` (component ids may inline the version, §24.2 "offer-badge@2"). */
-function componentRefMatches(
-  ref: string,
-  entry: ChatEditComponentEntry,
-): boolean {
+function componentRefMatches(ref: string, entry: ChatEditComponentEntry): boolean {
   if (entry.id === ref) {
     return true;
   }
@@ -360,9 +361,7 @@ export function enforceChatEditRules(
   // 3. Targets must exist in the layer summary (never invented).
   if (targets.length > 0) {
     if (context.layerNames.size === 0) {
-      warnings.push(
-        "target layer(s) could not be verified — the layer summary lists no layers",
-      );
+      warnings.push("target layer(s) could not be verified — the layer summary lists no layers");
     } else {
       for (const target of targets) {
         if (!context.layerNames.has(target)) {
@@ -382,7 +381,7 @@ export function enforceChatEditRules(
       : firstStringRef(args, ["component", "id", "ref"]);
     if (ref === undefined) {
       warnings.push(
-        'add_component args carry no component id (component|id|ref) — the §6 boundary validates the place call',
+        "add_component args carry no component id (component|id|ref) — the §6 boundary validates the place call",
       );
     } else if (context.components.length === 0) {
       warnings.push(
@@ -621,8 +620,14 @@ function notesFor(
   return clip(parts.join(" "), MAX_PLAN_STRING);
 }
 
-/** Swap-point: errors.ts is add-only; invalid classifier output maps to plan_invalid. */
-export const CHAT_EDIT_INVALID_CODE: AgentErrorCode = "plan_invalid";
+/**
+ * Swap-point (W6-F REPAIR_PLAN_INVALID_CODE precedent): errors.ts is add-only
+ * and carries no classifier-specific code, so invalid classifier output maps
+ * to the closest existing agent code — `plan_invalid`. errors.ts owner: add a
+ * chat-edit code to AGENT_ERROR_CODES, widen ChatEditErrorCode, then flip this
+ * one-line constant. Tests import it.
+ */
+export const CHAT_EDIT_INVALID_CODE: ChatEditErrorCode = "plan_invalid";
 
 /**
  * Wraps the chat-edit steps into a full §5.5-validated Plan (the executor
@@ -835,7 +840,8 @@ export function extractChatEditJson(text: string): ChatEditJsonExtraction {
   }
   return {
     ok: false,
-    issue: "classification: model output is not valid JSON (return the classification object as JSON only — §23.5)",
+    issue:
+      "classification: model output is not valid JSON (return the classification object as JSON only — §23.5)",
   };
 }
 
@@ -980,16 +986,21 @@ export class ChatEditClassifier {
       rawExcerpt = rawExcerptOf(completion.text);
 
       const extraction = extractChatEditJson(completion.text);
-      const schema = extraction.ok ? chatEditClassificationSchema.safeParse(extraction.json) : undefined;
-      const classification = schema !== undefined && schema.success ? schema.data : undefined;
-      const atoms = classification !== undefined ? parseActionExpr(classification.action) : undefined;
+      const schema = extraction.ok
+        ? chatEditClassificationSchema.safeParse(extraction.json)
+        : undefined;
+      const classification = schema?.success ? schema.data : undefined;
+      const atoms =
+        classification !== undefined ? parseActionExpr(classification.action) : undefined;
       const rules =
         classification !== undefined && atoms !== undefined && atoms.ok
           ? enforceChatEditRules(atoms.atoms, classification, context)
           : undefined;
       issues = [
         ...(extraction.ok ? [] : [extraction.issue]),
-        ...(schema !== undefined && !schema.success ? formatClassificationIssues(schema.error) : []),
+        ...(schema !== undefined && !schema.success
+          ? formatClassificationIssues(schema.error)
+          : []),
         ...(atoms !== undefined && !atoms.ok ? [atoms.issue] : []),
         ...(rules !== undefined ? rules.issues : []),
       ];

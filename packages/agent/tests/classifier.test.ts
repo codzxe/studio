@@ -6,25 +6,26 @@
 import { PLAN_RETRY_LIMIT } from "@studio/config";
 import { describe, expect, it } from "vitest";
 import {
-  type ChatEditAction,
-  type ChatEditClassification,
-  type ChatEditClassifyInput,
-  type ChatCostTier,
-  type ClassifierModelCompletion,
-  type ClassifierModelLike,
+  ACTION_PRIMARY_TOOLS,
   CHAT_EDIT_ACTIONS,
   CHAT_EDIT_COMPOSITE_CONVENTIONS,
   CHAT_EDIT_INVALID_CODE,
   CHAT_EDIT_MAX_ISSUES_ATTACHED,
   CHAT_EDIT_MAX_LAYER_ROWS,
   CHAT_EDIT_SPEC_PROMPT,
+  type ChatCostTier,
+  type ChatEditAction,
+  type ChatEditClassification,
   ChatEditClassifier,
+  type ChatEditClassifyInput,
+  type ChatEditPromptInput,
+  type ClassifierModelCompletion,
+  type ClassifierModelLike,
   LAYER_TARGETED_ACTIONS,
-  MAX_ASK_USER_OPTION_CHARS,
   MAX_ASK_USER_OPTIONS,
+  MAX_ASK_USER_OPTION_CHARS,
   MAX_TARGET_LAYERS,
   TIER_TOOL_CALL_CAPS,
-  ACTION_PRIMARY_TOOLS,
   buildChatEditMiniPlan,
   buildChatEditPrompt,
   buildChatEditRetryPrompt,
@@ -65,7 +66,7 @@ const catalog242 = {
   assets: [],
 };
 
-const input242: ChatEditClassifyInput = {
+const input242: ChatEditPromptInput = {
   userRequest: userRequest242,
   layerSummary: layerSummary242,
   catalog: catalog242,
@@ -200,9 +201,7 @@ describe("chat-edit prompt: §23.5 verbatim", () => {
     const rows = Array.from({ length: CHAT_EDIT_MAX_LAYER_ROWS + 1 }, (_, i) => ({
       name: `Layer ${i}`,
     }));
-    expect(
-      chatEditInputSchema.safeParse({ ...input242, layerSummary: rows }).success,
-    ).toBe(false);
+    expect(chatEditInputSchema.safeParse({ ...input242, layerSummary: rows }).success).toBe(false);
     expect(chatEditInputSchema.safeParse(input242).success).toBe(true);
   });
 });
@@ -300,7 +299,10 @@ describe("chatEditClassificationSchema", () => {
     ["unknown action", { ...base, action: "regenerate" }],
     ["repeated atom", { ...base, action: "restyle+restyle" }],
     ["four atoms", { ...base, action: "set_text+restyle+move+recolor" }],
-    ["premium tier (§5.2 multiplier, not a chat-edit cost tier)", { ...base, cost_tier: "premium" }],
+    [
+      "premium tier (§5.2 multiplier, not a chat-edit cost tier)",
+      { ...base, cost_tier: "premium" },
+    ],
     ["string needs_template_reapply", { ...base, needs_template_reapply: "false" }],
     [
       "11 target layers",
@@ -358,12 +360,17 @@ describe("extractChatEditJson", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("rejects empty and non-JSON output with a §23.5-flavored issue", () => {
-    for (const text of ["", "   ", "no json at all"]) {
+  it("rejects empty and non-JSON output with classifier-flavored issues", () => {
+    for (const [text, needle] of [
+      ["", "model output was empty"],
+      ["   ", "model output was empty"],
+      ["no json at all", "§23.5"],
+    ] as const) {
       const result = extractChatEditJson(text);
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.issue).toContain("§23.5");
+        expect(result.issue).toContain(needle);
+        expect(result.issue).toContain("classification:");
       }
     }
   });
@@ -469,7 +476,11 @@ describe("enforceChatEditRules", () => {
 
     const noCatalog = enforceChatEditRules(
       ["add_component"],
-      validClassification({ action: "add_component", target_layers: [], args: { id: "offer-badge@2" } }),
+      validClassification({
+        action: "add_component",
+        target_layers: [],
+        args: { id: "offer-badge@2" },
+      }),
       { layerNames: context242.layerNames, components: [] },
     );
     expect(noCatalog.issues).toEqual([]);
@@ -516,73 +527,157 @@ describe("resolveCostTier: §23.5 cheapest-action guard", () => {
   }[] = [
     {
       label: "the task's example: set_text proposed complex → quick",
-      atoms: ["set_text"], targetCount: 1, reapply: false, proposed: "complex",
-      resolved: "quick", credits: 1, estimated: 4, kind: "downgrade",
+      atoms: ["set_text"],
+      targetCount: 1,
+      reapply: false,
+      proposed: "complex",
+      resolved: "quick",
+      credits: 1,
+      estimated: 4,
+      kind: "downgrade",
     },
     {
       label: "set_text proposed standard → quick",
-      atoms: ["set_text"], targetCount: 1, reapply: false, proposed: "standard",
-      resolved: "quick", credits: 1, estimated: 4, kind: "downgrade",
+      atoms: ["set_text"],
+      targetCount: 1,
+      reapply: false,
+      proposed: "standard",
+      resolved: "quick",
+      credits: 1,
+      estimated: 4,
+      kind: "downgrade",
     },
     {
       label: "§24.2 restyle+add_component proposed complex → quick (5 calls, 1 credit)",
-      atoms: ["restyle", "add_component"], targetCount: 1, reapply: false, proposed: "complex",
-      resolved: "quick", credits: 1, estimated: 5, kind: "downgrade",
+      atoms: ["restyle", "add_component"],
+      targetCount: 1,
+      reapply: false,
+      proposed: "complex",
+      resolved: "quick",
+      credits: 1,
+      estimated: 5,
+      kind: "downgrade",
     },
     {
       label: "§24.2 at quick stays quick, no warnings",
-      atoms: ["restyle", "add_component"], targetCount: 1, reapply: false, proposed: "quick",
-      resolved: "quick", credits: 1, estimated: 5, kind: "none",
+      atoms: ["restyle", "add_component"],
+      targetCount: 1,
+      reapply: false,
+      proposed: "quick",
+      resolved: "quick",
+      credits: 1,
+      estimated: 5,
+      kind: "none",
     },
     {
       label: "10-target set_text at complex legitimately stays (13 calls)",
-      atoms: ["set_text"], targetCount: 10, reapply: false, proposed: "complex",
-      resolved: "complex", credits: 5, estimated: 13, kind: "none",
+      atoms: ["set_text"],
+      targetCount: 10,
+      reapply: false,
+      proposed: "complex",
+      resolved: "complex",
+      credits: 5,
+      estimated: 13,
+      kind: "none",
     },
     {
       label: "9-target set_text complex → standard (12 calls)",
-      atoms: ["set_text"], targetCount: 9, reapply: false, proposed: "complex",
-      resolved: "standard", credits: 2, estimated: 12, kind: "downgrade",
+      atoms: ["set_text"],
+      targetCount: 9,
+      reapply: false,
+      proposed: "complex",
+      resolved: "standard",
+      credits: 2,
+      estimated: 12,
+      kind: "downgrade",
     },
     {
       label: "8-target set_text quick → standard (budget-fit raise, 11 calls)",
-      atoms: ["set_text"], targetCount: 8, reapply: false, proposed: "quick",
-      resolved: "standard", credits: 2, estimated: 11, kind: "raise",
+      atoms: ["set_text"],
+      targetCount: 8,
+      reapply: false,
+      proposed: "quick",
+      resolved: "standard",
+      credits: 2,
+      estimated: 11,
+      kind: "raise",
     },
     {
       label: "add_component proposed standard → quick (4 calls)",
-      atoms: ["add_component"], targetCount: 0, reapply: false, proposed: "standard",
-      resolved: "quick", credits: 1, estimated: 4, kind: "downgrade",
+      atoms: ["add_component"],
+      targetCount: 0,
+      reapply: false,
+      proposed: "standard",
+      resolved: "quick",
+      credits: 1,
+      estimated: 4,
+      kind: "downgrade",
     },
     {
       label: "clarify proposed complex → quick (ask_user only, no run tail)",
-      atoms: ["clarify"], targetCount: 0, reapply: false, proposed: "complex",
-      resolved: "quick", credits: 1, estimated: 1, kind: "downgrade",
+      atoms: ["clarify"],
+      targetCount: 0,
+      reapply: false,
+      proposed: "complex",
+      resolved: "quick",
+      credits: 1,
+      estimated: 1,
+      kind: "downgrade",
     },
     {
       label: "export proposed standard → quick (4 calls)",
-      atoms: ["export"], targetCount: 0, reapply: false, proposed: "standard",
-      resolved: "quick", credits: 1, estimated: 4, kind: "downgrade",
+      atoms: ["export"],
+      targetCount: 0,
+      reapply: false,
+      proposed: "standard",
+      resolved: "quick",
+      credits: 1,
+      estimated: 4,
+      kind: "downgrade",
     },
     {
       label: "canvas resize + template reapply at quick fits exactly (6 calls)",
-      atoms: ["resize"], targetCount: 0, reapply: true, proposed: "quick",
-      resolved: "quick", credits: 1, estimated: 6, kind: "none",
+      atoms: ["resize"],
+      targetCount: 0,
+      reapply: true,
+      proposed: "quick",
+      resolved: "quick",
+      credits: 1,
+      estimated: 6,
+      kind: "none",
     },
     {
       label: "canvas resize + reapply proposed complex → quick",
-      atoms: ["resize"], targetCount: 0, reapply: true, proposed: "complex",
-      resolved: "quick", credits: 1, estimated: 6, kind: "downgrade",
+      atoms: ["resize"],
+      targetCount: 0,
+      reapply: true,
+      proposed: "complex",
+      resolved: "quick",
+      credits: 1,
+      estimated: 6,
+      kind: "downgrade",
     },
     {
       label: "10-target restyle quick → complex (13 calls over every lower cap)",
-      atoms: ["restyle"], targetCount: 10, reapply: false, proposed: "quick",
-      resolved: "complex", credits: 5, estimated: 13, kind: "raise",
+      atoms: ["restyle"],
+      targetCount: 10,
+      reapply: false,
+      proposed: "quick",
+      resolved: "complex",
+      credits: 5,
+      estimated: 13,
+      kind: "raise",
     },
     {
       label: "composite set_text+recolor over 4 targets complex → standard (11 calls)",
-      atoms: ["set_text", "recolor"], targetCount: 4, reapply: false, proposed: "complex",
-      resolved: "standard", credits: 2, estimated: 11, kind: "downgrade",
+      atoms: ["set_text", "recolor"],
+      targetCount: 4,
+      reapply: false,
+      proposed: "complex",
+      resolved: "standard",
+      credits: 2,
+      estimated: 11,
+      kind: "downgrade",
     },
   ];
 
@@ -678,8 +773,8 @@ describe("buildChatEditSteps", () => {
       expect(step.tool).toBe("style_apply");
     }
     const first = outcome.steps[0]?.args;
-    expect(first?.["layer"]).toBe("Headline");
-    expect(first?.["color"]).toBe("#D96C3B");
+    expect(first?.layer).toBe("Headline");
+    expect(first?.color).toBe("#D96C3B");
   });
 
   it("canvas-level resize without targets emits a single step with no layer binding", () => {
@@ -701,7 +796,9 @@ describe("buildChatEditSteps", () => {
       args: { keep: "shared", set_text: { text: "New copy" } },
     });
     const outcome = buildChatEditSteps(classification, ["set_text"], null);
-    expect(outcome.steps).toEqual([{ tool: "text_set", args: { text: "New copy", layer: "Headline" } }]);
+    expect(outcome.steps).toEqual([
+      { tool: "text_set", args: { text: "New copy", layer: "Headline" } },
+    ]);
   });
 
   it("clarify emits one ask_user step with the tool's 1-4 option cap", () => {
@@ -713,11 +810,10 @@ describe("buildChatEditSteps", () => {
         question: "Which text layer should be smaller?",
       },
     });
-    const outcome = buildChatEditSteps(
-      classification,
-      ["clarify"],
-      { question: "Which text layer should be smaller?", candidates: classification.args.candidates as string[] },
-    );
+    const outcome = buildChatEditSteps(classification, ["clarify"], {
+      question: "Which text layer should be smaller?",
+      candidates: classification.args.candidates as string[],
+    });
     expect(outcome.steps).toEqual([
       {
         tool: "ask_user",
@@ -784,7 +880,11 @@ describe("buildChatEditMiniPlan", () => {
         args: { format: "png" },
       }),
       atoms: ["export"],
-      steps: buildChatEditSteps(validClassification({ action: "export", target_layers: [], args: { format: "png" } }), ["export"], null).steps,
+      steps: buildChatEditSteps(
+        validClassification({ action: "export", target_layers: [], args: { format: "png" } }),
+        ["export"],
+        null,
+      ).steps,
       tier: "quick",
       clarify: null,
     });
@@ -816,7 +916,11 @@ describe("buildChatEditMiniPlan", () => {
     const withReapply = buildChatEditMiniPlan({
       classification: validClassification({ needs_template_reapply: true }),
       atoms: ["set_text"],
-      steps: buildChatEditSteps(validClassification({ needs_template_reapply: true }), ["set_text"], null).steps,
+      steps: buildChatEditSteps(
+        validClassification({ needs_template_reapply: true }),
+        ["set_text"],
+        null,
+      ).steps,
       tier: "quick",
       clarify: null,
     });
@@ -844,7 +948,10 @@ describe("buildChatEditMiniPlan", () => {
 describe("ChatEditClassifier: §24.2 worked example (quick tier, 1 credit)", () => {
   it("classifies restyle + add_component and emits the §5.5 mini plan", async () => {
     const { model, service } = serviceWith([
-      { text: JSON.stringify(classification242), usage: { tokensIn: 420, tokensOut: 38, cacheHits: 12 } },
+      {
+        text: JSON.stringify(classification242),
+        usage: { tokensIn: 420, tokensOut: 38, cacheHits: 12 },
+      },
     ]);
     const result = await service.classify(input242);
     expect(result.ok).toBe(true);
@@ -910,7 +1017,10 @@ describe("ChatEditClassifier: ambiguity → clarify", () => {
       expect(result.plan.steps).toEqual([
         {
           tool: "ask_user",
-          args: { question: "Which text layer should be smaller?", options: ["Headline", "Subhead"] },
+          args: {
+            question: "Which text layer should be smaller?",
+            options: ["Headline", "Subhead"],
+          },
         },
       ]);
     }
@@ -1023,17 +1133,25 @@ describe("ChatEditClassifier: one retry with issues attached (§5.1)", () => {
   it("retries invented targets, invented component ids, empty targets, bad clarify", async () => {
     const cases: readonly [string, Record<string, unknown>, RegExp][] = [
       ["invented target", { action: "restyle", target_layers: ["Sub-head"] }, /invented target/],
-      ["invented component", {
-        action: "add_component",
-        target_layers: [],
-        args: { id: "mega-badge@9" },
-      }, /invented component id/],
+      [
+        "invented component",
+        {
+          action: "add_component",
+          target_layers: [],
+          args: { id: "mega-badge@9" },
+        },
+        /invented component id/,
+      ],
       ["empty targets", { action: "restyle", target_layers: [] }, /need named target layers/],
-      ["clarify without candidates", {
-        action: "clarify",
-        target_layers: [],
-        args: { question: "Which?" },
-      }, /args\.candidates/],
+      [
+        "clarify without candidates",
+        {
+          action: "clarify",
+          target_layers: [],
+          args: { question: "Which?" },
+        },
+        /args\.candidates/,
+      ],
     ];
     for (const [label, patch, issueRe] of cases) {
       const { model, service } = serviceWith([
@@ -1063,7 +1181,7 @@ describe("ChatEditClassifier: one retry with issues attached (§5.1)", () => {
   });
 
   it("fails plan_invalid after the retry, with sanitized issues + excerpt", async () => {
-    const longRaw = `x`.repeat(600);
+    const longRaw = "x".repeat(600);
     const { model, service } = serviceWith([{ text: longRaw }, { text: "{" }]);
     const result = await service.classify(input242);
     expect(result.ok).toBe(false);
@@ -1156,11 +1274,13 @@ describe("ChatEditClassifier: provider + abort handling", () => {
     const { model, service } = serviceWith([]);
     await expect(
       service.classify({ userRequest: "", layerSummary: [], catalog: {} }),
-    ).rejects.toThrow(/worker wiring: userRequest/);
-    const rows = Array.from({ length: CHAT_EDIT_MAX_LAYER_ROWS + 1 }, (_, i) => ({ name: `L${i}` }));
-    await expect(
-      service.classify({ ...input242, layerSummary: rows }),
-    ).rejects.toThrow(/worker wiring: layerSummary/);
+    ).rejects.toThrow(/\(worker wiring\): userRequest/);
+    const rows = Array.from({ length: CHAT_EDIT_MAX_LAYER_ROWS + 1 }, (_, i) => ({
+      name: `L${i}`,
+    }));
+    await expect(service.classify({ ...input242, layerSummary: rows })).rejects.toThrow(
+      /\(worker wiring\): layerSummary/,
+    );
     expect(model.prompts).toHaveLength(0);
   });
 });

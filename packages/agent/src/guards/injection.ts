@@ -72,6 +72,7 @@ export interface SanitizeOptions {
  * bidi tricks, zero-width splits like "ig\u200Bnore"). \n and \t are KEPT —
  * they are legitimate data formatting. \u2028/\u2029 become \n.
  */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: §15.3 requires stripping control characters from untrusted user content — this regex IS that control.
 const UNSAFE_CONTROL_RE =
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/gu;
 const LINE_SEPARATOR_RE = /[\u2028\u2029]/gu;
@@ -81,10 +82,13 @@ export interface StrippedControls {
   readonly removed: number;
 }
 
-/** Removes control/invisible/bidi characters, counting what went away. */
+/** Removes control/invisible/bidi characters (line separators become \n), counting removals. */
 export function stripUnsafeControls(text: string): StrippedControls {
-  const asLines = text.replace(LINE_SEPARATOR_RE, "\n");
   let removed = 0;
+  const asLines = text.replace(LINE_SEPARATOR_RE, () => {
+    removed += 1;
+    return "\n";
+  });
   const stripped = asLines.replace(UNSAFE_CONTROL_RE, () => {
     removed += 1;
     return "";
@@ -104,24 +108,104 @@ export function stripUnsafeControls(text: string): StrippedControls {
  */
 const HOMOGLYPHS: Readonly<Record<string, string>> = Object.freeze({
   // Cyrillic lookalikes
-  "а": "a", "А": "A", "с": "c", "С": "C", "е": "e", "Е": "E", "о": "o", "О": "O",
-  "р": "p", "Р": "P", "х": "x", "Х": "X", "у": "y", "У": "Y", "і": "i", "І": "I",
-  "ј": "j", "Ј": "J", "ѕ": "s", "Ѕ": "S", "ԁ": "d", "Ԁ": "D",
+  а: "a",
+  А: "A",
+  с: "c",
+  С: "C",
+  е: "e",
+  Е: "E",
+  о: "o",
+  О: "O",
+  р: "p",
+  Р: "P",
+  х: "x",
+  Х: "X",
+  у: "y",
+  У: "Y",
+  і: "i",
+  І: "I",
+  ј: "j",
+  Ј: "J",
+  ѕ: "s",
+  Ѕ: "S",
+  ԁ: "d",
+  Ԁ: "D",
   // Greek lookalikes
-  "α": "a", "ε": "e", "ι": "i", "κ": "k", "μ": "u", "µ": "u", "ν": "v",
-  "ο": "o", "ρ": "p", "τ": "t", "υ": "u", "χ": "x",
-  "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z", "Η": "H", "Ι": "I", "Κ": "K",
-  "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Υ": "Y", "Χ": "X",
+  α: "a",
+  ε: "e",
+  ι: "i",
+  κ: "k",
+  μ: "u",
+  µ: "u",
+  ν: "v",
+  ο: "o",
+  ρ: "p",
+  τ: "t",
+  υ: "u",
+  χ: "x",
+  Α: "A",
+  Β: "B",
+  Ε: "E",
+  Ζ: "Z",
+  Η: "H",
+  Ι: "I",
+  Κ: "K",
+  Μ: "M",
+  Ν: "N",
+  Ο: "O",
+  Ρ: "P",
+  Τ: "T",
+  Υ: "Y",
+  Χ: "X",
   // Small capitals (the "ꜱᴍᴀʟʟ ᴄᴀᴘꜱ" jailbreak trick)
-  "ᴀ": "A", "ᴃ": "B", "ᴄ": "C", "ᴅ": "D", "ᴇ": "E", "ꜰ": "F", "ɢ": "G",
-  "ʜ": "H", "ɪ": "I", "ᴊ": "J", "ᴋ": "K", "ʟ": "L", "ᴍ": "M", "ɴ": "N",
-  "ᴏ": "O", "ᴘ": "P", "ʀ": "R", "ꜱ": "S", "ᴛ": "T", "ᴜ": "U", "ᴠ": "V",
-  "ᴡ": "W", "ʏ": "Y", "ᴢ": "Z",
+  ᴀ: "A",
+  ᴃ: "B",
+  ᴄ: "C",
+  ᴅ: "D",
+  ᴇ: "E",
+  ꜰ: "F",
+  ɢ: "G",
+  ʜ: "H",
+  ɪ: "I",
+  ᴊ: "J",
+  ᴋ: "K",
+  ʟ: "L",
+  ᴍ: "M",
+  ɴ: "N",
+  ᴏ: "O",
+  ᴘ: "P",
+  ʀ: "R",
+  ꜱ: "S",
+  ᴛ: "T",
+  ᴜ: "U",
+  ᴠ: "V",
+  ᴡ: "W",
+  ʏ: "Y",
+  ᴢ: "Z",
   // Letterlike symbols (double-struck / script / fraktur specials)
-  "ℂ": "C", "ℍ": "H", "ℎ": "h", "ℐ": "I", "ℒ": "l", "ℳ": "M", "ℕ": "N",
-  "ℙ": "P", "ℚ": "Q", "ℛ": "R", "ℝ": "R", "ℤ": "Z", "ℊ": "g", "ℬ": "B",
-  "ℰ": "E", "ℱ": "F", "ℋ": "H", "ℭ": "C", "ℌ": "H", "ℜ": "R", "ℨ": "Z",
-  "ℓ": "l", "ℴ": "o",
+  ℂ: "C",
+  ℍ: "H",
+  ℎ: "h",
+  ℐ: "I",
+  ℒ: "l",
+  ℳ: "M",
+  ℕ: "N",
+  ℙ: "P",
+  ℚ: "Q",
+  ℛ: "R",
+  ℝ: "R",
+  ℤ: "Z",
+  ℊ: "g",
+  ℬ: "B",
+  ℰ: "E",
+  ℱ: "F",
+  ℋ: "H",
+  ℭ: "C",
+  ℌ: "H",
+  ℜ: "R",
+  ℨ: "Z",
+  ℓ: "l",
+  ℴ: "o",
 });
 
 /**
@@ -289,7 +373,8 @@ export const INJECTION_FLAG_PATTERNS: readonly InjectionFlagPattern[] = [
   },
   {
     id: "sql_injection",
-    pattern: /'\s*(?:or|and)\s*'?\d*'?\s*=\s*'?|\bdrop\s+table\b|\bunion\s+(?:all\s+)?select\b|--\s*$/g,
+    pattern:
+      /'\s*(?:or|and)\s*'?\d*'?\s*=\s*'?|\bdrop\s+table\b|\bunion\s+(?:all\s+)?select\b|--\s*$/g,
   },
 ];
 

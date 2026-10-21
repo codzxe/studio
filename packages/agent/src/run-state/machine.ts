@@ -39,7 +39,7 @@
 // Threading: single-owner per run (one worker owns a run — §5.2 tracker
 // note); no locks. The clock is injectable (`Clock = () => epoch ms`,
 // budgets.ts) so tests and replayed runs are deterministic.
-import { type RunTierId, RUN_TIER_ID_SCHEMA, resolveTierConfig } from "@studio/config";
+import { RUN_TIER_ID_SCHEMA, type RunTierId, resolveTierConfig } from "@studio/config";
 import { z } from "zod";
 import type { Clock } from "../budgets.js";
 import type { RunEventPayloadMap, RunEventType } from "../events.js";
@@ -47,9 +47,9 @@ import type { Plan } from "../plan.js";
 import {
   ALLOWED_TRANSITIONS,
   RUN_STATUS_SCHEMA,
+  type RunStatus,
   canTransition,
   isTerminal,
-  type RunStatus,
 } from "../state.js";
 
 // --- Typed failures (self-contained catalog; errors.ts is W1 lineage) ---------
@@ -248,7 +248,12 @@ export interface TransitionSuccess {
 export type TransitionResult = TransitionSuccess | RunStateFailure;
 
 export type CreateRunResult =
-  | { readonly ok: true; readonly snapshot: RunSnapshot; readonly emitted: RunEventType | null; readonly emitFailed: boolean }
+  | {
+      readonly ok: true;
+      readonly snapshot: RunSnapshot;
+      readonly emitted: RunEventType | null;
+      readonly emitFailed: boolean;
+    }
   | RunStateFailure;
 
 export type DeadlineCheck =
@@ -298,22 +303,21 @@ const transitionContextSchema = z.strictObject({
   reason: z.string().min(1).optional(),
 });
 
-const machineOptionsSchema = z
-  .strictObject({
-    emit: z
-      .custom<EmitLike>(
-        (value) =>
-          typeof value === "object" &&
-          value !== null &&
-          typeof (value as EmitLike).publish === "function",
-        { message: "emit must expose publish(runId, type, payload)" },
-      )
-      .optional(),
-    clock: z
-      .custom<Clock>((value) => typeof value === "function", { message: "clock must be a function" })
-      .optional(),
-    historyCap: z.number().int().min(1).optional(),
-  });
+const machineOptionsSchema = z.strictObject({
+  emit: z
+    .custom<EmitLike>(
+      (value) =>
+        typeof value === "object" &&
+        value !== null &&
+        typeof (value as EmitLike).publish === "function",
+      { message: "emit must expose publish(runId, type, payload)" },
+    )
+    .optional(),
+  clock: z
+    .custom<Clock>((value) => typeof value === "function", { message: "clock must be a function" })
+    .optional(),
+  historyCap: z.number().int().min(1).optional(),
+});
 
 /** Field PATHS only — never values (§15.3). */
 function zodIssuePaths(issues: readonly z.ZodIssue[]): string {
@@ -403,16 +407,24 @@ export class RunStateMachine {
   createRun(runId: string, init: CreateRunInit): CreateRunResult {
     const parsedInit = createRunInitSchema.safeParse(init);
     if (!parsedInit.success) {
-      return runStateFailure("run_state_input_invalid", "createRun init failed schema validation (wiring bug — the caller is typed).", {
-        hint: zodIssuePaths(parsedInit.error.issues),
-        retryable: false,
-      });
+      return runStateFailure(
+        "run_state_input_invalid",
+        "createRun init failed schema validation (wiring bug — the caller is typed).",
+        {
+          hint: zodIssuePaths(parsedInit.error.issues),
+          retryable: false,
+        },
+      );
     }
     if (this.#runs.has(runId)) {
-      return runStateFailure("run_already_registered", `Run '${runId}' is already registered in this state machine.`, {
-        hint: "§3.4 idempotency: reuse the existing run instead of re-creating it.",
-        retryable: false,
-      });
+      return runStateFailure(
+        "run_already_registered",
+        `Run '${runId}' is already registered in this state machine.`,
+        {
+          hint: "§3.4 idempotency: reuse the existing run instead of re-creating it.",
+          retryable: false,
+        },
+      );
     }
     const tier = parsedInit.data.tier;
     const now = this.#clock();
@@ -478,17 +490,25 @@ export class RunStateMachine {
   transition(runId: string, to: RunStatus, ctx: TransitionContext = {}): TransitionResult {
     const parsedCtx = transitionContextSchema.safeParse(ctx);
     if (!parsedCtx.success) {
-      return runStateFailure("run_state_input_invalid", "Transition ctx failed schema validation (wiring bug — the caller is typed).", {
-        hint: zodIssuePaths(parsedCtx.error.issues),
-        retryable: false,
-      });
+      return runStateFailure(
+        "run_state_input_invalid",
+        "Transition ctx failed schema validation (wiring bug — the caller is typed).",
+        {
+          hint: zodIssuePaths(parsedCtx.error.issues),
+          retryable: false,
+        },
+      );
     }
     const record = this.#runs.get(runId);
     if (record === undefined) {
-      return runStateFailure("run_not_found", `Run '${runId}' is not registered in this state machine.`, {
-        hint: "createRun(runId, { tier }) before transitioning.",
-        retryable: false,
-      });
+      return runStateFailure(
+        "run_not_found",
+        `Run '${runId}' is not registered in this state machine.`,
+        {
+          hint: "createRun(runId, { tier }) before transitioning.",
+          retryable: false,
+        },
+      );
     }
     const from = record.status;
     // §5.1 terminal lock — terminals never move, not even onto themselves.
@@ -552,13 +572,17 @@ export class RunStateMachine {
     }
     // §5.1 table guard — W1-P state.ts is the single source of truth.
     if (!canTransition(from, to)) {
-      return runStateFailure("invalid_transition", `A run cannot move from '${from}' to '${to}' (§5.1 state machine).`, {
-        hint: isTerminal(to)
-          ? `Reach '${to}' via 'finalizing' (success) or directly from any active phase (failure/cancel).`
-          : `Allowed next states from '${from}': ${ALLOWED_TRANSITIONS[from].join(", ")}.`,
-        retryable: false,
-        allowed: [...ALLOWED_TRANSITIONS[from]],
-      });
+      return runStateFailure(
+        "invalid_transition",
+        `A run cannot move from '${from}' to '${to}' (§5.1 state machine).`,
+        {
+          hint: isTerminal(to)
+            ? `Reach '${to}' via 'finalizing' (success) or directly from any active phase (failure/cancel).`
+            : `Allowed next states from '${from}': ${ALLOWED_TRANSITIONS[from].join(", ")}.`,
+          retryable: false,
+          allowed: [...ALLOWED_TRANSITIONS[from]],
+        },
+      );
     }
     const missing = this.#missingRequired(from, to, ctx);
     if (missing !== null) {
@@ -573,7 +597,9 @@ export class RunStateMachine {
     }
     const mapped = this.#mappedEvent(from, to, ctx);
     const outcome =
-      mapped === null ? { emitted: null, emitFailed: false } : this.#emitEvent(runId, mapped.type, mapped.payload);
+      mapped === null
+        ? { emitted: null, emitFailed: false }
+        : this.#emitEvent(runId, mapped.type, mapped.payload);
     if (from === "queued" && to === "planning") {
       // Worker pickup: the §5.2 wall clock starts NOW (queued runs burn none).
       record.startedAtMs = now;
@@ -612,10 +638,14 @@ export class RunStateMachine {
   checkDeadline(runId: string): DeadlineCheck {
     const record = this.#runs.get(runId);
     if (record === undefined) {
-      return runStateFailure("run_not_found", `Run '${runId}' is not registered in this state machine.`, {
-        hint: "createRun(runId, { tier }) before checking deadlines.",
-        retryable: false,
-      });
+      return runStateFailure(
+        "run_not_found",
+        `Run '${runId}' is not registered in this state machine.`,
+        {
+          hint: "createRun(runId, { tier }) before checking deadlines.",
+          retryable: false,
+        },
+      );
     }
     const now = this.#clock();
     const report = this.#deadlineReport(record, now);
@@ -651,7 +681,8 @@ export class RunStateMachine {
       createdAtMs: record.createdAtMs,
       startedAtMs: record.startedAtMs,
       deadlineAtMs: record.deadlineAtMs,
-      deadlineRemainingMs: record.deadlineAtMs === null ? null : Math.max(0, record.deadlineAtMs - now),
+      deadlineRemainingMs:
+        record.deadlineAtMs === null ? null : Math.max(0, record.deadlineAtMs - now),
       timedOut: record.deadlineAtMs !== null && now >= record.deadlineAtMs,
       transitions: record.history.length,
     };
@@ -684,7 +715,10 @@ export class RunStateMachine {
     if (from === "planning" && to === "executing" && ctx.plan === undefined) {
       return "plan";
     }
-    if ((to === "succeeded" || to === "succeeded_with_warnings") && ctx.revisionAfter === undefined) {
+    if (
+      (to === "succeeded" || to === "succeeded_with_warnings") &&
+      ctx.revisionAfter === undefined
+    ) {
       return "revisionAfter";
     }
     if (to === "failed" && ctx.error === undefined) {

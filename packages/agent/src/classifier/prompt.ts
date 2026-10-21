@@ -136,7 +136,7 @@ export const CHAT_EDIT_SPEC_PROMPT = [
 export const CHAT_EDIT_COMPOSITE_CONVENTIONS = [
   "Output conventions:",
   '- A composite request joins atoms with "+" in "action" (e.g. "restyle+add_component", §24.2);',
-  "  scope each atom's payload under \"args\" keyed by the atom name.",
+  '  scope each atom\'s payload under "args" keyed by the atom name.',
   '- For "clarify", put the candidate targets in args.candidates and the one question in args.question.',
 ].join("\n");
 

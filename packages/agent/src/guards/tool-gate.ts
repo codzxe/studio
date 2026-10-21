@@ -34,9 +34,9 @@
 
 import { type RunTierId, resolveTierConfig } from "@studio/config";
 import {
+  type AnyTool,
   MAX_ARG_ARRAY_ITEMS,
   MAX_ARG_STRING_CHARS,
-  type AnyTool,
   type ToolErr,
   type ToolListing,
   err as buildToolErr,
@@ -206,9 +206,7 @@ function scanArgCaps(
       : null;
   }
   if (typeof value === "number") {
-    return Number.isFinite(value)
-      ? null
-      : { path, problem: "unsupported_value", limit: null };
+    return Number.isFinite(value) ? null : { path, problem: "unsupported_value", limit: null };
   }
   if (typeof value === "boolean") {
     return null;
@@ -291,7 +289,8 @@ export class ToolCallGate {
       typeof tools !== "object" ||
       Object.keys(tools).length === 0 ||
       Object.entries(tools).some(
-        ([name, tool]) => !isToolName(name) || tool?.args == null || typeof tool?.run !== "function",
+        ([name, tool]) =>
+          !isToolName(name) || tool?.args == null || typeof tool?.run !== "function",
       )
     ) {
       throw new Error(

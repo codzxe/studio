@@ -2,25 +2,25 @@
 // §5.2 wall-clock clean-stop funnel, §5.1 terminal lock, §13.2 emission
 // contract, §3.4 idempotent replays, typed rejections, history + snapshots.
 import { describe, expect, it } from "vitest";
+import type { Clock } from "../src/budgets.js";
+import type { RunEventType } from "../src/events.js";
 import type { Plan } from "../src/plan.js";
-import {
-  ALLOWED_TRANSITIONS,
-  TERMINAL_RUN_STATUSES,
-  canTransition,
-  transition as tableTransition,
-  type RunStatus,
-} from "../src/state.js";
 import {
   DEFAULT_CANCEL_REASON,
   DEFAULT_HISTORY_CAP,
   type EmitLike,
   RunStateMachine,
-  timeoutErrorEnvelope,
-  type RunEventType,
   type TransitionContext,
   type TransitionSuccess,
+  timeoutErrorEnvelope,
 } from "../src/run-state/machine.js";
-import type { Clock } from "../src/budgets.js";
+import {
+  ALLOWED_TRANSITIONS,
+  type RunStatus,
+  TERMINAL_RUN_STATUSES,
+  canTransition,
+  transition as tableTransition,
+} from "../src/state.js";
 
 // --- Deterministic helpers ------------------------------------------------------
 

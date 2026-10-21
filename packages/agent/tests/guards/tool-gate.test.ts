@@ -4,26 +4,26 @@
 // 8 / JSON-only), reserve-at-validation budget semantics, §5.2 tier caps, and
 // constructor fail-fast. Pure logic, table-driven; no network, <5 s.
 
-import { describe, expect, it } from "vitest";
-import { z } from "zod";
 import {
   type AnyTool,
   MAX_ARG_STRING_CHARS,
   cappedArray,
   cappedString,
   defineTool,
-  ok as toolOk,
   parseToolArgs,
   strictObject,
+  ok as toolOk,
   zIdempotencyKey,
   zTemplateRef,
 } from "@studio/tools";
+import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   DEFAULT_MUTATING_TOOLS,
   GATE_DEFAULT_ARG_CAPS,
   type ModelToolCall,
-  type ToolGateOptions,
   ToolCallGate,
+  type ToolGateOptions,
   mutatingCommandCapFromTier,
 } from "../../src/guards/tool-gate.js";
 
@@ -112,7 +112,10 @@ function ops(count: number): { op: string }[] {
 describe("ToolCallGate: decision table", () => {
   it("known tool + valid args → ok with parseToolArgs-parsed args", () => {
     const gate = makeGate();
-    const verdict = gate.validateModelToolCall({ name: "text_set", args: { text: "Hello", size: 72 } });
+    const verdict = gate.validateModelToolCall({
+      name: "text_set",
+      args: { text: "Hello", size: 72 },
+    });
     expect(verdict.ok).toBe(true);
     if (verdict.ok) {
       expect(verdict.tool.name).toBe("text_set");
@@ -134,7 +137,7 @@ describe("ToolCallGate: decision table", () => {
       expect(verdict.kind).toBe("unknown_tool");
       expect(verdict.rejection.code).toBe("unknown_tool");
       expect(verdict.rejection.retryable).toBe(false);
-      expect(verdict.rejection.hint).toContain("Available tools: workspace_snapshot, component_set_vars");
+      expect(verdict.rejection.hint).toContain("Available tools: component_set_vars, layer_ops");
       expect(verdict.allowedTools).toEqual(gate.allowedToolNames());
     }
   });
@@ -166,7 +169,10 @@ describe("ToolCallGate: decision table", () => {
 
   it("schema reject: parseToolArgs envelope passes through as invalid_args", () => {
     const gate = makeGate();
-    const verdict = gate.validateModelToolCall({ name: "text_set", args: { text: "ok", size: "big" } });
+    const verdict = gate.validateModelToolCall({
+      name: "text_set",
+      args: { text: "ok", size: "big" },
+    });
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) {
       expect(verdict.kind).toBe("invalid_args");
@@ -218,7 +224,10 @@ describe("ToolCallGate: §5.7 cap rejects", () => {
 
   it("array cap: 51 items rejected even though the schema allows 200 (gate fires first)", () => {
     const gate = makeGate();
-    const verdict = gate.validateModelToolCall({ name: "layer_ops", args: { operations: ops(51) } });
+    const verdict = gate.validateModelToolCall({
+      name: "layer_ops",
+      args: { operations: ops(51) },
+    });
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) {
       expect(verdict.kind).toBe("args_cap");
@@ -253,7 +262,9 @@ describe("ToolCallGate: §5.7 cap rejects", () => {
       args: { vars: nested },
     });
     expect(verdict.ok === false && verdict.kind).toBe("args_cap");
-    expect(verdict.ok === false && verdict.rejection.message).toContain("nesting deeper than 8 levels");
+    expect(verdict.ok === false && verdict.rejection.message).toContain(
+      "nesting deeper than 8 levels",
+    );
   });
 
   it.each([
@@ -373,7 +384,7 @@ describe("ToolCallGate: tier caps and catalog pins", () => {
     expect(mutatingCommandCapFromTier("standard")).toBe(12);
     expect(mutatingCommandCapFromTier("complex")).toBe(24);
     expect(mutatingCommandCapFromTier("premium")).toBe(18);
-    expect(mutatingCommandCapFromTier("max")).toBe(48);
+    expect(mutatingCommandCapFromTier("max")).toBe(24);
     expect(mutatingCommandCapFromTier("image_gen")).toBe(1);
     expect(mutatingCommandCapFromTier("image_gen_hd")).toBe(1);
   });
@@ -432,7 +443,10 @@ describe("ToolCallGate: tier caps and catalog pins", () => {
 
   it("caps are overridable upward within the §5.7 ceilings (strings ≤ 2000)", () => {
     const gate = makeGate({ caps: { maxArrayItems: 60, maxDepth: 4 } });
-    const verdict = gate.validateModelToolCall({ name: "layer_ops", args: { operations: ops(55) } });
+    const verdict = gate.validateModelToolCall({
+      name: "layer_ops",
+      args: { operations: ops(55) },
+    });
     expect(verdict.ok).toBe(true);
     const deep = gate.validateModelToolCall({
       name: "component_set_vars",
@@ -457,7 +471,10 @@ describe("ToolCallGate: executor seam + constructor", () => {
   it("verdicts match the kit's own parseToolArgs behavior (same boundary)", () => {
     const gate = makeGate();
     const direct = parseToolArgs(textSetTool, { text: "ok", size: 10 });
-    const viaGate = gate.validateModelToolCall({ name: "text_set", args: { text: "ok", size: 10 } });
+    const viaGate = gate.validateModelToolCall({
+      name: "text_set",
+      args: { text: "ok", size: 10 },
+    });
     expect(viaGate.ok).toBe(true);
     expect(direct.ok).toBe(true);
     expect(viaGate.ok && viaGate.args).toEqual(direct.ok ? direct.args : null);
@@ -468,7 +485,10 @@ describe("ToolCallGate: executor seam + constructor", () => {
       why: "manifest name missing from the registry",
       build: (): ToolGateOptions => ({
         tools: TOOLS,
-        manifest: [{ name: "text_set", description: "ok" }, { name: "vision_critique", description: "not wired" }],
+        manifest: [
+          { name: "text_set", description: "ok" },
+          { name: "vision_critique", description: "not wired" },
+        ],
         mutatingCommandCap: 6,
       }),
     },
