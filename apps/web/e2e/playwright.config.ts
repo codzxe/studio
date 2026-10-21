@@ -45,7 +45,9 @@ function projects(): Project[] {
   for (const name of BROWSERS) {
     const use = DEVICE_BY_BROWSER[name];
     if (!use) {
-      throw new Error(`E2E_BROWSERS contains unknown browser "${name}" (use chromium|firefox|webkit)`);
+      throw new Error(
+        `E2E_BROWSERS contains unknown browser "${name}" (use chromium|firefox|webkit)`,
+      );
     }
     out.push({ name, use });
   }

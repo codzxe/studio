@@ -52,7 +52,8 @@ test.describe.serial("§21 user journey (mock mode)", () => {
     await page.goto("/dashboard");
     const create = page
       .locator(
-        '[data-e2e="workspace-create"], button:has-text("New workspace"), button:has-text("Create workspace")',
+        '[data-e2e="workspace-create"], button:has-text("New workspace"), ' +
+          'button:has-text("Create workspace")',
       )
       .first();
     await create.click();
@@ -157,7 +158,8 @@ test.describe.serial("§21 user journey (mock mode)", () => {
     if (state.runPath) await page.goto(state.runPath);
     const chat = page
       .locator(
-        '[data-e2e="chat-input"], input[placeholder*="chat" i], input[placeholder*="ask" i], textarea',
+        '[data-e2e="chat-input"], input[placeholder*="chat" i], ' +
+          'input[placeholder*="ask" i], textarea',
       )
       .last();
     await chat.fill("make the subhead smaller");
