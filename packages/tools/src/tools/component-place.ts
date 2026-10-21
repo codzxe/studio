@@ -89,16 +89,18 @@ export const MAX_COMPONENT_VERSION = 4_294_967_295;
 
 /**
  * §8.3's dedicated code for an unknown component id is `unknown_component`
- * (candidates ride in the hint as id@version pins, §7.2). Adopted into
- * TOOL_ONLY_ERROR_CODES by W7-M — this constant stays as the single swap
- * point the tests import (W5-E/W5-B/W5-K fleet precedent).
+ * (candidates ride in the hint as id@version pins, §7.2). It lives in the
+ * shared §13.3 catalog (@studio/config ERROR_CODES, adopted via the W7-M
+ * swap point) — this constant stays as the single import point the tests
+ * pin (W5-E/W5-B/W5-K fleet precedent).
  */
 export const UNKNOWN_COMPONENT_CODE: ToolErrorCode = "unknown_component";
 
 /**
  * Same for §8.4's unknown-variable refusal (`unknown_component_vars`): the
- * §8.4 allowed list travels in the hint. Adopted into the catalog by W7-M;
- * the constant remains the tests' single import point.
+ * §8.4 allowed list travels in the hint. Also a shared-catalog code (adopted
+ * via the W7-M swap point); the constant remains the tests' single import
+ * point.
  */
 export const UNKNOWN_COMPONENT_VARS_CODE: ToolErrorCode = "unknown_component_vars";
 

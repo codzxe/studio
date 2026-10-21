@@ -376,9 +376,10 @@ export function compileSlotValues(
 
 /**
  * §7.3: upscaling past 200% is a hard engine error. The dedicated catalog name
- * `image_upscale_limit` was adopted into TOOL_ONLY_ERROR_CODES by W7-M —
- * exported here as the single swap point the tests import (W5-D/W5-Q fleet
- * precedent), and used by the builder below.
+ * `image_upscale_limit` lives in the shared §13.3 catalog (@studio/config
+ * ERROR_CODES, adopted via the W7-M swap point) — exported here as the single
+ * import point the tests pin (W5-D/W5-Q fleet precedent), and used by the
+ * builder below.
  */
 export const IMAGE_UPSCALE_LIMIT_CODE: ToolErrorCode = "image_upscale_limit";
 

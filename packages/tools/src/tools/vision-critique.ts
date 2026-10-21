@@ -77,9 +77,10 @@ export const MAX_VALIDATOR_REPORT_CHARS = 2000;
 export const MAX_PALETTE_ENTRIES = 10;
 
 /**
- * The parse-failure code. `critique_parse_failed` was adopted into the catalog
- * (types.ts TOOL_ONLY_ERROR_CODES) by W7-M — this constant stays as the single
- * swap point the tests import (W5-D/W5-B/W5-O fleet precedent).
+ * The parse-failure code. `critique_parse_failed` lives in the shared §13.3
+ * catalog (@studio/config ERROR_CODES, adopted by W10-F via the W7-M swap
+ * point) — this constant stays as the single import point the tests pin
+ * (W5-D/W5-B/W5-O fleet precedent).
  */
 export const CRITIQUE_PARSE_FAILED_CODE: ToolErrorCode = "critique_parse_failed";
 

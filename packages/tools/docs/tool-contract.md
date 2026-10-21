@@ -194,7 +194,7 @@ stack, no paths, no vendor text). A pre-aborted signal returns
 | --- | --- | --- |
 | `validation_failed` (16) | text_set ×6 (font not in workspace, §10.2 machine/role-name check, duplicate name, non-Type layer, no-op edit), layer_ops ×4 (§10.2 name rules, empty set_props, same layer twice), asset_place ×2, image_generate ×2 (empty prompt after sanitize, > 200% upscale), style_apply ×1, echo ×1 | §13.3: payload failed semantic validation beyond what zod can express; every call carries an actionable hint |
 | `internal_error` (8) | layer_ops ×2 (unresolvable ref, batch command rolled back), image_generate ×2 (missing seams — thrown as ToolError, sink path outside scope), template_fill ×1 (image slot with no resolved path), asset_place ×1 (unreachable slot-resolution fallback), kit ×2 (`toToolErr` catch-all, `defineTool` malformed-result swap) | §13.3: unexpected; the kit's never-leak fallback — no stack, no paths, no vendor text |
-| `invalid_slots` (6) | template_fill ×4 (kind mismatch, non-fillable kind, engine-hex narrowing ×2), asset_place ×1, image_generate ×1 | §13.3: slot values fail the template's slot schema (§7.3). The engine's > 200% upscale refusal maps here in `imageUpscaleLimitErr` — the dedicated `image_upscale_limit` code is not yet in the add-only catalog (one-line swap point, flagged by W5-D/W5-E) |
+| `invalid_slots` (6) | template_fill ×4 (kind mismatch, non-fillable kind, engine-hex narrowing ×2), asset_place ×1, image_generate ×1 | §13.3: slot values fail the template's slot schema (§7.3). The engine's > 200% upscale refusal maps to the dedicated `image_upscale_limit` in `imageUpscaleLimitErr` — adopted into the shared §13.3 catalog (W7-M swap, W10-F shared-catalog move) |
 | `not_found` (5) | template_fill ×2 (unknown template ref, unknown asset), template_apply ×2 (catalog miss + engine unknown-template), asset_place ×1, template_inspect ×2 (via `UNKNOWN_TEMPLATE_CODE = "not_found"`; swaps when §13.3 adopts `unknown_template`) | §13.3: unknown id — candidates in the hint, never confirm existence to strangers |
 | `layer_not_found` (5) | layer_ops ×2 (id miss, name miss — richer hints than the kit helper), asset_place / image_generate / text-set via kit `layerNotFoundErr` | §6.1 tool-surface code: a layer ref resolved to nothing; hint lists the document's layers |
 | `budget_exceeded` (5) | template_fill, asset_place, image_generate, text_set, style_apply — each charges `ctx.budgets.charge({ commands: n })` **before** dispatching mutations | §13.3: tier budget exhausted → clean stop, partial charge (§5.2) |
@@ -352,10 +352,10 @@ registry's allowed list, so a typo cannot ship under an invented name.
 1. `src/index.ts` does not yet re-export `src/tools/*` — W5-R's in-flight
    `registry-defaults.ts` starts the assembly (`buildDefaultToolRegistry()`),
    and the barrel/`ToolMap` export lines still need to land with it.
-2. `image_upscale_limit` (§7.3) and `unknown_template` are not yet in the §13.3
-   add-only catalog; current stand-ins: `invalid_slots` (template_fill, one-line
-   swap in `imageUpscaleLimitErr`) and `not_found` (template_inspect, swap in
-   `UNKNOWN_TEMPLATE_CODE`).
+2. `unknown_template` is not yet in the §13.3 add-only catalog; current
+   stand-in: `not_found` (template_inspect, swap in `UNKNOWN_TEMPLATE_CODE`).
+   (`image_upscale_limit` §7.3 landed in the shared catalog — W7-M swap,
+   W10-F shared-catalog move — and `imageUpscaleLimitErr` uses it.)
 3. `asset_place.idempotency_key` (snake) vs the fleet's `idempotencyKey` (camel).
 4. `EngineCommandReport` lacks a payload field; tools read adapter-attached
    `result` payloads or `message`-JSON defensively (text_set fit metrics,

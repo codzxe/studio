@@ -446,10 +446,10 @@ function truncateText(value: string, max: number): string {
 
 /**
  * §13.3-style add-only catalog adoption (fleet precedent: "unknown_asset",
- * "image_upscale_limit"): "export_failed" was added to TOOL_ONLY_ERROR_CODES
- * (packages/tools/src/types.ts) by W7-M, so pipeline failures now carry the
- * dedicated code. The tests import this constant, keeping the swap a single
- * line if the mapping ever needs revisiting.
+ * "image_upscale_limit"): "export_failed" lives in the shared §13.3 catalog
+ * (@studio/config ERROR_CODES, adopted via the W7-M swap point), so pipeline
+ * failures carry the dedicated code. The tests import this constant, keeping
+ * the mapping a single line if it ever needs revisiting.
  */
 export const EXPORT_FAILED_CODE: ToolErrorCode = "export_failed";
 
