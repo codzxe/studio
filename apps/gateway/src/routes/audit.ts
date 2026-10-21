@@ -196,7 +196,7 @@ const EXPORT_FAILURE_STATUS: Readonly<Record<AuditExportErrorCode, number>> = {
   invalid_org: 422,
   invalid_window: 422,
   invalid_cursor: 422,
-  storage_unavailable: 503
+  storage_unavailable: 503,
 };
 
 function exportFailureToAppError(failure: AuditExportFailure): AppError {
@@ -264,7 +264,7 @@ export const AUDIT_CSV_COLUMNS = [
   "action",
   "target",
   "metadata",
-  "created_at"
+  "created_at",
 ] as const;
 
 /**
@@ -387,7 +387,7 @@ auditSummaryRoutes.get("/summary/:id", async (c) => {
     window_days: SUMMARY_WINDOW_DAYS,
     since: since.toISOString(),
     total_events: total,
-    by_action: Object.fromEntries(entries)
+    by_action: Object.fromEntries(entries),
   });
 });
 

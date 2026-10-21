@@ -57,12 +57,7 @@ const SUMMARY_PATH = `/v1/audit/summary/${ORG}`;
 const CSV_HEADER = "id,organization_id,actor_id,action,target,metadata,created_at";
 
 function member(role: Role, organizationId: string): AuditRouteCaller {
-  return {
-    userId: `user-${role}`,
-    organizationId,
-    role,
-    permissions: PERMISSIONS[role],
-  };
+  return { userId: `user-${role}`, organizationId, role, permissions: PERMISSIONS[role] };
 }
 
 type Principal = AuditRouteCaller | "forbidden";
@@ -210,9 +205,7 @@ function buildApp(options?: {
     await next();
   });
   const store = new InMemoryAuditStore();
-  const summary = new FakeSummary(
-    options?.summaryCounts ?? { "auth.login": 2, "role.changed": 1 },
-  );
+  const summary = new FakeSummary(options?.summaryCounts ?? { "auth.login": 2, "role.changed": 1 });
   mountAuditRoutes(app, {
     auth: new FakeAuth(options?.principals ?? defaultPrincipals()),
     // The REAL §22 service over the fake store — the route's export seam.
@@ -266,9 +259,10 @@ function seedTrail(store: InMemoryAuditStore): void {
 }
 
 function get(app: Hono<AppEnv>, path: string, principal: string | null): Promise<Response> {
-  return app.request(path, principal === null ? undefined : {
-    headers: { authorization: `Bearer ${principal}` },
-  });
+  if (principal === null) {
+    return app.request(path);
+  }
+  return app.request(path, { headers: { authorization: `Bearer ${principal}` } });
 }
 
 async function jsonBody(res: Response): Promise<Record<string, unknown>> {
@@ -431,11 +425,7 @@ describe("pagination", () => {
 
   it("rejects an over-long workspace id with 422", async () => {
     const { app } = buildApp();
-    const res = await get(
-      app,
-      `/v1/workspaces/${"x".repeat(65)}/audit`,
-      "admin",
-    );
+    const res = await get(app, `/v1/workspaces/${"x".repeat(65)}/audit`, "admin");
     expect(res.status).toBe(422);
     expect((await jsonBody(res))["code"]).toBe("validation_failed");
   });
@@ -658,15 +648,11 @@ describe("GET /v1/audit/summary/:id", () => {
     // The seam is called for the caller's workspace with the frozen clock.
     expect(summary.calls).toHaveLength(1);
     expect(summary.calls[0]?.organizationId).toBe(ORG);
-    expect(summary.calls[0]?.since.getTime()).toBe(
-      NOW.getTime() - SUMMARY_WINDOW_DAYS * DAY_MS,
-    );
+    expect(summary.calls[0]?.since.getTime()).toBe(NOW.getTime() - SUMMARY_WINDOW_DAYS * DAY_MS);
   });
 
   it("sums to total_events and sorts by_action keys deterministically", async () => {
-    const { app } = buildApp({
-      summaryCounts: { "z.last": 2, "a.first": 1, "m.mid": 3 },
-    });
+    const { app } = buildApp({ summaryCounts: { "z.last": 2, "a.first": 1, "m.mid": 3 } });
     const body = await jsonBody(await get(app, SUMMARY_PATH, "owner"));
     expect(body["by_action"]).toEqual({ "a.first": 1, "m.mid": 3, "z.last": 2 });
     expect(body["total_events"]).toBe(6);
