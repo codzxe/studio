@@ -164,14 +164,20 @@ describe("metrics route exposition", () => {
     const emptyPing: PoolLike = { ping: () => Promise.resolve(undefined) };
     const withEmpty = build({ enginePool: emptyPing });
     const resB = await withEmpty.request("/", { headers: { authorization: basic("prom", TOKEN) } });
-    expect(await resB.text()).toContain("# engine pool stats unavailable (supervisor ping returned no snapshot)");
+    const bodyB = await resB.text();
+    expect(bodyB).toContain("# engine pool stats unavailable (supervisor ping returned no snapshot)");
   });
 
   it("escapes and clamps queue label values (Prometheus wire format)", async () => {
-    const weird: QueueStatsLike = {
-      getQueueDepths: () =>
-        Promise.resolve([{ queue: 'weird "q" name', waiting: 1, active: 0, delayed: 0, completed: 0, failed: 0 }])
+    const weirdDepth: QueueDepthLike = {
+      queue: 'weird "q" name',
+      waiting: 1,
+      active: 0,
+      delayed: 0,
+      completed: 0,
+      failed: 0
     };
+    const weird: QueueStatsLike = { getQueueDepths: () => Promise.resolve([weirdDepth]) };
     const router = build({ queue: weird });
     const res = await router.request("/", { headers: { authorization: basic("prom", TOKEN) } });
     const text = await res.text();

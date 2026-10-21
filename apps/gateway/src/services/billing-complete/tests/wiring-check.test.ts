@@ -162,7 +162,11 @@ describe("auditStripeWiring — price-id ↔ plan-code dedup", () => {
   ];
   for (const c of duplicateCases) {
     it(c.name, () => {
-      const audit = auditStripeWiring({ env: c.env, stripe: sdkLikeStripe, nodeEnv: "development" });
+      const audit = auditStripeWiring({
+        env: c.env,
+        stripe: sdkLikeStripe,
+        nodeEnv: "development",
+      });
       expect(audit.ok).toBe(false);
       const finding = audit.findings.find((f) => f.code === "duplicate_price_id");
       expect(finding).toBeDefined();
@@ -187,7 +191,11 @@ describe("auditStripeWiring — price-id ↔ plan-code dedup", () => {
 
 describe("guardStripeWiring — the §4 refuse-to-start gate", () => {
   it("returns the audit when the wiring is correct", () => {
-    const audit = guardStripeWiring({ env: PRICE_ENV_OK, stripe: sdkLikeStripe, nodeEnv: "production" });
+    const audit = guardStripeWiring({
+      env: PRICE_ENV_OK,
+      stripe: sdkLikeStripe,
+      nodeEnv: "production",
+    });
     expect(audit.ok).toBe(true);
   });
 

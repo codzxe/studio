@@ -34,13 +34,13 @@ import { PLANS, PLAN_ID_SCHEMA, PLAN_LIMITS } from "@studio/config";
 import type { Subscription } from "@studio/db";
 import type { Logger } from "pino";
 import {
-  planCodeForPriceId,
   type AuditLike,
   type BillingDbLike,
   type LedgerLike,
   type StripeEvent,
   type StripePriceMap,
   type SubscriptionPlanCode,
+  planCodeForPriceId,
 } from "../stripe.js";
 import { stripeLedgerKeyForEvent } from "./webhook-idempotency.js";
 import { configPlanForWireCode } from "./wiring-check.js";
@@ -173,7 +173,7 @@ export function createLedgerBridge(deps: LedgerBridgeDeps): LedgerBridge {
         eventType: event.type,
         invoiceId,
         priceId: detail.priceId ?? null,
-        hint: "Map this Stripe price id in STRIPE_PRICE_* env, then reconcile the invoice manually.",
+        hint: "Map this price id in STRIPE_PRICE_* env, then reconcile the invoice manually.",
       },
     });
     logger.warn(

@@ -102,11 +102,13 @@ describe("WorkerMetrics run lifecycle counters", () => {
   it("counts passing validators and accepted critics (§22 blocker/revise rates)", () => {
     const metrics = createWorkerMetrics();
     metrics.observeRunEvent(ev("validate.report", { ok: true, blockers: [], majors: [], minors: [] }, "run_v"));
-    metrics.observeRunEvent(ev("critique.report", {
-      verdict: "accept",
-      scores: { hierarchy: 5, balance: 5, contrast: 5, brief_adherence: 5, brand_fit: 5, editability: 5 },
-      issues: []
-    }, "run_v"));
+    metrics.observeRunEvent(
+      ev("critique.report", {
+        verdict: "accept",
+        scores: { hierarchy: 5, balance: 5, contrast: 5, brief_adherence: 5, brand_fit: 5, editability: 5 },
+        issues: []
+      }, "run_v")
+    );
     const text = metrics.render();
     expect(text).toContain('validator_reports_total{result="pass"} 1');
     expect(text).toContain("validator_blockers_total 0");
@@ -116,7 +118,9 @@ describe("WorkerMetrics run lifecycle counters", () => {
   it("ignores plan/preview events and steps without a tool", () => {
     const metrics = createWorkerMetrics();
     metrics.observeRunEvent(ev("run.plan", {} as RunEventPayloadMap["run.plan"], "run_x"));
-    metrics.observeRunEvent(ev("step.finished", { stepSeq: 2, phase: "planning", tool: null, ok: true, durationMs: 5, deviationFromPlan: false }, "run_x"));
+    metrics.observeRunEvent(
+      ev("step.finished", { stepSeq: 2, phase: "planning", tool: null, ok: true, durationMs: 5, deviationFromPlan: false }, "run_x")
+    );
     metrics.observeRunEvent(ev("preview.updated", { url: "https://internal/preview.png", revision: 2 }, "run_x"));
     const text = metrics.render();
     // Families render their HELP/TYPE headers but no sample line (counters

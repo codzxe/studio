@@ -108,7 +108,8 @@ function metricValue(value: number): string {
 }
 
 function sample(name: string, labels: string, value: number): string {
-  return labels.length > 0 ? `${name}{${labels}} ${metricValue(value)}` : `${name} ${metricValue(value)}`;
+  const rendered = metricValue(value);
+  return labels.length > 0 ? `${name}{${labels}} ${rendered}` : `${name} ${rendered}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,9 +165,8 @@ export class GatewayMetrics {
       (a, b) => a.method.localeCompare(b.method) || a.status - b.status
     );
     for (const row of rows) {
-      lines.push(
-        sample("gateway_http_requests_total", `method="${labelValue(row.method)}",status="${row.status}"`, row.count)
-      );
+      const labels = `method="${labelValue(row.method)}",status="${row.status}"`;
+      lines.push(sample("gateway_http_requests_total", labels, row.count));
     }
     lines.push(
       "# HELP gateway_http_requests_in_flight HTTP requests currently in the pipeline.",
@@ -212,7 +212,8 @@ function renderQueueDepths(depths: readonly QueueDepthLike[]): string {
   const sorted = Array.from(depths).sort((a, b) => a.queue.localeCompare(b.queue));
   for (const depth of sorted) {
     for (const state of QUEUE_STATES) {
-      lines.push(sample("queue_depth", `queue="${labelValue(depth.queue)}",state="${state}"`, depth[state]));
+      const labels = `queue="${labelValue(depth.queue)}",state="${state}"`;
+      lines.push(sample("queue_depth", labels, depth[state]));
     }
   }
   return lines.join("\n");
@@ -380,9 +381,10 @@ export function metricsRoutes(deps: MetricsRouteDeps): Hono<AppEnv> {
     await next();
   });
 
-  router.get("/", async (c) =>
-    c.text(await renderMetricsExposition(deps), 200, { "content-type": PROMETHEUS_CONTENT_TYPE })
-  );
+  router.get("/", async (c) => {
+    const body = await renderMetricsExposition(deps);
+    return c.text(body, 200, { "content-type": PROMETHEUS_CONTENT_TYPE });
+  });
 
   return router;
 }

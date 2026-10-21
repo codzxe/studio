@@ -180,7 +180,7 @@ describe("sampling policy (§22: errors 100%, successes 10%, env-tunable)", () =
 
 describe("createNoopTracer (tests + dependency-absent deployments)", () => {
   it("spans are chainable no-ops and stats stay honest", () => {
-    const tracer = createNoopTracer(createSamplingPolicy({ rng: () => 0.5 }));
+    const tracer = createNoopTracer(createSamplingPolicy({ rng: () => 0.01 }));
     expect(tracer.currentContext()).toBeUndefined();
     const span = tracer.startSpan("worker.run");
     expect(span.withAttrs({ "queue.name": "runs" })).toBe(span);

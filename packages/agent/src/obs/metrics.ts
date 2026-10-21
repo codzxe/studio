@@ -412,6 +412,8 @@ class HistogramFamily extends FamilyBase {
 export interface UnlabeledFamilyConfig {
   readonly name: string;
   readonly help: string;
+  /** Register into this registry when provided (renders via registry.render). */
+  readonly registry?: ObsMetricRegistry;
 }
 
 export interface LabeledFamilyConfig<L> {
@@ -419,6 +421,7 @@ export interface LabeledFamilyConfig<L> {
   readonly help: string;
   /** Exactly the keys of L (compile-time-checked for literal label types). */
   readonly labelNames: ReadonlyArray<keyof L & string>;
+  readonly registry?: ObsMetricRegistry;
 }
 
 export interface UnlabeledHistogramConfig extends UnlabeledFamilyConfig {
@@ -463,30 +466,23 @@ export interface LabeledHistogram<L> {
   observe(labels: L, value: number): void;
 }
 
-export function createUnlabeledCounter(
-  config: UnlabeledFamilyConfig,
-  registry?: ObsMetricRegistry,
-): UnlabeledCounter {
-  const family = new CounterFamily(config.name, config.help, [], registry);
+export function createUnlabeledCounter(config: UnlabeledFamilyConfig): UnlabeledCounter {
+  const family = new CounterFamily(config.name, config.help, [], config.registry);
   return { name: config.name, inc: (value = 1) => family.inc(undefined, value) };
 }
 
 export function createLabeledCounter<L extends object>(
   config: LabeledFamilyConfig<L>,
-  registry?: ObsMetricRegistry,
 ): LabeledCounter<L> {
-  const family = new CounterFamily(config.name, config.help, [...config.labelNames], registry);
+  const family = new CounterFamily(config.name, config.help, [...config.labelNames], config.registry);
   return {
     name: config.name,
     inc: (labels: L, value = 1) => family.inc(labels, value),
   };
 }
 
-export function createUnlabeledGauge(
-  config: UnlabeledFamilyConfig,
-  registry?: ObsMetricRegistry,
-): UnlabeledGauge {
-  const family = new GaugeFamily(config.name, config.help, [], registry);
+export function createUnlabeledGauge(config: UnlabeledFamilyConfig): UnlabeledGauge {
+  const family = new GaugeFamily(config.name, config.help, [], config.registry);
   return {
     name: config.name,
     set: (value: number) => family.set(undefined, value),
@@ -497,9 +493,8 @@ export function createUnlabeledGauge(
 
 export function createLabeledGauge<L extends object>(
   config: LabeledFamilyConfig<L>,
-  registry?: ObsMetricRegistry,
 ): LabeledGauge<L> {
-  const family = new GaugeFamily(config.name, config.help, [...config.labelNames], registry);
+  const family = new GaugeFamily(config.name, config.help, [...config.labelNames], config.registry);
   return {
     name: config.name,
     set: (labels: L, value: number) => family.set(labels, value),
@@ -510,22 +505,20 @@ export function createLabeledGauge<L extends object>(
 
 export function createUnlabeledHistogram(
   config: UnlabeledHistogramConfig,
-  registry?: ObsMetricRegistry,
 ): UnlabeledHistogram {
-  const family = new HistogramFamily(config.name, config.help, [], config.buckets, registry);
+  const family = new HistogramFamily(config.name, config.help, [], config.buckets, config.registry);
   return { name: config.name, observe: (value: number) => family.observe(undefined, value) };
 }
 
 export function createLabeledHistogram<L extends object>(
   config: LabeledHistogramConfig<L>,
-  registry?: ObsMetricRegistry,
 ): LabeledHistogram<L> {
   const family = new HistogramFamily(
     config.name,
     config.help,
     [...config.labelNames],
     config.buckets,
-    registry,
+    config.registry,
   );
   return { name: config.name, observe: (labels: L, value: number) => family.observe(labels, value) };
 }

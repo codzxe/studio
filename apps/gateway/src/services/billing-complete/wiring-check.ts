@@ -28,10 +28,10 @@ import { PLANS, type PlanConfig, type PlanId } from "@studio/config";
 import { AppError } from "../../middleware/error-mapper.js";
 import {
   NoopStripe,
-  priceMapFromEnv,
   type StripeLike,
   type StripePriceMap,
   type SubscriptionPlanCode,
+  priceMapFromEnv,
 } from "../stripe.js";
 
 // ---------------------------------------------------------------------------

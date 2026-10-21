@@ -301,11 +301,15 @@ describe("ledger bridge — customer.subscription.deleted → seats-cap note (§
         customer: "cus_nobody",
       }),
     );
-    expect(outcome).toEqual({ action: "skipped", reason: "subscription_not_found", audited: false });
+    expect(outcome).toEqual({
+      action: "skipped",
+      reason: "subscription_not_found",
+      audited: false,
+    });
     expect(h.audit.entries).toHaveLength(0);
   });
 
-  it("a deletion with an unknown subscription id resolves the row by customer (§14.3 fan-in)", async () => {
+  it("an unknown subscription id resolves the row by customer (§14.3 fan-in)", async () => {
     const { h, bridge } = makeBridge([attachedRow("pro")]);
     const event: StripeEvent = {
       id: "evt_bridge_by_customer",

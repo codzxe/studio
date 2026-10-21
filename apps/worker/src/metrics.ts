@@ -60,7 +60,7 @@ export const PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8
 /** 401 challenge for the Basic-auth seam. */
 export const METRICS_WWW_AUTHENTICATE = 'Basic realm="metrics", charset="UTF-8"';
 
-/** Label for dimensions with no observed value (tier on recovery paths, missing model/workspace). */
+/** Label for dimensions with no observed value (tier, model, workspace). */
 const DEFAULT_LABEL_VALUE = "unspecified";
 
 /** Tier memory cap: a run that never reaches terminal must not leak a slot. */
@@ -123,7 +123,9 @@ class LabeledSamples {
     const rows = Array.from(this.rows.entries()).sort(([a], [b]) => (a < b ? -1 : a === b ? 0 : 1));
     for (const [rendered, row] of rows) {
       lines.push(
-        rendered.length > 0 ? `${name}{${rendered}} ${metricValue(row.value)}` : `${name} ${metricValue(row.value)}`
+        rendered.length > 0
+          ? `${name}{${rendered}} ${metricValue(row.value)}`
+          : `${name} ${metricValue(row.value)}`
       );
     }
     return lines;
@@ -231,7 +233,8 @@ export class WorkerMetrics implements WorkerMetricsLike {
       case "run.succeeded":
       case "run.failed":
       case "run.cancelled": {
-        this.runs.inc(labels(["status", TERMINAL_STATUS[event.type]], ["tier", this.tierOf(event.runId)]));
+        const status = TERMINAL_STATUS[event.type];
+        this.runs.inc(labels(["status", status], ["tier", this.tierOf(event.runId)]));
         this.inFlight = Math.max(0, this.inFlight - 1);
         this.tierByRun.delete(event.runId);
         return;
@@ -262,34 +265,37 @@ export class WorkerMetrics implements WorkerMetricsLike {
       }
       lines.push(...block);
     };
-    section(this.runs.renderLines("runs_total", "Worker runs by lifecycle status and tier (§22)."));
+    section(this.runs.renderLines("runs_total", "Worker runs by status and tier (§22)."));
     section([
       "# HELP runs_in_flight Runs between queued and terminal event (§22).",
       "# TYPE runs_in_flight gauge",
       `runs_in_flight ${metricValue(this.inFlight)}`
     ]);
-    section(this.toolCalls.renderLines("tool_calls_total", "Tool-scoped steps executed (§22 tool error rate)."));
-    section(this.toolErrors.renderLines("tool_errors_total", "Tool-scoped steps that failed (§22 tool error rate)."));
-    section(this.validatorReports.renderLines("validator_reports_total", "Validator verdicts (§22 validator blocker rate)."));
+    section(this.toolCalls.renderLines("tool_calls_total", "Tool steps executed (§22)."));
+    section(this.toolErrors.renderLines("tool_errors_total", "Tool steps that failed (§22)."));
+    const validatorHelp = "Validator verdicts (§22).";
+    section(this.validatorReports.renderLines("validator_reports_total", validatorHelp));
     section([
-      "# HELP validator_blockers_total Validator blocker findings (§22 validator blocker rate).",
+      "# HELP validator_blockers_total Validator blocker findings (§22).",
       "# TYPE validator_blockers_total counter",
       `validator_blockers_total ${metricValue(this.validatorBlockers)}`
     ]);
-    section(this.criticVerdicts.renderLines("critic_verdicts_total", "Critic verdicts by outcome (§22 critic revise rate)."));
+    const criticHelp = "Critic verdicts by outcome (§22).";
+    section(this.criticVerdicts.renderLines("critic_verdicts_total", criticHelp));
     section([
-      "# HELP credits_reserved_total Credits reserved for runs (§22 credits reserved/committed).",
+      "# HELP credits_reserved_total Credits reserved for runs (§22).",
       "# TYPE credits_reserved_total counter",
       `credits_reserved_total ${metricValue(this.creditsReserved)}`
     ]);
     section([
-      "# HELP credits_committed_total Credits settled at run end (§22 credits reserved/committed).",
+      "# HELP credits_committed_total Credits settled at run end (§22).",
       "# TYPE credits_committed_total counter",
       `credits_committed_total ${metricValue(this.creditsCommitted)}`
     ]);
-    section(this.chargeEvents.renderLines("credits_charged_events_total", "Credit charge events by partial flag (§14.2)."));
-    section(this.tokens.renderLines("ai_tokens_total", "Model tokens consumed (§22 tokens in/out/cache)."));
-    section(this.cost.renderLines("ai_cost_usd_total", "Model cost settled in USD (§22 AI cost per workspace)."));
+    const chargeHelp = "Charge events by partial flag (§14.2).";
+    section(this.chargeEvents.renderLines("credits_charged_events_total", chargeHelp));
+    section(this.tokens.renderLines("ai_tokens_total", "Model tokens consumed (§22)."));
+    section(this.cost.renderLines("ai_cost_usd_total", "Model cost settled in USD (§22)."));
     return `${lines.join("\n")}\n`;
   }
 
@@ -359,7 +365,11 @@ export async function startMetricsServer(options: MetricsServerOptions): Promise
   };
 }
 
-function handleMetricsRequest(request: IncomingMessage, response: ServerResponse, options: MetricsServerOptions): void {
+function handleMetricsRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: MetricsServerOptions
+): void {
   const url = new URL(request.url ?? "/", "http://worker.internal");
   if (request.method !== "GET" || url.pathname !== "/metrics") {
     sendJson(response, 404, {
@@ -433,7 +443,11 @@ function basicPassword(header: string | undefined): string | undefined {
   return separator === -1 ? decoded : decoded.slice(separator + 1);
 }
 
-function sendJson(response: ServerResponse, statusCode: number, body: Record<string, unknown>): void {
+function sendJson(
+  response: ServerResponse,
+  statusCode: number,
+  body: Record<string, unknown>
+): void {
   const payload = JSON.stringify(body);
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
