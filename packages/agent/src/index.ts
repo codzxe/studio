@@ -2,12 +2,12 @@
 // (wave-6 assembly) to re-export EVERY landed src/ module: the W1 core
 // (budgets, errors, events, models, plan, state), W2-P's eventbus, and the
 // wave-6 service directories (planner, executor, observer, validator, critic,
-// repair, budgets-service, transactions, router, classifier). Consumers import
-// ONLY this file — package.json main/exports and tsconfig.base.json paths point
-// here.
+// repair, budgets-service, transactions, router, classifier, run-state).
+// Consumers import ONLY this file — package.json main/exports and
+// tsconfig.base.json paths point here.
 //
-// Collision audit (W6-P, across the full src/ export surface, ~570 names):
-// exactly three clashes. Star-exports carry every module's public surface;
+// Collision audit (W6-P, across the full src/ export surface, ~600 names):
+// exactly four clashes. Star-exports carry every module's public surface;
 // each clashing name is ALSO re-exported explicitly below (explicit re-exports
 // beat star exports in both TypeScript and the ESM spec — verified against
 // tsc 5.7 + esbuild), so every clash resolves deterministically instead of
@@ -20,6 +20,12 @@
 //     required) keeps the canonical name; critic/service.ts's parse-tolerant
 //     twin (observation/fix optional — survives the tool's L3/L4 compaction)
 //     rides as CriticIssue.
+//   - AbortSignalLike: planner/planner.ts's narrow { aborted } stand-in keeps
+//     the canonical name (classifier.ts imports it from there);
+//     run-state/cancellation.ts's richer cooperative-cancel shape
+//     ({ aborted, reason?, addEventListener?, removeEventListener? }) rides as
+//     RunAbortSignalLike — structurally compatible both ways (all extras are
+//     optional), so the alias is documentation, not a constraint.
 //
 // Flagged error codes NOT added here (errors.ts is W1-P's; add-only): wave-6
 // modules left swap-point constants for AgentErrorCodes that are absent from
@@ -32,7 +38,7 @@
 //   classifier/classifier.js CHAT_EDIT_INVALID_CODE (= "plan_invalid" today)
 //     → same family, flips with the repair code or on its own row.
 // All three constants are public here via their modules' star-exports; no
-// index-aux.ts was needed — the three type/value clashes above resolve inline.
+// index-aux.ts was needed — the four type/value clashes above resolve inline.
 // tests/barrel.test.ts pins the swap-point values so each flip is a visible,
 // test-breaking change for whoever adopts the codes.
 //
@@ -42,8 +48,6 @@
 //     index.ts notes it is collision-checked, so the owner adds
 //     `export * from "./guards/index.js"` + a tests/barrel.test.ts row when
 //     injection.ts is whole.
-//   - run-state/ (RunStateMachine, CancellationCoordinator) had not landed at
-//     all; same one-line convention when it does.
 // Each wave-6 owner collision-checks before their module goes public here.
 
 // --- W1 core (W1-P budgets/models/plan/state/errors/events, W2-P eventbus) -----
@@ -57,7 +61,7 @@ export * from "./state.js";
 
 // --- wave-6 services (owners: W6-A planner, W6-B executor, W6-C observer,
 // --- W6-D validator, W6-E critic, W6-F repair, W6-G budgets-service,
-// --- W6-H router, W6-I transactions, W6-J classifier) ----------------------------
+// --- W6-H router, W6-I transactions, W6-J run-state, W6-O classifier) ----------
 export * from "./planner/index.js";
 export * from "./executor/index.js";
 export * from "./observer/context.js";
@@ -72,8 +76,9 @@ export * from "./budgets-service/tracker-factory.js";
 export * from "./budgets-service/settlement.js";
 export * from "./transactions/index.js";
 export * from "./router/index.js";
-export * from "./classifier/classifier.js";
-export * from "./classifier/prompt.js";
+export * from "./classifier/index.js";
+export * from "./run-state/machine.js";
+export * from "./run-state/cancellation.js";
 
 // --- star-export collision disambiguation (explicit beats star) ----------------
 // (1) RUN_PHASES / RunPhase — state.ts's §5.1 phases stay canonical:
@@ -87,3 +92,7 @@ export {
 export type { CritiqueIssue } from "./events.js";
 // ...and critic/service.ts's parse-tolerant twin rides aliased as CriticIssue:
 export type { CritiqueIssue as CriticIssue } from "./critic/service.js";
+// (3) AbortSignalLike — planner's narrow stand-in stays canonical:
+export type { AbortSignalLike } from "./planner/planner.js";
+// ...and run-state/cancellation.ts's cooperative-cancel shape rides aliased:
+export type { AbortSignalLike as RunAbortSignalLike } from "./run-state/cancellation.js";

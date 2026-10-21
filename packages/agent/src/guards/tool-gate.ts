@@ -200,21 +200,20 @@ function scanArgCaps(
   if (value === null) {
     return null;
   }
-  const type = typeof value;
-  if (type === "string") {
+  if (typeof value === "string") {
     return value.length > caps.maxStringChars
       ? { path, problem: "string_too_long", limit: caps.maxStringChars }
       : null;
   }
-  if (type === "number") {
+  if (typeof value === "number") {
     return Number.isFinite(value)
       ? null
       : { path, problem: "unsupported_value", limit: null };
   }
-  if (type === "boolean") {
+  if (typeof value === "boolean") {
     return null;
   }
-  if (type !== "object") {
+  if (typeof value !== "object") {
     return { path, problem: "unsupported_value", limit: null };
   }
   if (Array.isArray(value)) {
@@ -280,7 +279,7 @@ export class ToolCallGate {
   private readonly mutating: ReadonlySet<string>;
   private readonly caps: GateArgCaps;
   private readonly mutatingCommandCap: number;
-  private mutatingCommandsUsed = 0;
+  private usedMutatingCommands = 0;
 
   constructor(options: ToolGateOptions) {
     if (options == null || typeof options !== "object") {
@@ -344,7 +343,15 @@ export class ToolCallGate {
     this.manifestNames = Object.freeze([...manifestNames]);
     this.allowedSorted = Object.freeze([...manifestNames].sort());
     this.mutating = new Set(mutatingList);
-    this.caps = Object.freeze({ ...GATE_DEFAULT_ARG_CAPS, ...parsedCaps.data });
+    // Partial spread over a full object widens to `| undefined`; resolve each
+    // cap explicitly so the frozen shape is exactly GateArgCaps.
+    const caps = parsedCaps.data;
+    this.caps = Object.freeze({
+      maxStringChars: caps.maxStringChars ?? GATE_DEFAULT_ARG_CAPS.maxStringChars,
+      maxArrayItems: caps.maxArrayItems ?? GATE_DEFAULT_ARG_CAPS.maxArrayItems,
+      maxRecordEntries: caps.maxRecordEntries ?? GATE_DEFAULT_ARG_CAPS.maxRecordEntries,
+      maxDepth: caps.maxDepth ?? GATE_DEFAULT_ARG_CAPS.maxDepth,
+    });
     this.mutatingCommandCap = parsedCap.data;
   }
 
@@ -358,11 +365,11 @@ export class ToolCallGate {
   }
 
   mutatingCommandsUsed(): number {
-    return this.mutatingCommandsUsed;
+    return this.usedMutatingCommands;
   }
 
   mutatingCommandsRemaining(): number {
-    return Math.max(0, this.mutatingCommandCap - this.mutatingCommandsUsed);
+    return Math.max(0, this.mutatingCommandCap - this.usedMutatingCommands);
   }
 
   /**
@@ -424,13 +431,13 @@ export class ToolCallGate {
     //    reservation never unwinds (see the file header).
     const mutating = this.mutating.has(rawName);
     if (mutating) {
-      if (this.mutatingCommandsUsed >= this.mutatingCommandCap) {
+      if (this.usedMutatingCommands >= this.mutatingCommandCap) {
         return {
           ok: false,
           kind: "mutating_budget",
           rejection: buildToolErr(
             "budget_exceeded",
-            `The run's mutating command budget is exhausted (${this.mutatingCommandsUsed} of ${this.mutatingCommandCap} used, §5.2/§5.7)`,
+            `The run's mutating command budget is exhausted (${this.usedMutatingCommands} of ${this.mutatingCommandCap} used, §5.2/§5.7)`,
             {
               hint: "No further mutating tool calls are allowed in this run; continue with read-only tools or finish.",
               retryable: false,
@@ -438,7 +445,7 @@ export class ToolCallGate {
           ),
         };
       }
-      this.mutatingCommandsUsed += 1;
+      this.usedMutatingCommands += 1;
     }
 
     return Object.freeze({ ok: true, tool, args: parsed.args, mutating });

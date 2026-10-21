@@ -259,7 +259,7 @@ export const INJECTION_FLAG_PATTERNS: readonly InjectionFlagPattern[] = [
   {
     id: "fake_role_block",
     pattern:
-      /(?:^| )(?:(?:system|assistant|developer|user|admin)\s*:|\[\/?inst\]|<\|im_start\|>|<\|im_end\|>|<<\s*sys\s*>>|<</\s*sys\s*>>|###\s*(?:system|assistant|instruction)\b)/g,
+      /(?:^| )(?:(?:system|assistant|developer|user|admin)\s*:|\[\/?inst\]|<\|im_start\|>|<\|im_end\|>|<<\s*sys\s*>>|<<\/\s*sys\s*>>|###\s*(?:system|assistant|instruction)\b)/g,
   },
   {
     id: "new_instructions",

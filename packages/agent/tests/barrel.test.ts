@@ -4,10 +4,10 @@
 // names (TS: TS2308) — so a collision that slips past the barrel would show up
 // here as a missing/undefined symbol, and a wrong precedence as a wrong value.
 //
-// Not asserted (yet): RunStateMachine, CancellationCoordinator, ChatEditClassifier
-// — run-state/, guards/ and classifier/ had not landed in src/ when this barrel
-// was assembled. When they do, their owner adds the barrel export line AND a row
-// here (fleet convention: one line per module in the tables below).
+// Not asserted (yet): ToolCallGate — guards/ landed MID-ASSEMBLY with
+// injection.ts still being written (38 parse errors at assembly time), so the
+// barrel deliberately does not export it. When the module is whole, its owner
+// adds the barrel export line AND rows here (fleet convention).
 //
 // Deterministic by construction: importing the barrel evaluates only module
 // top-levels (zod schemas, config-alignment loops) — no network, no clock use,
@@ -24,9 +24,9 @@ function expectNamespaceIsClean(): void {
   for (const key of keys) {
     expect(agent[key as keyof typeof agent], `undefined export: ${key}`).toBeDefined();
   }
-  // Floor: ~230 value exports at assembly time; ambiguous star collisions would
+  // Floor: 281 value exports at assembly time; ambiguous star collisions would
   // be silently dropped and shrink the namespace.
-  expect(keys.length).toBeGreaterThanOrEqual(220);
+  expect(keys.length).toBeGreaterThanOrEqual(275);
 }
 
 describe("W6-P barrel: curated public surface resolves", () => {
@@ -51,6 +51,9 @@ describe("W6-P barrel: curated public surface resolves", () => {
       "TierBudgetTracker",
       "ProviderCacheTracker",
       "RouterError",
+      "ChatEditClassifier",
+      "RunStateMachine",
+      "CancellationCoordinator",
     ];
     for (const name of classes) {
       expect(typeof agent[name as keyof typeof agent], name).toBe("function");
@@ -98,6 +101,14 @@ describe("W6-P barrel: curated public surface resolves", () => {
       "routeClassForTier", // W6-H router
       "preferOffPeakRoutes",
       "buildCacheablePrefix",
+      "buildChatEditPrompt", // W6-J chat-edit classifier
+      "enforceChatEditRules",
+      "extractChatEditJson",
+      "buildChatEditSteps",
+      "resolveCostTier",
+      "parseActionExpr",
+      "runStateFailure", // W6-J run-state machine
+      "timeoutErrorEnvelope",
       "defaultPcraftStorageKey", // W6-I transactions
     ];
     for (const name of functions) {
@@ -126,6 +137,11 @@ describe("W6-P barrel: curated public surface resolves", () => {
       ["CRITIC_TOOL_FAILURE_CODE", "string"], // W6-E swap-point (flagged)
       ["SETTLEMENT_POLICIES", "object"], // W6-G §14.2
       ["TRANSACTION_ERROR_CODES", "object"], // W6-I §5.6
+      ["CHAT_EDIT_INVALID_CODE", "string"], // W6-J swap-point (flagged)
+      ["CHAT_EDIT_ACTIONS", "object"], // W6-J §13 chat-edit actions
+      ["CHAT_COST_TIERS", "object"],
+      ["RUN_STATE_ERROR_CODES", "object"], // W6-J run-state catalog
+      ["DEFAULT_CANCEL_REASON", "string"],
       ["CACHE_HIT_TARGET", "number"], // W6-H §5.3 >=60%
     ];
     for (const [name, kind] of consts) {
@@ -164,16 +180,31 @@ describe("W6-P barrel: star-export collisions resolve as documented", () => {
     expectTypeOf<agent.CriticIssue>().not.toEqualTypeOf<agent.CritiqueIssue>();
   });
 
+  it("AbortSignalLike stays planner's shape; cancellation's rides as RunAbortSignalLike", () => {
+    expectTypeOf<agent.AbortSignalLike>().toEqualTypeOf<
+      import("../src/planner/planner.js").AbortSignalLike
+    >();
+    expectTypeOf<agent.RunAbortSignalLike>().toEqualTypeOf<
+      import("../src/run-state/cancellation.js").AbortSignalLike
+    >();
+    // Structurally compatible both ways (the coordinator's extras are all
+    // optional) — but the alias keeps the richer cooperative-cancel shape
+    // addressable instead of dropped by the ESM ambiguity rule.
+    expectTypeOf<agent.AbortSignalLike>().not.toEqualTypeOf<agent.RunAbortSignalLike>();
+  });
+
   it("flagged-but-absent error codes stay pinned at their swap-point values", () => {
-    // errors.ts (W1-P, add-only) does not carry "repair_plan_invalid" (W6-F) or
-    // "critique_unavailable" (W6-E) yet; these constants flip when it does, so
-    // pin today's values — the flip breaks this row and forces the barrel+CI
-    // conversation instead of drifting silently.
+    // errors.ts (W1-P, add-only) does not carry "repair_plan_invalid" (W6-F),
+    // "critique_unavailable" (W6-E) or a chat-edit-specific code (W6-J) yet;
+    // these constants flip when errors.ts adopts them, so pin today's values —
+    // the flip breaks this row and forces the barrel+CI conversation instead of
+    // drifting silently.
     const codes: import("../src/errors.js").AgentErrorCode[] = [
       agent.REPAIR_PLAN_INVALID_CODE,
       agent.CRITIC_TOOL_FAILURE_CODE,
+      agent.CHAT_EDIT_INVALID_CODE,
     ];
-    expect(codes).toEqual(["plan_invalid", "tool_retry_exhausted"]);
+    expect(codes).toEqual(["plan_invalid", "tool_retry_exhausted", "plan_invalid"]);
     // The W1-P catalog itself is pinned add-only against accidental renames.
     expect(agent.AGENT_ERROR_CODES).toEqual([
       "plan_invalid",
