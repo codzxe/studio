@@ -58,6 +58,11 @@ die()  { err "FATAL: $*"; exit 1; }
 
 [ -r "$ENV_FILE" ] || die "env file not readable: $ENV_FILE — secrets are provisioned on the box only (infra/environments.md; ADR-0002)"
 [ -r "$COMPOSE_FILE" ] || die "compose file not readable: $COMPOSE_FILE"
+command -v docker >/dev/null 2>&1 \
+  || die "docker CLI not found — install Docker Engine + the compose plugin on the box (infra/README first-boot step 1)"
+if ! docker compose version >/dev/null 2>&1; then
+  die "docker compose plugin not available"
+fi
 
 # --- pre-flight: the compose file must resolve ---------------------------------
 compose config >/dev/null 2>&1 || die "compose config does not resolve (check ENV_FILE=$ENV_FILE / COMPOSE_FILE=$COMPOSE_FILE)"

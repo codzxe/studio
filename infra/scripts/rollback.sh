@@ -141,6 +141,11 @@ done
 # --- pre-flight -------------------------------------------------------------------------
 [ -r "$ENV_FILE" ] || die "env file not readable: $ENV_FILE (secrets live on the box only — infra/environments.md)"
 [ -r "$COMPOSE_FILE" ] || die "compose file not readable: $COMPOSE_FILE"
+command -v docker >/dev/null 2>&1 \
+  || die "docker CLI not found — install Docker Engine + the compose plugin on the box (infra/README first-boot step 1)"
+if ! docker compose version >/dev/null 2>&1; then
+  die "docker compose plugin not available"
+fi
 
 for svc in "${SERVICES[@]}"; do
   case "$svc" in

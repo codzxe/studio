@@ -247,6 +247,14 @@ step "pre-flight: env file"
 [ -r "$COMPOSE_FILE" ] || die "compose file not readable: $COMPOSE_FILE"
 ok "env file: $ENV_FILE"
 
+step "pre-flight: tooling (docker + compose plugin)"
+command -v docker >/dev/null 2>&1 \
+  || die "docker CLI not found — install Docker Engine + the compose plugin on the box (infra/README first-boot step 1)"
+if ! docker compose version >/dev/null 2>&1; then
+  die "docker compose plugin not available"
+fi
+ok "docker + compose plugin"
+
 step "pre-flight: pin check (app:<sha> tag scheme)"
 preflight_pin
 
@@ -293,7 +301,9 @@ ok "smoke green"
 # --- 5. record state (rollback.sh reads this) ----------------------------------------------------
 CURRENT="state"
 step "recording deploy state (for rollback.sh)"
-record_state
+if ! record_state; then
+  warn "state NOT recorded — a future rollback.sh will need an explicit --tag <sha>"
+fi
 
 step "deploy COMPLETE (tag ${IMAGE_TAG})"
 warn "watch §17.4 for the next hour: engine crash rate (RB-03), provider breakers (RB-04), queue backlog (RB-02)"
