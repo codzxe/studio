@@ -40,3 +40,12 @@ target/
 # editor misc
 .idea/
 .vscode/
+
+# editor wasm build output (built by cargo xtask web, never committed)
+editor/target/
+editor/dist/
+# rust tooling
+editor/rustc-*.json
+
+# portable local services (native dev without Docker)
+.local/
