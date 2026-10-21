@@ -21,6 +21,30 @@
 #       email {$ACME_EMAIL}
 #   }
 
+# --- rate_limit snippet (import docs) ----------------------------------------
+# Reusable edge rate-limit block. Enabling it REQUIRES the mholt/caddy-ratelimit
+# plugin, which is NOT in stock caddy:2-alpine — an active `rate_limit`
+# directive would make stock Caddy fail to parse this file, so the snippet body
+# stays commented until the plugin image exists (cheap, boring, reliable, §17;
+# deferred until abuse shows up — the gateway already enforces the app-level
+# limits of §15.2: RATE_LIMIT_* in .env.example, auth/runs/uploads/exports per
+# IP/user/workspace; the edge zone below is a coarse second line of defense).
+#
+# To enable:
+#   1) build the custom image:  xcaddy build --with github.com/mholt/caddy-ratelimit
+#   2) swap the caddy image in infra/compose/docker-compose.yml to that build
+#   3) uncomment the snippet, then `import rate_limit` inside the site block
+#      (or inside a single handle for scoped routes).
+# (rate_limit) {
+#         rate_limit {
+#                 zone edge_ip {
+#                         key    {remote_host}
+#                         events 50
+#                         window 1m
+#                 }
+#         }
+# }
+
 {$APP_DOMAIN} {
         # --- TLS defaults (§15.2) ----------------------------------------------
         # Caddy's defaults are already modern; we pin the floor explicitly.
@@ -46,11 +70,16 @@
                 # door).
                 Strict-Transport-Security "max-age=31536000; includeSubDomains"
                 X-Content-Type-Options "nosniff"
-                # §3.1: the wasm editor is embedded same-origin (iframe or
-                # full-page). SAMEORIGIN keeps that working while blocking
-                # third-party framing/clickjacking.
-                X-Frame-Options "SAMEORIGIN"
-                Referrer-Policy "strict-origin-when-cross-origin"
+                # DENY (strictened, W9-M): no framing at all, including
+                # same-origin — the wasm editor mounts full-page in the app
+                # shell, so nothing legitimate frames us. If a same-origin
+                # iframe embed ever returns, scope a SAMEORIGIN exception on
+                # that one route instead of weakening this global header.
+                X-Frame-Options "DENY"
+                # strict-origin: send only the origin (never a path) for
+                # same- AND cross-origin requests — stricter than
+                # strict-origin-when-cross-origin.
+                Referrer-Policy "strict-origin"
                 Permissions-Policy "camera=(), microphone=(), geolocation=()"
                 # Hide implementation details (§22: no version leakage).
                 -Server
@@ -69,25 +98,17 @@
                 max_size 30MB
         }
 
-        # --- Rate limiting (stub) -----------------------------------------------
-        # Edge rate limiting needs mholt/caddy-ratelimit, a custom xcaddy build
-        # — deferred until abuse shows up (cheap, boring, reliable, §17). The
-        # gateway already enforces the app-level limits of §15.2 (see
-        # RATE_LIMIT_* in .env.example: auth/runs/uploads/exports, per IP /
-        # user / workspace). To add the plugin later:
-        #   xcaddy build --with github.com/mholt/caddy-ratelimit
-        #   rate_limit {
-        #       zone auth_ip {
-        #           key    {remote_host}
-        #           events 10
-        #           window 1m
-        #       }
-        #   }
+        # --- Rate limiting (snippet defined above) -----------------------------
+        # Edge rate limiting is plugin-gated (mholt/caddy-ratelimit) and the
+        # gateway already enforces the app-level limits of §15.2 — enable via
+        # `import rate_limit` once the xcaddy image exists (see the snippet
+        # definition + import docs at the top of this file).
 
         # --- Routing (§3.1, §13) -------------------------------------------------
         # /v1/* → gateway (Hono REST + SSE). flush_interval -1 disables response
         # buffering so SSE events (§13.2: progress, heartbeat, resume via
         # Last-Event-ID) reach the browser immediately — do NOT change this.
+        # (Audited W9-M: already in place — kept.)
         @v1 path /v1/*
         handle @v1 {
                 reverse_proxy {$GATEWAY_INTERNAL} {
@@ -95,6 +116,17 @@
                         # Preserve X-Forwarded-For/Proto (Caddy defaults) so Better Auth
                         # builds correct callbacks behind TLS (§15.2).
                 }
+        }
+
+        # --- /metrics is NOT routed (internal-only scrape path) -----------------
+        # Prometheus scrapes gateway:3001 / worker:9876 container-to-container
+        # on the internal compose network (infra/obs/compose/prometheus.yml +
+        # infra/compose/docker-compose.yml). Metrics must never traverse the
+        # public proxy, so /metrics gets an explicit 404 here — even if an app
+        # later adds such a route by accident it stays unreachable.
+        @metrics path /metrics
+        handle @metrics {
+                respond 404
         }
 
         # Everything else → web (Next.js marketing + product UI).

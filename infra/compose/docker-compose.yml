@@ -104,6 +104,15 @@ services:
       # (GET /v1/health). Uses Node's global fetch so the check survives any
       # base image (no curl/wget dependency inside app images).
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.GATEWAY_PORT??'8787')+'/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    # Metrics listener (§22): Prometheus-format /metrics on its OWN internal
+    # port 3001 (separate from the 8787 API). `expose` only DOCUMENTS the port
+    # on the internal bridge — it does not publish anything; ONLY Caddy
+    # publishes host ports (§17.2). Prometheus (profile obs) scrapes
+    # gateway:3001/metrics with the METRICS_TOKEN bearer (infra/obs/compose/
+    # prometheus.yml). NEVER move this to `ports:` — /metrics stays
+    # unreachable from the internet.
+    expose:
+      - "3001"
     depends_on:
       db:
         condition: service_healthy
@@ -137,6 +146,16 @@ services:
       # Worker ops endpoint (apps/worker/src/health.ts): GET /health, default
       # WORKER_HEALTH_PORT 9876, bound to loopback inside its own container.
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.WORKER_HEALTH_PORT??'9876')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    # Metrics (§22): the SAME ops server serves Prometheus-format /metrics at
+    # worker:9876/metrics. INTERNAL NETWORK ONLY — `expose` publishes nothing
+    # (§17.2: only Caddy publishes host ports); Prometheus (profile obs)
+    # scrapes it with the METRICS_TOKEN bearer. NOTE: the comment above
+    # documents the ops endpoint as loopback-bound IN-CONTAINER — the worker
+    # owner must bind it to 0.0.0.0 on the internal bridge (still private to
+    # the box) for cross-container scrapes to succeed. NEVER move this to
+    # `ports:`.
+    expose:
+      - "9876"
     depends_on:
       db:
         condition: service_healthy
@@ -263,6 +282,16 @@ services:
   # Enable with: docker compose --env-file ../../.env --profile obs up -d
   # Not started by default; keep the box lean at ≤ 2 users (§17.2 Langfuse
   # note applies to all heavy obs self-hosting).
+  #
+  # W9-M stack (§16.5 license-clean): Prometheus (Apache-2.0) scrapes
+  # gateway/worker /metrics with the METRICS_TOKEN bearer and evaluates the
+  # §22 alert rules from infra/obs; Alertmanager stub routes alerts
+  # (receivers log-only until the on-call rotation in infra/obs/README.md is
+  # real); Perses (Apache-2.0) serves dashboards. Grafana was deliberately
+  # NOT added: AGPL-3.0 (§16.5) — §16's license policy would allow an
+  # internal, unmodified, separately-run copy as a utility, but Perses fills
+  # the same role with zero copyleft exposure (W9-F flagged it; dashboards'
+  # PromQL carries over). Uptime Kuma (MIT) + GlitchTip (MIT) keep roles.
   # ==========================================================================
 
   # Uptime Kuma — external uptime pings (MIT, §16.3). §17.2 pins the 1.x
@@ -314,10 +343,122 @@ services:
     networks: [studio]
     logging: *default-logging
 
+  # Prometheus — metrics hub for the obs profile (§22). prom/prometheus is
+  # Apache-2.0 (§16). Scrapes gateway:3001 and worker:9876 /metrics (bearer
+  # METRICS_TOKEN) and evaluates the §22 alert rules from infra/obs.
+  # INTERNAL ONLY: no host port — reach the UI via SSH tunnel or a Caddyfile
+  # subdomain block, never a published port (§17.2).
+  prometheus:
+    # Pin a major on the box (e.g. :v3.x) once verified; `latest` matches the
+    # uptime-kuma/glitchtip choice until then.
+    image: prom/prometheus:latest
+    profiles: ["obs"]
+    restart: unless-stopped
+    environment:
+      # Same bearer token gateway/worker require on /metrics (../../.env).
+      # Fail fast when the obs profile runs without it (GlitchTip pattern).
+      METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN required when the obs profile runs (bearer token gateway/worker verify on /metrics — same value as ../../.env)}
+    # Compose does NOT interpolate mounted files and Prometheus does not read
+    # env vars in its config, so the entrypoint seds the __METRICS_TOKEN__
+    # placeholder from infra/obs/compose/prometheus.yml into a container-local
+    # tmpfs copy, promtool-checks it, and execs prometheus — the token never
+    # lands in a committed file (§17.2: secrets live in the 0600 env file).
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        sed "s|__METRICS_TOKEN__|$$METRICS_TOKEN|g" /etc/prometheus/prometheus.yml > /tmp/prometheus.yml
+        promtool check config /tmp/prometheus.yml
+        exec prometheus --config.file=/tmp/prometheus.yml --storage.tsdb.path=/prometheus
+    volumes:
+      - ../obs/compose/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # §22 alert rules (W9-F contract: mount as /etc/prometheus/rules/*.yml).
+      - ../obs/alerts/prometheus-rules.yml:/etc/prometheus/rules/studio-alerts.yml:ro
+      - prometheus_data:/prometheus
+    deploy:
+      resources:
+        # Obs tooling must never starve the app/engine pool (§17.4 memory
+        # rule). TSDB for 2 targets @15s fits 512 MB comfortably.
+        limits:
+          memory: 512m
+    healthcheck:
+      <<: *healthcheck-defaults
+      # busybox-based image → wget; /-/ready is the readiness endpoint.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9090/-/ready"]
+    networks: [studio]
+    logging: *default-logging
+
+  # Alertmanager — routing stub for §22 alerts (prom/alertmanager, Apache-2.0).
+  # STUB by design: the on-call rotation in infra/obs/README.md is a
+  # placeholder, so the receivers in infra/obs/compose/alertmanager.yml are
+  # log-only (alerts appear in the UI + container logs, nothing pages).
+  # Wire real receivers (ops-channel webhook, GlitchTip, SMTP) when the
+  # rotation lands. INTERNAL ONLY — same no-published-port rule (§17.2).
+  alertmanager:
+    # Pin on the box alongside prometheus.
+    image: prom/alertmanager:latest
+    profiles: ["obs"]
+    restart: unless-stopped
+    volumes:
+      - ../obs/compose/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Silences/notification-log survive container replacement.
+      - alertmanager_data:/alertmanager
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    healthcheck:
+      <<: *healthcheck-defaults
+      # Same busybox base as prometheus; /-/ready is the readiness endpoint.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9093/-/ready"]
+    networks: [studio]
+    logging: *default-logging
+
+  # Perses — dashboards, REPLACING Grafana (§16.5: the grafana server is
+  # AGPL-3.0; §16's license policy would allow an internal, unmodified,
+  # separately-run copy as a utility, but persesdev/perses is Apache-2.0 —
+  # same role, zero copyleft exposure). INTERNAL ONLY — reach the UI via SSH
+  # tunnel or a Caddyfile subdomain block, never a published port (§17.2).
+  #
+  # Dashboard import path (W9-F contract): infra/obs/grafana/*.json are
+  # plain Grafana-format JSONs (business/product/reliability/cost) mounted
+  # below at /import/grafana. Perses ships Grafana-import tooling — run
+  # inside the container:
+  #     docker compose --env-file ../../.env --profile obs exec perses \
+  #       perses import grafana /import/grafana/reliability.json
+  # (verify the exact CLI shape on first boot). If the import tooling is
+  # unavailable in this image build, the JSONs remain plain dashboards for
+  # MANUAL import into any Grafana-compatible viewer. After importing,
+  # provision a Prometheus datasource pointing at http://prometheus:9090
+  # via the Perses UI/API — panel PromQL carries over untouched.
+  perses:
+    # Pin on the box once verified (persesdev/perses release tags).
+    image: persesdev/perses:latest
+    profiles: ["obs"]
+    restart: unless-stopped
+    volumes:
+      # Default file-DB dir; verify on first boot if the image moves it.
+      - perses_data:/perses
+      # Documented import path for the W9-F Grafana-format dashboards.
+      - ../obs/grafana:/import/grafana:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    healthcheck:
+      <<: *healthcheck-defaults
+      # Default listen port 8080 (alpine base → busybox wget). Verify on
+      # first boot and adjust if the major changes.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+    networks: [studio]
+    logging: *default-logging
+
 # =============================================================================
 # Volumes (§17.2): pgdata + kuma are mandated; caddy_data keeps ACME certs
 # across redeploys; caddy_config avoids ACME re-issues on config reloads;
 # engine_work holds per-session capability roots; valkey_data holds snapshots.
+# The obs profile adds the Prometheus TSDB, Alertmanager state and the Perses
+# file DB so observability data survives container replacement.
 # =============================================================================
 volumes:
   pgdata:
@@ -326,6 +467,9 @@ volumes:
   caddy_config:
   engine_work:
   valkey_data:
+  prometheus_data:
+  alertmanager_data:
+  perses_data:
 
 # =============================================================================
 # Network: ONE internal bridge (§17.2: "no service exposes ports except
