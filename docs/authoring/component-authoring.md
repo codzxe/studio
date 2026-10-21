@@ -134,7 +134,12 @@ per-instance state is returned.
   "designSize": { "width": 180, "height": 180 },
   "group": "Offer Badge",
   "layers": [ /* bottom→top */ ],
-  "bindings": { "label": { "layer": "Label", "as": "textReplacement" }, "…": {} },
+  "bindings": {
+    "label":      { "layer": "Label", "as": "textReplacement" },
+    "bg":         { "layer": "Badge background", "as": "fill colour" },
+    "textColor":  { "layer": "Label", "as": "type colour" },
+    "showRibbon": { "layer": "Ribbon", "as": "visibility" }
+  },
   "comps": { "default": "Authored state: …", "light": "…", "dark": "…" }
 }
 ```
@@ -187,8 +192,8 @@ x' = x − fx · w      y' = y − fy · h
 # the adjusted frame is sent as bounds (engine takes explicit bounds literally)
 ```
 
-Caps on explicit bounds: x/y ≥ 0, w/h ≥ 1 px, per-side and ≤ 64 MP (§2.3) — negative
-user-passed offsets refuse; a collapsing transform is `degenerate_placement`.
+Caps on explicit bounds: x/y ≥ 0 (negative offsets refuse), w/h ≥ 1 px, each side
+≤ 16 384 px, and w·h ≤ 64 MP (§2.3); a collapsing transform is `degenerate_placement`.
 
 ## 5. Comps — alternative states
 
@@ -235,7 +240,7 @@ Until it lands, the authoring flow **is** this data flow:
    `.pcraft` is materialized from `layer.json` beside the registry copy).
 2. Validate: the manifest parses (`component.inspect { id }` returns the manifest +
    master summary; a bad manifest is `broken_manifest`, a missing id is
-   `unknown_component` with candidates); every variable binds exactly one layer; `§8.4`
+   `unknown_component`); every variable binds exactly one layer; the §8.4
    rules above hold; `component.place` on a scratch document with each comp + defaults
    renders green.
 3. Version: masters are append-only (`<id>@<version>.pcraft`); bumping = new master +
