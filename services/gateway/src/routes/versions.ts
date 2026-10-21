@@ -17,13 +17,14 @@
 // the stored version without re-streaming bytes.
 
 import { Hono } from "hono";
+import { z } from "zod";
 
 import {
+  ID_SCHEMA,
   PAGINATION_QUERY_SCHEMA,
   RESTORE_VERSION_SCHEMA,
   UPLOAD_VERSION_SCHEMA,
   type ProjectVersion as VersionDto,
-  type UploadVersionRequest,
 } from "@studio/contracts";
 
 import { ok, page, pathParam } from "../http.js";
@@ -33,6 +34,27 @@ import { snapshotKey, sha256Hex } from "../storage.js";
 import { audit } from "./projects.js";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import type { ProjectVersion } from "@studio/db";
+
+/**
+ * W3-gw bugfix: a project's FIRST snapshot has no base version — a fresh
+ * project has currentVersionId null, so the only non-conflicting descriptor
+ * is baseVersionId: null (§9.3 keeps "base is required on upload" — the
+ * field is present, its value is null). @studio/contracts'
+ * UPLOAD_VERSION_SCHEMA pins baseVersionId to a non-null Id, which made the
+ * first upload via POST /v1/projects/:id/versions unreachable (always 409);
+ * the gateway therefore accepts null/omitted locally and passes it through to
+ * the repo, which still enforces the optimistic-concurrency check. Follow-up
+ * for the contracts owner: make UPLOAD_VERSION_SCHEMA.baseVersionId nullable.
+ */
+const UPLOAD_VERSION_GATEWAY_SCHEMA = UPLOAD_VERSION_SCHEMA.extend({
+  baseVersionId: ID_SCHEMA.nullable(),
+  // Query strings deliver sizeBytes as text — coerce here so the raw-bytes
+  // branch parses; the multipart branch already receives numbers and is
+  // unaffected. (Without this the raw upload path could never validate.)
+  sizeBytes: z.coerce.number().int().positive(),
+});
+
+type UploadVersionDescriptor = z.infer<typeof UPLOAD_VERSION_GATEWAY_SCHEMA>;
 
 export function versionsRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -87,7 +109,7 @@ export function versionsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       });
     }
 
-    let descriptor: UploadVersionRequest;
+    let descriptor: UploadVersionDescriptor;
     let bytes: Buffer;
 
     if (contentType.includes("multipart/form-data")) {
@@ -111,7 +133,7 @@ export function versionsRoutes(deps: GatewayDeps): Hono<AppBindings> {
           requestId,
         });
       }
-      const validated = UPLOAD_VERSION_SCHEMA.safeParse(parsedDescriptor);
+      const validated = UPLOAD_VERSION_GATEWAY_SCHEMA.safeParse(parsedDescriptor);
       if (!validated.success) {
         throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
           status: 400,
@@ -122,9 +144,10 @@ export function versionsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       descriptor = validated.data;
       bytes = Buffer.from(await filePart.arrayBuffer());
     } else {
-      // Raw .ecproj bytes; descriptor comes from the query string.
-      const validated = UPLOAD_VERSION_SCHEMA.safeParse({
-        baseVersionId: c.req.query("baseVersionId"),
+      // Raw .ecproj bytes; descriptor comes from the query string. An omitted
+      // baseVersionId means "no base" — the project's first snapshot.
+      const validated = UPLOAD_VERSION_GATEWAY_SCHEMA.safeParse({
+        baseVersionId: c.req.query("baseVersionId") ?? null,
         sha256: c.req.query("sha256"),
         label: c.req.query("label") ?? undefined,
         agentRunId: c.req.query("agentRunId") ?? undefined,

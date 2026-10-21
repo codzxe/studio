@@ -195,7 +195,16 @@ export function idempotencyMiddleware(): MiddlewareHandler<AppBindings> {
 
     try {
       await next();
-      const body = await c.res.text();
+      // W3-gw bugfix: read the body from a CLONE of the response. Consuming
+      // c.res's live stream directly leaves it "disturbed", and the requestId
+      // middleware later calls c.header("x-request-id") — Hono rebuilds the
+      // Response from res.body for every finalized header set, which throws
+      // "Response body object should not be disturbed or locked". Net effect
+      // pre-fix: every idempotent POST /v1 mutation returned INTERNAL *after*
+      // the mutation had already committed. The clone is tee'd by undici, so
+      // the client still receives the original bytes.
+      const snapshot = c.res.clone();
+      const body = await snapshot.text();
       deps.idempotency.complete(key, payloadHash, c.res.status, safeJsonParse(body), contentTypeOf(c.res.headers));
     } catch (error) {
       deps.idempotency.release(key);

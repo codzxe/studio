@@ -232,7 +232,11 @@ export function mockEditPlan(): EditPlan {
     summary: "Rename the selected layer",
     risk: "low",
     requiresApproval: false,
-    affectedLayers: [{ id: "layer-headline", name: "Headline", change: "Rename to Subtitle" }],
+    // W3-gw bugfix: AFFECTED_LAYER_SCHEMA.id is z.number() (engine layer ids
+    // are numeric) — the previous string id ("layer-headline") failed
+    // EDIT_PLAN_SCHEMA.parse, so MockRunner runs ALWAYS died with
+    // run.failed INTERNAL at the plan step.
+    affectedLayers: [{ id: 0, name: "Headline", change: "Rename to Subtitle" }],
     estimatedCredits: estimateCredits({ risk: "low", steps: [{}] }),
     steps: [
       {

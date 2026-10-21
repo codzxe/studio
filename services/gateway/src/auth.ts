@@ -93,7 +93,13 @@ export interface GatewayAuth {
 
 // ---------------------------------------------------------------------------
 // Error mapping — better-auth APIError → typed GatewayError. Raw provider
-// messages never reach the envelope; only well-known codes map to hints.
+// messages never reach the envelope; only well-known failures map to hints.
+//
+// W3-gw bugfix: better-auth 1.7.12 throws HUMAN messages ("Organization not
+// found", "User is not a member of the organization"), not the UPPER_SNAKE
+// code names the original mapping matched — so membership/existence leaks
+// surfaced as 400 VALIDATION_FAILED instead of the §12.1 404. Match phrases,
+// case-insensitively.
 // ---------------------------------------------------------------------------
 
 function apiErrorMessage(error: APIError): string {
@@ -105,21 +111,31 @@ function throwFromAuthError(error: unknown): never {
   if (error instanceof APIError) {
     const status = error.statusCode;
     const message = apiErrorMessage(error);
-    // §12.1: membership and existence are never confirmed to strangers.
-    if (message.includes("USER_IS_NOT_A_MEMBER_OF_THE_ORGANIZATION")) {
+    const lower = message.toLowerCase();
+    // §12.1: membership and existence are never confirmed to strangers —
+    // both the missing-workspace and the not-a-member failures read as 404.
+    if (lower.includes("invitation not found")) {
+      throw new GatewayError("INVITE_NOT_FOUND", "That invite is no longer available.", { status: 404 });
+    }
+    if (lower.includes("user is not a member of the organization") || lower.includes("organization not found")) {
       throw new GatewayError("NOT_FOUND", "Workspace not found.", { status: 404 });
     }
-    if (status === 404 || message.includes("_NOT_FOUND")) {
-      const code = message.includes("INVITATION") ? "INVITE_NOT_FOUND" : "NOT_FOUND";
-      throw new GatewayError(code, "That resource was not found.", { status: 404, hint: message });
+    if (lower.includes("slug already taken")) {
+      throw new GatewayError("CONFLICT", "That workspace slug is taken.", {
+        status: 409,
+        hint: "Pick a different slug.",
+      });
+    }
+    if (lower.includes("recipient of the invitation")) {
+      throw new GatewayError("INVITE_RECIPIENT_MISMATCH", "This invite was issued to a different email.", { status: 403 });
+    }
+    if (status === 404) {
+      throw new GatewayError("NOT_FOUND", "That resource was not found.", { status: 404, hint: message });
     }
     if (status === 409) {
       throw new GatewayError("CONFLICT", "That request conflicted with the current state.", { status: 409, hint: message });
     }
-    if (status === 403 || message.includes("YOU_ARE_NOT")) {
-      if (message.includes("RECIPIENT")) {
-        throw new GatewayError("INVITE_RECIPIENT_MISMATCH", "This invite was issued to a different email.", { status: 403 });
-      }
+    if (status === 403 || lower.includes("you are not")) {
       throw new GatewayError("FORBIDDEN", "You don't have permission to do that.", {
         status: 403,
         hint: "Ask a workspace admin for access.",
@@ -226,17 +242,26 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
     },
 
     async getFullWorkspace(headers, candidate) {
-      const isSlug = !candidate.startsWith("org_");
+      // W3-gw bugfix: better-auth 1.7.12 generates 32-char random org ids
+      // (e.g. "L5aBWdZBmJ36vTtxK6pwzR8n471hm1MQ"), so the previous
+      // startsWith("org_") id-vs-slug heuristic classified EVERY id as a
+      // slug and every workspace-by-id resolution failed. Try the id first,
+      // then fall back to the slug; a missing org AND a non-member both read
+      // as null so the middleware renders the §12.1 404 (never a leak).
       let raw: unknown;
       try {
-        raw = await call<unknown>("getFullOrganization", {
-          headers,
-          query: isSlug ? { organizationSlug: candidate } : { organizationId: candidate },
-        });
+        raw = await call<unknown>("getFullOrganization", { headers, query: { organizationId: candidate } });
       } catch (error) {
-        // ORGANIZATION_NOT_FOUND → null (404 upstream, §12.1).
-        if (error instanceof GatewayError && error.code === "NOT_FOUND") return null;
-        throw error;
+        if (error instanceof GatewayError && error.code === "NOT_FOUND") {
+          try {
+            raw = await call<unknown>("getFullOrganization", { headers, query: { organizationSlug: candidate } });
+          } catch (again) {
+            if (again instanceof GatewayError && again.code === "NOT_FOUND") return null;
+            throw again;
+          }
+        } else {
+          throw error;
+        }
       }
       if (raw === null || raw === undefined) return null;
       const record = asRecord(raw);
@@ -265,7 +290,13 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
     },
 
     async inviteMember(headers, body) {
-      const raw = await call<unknown>("inviteMember", { headers, body });
+      // W3-gw bugfix: better-auth 1.7.12 exposes invite creation as
+      // `createInvitation` (POST /organization/invite-member) — the previously
+      // used `inviteMember` does not exist on the installed api surface, so
+      // every POST /v1/workspaces/:id/invites failed with INTERNAL. Body and
+      // response shapes are identical (id, email, role, organizationId,
+      // status, expiresAt).
+      const raw = await call<unknown>("createInvitation", { headers, body });
       const record = asRecord(raw);
       const expiresAt = record.expiresAt;
       return {
@@ -294,10 +325,24 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
     },
 
     async checkSlug(headers, slug) {
-      const raw = await call<unknown>("checkSlug", { headers, query: { slug } });
-      const record = asRecord(raw);
-      // /organization/check-slug returns { status: false } when taken.
-      return { available: record.status !== false };
+      // W3-gw bugfix: better-auth 1.7.12 exposes the slug check as
+      // `checkOrganizationSlug` (POST /organization/check-slug, slug in the
+      // body) — the previously used `checkSlug` does not exist on the
+      // installed api surface, so POST /v1/workspaces always failed with
+      // INTERNAL. The endpoint returns { status: true } for a free slug and
+      // throws "Organization slug already taken" for a taken one (mapped by
+      // throwFromAuthError to 409 CONFLICT); fold both into the { available }
+      // seam so the route renders its typed 409.
+      try {
+        const raw = await call<unknown>("checkOrganizationSlug", { headers, body: { slug } });
+        const record = asRecord(raw);
+        return { available: record.status !== false };
+      } catch (error) {
+        if (error instanceof GatewayError && error.status === 409) {
+          return { available: false };
+        }
+        throw error;
+      }
     },
   };
 }
