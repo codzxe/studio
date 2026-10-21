@@ -781,14 +781,12 @@ export function billingSessionLimits(lookup: SubscriptionLookup): SessionLimitsP
 // ---------------------------------------------------------------------------
 
 /** Env keys this module reads; parsed with Zod at the boundary (§4 fail-fast). */
-export const LOCAL_ALLOCATOR_ENV_SCHEMA = z
-  .object({
-    MOCK_ENGINE: z.string().trim().optional(),
-    ENGINE_BINARY_PATH: z.string().trim().optional(),
-    ENGINE_CAPABILITY_ROOT_BASE: z.string().trim().optional(),
-    MOCK_ENGINE_ENTRY: z.string().trim().optional(),
-  })
-  .strict();
+export const LOCAL_ALLOCATOR_ENV_SCHEMA = z.object({
+  MOCK_ENGINE: z.string().trim().optional(),
+  ENGINE_BINARY_PATH: z.string().trim().optional(),
+  ENGINE_CAPABILITY_ROOT_BASE: z.string().trim().optional(),
+  MOCK_ENGINE_ENTRY: z.string().trim().optional(),
+});
 
 export type LocalAllocatorEnv = z.infer<typeof LOCAL_ALLOCATOR_ENV_SCHEMA>;
 

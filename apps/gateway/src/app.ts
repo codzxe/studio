@@ -1225,6 +1225,15 @@ export interface CreateDefaultDepsOptions {
    * the raw env source; when omitted the parsed GatewayEnv is used as-is.
    */
   readonly storageEnv?: StorageEnvInput;
+  /**
+   * W10-R: raw env source for the Stripe price map — GatewayEnv CANNOT carry
+   * STRIPE_PRICE_* (the schema is .strict(); priceMapFromEnv parses the alias
+   * names too), so the bootstrap hands the raw source over exactly like
+   * storageEnv. A source that fails to yield starter/pro/max prices throws
+   * (§4 fail-fast); omitted ⇒ no billingWiring ⇒ the billing group stays
+   * behind the typed 501 catch-all.
+   */
+  readonly stripePriceEnv?: Readonly<Record<string, string | undefined>>;
   /** Per-seam overrides applied LAST — tests inject their fakes here. */
   readonly overrides?: Partial<GatewayDeps>;
 }
@@ -1248,6 +1257,24 @@ export function createDefaultDeps(
     overrides.storage ?? defaultStorage(options.storageEnv ?? (env as unknown as StorageEnvInput));
   const engineSessions = overrides.engineSessions ?? new NotWiredSessionResolver();
   const bus = overrides.bus ?? new RunEventBus({ store: new DrizzleEventStore(db) });
+  // W10-R: §14.3 wiring inputs. The parsed GatewayEnv carries the webhook
+  // secret + app URL (both required); the price ids come from the RAW env
+  // source (strict schema — see CreateDefaultDepsOptions.stripePriceEnv).
+  // A provided-but-bad price source refuses to boot (§4), a missing one just
+  // leaves billingWiring unset (billing group → typed 501, never pretend).
+  const prices =
+    options.stripePriceEnv !== undefined ? priceMapFromEnv(options.stripePriceEnv) : undefined;
+  if (prices !== undefined && !prices.ok) {
+    throw new AppError(500, "validation_failed", prices.message, {
+      hint: prices.hint,
+      retryable: false,
+    });
+  }
+  const billingWiring =
+    overrides.billingWiring ??
+    (prices?.ok === true
+      ? { webhookSecret: env.STRIPE_WEBHOOK_SECRET, appUrl: env.APP_URL, prices: prices.value }
+      : undefined);
   return {
     auth: overrides.auth ?? createDefaultAuthProvider(createAuthResolvers()),
     db,
@@ -1259,7 +1286,11 @@ export function createDefaultDeps(
     ledger: overrides.ledger ?? new UnavailableLedgerStore(),
     audit: overrides.audit ?? createDrizzleAudit(db),
     catalog: overrides.catalog ?? new EmptyTemplateCatalog(),
+    // W10-R: services/stripe.ts's NoopStripe (W4-N authoritative shape) —
+    // deterministic ids, no network, REAL HMAC webhook verification. Production
+    // must inject createStripeSdk (wiring-check wave fails fast on Noop there).
     stripe: overrides.stripe ?? new NoopStripe(),
+    ...(billingWiring !== undefined ? { billingWiring } : {}),
     engineSessions,
     resolvePlan: overrides.resolvePlan ?? drizzlePlanResolver(db),
     ...(overrides.assets !== undefined ? { assets: overrides.assets } : {}),
