@@ -130,45 +130,47 @@ export const ENV_VAR_SPECS: readonly EnvVarMeta[] = [
   // ── storage ──────────────────────────────────────────────────────────────
   {
     name: "S3_ENDPOINT",
-    purpose: "S3-compatible object-storage endpoint (MinIO locally, S3/R2 in the cloud).",
+    purpose:
+      "S3-compatible object-storage endpoint (MinIO locally, S3/R2 in the cloud). Optional in local: the gateway falls back to a filesystem driver under .local/storage.",
     group: "storage",
-    required: true,
+    required: false,
     secret: false,
     hasDefault: false,
     example: "http://localhost:9000",
   },
   {
     name: "S3_REGION",
-    purpose: "Object-storage region ('auto' for MinIO/R2).",
+    purpose: "Object-storage region ('auto' for MinIO/R2). Optional in local with the filesystem driver.",
     group: "storage",
-    required: true,
+    required: false,
     secret: false,
     hasDefault: false,
     example: "auto",
   },
   {
     name: "S3_ACCESS_KEY_ID",
-    purpose: "Object-storage access key id.",
+    purpose: "Object-storage access key id. Optional in local with the filesystem driver.",
     group: "storage",
-    required: true,
+    required: false,
     secret: true,
     hasDefault: false,
     example: "minioadmin",
   },
   {
     name: "S3_SECRET_ACCESS_KEY",
-    purpose: "Object-storage secret access key.",
+    purpose: "Object-storage secret access key. Optional in local with the filesystem driver.",
     group: "storage",
-    required: true,
+    required: false,
     secret: true,
     hasDefault: false,
     example: "minioadmin",
   },
   {
     name: "S3_BUCKET",
-    purpose: "Bucket for project versions, assets, renders and previews.",
+    purpose:
+      "Bucket for project versions, assets, renders and previews. Optional in local with the filesystem driver.",
     group: "storage",
-    required: true,
+    required: false,
     secret: false,
     hasDefault: false,
     example: "studio-local",
@@ -522,12 +524,14 @@ export const envSchema = z.object({
   DATABASE_URL: postgresUrl,
   // queue
   VALKEY_URL: valkeyUrl.optional(),
-  // storage
-  S3_ENDPOINT: httpUrl,
-  S3_REGION: z.string().min(1),
-  S3_ACCESS_KEY_ID: z.string().min(1),
-  S3_SECRET_ACCESS_KEY: z.string().min(1),
-  S3_BUCKET: bucketName,
+  // storage — optional as a group: local dev runs the gateway's filesystem
+  // driver (.local/storage) when the endpoint is unset; staging/production
+  // must set the whole group (cross-checked below).
+  S3_ENDPOINT: httpUrl.optional(),
+  S3_REGION: z.string().min(1).optional(),
+  S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+  S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  S3_BUCKET: bucketName.optional(),
   ASSET_MAX_BYTES: wholeNumber(1),
   PROJECT_MAX_BYTES: wholeNumber(1),
   // stripe
@@ -579,11 +583,12 @@ export interface StudioEnv {
     readonly url: string | undefined;
   };
   readonly storage: {
-    readonly endpoint: string;
-    readonly region: string;
-    readonly accessKeyId: string;
-    readonly secretAccessKey: string;
-    readonly bucket: string;
+    /** Undefined only when APP_ENV is "local" and the filesystem driver is used. */
+    readonly endpoint: string | undefined;
+    readonly region: string | undefined;
+    readonly accessKeyId: string | undefined;
+    readonly secretAccessKey: string | undefined;
+    readonly bucket: string | undefined;
     readonly assetMaxBytes: number;
     readonly projectMaxBytes: number;
   };
@@ -742,6 +747,18 @@ function crossCheckProblems(env: FlatEnv): EnvProblem[] {
     problems.push({ kind: "rejected", name, purpose: envPurpose(name), reason });
   };
 
+  if (env.APP_ENV !== "local" && env.S3_ENDPOINT === undefined) {
+    push(
+      "S3_ENDPOINT",
+      `required when APP_ENV is "${env.APP_ENV}" — object storage must be configured outside local (S3_ENDPOINT, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_BUCKET)`,
+    );
+  }
+  if (env.APP_ENV !== "local" && env.S3_BUCKET === undefined) {
+    push(
+      "S3_BUCKET",
+      `required when APP_ENV is "${env.APP_ENV}" — the filesystem storage driver is local-only`,
+    );
+  }
   if (env.APP_ENV !== "local" && env.STRIPE_SECRET_KEY === undefined) {
     push(
       "STRIPE_SECRET_KEY",

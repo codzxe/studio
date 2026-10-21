@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@studio/config": ["../../packages/config/src/index.ts"],
+      "@studio/contracts": ["../../packages/contracts/src/index.ts"],
+      "@studio/db": ["../../packages/db/src/index.ts"],
+      "@studio/editor-bridge": ["../../packages/editor-bridge/src/index.ts"]
+    }
+  },
+  "include": ["src", "tests"],
+  "exclude": ["dist", ".local"]
+}
