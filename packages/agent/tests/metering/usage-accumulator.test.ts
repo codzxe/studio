@@ -1,6 +1,6 @@
 // W9-C — metering usage accumulator: per-model + per-tool rollup to agent_runs
 // cost fields, step-level rollup to agent_steps, bigint money invariants.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MeteringError, resolveModelRates } from "../../src/metering/cost-model.js";
 import { RunUsage, type RunUsageRow } from "../../src/metering/usage-accumulator.js";
 
@@ -113,9 +113,7 @@ describe("W9-C usage accumulator: step rollup matches agent_steps cost fields", 
 
   it("INVARIANT: Σ step costs + bare-call cost = run total (single counting path)", () => {
     const usage = seededRun();
-    const stepSum = usage
-      .steps()
-      .reduce((sum, step) => sum + BigInt(step.costMicroUsd), 0n);
+    const stepSum = usage.steps().reduce((sum, step) => sum + BigInt(step.costMicroUsd), 0n);
     const row = usage.toRow("r");
     expect(stepSum).toBe(RUN_TOTAL - FLASH_BARE_CALL);
     expect(row.costMicroUsd).toBe(Number(RUN_TOTAL));
@@ -162,7 +160,9 @@ describe("W9-C usage accumulator: step rollup matches agent_steps cost fields", 
   it("rejects invalid step seq (agent_steps.seq is 1-based)", () => {
     const usage = new RunUsage();
     for (const seq of [0, -1, 1.5]) {
-      expect(() => usage.openStep({ seq, phase: "executing", tool: null })).toThrowError(MeteringError);
+      expect(() => usage.openStep({ seq, phase: "executing", tool: null })).toThrowError(
+        MeteringError,
+      );
     }
   });
 });
@@ -200,21 +200,20 @@ describe("W9-C usage accumulator: §22 tool-error-rate aggregation", () => {
 
 describe("W9-C usage accumulator: rates injection and money guards", () => {
   it("uses Appendix C defaults when no rates are injected (clean env)", () => {
-    const hadKey = Object.hasOwn(process.env, "MODEL_RATES_JSON");
-    const previous = hadKey ? process.env.MODEL_RATES_JSON : undefined;
-    if (hadKey) delete process.env.MODEL_RATES_JSON;
+    vi.stubEnv("MODEL_RATES_JSON", undefined); // guarantee a clean env for this test
     try {
       const usage = new RunUsage();
       usage.addModelCall("gemini-3.8-flash", { tokensIn: 1_000_000, tokensOut: 0 });
       expect(usage.toRow("r").costMicroUsd).toBe(750_000);
     } finally {
-      if (hadKey) process.env.MODEL_RATES_JSON = previous;
+      vi.unstubAllEnvs(); // restore the real process.env
     }
   });
 
   it("accepts an injected resolved table (boot-time MODEL_RATES_JSON)", () => {
     const rates = resolveModelRates({
-      MODEL_RATES_JSON: '{"gemini-3.8-flash":{"kind":"text","inputUsdPerM":1.5,"outputUsdPerM":7.5}}',
+      MODEL_RATES_JSON:
+        '{"gemini-3.8-flash":{"kind":"text","inputUsdPerM":1.5,"outputUsdPerM":7.5}}',
     });
     const usage = new RunUsage({ rates });
     usage.addModelCall("gemini-3.8-flash", { tokensIn: 1_000_000, tokensOut: 0 });
@@ -222,9 +221,9 @@ describe("W9-C usage accumulator: rates injection and money guards", () => {
   });
 
   it("fails fast at construction on a broken MODEL_RATES_JSON (money path)", () => {
-    expect(() => new RunUsage({ rates: resolveModelRates({ MODEL_RATES_JSON: "{oops" }) })).toThrowError(
-      MeteringError,
-    );
+    expect(
+      () => new RunUsage({ rates: resolveModelRates({ MODEL_RATES_JSON: "{oops" }) }),
+    ).toThrowError(MeteringError);
   });
 
   it("unknown models throw model_rate_missing — never a silent $0", () => {
@@ -252,7 +251,7 @@ describe("W9-C usage accumulator: rates injection and money guards", () => {
 });
 
 afterEach(() => {
-  if (Object.hasOwn(process.env, "MODEL_RATES_JSON")) {
-    delete process.env.MODEL_RATES_JSON;
-  }
+  // No test may leak a stubbed MODEL_RATES_JSON into other suites — vitest
+  // restores the real env cleanly (no delete operator).
+  vi.unstubAllEnvs();
 });

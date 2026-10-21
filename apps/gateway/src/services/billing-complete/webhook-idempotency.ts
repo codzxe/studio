@@ -162,10 +162,10 @@ export class InMemoryBillingDb implements BillingDbLike {
       this.plans.push(...options.plans.map((p) => ({ ...p })));
     }
     if (options.subscriptions !== undefined) {
-      // upsertSubscription's fake body is synchronous (no awaits inside), so
-      // pre-attached rows are visible the moment the constructor returns.
+      // The sync upsert helper below runs inline, so pre-attached rows are
+      // visible the moment the constructor returns.
       for (const row of options.subscriptions) {
-        void this.upsertSubscription(row);
+        this.upsertRow(row);
       }
     }
   }
@@ -201,6 +201,11 @@ export class InMemoryBillingDb implements BillingDbLike {
   }
 
   async upsertSubscription(input: SubscriptionUpsert): Promise<Subscription> {
+    return this.upsertRow(input);
+  }
+
+  /** Synchronous core so the constructor can pre-attach rows inline. */
+  private upsertRow(input: SubscriptionUpsert): Subscription {
     const existing = this.subscriptions.find((s) => s.organizationId === input.organizationId);
     if (existing !== undefined) {
       // subscriptions.organizationId UNIQUE (§12.1) — one row per org.

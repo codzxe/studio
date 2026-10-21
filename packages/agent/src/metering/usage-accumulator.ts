@@ -17,11 +17,11 @@
 // matches the agent_steps cost subset (tokensIn / tokensOut / costMicroUsd)
 // plus the per-tool counters the §22 tool-error-rate metric needs.
 import {
-  computeCost,
   MeteringError,
+  type ModelRatesTable,
+  computeCost,
   microToSafeNumber,
   resolveModelRates,
-  type ModelRatesTable,
 } from "./cost-model.js";
 
 /** runs.ts `ModelCallUsage` (agent_runs.model_calls jsonb), per model id. */
@@ -142,11 +142,21 @@ export class RunUsage {
    */
   addModelCall(model: string, usage: ModelCallInput): bigint {
     const cost = computeCost(
-      { model, tokensIn: usage.tokensIn, tokensOut: usage.tokensOut, cacheHits: usage.cacheHits ?? 0 },
+      {
+        model,
+        tokensIn: usage.tokensIn,
+        tokensOut: usage.tokensOut,
+        cacheHits: usage.cacheHits ?? 0,
+      },
       this.rates,
     );
-    const tally =
-      this.models.get(model) ?? { calls: 0, tokensIn: 0, tokensOut: 0, cacheHits: 0, costMicro: 0n };
+    const tally = this.models.get(model) ?? {
+      calls: 0,
+      tokensIn: 0,
+      tokensOut: 0,
+      cacheHits: 0,
+      costMicro: 0n,
+    };
     tally.calls += 1;
     tally.tokensIn += usage.tokensIn;
     tally.tokensOut += usage.tokensOut;

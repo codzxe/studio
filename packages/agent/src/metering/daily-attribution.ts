@@ -109,7 +109,9 @@ function toBigIntMicro(value: number | bigint, field: string): bigint {
  * in bigint and convert to numbers only at row time (microToSafeNumber refuses
  * to exceed Number.MAX_SAFE_INTEGER — money never wraps through float64).
  */
-export function attributeDailyCosts(records: Iterable<RunCostRecord>): readonly WorkspaceDayCostRow[] {
+export function attributeDailyCosts(
+  records: Iterable<RunCostRecord>,
+): readonly WorkspaceDayCostRow[] {
   const buckets = new Map<string, DayTally>();
   for (const record of records) {
     if (typeof record.runId !== "string" || record.runId.trim() === "") {

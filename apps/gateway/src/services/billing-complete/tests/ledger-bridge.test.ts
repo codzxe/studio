@@ -141,9 +141,10 @@ describe("ledger bridge — invoice.paid → grant (§14.1 / §14.2 rule 6)", ()
         }),
       );
 
-      if (c.expect.action === "granted") {
+      const expected = c.expect;
+      if (expected.action === "granted") {
         expect(outcome).toMatchObject({
-          ...c.expect,
+          ...expected,
           organizationId: HARNESS_ORG_ID,
           duplicate: false,
         });
@@ -156,7 +157,7 @@ describe("ledger bridge — invoice.paid → grant (§14.1 / §14.2 rule 6)", ()
         expect(grant?.note).toContain("§14.1");
         expect(h.audit.entries).toHaveLength(0);
       } else {
-        expect(outcome).toEqual(c.expect);
+        expect(outcome).toEqual(expected);
         expect(h.ledger.grants).toHaveLength(0);
         const entries = h.audit.byAction("billing.webhook.unresolved_price");
         expect(entries).toHaveLength(1);

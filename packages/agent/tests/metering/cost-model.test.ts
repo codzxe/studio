@@ -1,11 +1,12 @@
 // W9-C — metering cost model: Appendix C rate table, exact micro-USD cost math,
 // cache-read discount derivation, image costs, COGS margin checks, env override.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CACHE_READ_PRICE_DENOMINATOR,
   CACHE_READ_PRICE_NUMERATOR,
   CREDIT_LIST_USD,
   GROSS_MARGIN_TARGET,
+  type ImageQuality,
   MODEL_RATES,
   MeteringError,
   computeCost,
@@ -15,11 +16,16 @@ import {
   microToSafeNumber,
   parseModelRatesEnv,
   resolveModelRates,
-  type ImageQuality,
 } from "../../src/metering/cost-model.js";
 
 /** Round-half-up reference in Number space (tests only — production path is bigint). */
-function refMicro(tokensIn: number, tokensOut: number, cacheHits: number, inPerM: number, outPerM: number): number {
+function refMicro(
+  tokensIn: number,
+  tokensOut: number,
+  cacheHits: number,
+  inPerM: number,
+  outPerM: number,
+): number {
   const exact =
     ((tokensIn - cacheHits) * inPerM + (cacheHits * inPerM) / 10 + tokensOut * outPerM) / 1_000_000;
   return Math.round(exact); // same half-up as the bigint path
@@ -67,7 +73,9 @@ describe("W9-C cost model: Appendix C rate table", () => {
       expect(rate?.kind).toBe("image");
       if (rate?.kind === "image") {
         expect(rate.imageMicroUsd).toBe(BigInt(Math.round(stdUsd * 1_000_000)));
-        expect(rate.imageHdMicroUsd).toBe(hdUsd === null ? null : BigInt(Math.round(hdUsd * 1_000_000)));
+        expect(rate.imageHdMicroUsd).toBe(
+          hdUsd === null ? null : BigInt(Math.round(hdUsd * 1_000_000)),
+        );
       }
     }
   });
@@ -103,27 +111,23 @@ describe("W9-C cost model: computeCost math table (Flash $0.75 / $3.75)", () => 
     ["0 in, 1M out → exactly $3.75", 0, 1_000_000, 0, 3_750_000n],
     ["100k in / 10k out, no cache → $0.1125", 100_000, 10_000, 0, 112_500n],
     ["80k in / 5k out, no cache (§5.2 standard tier) → $0.07875", 80_000, 5_000, 0, 78_750n],
-    [
-      "80k in (60% cache-hit) / 5k out → $0.04635 pre-buffer",
-      80_000,
-      5_000,
-      48_000,
-      46_350n,
-    ],
+    ["80k in (60% cache-hit) / 5k out → $0.04635 pre-buffer", 80_000, 5_000, 48_000, 46_350n],
     ["all input cached → 10% of input price (90% discount)", 100_000, 0, 100_000, 7_500n],
     ["zero usage → zero cost", 0, 0, 0, 0n],
   ];
   for (const [label, tokensIn, tokensOut, cacheHits, expected] of cases) {
     it(label, () => {
-      expect(
-        computeCost({ model: "gemini-3.8-flash", tokensIn, tokensOut, cacheHits }),
-      ).toBe(expected);
+      expect(computeCost({ model: "gemini-3.8-flash", tokensIn, tokensOut, cacheHits })).toBe(
+        expected,
+      );
     });
   }
 
   it("cost math table agrees with the float reference on every row", () => {
     for (const [, tokensIn, tokensOut, cacheHits] of cases) {
-      const micro = Number(computeCost({ model: "gemini-3.8-flash", tokensIn, tokensOut, cacheHits }));
+      const micro = Number(
+        computeCost({ model: "gemini-3.8-flash", tokensIn, tokensOut, cacheHits }),
+      );
       expect(micro).toBe(refMicro(tokensIn, tokensOut, cacheHits, FLASH_IN_PER_M, FLASH_OUT_PER_M));
     }
   });
@@ -161,15 +165,15 @@ describe("W9-C cost model: computeCost math table (Flash $0.75 / $3.75)", () => 
     for (const [model, baseMicro, publishedUsd] of models) {
       const base = computeCost({ model, tokensIn: 80_000, tokensOut: 5_000, cacheHits: 48_000 });
       expect(base).toBe(baseMicro);
-      const withBuffer = Number(base) * 1.2 / 1_000_000; // USD
+      const withBuffer = (Number(base) * 1.2) / 1_000_000; // USD
       expect(Math.abs(withBuffer - publishedUsd)).toBeLessThan(0.0005);
     }
   });
 
   it("refuses unknown models instead of silently pricing $0", () => {
-    expect(() => computeCost({ model: "totally-unknown-model", tokensIn: 1, tokensOut: 1 })).toThrowError(
-      MeteringError,
-    );
+    expect(() =>
+      computeCost({ model: "totally-unknown-model", tokensIn: 1, tokensOut: 1 }),
+    ).toThrowError(MeteringError);
     try {
       computeCost({ model: "totally-unknown-model", tokensIn: 1, tokensOut: 1 });
     } catch (error) {
@@ -321,13 +325,18 @@ describe("W9-C cost model: MODEL_RATES_JSON env override", () => {
 
   it("resolveModelRates merges overrides without mutating the static table", () => {
     const rates = resolveModelRates({
-      MODEL_RATES_JSON: '{"gemini-3.8-flash":{"kind":"text","inputUsdPerM":1.5,"outputUsdPerM":7.5}}',
+      MODEL_RATES_JSON:
+        '{"gemini-3.8-flash":{"kind":"text","inputUsdPerM":1.5,"outputUsdPerM":7.5}}',
     });
-    expect(computeCost({ model: "gemini-3.8-flash", tokensIn: 1_000_000, tokensOut: 0 }, rates)).toBe(
+    expect(
+      computeCost({ model: "gemini-3.8-flash", tokensIn: 1_000_000, tokensOut: 0 }, rates),
+    ).toBe(
       1_500_000n, // 2027-01-01 doubled rates (Appendix C note)
     );
     // default untouched:
-    expect(computeCost({ model: "gemini-3.8-flash", tokensIn: 1_000_000, tokensOut: 0 })).toBe(750_000n);
+    expect(computeCost({ model: "gemini-3.8-flash", tokensIn: 1_000_000, tokensOut: 0 })).toBe(
+      750_000n,
+    );
     expect(rates).not.toBe(MODEL_RATES);
     expect(Object.isFrozen(rates)).toBe(true);
   });
@@ -337,9 +346,9 @@ describe("W9-C cost model: MODEL_RATES_JSON env override", () => {
       MODEL_RATES_JSON: '{"new-model-x":{"kind":"text","inputUsdPerM":1,"outputUsdPerM":2}}',
     });
     expect(hasModelRate("new-model-x", rates)).toBe(true);
-    expect(computeCost({ model: "new-model-x", tokensIn: 1_000_000, tokensOut: 1_000_000 }, rates)).toBe(
-      3_000_000n,
-    );
+    expect(
+      computeCost({ model: "new-model-x", tokensIn: 1_000_000, tokensOut: 1_000_000 }, rates),
+    ).toBe(3_000_000n);
   });
 
   it("image overrides work, including removing/adding HD", () => {
@@ -360,21 +369,17 @@ describe("W9-C cost model: MODEL_RATES_JSON env override", () => {
   });
 
   it("reads process.env by default (injected for determinism in tests)", () => {
-    const hadKey = Object.hasOwn(process.env, "MODEL_RATES_JSON");
-    const previousRates = hadKey ? process.env.MODEL_RATES_JSON : undefined;
-    process.env.MODEL_RATES_JSON =
-      '{"gemini-2.5-flash-lite":{"kind":"text","inputUsdPerM":0.2,"outputUsdPerM":0.8}}';
+    vi.stubEnv(
+      "MODEL_RATES_JSON",
+      '{"gemini-2.5-flash-lite":{"kind":"text","inputUsdPerM":0.2,"outputUsdPerM":0.8}}',
+    );
     try {
       const rates = resolveModelRates();
       expect(
         computeCost({ model: "gemini-2.5-flash-lite", tokensIn: 1_000_000, tokensOut: 0 }, rates),
       ).toBe(200_000n);
     } finally {
-      if (hadKey) {
-        process.env.MODEL_RATES_JSON = previousRates;
-      } else {
-        delete process.env.MODEL_RATES_JSON;
-      }
+      vi.unstubAllEnvs(); // restore the real process.env
     }
   });
 });
@@ -397,8 +402,7 @@ describe("W9-C cost model: bigint→number conversion guard", () => {
 });
 
 afterEach(() => {
-  // Belt-and-braces: no test may leak MODEL_RATES_JSON into other suites.
-  if (Object.hasOwn(process.env, "MODEL_RATES_JSON")) {
-    delete process.env.MODEL_RATES_JSON;
-  }
+  // Belt-and-braces: no test may leak a stubbed MODEL_RATES_JSON into other
+  // suites — vitest restores the real env cleanly (no delete operator).
+  vi.unstubAllEnvs();
 });

@@ -313,7 +313,7 @@ function requireTextRate(model: string, rates: ModelRatesTable): TextModelRate {
     throw new MeteringError(
       "model_rate_missing",
       `no rate row for model "${model}"`,
-      'add it to MODEL_RATES or the MODEL_RATES_JSON env override — costs are never silently priced $0',
+      "add it to MODEL_RATES or the MODEL_RATES_JSON env override — costs are never silently priced $0",
     );
   }
   if (rate.kind !== "text") {
@@ -351,10 +351,7 @@ export interface CostInput {
  * rate (Appendix C budget-assumption derivation, pinned in tests). Throws a
  * typed MeteringError on unknown models / mismatched kinds / bad counters.
  */
-export function computeCost(
-  input: CostInput,
-  rates: ModelRatesTable = MODEL_RATES,
-): bigint {
+export function computeCost(input: CostInput, rates: ModelRatesTable = MODEL_RATES): bigint {
   const tokensIn = input.tokensIn;
   const tokensOut = input.tokensOut;
   const cacheHits = input.cacheHits ?? 0;

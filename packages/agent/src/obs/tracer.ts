@@ -425,7 +425,7 @@ function createOtelTracer(
     if (cachedTracer === undefined) {
       cachedTracer = safeResult(() => api.trace.getTracer(tracerName, serviceVersion));
     }
-    return cachedTracer ?? createNoopOtelSpanFactory();
+    return cachedTracer ?? createNoopOtelTracer();
   };
   return {
     stats,
@@ -437,9 +437,8 @@ function createOtelTracer(
           attributes[key] = value;
         }
       }
-      const otelSpan = safeResult(
-        () => getTracer().startSpan(name, { attributes }),
-      ) ?? createNoopOtelSpanFactory();
+      const otelSpan = safeResult(() => getTracer().startSpan(name, { attributes })) ??
+        createNoopOtelSpan();
       return createOtelSpan(api, otelSpan, policy, stats);
     },
     currentContext: () => {
@@ -464,15 +463,17 @@ function createOtelTracer(
   };
 }
 
-/** A span-shaped stub for when the SDK exists in type but fails at runtime. */
-function createNoopOtelSpanFactory(): OtelTracerLike {
+/** Span/tracer-shaped stubs for when the SDK exists in type but fails at runtime. */
+function createNoopOtelSpan(): OtelSpanLike {
   return {
-    startSpan: () => ({
-      setAttribute: () => undefined,
-      setStatus: () => undefined,
-      end: () => undefined,
-    }),
+    setAttribute: () => undefined,
+    setStatus: () => undefined,
+    end: () => undefined,
   };
+}
+
+function createNoopOtelTracer(): OtelTracerLike {
+  return { startSpan: () => createNoopOtelSpan() };
 }
 
 function safeResult<T>(action: () => T): T | undefined {

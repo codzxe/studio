@@ -154,7 +154,10 @@ export function createLedgerBridge(deps: LedgerBridgeDeps): LedgerBridge {
   /** Money-relevant skips leave an audit trail (§22) — W4-N only logs them. */
   async function auditUnresolvedPrice(
     event: StripeEvent,
-    detail: { readonly reason: "unresolvable_price" | "unresolvable_plan"; readonly priceId?: string },
+    detail: {
+      readonly reason: "unresolvable_price" | "unresolvable_plan";
+      readonly priceId?: string;
+    },
     organizationId: string,
   ): Promise<void> {
     const invoice = event.data.object;
@@ -202,7 +205,11 @@ export function createLedgerBridge(deps: LedgerBridgeDeps): LedgerBridge {
       // mapping problem — mint nothing, audit it.
       planCode = byPrice !== null && byPrice !== "pack" ? byPrice : null;
       if (planCode === null) {
-        await auditUnresolvedPrice(event, { reason: "unresolvable_price", priceId }, row.organizationId);
+        await auditUnresolvedPrice(
+          event,
+          { reason: "unresolvable_price", priceId },
+          row.organizationId,
+        );
         return { action: "skipped", reason: "unresolvable_price", audited: true };
       }
     } else {
@@ -275,7 +282,12 @@ export function createLedgerBridge(deps: LedgerBridgeDeps): LedgerBridge {
       },
     });
     logger.info({ eventId: event.id, seatsRemoved }, "billing_bridge_downgrade_noted");
-    return { action: "downgrade_noted", organizationId: row.organizationId, planCode, seatsRemoved };
+    return {
+      action: "downgrade_noted",
+      organizationId: row.organizationId,
+      planCode,
+      seatsRemoved,
+    };
   }
 
   return {

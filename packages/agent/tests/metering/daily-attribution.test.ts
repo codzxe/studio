@@ -4,10 +4,10 @@
 import { describe, expect, it } from "vitest";
 import { MeteringError } from "../../src/metering/cost-model.js";
 import {
-  attributeDailyCosts,
-  utcDayOf,
   type RunCostRecord,
   type WorkspaceDayCostRow,
+  attributeDailyCosts,
+  utcDayOf,
 } from "../../src/metering/daily-attribution.js";
 
 // Deterministic instants (built from Date.UTC — no local timezone anywhere).
@@ -144,16 +144,24 @@ describe("W9-C daily attribution: validation and money guards", () => {
 
   it("refuses blank run ids and blank organization ids (§12.2 tenant column)", () => {
     expect(() => attributeDailyCosts([{ ...valid, runId: "" }])).toThrowError(MeteringError);
-    expect(() => attributeDailyCosts([{ ...valid, organizationId: "  " }])).toThrowError(MeteringError);
+    expect(() => attributeDailyCosts([{ ...valid, organizationId: "  " }])).toThrowError(
+      MeteringError,
+    );
   });
 
   it("refuses negative / non-integer counters", () => {
-    expect(() => attributeDailyCosts([{ ...valid, costMicroUsd: -1n }])).toThrowError(MeteringError);
+    expect(() => attributeDailyCosts([{ ...valid, costMicroUsd: -1n }])).toThrowError(
+      MeteringError,
+    );
     expect(() => attributeDailyCosts([{ ...valid, costMicroUsd: -1 }])).toThrowError(MeteringError);
-    expect(() => attributeDailyCosts([{ ...valid, costMicroUsd: Number.NaN }])).toThrowError(MeteringError);
+    expect(() => attributeDailyCosts([{ ...valid, costMicroUsd: Number.NaN }])).toThrowError(
+      MeteringError,
+    );
     expect(() => attributeDailyCosts([{ ...valid, tokensIn: -1 }])).toThrowError(MeteringError);
     expect(() => attributeDailyCosts([{ ...valid, tokensIn: 1.5 }])).toThrowError(MeteringError);
-    expect(() => attributeDailyCosts([{ ...valid, creditsReserved: -1 }])).toThrowError(MeteringError);
+    expect(() => attributeDailyCosts([{ ...valid, creditsReserved: -1 }])).toThrowError(
+      MeteringError,
+    );
   });
 
   it("bucket sums refuse to wrap through float64 (unsafe_number_conversion)", () => {

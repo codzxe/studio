@@ -265,8 +265,6 @@ function basicPassword(header: string | undefined): string | undefined {
   return separator === -1 ? decoded : decoded.slice(separator + 1);
 }
 
-
-
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------

@@ -15,6 +15,8 @@ import {
   resolveLogLevel,
   type CorrelationBindings,
   type LogFields,
+  type ObsLogger,
+  type ObsLoggerOptions,
   type PinoFactory,
   type PinoLoggerLike,
   type PinoOptionsLike,
@@ -108,20 +110,20 @@ describe("redactDeep (§22 prompts, §15.3 fail-closed)", () => {
 });
 
 interface ConsoleHarness {
+  readonly logger: ObsLogger;
   readonly lines: string[];
   readonly parsed: () => Record<string, unknown>[];
 }
 
-async function makeConsoleLogger(
-  options: Record<string, unknown> = {},
-): Promise<ConsoleHarness & { logger: Awaited<ReturnType<typeof createObsLogger>> }> {
+async function makeConsoleLogger(options: ObsLoggerOptions = {}): Promise<ConsoleHarness> {
   const lines: string[] = [];
   const logger = await createObsLogger({
-    ...(options as object),
-    backend: "console",
+    // Deterministic: no ambient process.env unless a case overrides `env`.
     env: NO_ENV,
+    ...options,
+    backend: "console",
     sink: (line: string) => lines.push(line),
-  } as Parameters<typeof createObsLogger>[0]);
+  });
   const parsed = (): Record<string, unknown>[] =>
     lines.map((line) => JSON.parse(line) as Record<string, unknown>);
   return { logger, lines, parsed };
@@ -182,17 +184,14 @@ describe("createObsLogger — console fallback backend", () => {
     expect(line.prompt).toBe(REDACTED_MARKER);
   });
 
-  it("level threshold from env LOG_LEVEL filters calls", async () => {
+  it("level threshold from explicit level or env LOG_LEVEL filters calls", async () => {
     const quiet = await makeConsoleLogger({ level: "warn" });
     quiet.logger.info("suppressed");
     expect(quiet.lines.length).toBe(0);
     quiet.logger.error("emitted");
     expect(quiet.parsed()[0]?.level).toBe("error");
 
-    const fromEnv = await makeConsoleLogger({
-      level: undefined,
-      env: { LOG_LEVEL: "error" },
-    });
+    const fromEnv = await makeConsoleLogger({ env: { LOG_LEVEL: "error" } });
     fromEnv.logger.warn("suppressed too");
     expect(fromEnv.lines.length).toBe(0);
   });
