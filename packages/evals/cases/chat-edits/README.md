@@ -155,13 +155,15 @@ prompt.ts) — labeled `{{userRequest}}` / `{{doc.layerSummary}}` /
 §23.5 block VERBATIM (already pinned in `packages/agent/prompts/v1/
 chat-edit-classifier.md`). The mock only requires `{{userRequest}}` to render.
 
-### Registration (promptfoo.config.yaml owner — one block)
+### Registration — LANDED (W10-P final-review pass)
 
-Because the 90% gate is per-subset, register this set under its own config
-(e.g. `promptfoo.chat-edit.config.yaml`) with the chat-edit provider and
-prompt above, tests = the five files below, then gate with `0.90`. Appending
-the files to the MAIN config instead is possible but would blend the gates —
-if done, add a subset filter to eval-gate first.
+Because the 90% gate is per-subset, this set is registered under its own config,
+`promptfoo.chat-edit.config.yaml` (the block below, now committed), with the
+chat-edit provider and prompt, tests = the five files, gated at `0.90` by
+`scripts/eval-gate.mjs` (`--classifier <results> [--classifier-threshold 0.90]`,
+or the legacy positional form). Appending the files to the MAIN config instead
+would blend the gates and fail the suite's `{plan, run}` defaultTest on every
+classifier case — that is why registration needed this third config.
 
 ```yaml
 # promptfoo.chat-edit.config.yaml
@@ -178,8 +180,13 @@ tests:
 evaluate: { maxConcurrency: 4 }
 ```
 
-CI step (workflows owner):
-`promptfoo eval --no-cache --output results/chat-edit-eval.json && node scripts/eval-gate.mjs results/chat-edit-eval.json 0.90`.
+CI step (workflows owner): `pnpm --filter @studio/evals eval:ci` runs all three
+gates (suite 0.85, chat-edits 0.90, classifier 0.90) in one strictest-failure
+pipeline; `eval:classifier` runs this gate standalone.
+
+`scripts/eval-gate.mjs --dry` now scans `cases/chat-edits/` as part of its
+config-wiring sanity check: a classifier case file on disk that is not
+registered in `promptfoo.chat-edit.config.yaml` fails the self-test loudly.
 
 ## Tier math the goldens must honor (future case authors)
 
@@ -210,13 +217,16 @@ briefs (`cases/expanded/freeform.yaml`).
 
 ## Fleet flags (owners beyond cases/chat-edits/**)
 
-- `promptfoo.config.yaml` / CI owner: registration per the block above + the
-  second gate step (0.90); `providers/mock-chat-edit.mjs` + the chat-edit
-  prompt mirror are `packages/evals` files, not in this task's ownership.
+- `promptfoo.config.yaml` / CI owner: **RESOLVED (W10-P)** — the third config
+  `promptfoo.chat-edit.config.yaml`, `providers/mock-chat-edit.mjs` and the
+  `prompts/chat-edit-classifier.system.txt` mirror landed with the classifier
+  gate; `package.json` gained `eval:classifier` and a three-gate `eval:ci`.
+  Remaining for the agent-prompts owner: sync the VERBATIM §23.5 block into the
+  prompt mirror before real-model runs (TODO noted in the file).
 - `packages/agent` owner: the classifier's `resolveCostTier`,
   `parseActionExpr`, clarify payload and never-invented rules are the graded
   surface — changes there must keep these 20 goldens passing (or update the
   goldens in the same change, with the tier math above).
-- `scripts/eval-gate.mjs` already takes a threshold argument — no change
-  needed for the 90% gate; a subset filter would only be required if the
-  sets are blended into one run.
+- `scripts/eval-gate.mjs` takes the classifier gate via `--classifier`
+  (threshold default 0.90); the legacy `node scripts/eval-gate.mjs <file> 0.90`
+  form still works.

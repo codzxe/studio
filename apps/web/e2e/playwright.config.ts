@@ -24,8 +24,8 @@ function requireBaseUrl(): URL {
 }
 const BASE_URL = requireBaseUrl();
 
-/** Gateway origin for the mock-mode journey (compose §22 bridge-only :3001). */
-const GATEWAY_URL = process.env.E2E_GATEWAY_URL ?? "http://localhost:3001";
+// Gateway reachability (E2E_GATEWAY_URL, compose §22 bridge-only :3001) is owned
+// by helpers/gateway.ts — specs import the probe/skip reason from there.
 
 /** `E2E_BROWSERS=chromium,firefox,webkit` extends the default chromium-only set. */
 const BROWSERS = (process.env.E2E_BROWSERS ?? "chromium")
@@ -102,6 +102,3 @@ export default defineConfig({
   projects: projects(),
   webServer: webServer(),
 });
-
-// Re-exported for specs that print the contract in skip reasons (single knob).
-export { GATEWAY_URL };
