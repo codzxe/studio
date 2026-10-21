@@ -36,17 +36,20 @@
 // cache prefix; a memo here would hide mid-session brand edits.
 
 import {
+  type ContextSectionId,
+  type Rec,
+  type StyleGuideInput,
   asRecord,
   canonicalStringify,
   clip,
   finalizeWarnings,
 } from "../observer/context.js";
-import type { ContextSectionId, Rec, StyleGuideInput } from "../observer/context.js";
 import {
-  DEFAULT_BRAND,
-  FONT_ROLES,
   type BrandFontSet,
   type BrandTokens,
+  type FontRole,
+  DEFAULT_BRAND,
+  FONT_ROLES,
   MAX_FONT_NAME_CHARS,
   MAX_PALETTE_TOKENS,
   MAX_TONE_WORDS,
@@ -56,7 +59,6 @@ import {
   logoAssetIdSchema,
   toneWordSchema,
 } from "./tokens.js";
-import type { FontRole } from "./tokens.js";
 
 // ---------------------------------------------------------------------------
 // Error catalog (§11.1 blocker code; errors.ts is W1-P's, add-only — kept

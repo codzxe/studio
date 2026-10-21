@@ -1,0 +1,170 @@
+# =============================================================================
+# packages/evals/cases/expanded/clarify.yaml — golden briefs: clarification policy
+# (W7-D growth wave; §23.2 "if the brief is ambiguous, ask_user FIRST — never
+# guess"). Companion to the Wave-1 seed clarify-ambiguous-platform (platform
+# ambiguity): these two cover asset ambiguity and contradictory output shapes.
+#
+# Golden behavior: ask_user is the FIRST (and only) step; NO engine mutation runs
+# before the answer (validator null, layers untouched, zero undo entries);
+# quick-tier clarification pass = 1 credit (§5.2).
+# =============================================================================
+
+# ── clarify #1: bestseller is ambiguous (which product? which copy?) ──────────
+- id: clarify-product-choice
+  description: >-
+    "Post about our bestseller" names neither the product (three candidate photos in
+    SNAPSHOT) nor any copy — §23.2 forbids guessing, so ask_user comes FIRST with the
+    three products as options; nothing is mutated; quick tier = 1 credit.
+  vars:
+    brief: "Post about our bestseller for the weekend."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers: []
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+      assets:
+        - { id: asset_601, name: 'flat-white.jpg', kind: photo }
+        - { id: asset_602, name: 'cold-brew.jpg', kind: photo }
+        - { id: asset_603, name: 'beans-bag.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+      components: []
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: create_post
+      template: instagram-post@3   # proposed default, pending the user's answer
+      assets: []
+      slots: {}
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: { headline: { font: display-serif, weight: bold } }
+      steps:
+        - tool: ask_user
+          args:
+            question: "Which product is the bestseller post about, and what copy should it carry?"
+            options:
+              - 'Flat white + suggested copy'
+              - 'Cold brew + suggested copy'
+              - 'Whole beans + suggested copy'
+      checks: [in_bounds, 'contrast>=4.5']
+      model_tier: quick
+      notes_for_user: "Bestseller and copy are unspecified; asking before any engine command runs."
+    run:
+      status: succeeded          # the clarification pass completed; nothing executed
+      credits_charged: 1         # §5.2 quick tier
+      tool_calls: 1
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: null            # no render happened
+      layers: []                 # document untouched
+      undo_entries: 0
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # §23.2: ask_user is the FIRST step
+      value: "return JSON.parse(output).plan.steps[0].tool === 'ask_user'"
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # options enumerate the SNAPSHOT products, no guessing (§23.2)
+      value: "return ((o) => o.length === 3 && o.some(x => x.includes('Cold brew')))(JSON.parse(output).plan.steps[0].args.options)"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # nothing mutated: no validator, no layers, no undo
+      value: "return JSON.parse(output).run.validator === null && JSON.parse(output).run.layers.length === 0 && JSON.parse(output).run.undo_entries === 0"
+
+# ── clarify #2: contradictory output shapes (square AND vertical) ────────────
+- id: clarify-contradictory-canvas
+  description: >-
+    The brief demands a square feed post AND a vertical story "same post" — a
+    contradiction (§23.2 ambiguity): one canvas cannot be both. The golden planner
+    asks which of the two shapes (or both as variants) is wanted BEFORE running
+    anything; quick tier = 1 credit; nothing mutated.
+  vars:
+    brief: "Make this square for the feed but also vertical for stories — same post, just squeeze it."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers:
+        - { name: Background, kind: fill, opacity: 100 }
+        - { name: Photo, kind: smart_object, asset: asset_812 }
+        - { name: Headline, kind: text, size: 88 }
+        - { name: Subhead, kind: text, size: 36 }
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            photo: { kind: image, minPixels: 600 }
+      components: []
+    budget: "quick — 1 credit, 20k/2k tokens in/out, 6 tool calls, 1 revision, 2 min wall clock (§5.2)"
+    plan:
+      intent: variant
+      template: null            # shape unresolved — nothing to derive variants from yet
+      assets: []
+      slots: {}
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography: {}
+      steps:
+        - tool: ask_user
+          args:
+            question: "One canvas can't be both 1:1 and 9:16 — keep the square, make the story, or produce both as variants?"
+            options:
+              - 'Keep the square only'
+              - 'Story version only'
+              - 'Both as size variants'
+      checks: [in_bounds, aspect]
+      model_tier: quick
+      notes_for_user: "Square and vertical are mutually exclusive shapes; asking which you want before running anything."
+    run:
+      status: succeeded          # clarification pass completed; nothing executed
+      credits_charged: 1         # §5.2 quick tier
+      tool_calls: 1
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: null
+      layers: []                 # document untouched — the run paused before any mutation
+      undo_entries: 0
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # §23.2: ask_user first — no squeezed-canvas guessing
+      value: "return JSON.parse(output).plan.steps[0].tool === 'ask_user'"
+    - type: javascript          # intent match: variant is the likely resolution, proposed only
+      value: "return JSON.parse(output).plan.intent === 'variant'"
+    - type: javascript          # the "both as variants" resolution is offered (§19 Phase 2)
+      value: "return ((o) => o.some(x => x.includes('variants')))(JSON.parse(output).plan.steps[0].args.options)"
+    - type: javascript          # tier cost exact (§5.2: quick = 1 credit)
+      value: "return JSON.parse(output).run.credits_charged === 1"
+    - type: javascript          # max tool calls respected (§5.2: quick cap = 6)
+      value: "return JSON.parse(output).run.tool_calls <= 6 && JSON.parse(output).plan.steps.length <= 6"
+    - type: javascript          # nothing mutated (§23.2 no-engine-command-before-answer)
+      value: "return JSON.parse(output).run.validator === null && JSON.parse(output).run.layers.length === 0 && JSON.parse(output).run.undo_entries === 0"

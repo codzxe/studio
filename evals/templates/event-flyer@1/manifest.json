@@ -1,0 +1,48 @@
+{
+  "id": "event-flyer",
+  "version": 1,
+  "name": "Event Flyer — A5",
+  "description": "A5 print event flyer (1748×2480 px at 300 dpi, 148×210 mm) with a top photo, headline, date and venue lines, an optional QR-code badge and a footer strip.",
+  "tags": ["print", "flyer", "a5", "event"],
+  "canvas": { "width": 1748, "height": 2480, "background": "#F4E7D3" },
+  "slots": {
+    "photo":    { "kind": "image", "layer": "Photo", "bounds": [150, 150, 1448, 980],
+                  "fit": "cover", "minPixels": [1448, 980], "focal": [0.5, 0.5], "optional": false },
+    "headline": { "kind": "text", "layer": "Headline", "bounds": [150, 1230, 1448, 360],
+                  "font": "display", "weight": "bold", "size": 150, "lineHeight": 1.05,
+                  "maxLines": 2, "maxChars": 30, "align": "left",
+                  "color": "#3B2A20", "autoFit": { "minSize": 100, "maxSize": 160 } },
+    "date":     { "kind": "text", "layer": "Subhead — Date", "bounds": [150, 1650, 900, 90],
+                  "font": "sans", "weight": "bold", "size": 64, "maxLines": 1, "maxChars": 36,
+                  "align": "left", "color": "#6B5748", "autoFit": { "minSize": 48, "maxSize": 64 } },
+    "venue":    { "kind": "text", "layer": "Body — Venue", "bounds": [150, 1770, 900, 90],
+                  "font": "sans", "size": 64, "maxLines": 1, "maxChars": 36,
+                  "align": "left", "color": "#3B2A20", "autoFit": { "minSize": 48, "maxSize": 64 } },
+    "badge":    { "kind": "component", "component": "qr-code@1", "layer": "Badge",
+                  "bounds": [1168, 1690, 430, 430], "optional": true },
+    "footer":   { "kind": "text", "layer": "Caption — Footer", "bounds": [150, 2180, 1448, 90],
+                  "font": "sans", "weight": "bold", "size": 60, "maxLines": 1, "maxChars": 48,
+                  "align": "center", "color": "#3B2A20" }
+  },
+  "rules": {
+    "safeArea": 150,
+    "minContrast": 4.5,
+    "mustLayers": ["Background", "Photo", "Headline"],
+    "maxTextLayers": 6,
+    "palette": ["#F4E7D3", "#3B2A20", "#6B5748", "#D96C3B"]
+  },
+  "layerMap": {
+    "Background":       { "role": "background", "fill": "#F4E7D3" },
+    "Photo":            { "role": "image" },
+    "Footer Strip":     { "role": "decoration", "fill": "#D96C3B" },
+    "Content":          { "role": "group" },
+    "Headline":         { "role": "headline" },
+    "Subhead — Date":   { "role": "subhead" },
+    "Body — Venue":     { "role": "body" },
+    "Caption — Footer": { "role": "caption" },
+    "Badge":            { "role": "component", "component": "qr-code@1" }
+  },
+  "thumbnail": "thumbnails/event-flyer@1.png",
+  "license": "public",
+  "author": "studio"
+}

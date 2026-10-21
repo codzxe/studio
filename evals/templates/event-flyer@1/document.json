@@ -1,0 +1,111 @@
+{
+  "format": "studio-template-document/1",
+  "template": "event-flyer@1",
+  "name": "Event Flyer — A5",
+  "width": 1748,
+  "height": 2480,
+  "background": "#F4E7D3",
+  "layers": [
+    {
+      "name": "Background",
+      "kind": "Fill",
+      "bounds": [0, 0, 1748, 2480],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#F4E7D3"
+    },
+    {
+      "name": "Photo",
+      "kind": "Pixel",
+      "bounds": [150, 150, 1448, 980],
+      "visible": true,
+      "opacity": 1.0,
+      "placeholder": "photo placeholder — synthetic gradient PNG (see assets-note.md); replaced by the placed image on template.fill, never deleted"
+    },
+    {
+      "name": "Footer Strip",
+      "kind": "Fill",
+      "bounds": [0, 2120, 1748, 210],
+      "visible": true,
+      "opacity": 1.0,
+      "fill": "#D96C3B"
+    },
+    {
+      "name": "Content",
+      "kind": "Group",
+      "bounds": [150, 1230, 1448, 1040],
+      "visible": true,
+      "opacity": 1.0,
+      "layers": [
+        {
+          "name": "Headline",
+          "kind": "Type",
+          "bounds": [150, 1230, 1448, 360],
+          "visible": true,
+          "opacity": 1.0,
+          "text": {
+            "content": "Spring night market",
+            "font": "display",
+            "weight": "bold",
+            "size": 150,
+            "lineHeight": 1.05,
+            "color": "#3B2A20",
+            "align": "left"
+          }
+        },
+        {
+          "name": "Subhead — Date",
+          "kind": "Type",
+          "bounds": [150, 1650, 900, 90],
+          "visible": true,
+          "opacity": 1.0,
+          "text": {
+            "content": "Saturday 12 September, 6 PM",
+            "font": "sans",
+            "weight": "bold",
+            "size": 64,
+            "color": "#6B5748",
+            "align": "left"
+          }
+        },
+        {
+          "name": "Body — Venue",
+          "kind": "Type",
+          "bounds": [150, 1770, 900, 90],
+          "visible": true,
+          "opacity": 1.0,
+          "text": {
+            "content": "Riverside Railway Yard",
+            "font": "sans",
+            "size": 64,
+            "color": "#3B2A20",
+            "align": "left"
+          }
+        },
+        {
+          "name": "Caption — Footer",
+          "kind": "Type",
+          "bounds": [150, 2180, 1448, 90],
+          "visible": true,
+          "opacity": 1.0,
+          "text": {
+            "content": "Tickets at acme.example/events",
+            "font": "sans",
+            "weight": "bold",
+            "size": 60,
+            "color": "#3B2A20",
+            "align": "center"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Badge",
+      "kind": "Group",
+      "bounds": [1168, 1690, 430, 430],
+      "visible": true,
+      "opacity": 1.0,
+      "component": { "id": "qr-code@1" }
+    }
+  ]
+}
