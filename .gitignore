@@ -33,6 +33,10 @@ target/
 *.psd
 *.psb
 
+# local demo artifacts (apps/worker/.demo-output/ from demo:coffee / demo:spine)
+# — never tracked; git-sync's `add -A` must not sweep them (W10-T hygiene)
+.demo-output/
+
 # editor misc
 .idea/
 .vscode/
