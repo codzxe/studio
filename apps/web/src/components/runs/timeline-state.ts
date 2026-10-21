@@ -730,6 +730,7 @@ export function deriveTimeline(
         terminal = true;
         status = event.payload.warnings.length > 0 ? "succeeded_with_warnings" : "succeeded";
         succeeded = event.payload;
+        failure = null; // the terminal event is authoritative over the seed
         break;
       }
       case "run.failed": {
@@ -742,6 +743,7 @@ export function deriveTimeline(
         terminal = true;
         status = "cancelled";
         cancelledReason = event.payload.reason;
+        failure = null; // the terminal event is authoritative over the seed
         break;
       }
       default: {

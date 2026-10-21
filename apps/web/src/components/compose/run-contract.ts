@@ -1,8 +1,8 @@
 // apps/web — compose wire contract + pre-run cost display (W8-D).
 //
-// Pure module, no React imports: the tier cost table, the Zod schemas for the
-// three gateway reads and two mutations the composer makes, the typed error
-// mapping (§13.3 → UI states) and the small validators are all defined here so
+// Pure module, no React imports: the tier cost table, the Zod schema for the
+// POST /v1/runs 201 response, the typed error mapping (§13.3 → UI states),
+// the brief validator and the idempotency-key mint are all defined here so
 // the colocated run-contract.test.ts covers them hermetically (no network,
 // no DOM) and use-run-create.ts stays a thin React binding.
 //
@@ -20,6 +20,14 @@
 // way). Import it directly once TS-source workspace packages are wired into
 // Vitest aliases (same TODO as src/lib/api.ts's §13.2 event mirror); until
 // then this local mirror is pinned against it by the colocated test.
+//
+// Read-side contracts (catalog cards, documents, credits) are NOT mirrored
+// here: the composer consumes the shared hooks that landed with the rest of
+// Wave 8 — useTemplateCards (components/gallery/use-catalog.ts, W8-J),
+// useRecentDocuments / useCreateDocument / useSession credits
+// (hooks/use-session.tsx, W8-A) and the asset library
+// (components/assets/use-assets.ts, W8-I). Only the run-creation contract is
+// duplicated — the same "local mirror" posture as those modules.
 
 import { z } from "zod";
 import { type ApiError, isApiError } from "../../src/lib/api";
@@ -159,93 +167,23 @@ export function isTierUnaffordable(tier: ComposableTier, balance: number | undef
 // Wave-8 owners — see each constant's owner note).
 // ---------------------------------------------------------------------------
 
-// TODO(wiring W8-E): the run timeline page owns /runs/[id]; this builder is
-// the one navigation seam the composer needs. It stays a plain string because
-// experimental.typedRoutes only types existing routes (next.config.ts W1-K).
+// The run timeline lives at /runs/[id] (W8-E, landed) — this builder is the
+// composer's one navigation seam to it. A plain string because only the
+// call site knows the run id (no route type for dynamic values needed).
 export function runTimelineHref(runId: string): string {
   return `/runs/${encodeURIComponent(runId)}`;
 }
 
-// TODO(wiring, billing wave): the credits/top-up page is not in this repo yet;
-// a native <a> is used for the CTA so typedRoutes never blocks the link.
-export const CREDITS_ROUTE: string = "/credits";
-
-// React Query cache keys shared by the composer's reads (useQuery in the
-// page) and the run-creation mutation (balance invalidation §14.2 r1). Plain
-// frozen data, colocated with the wire contract they validate.
-export const TEMPLATES_QUERY_KEY = ["compose", "templates"] as const;
-export const DOCUMENTS_QUERY_KEY = ["compose", "documents"] as const;
-export const CREDITS_QUERY_KEY = ["compose", "credits"] as const;
+/**
+ * The §14.2 top-up path: the billing page (W8-A placeholder → the billing
+ * wave's plans, credit packs and ledger). typedRoutes-safe as a constant
+ * string typed `string`, so the CTA compiles while the page fills in.
+ */
+export const CREDITS_ROUTE: string = "/billing";
 
 // ---------------------------------------------------------------------------
-// Wire schemas — Zod at every boundary (gateway §13.1 shapes, exact fields)
+// Wire schema — POST /v1/runs (§13.1; the composer's only own write contract)
 // ---------------------------------------------------------------------------
-
-/** GET /v1/templates card (services/catalog.ts TemplateCard, W4-J). */
-export const templateCardSchema = z
-  .object({
-    id: z.string().min(1),
-    version: z.number().int().min(1),
-    /** The immutable `id@version` pin (§7.2) — always explicit in replies. */
-    ref: z.string().min(1),
-    name: z.string().min(1),
-    tags: z.array(z.string()),
-    canvas: z.object({
-      width: z.number().int().positive(),
-      height: z.number().int().positive(),
-    }),
-    slots: z.array(z.string()),
-  })
-  .strict();
-
-export type TemplateCard = z.infer<typeof templateCardSchema>;
-
-export const templatesResponseSchema = z
-  .object({ templates: z.array(templateCardSchema) })
-  .strict();
-
-/** GET /v1/documents row (routes/documents.ts toDocumentDto, W4-F). */
-export const documentDtoSchema = z
-  .object({
-    id: z.string().min(1),
-    name: z.string(),
-    width_px: z.number().int().positive(),
-    height_px: z.number().int().positive(),
-    current_revision: z.number().int().nonnegative(),
-    template_id: z.string().nullable(),
-    created_by: z.string(),
-    created_at: z.string(),
-    updated_at: z.string(),
-    archived_at: z.string().nullable(),
-  })
-  .strict();
-
-export type DocumentDto = z.infer<typeof documentDtoSchema>;
-
-export const documentsResponseSchema = z
-  .object({
-    ok: z.literal(true),
-    documents: z.array(documentDtoSchema),
-    next_cursor: z.string().nullable().optional(),
-  })
-  .strict();
-
-/** GET /v1/credits — only the balance is consumed here (§13.1). */
-export const creditsResponseSchema = z
-  .object({
-    balance: z.number(),
-    ledger: z
-      .object({
-        // Row shape is the credits surface's contract (W4-M), not the
-        // composer's — kept unknown so the balance read never breaks on it.
-        rows: z.array(z.unknown()),
-        next_cursor: z.string().optional(),
-      })
-      .strict(),
-  })
-  .strict();
-
-export type CreditsResponse = z.infer<typeof creditsResponseSchema>;
 
 /** POST /v1/runs 201 response (routes/runs.ts, W4-G). */
 export const createRunResponseSchema = z
@@ -257,25 +195,6 @@ export const createRunResponseSchema = z
   .strict();
 
 export type CreateRunResponse = z.infer<typeof createRunResponseSchema>;
-
-/** POST /v1/documents 201 response (routes/documents.ts, W4-F). */
-export const createDocumentResponseSchema = z
-  .object({
-    ok: z.literal(true),
-    document: documentDtoSchema,
-    version: z
-      .object({
-        id: z.string().min(1),
-        revision: z.number().int().nonnegative(),
-        label: z.string(),
-        created_by: z.string(),
-        created_at: z.string(),
-      })
-      .strict(),
-  })
-  .strict();
-
-export type CreateDocumentResponse = z.infer<typeof createDocumentResponseSchema>;
 
 /** POST /v1/runs request body (camelCase, gateway CREATE_RUN_BODY_SCHEMA). */
 export interface CreateRunRequest {

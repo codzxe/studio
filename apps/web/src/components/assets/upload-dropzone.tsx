@@ -14,8 +14,8 @@
 
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MEGAPIXELS } from "@studio/config";
 import {
-  AlertCircle,
-  CheckCircle2,
+  CircleAlert,
+  CircleCheck,
   LoaderCircle,
   Upload,
   X,
@@ -247,12 +247,12 @@ export function UploadDropzone({ onUploaded }: UploadDropzoneProps) {
               className="flex items-start gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm"
             >
               {item.status === "succeeded" ? (
-                <CheckCircle2
+                <CircleCheck
                   className="mt-0.5 size-4 shrink-0 text-emerald-600"
                   aria-hidden="true"
                 />
               ) : (
-                <AlertCircle
+                <CircleAlert
                   className="mt-0.5 size-4 shrink-0 text-red-600"
                   aria-hidden="true"
                 />

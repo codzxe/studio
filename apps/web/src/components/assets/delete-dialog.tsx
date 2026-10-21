@@ -9,9 +9,13 @@
 
 import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { describeLibraryFailure, formatBytes, isNotFoundFailure } from "./guards";
+import {
+  describeLibraryFailure,
+  formatBytes,
+  isNotFoundFailure,
+  type FailureCopy,
+} from "./guards";
 import { useDeleteAsset, type AssetSummary } from "./use-assets";
-import type { FailureCopy } from "./guards";
 
 const TITLE_ID = "asset-delete-title";
 

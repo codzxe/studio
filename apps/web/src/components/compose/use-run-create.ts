@@ -8,18 +8,19 @@
 //   - export the lazily-built gateway client for the composer's reads;
 //   - send the camelCase CREATE_RUN body and Zod-validate the 201 response;
 //   - narrow every failure into the typed RunCreateError states (§13.3):
-//     402 → insufficient_credits (credits CTA), 429 → retry-after display;
-//   - invalidate the credits query after a create so the balance the user
-//     sees reflects the fresh reservation (§14.2 rule 1).
+//     402 → insufficient_credits (credits CTA), 429 → retry-after display.
+//
+// Cache ownership: the session-credits refresh after a successful create
+// belongs to the composer (refreshSession invalidates the ["session"] keys,
+// hooks/use-session.tsx) so this hook stays usable outside the (app) shell.
 //
 // The pure mapping/schema/idempotency logic lives in ./run-contract.ts and is
 // unit-tested there; this file is the thin React Query binding.
 
 import { type GatewayClient, createGatewayClientFromEnv } from "@/lib/api";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { useMemo, useRef } from "react";
 import {
-  CREDITS_QUERY_KEY,
   type CreateRunRequest,
   type CreateRunResponse,
   type RunCreateError,
@@ -84,7 +85,6 @@ export interface UseRunCreate {
 }
 
 export function useRunCreate(): UseRunCreate {
-  const queryClient = useQueryClient();
   /** §3.4: one key per run-intent; null → mint on the next submit. */
   const idempotencyKeyRef = useRef<string | null>(null);
 
@@ -105,9 +105,8 @@ export function useRunCreate(): UseRunCreate {
     },
     onSuccess: () => {
       // The intent completed — a later "run again" is a NEW run (fresh key).
+      // The §14.2 balance refresh is the composer's (see the header note).
       idempotencyKeyRef.current = null;
-      // §14.2 rule 1: the reservation changed the balance — refresh the card.
-      void queryClient.invalidateQueries({ queryKey: CREDITS_QUERY_KEY });
     },
   });
 

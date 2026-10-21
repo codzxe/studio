@@ -27,11 +27,11 @@ export const ENGINE_MAX_CANVAS_MEGAPIXELS = 64;
  * Client-side create validation only — the server enforces the real ceiling
  * for the caller's workspace (402 `plan_limit`, services/documents.ts).
  */
-export const PLAN_CANVAS_CEILINGS_MP: Readonly<Record<string, number>> = {
+export const PLAN_CANVAS_CEILINGS_MP = {
   starter: 32,
   pro: 64,
   business: 128,
-};
+} as const satisfies Readonly<Record<string, number>>;
 
 /**
  * Conservative default ceiling until `GET /v1/me` (contract-only today) ships
@@ -39,7 +39,7 @@ export const PLAN_CANVAS_CEILINGS_MP: Readonly<Record<string, number>> = {
  * real value from the shell/dashboard narrows client validation only — the
  * server always re-validates.
  */
-export const DEFAULT_PLAN_CEILING_MP = PLAN_CANVAS_CEILINGS_MP.starter;
+export const DEFAULT_PLAN_CEILING_MP: number = PLAN_CANVAS_CEILINGS_MP.starter;
 
 /** One selectable canvas preset in the create modal. */
 export interface DocumentSizePreset {

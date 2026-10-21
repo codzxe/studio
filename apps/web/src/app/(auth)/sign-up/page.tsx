@@ -1,8 +1,12 @@
-// Sign-up stub (W1-K) — see src/components/auth-form.tsx for the client
-// boundary; TODO(W4 auth wiring) replaces the stub with the Better Auth flow.
+// Sign-up page (W8-B) — replaces the W1-K stub with the real Better Auth
+// flow. Server wrapper keeps metadata server-side and Suspense-bounds the
+// form (it reads `?next=` via useSearchParams for the invite round-trip).
+// Card chrome comes from the (auth) layout.
 
 import type { Metadata } from "next";
-import { AuthForm } from "@/components/auth-form";
+import { Suspense } from "react";
+import { SignUpForm } from "../components/sign-up-form";
+import { AuthFormFallback } from "../components/form-fallback";
 
 export const metadata: Metadata = {
   title: "Create account",
@@ -10,10 +14,8 @@ export const metadata: Metadata = {
 
 export default function SignUpPage() {
   return (
-    <main
-      className="flex min-h-screen flex-col items-center justify-center gap-4 bg-surface-muted px-6"
-    >
-      <AuthForm mode="sign-up" />
-    </main>
+    <Suspense fallback={<AuthFormFallback />}>
+      <SignUpForm />
+    </Suspense>
   );
 }
