@@ -3,6 +3,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin, organization } from "better-auth/plugins";
 import { role } from "better-auth/plugins/access";
+import { defaultRoles } from "better-auth/plugins/organization/access";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
@@ -103,10 +104,17 @@ export function createAuth(env: AuthEnv): Auth {
       organization({
         creatorRole: "owner",
         // Register our extra wire-stable roles so better-auth accepts them on
-        // invites. Capability enforcement lives in @studio/db/permissions +
-        // the gateway (§3.3); better-auth defaults still gate org management
-        // (invite/remove/billing) to admin|owner.
+        // invites. W3-gw bugfix: better-auth 1.7.12 REPLACES the built-in role
+        // set when `roles` is passed (hasPermission uses
+        // `{...options.roles || defaultRoles}`), so listing only editor/viewer
+        // wiped owner/admin/member access-control statements — the org OWNER
+        // then failed every better-auth permission check (invite, org update).
+        // Spread the defaults first, then add ours on top. Capability
+        // enforcement still lives in @studio/db/permissions + the gateway
+        // (§3.3); better-auth defaults still gate org management to
+        // admin|owner.
         roles: {
+          ...defaultRoles,
           editor: role({}),
           viewer: role({}),
         },
