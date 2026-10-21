@@ -7,9 +7,9 @@
 // /dashboard stays active on its child routes only; visible focus ring via
 // the app's --ring token.
 
+import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { LucideIcon } from "lucide-react";
 import type { AppHref } from "./nav-config";
 
 const NAV_ITEM_BASE_CLASS =

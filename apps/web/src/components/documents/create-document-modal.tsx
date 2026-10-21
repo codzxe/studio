@@ -17,8 +17,6 @@
 // a fieldset/legend; custom inputs use useFieldIds wiring; inline errors ride
 // aria-invalid + aria-describedby; the server error is a role="alert" region.
 
-import { z } from "zod";
-import { useId, useState, type FormEvent } from "react";
 import {
   Button,
   Dialog,
@@ -31,13 +29,15 @@ import {
   Label,
   useFieldIds,
 } from "@studio/ui";
+import { type FormEvent, useId, useState } from "react";
+import { z } from "zod";
 import {
   CUSTOM_SIZE_PRESET_ID,
   DEFAULT_PLAN_CEILING_MP,
   DOCUMENT_SIZE_PRESETS,
+  type DocumentSizePreset,
   parseSizeInput,
   validateCanvasSize,
-  type DocumentSizePreset,
 } from "./document-sizes";
 import { toErrorEnvelope, useCreateDocument } from "./use-documents";
 
@@ -107,7 +107,9 @@ export function CreateDocumentModal({
     event.preventDefault();
 
     const parsedName = nameSchema.safeParse(name);
-    setNameError(parsedName.success ? null : (parsedName.error.issues[0]?.message ?? "Name is required."));
+    setNameError(
+      parsedName.success ? null : (parsedName.error.issues[0]?.message ?? "Name is required."),
+    );
 
     const preset = DOCUMENT_SIZE_PRESETS.find((candidate) => candidate.id === presetId);
     const custom: CustomSizeState =
@@ -126,7 +128,12 @@ export function CreateDocumentModal({
           })();
     setSizeError(sizeFail);
 
-    if (!parsedName.success || sizeFail !== null || custom.width === null || custom.height === null) {
+    if (
+      !parsedName.success ||
+      sizeFail !== null ||
+      custom.width === null ||
+      custom.height === null
+    ) {
       return;
     }
 
@@ -148,8 +155,8 @@ export function CreateDocumentModal({
         <DialogHeader>
           <DialogTitle>New document</DialogTitle>
           <DialogDescription>
-            Name it and pick canvas dimensions — start from a blank canvas and let the agent
-            design it with you.
+            Name it and pick canvas dimensions — start from a blank canvas and let the agent design
+            it with you.
           </DialogDescription>
         </DialogHeader>
 
@@ -235,14 +242,17 @@ export function CreateDocumentModal({
               </div>
             ) : null}
             <p className="text-xs text-muted-foreground">
-              Your plan allows canvases up to {planMaxMegapixels} megapixels. Need more? Upgrade
-              the workspace plan.
+              Your plan allows canvases up to {planMaxMegapixels} megapixels. Need more? Upgrade the
+              workspace plan.
             </p>
           </fieldset>
 
           {/* Server refusal: flat envelope + hint (§13.3), never internals. */}
           {serverEnvelope === null ? null : (
-            <div role="alert" className="rounded-md border border-border bg-surface-muted p-3 text-sm">
+            <div
+              role="alert"
+              className="rounded-md border border-border bg-surface-muted p-3 text-sm"
+            >
               <p className="font-medium">{serverEnvelope.message}</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {serverEnvelope.hint === undefined

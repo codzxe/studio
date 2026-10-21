@@ -99,7 +99,9 @@ export function WorkspaceSwitcher({ onSelect }: WorkspaceSwitcherProps) {
                     aria-hidden="true"
                   />
                   <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-                  <span className="shrink-0 rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-muted-foreground capitalize">
+                  <span
+                    className="shrink-0 rounded-full bg-surface-muted px-2 py-0.5 text-[11px] text-muted-foreground capitalize"
+                  >
                     {workspace.role}
                   </span>
                 </button>

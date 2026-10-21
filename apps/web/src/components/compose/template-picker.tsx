@@ -68,8 +68,8 @@ function TemplateCardTile({
         />
       </span>
       <span className="font-mono text-[11px] text-muted-foreground">
-        {card.ref} · {card.canvas.width}×{card.canvas.height} ·{" "}
-        {card.slots.length} slot{card.slots.length === 1 ? "" : "s"}
+        {card.ref} · {card.canvas.width}×{card.canvas.height} · {card.slots.length} slot
+        {card.slots.length === 1 ? "" : "s"}
       </span>
       {visibleTags.length === 0 && overflow <= 0 ? null : (
         <span className="flex flex-wrap gap-1">
@@ -137,17 +137,14 @@ export function TemplatePicker({
   if (templates.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        No templates are published yet — check back soon, or create the
-        document without one.
+        No templates are published yet — check back soon, or create the document without one.
       </p>
     );
   }
 
   return (
     <fieldset disabled={disabled} className="space-y-2">
-      <legend className="mb-1 text-sm font-medium">
-        Template
-      </legend>
+      <legend className="mb-1 text-sm font-medium">Template</legend>
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {templates.map((card) => (
           <TemplateCardTile

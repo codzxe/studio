@@ -33,6 +33,7 @@
 // Errors never cross these boundaries as raw objects: callers surface
 // `ApiError.message` (the gateway's §13.3 user-safe text) via errorText().
 
+import { isApiError } from "../../lib/api";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -215,7 +216,7 @@ export interface RunDetail extends z.infer<typeof runDetailSchema> {}
 // ---------------------------------------------------------------------------
 
 export function errorText(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message !== "" && error.name === "ApiError") {
+  if (isApiError(error)) {
     return error.message;
   }
   return fallback;

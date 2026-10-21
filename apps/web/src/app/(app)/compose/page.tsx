@@ -9,8 +9,8 @@
 // TODO(W4 auth wiring): protected app routes land with the Better Auth
 // middleware; until then the gateway's 401 envelopes render in the UI.
 
-import type { Metadata } from "next";
 import { PromptComposer } from "@/components/compose/prompt-composer";
+import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Compose",

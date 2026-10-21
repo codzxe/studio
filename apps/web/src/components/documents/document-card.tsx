@@ -12,10 +12,10 @@
 // name); meta is plain text inside the link so screen readers get it for free;
 // the pending variant is a <div aria-busy> with an sr-only status.
 
+import { Badge } from "@studio/ui";
 import { FileImage } from "lucide-react";
 import Link from "next/link";
-import { Badge } from "@studio/ui";
-import { isOptimisticDocument, type DocumentDto } from "./use-documents";
+import { type DocumentDto, isOptimisticDocument } from "./use-documents";
 
 const CREATED_FORMAT = new Intl.DateTimeFormat("en", { dateStyle: "medium" });
 
@@ -56,7 +56,10 @@ export function DocumentCard({ document, variant = "grid", className }: Document
           </Badge>
         )}
         <Badge variant="outline">Rev {document.current_revision}</Badge>
-        <span aria-hidden="true" className="hidden w-28 shrink-0 text-right text-xs text-muted-foreground md:inline">
+        <span
+          aria-hidden="true"
+          className="hidden w-28 shrink-0 text-right text-xs text-muted-foreground md:inline"
+        >
           {formatDocumentDate(document.created_at)}
         </span>
       </Link>
@@ -98,14 +101,12 @@ function PendingDocumentCard({ document, variant }: DocumentCardProps) {
   const label = `Creating “${document.name}”…`;
   if (variant === "row") {
     return (
-      <div
-        aria-busy="true"
-        className="flex items-center gap-3 px-4 py-3 text-muted-foreground"
-      >
-        <span className="sr-only" role="status">
-          {label}
-        </span>
-        <span className="size-5 shrink-0 animate-pulse rounded bg-surface-muted" aria-hidden="true" />
+      <div aria-busy="true" className="flex items-center gap-3 px-4 py-3 text-muted-foreground">
+        <output className="sr-only">{label}</output>
+        <span
+          className="size-5 shrink-0 animate-pulse rounded bg-surface-muted"
+          aria-hidden="true"
+        />
         <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
       </div>
     );
@@ -119,9 +120,7 @@ function PendingDocumentCard({ document, variant }: DocumentCardProps) {
         <span className="size-8 animate-pulse rounded bg-border" aria-hidden="true" />
       </div>
       <div className="flex flex-col gap-2 p-4">
-        <span className="sr-only" role="status">
-          {label}
-        </span>
+        <output className="sr-only">{label}</output>
         <span aria-hidden="true" className="h-4 w-2/3 animate-pulse rounded bg-surface-muted" />
         <span aria-hidden="true" className="h-4 w-1/3 animate-pulse rounded bg-surface-muted" />
       </div>

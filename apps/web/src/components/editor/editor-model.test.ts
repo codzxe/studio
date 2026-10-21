@@ -5,6 +5,7 @@
  * (§23.5/§24.2). Deterministic, no DOM, no network, <5 s.
  */
 import { describe, expect, it } from "vitest";
+import { ApiError } from "../../lib/api";
 import {
   countLayers,
   documentPayloadSchema,
@@ -343,8 +344,11 @@ describe("extractRunError / errorText", () => {
   });
 
   it("errorText surfaces only typed ApiError messages", () => {
-    const apiError = new Error("Quota exceeded for this workspace.");
-    apiError.name = "ApiError";
+    const apiError = new ApiError({
+      code: "quota_exceeded",
+      message: "Quota exceeded for this workspace.",
+      status: 402,
+    });
     expect(errorText(apiError, "fallback")).toBe("Quota exceeded for this workspace.");
     expect(errorText(new Error("raw internal"), "fallback")).toBe("fallback");
     expect(errorText("string", "fallback")).toBe("fallback");

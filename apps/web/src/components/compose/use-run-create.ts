@@ -15,17 +15,17 @@
 // The pure mapping/schema/idempotency logic lives in ./run-contract.ts and is
 // unit-tested there; this file is the thin React Query binding.
 
+import { type GatewayClient, createGatewayClientFromEnv } from "@/lib/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef } from "react";
-import { createGatewayClientFromEnv, type GatewayClient } from "@/lib/api";
 import {
   CREDITS_QUERY_KEY,
-  createRunIdempotencyKey,
-  createRunResponseSchema,
-  mapRunCreateError,
   type CreateRunRequest,
   type CreateRunResponse,
   type RunCreateError,
+  createRunIdempotencyKey,
+  createRunResponseSchema,
+  mapRunCreateError,
 } from "./run-contract";
 
 /** Typed result envelope for one create attempt (docs/AGENTS.md error style). */

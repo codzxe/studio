@@ -36,9 +36,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
     }
   }
 
-  const sidebarClass = open
-    ? `${SIDEBAR_BASE_CLASS} flex`
-    : `${SIDEBAR_BASE_CLASS} hidden md:flex`;
+  const sidebarClass = open ? `${SIDEBAR_BASE_CLASS} flex` : `${SIDEBAR_BASE_CLASS} hidden md:flex`;
 
   return (
     <>

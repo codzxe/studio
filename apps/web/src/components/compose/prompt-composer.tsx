@@ -23,15 +23,16 @@ import { useMemo, useState } from "react";
 import { AssetChips, useAssets } from "./asset-chips";
 import { BriefInput } from "./brief-input";
 import { RunButton } from "./run-button";
-import { TierSelector } from "./tier-selector";
-import { TemplatePicker } from "./template-picker";
-import { getGatewayClient, useRunCreate } from "./use-run-create";
 import {
   CREDITS_QUERY_KEY,
+  type ComposableTier,
+  type CreateDocumentResponse,
   DOCUMENTS_QUERY_KEY,
   DOCUMENT_NAME_MAX_CHARS,
   MAX_ASSET_ATTACHMENTS,
+  type RunCreateError,
   TEMPLATES_QUERY_KEY,
+  type TemplateCard,
   createDocumentResponseSchema,
   creditsForTier,
   creditsResponseSchema,
@@ -40,11 +41,10 @@ import {
   runTimelineHref,
   templatesResponseSchema,
   validateBrief,
-  type ComposableTier,
-  type CreateDocumentResponse,
-  type CreateRunError,
-  type TemplateCard,
 } from "./run-contract";
+import { TemplatePicker } from "./template-picker";
+import { TierSelector } from "./tier-selector";
+import { getGatewayClient, useRunCreate } from "./use-run-create";
 
 /** Document-target mode: run inside an existing document, or mint one. */
 type TargetMode = "existing" | "new";
@@ -121,9 +121,7 @@ export function PromptComposer() {
   const canSubmit =
     briefValidation.ok &&
     !pending &&
-    (mode === "existing"
-      ? documentId !== null
-      : selectedTemplate !== undefined && nameOk);
+    (mode === "existing" ? documentId !== null : selectedTemplate !== undefined && nameOk);
 
   // Any edit invalidates the last failure message (fresh intent, fresh try).
   function clearFeedback(): void {
@@ -228,8 +226,8 @@ export function PromptComposer() {
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">New run</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Describe the outcome. The agent composes editable layers in the
-          target document — every step lands on the run timeline.
+          Describe the outcome. The agent composes editable layers in the target document — every
+          step lands on the run timeline.
         </p>
       </header>
 
@@ -287,8 +285,7 @@ export function PromptComposer() {
                 </p>
               ) : documents.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  No documents in this workspace yet — create one from a
-                  template instead.
+                  No documents in this workspace yet — create one from a template instead.
                 </p>
               ) : (
                 <>
@@ -314,7 +311,9 @@ export function PromptComposer() {
                     <p className="font-mono text-xs text-muted-foreground">
                       {selectedDocument.width_px}×{selectedDocument.height_px} px · revision{" "}
                       {selectedDocument.current_revision}
-                      {selectedDocument.template_id === null ? "" : ` · ${selectedDocument.template_id}`}
+                      {selectedDocument.template_id === null
+                        ? ""
+                        : ` · ${selectedDocument.template_id}`}
                     </p>
                   )}
                   {documentsQuery.data?.next_cursor !== undefined &&
@@ -330,7 +329,9 @@ export function PromptComposer() {
             <div className="space-y-3">
               <TemplatePicker
                 templates={templates}
-                status={templatesQuery.isPending ? "loading" : templatesQuery.isError ? "error" : "ready"}
+                status={
+                  templatesQuery.isPending ? "loading" : templatesQuery.isError ? "error" : "ready"
+                }
                 errorMessage={
                   templatesQuery.error === null
                     ? undefined
@@ -437,14 +438,11 @@ export function PromptComposer() {
             className="mt-0.5 size-4"
           />
           <span>
-            <span className="block text-sm font-medium">
-              Keep partial work if the run fails
-            </span>
+            <span className="block text-sm font-medium">Keep partial work if the run fails</span>
             <span className="block text-xs leading-relaxed text-muted-foreground">
-              Off by default: a failed run rolls the document back to its last
-              saved state. Keep this on to save the layers that did land
-              instead — you are charged at most half the run&apos;s credits
-              when work was kept.
+              Off by default: a failed run rolls the document back to its last saved state. Keep
+              this on to save the layers that did land instead — you are charged at most half the
+              run&apos;s credits when work was kept.
             </span>
           </span>
         </label>

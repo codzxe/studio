@@ -8,7 +8,7 @@
 // button while the gateway rules would reject the text (blank or over cap).
 
 import { useId } from "react";
-import { PROMPT_MAX_CHARS, type BriefValidation } from "./run-contract";
+import { type BriefValidation, PROMPT_MAX_CHARS } from "./run-contract";
 
 export interface BriefInputProps {
   readonly value: string;
@@ -63,8 +63,7 @@ export function BriefInput({
       <div className="flex items-center justify-between gap-3">
         {validation.error === null ? (
           <p className="text-xs text-muted-foreground">
-            Be specific — the agent works from this brief and validates its own
-            output against it.
+            Be specific — the agent works from this brief and validates its own output against it.
           </p>
         ) : (
           <p id={errorId} role="alert" className="text-xs text-red-600">

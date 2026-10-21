@@ -49,7 +49,8 @@ function toDisplayMessage(error: unknown): string {
 
 const CARD_CLASS = "rounded-lg border border-border bg-surface";
 const ERROR_CLASS = "rounded-lg border border-border bg-surface p-4 text-sm text-muted-foreground";
-const EMPTY_CLASS = "rounded-lg border border-dashed border-border bg-surface p-4 text-sm text-muted-foreground";
+const EMPTY_CLASS =
+  "rounded-lg border border-dashed border-border bg-surface p-4 text-sm text-muted-foreground";
 const RETRY_CLASS = "font-medium text-foreground underline underline-offset-2";
 const INPUT_CLASS =
   "h-9 flex-1 rounded-md border border-border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -266,7 +267,10 @@ function RecentRunsSection() {
             </span>
             <ul aria-hidden="true" className="flex gap-3 overflow-hidden">
               {RUN_SKELETON_IDS.map((id) => (
-                <li key={id} className="h-20 w-56 shrink-0 animate-pulse rounded-lg bg-surface-muted" />
+                <li
+                  key={id}
+                  className="h-20 w-56 shrink-0 animate-pulse rounded-lg bg-surface-muted"
+                />
               ))}
             </ul>
           </>
@@ -284,15 +288,22 @@ function RecentRunsSection() {
             </button>
           </p>
         ) : (query.data?.runs.length ?? 0) === 0 ? (
-          <p className={EMPTY_CLASS}>No agent runs yet — the first one starts from any document.</p>
+          <p className={EMPTY_CLASS}>
+            No agent runs yet — the first one starts from any document.
+          </p>
         ) : (
           <ul className="flex gap-3 overflow-x-auto pb-2">
             {query.data?.runs.map((run) => (
-              <li key={run.run_id} className="flex min-w-56 shrink-0 flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+              <li
+                key={run.run_id}
+                className="flex min-w-56 shrink-0 flex-col gap-2 rounded-lg border border-border bg-surface p-3"
+              >
                 <div className="flex items-center justify-between gap-2">
                   {/* TODO(theme): semantic status colors once globals.css maps
                       success/info/destructive (packages/ui tokens has them). */}
-                  <span className="inline-flex items-center rounded-full bg-surface-muted px-2 py-0.5 text-xs font-medium capitalize">
+                  <span
+                    className="inline-flex items-center rounded-full bg-surface-muted px-2 py-0.5 text-xs font-medium capitalize"
+                  >
                     {run.status.replaceAll("_", " ")}
                   </span>
                   <span className="text-xs text-muted-foreground capitalize">{run.tier}</span>

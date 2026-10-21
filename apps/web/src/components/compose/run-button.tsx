@@ -88,9 +88,17 @@ function RunErrorFeedback({ error }: { readonly error: RunCreateError }) {
       );
     case "network":
     case "server":
-      return <p role="alert" className="text-sm text-red-600">{error.message}</p>;
+      return (
+        <p role="alert" className="text-sm text-red-600">
+          {error.message}
+        </p>
+      );
     default:
-      return <p role="alert" className="text-sm text-red-600">{error.message}</p>;
+      return (
+        <p role="alert" className="text-sm text-red-600">
+          {error.message}
+        </p>
+      );
   }
 }
 

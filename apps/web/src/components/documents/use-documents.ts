@@ -26,15 +26,15 @@
 //     SSE event carries a new revision, invalidate documentsKeys.detail(id);
 //     list rows only change on create/archive/rename.
 
+import { type GatewayClient, createGatewayClientFromEnv, isApiError } from "@/lib/api";
 import {
+  type InfiniteData,
   useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
-  type InfiniteData,
 } from "@tanstack/react-query";
 import { z } from "zod";
-import { createGatewayClientFromEnv, isApiError, type GatewayClient } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Wire schemas — mirrors of the gateway DTO mappers (routes/documents.ts)
@@ -63,20 +63,20 @@ export const documentVersionSchema = z.object({
   created_at: isoDateTime,
 });
 
-const documentListResponseSchema = z.object({
+export const documentListResponseSchema = z.object({
   ok: z.literal(true),
   documents: z.array(documentSchema),
   next_cursor: z.string().nullable(),
 });
 
-const documentDetailResponseSchema = z.object({
+export const documentDetailResponseSchema = z.object({
   ok: z.literal(true),
   document: documentSchema.extend({
     latest_version: documentVersionSchema.nullable(),
   }),
 });
 
-const documentCreateResponseSchema = z.object({
+export const documentCreateResponseSchema = z.object({
   ok: z.literal(true),
   document: documentSchema,
   version: documentVersionSchema,
@@ -231,10 +231,9 @@ export function useDocument(documentId: string) {
   const query = useQuery({
     queryKey: documentsKeys.detail(documentId),
     queryFn: async () => {
-      const response = await gateway().get(
-        `/documents/${encodeURIComponent(documentId)}`,
-        { schema: documentDetailResponseSchema },
-      );
+      const response = await gateway().get(`/documents/${encodeURIComponent(documentId)}`, {
+        schema: documentDetailResponseSchema,
+      });
       return response.document;
     },
     enabled: documentId !== "",
@@ -315,9 +314,7 @@ export function useCreateDocument() {
         queryClient.setQueryData<DocumentsListData>(key, {
           ...data,
           pages: data.pages.map((page, index) =>
-            index === 0
-              ? { ...page, documents: [placeholder, ...page.documents] }
-              : page,
+            index === 0 ? { ...page, documents: [placeholder, ...page.documents] } : page,
           ),
         });
       }
@@ -348,9 +345,7 @@ export function useCreateDocument() {
           pages: data.pages.map((page) => ({
             ...page,
             documents: page.documents.map((row) =>
-              context !== undefined && row.id === context.placeholderId
-                ? response.document
-                : row,
+              context !== undefined && row.id === context.placeholderId ? response.document : row,
             ),
           })),
         });

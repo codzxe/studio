@@ -149,7 +149,5 @@ export function matchesQuery(
   if (needle === "") {
     return true;
   }
-  return fields.some(
-    (field) => field !== null && field !== undefined && field.toLowerCase().includes(needle),
-  );
+  return fields.some((field) => field?.toLowerCase().includes(needle) === true);
 }

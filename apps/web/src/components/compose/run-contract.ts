@@ -22,7 +22,7 @@
 // then this local mirror is pinned against it by the colocated test.
 
 import { z } from "zod";
-import { ApiError, isApiError } from "../../src/lib/api";
+import { type ApiError, isApiError } from "../../src/lib/api";
 
 // ---------------------------------------------------------------------------
 // Prompt + attachment caps (gateway CREATE_RUN_BODY_SCHEMA, W4-G)
@@ -150,10 +150,7 @@ export function creditsForTier(tier: ComposableTier): number {
 }
 
 /** True when the workspace balance cannot cover the tier's reservation. */
-export function isTierUnaffordable(
-  tier: ComposableTier,
-  balance: number | undefined,
-): boolean {
+export function isTierUnaffordable(tier: ComposableTier, balance: number | undefined): boolean {
   return balance !== undefined && balance < creditsForTier(tier);
 }
 

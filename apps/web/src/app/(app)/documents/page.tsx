@@ -1,23 +1,39 @@
-// app/(app)/documents — placeholder (W8-A). TODO(documents wave): the real
-// documents library — grid, filters, create-from-template — wired to
-// GET /v1/documents (§13.1) via the placeholder hooks in
-// src/hooks/use-session.tsx (useRecentDocuments is the seed).
+// apps/web — documents library route (W8-C, §13.1 GET /v1/documents).
+//
+// Server page under the (app) route group (shell/layout owner: W8-A, see
+// documents-library.tsx "Layout contract"). This page reads the `?q=` server
+// query param and seeds the client library with it; filtering itself stays
+// client-side until the gateway list endpoint grows a server-side `q`
+// (its schema is strict over {cursor, limit, include_archived} today,
+// apps/gateway/src/routes/documents.ts).
+//
+// No <main> here on purpose: when the (app) shell lands with its own
+// <main> landmark, a nested one would be an a11y violation — the section
+// landmark + labelled heading work standalone and inside the shell.
 
+import { DocumentsLibrary } from "@/components/documents/documents-library";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Documents",
 };
 
-export default function DocumentsPage() {
+interface DocumentsPageProps {
+  /** Next 15: search params resolve asynchronously (§ App Router). */
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export default async function DocumentsPage({ searchParams }: DocumentsPageProps) {
+  const params = await searchParams;
+  const raw = params.q;
+  const initialQuery = typeof raw === "string" ? raw : Array.isArray(raw) ? (raw[0] ?? "") : "";
+
   return (
-    <section aria-labelledby="documents-heading" className="max-w-3xl">
-      <h1 id="documents-heading" className="text-2xl font-semibold tracking-tight">
-        Documents
-      </h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        The documents library is on its way — this placeholder keeps the shell navigable.
-      </p>
+    <section
+      aria-labelledby="documents-heading"
+      className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"
+    >
+      <DocumentsLibrary initialQuery={initialQuery} />
     </section>
   );
 }

@@ -7,9 +7,9 @@
 // routes/documents.ts); when it grows one, this control keeps its debounced
 // URL write and the library swaps the local filter for a server query.
 
+import { Button, Input, Label } from "@studio/ui";
 import { X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { Button, Input, Label } from "@studio/ui";
 
 export interface SearchBarProps {
   readonly query: string;
@@ -84,11 +84,12 @@ export function SearchBar({
           </Button>
         )}
       </div>
-      {/* Polite announcement: the match count updates as the query changes. */}
+      {/* Polite announcement: the match count updates as the query changes
+          (<output> carries the implicit status/live-region role). */}
       {resultCount === undefined ? null : (
-        <span id={statusId} role="status" className="sr-only">
+        <output id={statusId} className="sr-only">
           {resultCount} matching document{resultCount === 1 ? "" : "s"}
-        </span>
+        </output>
       )}
     </div>
   );

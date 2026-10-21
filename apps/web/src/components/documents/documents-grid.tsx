@@ -5,11 +5,21 @@
 // rows/cards come from document-card.tsx. All data plumbing lives in
 // documents-library.tsx (useDocuments + optimistic create wiring).
 
-import { Plus, RefreshCw } from "lucide-react";
 import { Button, Skeleton } from "@studio/ui";
-import { matchesQuery } from "./document-sizes";
+import { Plus, RefreshCw } from "lucide-react";
 import { DocumentCard } from "./document-card";
-import { toErrorEnvelope, type DocumentDto } from "./use-documents";
+import { matchesQuery } from "./document-sizes";
+import { type DocumentDto, toErrorEnvelope } from "./use-documents";
+
+/** Static skeleton rows — module-scope so list renders get stable keys. */
+const GRID_SKELETON_TILES: readonly string[] = Array.from(
+  { length: 8 },
+  (_, index) => `skeleton-tile-${index}`,
+);
+const LIST_SKELETON_ROWS: readonly string[] = Array.from(
+  { length: 5 },
+  (_, index) => `skeleton-row-${index}`,
+);
 
 export interface DocumentsGridProps {
   /** Every loaded document (all pages), unfiltered. */
@@ -108,15 +118,14 @@ export function DocumentsGrid({
   );
 }
 
-/** First-page loading skeleton + polite screen-reader status. */
+/** First-page loading skeleton + polite screen-reader status (<output>). */
 function GridSkeleton({ view }: { readonly view: "grid" | "list" }) {
-  const count = view === "grid" ? 8 : 5;
   return (
-    <div role="status" aria-label="Loading documents">
+    <output aria-label="Loading documents" className="block w-full">
       {view === "grid" ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: count }, (_, index) => (
-            <div key={index} className="rounded-lg border border-border bg-surface">
+          {GRID_SKELETON_TILES.map((tile) => (
+            <div key={tile} className="rounded-lg border border-border bg-surface">
               <Skeleton className="aspect-video w-full rounded-b-none bg-surface-muted" />
               <div className="flex flex-col gap-2 p-4">
                 <Skeleton className="h-4 w-2/3 bg-surface-muted" />
@@ -127,15 +136,15 @@ function GridSkeleton({ view }: { readonly view: "grid" | "list" }) {
         </div>
       ) : (
         <div className="overflow-hidden rounded-lg border border-border bg-surface">
-          {Array.from({ length: count }, (_, index) => (
-            <div key={index} className="flex items-center gap-3 border-b border-border px-4 py-3">
+          {LIST_SKELETON_ROWS.map((row) => (
+            <div key={row} className="flex items-center gap-3 border-b border-border px-4 py-3">
               <Skeleton className="size-5 bg-surface-muted" />
               <Skeleton className="h-4 flex-1 bg-surface-muted" />
             </div>
           ))}
         </div>
       )}
-    </div>
+    </output>
   );
 }
 
@@ -161,7 +170,9 @@ function GridError({
       <p className="font-medium">Couldn&apos;t load your documents</p>
       <p className="text-sm text-muted-foreground">{envelope.message}</p>
       <p className="text-xs text-muted-foreground">
-        {envelope.hint === undefined ? `Code: ${envelope.code}` : `${envelope.hint} (code ${envelope.code})`}
+        {envelope.hint === undefined
+          ? `Code: ${envelope.code}`
+          : `${envelope.hint} (code ${envelope.code})`}
       </p>
       <Button
         type="button"
@@ -197,7 +208,12 @@ function GridEmpty({
         <p className="text-sm text-muted-foreground">
           Nothing matches “{query.trim()}”. Try a different name or template.
         </p>
-        <Button type="button" variant="outline" onClick={() => onClearSearch()} className="border-border">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => onClearSearch()}
+          className="border-border"
+        >
           Clear search
         </Button>
       </div>
@@ -207,10 +223,14 @@ function GridEmpty({
     <div className="flex flex-col items-center gap-4 rounded-lg border border-dashed border-border bg-surface p-12 text-center">
       <p className="text-lg font-medium">No documents yet</p>
       <p className="max-w-sm text-sm text-muted-foreground">
-        Create your first document — pick a canvas size preset or enter custom dimensions, then
-        let the agent design it with you.
+        Create your first document — pick a canvas size preset or enter custom dimensions, then let
+        the agent design it with you.
       </p>
-      <Button type="button" onClick={() => onCreate()} className="bg-accent text-accent-foreground hover:opacity-90">
+      <Button
+        type="button"
+        onClick={() => onCreate()}
+        className="bg-accent text-accent-foreground hover:opacity-90"
+      >
         <Plus aria-hidden="true" />
         New document
       </Button>

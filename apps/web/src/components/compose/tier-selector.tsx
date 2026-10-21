@@ -12,7 +12,7 @@
 // is the money authority (§14.2 rule 1, 402) and disabling here would only
 // hide the shortfall; the unaffordable badge makes it explicit instead.
 
-import { TIER_COSTS, isTierUnaffordable, type ComposableTier } from "./run-contract";
+import { type ComposableTier, TIER_COSTS, isTierUnaffordable } from "./run-contract";
 
 export interface TierSelectorProps {
   readonly value: ComposableTier;
@@ -27,15 +27,15 @@ export interface TierSelectorProps {
 
 /** Cost line: resolved credits, with the multiplier kept visible (§14.1). */
 function costLabel(credits: number, multiplied: boolean): string {
-  return multiplied ? `${credits} credits (×${credits / 2} standard)` : `${credits} credit${credits === 1 ? "" : "s"}`;
+  return multiplied
+    ? `${credits} credits (×${credits / 2} standard)`
+    : `${credits} credit${credits === 1 ? "" : "s"}`;
 }
 
 export function TierSelector({ value, onChange, balance, disabled = false }: TierSelectorProps) {
   return (
     <fieldset disabled={disabled} className="space-y-2">
-      <legend className="mb-1 text-sm font-medium">
-        Speed &amp; quality tier
-      </legend>
+      <legend className="mb-1 text-sm font-medium">Speed &amp; quality tier</legend>
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {TIER_COSTS.map((tier) => {
           const selected = tier.tier === value;
@@ -68,8 +68,8 @@ export function TierSelector({ value, onChange, balance, disabled = false }: Tie
               </span>
               <span className="text-xs text-muted-foreground">{tier.modelLabel}</span>
               <span className="font-mono text-[11px] text-muted-foreground">
-                {tier.wallClockMin} min · {tier.toolCallCap} tool calls ·{" "}
-                {tier.revisions} revision{tier.revisions === 1 ? "" : "s"}
+                {tier.wallClockMin} min · {tier.toolCallCap} tool calls · {tier.revisions} revision
+                {tier.revisions === 1 ? "" : "s"}
               </span>
               <span className="text-xs leading-relaxed text-muted-foreground">{tier.summary}</span>
               {unaffordable ? (

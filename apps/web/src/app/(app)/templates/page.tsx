@@ -1,23 +1,23 @@
-// app/(app)/templates — placeholder (W8-A). TODO(catalog wave): the template
-// catalog from GET /v1/templates (§13.1), manifests + live previews, and the
-// create-from-template flow (POST /v1/documents with the §13.1 `template`
-// key — useCreateDocument already accepts templateId).
+// Template gallery page (W8-J) — the in-app slice of the §16.2 "template
+// gallery": filter chips + search over `GET /v1/templates` cards (§7.4),
+// "Use template" → compose preselect (?template=id@version, W8-D contract),
+// "Manifest" → the full §7.2 payload. Server component for metadata only —
+// the interactive gallery is a client component (React Query owns the
+// gateway state, src/app/providers.tsx).
 
 import type { Metadata } from "next";
+import { TemplateGallery } from "@/components/gallery/template-gallery";
 
 export const metadata: Metadata = {
   title: "Templates",
+  description:
+    "Browse the template catalog and start from a real layered document with named slots.",
 };
 
 export default function TemplatesPage() {
   return (
-    <section aria-labelledby="templates-heading" className="max-w-3xl">
-      <h1 id="templates-heading" className="text-2xl font-semibold tracking-tight">
-        Templates
-      </h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        The template catalog is on its way — this placeholder keeps the shell navigable.
-      </p>
-    </section>
+    <main className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6">
+      <TemplateGallery />
+    </main>
   );
 }

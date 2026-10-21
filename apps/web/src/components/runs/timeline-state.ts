@@ -418,20 +418,23 @@ function toMs(at: Date | string | number): number {
  * or malformed payloads (defensive §13.2: skip, never wedge the timeline).
  */
 export function parseRunEvent(event: WireEventInput): ParsedRunEvent | null {
-  const schema = RUN_EVENT_PAYLOAD_SCHEMAS[event.type as keyof RunEventPayloadMap];
+  const type = event.type as keyof RunEventPayloadMap;
+  // The untrusted `type` string is cast for the lookup, so the value is widened
+  // to `| undefined` — an unknown type drops the event instead of crashing.
+  const schema = RUN_EVENT_PAYLOAD_SCHEMAS[type] as
+    | z.ZodType<RunEventPayloadMap[keyof RunEventPayloadMap], z.ZodTypeDef, unknown>
+    | undefined;
   if (schema === undefined) {
     return null;
   }
-  const payload = schema.safeParse(event.payload);
-  if (!payload.success) {
+  const parsed = schema.safeParse(event.payload);
+  if (!parsed.success) {
     return null;
   }
-  return {
-    seq: event.seq,
-    atMs: toMs(event.at),
-    type: event.type as keyof RunEventPayloadMap,
-    payload: payload.data,
-  };
+  // The type↔payload correlation is guaranteed by RUN_EVENT_PAYLOAD_SCHEMAS's
+  // `satisfies` binding (the schema was chosen by this very `type`); the cast
+  // only re-correlates what TS cannot track through a dynamic keyed lookup.
+  return { seq: event.seq, atMs: toMs(event.at), type, payload: parsed.data } as ParsedRunEvent;
 }
 
 // ---------------------------------------------------------------------------
@@ -823,6 +826,63 @@ export function formatDuration(ms: number): string {
     return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
   }
   return `${totalSeconds}s`;
+}
+
+/** User-facing status labels (§5.1 states — never raw codes). */
+export function statusLabel(status: RunStatusName): string {
+  switch (status) {
+    case "queued":
+      return "Queued";
+    case "planning":
+      return "Planning";
+    case "executing":
+      return "Executing";
+    case "observing":
+      return "Observing";
+    case "rendering":
+      return "Rendering";
+    case "validating":
+      return "Validating";
+    case "critiquing":
+      return "Critiquing";
+    case "repairing":
+      return "Repairing";
+    case "finalizing":
+      return "Finalizing";
+    case "succeeded":
+      return "Succeeded";
+    case "succeeded_with_warnings":
+      return "Succeeded with warnings";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+  }
+}
+
+/** User-facing tier labels (§5.2 rows). */
+export function tierLabel(tier: string | null): string {
+  if (tier === null) {
+    return "Unknown tier";
+  }
+  switch (tier) {
+    case "quick":
+      return "Quick edit";
+    case "standard":
+      return "Standard";
+    case "complex":
+      return "Complex";
+    case "premium":
+      return "Premium";
+    case "max":
+      return "Max";
+    case "image_gen":
+      return "Image generation";
+    case "image_gen_hd":
+      return "Image generation (HD)";
+    default:
+      return tier.charAt(0).toUpperCase() + tier.slice(1);
+  }
 }
 
 // ---------------------------------------------------------------------------

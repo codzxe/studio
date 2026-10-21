@@ -19,7 +19,7 @@
 // Selection state (≤ MAX_ASSET_ATTACHMENTS) is owned by the composer page and
 // passed down; these chips are pure presentation + toggle semantics.
 
-import { createContext, useContext, type ReactNode } from "react";
+import { type ReactNode, createContext, useContext } from "react";
 import { MAX_ASSET_ATTACHMENTS } from "./run-contract";
 
 // ---------------------------------------------------------------------------
@@ -185,8 +185,7 @@ export function AssetChips({
   if (assets.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        No assets in this workspace yet — upload files from the dashboard and
-        attach them here.
+        No assets in this workspace yet — upload files from the dashboard and attach them here.
       </p>
     );
   }
