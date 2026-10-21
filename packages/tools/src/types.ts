@@ -29,6 +29,12 @@ export const TOOL_ONLY_ERROR_CODES = [
   // §6.1 layer references.
   "ambiguous_layer", // A layer_name matched multiple layers; candidates listed.
   "layer_not_found", // A layer reference (id or name) resolved to nothing.
+  // Adopted by W7-M from the fleet swap-point flags (add-only; one line each).
+  "unknown_component", // §8.3/§8.4: no component matches the id (candidates pinned in the hint).
+  "unknown_component_vars", // §8.4: unknown variable names (allowed list in the hint).
+  "critique_parse_failed", // vision_critique: the model reply was unparseable after its retry.
+  "export_failed", // export_document: the export pipeline failed (retryable per pipeline code).
+  "image_upscale_limit", // §7.3: the image would be upscaled past the 200% hard limit.
 ] as const satisfies readonly string[];
 
 /** The full catalog tools may emit: shared codes (§13.3) plus the tool surface above. */

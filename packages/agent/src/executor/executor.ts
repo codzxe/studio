@@ -435,10 +435,7 @@ export class ExecutorService {
     if (typeof options.emit !== "function") {
       throw new Error("[agent/executor] options.emit is required (§13.2 step events)");
     }
-    if (
-      options.gate !== undefined &&
-      typeof options.gate?.validateModelToolCall !== "function"
-    ) {
+    if (options.gate !== undefined && typeof options.gate?.validateModelToolCall !== "function") {
       throw new Error("[agent/executor] options.gate must be a ToolCallGate (§5.7 seam)");
     }
     this.model = options.model;

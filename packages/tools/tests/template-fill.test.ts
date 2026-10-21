@@ -601,7 +601,7 @@ describe("template_fill: engine flow", () => {
     });
   });
 
-  it("maps the engine's §7.3 upscale refusal to the precise invalid_slots error", async () => {
+  it("maps the engine's §7.3 upscale refusal to the precise image_upscale_limit error", async () => {
     const { ctx } = happyContext(async () => ({
       ok: false,
       code: "validation_failed",
@@ -617,7 +617,7 @@ describe("template_fill: engine flow", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe("invalid_slots");
+      expect(result.code).toBe("image_upscale_limit"); // W7-M catalog adoption pin
       expect(result.message).toContain("exceeds the 200% limit");
       expect(result.hint).toContain("125%");
       expect(result.retryable).toBe(false);
@@ -734,7 +734,7 @@ describe("template_fill: pure report + summary helpers", () => {
       "slot `logo`: upscaling the image to 1500% of its pixels exceeds the 200% limit",
     );
     expect(failure.ok).toBe(false);
-    expect(failure.code).toBe("invalid_slots");
+    expect(failure.code).toBe("image_upscale_limit"); // W7-M catalog adoption pin
     expect(failure.message).toContain("200% limit");
     expect(failure.hint).toContain("asset_search");
   });

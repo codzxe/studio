@@ -77,12 +77,11 @@ export const MAX_VALIDATOR_REPORT_CHARS = 2000;
 export const MAX_PALETTE_ENTRIES = 10;
 
 /**
- * The parse-failure code. `critique_parse_failed` is NOT yet in the §13.3
- * add-only catalog (nor in types.ts TOOL_ONLY_ERROR_CODES) — `validation_failed`
- * is the closest existing code ("payload failed schema validation", §5.1).
- * Swap this ONE line when the types.ts owner adopts the code (W5-D/W5-B precedent).
+ * The parse-failure code. `critique_parse_failed` was adopted into the catalog
+ * (types.ts TOOL_ONLY_ERROR_CODES) by W7-M — this constant stays as the single
+ * swap point the tests import (W5-D/W5-B/W5-O fleet precedent).
  */
-export const CRITIQUE_PARSE_FAILED_CODE: ToolErrorCode = "validation_failed";
+export const CRITIQUE_PARSE_FAILED_CODE: ToolErrorCode = "critique_parse_failed";
 
 // ---------------------------------------------------------------------------
 // The injected vision-model seam (worker conforms structurally; §5.3 in worker)

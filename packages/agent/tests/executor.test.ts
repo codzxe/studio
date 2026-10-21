@@ -50,6 +50,7 @@ import {
   TOOLS_BLOCK_HEADER,
   buildExecutorSystemPrompt,
 } from "../src/executor/prompt.js";
+import { ToolCallGate } from "../src/guards/tool-gate.js";
 import { type Plan, validatePlan } from "../src/plan.js";
 
 // ---------------------------------------------------------------------------
@@ -1195,5 +1196,133 @@ describe("executor: statuses", () => {
       "aborted",
     ];
     expect(statuses).toHaveLength(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §5.7 ToolCallGate wiring (W6-K seam, wired by W7-M)
+// ---------------------------------------------------------------------------
+
+describe("executor: §5.7 ToolCallGate wiring (W7-M)", () => {
+  /** The run-start manifest the gate freezes: a SUBSET of the registry, so a
+   * registry-known-but-unoffered tool proves the gate runs BEFORE dispatch. */
+  const gateManifest: ToolListing[] = [
+    { name: "workspace_snapshot", description: "Read the document." },
+    { name: "text_set", description: "Set editable text." },
+  ];
+
+  function makeGatedService(
+    turns: readonly ScriptedTurn[],
+    options: { mutatingCommandCap?: number } = {},
+  ): { service: ExecutorService; state: ScriptedModelState } {
+    const { model, state } = scriptedModel(turns);
+    const tools = defaultFakeTools();
+    const service = new ExecutorService({
+      model,
+      tools,
+      manifest: gateManifest,
+      toolContext: fakeContext(),
+      emit: () => {},
+      clock: () => 0,
+      gate: new ToolCallGate({
+        tools,
+        manifest: gateManifest,
+        mutatingCommandCap: options.mutatingCommandCap ?? 12,
+      }),
+    });
+    return { service, state };
+  }
+
+  it("rejects a registry-known tool outside the run-start manifest (skip + deviation, no execution)", async () => {
+    // template_apply IS in the registry (and would execute without a gate), but
+    // the gate's manifest was fixed at run start without it → §5.7 rejection.
+    const plan = makePlan([{ tool: "text_set", args: { size: 40 } }]);
+    const { service, state } = makeGatedService([
+      {
+        calls: [{ name: "template_apply" }, { name: "text_set", args: { size: 40 } }],
+        done: true,
+      },
+    ]);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
+
+    expect(report.status).toBe("completed");
+    expect(report.toolCallsExecuted).toBe(1); // only text_set ran; template_apply skipped
+    expect(report.steps[0]?.succeededTools).toEqual(["text_set"]);
+    expect(report.deviations).toEqual([
+      {
+        stepSeq: 0,
+        kind: "unknown_tool",
+        plannedTool: "text_set",
+        actualTool: "template_apply",
+        detail: expect.stringContaining('ToolCallGate rejected "template_apply"'),
+      },
+    ]);
+    // The model gets the gate's envelope with the OFFERED tools in the hint.
+    const codes = lastSnapshotCodes(state);
+    expect(codes).toEqual(["unknown_tool", "ok"]);
+    const messages = (state.snapshots.at(-1) ?? []).filter((message) => message.role === "tool");
+    const feedback = messages.find((message) => !message.result.ok)?.result;
+    if (feedback === undefined || feedback.ok) {
+      throw new Error("expected the gate's unknown_tool feedback result");
+    }
+    expect(feedback.hint).toContain("workspace_snapshot");
+    expect(feedback.hint).not.toContain("template_apply");
+  });
+
+  it("refuses mutating calls past the gate's §5.2 cap (mutating_budget deviation, tool never runs)", async () => {
+    const plan = makePlan([{ tool: "text_set" }]);
+    const { service, state } = makeGatedService(
+      [
+        { calls: [{ name: "text_set", args: { size: 72 } }] }, // executes, reserves 1/1
+        { calls: [{ name: "text_set", args: { size: 80 } }], done: true }, // cap exhausted
+      ],
+      { mutatingCommandCap: 1 },
+    );
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
+
+    expect(report.toolCallsExecuted).toBe(1);
+    expect(report.steps[0]?.succeededTools).toEqual(["text_set"]);
+    expect(report.deviations).toEqual([
+      {
+        stepSeq: 0,
+        kind: "mutating_budget",
+        plannedTool: "text_set",
+        actualTool: "text_set",
+        detail: expect.stringContaining("mutating command budget is exhausted"),
+      },
+    ]);
+    expect(lastSnapshotCodes(state)).toEqual(["ok", "budget_exceeded"]);
+  });
+
+  it("args-cap rejections take the §6.3 retry path: invalid_args feedback, no deviation, a fixed retry executes", async () => {
+    const plan = makePlan([{ tool: "text_set" }]);
+    // A 2501-char string trips the gate's §5.7 string cap before the schema parse.
+    const oversized = { size: 72, note: "x".repeat(2501) };
+    const { service, state } = makeGatedService([
+      { calls: [{ name: "text_set", args: oversized }] }, // args_cap → invalid_args
+      { calls: [{ name: "text_set", args: { size: 72 } }], done: true }, // fixed → ok
+    ]);
+    const report = await service.execute(
+      makeInput(plan, makeBudget()),
+      new AbortController().signal,
+    );
+
+    expect(report.status).toBe("completed");
+    expect(report.toolCallsExecuted).toBe(1); // the capped call never ran
+    expect(report.deviations).toEqual([]); // §6.3 feedback path, not a §5.5 deviation
+    expect(lastSnapshotCodes(state)).toEqual(["invalid_args", "ok"]);
+    const messages = (state.snapshots.at(-1) ?? []).filter((message) => message.role === "tool");
+    const feedback = messages.find((message) => !message.result.ok)?.result;
+    if (feedback === undefined || feedback.ok) {
+      throw new Error("expected the gate's args_cap feedback result");
+    }
+    expect(feedback.code).toBe("invalid_args");
+    expect(feedback.message).toContain("§5.7 caps");
   });
 });

@@ -44,6 +44,7 @@ import type {
   Tool,
   ToolContext,
   ToolErr,
+  ToolErrorCode,
 } from "../types.js";
 
 /** The single engine command underneath (§6 row 5); the model never sees this id. */
@@ -374,16 +375,17 @@ export function compileSlotValues(
 // ---------------------------------------------------------------------------
 
 /**
- * §7.3: upscaling past 200% is a hard engine error. The dedicated catalog name for
- * this is `image_upscale_limit`; the §13.3 catalog is add-only and does not carry it
- * yet, so this maps to the nearest code — `invalid_slots`: the asset fails the slot's
- * constraints. Swap the code here (one line) when the catalog gains the code.
+ * §7.3: upscaling past 200% is a hard engine error. The dedicated catalog name
+ * `image_upscale_limit` was adopted into TOOL_ONLY_ERROR_CODES by W7-M —
+ * exported here as the single swap point the tests import (W5-D/W5-Q fleet
+ * precedent), and used by the builder below.
  */
+export const IMAGE_UPSCALE_LIMIT_CODE: ToolErrorCode = "image_upscale_limit";
+
 export function imageUpscaleLimitErr(engineText: string): ToolErr {
   const trimmed = engineText.trim();
-  const message =
-    trimmed.length > 0 ? trimmed : "The image would be upscaled past the 200% limit";
-  return err("invalid_slots", truncateStr(message, MAX_ERROR_MESSAGE_CHARS), {
+  const message = trimmed.length > 0 ? trimmed : "The image would be upscaled past the 200% limit";
+  return err(IMAGE_UPSCALE_LIMIT_CODE, truncateStr(message, MAX_ERROR_MESSAGE_CHARS), {
     hint: "Use a larger image (upscale beyond 125% warns, beyond 200% is refused) or asset_search a higher-resolution one (§7.3).",
     retryable: false,
   });

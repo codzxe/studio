@@ -445,15 +445,13 @@ function truncateText(value: string, max: number): string {
 }
 
 /**
- * §13.3 add-only catalog gap (fleet precedent: "unknown_asset", "image_upscale_limit"):
- * "export_failed" is not yet in the shared catalog (@studio/config ERROR_CODES)
- * nor in TOOL_ONLY_ERROR_CODES (packages/tools/src/types.ts — not owned by this
- * file). Until the types.ts owner adds it, pipeline failures map to
- * `storage_error` (exports terminate as object-storage artifacts). Flip this ONE
- * constant to "export_failed" the day the catalog gains the code — the tests
- * import it, so the swap is a single line.
+ * §13.3-style add-only catalog adoption (fleet precedent: "unknown_asset",
+ * "image_upscale_limit"): "export_failed" was added to TOOL_ONLY_ERROR_CODES
+ * (packages/tools/src/types.ts) by W7-M, so pipeline failures now carry the
+ * dedicated code. The tests import this constant, keeping the swap a single
+ * line if the mapping ever needs revisiting.
  */
-export const EXPORT_FAILED_CODE: ToolErrorCode = "storage_error";
+export const EXPORT_FAILED_CODE: ToolErrorCode = "export_failed";
 
 /**
  * A failed export job (or an invalid export URL), mapped from the pipeline's

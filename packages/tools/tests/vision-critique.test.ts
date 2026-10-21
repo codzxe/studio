@@ -623,7 +623,7 @@ describe("vision_critique tool", () => {
     expect(calls).toHaveLength(2);
     if (!result.ok) {
       expect(result.code).toBe(CRITIQUE_PARSE_FAILED_CODE);
-      expect(result.code).toBe("validation_failed");
+      expect(result.code).toBe("critique_parse_failed"); // W7-M catalog adoption pin
       expect(result.retryable).toBe(true);
       expect(result.hint).toContain("render_preview");
       expect(JSON.stringify(result)).not.toContain("still nope");

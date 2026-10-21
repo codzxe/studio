@@ -88,19 +88,19 @@ export const MAX_COMPONENT_ID_CHARS = 64;
 export const MAX_COMPONENT_VERSION = 4_294_967_295;
 
 /**
- * §8.3's dedicated code for an unknown component id is `unknown_component`; the
- * shared §13.3 catalog is add-only and does not carry it yet, so the tool emits
- * the catalog's unknown-id code with candidate pins in the hint (W5-E/W5-B
- * fleet precedent). Swap this one line when the catalog adopts the code.
+ * §8.3's dedicated code for an unknown component id is `unknown_component`
+ * (candidates ride in the hint as id@version pins, §7.2). Adopted into
+ * TOOL_ONLY_ERROR_CODES by W7-M — this constant stays as the single swap
+ * point the tests import (W5-E/W5-B/W5-K fleet precedent).
  */
-export const UNKNOWN_COMPONENT_CODE: ToolErrorCode = "not_found";
+export const UNKNOWN_COMPONENT_CODE: ToolErrorCode = "unknown_component";
 
 /**
  * Same for §8.4's unknown-variable refusal (`unknown_component_vars`): the
- * catalog carries no component-specific code, so the generic §13.3 validation
- * code carries the §8.4 allowed list in the hint. One-line swap when adopted.
+ * §8.4 allowed list travels in the hint. Adopted into the catalog by W7-M;
+ * the constant remains the tests' single import point.
  */
-export const UNKNOWN_COMPONENT_VARS_CODE: ToolErrorCode = "validation_failed";
+export const UNKNOWN_COMPONENT_VARS_CODE: ToolErrorCode = "unknown_component_vars";
 
 // ---------------------------------------------------------------------------
 // Error builders (§6.1: actionable, allowed lists attached)

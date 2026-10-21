@@ -354,6 +354,7 @@ export {
   CompiledSlots,
   EngineSlotValue,
   FillReport,
+  IMAGE_UPSCALE_LIMIT_CODE,
   ImageSlotValue,
   SlotValue,
   TEMPLATE_FILL_COMMAND,
