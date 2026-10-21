@@ -1,0 +1,19 @@
+{
+  "template": "x-post@1",
+  "note": "evals/templates/x-post@1/assets-note.md",
+  "assets": [
+    {
+      "kind": "gradient",
+      "file": "asset_photo_1600x900.png",
+      "w": 1600,
+      "h": 900,
+      "alpha": false,
+      "from": "#0A0A0A",
+      "to": "#1D9BF0",
+      "axis": "xy",
+      "shapes": [
+        { "type": "rect", "x": 320, "y": 340, "w": 960, "h": 220, "color": "#FFFFFF", "blend": "screen", "amount": 0.2 }
+      ]
+    }
+  ]
+}

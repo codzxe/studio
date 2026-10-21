@@ -1,0 +1,223 @@
+# =============================================================================
+# packages/evals/cases/expanded/freeform.yaml — golden briefs: FREEFORM create
+# intents (W7-D growth wave; §23.2 "freeform is the last resort", §24.3 seed
+# family).
+#
+# Both cases deliberately hand the planner a catalog containing the three ACTUAL
+# templates (evals/templates/) that ALL fail the brief (wrong aspect, or a required
+# slot the brief cannot fill). The golden planner must:
+#   - set plan.template = null (§5.5) instead of forcing a template,
+#   - flag the freeform path in plan.notes_for_user (asserted verbatim-ish),
+#   - compose named role layers from primitives (§23.1 rule 5, §24.3 trace),
+#   - run on the complex tier = 5 credits (§5.2/§24.3 precedent).
+# =============================================================================
+
+# ── freeform #1: portrait gig poster — no template fits the aspect ───────────
+- id: freeform-gig-poster
+  description: >-
+    1080x1350 portrait gig poster: every catalog template is the wrong aspect
+    (instagram-post@3 and youtube-thumbnail@1 and presentation-slide@1 are 1:1, 16:9,
+    16:9 — none is 4:5 portrait), so the planner takes the freeform-from-primitives
+    path and flags it (§23.2). The user asks for a "black" background; the golden
+    planner uses the brand near-black token #3B2A20 and says so (§11.1
+    color_out_of_palette discipline). Complex tier = 5 credits (§5.2/§24.3).
+  vars:
+    brief: "Gig poster 1080×1350 for the indie night: huge stacked headline 'LOUD AT MIDNIGHT', support line 'Doors 11pm · The Basement', a thin rule under the support line, black background, cream type, terracotta accent bar at the top."
+    snapshot:
+      canvas: { w: 1080, h: 1350 }
+      layers: []
+      palette: ['#3B2A20', '#F4E7D3', '#D96C3B']   # brand tokens: near-black, cream, terracotta
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+        - id: youtube-thumbnail@1
+          tags: [social, video, thumbnail, wide]
+          canvas: { w: 1280, h: 720 }
+          slots:
+            headline: { kind: text, maxChars: 30 }
+            photo: { kind: image, minPixels: 800 }
+        - id: presentation-slide@1
+          tags: [presentation, slide, 16x9]
+          canvas: { w: 1920, h: 1080 }
+          slots:
+            title: { kind: text, maxChars: 48 }
+            visual: { kind: image, minPixels: 600 }
+      components: []
+    budget: "complex — 5 credits, 200k/12k tokens in/out, 24 tool calls, 2 revisions, 10 min wall clock (§5.2)"
+    plan:
+      intent: create_post
+      template: null            # freeform last resort — no catalog template fits 1080x1350 (§23.2)
+      assets: []
+      slots:
+        headline: "LOUD AT MIDNIGHT"
+        support: "Doors 11pm · The Basement"
+      palette: ['#3B2A20', '#F4E7D3', '#D96C3B']
+      typography:
+        headline: { font: display-serif, weight: bold, size: 140 }
+        support: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: layer.new, args: { name: Background, fill: '#3B2A20' } }
+        - { tool: layer.new, args: { name: AccentBar, fill: '#D96C3B' } }
+        - { tool: layout.apply, args: { stack: centered, padding: 96 } }
+        - { tool: type.create, args: { name: Headline, font: display-serif, size: 140 } }
+        - { tool: type.create, args: { name: Support, font: brand-sans, size: 36 } }
+        - { tool: layer.new, args: { name: Rule, kind: rule } }
+        - { tool: style.apply, args: { layer: Rule, fill: '#D96C3B', thickness: 4 } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area]
+      model_tier: complex
+      notes_for_user: "No template fits a 1080x1350 poster (freeform): composed from layout primitives; background is the brand near-black token, not pure black."
+    run:
+      status: succeeded
+      credits_charged: 5        # §5.2 complex tier; §24.3 freeform precedent
+      tool_calls: 12
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, AccentBar, Headline, Support, Rule]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template NOT chosen — freeform is correct (§23.2)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # planner flags the freeform path to the user (§23.2/§5.5)
+      value: "return JSON.parse(output).plan.notes_for_user.toLowerCase().includes('freeform')"
+    - type: javascript          # tier cost exact (§5.2: complex = 5 credits; §24.3)
+      value: "return JSON.parse(output).run.credits_charged === 5"
+    - type: javascript          # max tool calls respected (§5.2: complex cap = 24)
+      value: "return JSON.parse(output).run.tool_calls <= 24 && JSON.parse(output).plan.steps.length <= 24"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok, zero blockers (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: named role layers from primitives (§23.1 rule 5)
+      value: "return ['Background', 'AccentBar', 'Headline', 'Support', 'Rule'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # §11.1 palette discipline: only brand tokens, incl. the near-black
+      value: "return ((brand) => JSON.parse(output).plan.palette.every(h => brand.includes(h)))(['#3B2A20', '#F4E7D3', '#D96C3B'])"
+    - type: javascript          # §24.3-style display scale: 140pt stacked headline
+      value: "return JSON.parse(output).plan.typography.headline.size === 140"
+    - type: contains            # slot contents: poster copy verbatim (§21)
+      value: "Doors 11pm · The Basement"
+
+# ── freeform #2: typographic quote card — required photo slot cannot be filled ─
+- id: freeform-quote-card
+  description: >-
+    Minimal typographic quote card 1080x1080 with NO photo. instagram-post@3 is square
+    but its photo slot is required (optional: false in the actual manifest) — a
+    photo-less brief cannot fill it, so forcing the template would break §7.3 slot
+    rules; the planner goes freeform from primitives and flags it (§23.2). Complex
+    tier = 5 credits (§5.2/§24.3).
+  vars:
+    brief: "Minimal typographic quote card, 1080×1080: just the serif quote 'Simplicity is the hardest brief.' centered large, the attribution '— the studio manifesto' small underneath, cream background, and no photo at all."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers: []
+      palette: ['#F4E7D3', '#3B2A20', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }   # required — cannot stay empty (§7.3)
+        - id: youtube-thumbnail@1
+          tags: [social, video, thumbnail, wide]
+          canvas: { w: 1280, h: 720 }
+          slots:
+            headline: { kind: text, maxChars: 30 }
+            photo: { kind: image, minPixels: 800 }
+        - id: presentation-slide@1
+          tags: [presentation, slide, 16x9]
+          canvas: { w: 1920, h: 1080 }
+          slots:
+            title: { kind: text, maxChars: 48 }
+            visual: { kind: image, minPixels: 600 }
+      components: []
+    budget: "complex — 5 credits, 200k/12k tokens in/out, 24 tool calls, 2 revisions, 10 min wall clock (§5.2)"
+    plan:
+      intent: create_post
+      template: null            # freeform — the only square template demands a photo (§23.2/§7.3)
+      assets: []                # no photo in this brief, by explicit user request
+      slots:
+        quote: "Simplicity is the hardest brief."
+        attribution: "— the studio manifesto"
+      palette: ['#F4E7D3', '#3B2A20', '#D96C3B']
+      typography:
+        quote: { font: display-serif, weight: normal, size: 96 }
+        attribution: { font: brand-sans, size: 30 }
+      steps:
+        - { tool: layer.new, args: { name: Background, fill: '#F4E7D3' } }
+        - { tool: layout.apply, args: { stack: centered, padding: 96 } }
+        - { tool: type.create, args: { name: Quote, font: display-serif, size: 96 } }
+        - { tool: type.create, args: { name: Attribution, font: brand-sans, size: 30 } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area]
+      model_tier: complex
+      notes_for_user: "You asked for no photo and the only square template requires one, so this is a freeform composition on centered stack primitives."
+    run:
+      status: succeeded
+      credits_charged: 5        # §5.2 complex tier; §24.3 freeform precedent
+      tool_calls: 7
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }  # cream/ink contrast passes 4.5:1
+      layers: [Background, Quote, Attribution]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template NOT chosen — photo-less brief vs required slot (§23.2/§7.3)
+      value: "return JSON.parse(output).plan.template === null"
+    - type: javascript          # no assets planned (the "no photo" ask is honored, §21)
+      value: "return JSON.parse(output).plan.assets.length === 0"
+    - type: javascript          # planner flags the freeform path (§23.2/§5.5)
+      value: "return JSON.parse(output).plan.notes_for_user.toLowerCase().includes('freeform')"
+    - type: javascript          # tier cost exact (§5.2: complex = 5 credits)
+      value: "return JSON.parse(output).run.credits_charged === 5"
+    - type: javascript          # max tool calls respected (§5.2: complex cap = 24)
+      value: "return JSON.parse(output).run.tool_calls <= 24 && JSON.parse(output).plan.steps.length <= 24"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok, zero blockers (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: minimal role-named tree (§23.1 rule 5)
+      value: "return ['Background', 'Quote', 'Attribution'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: contains            # slot contents: the quote verbatim (§21)
+      value: "Simplicity is the hardest brief."

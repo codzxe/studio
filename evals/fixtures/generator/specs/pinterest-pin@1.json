@@ -1,0 +1,22 @@
+{
+  "template": "pinterest-pin@1",
+  "note": "evals/templates/pinterest-pin@1/assets-note.md",
+  "comment": "asset_footer_280x48.png is the social-handle component's fallback 'before the component registry ships' — it has (evals/components), so only the photo is generated.",
+  "assets": [
+    {
+      "kind": "gradient",
+      "file": "asset_photo_1000x900.png",
+      "w": 1000,
+      "h": 900,
+      "alpha": false,
+      "from": "#FFF7EE",
+      "to": "#D96C3B",
+      "axis": "y",
+      "shapes": [
+        { "type": "circle", "cx": 250, "cy": 260, "r": 120, "color": "#3B2A20", "blend": "screen", "amount": 0.25 },
+        { "type": "circle", "cx": 500, "cy": 450, "r": 150, "color": "#3B2A20", "blend": "screen", "amount": 0.25 },
+        { "type": "circle", "cx": 750, "cy": 300, "r": 110, "color": "#3B2A20", "blend": "screen", "amount": 0.25 }
+      ]
+    }
+  ]
+}

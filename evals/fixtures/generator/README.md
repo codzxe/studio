@@ -24,6 +24,7 @@ evals/fixtures/generator/
 ```sh
 node evals/fixtures/generator/src/generate-assets.mjs                 # all templates
 node evals/fixtures/generator/src/generate-assets.mjs instagram-post  # one template
+node evals/fixtures/generator/src/generate-assets.mjs --skip-missing-specs  # mid-wave
 node evals/fixtures/generator/src/render-golden.mjs                   # stub dry-run
 ```
 
@@ -89,13 +90,19 @@ anti-aliasing) exactly as the notes allow. Blend math (0..255 sRGB floats,
 rounded once): `screen(a,b) = a + b − a·b/255`, then mixed at `amount`:
 `out = base + amount·(blended − base)` — e.g. "circles at 25% screen blend".
 
-The three shipped specs transcribe their notes 1:1
-(`asset_photo_1080x700.png`, `asset_logo_240x80.png` for instagram-post@3;
-`asset_photo_1280x720.png` for youtube-thumbnail@1; `asset_visual_768x576.png`,
-`asset_logo_320x96.png` for presentation-slide@1). The notes' **conditional
-badge fallbacks are intentionally NOT generated**: `offer-badge@2` has shipped in
-`evals/components/`, so the badge slot renders via `component.place`, not a
-raster — the generator prints those as note-coverage lines.
+The shipped specs transcribe their notes 1:1 (the note prose is the human
+spec; the mirror is its machine form — the generator prints a note-coverage
+diff so drift is visible). Assets a note marks **conditional** — "if a fixture
+case needs it", "fallback if the component registry has not shipped" — are
+**intentionally NOT generated**: the component registry (`evals/components/`)
+has shipped, so those slots render via `component.place`, and the generator
+lists every such mention as a note-coverage line. Templates whose notes
+generate **no** unconditional asset (linkedin-banner@1, presentation-quote@1,
+blog-cover@1) carry an explicit empty mirror `{ "template": …, "assets": [] }`
+with a `comment` explaining why — the reviewed form of "no raster assets".
+While parallel waves are still landing templates, `--skip-missing-specs`
+turns the missing-mirror hard failure into warn+skip (default stays loud so
+the fixture set can never silently go incomplete).
 
 ## Output & size caps
 
@@ -116,6 +123,16 @@ Current outputs (all deterministic, all ≤ 50 KB):
 | youtube-thumbnail@1 | asset_photo_1280x720.png | 22 864 |
 | presentation-slide@1 | asset_visual_768x576.png | 8 031 |
 | presentation-slide@1 | asset_logo_320x96.png | 719 |
+| instagram-story@1 | asset_photo_1080x1280.png | 10 706 |
+| x-post@1 | asset_photo_1600x900.png | 34 364 |
+| email-header@1 | asset_logo_320x160.png | 872 |
+| facebook-cover@1 | asset_photo_820x312.png | 8 499 |
+| facebook-cover@1 | asset_logo_128x128.png | 692 |
+| pinterest-pin@1 | asset_photo_1000x900.png | 8 286 |
+| web-hero-banner@1 | asset_photo_960x1080.png | 10 001 |
+
+(12 assets, ~111 KiB total. blog-cover@1, linkedin-banner@1 and
+presentation-quote@1 generate none — see "Spec convention".)
 
 ## Golden renders (§21 render-similarity TODO)
 

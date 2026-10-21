@@ -1,0 +1,1304 @@
+# =============================================================================
+# packages/evals/cases/expanded/creates.yaml — golden briefs: create_post intents
+# (W7-D growth wave, §21 "50+ golden briefs").
+#
+# Coverage targets of this file:
+#   (a) every ACTUAL template in evals/templates/ gets >=1 happy-path brief:
+#       instagram-post@3, youtube-thumbnail@1, presentation-slide@1
+#   (b) every ACTUAL component in evals/components/ appears in >=1 brief:
+#       avatar-circle@1, button-cta@1, logo-lockup@1, offer-badge@2, price-tag@1,
+#       quote-block@1, ribbon-banner@1, social-handle@1, star-rating@1, wave-divider@1
+#   (c) intent matrix row create_post x15 (14 here + 2 more in freeform.yaml,
+#       plus clarify/injection/budget cases that also classify create_post).
+#
+# Slot budgets asserted against the ACTUAL manifests in evals/templates/*/manifest.json
+# (headline maxChars 42 / subhead 60 on instagram-post@3; 30 on youtube-thumbnail@1;
+# title 48 / subtitle 80 on presentation-slide@1) and the component variable caps
+# in evals/components/*/component.json.
+# =============================================================================
+
+# ── template happy-path: youtube-thumbnail@1 (§7 manifest verbatim) ──────────
+- id: create-thumb-yt-episode
+  description: >-
+    Happy path for youtube-thumbnail@1 (actual manifest in evals/templates/): full-bleed
+    cover photo (asset_733, minPixels 1280x720), 18-char headline inside the 30-char
+    slot cap, optional badge slot filled via offer-badge@2 label "NEW" at topRight;
+    standard tier = 2 credits (§5.2); validator clean.
+  vars:
+    brief: "New video thumbnail for the camping gear review episode — huge text 'WE TESTED 12 TENTS', the ridge tent shot as the photo, red NEW badge in the corner."
+    snapshot:
+      canvas: { w: 1280, h: 720 }
+      layers: []
+      palette: ['#101418', '#FFFFFF', '#E5484D']
+      fonts: ['display-sans', 'brand-sans']
+      assets:
+        - { id: asset_733, name: 'tent-ridge.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: youtube-thumbnail@1
+          tags: [social, video, thumbnail, wide]
+          canvas: { w: 1280, h: 720 }
+          slots:
+            headline: { kind: text, maxChars: 30 }
+            photo: { kind: image, minPixels: 800 }
+            badge: { kind: component, optional: true }
+      components:
+        - { id: offer-badge@2, vars: [label, bg, textColor, showRibbon] }
+    plan:
+      intent: create_post
+      template: youtube-thumbnail@1
+      assets:
+        - { ref: asset_733, slot: photo, fit: cover, focal: { x: 0.5, y: 0.35 } }
+      slots:
+        headline: "WE TESTED 12 TENTS"
+      palette: ['#101418', '#FFFFFF', '#E5484D']
+      typography:
+        headline: { font: display-sans, weight: bold, size: 88 }
+      steps:
+        - { tool: template.apply, args: { id: youtube-thumbnail@1 } }
+        - { tool: doc.place, args: { asset: asset_733, layer: Photo, fit: cover, focalY: 0.35 } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: component.place, args: { id: offer-badge@2, vars: { label: NEW }, anchor: topRight } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, asset_resolution]
+      model_tier: standard
+      notes_for_user: "Built on youtube-thumbnail@1; headline fits the 30-char slot at 88pt over one line."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 7
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Badge]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin: actual manifest id@version (§21)
+      value: "return JSON.parse(output).plan.template === 'youtube-thumbnail@1'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present (§11.1 + §7.2 rules)
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area', 'asset_resolution'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok, zero blockers (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0 && v.majors === 0 && v.minors === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: manifest layerMap roles (§7.2)
+      value: "return ['Background', 'Photo', 'Headline', 'Badge'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # slot contents (§21) + §7.2 maxChars 30 budget
+      value: "return JSON.parse(output).plan.slots.headline === 'WE TESTED 12 TENTS' && JSON.parse(output).plan.slots.headline.length <= 30"
+    - type: javascript          # badge slot filled via the actual component pin (§8)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'offer-badge@2' && s.args.vars.label === 'NEW')"
+
+# ── template happy-path: presentation-slide@1 (§7 manifest verbatim) ───────────
+- id: create-slide-quarterly-results
+  description: >-
+    Happy path for presentation-slide@1 (actual manifest): title 23 chars within the
+    48-char cap, optional subtitle + logo slots filled, chart screenshot (asset_901)
+    placed cover into the required visual slot (minPixels 768x576); standard tier =
+    2 credits; validator clean.
+  vars:
+    brief: "Quarterly all-hands slide: title 'Q3 growth, in one chart', subtitle 'ARR +38% YoY', the growth chart visual on the right, our logo bottom-left."
+    snapshot:
+      canvas: { w: 1920, h: 1080 }
+      layers: []
+      palette: ['#F6F5F2', '#1A1A1A', '#52504B']
+      fonts: ['display-sans', 'brand-sans']
+      assets:
+        - { id: asset_901, name: 'q3-arr-chart.png', kind: chart }
+        - { id: asset_902, name: 'logo.png', kind: logo }
+    catalog:
+      templates:
+        - id: presentation-slide@1
+          tags: [presentation, slide, 16x9]
+          canvas: { w: 1920, h: 1080 }
+          slots:
+            title: { kind: text, maxChars: 48 }
+            subtitle: { kind: text, maxChars: 80, optional: true }
+            visual: { kind: image, minPixels: 600 }
+            logo: { kind: image, optional: true }
+      components: []
+    plan:
+      intent: create_post
+      template: presentation-slide@1
+      assets:
+        - { ref: asset_901, slot: visual, fit: cover, focal: { x: 0.5, y: 0.5 } }
+        - { ref: asset_902, slot: logo, fit: contain }
+      slots:
+        title: "Q3 growth, in one chart"
+        subtitle: "ARR +38% YoY"
+      palette: ['#F6F5F2', '#1A1A1A', '#52504B']
+      typography:
+        title: { font: display-sans, weight: bold, size: 72 }
+        subtitle: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: template.apply, args: { id: presentation-slide@1 } }
+        - { tool: doc.place, args: { asset: asset_901, layer: Visual, fit: cover } }
+        - { tool: doc.place, args: { asset: asset_902, layer: Logo, fit: contain } }
+        - { tool: type.edit, args: { layer: Title, size: 72 } }
+        - { tool: type.edit, args: { layer: Subtitle, size: 36 } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, asset_resolution]
+      model_tier: standard
+      notes_for_user: "Built on presentation-slide@1; title fits the 48-char slot at 72pt, chart placed cover."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 8
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Title, Subtitle, Visual, Logo]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin: actual manifest id@version (§21)
+      value: "return JSON.parse(output).plan.template === 'presentation-slide@1'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present (§11.1 + §7.2 rules)
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area', 'asset_resolution'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok, zero blockers (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0 && v.majors === 0 && v.minors === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: manifest layerMap roles (§7.2)
+      value: "return ['Background', 'Title', 'Subtitle', 'Visual', 'Logo'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # slot contents exact + maxChars budgets (§7.2)
+      value: "return JSON.parse(output).plan.slots.title === 'Q3 growth, in one chart' && JSON.parse(output).plan.slots.subtitle === 'ARR +38% YoY'"
+    - type: javascript          # asset-id discipline: both refs come from SNAPSHOT (§23.2)
+      value: "return JSON.parse(output).plan.assets[0].ref === 'asset_901' && JSON.parse(output).plan.assets[0].slot === 'visual' && JSON.parse(output).plan.assets[1].ref === 'asset_902' && JSON.parse(output).plan.assets[1].slot === 'logo'"
+
+# ── template happy-path: instagram-post@3 with every optional slot filled ─────
+- id: create-ig-friday-special
+  description: >-
+    Happy path for instagram-post@3 (actual manifest): required photo/headline/subhead
+    slots plus BOTH optional slots (badge via offer-badge@2 "TODAY", logo contain);
+    headline 29 of 42 chars, subhead 18 of 60; standard tier = 2 credits. Proves
+    optional slots are FILLED-not-deleted when the brief supplies them (§7.3).
+  vars:
+    brief: "Friday pastry special post for the coffee shop — headline 'Pastries half off, today only', sub 'From 8am · Main St', the latte photo, a TODAY badge, and our logo."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers: []
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+      assets:
+        - { id: asset_812, name: 'latte-hero.jpg', kind: photo }
+        - { id: asset_902, name: 'logo.png', kind: logo }
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+            badge: { kind: component, optional: true }
+            logo: { kind: image, optional: true }
+      components:
+        - { id: offer-badge@2, vars: [label, bg, textColor, showRibbon] }
+    plan:
+      intent: create_post
+      template: instagram-post@3
+      assets:
+        - { ref: asset_812, slot: photo, fit: cover, focal: { x: 0.5, y: 0.4 } }
+        - { ref: asset_902, slot: logo, fit: contain }
+      slots:
+        headline: "Pastries half off, today only"
+        subhead: "From 8am · Main St"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography:
+        headline: { font: display-serif, weight: bold, size: 88 }
+        subhead: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: template.apply, args: { id: instagram-post@3 } }
+        - { tool: doc.place, args: { asset: asset_812, layer: Photo, fit: cover, focalY: 0.4 } }
+        - { tool: doc.place, args: { asset: asset_902, layer: Logo, fit: contain } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: type.edit, args: { layer: Subhead, size: 36 } }
+        - { tool: component.place, args: { id: offer-badge@2, vars: { label: TODAY }, anchor: topRight } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, asset_resolution]
+      model_tier: standard
+      notes_for_user: "instagram-post@3 with both optional slots on: TODAY badge top-right, logo bottom-right."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 10
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, Badge, Logo]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'instagram-post@3'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area', 'asset_resolution'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results: ok, zero blockers (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0 && v.majors === 0 && v.minors === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: every manifest layer incl. both optional ones (§7.2/§7.3)
+      value: "return ['Background', 'Photo', 'Headline', 'Subhead', 'Badge', 'Logo'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # slot contents exact + §7.2 maxChars budgets
+      value: "return JSON.parse(output).plan.slots.headline === 'Pastries half off, today only' && JSON.parse(output).plan.slots.headline.length <= 42 && JSON.parse(output).plan.slots.subhead === 'From 8am · Main St' && JSON.parse(output).plan.slots.subhead.length <= 60"
+    - type: javascript          # optional badge slot filled via actual component pin (§8)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'offer-badge@2' && s.args.vars.label === 'TODAY')"
+
+# ── create_post + ribbon-banner + social-handle (component coverage) ─────────
+- id: create-ig-trainer-ribbon
+  description: >-
+    Yoga-studio promo on instagram-post@3 with two placed components: ribbon-banner@1
+    (label "LIMITED", 16-char cap) across the top and social-handle@1 (30-char cap)
+    at the bottom; standard tier = 2 credits; validator clean.
+  vars:
+    brief: "January promo for the yoga studio — headline 'New year, new mat', sub '2-week intro pass', the studio photo, a LIMITED ribbon across the top, and our handle at the bottom."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers: []
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+      assets:
+        - { id: asset_741, name: 'yoga-studio.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+      components:
+        - { id: ribbon-banner@1, vars: [label, bg, textColor, corner] }
+        - { id: social-handle@1, vars: [handle, color, showIcon] }
+    plan:
+      intent: create_post
+      template: instagram-post@3
+      assets:
+        - { ref: asset_741, slot: photo, fit: cover }
+      slots:
+        headline: "New year, new mat"
+        subhead: "2-week intro pass"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography:
+        headline: { font: display-serif, weight: bold, size: 88 }
+        subhead: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: template.apply, args: { id: instagram-post@3 } }
+        - { tool: doc.place, args: { asset: asset_741, layer: Photo, fit: cover } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: type.edit, args: { layer: Subhead, size: 36 } }
+        - { tool: component.place, args: { id: ribbon-banner@1, vars: { label: LIMITED, bg: '#D96C3B' }, anchor: top } }
+        - { tool: component.place, args: { id: social-handle@1, vars: { handle: '@flow.studio', color: '#6B4A32' }, anchor: bottom } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, asset_resolution]
+      model_tier: standard
+      notes_for_user: "instagram-post@3 plus a LIMITED ribbon top and the handle bottom; brand palette only."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 9
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, Ribbon, Handle]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'instagram-post@3'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: both component instances present (§23.1 rule 5)
+      value: "return ['Ribbon', 'Handle'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # component pins + var caps: ribbon 16-char label (§8.2)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'ribbon-banner@1' && s.args.vars.label === 'LIMITED' && s.args.vars.label.length <= 16)"
+    - type: javascript          # component pins + var caps: handle 30-char cap (§8.2)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'social-handle@1' && s.args.vars.handle === '@flow.studio' && s.args.vars.handle.length <= 30)"
+    - type: contains            # slot contents (§21)
+      value: "New year, new mat"
+
+# ── create_post + price-tag + button-cta (component coverage) ────────────────
+- id: create-ig-flash-sale
+  description: >-
+    Flash-sale post on instagram-post@3 with price-tag@1 ($18.00, 10-char price cap)
+    and button-cta@1 ("Shop now", 24-char label cap); standard tier = 2 credits;
+    validator clean. Component vars respect the actual component.json caps.
+  vars:
+    brief: "Flash sale post: headline '48-hour flash sale', sub 'Everything roasted today', the product photo, a price tag showing $18, and a Shop now button at the bottom."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers: []
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+      assets:
+        - { id: asset_755, name: 'beans-bag.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+      components:
+        - { id: price-tag@1, vars: [price, currency, bg, textColor] }
+        - { id: button-cta@1, vars: [label, bg, textColor, rounded] }
+    plan:
+      intent: create_post
+      template: instagram-post@3
+      assets:
+        - { ref: asset_755, slot: photo, fit: cover }
+      slots:
+        headline: "48-hour flash sale"
+        subhead: "Everything roasted today"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography:
+        headline: { font: display-serif, weight: bold, size: 88 }
+        subhead: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: template.apply, args: { id: instagram-post@3 } }
+        - { tool: doc.place, args: { asset: asset_755, layer: Photo, fit: cover } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: type.edit, args: { layer: Subhead, size: 36 } }
+        - { tool: component.place, args: { id: price-tag@1, vars: { price: '18.00', currency: '$' }, anchor: topRight } }
+        - { tool: component.place, args: { id: button-cta@1, vars: { label: 'Shop now', rounded: true }, anchor: bottom } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, min_font_size]
+      model_tier: standard
+      notes_for_user: "instagram-post@3 with the $18 price tag top-right and a Shop now CTA at the bottom."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 9
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, PriceTag, Button]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'instagram-post@3'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area', 'min_font_size'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: price + CTA instances present (§23.1 rule 5)
+      value: "return ['PriceTag', 'Button'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # price-tag pin: 10-char price cap + 3-char currency cap (§8.2)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'price-tag@1' && s.args.vars.price === '18.00' && s.args.vars.price.length <= 10 && s.args.vars.currency === '$')"
+    - type: javascript          # button-cta pin: 24-char label cap (§8.2)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'button-cta@1' && s.args.vars.label === 'Shop now' && s.args.vars.label.length <= 24)"
+
+# ── create_post + quote-block + star-rating + avatar-circle ──────────────────
+- id: create-ig-testimonial
+  description: >-
+    Testimonial post on instagram-post@3 with three placed components: quote-block@1
+    (280-char quote cap, 48-char author cap), star-rating@1 ("5.0", 3-char cap — five
+    star glyphs cannot fit the actual cap, so the value form is correct) and
+    avatar-circle@1 ("LR", 3-char initials cap); standard tier = 2 credits.
+  vars:
+    brief: "Customer love post: headline 'Why they come back', sub 'Real reviews, real mornings', the cafe interior photo, the quote 'Best flat white in town' from Lena R., a five-star rating, and her avatar with initials LR."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers: []
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+      assets:
+        - { id: asset_762, name: 'cafe-interior.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+      components:
+        - { id: quote-block@1, vars: [quote, author, accent] }
+        - { id: star-rating@1, vars: [stars, color] }
+        - { id: avatar-circle@1, vars: [initials, bg, textColor] }
+    plan:
+      intent: create_post
+      template: instagram-post@3
+      assets:
+        - { ref: asset_762, slot: photo, fit: cover }
+      slots:
+        headline: "Why they come back"
+        subhead: "Real reviews, real mornings"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography:
+        headline: { font: display-serif, weight: bold, size: 88 }
+        subhead: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: template.apply, args: { id: instagram-post@3 } }
+        - { tool: doc.place, args: { asset: asset_762, layer: Photo, fit: cover } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: type.edit, args: { layer: Subhead, size: 36 } }
+        - { tool: component.place, args: { id: quote-block@1, vars: { quote: 'Best flat white in town', author: 'Lena R.', accent: '#D96C3B' }, anchor: center } }
+        - { tool: component.place, args: { id: star-rating@1, vars: { stars: '5.0', color: '#D96C3B' }, anchor: center } }
+        - { tool: component.place, args: { id: avatar-circle@1, vars: { initials: LR, bg: '#6B4A32' }, anchor: topLeft } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, min_font_size]
+      model_tier: standard
+      notes_for_user: "instagram-post@3 with the review block, a 5.0 star row and the LR avatar; brand palette only."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 10
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, QuoteBlock, StarRating, Avatar]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'instagram-post@3'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'safe_area', 'min_font_size'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: all three component instances (§23.1 rule 5)
+      value: "return ['QuoteBlock', 'StarRating', 'Avatar'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # quote-block pin: quote + author within §8.2 caps
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'quote-block@1' && s.args.vars.quote === 'Best flat white in town' && s.args.vars.quote.length <= 280 && s.args.vars.author === 'Lena R.' && s.args.vars.author.length <= 48)"
+    - type: javascript          # star-rating pin: 3-char value form (five glyphs would bust §8.2 cap)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'star-rating@1' && s.args.vars.stars === '5.0' && s.args.vars.stars.length <= 3)"
+    - type: javascript          # avatar-circle pin: 3-char initials cap (§8.2)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'avatar-circle@1' && s.args.vars.initials === 'LR' && s.args.vars.initials.length <= 3)"
+
+# ── create_post on youtube-thumbnail@1 + brand-token substitution ─────────────
+- id: create-thumb-recipe-easy
+  description: >-
+    Recipe thumbnail on youtube-thumbnail@1: the user asks for a YELLOW badge, but
+    yellow is not in the template palette ['#101418','#FFFFFF','#E5484D'] — the golden
+    planner pulls the badge to brand red and SAYS SO (§11.1 color_out_of_palette,
+    §23.1 rule 10 assumption note); standard tier = 2 credits.
+  vars:
+    brief: "Thumbnail for the weeknight recipe video — big text '15-MINUTE PASTA', the overhead pan shot as the photo, and a yellow EASY badge in the corner."
+    snapshot:
+      canvas: { w: 1280, h: 720 }
+      layers: []
+      palette: ['#101418', '#FFFFFF', '#E5484D']
+      fonts: ['display-sans', 'brand-sans']
+      assets:
+        - { id: asset_771, name: 'pan-overhead.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: youtube-thumbnail@1
+          tags: [social, video, thumbnail, wide]
+          canvas: { w: 1280, h: 720 }
+          slots:
+            headline: { kind: text, maxChars: 30 }
+            photo: { kind: image, minPixels: 800 }
+            badge: { kind: component, optional: true }
+      components:
+        - { id: offer-badge@2, vars: [label, bg, textColor, showRibbon] }
+    plan:
+      intent: create_post
+      template: youtube-thumbnail@1
+      assets:
+        - { ref: asset_771, slot: photo, fit: cover, focal: { x: 0.5, y: 0.5 } }
+      slots:
+        headline: "15-MINUTE PASTA"
+      palette: ['#101418', '#FFFFFF', '#E5484D']
+      typography:
+        headline: { font: display-sans, weight: bold, size: 88 }
+      steps:
+        - { tool: template.apply, args: { id: youtube-thumbnail@1 } }
+        - { tool: doc.place, args: { asset: asset_771, layer: Photo, fit: cover } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: component.place, args: { id: offer-badge@2, vars: { label: EASY, bg: '#E5484D' }, anchor: topRight } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, asset_resolution]
+      model_tier: standard
+      notes_for_user: "youtube-thumbnail@1; you asked for a yellow badge but the palette only ships red, so the badge is brand red."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 7
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }  # no color_out_of_palette
+      layers: [Background, Photo, Headline, Badge]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'youtube-thumbnail@1'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # §11.1 color_out_of_palette: badge stays on the template palette
+      value: "return JSON.parse(output).plan.steps.some(s => s.args.id === 'offer-badge@2' && s.args.vars.bg === '#E5484D') && JSON.parse(output).plan.palette.every(h => ['#101418', '#FFFFFF', '#E5484D'].includes(h))"
+    - type: javascript          # §23.1 rule 10: substitution is disclosed to the user
+      value: "return JSON.parse(output).plan.notes_for_user.toLowerCase().includes('palette')"
+    - type: javascript          # slot contents: 16-char headline inside the 30-char cap (§7.2)
+      value: "return JSON.parse(output).plan.slots.headline === '15-MINUTE PASTA' && JSON.parse(output).plan.slots.headline.length <= 30"
+    - type: javascript          # validator results: clean — the recolour preempts the flag (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0 && v.majors === 0)(JSON.parse(output).run.validator)"
+
+# ── create_post on presentation-slide@1 + logo-lockup + button-cta + handle ───
+- id: create-slide-webinar-cta
+  description: >-
+    Webinar slide on presentation-slide@1 with logo-lockup@1 ("Studio", 32-char name
+    cap) top-right, button-cta@1 ("Save my seat") under the visual and social-handle@1
+    at the bottom; title 28 of 48 chars; standard tier = 2 credits.
+  vars:
+    brief: "Webinar announcement slide: title 'Ship design at machine speed', subtitle 'Live, Thurs 6pm', the product screenshot as the visual, our lockup top-right, a Save my seat button, and the handle at the bottom."
+    snapshot:
+      canvas: { w: 1920, h: 1080 }
+      layers: []
+      palette: ['#F6F5F2', '#1A1A1A', '#D96C3B']
+      fonts: ['display-sans', 'brand-sans']
+      assets:
+        - { id: asset_935, name: 'product-beta.png', kind: screenshot }
+    catalog:
+      templates:
+        - id: presentation-slide@1
+          tags: [presentation, slide, 16x9]
+          canvas: { w: 1920, h: 1080 }
+          slots:
+            title: { kind: text, maxChars: 48 }
+            subtitle: { kind: text, maxChars: 80, optional: true }
+            visual: { kind: image, minPixels: 600 }
+      components:
+        - { id: logo-lockup@1, vars: [name, tagline, color, onDark] }
+        - { id: button-cta@1, vars: [label, bg, textColor, rounded] }
+        - { id: social-handle@1, vars: [handle, color, showIcon] }
+    plan:
+      intent: create_post
+      template: presentation-slide@1
+      assets:
+        - { ref: asset_935, slot: visual, fit: cover, focal: { x: 0.5, y: 0.5 } }
+      slots:
+        title: "Ship design at machine speed"
+        subtitle: "Live, Thurs 6pm"
+      palette: ['#F6F5F2', '#1A1A1A', '#D96C3B']
+      typography:
+        title: { font: display-sans, weight: bold, size: 72 }
+        subtitle: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: template.apply, args: { id: presentation-slide@1 } }
+        - { tool: doc.place, args: { asset: asset_935, layer: Visual, fit: cover } }
+        - { tool: type.edit, args: { layer: Title, size: 72 } }
+        - { tool: type.edit, args: { layer: Subtitle, size: 36 } }
+        - { tool: component.place, args: { id: logo-lockup@1, vars: { name: Studio }, anchor: topRight } }
+        - { tool: component.place, args: { id: button-cta@1, vars: { label: 'Save my seat', bg: '#D96C3B' }, anchor: bottomRight } }
+        - { tool: component.place, args: { id: social-handle@1, vars: { handle: '@studio.design', color: '#1A1A1A' }, anchor: bottom } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, min_font_size]
+      model_tier: standard
+      notes_for_user: "presentation-slide@1 with the lockup, CTA and handle added; screenshot placed cover."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 10
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Title, Subtitle, Visual, Lockup, Button, Handle]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'presentation-slide@1'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: lockup/CTA/handle instances (§23.1 rule 5)
+      value: "return ['Lockup', 'Button', 'Handle'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # slot contents: title within the 48-char cap (§7.2)
+      value: "return JSON.parse(output).plan.slots.title === 'Ship design at machine speed' && JSON.parse(output).plan.slots.title.length <= 48"
+    - type: javascript          # logo-lockup pin: 32-char name cap (§8.2)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'logo-lockup@1' && s.args.vars.name === 'Studio' && s.args.vars.name.length <= 32)"
+
+# ── create_post on instagram-post@3 + wave-divider + logo-lockup + handle ────
+- id: create-ig-grand-opening
+  description: >-
+    Grand-opening post on instagram-post@3 with wave-divider@1 (terracotta, brand
+    token), logo-lockup@1 ("Acme Coffee") and social-handle@1; 22-char headline;
+    standard tier = 2 credits; validator clean.
+  vars:
+    brief: "Grand opening post for the second cafe — headline 'We're open on 5th Ave', sub 'Doors at 8am Saturday', the storefront photo, our lockup, a wave divider above the copy, and the handle at the very bottom."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers: []
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+      assets:
+        - { id: asset_781, name: 'storefront.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+      components:
+        - { id: wave-divider@1, vars: [color, flip] }
+        - { id: logo-lockup@1, vars: [name, tagline, color, onDark] }
+        - { id: social-handle@1, vars: [handle, color, showIcon] }
+    plan:
+      intent: create_post
+      template: instagram-post@3
+      assets:
+        - { ref: asset_781, slot: photo, fit: cover, focal: { x: 0.5, y: 0.3 } }
+      slots:
+        headline: "We're open on 5th Ave"
+        subhead: "Doors at 8am Saturday"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography:
+        headline: { font: display-serif, weight: bold, size: 88 }
+        subhead: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: template.apply, args: { id: instagram-post@3 } }
+        - { tool: doc.place, args: { asset: asset_781, layer: Photo, fit: cover, focalY: 0.3 } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: type.edit, args: { layer: Subhead, size: 36 } }
+        - { tool: component.place, args: { id: wave-divider@1, vars: { color: '#D96C3B' }, anchor: center } }
+        - { tool: component.place, args: { id: logo-lockup@1, vars: { name: 'Acme Coffee' }, anchor: bottom } }
+        - { tool: component.place, args: { id: social-handle@1, vars: { handle: '@acme.coffee' }, anchor: bottom } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, asset_resolution]
+      model_tier: standard
+      notes_for_user: "instagram-post@3 with the wave divider, lockup and handle; storefront shot focal on the awning."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 10
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, Wave, Lockup, Handle]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'instagram-post@3'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: wave/lockup/handle instances (§23.1 rule 5)
+      value: "return ['Wave', 'Lockup', 'Handle'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # wave-divider pin with brand token colour (§8.2/§11.1)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'wave-divider@1' && s.args.vars.color === '#D96C3B')"
+    - type: contains            # slot contents (§21)
+      value: "We're open on 5th Ave"
+
+# ── create_post + star-rating + avatar-circle (review spotlight) ──────────────
+- id: create-ig-review-spotlight
+  description: >-
+    Review spotlight on instagram-post@3: star-rating@1 ("4.9" value form inside the
+    3-char cap) under the subhead and avatar-circle@1 ("MC") top-left; 22-char
+    headline; standard tier = 2 credits.
+  vars:
+    brief: "Review spotlight post: headline '4.9 from 2,300 reviews', sub 'Loved on Main St since 2019', the coffee pour photo, a 4.9 star row under the subhead, and a round MC avatar at the top."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers: []
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+      assets:
+        - { id: asset_766, name: 'coffee-pour.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+      components:
+        - { id: star-rating@1, vars: [stars, color] }
+        - { id: avatar-circle@1, vars: [initials, bg, textColor] }
+    plan:
+      intent: create_post
+      template: instagram-post@3
+      assets:
+        - { ref: asset_766, slot: photo, fit: cover }
+      slots:
+        headline: "4.9 from 2,300 reviews"
+        subhead: "Loved on Main St since 2019"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography:
+        headline: { font: display-serif, weight: bold, size: 88 }
+        subhead: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: template.apply, args: { id: instagram-post@3 } }
+        - { tool: doc.place, args: { asset: asset_766, layer: Photo, fit: cover } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: type.edit, args: { layer: Subhead, size: 36 } }
+        - { tool: component.place, args: { id: star-rating@1, vars: { stars: '4.9', color: '#D96C3B' }, anchor: center } }
+        - { tool: component.place, args: { id: avatar-circle@1, vars: { initials: MC, bg: '#D96C3B' }, anchor: topLeft } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area]
+      model_tier: standard
+      notes_for_user: "instagram-post@3 with the 4.9 star row and the MC avatar; palette from brand tokens."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 8
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, StarRating, Avatar]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'instagram-post@3'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: rating + avatar instances (§23.1 rule 5)
+      value: "return ['StarRating', 'Avatar'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # star-rating pin: 3-char value form (§8.2)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'star-rating@1' && s.args.vars.stars === '4.9' && s.args.vars.stars.length <= 3)"
+    - type: contains            # slot contents (§21)
+      value: "4.9 from 2,300 reviews"
+
+# ── create_post on youtube-thumbnail@1 + price-tag (deal thumbnail) ───────────
+- id: create-thumb-deal-price
+  description: >-
+    Deal thumbnail on youtube-thumbnail@1: 19-char headline ("IS IT WORTH $9.99?"),
+    gadget close-up photo and a price-tag@1 ($9.99) bottom-right; standard tier =
+    2 credits; validator clean.
+  vars:
+    brief: "Deal video thumbnail: giant 'IS IT WORTH $9.99?' text over the gadget close-up shot, plus a price tag reading $9.99 bottom-right."
+    snapshot:
+      canvas: { w: 1280, h: 720 }
+      layers: []
+      palette: ['#101418', '#FFFFFF', '#E5484D']
+      fonts: ['display-sans', 'brand-sans']
+      assets:
+        - { id: asset_793, name: 'gadget-closeup.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: youtube-thumbnail@1
+          tags: [social, video, thumbnail, wide]
+          canvas: { w: 1280, h: 720 }
+          slots:
+            headline: { kind: text, maxChars: 30 }
+            photo: { kind: image, minPixels: 800 }
+      components:
+        - { id: price-tag@1, vars: [price, currency, bg, textColor] }
+    plan:
+      intent: create_post
+      template: youtube-thumbnail@1
+      assets:
+        - { ref: asset_793, slot: photo, fit: cover, focal: { x: 0.5, y: 0.5 } }
+      slots:
+        headline: "IS IT WORTH $9.99?"
+      palette: ['#101418', '#FFFFFF', '#E5484D']
+      typography:
+        headline: { font: display-sans, weight: bold, size: 88 }
+      steps:
+        - { tool: template.apply, args: { id: youtube-thumbnail@1 } }
+        - { tool: doc.place, args: { asset: asset_793, layer: Photo, fit: cover } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: component.place, args: { id: price-tag@1, vars: { price: '9.99', currency: '$' }, anchor: bottomRight } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, asset_resolution]
+      model_tier: standard
+      notes_for_user: "youtube-thumbnail@1 with the $9.99 tag bottom-right; headline one line at 88pt."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 7
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, PriceTag]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'youtube-thumbnail@1'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: price tag instance (§23.1 rule 5)
+      value: "return ['Headline', 'PriceTag'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # price-tag pin: $9.99 within caps (§8.2)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'price-tag@1' && s.args.vars.price === '9.99' && s.args.vars.currency === '$')"
+
+# ── create_post on presentation-slide@1 + quote-block (keynote) ──────────────
+- id: create-slide-keynote-quote
+  description: >-
+    Keynote quote slide on presentation-slide@1: 23-char title, attribution subtitle
+    and a quote-block@1 carrying the full 60-char quote; standard tier = 2 credits.
+  vars:
+    brief: "Keynote quote slide: title 'Design is the interface', subtitle '— Nadia R., CTO', the audience photo as the visual, and an editorial quote block under the title with the full quote 'Make it boring, make it reliable — that is the whole job.'"
+    snapshot:
+      canvas: { w: 1920, h: 1080 }
+      layers: []
+      palette: ['#F6F5F2', '#1A1A1A', '#52504B']
+      fonts: ['display-sans', 'brand-sans']
+      assets:
+        - { id: asset_957, name: 'keynote-audience.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: presentation-slide@1
+          tags: [presentation, slide, 16x9]
+          canvas: { w: 1920, h: 1080 }
+          slots:
+            title: { kind: text, maxChars: 48 }
+            subtitle: { kind: text, maxChars: 80, optional: true }
+            visual: { kind: image, minPixels: 600 }
+      components:
+        - { id: quote-block@1, vars: [quote, author, accent] }
+    plan:
+      intent: create_post
+      template: presentation-slide@1
+      assets:
+        - { ref: asset_957, slot: visual, fit: cover }
+      slots:
+        title: "Design is the interface"
+        subtitle: "— Nadia R., CTO"
+      palette: ['#F6F5F2', '#1A1A1A', '#52504B']
+      typography:
+        title: { font: display-sans, weight: bold, size: 72 }
+        subtitle: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: template.apply, args: { id: presentation-slide@1 } }
+        - { tool: doc.place, args: { asset: asset_957, layer: Visual, fit: cover } }
+        - { tool: type.edit, args: { layer: Title, size: 72 } }
+        - { tool: type.edit, args: { layer: Subtitle, size: 36 } }
+        - { tool: component.place, args: { id: quote-block@1, vars: { quote: 'Make it boring, make it reliable — that is the whole job.', author: 'Nadia R.', accent: '#52504B' }, anchor: bottomLeft } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, min_font_size]
+      model_tier: standard
+      notes_for_user: "presentation-slide@1 with the keynote quote block bottom-left; title one line."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 8
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Title, Subtitle, Visual, QuoteBlock]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'presentation-slide@1'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: quote block instance (§23.1 rule 5)
+      value: "return ['Title', 'QuoteBlock'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # quote-block pin: full quote within the 280-char cap (§8.2)
+      value: "return JSON.parse(output).plan.steps.some(s => s.tool === 'component.place' && s.args.id === 'quote-block@1' && s.args.vars.quote.length <= 280 && s.args.vars.author === 'Nadia R.')"
+
+# ── create_post COMPLEX: generated hero + 3 components (5-credit tier) ────────
+- id: create-menu-teaser-complex
+  description: >-
+    Complex-tier create (§5.2: 5 credits, 24-call cap): tasting-menu teaser with a
+    generated hero image (image tier priced into the run), instagram-post@3 base,
+    price-tag@1 ($58), quote-block@1 (chef quote) and button-cta@1 ("Reserve a seat");
+    11 tool calls, validator clean.
+  vars:
+    brief: "Tasting-menu announcement, four courses: generate a warm candlelight hero shot of the long table, headline 'Four courses, one long table', sub 'Saturdays in October', a $58 price tag, a short quote from the chef, and a Reserve a seat CTA."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers: []
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B', '#3B2A20']
+      fonts: ['display-serif', 'brand-sans']
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+      components:
+        - { id: price-tag@1, vars: [price, currency, bg, textColor] }
+        - { id: quote-block@1, vars: [quote, author, accent] }
+        - { id: button-cta@1, vars: [label, bg, textColor, rounded] }
+    budget: "complex — 5 credits, 200k/12k tokens in/out, 24 tool calls, 2 revisions, 10 min wall clock (§5.2)"
+    plan:
+      intent: create_post
+      template: instagram-post@3
+      assets:
+        - { ref: 'imagegen:menu-hero', slot: photo, fit: cover }
+      slots:
+        headline: "Four courses, one long table"
+        subhead: "Saturdays in October"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography:
+        headline: { font: display-serif, weight: bold, size: 88 }
+        subhead: { font: brand-sans, size: 36 }
+      steps:
+        - tool: image.generate
+          args: { prompt: "warm candlelight photo of a long tasting-menu table, terracotta and cream tones", size: 1024 }
+        - { tool: template.apply, args: { id: instagram-post@3 } }
+        - { tool: doc.place, args: { asset: 'imagegen:menu-hero', layer: Photo, fit: cover } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: type.edit, args: { layer: Subhead, size: 36 } }
+        - { tool: component.place, args: { id: price-tag@1, vars: { price: '58', currency: '$' }, anchor: topLeft } }
+        - { tool: component.place, args: { id: quote-block@1, vars: { quote: 'Four plates, one story — eat the whole arc.', author: 'Chef Marco' }, anchor: center } }
+        - { tool: component.place, args: { id: button-cta@1, vars: { label: 'Reserve a seat' }, anchor: bottom } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, asset_resolution, min_font_size]
+      model_tier: complex
+      notes_for_user: "instagram-post@3 with a generated hero, the $58 tag, the chef quote and the CTA; 11 of 24 calls used."
+    run:
+      status: succeeded
+      credits_charged: 5        # §5.2 complex tier — image priced into the run
+      tool_calls: 11
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead, PriceTag, QuoteBlock, Button]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'instagram-post@3'"
+    - type: javascript          # tier classified complex (§5.2)
+      value: "return JSON.parse(output).plan.model_tier === 'complex'"
+    - type: javascript          # tier cost exact (§5.2: complex = 5 credits)
+      value: "return JSON.parse(output).run.credits_charged === 5"
+    - type: javascript          # max tool calls respected (§5.2: complex cap = 24)
+      value: "return JSON.parse(output).run.tool_calls <= 24 && JSON.parse(output).plan.steps.length <= 24"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area', 'asset_resolution'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # layer names: all three instances (§23.1 rule 5)
+      value: "return ['PriceTag', 'QuoteBlock', 'Button'].every(n => JSON.parse(output).run.layers.includes(n))"
+    - type: javascript          # generated hero rides the plan (§6 image_generate path)
+      value: "return JSON.parse(output).plan.steps[0].tool === 'image.generate' && JSON.parse(output).plan.assets[0].ref === 'imagegen:menu-hero'"
+    - type: contains            # slot contents (§21)
+      value: "Four courses, one long table"
+
+# ── create_post, non-English brief (§11.4 "batch of non-English briefs") ──────
+- id: create-de-post-kaffee
+  description: >-
+    Non-English golden brief (README growth plan / §11.4): German coffee promo on
+    instagram-post@3 — the planner must carry the GERMAN copy verbatim into the slots
+    (never translate it back to English); 29-char headline inside the 42-char cap;
+    standard tier = 2 credits.
+  vars:
+    brief: "Kaffeewerbung für Instagram: Schlagzeile 'Frisch geröstet, jeden Morgen', Unterzeile 'Mo–Fr 7–17 Uhr · Hauptstraße', nutze das Latte-Foto."
+    snapshot:
+      canvas: { w: 1080, h: 1080 }
+      layers: []
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      fonts: ['display-serif', 'brand-sans']
+      assets:
+        - { id: asset_812, name: 'latte-hero.jpg', kind: photo }
+    catalog:
+      templates:
+        - id: instagram-post@3
+          tags: [promo, social, square]
+          canvas: { w: 1080, h: 1080 }
+          slots:
+            headline: { kind: text, maxChars: 42 }
+            subhead: { kind: text, maxChars: 60 }
+            photo: { kind: image, minPixels: 600 }
+      components: []
+    plan:
+      intent: create_post
+      template: instagram-post@3
+      assets:
+        - { ref: asset_812, slot: photo, fit: cover, focal: { x: 0.5, y: 0.4 } }
+      slots:
+        headline: "Frisch geröstet, jeden Morgen"
+        subhead: "Mo–Fr 7–17 Uhr · Hauptstraße"
+      palette: ['#6B4A32', '#F4E7D3', '#D96C3B']
+      typography:
+        headline: { font: display-serif, weight: bold, size: 88 }
+        subhead: { font: brand-sans, size: 36 }
+      steps:
+        - { tool: template.apply, args: { id: instagram-post@3 } }
+        - { tool: doc.place, args: { asset: asset_812, layer: Photo, fit: cover, focalY: 0.4 } }
+        - { tool: type.edit, args: { layer: Headline, size: 88 } }
+        - { tool: type.edit, args: { layer: Subhead, size: 36 } }
+        - { tool: render_preview, args: { size: 1024 } }
+        - { tool: validate_document, args: {} }
+        - { tool: agent.commit, args: {} }
+      checks: [in_bounds, 'contrast>=4.5', headline_largest, safe_area, asset_resolution]
+      model_tier: standard
+      notes_for_user: "instagram-post@3 mit deutscher Schlagzeile und Unterzeile; Übersetzung nicht angetastet."
+    run:
+      status: succeeded
+      credits_charged: 2        # §5.2 standard tier
+      tool_calls: 7
+      revisions: 0
+      code: null
+      retryable: null
+      retry_grace: 0
+      validator: { ok: true, blockers: 0, majors: 0, minors: 0 }
+      layers: [Background, Photo, Headline, Subhead]
+      undo_entries: 1
+      rolled_back: false
+      reservation_released: true
+  assert:
+    - type: is-json            # plan_valid (schema)
+      validate:
+        type: object
+        required: [plan, run]
+        properties:
+          plan: { type: object, required: [intent, template, steps, checks, model_tier] }
+          run: { type: object, required: [status, credits_charged, tool_calls, validator, layers] }
+    - type: javascript          # intent match (§21)
+      value: "return JSON.parse(output).plan.intent === 'create_post'"
+    - type: javascript          # template pin (§21)
+      value: "return JSON.parse(output).plan.template === 'instagram-post@3'"
+    - type: javascript          # tier cost exact (§5.2: standard = 2 credits)
+      value: "return JSON.parse(output).run.credits_charged === 2"
+    - type: javascript          # max tool calls respected (§5.2: standard cap = 12)
+      value: "return JSON.parse(output).run.tool_calls <= 12 && JSON.parse(output).plan.steps.length <= 12"
+    - type: javascript          # expected checks present
+      value: "return ['in_bounds', 'contrast>=4.5', 'headline_largest', 'safe_area'].every(c => JSON.parse(output).plan.checks.includes(c))"
+    - type: javascript          # validator results (§11.1)
+      value: "return ((v) => v.ok === true && v.blockers === 0)(JSON.parse(output).run.validator)"
+    - type: javascript          # slot contents: GERMAN copy carried verbatim (§21)
+      value: "return JSON.parse(output).plan.slots.headline === 'Frisch geröstet, jeden Morgen' && JSON.parse(output).plan.slots.headline.length <= 42"
+    - type: javascript          # subhead verbatim, inside the 60-char cap (§7.2)
+      value: "return JSON.parse(output).plan.slots.subhead === 'Mo–Fr 7–17 Uhr · Hauptstraße' && JSON.parse(output).plan.slots.subhead.length <= 60"
+    - type: javascript          # layer names (§7.2 layerMap)
+      value: "return ['Background', 'Photo', 'Headline', 'Subhead'].every(n => JSON.parse(output).run.layers.includes(n))"

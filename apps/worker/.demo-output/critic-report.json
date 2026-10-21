@@ -1,0 +1,65 @@
+{
+  "label": "MOCK CRITIC — placeholder rubric (Phase 0 §19 step 4 stand-in)",
+  "modelCalls": 0,
+  "privacyNote": "zero model calls: §1.5-6 forbids free-tier LLMs on customer content; the real §23.3 vision critic is wired post-Phase-0",
+  "template": "instagram-post@3",
+  "tier": "standard",
+  "brief": "Coffee shop promo post, warm and cozy, headline 'Fresh roasted, every morning', sub 'Open 7–5 · Main St', use the latte photo.",
+  "slots": {
+    "headline": "Fresh roasted,\nevery morning",
+    "subhead": "Open 7–5 · Main St",
+    "photo": "asset_812"
+  },
+  "scores": {
+    "hierarchy": 4,
+    "balance": 4,
+    "contrast": 5,
+    "adherence": 5,
+    "brand": 4,
+    "editability": 5
+  },
+  "scoreAverage": 4.5,
+  "verdict": "accept",
+  "placeholderScoresNote": "hierarchy/balance/adherence/brand mirror the §24.1 worked-example rubric (placeholder values, not model output); contrast and editability are derived from document state",
+  "computed": {
+    "headlineContrastRatio": 11.19,
+    "minContrastRule": 4.5,
+    "layers": 4,
+    "textLayers": 2,
+    "flatteningOperations": 0
+  },
+  "validation": {
+    "blockers": 0,
+    "minors": 0,
+    "checks": [
+      {
+        "check": "rules.mustLayers",
+        "ok": true,
+        "detail": "required Background, Photo, Headline — all present"
+      },
+      {
+        "check": "rules.maxTextLayers",
+        "ok": true,
+        "detail": "2 text layers ≤ 6"
+      },
+      {
+        "check": "rules.safeArea",
+        "ok": true,
+        "detail": "subhead margins {top 924, left 72, right 619, bottom 111} — min 72px ≥ 48px"
+      },
+      {
+        "check": "rules.minContrast",
+        "ok": true,
+        "detail": "headline #3B2A20 on #F4E7D3 = 11.19:1 ≥ 4.5 (WCAG, computed)"
+      },
+      {
+        "check": "editability (§25.1-2)",
+        "ok": true,
+        "detail": "2 live Type layers with text preserved, zero merge/rasterize commands issued"
+      }
+    ]
+  },
+  "creditsCharged": 2,
+  "creditsNote": "charge 2 credits per the §24.1 trace — mocked (no ledger in the Phase-0 demo)",
+  "versionLabel": "First draft"
+}

@@ -1,0 +1,6 @@
+{
+  "template": "blog-cover@1",
+  "note": "evals/templates/blog-cover@1/assets-note.md",
+  "comment": "No image slots — the note's only candidate assets (asset_badge_420x96.png, asset_avatar_96x96.png) are ribbon-banner/avatar-circle component fallbacks 'if the component registry has not shipped'; it has (evals/components), so no PNG is generated.",
+  "assets": []
+}

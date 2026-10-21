@@ -1,0 +1,21 @@
+{
+  "template": "instagram-story@1",
+  "note": "evals/templates/instagram-story@1/assets-note.md",
+  "assets": [
+    {
+      "kind": "gradient",
+      "file": "asset_photo_1080x1280.png",
+      "w": 1080,
+      "h": 1280,
+      "alpha": false,
+      "from": "#FFF7EE",
+      "to": "#D96C3B",
+      "axis": "y",
+      "shapes": [
+        { "type": "circle", "cx": 270, "cy": 340, "r": 150, "color": "#3B2A20", "blend": "screen", "amount": 0.25 },
+        { "type": "circle", "cx": 540, "cy": 640, "r": 180, "color": "#3B2A20", "blend": "screen", "amount": 0.25 },
+        { "type": "circle", "cx": 810, "cy": 380, "r": 130, "color": "#3B2A20", "blend": "screen", "amount": 0.25 }
+      ]
+    }
+  ]
+}

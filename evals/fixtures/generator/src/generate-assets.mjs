@@ -26,7 +26,10 @@
  *   node evals/fixtures/generator/src/generate-assets.mjs [templates…] [flags]
  *   templates   optional slugs ("instagram-post" or "instagram-post@3"); default: all
  *   --out DIR   output root (default: evals/fixtures/generated)
- *   --allow-oversize   do not fail when an asset exceeds the 50 KB commit cap
+ *   --allow-oversize       do not fail when an asset exceeds the 50 KB commit cap
+ *   --skip-missing-specs  warn + skip templates whose note has no spec yet
+ *                          (mid-wave escape hatch; default is a loud failure so the
+ *                          fixture set can never silently go incomplete)
  *
  * EXIT CODES  0 = ok · 1 = size-cap violation (asset still written — do NOT
  * commit it) · 2 = usage / spec error. Fails loudly, per §21 "fails loudly with
@@ -65,11 +68,12 @@ function dirnameOf(url) {
 
 function usage() {
   return [
-    "usage: node evals/fixtures/generator/src/generate-assets.mjs [templates…] [--out DIR] [--allow-oversize]",
-    "  templates        slug filters, e.g. `instagram-post` or `instagram-post@3` (default: all)",
-    "  --out DIR        output root (default: evals/fixtures/generated)",
-    "  --allow-oversize keep going when an asset exceeds the 50 KB commit cap",
-    "  -h | --help      this message",
+    "usage: node evals/fixtures/generator/src/generate-assets.mjs [templates…] [--out DIR] [flags]",
+    "  templates              slug filters, e.g. `instagram-post` or `instagram-post@3` (default: all)",
+    "  --out DIR              output root (default: evals/fixtures/generated)",
+    "  --allow-oversize       keep going when an asset exceeds the 50 KB commit cap",
+    "  --skip-missing-specs   warn + skip templates whose assets-note has no spec yet",
+    "  -h | --help            this message",
   ].join("\n");
 }
 
@@ -81,10 +85,12 @@ if (args.includes("-h") || args.includes("--help")) {
 /** @type {string[]} */ const wanted = [];
 /** @type {string | null} */ let outDir = null;
 let allowOversize = false;
+let skipMissingSpecs = false;
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--out") outDir = args[++i] ?? fail("--out needs a directory argument");
   else if (a === "--allow-oversize") allowOversize = true;
+  else if (a === "--skip-missing-specs") skipMissingSpecs = true;
   else if (a.startsWith("--")) fail(`unknown flag \`${a}\`\n\n${usage()}`);
   else wanted.push(a);
 }
@@ -355,6 +361,7 @@ if (templates.length === 0) {
 }
 
 /** @type {{ file: string, bytes: number, over: boolean }[]} */ const oversizeRows = [];
+/** @type {string[]} */ const missingSpecs = [];
 let totalFiles = 0;
 let totalBytes = 0;
 
@@ -375,13 +382,17 @@ for (const tmpl of templates) {
       : `mirror specs/${tmpl}.json (note has no inline json spec block — see evals/fixtures/generator/README.md)`;
   if (specs.length === 0) {
     const mirrorPath = join(SPECS_DIR, `${tmpl}.json`);
-    let mirrorText;
+    let mirrorText = null;
     try {
       mirrorText = readFileSync(mirrorPath, "utf8");
     } catch {
-      fail(
-        `${tmpl}: assets-note.md has no inline json spec block and no mirror spec at ${relative(REPO_ROOT, mirrorPath)} — add one (evals/fixtures/generator/README.md documents the convention)`,
-      );
+      const why = `${tmpl}: assets-note.md has no inline json spec block and no mirror spec at ${relative(REPO_ROOT, mirrorPath)}`;
+      if (skipMissingSpecs) {
+        missingSpecs.push(tmpl);
+        warn(`${why} — SKIPPED (--skip-missing-specs; add the spec before the wave closes)`);
+        continue;
+      }
+      fail(`${why} — add one (evals/fixtures/generator/README.md documents the convention)`);
     }
     let mirror;
     try {
@@ -434,6 +445,9 @@ for (const tmpl of templates) {
 }
 
 log(`done: ${totalFiles} assets, ${totalBytes} bytes total under ${relative(REPO_ROOT, OUT_ROOT)}/`);
+if (missingSpecs.length > 0) {
+  warn(`specs still missing for: ${missingSpecs.join(", ")} (skipped via --skip-missing-specs)`);
+}
 if (oversizeRows.length > 0) {
   for (const r of oversizeRows) {
     process.stderr.write(

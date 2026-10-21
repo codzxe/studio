@@ -329,7 +329,12 @@ class CommandLog {
 
   /** Timestamp-stripped rows (§19 determinism: timestamps excluded from hashing). */
   canonical() {
-    return this.rows.map((row) => JSON.stringify(({ ts: _ts, ...rest }) => rest)(row)).join("\n");
+    return this.rows
+      .map((row) => {
+        const { ts: _ts, ...rest } = row;
+        return JSON.stringify(rest);
+      })
+      .join("\n");
   }
 
   toJsonl() {
@@ -517,9 +522,11 @@ function makeStepPrinter(prefix, quiet) {
  *   manifest      parsed evals/templates/instagram-post@3/manifest.json
  *   fixture        {bytes, source} photo fixture
  *   verbose       full per-step output (pass A / connect); quiet = pass B
+ *   fresh         spawn mode: a brand-new engine session (document index 0);
+ *                 connect mode may attach to an engine with documents open
  *   label         pass label for error messages
  */
-async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose, label }) {
+async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose, fresh, label }) {
   const canvas = manifest.canvas;
   const slots = manifest.slots;
   const rules = manifest.rules;
@@ -528,6 +535,8 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
   const subheadSlot = slots.subhead;
   const photoSlot = slots.photo;
   const step = makeStepPrinter(verbose ? "" : "     ", !verbose);
+  /** Detail lines print in full passes only (pass B stays a compact replay log). */
+  const note = verbose ? log : () => {};
   const cmd = new CommandLog(DOCUMENT_ID);
   let rev = 0;
 
@@ -542,12 +551,12 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
 
   // plan ------------------------------------------------------------- §24.1 line 1
   await step("plan — brief → template + slots + palette (hard-coded §23.2 stand-in)", () => {
-    log(`     brief .... ${BRIEF}`);
-    log(`     template . ${TEMPLATE_ID} (${TIER} tier)`);
-    log(
+    note(`     brief .... ${BRIEF}`);
+    note(`     template . ${TEMPLATE_ID} (${TIER} tier)`);
+    note(
       `     slots .... ${summarize({ headline: HEADLINE_TEXT.replace("\n", " "), subhead: SUBHEAD_TEXT, photo: PHOTO_ASSET_ID })}`,
     );
-    log(`     palette .. ${palette.join(" ")} (cream, brown, terracotta)`);
+    note(`     palette .. ${palette.join(" ")} (cream, brown, terracotta)`);
     return { template: TEMPLATE_ID, tier: TIER };
   });
 
@@ -561,7 +570,10 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
       mode: "rgb",
     }),
   );
-  assertEq(created.document, 0, `${label}: doc.new`);
+  if (fresh) assertEq(created.document, 0, `${label}: doc.new`);
+  else if (!Number.isInteger(created.document)) {
+    throw new DemoError(`${label}: doc.new did not return a document index`);
+  }
   track({
     kind: "method", trace: "plan", stage: "planning", commandName: "doc.new",
     params: { width: canvas.width, height: canvas.height, background: canvas.background },
@@ -573,11 +585,11 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
     probe(client, "method", "template.apply", { id: TEMPLATE_ID }),
   );
   if (applied.supported) {
-    log("     the mock now serves template.apply natively — using it");
+    note("     the mock serves template.apply natively — the direct sequence below remains the demo path");
   } else {
-    log(`     gracefully refused → ${applied.error}`);
-    log("     (template commands land in Phase 2 §2.3; the demo applies the compiled");
-    log("      manifest's layer sequence directly, command-by-command — W2-J mechanics)");
+    note(`     gracefully refused → ${applied.error}`);
+    note("     (template commands land in Phase 2 §2.3; the demo applies the compiled");
+    note("      manifest's layer sequence directly, command-by-command — W2-J mechanics)");
   }
   track({
     kind: "method", trace: "apply", stage: "executing", commandName: "template.apply",
@@ -595,19 +607,21 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
     params: { name: RUN_NAME }, revisionBefore: 1, revisionAfter: 1,
   });
 
-  // emulated apply: the manifest's layer sequence (bottom-up like the template)
+  // emulated apply: the manifest's layer sequence (bottom-up like the template).
+  // The mock's doc.place centers a w/2 × h/2 smart object at `center`; the fit into
+  // the slot box is therefore an explicit transform (the mock has no cover/focal).
   const placeCenter = [Math.round((photoSlot.bounds[0] + photoSlot.bounds[2]) / 2), Math.round((photoSlot.bounds[1] + photoSlot.bounds[3]) / 2)];
+  const placedX = Math.round(placeCenter[0] - canvas.width / 4);
+  const placedY = Math.round(placeCenter[1] - canvas.height / 4);
+  const fitOffset = [photoSlot.bounds[0] - placedX, photoSlot.bounds[1] - placedY];
+  const fitScaleX = photoSlot.bounds[2] / (canvas.width / 2);
+  const fitScaleY = photoSlot.bounds[3] / (canvas.height / 2);
   const applySteps = [
     { method: "doc.place", params: { path: PHOTO_PATH, center: placeCenter, scale: 100 } },
     { command: "layer.setProps", params: { layer: "asset_photo_1080x700.png", name: "Photo" } },
     {
       command: "edit.transform",
-      params: {
-        layer: "Photo",
-        offset: [photoSlot.bounds[0] - Math.round(canvas.width / 4), photoSlot.bounds[1] - Math.round(canvas.height / 4)],
-        scaleX: 2,
-        scaleY: photoSlot.bounds[3] / (canvas.height / 2),
-      },
+      params: { layer: "Photo", offset: fitOffset, scaleX: fitScaleX, scaleY: fitScaleY },
     },
     { command: "type.create", params: { text: "Headline", x: headlineSlot.bounds[0], y: headlineSlot.bounds[1], size: headlineSlot.size } },
     { command: "type.create", params: { text: "Subhead", x: subheadSlot.bounds[0], y: subheadSlot.bounds[1], size: subheadSlot.size } },
@@ -634,17 +648,17 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
   // fill -------------------------------------------------------------- §24.1 line 4
   const fillPayload = { id: TEMPLATE_ID, slots: { headline: HEADLINE_TEXT, subhead: SUBHEAD_TEXT, photo: PHOTO_ASSET_ID }, palette };
   await step("template.fill slot call — the payload the §6 tool sends (printed)", () => {
-    log(`     ${JSON.stringify(fillPayload)}`);
+    note(`     ${JSON.stringify(fillPayload)}`);
     return fillPayload;
   });
   const filled = await step(`template.fill {id:"${TEMPLATE_ID}"} (real-engine tool call)`, () =>
     probe(client, "method", "template.fill", fillPayload),
   );
   if (filled.supported) {
-    log("     the mock now serves template.fill natively — using it");
+    note("     the mock serves template.fill natively — the direct edits below remain the demo path");
   } else {
-    log(`     gracefully refused → ${filled.error}`);
-    log("     (fill is EMULATED below: type.edit per slot — the trace's own commands)");
+    note(`     gracefully refused → ${filled.error}`);
+    note("     (fill is EMULATED below: type.edit per slot — the trace's own commands)");
   }
   track({
     kind: "method", trace: "fill", stage: "executing", commandName: "template.fill",
@@ -664,7 +678,7 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
   );
   assertEq(fillBatch.failed, 0, `${label}: fill batch`);
   assertEq(fillBatch.completed, fillSteps.length, `${label}: fill batch`);
-  log(
+  note(
     `     autoFit ${AUTOFIT_FROM_PT}→${AUTOFIT_TO_PT}pt emulated via edit.transform (uniform metric` +
       ` scale ≡ point-size change): the mock's type.edit has no size param — the real engine takes type.edit {size}`,
   );
@@ -684,10 +698,10 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
     probe(client, "command", "layer.layerStyle.dropShadow", { layer: "Headline" }),
   );
   if (styled.supported) {
-    log("     the mock now serves layer styles — applied");
+    note("     the mock serves layer styles — applied");
   } else {
-    log(`     gracefully refused → ${styled.error}`);
-    log("     (no layer-style command in the mock set yet; the run continues without it)");
+    note(`     gracefully refused → ${styled.error}`);
+    note("     (no layer-style command in the mock set yet; the run continues without it)");
   }
   track({
     kind: "command", trace: "style", stage: "executing", commandName: "layer.layerStyle.dropShadow",
@@ -705,7 +719,7 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
   if (magic.some((byte, i) => byte !== PNG_MAGIC[i])) {
     throw new DemoError(`${label}: doc.render did not return a PNG (magic ${summarize(magic)})`);
   }
-  log(`     PNG magic 89 50 4E 47 verified (${pngBytes.length} bytes — mock render: fixed 8×8 gray)`);
+  note(`     PNG magic 89 50 4E 47 verified (${pngBytes.length} bytes — mock render: fixed 8×8 gray)`);
   track({
     kind: "method", trace: "render", stage: "rendering", commandName: "doc.render",
     params: { maxSide: 1024 }, revisionBefore: rev, revisionAfter: rev,
@@ -756,8 +770,8 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
   const blockers = checks.filter((check) => !check.ok && check.check !== "rules.safeArea").length;
   const minors = checks.filter((check) => !check.ok && check.check === "rules.safeArea").length;
   await step("validate — manifest.rules over doc.inspect (validator v1 stand-in)", () => {
-    for (const check of checks) log(`     ${check.ok ? "ok " : "FLAG"} ${check.check}: ${check.detail}`);
-    log(`     → ${blockers} blockers, ${minors} minors (mock metrics; §24.1's real run reports 1 minor — subhead near safe area)`);
+    for (const check of checks) note(`     ${check.ok ? "ok " : "FLAG"} ${check.check}: ${check.detail}`);
+    note(`     → ${blockers} blockers, ${minors} minors (mock metrics; §24.1's real run reports 1 minor — subhead near safe area)`);
     return { blockers, minors };
   });
 
@@ -791,9 +805,9 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
     versionLabel: VERSION_LABEL,
   };
   await step("critique — MOCK CRITIC (placeholder rubric, ZERO model calls — §1.5-6)", () => {
-    log(`     scores .. hierarchy 4 · balance 4 · contrast 5 · adherence 5 · brand 4 · editability 5 → average ${scoreAverage}`);
-    log(`     contrast is COMPUTED: ${headlineRatio.toFixed(2)}:1 ≥ ${rules.minContrast} (WCAG on the palette, not invented)`);
-    log("     verdict . accept (placeholder per §24.1; clearly labeled — no vision call happened)");
+    note(`     scores .. hierarchy 4 · balance 4 · contrast 5 · adherence 5 · brand 4 · editability 5 → average ${scoreAverage}`);
+    note(`     contrast is COMPUTED: ${headlineRatio.toFixed(2)}:1 ≥ ${rules.minContrast} (WCAG on the palette, not invented)`);
+    note("     verdict . accept (placeholder per §24.1; clearly labeled — no vision call happened)");
     return criticReport;
   });
 
@@ -802,7 +816,7 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
     client.execute("agent.commit", { name: RUN_NAME }),
   );
   assertEq(committed.checkpoint, RUN_NAME, `${label}: agent.commit`);
-  log(`     charge ${CREDITS} credits (${TIER} tier, §5.2 — mocked ledger line)`);
+  note(`     charge ${CREDITS} credits (${TIER} tier, §5.2 — mocked ledger line)`);
   track({
     kind: "command", trace: "commit", stage: "finalizing", commandName: "agent.commit",
     params: { name: RUN_NAME }, revisionBefore: rev, revisionAfter: rev,
@@ -813,7 +827,7 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
     client.call("doc.save", { path: SAVE_PATH }),
   );
   assertEq(saved.warnings.length, 0, `${label}: doc.save warnings`);
-  log(`     version "${VERSION_LABEL}" created (document_versions — mocked)`);
+  note(`     version "${VERSION_LABEL}" created (document_versions — mocked)`);
   track({
     kind: "method", trace: "save", stage: "finalizing", commandName: "doc.save",
     params: { path: SAVE_PATH }, revisionBefore: rev, revisionAfter: rev,
@@ -843,7 +857,7 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
     assertEq(subhead.text, SUBHEAD_TEXT, `${label}: pcraft subhead text`);
     assertEq(snapshot.layers.find((l) => l.name === "Background").fill, canvas.background.toLowerCase(), `${label}: pcraft background fill`);
   } else {
-    log("     (.pcraft landed under the engine's own write root — connect mode; verified via doc.inspect)");
+    note("     (.pcraft landed under the engine's own write root — connect mode; verified via doc.inspect)");
   }
 
   // write the demo artifacts -----------------------------------------
@@ -872,13 +886,13 @@ async function runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose,
 }
 
 /** Connect + auth + one full trace pass. Caller owns the spawned mock (if any). */
-async function runPass({ port, token, spawned, artifactDir, manifest, fixture, verbose, label }) {
+async function runPass({ port, token, spawned, artifactDir, manifest, fixture, verbose, fresh, label }) {
   const client = new ControlClient(port, token);
   let result = null;
   try {
     await client.connect();
     await client.auth();
-    result = await runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose, label });
+    result = await runCoffeeTrace({ client, artifactDir, manifest, fixture, verbose, fresh, label });
   } finally {
     client.close();
     if (spawned !== undefined) await stopMock(spawned);
@@ -910,6 +924,19 @@ async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
 
   const fixture = loadPhotoFixture(manifest.rules.palette);
+  if (
+    fixture.bytes[0] !== PNG_MAGIC[0] || fixture.bytes[1] !== PNG_MAGIC[1] ||
+    fixture.bytes[2] !== PNG_MAGIC[2] || fixture.bytes[3] !== PNG_MAGIC[3]
+  ) {
+    throw new DemoError("photo fixture is not a PNG");
+  }
+  const fixtureWidth = fixture.bytes.readUInt32BE(16); // IHDR data starts at byte 16
+  const fixtureHeight = fixture.bytes.readUInt32BE(20);
+  if (fixtureWidth !== manifest.slots.photo.minPixels[0] || fixtureHeight !== manifest.slots.photo.minPixels[1]) {
+    throw new DemoError(
+      `photo fixture is ${fixtureWidth}×${fixtureHeight}; the slot needs ≥ ${manifest.slots.photo.minPixels.join("×")}`,
+    );
+  }
 
   log("studio Phase-0 coffee demo (§19 exit) — §24.1 run trace, end-to-end");
   log(`mode: ${external ? `connect to a running mock-engine on 127.0.0.1:${externalPort} (local Compose)` : "spawn a fresh mock-engine per pass (ephemeral port)"}`);
@@ -920,7 +947,7 @@ async function main() {
     // ------------------------------------------------------------------ connect
     const pass = await runPass({
       port: externalPort, token: externalToken, artifactDir: OUT_DIR,
-      manifest, fixture, verbose: true, label: "connect pass",
+      manifest, fixture, verbose: true, fresh: false, label: "connect pass",
     });
     printCommandLog(pass.rows);
     printSummary({ pass, replay: null, compose: true, outDir: OUT_DIR });
@@ -937,7 +964,7 @@ async function main() {
   log(`mock-engine listening on 127.0.0.1:${spawnedA.port}`);
   const passA = await runPass({
     port: spawnedA.port, token: spawnedA.token, spawned: spawnedA,
-    artifactDir: rootA, manifest, fixture, verbose: true, label: "pass A",
+    artifactDir: rootA, manifest, fixture, verbose: true, fresh: true, label: "pass A",
   });
 
   log("");
@@ -948,7 +975,7 @@ async function main() {
   const spawnedB = await spawnMock(rootB);
   const passB = await runPass({
     port: spawnedB.port, token: spawnedB.token, spawned: spawnedB,
-    artifactDir: rootB, manifest, fixture, verbose: false, label: "pass B",
+    artifactDir: rootB, manifest, fixture, verbose: false, fresh: true, label: "pass B",
   });
   rmSync(rootB, { recursive: true, force: true });
 
@@ -993,7 +1020,7 @@ function printSummary({ pass, replay, compose, outDir }) {
   log(`Phase-0 exit summary — §19: "pnpm demo:coffee produces a valid layered .pcraft, a PNG,`);
   log("a critic report, and a command log, deterministically, in local Compose\"");
   log("");
-  log(`  layered .pcraft ... ok   ${pass.artifacts.pcraft} — ${pass.layers.length} layers [${layered}],`);
+  log(`  layered .pcraft ... ok   ${pass.artifacts.pcraft} — ${pass.layers.length} layers [${layered}] (top-down),`);
   log(`                            revision ${pass.revision}, text preserved, zero flattening (§25.2)`);
   log(`                            (mock snapshot format; the real engine writes .pcraft)`);
   log(`  PNG ............... ok   ${pass.artifacts.png} — PNG magic verified (mock render: fixed 8×8 gray)`);
