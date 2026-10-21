@@ -35,6 +35,7 @@ import {
 } from "./flows-model";
 import {
   subscribeRevisionRefresh,
+  broadcastRevisionRefresh,
   type RevisionRefreshListener,
 } from "./revision-events";
 
@@ -94,8 +95,14 @@ export function useUndoRedo(options: UseUndoRedoOptions): UseUndoRedoResult {
           `/documents/${encodeURIComponent(documentId)}/${kind}`,
           { schema: undoRedoReplySchema },
         );
-        // Revision refresh, style (b): the documented window broadcast.
-        void broadcastStep(documentId, reply.revision_after, kind);
+        // Revision refresh, style (b): the documented window broadcast
+        // (./revision-events.ts — panels subscribe via useRevisionRefresh).
+        broadcastRevisionRefresh({
+          documentId,
+          revision: reply.revision_after,
+          source: kind,
+          at: Date.now(),
+        });
         // Revision refresh, style (a): the callback seam (chat-panel pattern).
         onRevision?.(reply.revision_after);
         onLayersStale?.();
@@ -138,19 +145,6 @@ export function useUndoRedo(options: UseUndoRedoOptions): UseUndoRedoResult {
   }, []);
 
   return { undoOne, redoOne, busy, notice, dismissNotice };
-}
-
-// Imported lazily here to keep the module's contract obvious above the fold —
-// no: imports are hoisted anyway; this is a plain named import done inline to
-// avoid a circular-looking header. (Keep it boring.)
-import { broadcastRevisionRefresh } from "./revision-events";
-
-function broadcastStep(
-  documentId: string,
-  revision: number,
-  source: "undo" | "redo",
-): void {
-  broadcastRevisionRefresh({ documentId, revision, source, at: Date.now() });
 }
 
 /**
