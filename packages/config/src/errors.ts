@@ -1,166 +1,321 @@
-// @studio/config — error code catalog and Result envelopes.
-// Spec §13.3: codes are stable strings; envelope `{ error: { code, message,
-// hint?, retryable, docs_url? } }`; never leak internal ids or stack traces.
-// §4/AGENTS.md: typed result envelopes `{ ok:false, code, message, hint, retryable? }`.
-import { z } from 'zod';
+// @studio/config — error catalog and the Err half of the §7.3 response envelope.
+//
+// PRODUCT_ARCHITECTURE §7.3: Err = { error: { code, message, hint?, retryable,
+// requestId } }. Codes are stable strings — add-only, never rename or reuse.
+// §8.9 failure semantics drive the per-code defaults. Never leak stack traces,
+// absolute paths, upstream URLs or raw provider errors: `fromUnknown` maps any
+// unknown failure to INTERNAL and keeps the original only on `cause` (for
+// server-side logs), never in the envelope.
+import { z } from "zod";
+import { newRequestId } from "./ids.js";
+
+/** Catalog entry defaults: shown to users as-is, safe for any tenant. */
+export interface StudioErrorCatalogEntry {
+  /** Human message, safe to show. */
+  readonly message: string;
+  /** Actionable next step (always present in the catalog; overridable per throw). */
+  readonly hint: string;
+  /** Safe to retry the same request (after a pause) without human intervention? */
+  readonly retryable: boolean;
+}
 
 /**
- * Stable error codes (§13.3 + worked examples §24.4 + §15).
- * Add-only: never rename or reuse an existing code.
+ * Stable error-code catalog (§7.3 codes, §8.9 failure semantics).
+ * Add-only: never rename or reuse an existing key.
  */
-export const ERROR_CODES = [
-  // Validation / user input (§13.3: HTTP 400).
-  'text_overflow', // Engine text does not fit its bounds after layout.fitText.
-  'unknown_slots', // Plan references slot names the template does not define.
-  'invalid_slots', // Slot values fail the template's slot schema (§13.3).
-  'validation_failed', // Plan or payload failed schema validation (§5.1).
-  'budget_exceeded', // Tier budget exhausted → clean stop, partial charge (§5.2).
-  // Payment / credits (§13.3: HTTP 402).
-  'insufficient_credits', // Balance below reservation; run never starts (§14.2 rule 1).
-  'plan_limit', // Workspace hit a plan gate (seats, concurrent runs, canvas).
-  // Auth / tenancy (§13.3: 401/403; §15 cross-tenant tests).
-  'unauthorized', // Missing or invalid session/API key.
-  'forbidden', // Authenticated but not allowed (RBAC).
-  'cross_tenant_denied', // Access across workspace boundary denied (§15).
-  'not_found', // Unknown id (never confirm existence to strangers).
-  'conflict', // Version/idempotency conflict.
-  // Rate limiting (§13.3: HTTP 429).
-  'rate_limited', // Too many requests.
-  'quota_exceeded', // Daily/workspace quota cap hit (§14.2 rule 7).
-  // Cost-abuse guardrails (W9-N bridge map; §18.4/§16.2).
-  'cost_cap_reached', // Workspace hit its daily provider-spend cap (§18.4; resets 00:00 UTC).
-  'demo_cap_reached', // Shared demo workspace exhausted its N runs/day budget (§16.2).
-  'disabled_workspace', // Admin kill switch is set for the workspace (§18.4).
-  'demo_disabled', // Demo flow's global kill switch (DEMO_ENABLED) is off (§16.2).
-  'providers_disabled', // Every provider of the routing class disabled, no failover (§5.3).
-  // Agent/tool swap points adopted from the W6/W7 flags (add-only, W10-F).
-  'repair_plan_invalid', // Repair-model output failed the §23.4/§5.5 schema (§5.1 retry rule).
-  'critique_parse_failed', // vision_critique: the model reply was unparseable after its retry.
-  'export_failed', // export_document: the export pipeline failed (retryable per pipeline code).
-  'image_upscale_limit', // §7.3: the image would be upscaled past the 200% hard limit.
-  'unknown_component', // §8.3: no component matches the id (candidates pinned in the hint).
-  'unknown_component_vars', // §8.4: unknown variable names (allowed list in the hint).
-  'tool_retry_exhausted', // §6.3: a tool interaction failed past its retry budget.
-  // Engine / providers (§13.3: HTTP 503 engine, §24.4).
-  'engine_unavailable', // No engine session can be allocated/served.
-  'engine_timeout', // Tool/render/run/session timeout (§3.4).
-  'engine_crashed', // Engine died mid-run; replay/resume failed.
-  'image_provider_error', // Image provider failed all retries (§24.4, retryable).
-  'provider_unhealthy', // Model provider circuit breaker open (§5.3).
-  // Internal (§13.3: HTTP 500).
-  'storage_error', // S3/R2 read/write failure.
-  'internal_error', // Unexpected; logged with run id, no details leaked.
-] as const satisfies readonly string[];
+export const ERROR_CATALOG = {
+  /** Version conflict on save/upload — never overwrite; offer compare/restore (§9.3). */
+  PROJECT_VERSION_CONFLICT: {
+    message: "This project changed while you were working.",
+    hint: "Open the latest version, or restore yours from version history. Nothing was overwritten.",
+    retryable: false,
+  },
+  /** Zero/negative balance — run never starts (§8.8); upgrade CTA. */
+  INSUFFICIENT_CREDITS: {
+    message: "This workspace is out of credits.",
+    hint: "Top up credits or upgrade your plan to continue.",
+    retryable: false,
+  },
+  /** Single-writer lease owned by another editor (§11). */
+  LEASE_HELD: {
+    message: "Someone else is editing this project right now.",
+    hint: "You can open it read-only, or take over once the lease is released.",
+    retryable: true,
+  },
+  /** Own lease expired mid-session — re-acquire to continue (§11). */
+  LEASE_EXPIRED: {
+    message: "Your editing lease on this project expired.",
+    hint: "Reacquire the lease to continue editing.",
+    retryable: true,
+  },
+  /** Model provider down and no fallback available (§8.9); no charge. */
+  RUN_MODEL_UNAVAILABLE: {
+    message: "The model service is unavailable right now.",
+    hint: "Try again in a moment. You were not charged for this run.",
+    retryable: true,
+  },
+  /** Tool args failed validation twice (repair turn exhausted, §8.9). */
+  RUN_INVALID_TOOL: {
+    message: "The agent requested a tool call we can't validate.",
+    hint: "Nothing was applied. Rephrase the request and try again.",
+    retryable: false,
+  },
+  /** Batch validation failed before execution; no editor change (§8.9). */
+  RUN_INVALID_COMMAND: {
+    message: "The planned edit didn't pass validation.",
+    hint: "Nothing was applied. Ask for a smaller, more specific edit.",
+    retryable: false,
+  },
+  /** Step failed mid-batch → atomic rollback, no commit (§8.9). */
+  RUN_BATCH_ROLLED_BACK: {
+    message: "Part of the edit failed, so the whole edit was rolled back.",
+    hint: "Nothing was applied. Ask the agent to split the edit into smaller steps.",
+    retryable: false,
+  },
+  /** User cancelled the run; reserve released (§8.9). */
+  RUN_CANCELLED: {
+    message: "The run was cancelled.",
+    hint: "Nothing was applied. Reserved credits were refunded.",
+    retryable: false,
+  },
+  /** Editor iframe/connection dropped; retried once (§8.9). */
+  EDITOR_DISCONNECTED: {
+    message: "The editor connection dropped.",
+    hint: "Reconnect the editor, then retry the step.",
+    retryable: true,
+  },
+  /** Render exceeded its timeout; preview remains optional (§8.9). */
+  RENDER_TIMEOUT: {
+    message: "Rendering took too long and was stopped.",
+    hint: "Retry, or render a shorter range at a lower resolution.",
+    retryable: true,
+  },
+  /** Render pipeline failed. */
+  RENDER_FAILED: {
+    message: "Rendering failed.",
+    hint: "Check the composition for unsupported features, then retry.",
+    retryable: true,
+  },
+  /** Upload above the plan/size cap (ASSET_MAX_BYTES). */
+  ASSET_TOO_LARGE: {
+    message: "This file is larger than your plan allows.",
+    hint: "Compress the file, or upgrade for bigger uploads.",
+    retryable: false,
+  },
+  /** MIME/extension rejected by the upload allowlist (§12.3). */
+  ASSET_REJECTED: {
+    message: "This file type isn't supported.",
+    hint: "Use a supported media format: video, image, audio, font, LUT, SVG or PDF.",
+    retryable: false,
+  },
+  /** Workspace hit a plan quota (storage, runs/day, seats…). */
+  QUOTA_EXCEEDED: {
+    message: "This workspace hit a usage quota.",
+    hint: "The quota resets with your billing cycle, or you can upgrade now.",
+    retryable: false,
+  },
+  /** Unknown workspace — never confirms existence to strangers (§12.1). */
+  WORKSPACE_NOT_FOUND: {
+    message: "Workspace not found.",
+    hint: "Check the link, or ask the workspace owner to invite you.",
+    retryable: false,
+  },
+  PROJECT_NOT_FOUND: {
+    message: "Project not found.",
+    hint: "It may have been deleted, or you may not have access.",
+    retryable: false,
+  },
+  VERSION_NOT_FOUND: {
+    message: "Version not found.",
+    hint: "Refresh the version list and try again.",
+    retryable: false,
+  },
+  THREAD_NOT_FOUND: {
+    message: "Thread not found.",
+    hint: "Start a new thread in this project.",
+    retryable: false,
+  },
+  RUN_NOT_FOUND: {
+    message: "Run not found.",
+    hint: "Refresh the page, or open the project's run history.",
+    retryable: false,
+  },
+  /** Per-IP/user/workspace rate limit (§7.1). */
+  RATE_LIMITED: {
+    message: "Too many requests.",
+    hint: "Slow down for a moment, then retry.",
+    retryable: true,
+  },
+  /** 401 — missing/invalid session or API key. */
+  AUTH_REQUIRED: {
+    message: "Sign in to continue.",
+    hint: "Your session may have expired.",
+    retryable: false,
+  },
+  /** 403 — authenticated but not allowed (RBAC role, read-only lease). */
+  FORBIDDEN: {
+    message: "You don't have permission to do that.",
+    hint: "Ask a workspace admin for access.",
+    retryable: false,
+  },
+  /** Payload failed schema validation at the boundary. */
+  VALIDATION_FAILED: {
+    message: "That request didn't look right.",
+    hint: "Check the input and try again.",
+    retryable: false,
+  },
+  /** Unexpected failure — details never leak to clients. */
+  INTERNAL: {
+    message: "Something went wrong on our side.",
+    hint: "We're on it. Try again in a moment.",
+    retryable: true,
+  },
+} as const satisfies Record<string, StudioErrorCatalogEntry>;
 
-export type ErrorCode = (typeof ERROR_CODES)[number];
+/** Stable error codes, in catalog order. */
+export type StudioErrorCode = keyof typeof ERROR_CATALOG;
 
-export const ERROR_CODE_SCHEMA = z.enum(ERROR_CODES);
+export const ERROR_CODES: readonly StudioErrorCode[] = Object.freeze(
+  Object.keys(ERROR_CATALOG),
+) as readonly StudioErrorCode[];
 
-/** Failure envelope fields (§13.3). */
-export interface Failure {
-  readonly ok: false;
-  readonly code: ErrorCode;
+/** Zod schema for error codes at API boundaries. */
+export const ERROR_CODE_SCHEMA = z.enum(
+  // The catalog is a frozen const object; its keys are the exhaustive enum.
+  Object.keys(ERROR_CATALOG) as [StudioErrorCode, ...StudioErrorCode[]],
+);
+
+/** §7.3 Err envelope error body. `hint` is omitted when undefined. */
+export interface ErrBody {
+  /** Stable code, e.g. `PROJECT_VERSION_CONFLICT`. */
+  readonly code: StudioErrorCode;
+  /** Human message, safe to show. */
   readonly message: string;
+  /** Actionable next step. */
+  readonly hint?: string;
+  /** Safe to retry the same request? */
+  readonly retryable: boolean;
+  /** Correlates with server logs for support. */
+  readonly requestId: string;
+}
+
+/** §7.3 Err envelope. */
+export interface ErrEnvelope {
+  readonly error: ErrBody;
+}
+
+/** §7.3 Ok envelope. */
+export interface OkEnvelope<T> {
+  readonly data: T;
+  readonly meta?: Record<string, unknown>;
+}
+
+/** §7.3 response envelope union. */
+export type Envelope<T> = OkEnvelope<T> | ErrEnvelope;
+
+/** Builds an Ok envelope: `okEnvelope(value, meta?)`. */
+export function okEnvelope<T>(data: T, meta?: Record<string, unknown>): OkEnvelope<T> {
+  return meta === undefined ? { data } : { data, meta };
+}
+
+/** Constructor overrides; every field optional, catalog defaults apply. */
+export interface StudioErrorOptions {
+  readonly message?: string;
   readonly hint?: string;
   readonly retryable?: boolean;
-  readonly docsUrl?: string;
+  readonly requestId?: string;
+  /** Original failure — kept for server-side logs only, never serialized. */
+  readonly cause?: unknown;
 }
 
-export type Result<T> = { readonly ok: true; readonly value: T } | Failure;
+/**
+ * Typed application error carrying the §7.3 envelope. Message/hint/retryable
+ * default from the catalog and may be overridden per throw; `requestId`
+ * defaults to a fresh `req_…` id. `toEnvelope()` is the wire shape — `toJSON()`
+ * aliases it so accidental `JSON.stringify(error)` still cannot leak internals
+ * (stack, cause, upstream URLs, absolute paths).
+ */
+export class StudioError extends Error {
+  readonly code: StudioErrorCode;
+  readonly hint: string | undefined;
+  readonly retryable: boolean;
+  readonly requestId: string;
 
-export function ok<T>(value: T): Result<T> {
-  return { ok: true, value };
-}
-
-export interface ErrOptions {
-  readonly hint?: string;
-  readonly retryable?: boolean;
-  readonly docsUrl?: string;
-}
-
-/** Builds a typed failure envelope; optional fields are omitted when unset. */
-export function err(code: ErrorCode, message: string, options: ErrOptions = {}): Result<never> {
-  const failure: {
-    ok: false;
-    code: ErrorCode;
-    message: string;
-    hint?: string;
-    retryable?: boolean;
-    docsUrl?: string;
-  } = { ok: false, code, message };
-  if (options.hint !== undefined) {
-    failure.hint = options.hint;
+  constructor(code: StudioErrorCode, options: StudioErrorOptions = {}) {
+    const entry = ERROR_CATALOG[code];
+    super(options.message ?? entry.message, { cause: options.cause });
+    this.name = "StudioError";
+    this.code = code;
+    this.hint = options.hint ?? entry.hint;
+    this.retryable = options.retryable ?? entry.retryable;
+    this.requestId = options.requestId ?? newRequestId();
   }
-  if (options.retryable !== undefined) {
-    failure.retryable = options.retryable;
+
+  /** §7.3 Err envelope for this error. */
+  toEnvelope(): ErrEnvelope {
+    const body: {
+      code: StudioErrorCode;
+      message: string;
+      retryable: boolean;
+      requestId: string;
+      hint?: string;
+    } = {
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+      requestId: this.requestId,
+    };
+    const hint = this.hint;
+    if (hint !== undefined) {
+      body.hint = hint;
+    }
+    return { error: body };
   }
-  if (options.docsUrl !== undefined) {
-    failure.docsUrl = options.docsUrl;
+
+  /** JSON.stringify hook — same wire shape as {@link toEnvelope}. */
+  toJSON(): ErrEnvelope {
+    return this.toEnvelope();
   }
-  return failure;
 }
 
-export function isFailure<T>(result: Result<T>): result is Failure {
-  return result.ok === false;
+/** Type guard for StudioError at boundaries/handlers. */
+export function isStudioError(value: unknown): value is StudioError {
+  return value instanceof StudioError;
 }
 
-/** HTTP status classes per §13.3. */
-export type HttpErrorStatus = 400 | 401 | 402 | 403 | 404 | 409 | 429 | 500 | 503;
-
-/** Stable code → HTTP status mapping (§13.3). */
-export const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<ErrorCode, HttpErrorStatus>> = {
-  text_overflow: 400,
-  unknown_slots: 400,
-  invalid_slots: 400,
-  validation_failed: 400,
-  budget_exceeded: 400,
-  insufficient_credits: 402,
-  plan_limit: 402,
-  unauthorized: 401,
-  forbidden: 403,
-  cross_tenant_denied: 403,
-  not_found: 404,
-  conflict: 409,
-  rate_limited: 429,
-  quota_exceeded: 429,
-  cost_cap_reached: 429, // quota class (§14.2 rule 7 daily cap, W9-N bridge target)
-  demo_cap_reached: 429, // quota class (N runs/day platform-wide)
-  disabled_workspace: 403, // forbidden class (admin kill switch)
-  demo_disabled: 403, // forbidden class (global demo kill switch)
-  providers_disabled: 503, // provider routing failure family (§5.3)
-  repair_plan_invalid: 400, // validation class (§5.1 plan retry rule)
-  critique_parse_failed: 400, // validation class (unparseable model reply)
-  export_failed: 500, // export pipeline failure (retryable per pipeline code)
-  image_upscale_limit: 400, // §7.3 hard-limit refusal (user input validation)
-  unknown_component: 400, // §8.3 catalog lookup refusal
-  unknown_component_vars: 400, // §8.4 variable allow-list refusal
-  tool_retry_exhausted: 503, // §3.4 timeout family (§6.3 retry budget spent)
-  engine_unavailable: 503,
-  engine_timeout: 503,
-  engine_crashed: 503,
-  image_provider_error: 503,
-  provider_unhealthy: 503,
-  storage_error: 500,
-  internal_error: 500,
-};
-
-export function httpStatusFor(code: ErrorCode): HttpErrorStatus {
-  return HTTP_STATUS_BY_ERROR_CODE[code];
+/**
+ * Maps an unknown thrown value to a safe StudioError.
+ *
+ * - `StudioError` passes through unchanged.
+ * - `ZodError` → `VALIDATION_FAILED` (generic message; the invalid input is
+ *   never echoed into the envelope).
+ * - Anything else → `INTERNAL` with the catalog message. The original failure
+ *   is preserved on `cause` for server-side logging only — stack traces,
+ *   absolute paths and upstream URLs never reach the client.
+ */
+export function fromUnknown(err: unknown, requestId?: string): StudioError {
+  if (err instanceof StudioError) {
+    if (requestId === undefined || err.requestId === requestId) {
+      return err;
+    }
+    return new StudioError(err.code, {
+      message: err.message,
+      hint: err.hint,
+      retryable: err.retryable,
+      requestId,
+      cause: err.cause,
+    });
+  }
+  if (err instanceof z.ZodError) {
+    return new StudioError("VALIDATION_FAILED", { requestId, cause: err });
+  }
+  return new StudioError("INTERNAL", {
+    requestId,
+    cause: err instanceof Error ? err : undefined,
+  });
 }
 
-/** Zod schema for the wire error envelope `{ error: { code, message, hint?, retryable, docs_url? } }` (§13.3). */
-export const ERROR_ENVELOPE_SCHEMA = z
-  .object({
-    error: z
-      .object({
-        code: ERROR_CODE_SCHEMA,
-        message: z.string(),
-        hint: z.string().optional(),
-        retryable: z.boolean(),
-        docs_url: z.string().url().optional(),
-      })
-      .strict(),
-  })
-  .strict();
-
-export type ErrorEnvelope = z.infer<typeof ERROR_ENVELOPE_SCHEMA>;
+/** Type guard for the Err envelope half. */
+export function isErrEnvelope<T>(value: Envelope<T>): value is ErrEnvelope {
+  return "error" in value;
+}
