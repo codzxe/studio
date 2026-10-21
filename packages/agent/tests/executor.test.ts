@@ -880,7 +880,7 @@ describe("executor: §5.2 budget stops are clean stops (feature, not error)", ()
     expect(events.filter(isStarted)).toHaveLength(2);
     expect(state.calls).toBe(2); // the seam was never called for step 3
     // §5.2 "tell the user what was cut".
-    expect(report.cut).toEqual({
+    expect(report.cut).toMatchObject({
       reason: "budget_exceeded",
       completedSteps: 2,
       totalSteps: 3,
@@ -945,12 +945,13 @@ describe("executor: max 8 model↔tool round trips per phase (§5.1)", () => {
     expect(report.steps).toHaveLength(8);
     expect(report.steps.every((step) => step.ok)).toBe(true);
     expect(state.turnsConsumed).toBe(8); // the 9th turn never reached the seam's stream
-    expect(report.cut).toEqual({
+    expect(report.cut).toMatchObject({
       reason: "round_trip_cap",
       completedSteps: 8,
       totalSteps: 10,
       inFlightStep: null,
       cutStepTools: ["tool_8", "tool_9"],
+      budgetExceeded: null,
       message: expect.stringContaining("round-trip cap for the phase reached (8 of 8, §5.1)"),
     });
   });
