@@ -127,7 +127,7 @@ const bucketMs = args["bucket-seconds"] * 1000;
 
 function launch(scheduledAtMs) {
   inFlight++;
-  const rate = rateAt(performance.now() - t0);
+  const rate = rateAt(scheduledAtMs); // phase the request was offered in
   const bucket = Math.floor((performance.now() - t0) / bucketMs);
   fetchFull(args.url, { headers, timeoutMs: args["timeout-ms"] })
     .then((res) => {

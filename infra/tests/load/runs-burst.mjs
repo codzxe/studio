@@ -180,11 +180,18 @@ await pool(args.count, args.concurrency, async (i) => {
 
   // §13.2 follow: SSE to terminal, resume with Last-Event-ID on drops.
   const budgetMs = TIER_BUDGETS_MS[tier].minutes * 60_000 + args["grace-ms"];
-  const follow = await followRunEvents(`${base}/v1/runs/${encodeURIComponent(runId)}/events`, {
-    headers,
-    deadlineMs: budgetMs,
-    terminal: TERMINAL,
-  });
+  let follow;
+  try {
+    follow = await followRunEvents(`${base}/v1/runs/${encodeURIComponent(runId)}/events`, {
+      headers,
+      deadlineMs: budgetMs,
+      terminal: TERMINAL,
+    });
+  } catch (err) {
+    record.error = `follow transport failure: ${err?.message ?? err}`;
+    record.hung = true;
+    return;
+  }
   record.terminal = follow.terminal;
   record.runMs = follow.ms;
   record.hung = follow.timedOut;
@@ -254,10 +261,17 @@ if (createFail.length > 0) {
   console.log("create failures:");
   for (const [err, n] of counts) console.log(`  ${pad(n, 4)} ${err}`);
 }
+const broken = results.filter((r) => r.error && r.created);
+if (broken.length > 0) {
+  console.log("follow failures:");
+  for (const r of broken) console.log(`  ${r.runId}  ${r.error}`);
+}
 if (hungRuns.length > 0) {
   console.log(`hung runs (no terminal within budget + grace): ${hungRuns.map((r) => r.runId).join(", ")}`);
   console.log(`  → §3.4 on timeout: cancel, rollback, refund — check the ledger (GET /v1/credits)`);
 }
+const noTerminal = results.filter((r) => r.created && r.terminal === null);
+if (noTerminal.length > 0 && !anyBreach) anyBreach = true;
 console.log(line());
 console.log(anyBreach
   ? "VERDICT  ⚠ budget breaches or hung runs observed — investigate queue depth / engine pool (§22: queue age > 2 min alert, engine restarts)"
@@ -276,5 +290,5 @@ const summary = {
 if (args.json) printJson("SUMMARY_JSON", summary);
 
 if (createOk.length === 0) process.exit(1);
-if (args.strict && (anyBreach || failedRuns.length > 0 || hungRuns.length > 0)) process.exit(2);
+if (args.strict && (anyBreach || failedRuns.length > 0 || hungRuns.length > 0 || broken.length > 0)) process.exit(2);
 process.exit(0);

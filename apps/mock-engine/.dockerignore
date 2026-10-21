@@ -1,0 +1,28 @@
+# apps/mock-engine/.dockerignore — W9-I
+# mock-engine builds with THIS directory as the context
+# (`docker build apps/mock-engine`), so this file is fully effective.
+# Keep src/ IN the context (that is all the trivial runner needs); keep
+# everything else out — especially the zero-dep guarantee: no node_modules,
+# no lockfiles, no .env secrets in a test-helper image.
+#
+# W9-I ignore set: node_modules, .next, dist, tests, .demo-output, .env*,
+# fixtures (+ .git/coverage hygiene). **/ forms cover nested copies.
+
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+tests
+**/tests
+.demo-output
+**/.demo-output
+.env*
+**/.env*
+fixtures
+**/fixtures
+.git
+**/.git
+coverage
+**/coverage

@@ -5,17 +5,17 @@
 # Spec §17.4: "documented restore drill with RTO ≤ 4 h, RPO ≤ 24 h. Test it
 # monthly." This is the human-run drill (RB-06); verify-backup.sh is its
 # automated half and nightly gate (§17.3). Phases, all timed:
-#   0. resolve the newest backup → RPO = its age (must be ≤ 24 h; 26 h = §22 alert)
+#   0. resolve the newest backup → RPO = its age (≤ 24 h; 26 h = §22 alert)
 #   1. fetch dump + .sha256 (t_fetch)
 #   2. run verify-backup.sh with COMPARE_SOURCE=1 (t_verify): throwaway-container
 #      restore + row-count sanity + money-path count diff vs the live db
 #   3. restore the SAME dump into a SCRATCH COMPOSE PROJECT (isolated project
-#      name, named volume, torn down with -v at the end — never a real DB, §17.5)
+#      name, named volume, torn down with -v — never a real DB, §17.5)
 #      (t_up + t_restore)
 #   4. smoke against the scratch project (t_smoke): table groups, count diff vs
-#      source, and a preview-URL resolution check (soft — see ASSET_PREVIEW_SQL)
+#      source, preview-URL resolution check (soft — see ASSET_PREVIEW_SQL)
 #   5. timing report (RTO/RPO vs the §17.4 budgets) + one row appended to
-#      docs/runbooks/drill-log.md, then the operator signs off in RB-06.
+#      docs/runbooks/drill-log.md; the operator then signs off in RB-06.
 #
 # Usage:
 #   infra/scripts/drill-restore.sh --operator "$USER" [--backup KEY|path.dump.gz]
@@ -39,14 +39,13 @@ env_get() {
 
 log() { printf '[drill] %s %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
 die() { log "FATAL: $*"; exit 1; }
-usage() { sed -n '2,30p' "${BASH_SOURCE[0]}" | grep -E '^\s+#' | sed 's/^#\s\{0,1\}//' >&2; }
+usage() { grep -E '^# (Usage:|  infra/scripts/drill-restore)' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; }
 
 POSTGRES_USER="${POSTGRES_USER:-$(env_get POSTGRES_USER)}"; POSTGRES_USER="${POSTGRES_USER:-studio}"
 POSTGRES_DB="${POSTGRES_DB:-$(env_get POSTGRES_DB)}";       POSTGRES_DB="${POSTGRES_DB:-studio}"
 S3_BACKUP_BUCKET="${S3_BACKUP_BUCKET:-$(env_get S3_BACKUP_BUCKET)}"
 S3_BACKUP_PREFIX="${S3_BACKUP_PREFIX:-postgres}"
 STORAGE_ENDPOINT_URL="${STORAGE_ENDPOINT_URL:-}"
-BACKUP_DIR="${BACKUP_DIR:-/var/backups/studio}"
 VERIFY_TABLES="${VERIFY_TABLES:-users,organizations|workspaces,agent_runs,credit_ledger,credit_reservations,subscriptions}"
 ASSET_PREVIEW_SQL="${ASSET_PREVIEW_SQL:-SELECT preview_url FROM assets WHERE preview_url IS NOT NULL LIMIT 1}"
 SKIP_SOURCE_DIFF="${SKIP_SOURCE_DIFF:-0}"
@@ -68,7 +67,10 @@ command -v curl >/dev/null 2>&1 || log "WARN: curl missing — the preview-URL s
 [ -r "$ENV_FILE" ] || { [ "$SKIP_SOURCE_DIFF" = 1 ] || die "env file missing: $ENV_FILE (needed for the source diff; pass --skip-source-diff to run without it)"; }
 [ -n "$S3_BACKUP_BUCKET" ] || die "S3_BACKUP_BUCKET unset — the drill must test the offsite path (§17.4)"
 command -v aws >/dev/null 2>&1 || die "aws cli required (credentials from env only)"
-[ -n "$STORAGE_ENDPOINT_URL" ] && { export AWS_ENDPOINT_URL_S3="${AWS_ENDPOINT_URL_S3:-$STORAGE_ENDPOINT_URL}"; export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"; }
+if [ -n "$STORAGE_ENDPOINT_URL" ]; then
+  export AWS_ENDPOINT_URL_S3="${AWS_ENDPOINT_URL_S3:-$STORAGE_ENDPOINT_URL}"
+  export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
+fi
 [ -n "$DRILL_LOG" ] || DRILL_LOG="$SCRIPT_DIR/../../docs/runbooks/drill-log.md"
 PREFIX_ROOT="${S3_BACKUP_PREFIX%/}"; [ -n "$PREFIX_ROOT" ] || PREFIX_ROOT="postgres"
 
@@ -77,6 +79,7 @@ DATE_ISO="$(date -u +%FT%TZ)"
 PROJ="studio-drill-$(date -u +%Y%m%d%H%M%S)-$$"
 DDB="studio_drill"
 TMP="$(mktemp -d)"
+T_FETCH=0; T_VERIFY=0; T_UP=0; T_RESTORE=0; T_SMOKE=0
 NOTES=""
 
 human_secs() {
@@ -100,9 +103,59 @@ teardown() {
 }
 trap teardown EXIT
 
-# --- 0. resolve newest backup → RPO ------------------------------------------
+# report_and_log — shared tail for PASS and FAIL paths: appends the machine row
+# to drill-log.md, prints the §17.4 timing report, exits with the drill verdict.
+report_and_log() {
+  RTO_SECS=$(( $(date +%s) - DRILL_T0 ))
+  RTO_OK=ok; [ "$RTO_SECS" -le $(( 4 * 3600 )) ] || RTO_OK=OVER
+  [ "$RPO_OK" = ok ] || NOTES="$NOTES RPO over 24 h budget"
+  [ "$RTO_OK" = ok ] || NOTES="$NOTES RTO over 4 h budget"
+  NOTES="$(printf '%s' "$NOTES" | sed 's/^ *//' | tr '|' '/'; [ -n "$NOTES" ] || true)"
+  NOTES="${NOTES:-budgets ok}"
+  if [ ! -f "$DRILL_LOG" ]; then
+    mkdir -p "$(dirname "$DRILL_LOG")"
+    cat > "$DRILL_LOG" <<'EOF'
+# Restore drill log (spec §17.4)
+
+Machine-appended record of restore drills: `infra/scripts/drill-restore.sh` adds
+one row per run (verify-backup + scratch compose restore + smoke, with measured
+RTO/RPO). The quarterly human sign-off table lives in
+`docs/runbooks/RB-06-restore-drill.md` (§ Drill sign-off).
+
+Budgets (spec §17.4): **RTO ≤ 4 h**, **RPO ≤ 24 h** (§22 alert at 26 h).
+Cadence: nightly automated verify (`verify-backup.sh`, §17.3) + quarterly full
+drill — never skip two consecutive drills (RB-06).
+
+| Date (UTC) | Operator | Backup | Size | RPO | Fetch | Verify | Restore | Smoke | RTO | Result | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+EOF
+  fi
+  printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+    "$DATE_ISO" "$OPERATOR" "$FNAME" "$SIZE_H" "$(human_secs "$RPO_SECS")" \
+    "$(human_secs "$T_FETCH")" "$(human_secs "$T_VERIFY")" "$(human_secs "$((T_UP + T_RESTORE))")" \
+    "$(human_secs "$T_SMOKE")" "$(human_secs "$RTO_SECS")" "$RESULT" "$NOTES" >> "$DRILL_LOG"
+  log "appended drill row to $DRILL_LOG"
+  cat >&2 <<EOF
+
+================ DRILL REPORT (§17.4) ================
+backup:     ${DUMP_LABEL} (${SIZE_H})
+operator:   ${OPERATOR}
+RPO:        $(human_secs "$RPO_SECS")  budget ≤ 24 h (§22 alert 26 h)  [${RPO_OK}]
+phases:     fetch $(human_secs "$T_FETCH") · verify $(human_secs "$T_VERIFY") · scratch-up $(human_secs "$T_UP") · restore $(human_secs "$T_RESTORE") · smoke $(human_secs "$T_SMOKE")
+RTO:        $(human_secs "$RTO_SECS")  budget ≤ 4 h  [${RTO_OK}]
+result:     ${RESULT}
+next:       eyeball the sample workspace (document/version/asset round-trip,
+            RB-06 §Diagnosis 4), then sign off in RB-06 § Drill sign-off.
+======================================================
+EOF
+  [ "$RESULT" = "PASS" ] || exit 1
+  exit 0
+}
+
+# --- 0. resolve newest backup → RPO -------------------------------------------
 if [ -n "${BACKUP_OVERRIDE:-}" ]; then
   DUMP_LABEL="$BACKUP_OVERRIDE"
+  MARKER_EPOCH=""
 else
   MARKER="$(aws s3 cp "s3://${S3_BACKUP_BUCKET}/${PREFIX_ROOT}/_freshness.json" - 2>/dev/null || true)"
   DUMP_KEY="$(printf '%s' "$MARKER" | sed -n 's/.*"newest_backup"[: ]*"\([^"]*\)".*/\1/p' | head -1)"
@@ -118,7 +171,7 @@ else
   MARKER_EPOCH="$(printf '%s' "$MARKER" | sed -n 's/.*"last_success_epoch"[: ]*"\{0,1\}\([0-9]\{1,\}\).*/\1/p' | head -1)"
 fi
 
-# --- 1. fetch (timed; this is the first half of the RTO clock) ----------------
+# --- 1. fetch (timed; the RTO clock started at phase 0) -----------------------
 T="$(date +%s)"
 if [ -n "${BACKUP_OVERRIDE:-}" ] && [ "${BACKUP_OVERRIDE#s3://}" = "${BACKUP_OVERRIDE}" ]; then
   [ -r "$BACKUP_OVERRIDE" ] || die "provided backup not readable: $BACKUP_OVERRIDE"
@@ -141,30 +194,25 @@ BACKUP_EPOCH="$(stamp_epoch "$FNAME" || true)"
 [ -n "$BACKUP_EPOCH" ] || die "cannot determine backup age (RPO unmeasurable) — aborting the drill"
 RPO_SECS=$(( $(date +%s) - BACKUP_EPOCH ))
 RPO_OK=ok; [ "$RPO_SECS" -le $(( 24 * 3600 )) ] || RPO_OK=OVER
-log "RPO: backup age $(human_secs "$RPO_SECS") (budget ≤ 24 h, §22 alert at 26 h) [$RPO_OK]"
+log "RPO: backup age $(human_secs "$RPO_SECS") (budget ≤ 24 h, §22 alert at 26 h) [${RPO_OK}]"
 
 # --- 2. automated half: verify-backup (throwaway container + count diff) ------
 T="$(date +%s)"
 VERIFY_ENV="COMPARE_SOURCE=1 FRESHNESS_CHECK=1"
 [ "$SKIP_SOURCE_DIFF" = 1 ] && VERIFY_ENV="COMPARE_SOURCE=0 FRESHNESS_CHECK=1"
 if ! env $VERIFY_ENV "$SCRIPT_DIR/verify-backup.sh" "$DUMP_LOCAL"; then
+  T_VERIFY=$(( $(date +%s) - T ))
   log "verify-backup FAILED — aborting the drill before the scratch restore; see RB-06 §Fix (version skew, checksum, cron)"
   RESULT="FAIL"; NOTES="verify-backup failed"
-  T_VERIFY=$(( $(date +%s) - T )); T_UP=0; T_RESTORE=0; T_SMOKE=0
-  RTO_SECS=$(( $(date +%s) - DRILL_T0 ))
-  finish 2>/dev/null || true   # not defined on this path; append happens below
-  append_log_row() { :; }
-  printf '' >&2
-  # fall through to the shared report/append block
+  report_and_log   # appends the FAIL row, prints the report, exits 1
 else
   T_VERIFY=$(( $(date +%s) - T ))
 fi
-RESULT="${RESULT:-RUNNING}"
 
 # --- 3. scratch compose project (isolated name + volume; torn down with -v) --
 resolve_pg_image() {
   local cid
-  cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q db 2>/dev/null 2>&1 || true)"
+  cid="$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q db 2>/dev/null || true)"
   if [ -n "$cid" ]; then docker inspect --format '{{.Config.Image}}' "$cid" 2>/dev/null && return 0; fi
   echo "${VERIFY_PG_IMAGE:-postgres:16-alpine}"
 }
@@ -214,10 +262,12 @@ RC=$?
 set -e
 T_RESTORE=$(( $(date +%s) - T ))
 if [ "$RC" -ne 0 ]; then
-  REAL_ERRS="$(grep -c 'error:' "$RESTORE_ERR" 2>/dev/null || echo 0)"
-  ROLE_ERRS="$(grep 'error:' "$RESTORE_ERR" 2>/dev/null | grep -c 'role .* does not exist' || true)"
-  if [ "$REAL_ERRS" -gt "${ROLE_ERRS:-0}" ]; then
-    die "scratch pg_restore failed for real (first: $(grep -m1 'error:' "$RESTORE_ERR" || true)) — see RB-06 §Fix (version skew)"
+  REAL_ERRS="$(grep -c 'error:' "$RESTORE_ERR" 2>/dev/null || true)"; REAL_ERRS="${REAL_ERRS:-0}"
+  ROLE_ERRS="$(grep 'error:' "$RESTORE_ERR" 2>/dev/null | grep -c 'role .* does not exist' || true)"; ROLE_ERRS="${ROLE_ERRS:-0}"
+  if [ "$REAL_ERRS" -gt "$ROLE_ERRS" ]; then
+    log "FAIL: scratch pg_restore reported real errors (first: $(grep -m1 'error:' "$RESTORE_ERR" || true))"
+    RESULT="FAIL"; NOTES="$NOTES scratch restore errors"
+    report_and_log
   fi
   log "WARN: scratch restore exit ${RC}: only missing-role GRANT warnings — tolerated"
 fi
@@ -227,7 +277,10 @@ log "scratch restore finished in ${T_RESTORE}s ($(du -h "$DUMP_LOCAL" | cut -f1)
 T="$(date +%s)"
 SMOKE_FAILS=0
 NTAB="$(sql_scratch "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" || echo 0)"
-[ "${NTAB:-0}" -ge 1 ] || { log "FAIL: scratch DB has no public tables"; SMOKE_FAILS=$((SMOKE_FAILS+1)); NOTES="$NOTES empty restore"; }
+if [ "${NTAB:-0}" -lt 1 ]; then
+  log "FAIL: scratch DB has no public-schema tables — empty/partial restore"
+  SMOKE_FAILS=$((SMOKE_FAILS + 1)); NOTES="$NOTES empty restore"
+fi
 
 FOUND_TABLES=""
 IFS=',' read -ra GROUPS <<< "$VERIFY_TABLES"
@@ -242,7 +295,8 @@ for group in "${GROUPS[@]}"; do
     [ "${n:-0}" = "1" ] && { found="$alt"; break; }
   done
   if [ -z "$found" ]; then
-    log "FAIL: no table from group [${group}] in the scratch DB"; SMOKE_FAILS=$((SMOKE_FAILS+1)); continue
+    log "FAIL: no table from group [${group}] in the scratch DB"
+    SMOKE_FAILS=$((SMOKE_FAILS + 1)); continue
   fi
   FOUND_TABLES="$FOUND_TABLES $found"
   cnt="$(sql_scratch "SELECT count(*) FROM public.\"${found}\"" || echo -1)"
@@ -254,10 +308,17 @@ if [ "$SKIP_SOURCE_DIFF" != 1 ]; then
   for TBL in $FOUND_TABLES; do
     R="$(sql_scratch "SELECT count(*) FROM public.\"${TBL}\"" || echo x)"
     L="$(sql_src "SELECT count(*) FROM public.\"${TBL}\"" || true)"
-    if [ -z "${L:-}" ]; then log "FAIL: live db unreachable — cannot diff ${TBL}"; SMOKE_FAILS=$((SMOKE_FAILS+1)); continue; fi
-    if ! [[ "$R" =~ ^[0-9]+$ && "$L" =~ ^[0-9]+$ ]]; then log "FAIL: non-numeric counts for ${TBL}"; SMOKE_FAILS=$((SMOKE_FAILS+1)); continue; fi
-    if [ "$R" -gt "$L" ]; then log "FAIL: restored ${TBL}=${R} > live=${L} — corrupt restore"; SMOKE_FAILS=$((SMOKE_FAILS+1));
-    elif [ "$R" -lt "$L" ]; then log "note: ${TBL} restored=${R} < live=${L} (delta $((L-R)) = writes since the backup — expected drift)"
+    if [ -z "${L:-}" ]; then
+      log "FAIL: live db unreachable — cannot diff ${TBL}"; SMOKE_FAILS=$((SMOKE_FAILS + 1)); continue
+    fi
+    if ! [[ "$R" =~ ^[0-9]+$ && "$L" =~ ^[0-9]+$ ]]; then
+      log "FAIL: non-numeric counts for ${TBL} (restored=${R} live=${L})"; SMOKE_FAILS=$((SMOKE_FAILS + 1)); continue
+    fi
+    if [ "$R" -gt "$L" ]; then
+      log "FAIL: restored ${TBL}=${R} > live=${L} — impossible for a clean snapshot; corrupt restore"
+      SMOKE_FAILS=$((SMOKE_FAILS + 1))
+    elif [ "$R" -lt "$L" ]; then
+      log "note: ${TBL} restored=${R} < live=${L} (delta $((L - R)) = writes since the backup — expected drift)"
     fi
     printf '[drill]   %-26s restored=%-9s live=%s\n' "$TBL" "$R" "$L" >&2
   done
@@ -274,58 +335,15 @@ else
     2*|3*) log "preview URL resolves (HTTP ${CODE})" ;;
     000)   log "WARN: preview URL unreachable from the drill host (no egress?) — eyeball from a browser: $URL" ;;
     4*)    log "WARN: preview URL HTTP ${CODE} (expired signature?) — confirm the object exists in the versioned prefix" ;;
-    *)     log "FAIL: preview URL HTTP ${CODE} — object path broken (§17.4)"; SMOKE_FAILS=$((SMOKE_FAILS+1)) ;;
+    *)     log "FAIL: preview URL HTTP ${CODE} — object path broken (§17.4)"; SMOKE_FAILS=$((SMOKE_FAILS + 1)) ;;
   esac
 fi
 T_SMOKE=$(( $(date +%s) - T ))
 
 # --- 5. report + drill-log row -------------------------------------------------
-RTO_SECS=$(( $(date +%s) - DRILL_T0 ))
-RTO_OK=ok; [ "$RTO_SECS" -le $(( 4 * 3600 )) ] || RTO_OK=OVER
-RESULT="PASS"
-[ "$SMOKE_FAILS" -eq 0 ] || { RESULT="FAIL"; NOTES="$NOTES smoke failures: ${SMOKE_FAILS}"; }
-[ "$RPO_OK" = ok ] || NOTES="$NOTES RPO over 24 h budget"
-[ "$RTO_OK" = ok ] || NOTES="$NOTES RTO over 4 h budget"
-NOTES="$(printf '%s' "$NOTES" | sed 's/^ *;* *//' | tr '|' '/')"
-[ -n "$NOTES" ] || NOTES="budgets ok"
-
-ensure_drill_log() {
-  [ -f "$DRILL_LOG" ] && return 0
-  mkdir -p "$(dirname "$DRILL_LOG")"
-  cat > "$DRILL_LOG" <<'EOF'
-# Restore drill log (spec §17.4)
-
-Machine-appended record of restore drills: `infra/scripts/drill-restore.sh` adds
-one row per run (verify-backup + scratch compose restore + smoke, with measured
-RTO/RPO). The quarterly human sign-off table lives in
-`docs/runbooks/RB-06-restore-drill.md` (§ Drill sign-off).
-
-Budgets (spec §17.4): **RTO ≤ 4 h**, **RPO ≤ 24 h** (§22 alert at 26 h).
-Cadence: nightly automated verify (`verify-backup.sh`, §17.3) + quarterly full
-drill — never skip two consecutive drills (RB-06).
-
-| Date (UTC) | Operator | Backup | Size | RPO | Fetch | Verify | Restore | Smoke | RTO | Result | Notes |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-EOF
-}
-ensure_drill_log
-printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
-  "$DATE_ISO" "$OPERATOR" "$FNAME" "$SIZE_H" "$(human_secs "$RPO_SECS")" \
-  "$(human_secs "$T_FETCH")" "$(human_secs "$T_VERIFY")" "$(human_secs "$((T_UP + T_RESTORE))")" \
-  "$(human_secs "$T_SMOKE")" "$(human_secs "$RTO_SECS")" "$RESULT" "$NOTES" >> "$DRILL_LOG"
-log "appended drill row to $DRILL_LOG"
-
-cat >&2 <<EOF
-
-================ DRILL REPORT (§17.4) ================
-backup:     ${DUMP_LABEL} (${SIZE_H})
-operator:   ${OPERATOR}
-RPO:        $(human_secs "$RPO_SECS")  budget ≤ 24 h (§22 alert 26 h)  [${RPO_OK}]
-phases:     fetch $(human_secs "$T_FETCH") · verify $(human_secs "$T_VERIFY") · scratch-up $(human_secs "$T_UP") · restore $(human_secs "$T_RESTORE") · smoke $(human_secs "$T_SMOKE")
-RTO:        $(human_secs "$RTO_SECS")  budget ≤ 4 h  [${RTO_OK}]
-result:     ${RESULT}
-next:       eyeball the sample workspace (document/version/asset round-trip,
-            RB-06 §Diagnosis 4), then sign off in RB-06 § Drill sign-off.
-EOF
-[ "$RESULT" = PASS ] || exit 1
-exit 0
+if [ "$SMOKE_FAILS" -gt 0 ]; then
+  RESULT="FAIL"; NOTES="$NOTES smoke failures: ${SMOKE_FAILS}"
+else
+  RESULT="PASS"
+fi
+report_and_log

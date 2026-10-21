@@ -35,7 +35,6 @@ import {
   DAILY_SPEND_CAP_MULTIPLIER,
   type PlanId,
   PLAN_ID_SCHEMA,
-  PLANS,
   TRIAL_CREDITS,
 } from "@studio/config";
 

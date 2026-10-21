@@ -234,7 +234,7 @@ export async function followRunEvents(url, { headers = {}, deadlineMs, terminal 
   for (;;) {
     const remaining = deadlineMs - (performance.now() - startedAt);
     if (remaining <= 0) return { terminal: null, seq: lastSeq, events: seen, reconnects, ms: performance.now() - startedAt, timedOut: true };
-    const signal = AbortSignal.timeout(remaining);
+    const signal = AbortSignal.timeout(Math.max(1, Math.floor(remaining)));
     let res;
     try {
       res = await fetch(url, {
