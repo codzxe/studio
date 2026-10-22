@@ -8,14 +8,17 @@
 
 export {
   attachEditorBridge,
+  editorLoadState,
   forwardShortcut,
   sameOrigin,
   type AttachOptions,
+  type EditorLoadState,
+  type EditorLoadStatus,
   type EditorShortcutEvent,
   type EditorShortcutHandler,
   type EditorShortcutName,
   type ShortcutHandlers,
-} from "./bridge.js";
+} from "./bridge";
 
 export {
   AgentBatchInputSchema,
@@ -29,7 +32,7 @@ export {
   type AgentBatch,
   type AgentBatchInput,
   type AgentBatchStep,
-} from "./batch.js";
+} from "./batch";
 
 export {
   BridgeError,
@@ -37,7 +40,7 @@ export {
   isBridgeErrorCode,
   messageOf,
   type BridgeErrorCode,
-} from "./errors.js";
+} from "./errors";
 
 export {
   AppCapabilitiesSchema,
@@ -80,4 +83,4 @@ export {
   type ScreenshotParams,
   type ScreenshotResult,
   type UiInspect,
-} from "./types.js";
+} from "./types";

@@ -9,9 +9,9 @@
  */
 
 import { z } from "zod";
-import { type AgentBatch, normalizeAgentBatch } from "./batch.js";
-import { BridgeError, messageOf } from "./errors.js";
-import type { FakeEditor } from "./fake.js";
+import { type AgentBatch, normalizeAgentBatch } from "./batch";
+import { BridgeError, messageOf } from "./errors";
+import type { FakeEditor } from "./fake";
 import {
   type AppCapabilities,
   AppCapabilitiesSchema,
@@ -38,7 +38,7 @@ import {
   ScreenshotResultSchema,
   type UiInspect,
   UiInspectSchema,
-} from "./types.js";
+} from "./types";
 
 export interface FakeBridgeOptions {
   /** Simulate load timings in `info().load` (defaults: 42 / 64 ms). */

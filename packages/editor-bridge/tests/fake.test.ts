@@ -5,10 +5,10 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { attachFakeBridge } from "../src/attachFake.js";
-import { BridgeError } from "../src/errors.js";
-import { FAKE_PNG_BASE64, type FakeEditor, createFakeEditor, fakePathFor } from "../src/fake.js";
-import type { LayerNode, ProjectSummary } from "../src/types.js";
+import { attachFakeBridge } from "../src/attachFake";
+import { BridgeError } from "../src/errors";
+import { FAKE_PNG_BASE64, type FakeEditor, createFakeEditor, fakePathFor } from "../src/fake";
+import type { LayerNode, ProjectSummary } from "../src/types";
 
 async function rejects(promise: Promise<unknown>): Promise<unknown> {
   return promise.then(

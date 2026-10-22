@@ -5,10 +5,10 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type AttachOptions, attachEditorBridge, forwardShortcut } from "../src/bridge.js";
-import { type BridgeError, isBridgeError } from "../src/errors.js";
-import { type FakeEditor, createFakeEditor } from "../src/fake.js";
-import type { EffectcraftGlobal, EffectcraftWindow } from "../src/types.js";
+import { type AttachOptions, attachEditorBridge, forwardShortcut } from "../src/bridge";
+import { type BridgeError, isBridgeError } from "../src/errors";
+import { type FakeEditor, createFakeEditor } from "../src/fake";
+import type { EffectcraftGlobal, EffectcraftWindow } from "../src/types";
 
 function makeIframe(src = "/editor/"): HTMLIFrameElement {
   const iframe = document.createElement("iframe");
@@ -81,7 +81,7 @@ describe("attachEditorBridge: handshake", () => {
     iframe.remove();
   });
 
-  it("rejects with EDITOR_NOT_READY when the editor failed to start", async () => {
+  it("rejects with EDITOR_LOAD_FAILED when the editor failed to start", async () => {
     const iframe = makeIframe();
     const attach = attachEditorBridge(iframe);
     install(iframe, createFakeEditor(), { error: "wasm compile failed" });
@@ -92,7 +92,8 @@ describe("attachEditorBridge: handshake", () => {
       (e: unknown) => e,
     );
     expect(isBridgeError(err)).toBe(true);
-    expect((err as BridgeError).code).toBe("EDITOR_NOT_READY");
+    expect((err as BridgeError).code).toBe("EDITOR_LOAD_FAILED");
+    expect((err as BridgeError).retryable).toBe(false);
     expect((err as BridgeError).message).toContain("wasm compile failed");
     iframe.remove();
   });
@@ -192,7 +193,7 @@ describe("bridge calls: timeout / retry / errors", () => {
       stubEffectcraft({
         execute: () => {
           calls++;
-          if (calls === 1) throw "EffectCraft is not running yet";
+          if (calls === 1) throw "Studio is not running yet"; // the dist's api.rs string
           return { items: [] };
         },
       }),
@@ -215,7 +216,7 @@ describe("bridge calls: timeout / retry / errors", () => {
       stubEffectcraft({
         execute: () => {
           calls++;
-          throw "EffectCraft is not running yet";
+          throw "Studio is not running yet"; // the dist's api.rs string
         },
       }),
     );

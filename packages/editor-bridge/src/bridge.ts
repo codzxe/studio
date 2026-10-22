@@ -2,24 +2,29 @@
  * `attachEditorBridge` — the typed wrapper around the frozen editor iframe's
  * `window.effectcraft` global (PRODUCT_ARCHITECTURE §6.2).
  *
- * Verified upstream behavior this is built against (v0.13.0):
- * - `window.effectcraft` is defined synchronously by the inline module script
- *   in `editor/apps/effectcraft-web/web/index.html` (before WASM runs); it is
- *   NOT yet usable. `window.effectcraftLoad.readyMs` is set after
- *   `ec.start()` returns; `error` is set when startup fails. The smoke test
- *   (`apps/effectcraft-web/tests/smoke.mjs`) waits for
+ * Verified against the shipped dist (READ-ONLY sources, v0.13.0):
+ * - `window.effectcraft` + `window.effectcraftLoad = {}` are defined synchronously
+ *   by the inline module script in `apps/web/public/editor/index.html` (from
+ *   `editor/apps/effectcraft-web/web/index.html`) before the wasm runs.
+ * - `effectcraftLoad.wasmMs` is set once the module compiles, `readyMs` once
+ *   `ec.start()` returns; on failure the page sets `effectcraftLoad.error =
+ *   String(e)` (and never `readyMs`). The upstream smoke test
+ *   (`editor/apps/effectcraft-web/tests/smoke.mjs`) waits for
  *   `effectcraftLoad.readyMs || effectcraftLoad.error`.
  * - `effectcraft.request`/`execute` reject with plain STRINGS
- *   (`editor/apps/effectcraft-web/src/api.rs`): "EffectCraft is not running
- *   yet" when the control channel is not up (transient, retry), "request
- *   dropped" when it disconnects.
- * - Control requests time out after 60 s upstream; we time out after
- *   `callTimeoutMs` (default 15 s) client-side and normalize to `BridgeError`.
+ *   (`editor/apps/effectcraft-web/src/api.rs`): "Studio is not running yet"
+ *   (de-branded dist string) when the control channel is not up (transient,
+ *   retry), "request dropped" when it disconnects. Errors from the control
+ *   channel itself reject with that channel's `error` message.
+ * - Upstream documents a 60 s control-request timeout
+ *   (`editor/docs/control-protocol.md`); the web dist keeps requests pending
+ *   until they are answered or dropped, so the bridge enforces its own
+ *   `callTimeoutMs` (default 15 s) client-side and normalizes to `BridgeError`.
  */
 
 import { z } from "zod";
-import { type AgentBatch, MAX_BATCH_TIMEOUT_MS, normalizeAgentBatch } from "./batch.js";
-import { BridgeError, messageOf } from "./errors.js";
+import { type AgentBatch, MAX_BATCH_TIMEOUT_MS, normalizeAgentBatch } from "./batch";
+import { BridgeError, messageOf } from "./errors";
 import {
   type AppCapabilities,
   AppCapabilitiesSchema,
@@ -36,6 +41,7 @@ import {
   type EditorInfo,
   EditorInfoSchema,
   type EffectcraftGlobal,
+  type EffectcraftLoad,
   EffectcraftLoadInfoSchema,
   type EffectcraftWindow,
   type RenderFrameParams,
@@ -47,14 +53,14 @@ import {
   ScreenshotResultSchema,
   type UiInspect,
   UiInspectSchema,
-} from "./types.js";
+} from "./types";
 
 const DEFAULT_CALL_TIMEOUT_MS = 15_000;
 const DEFAULT_READY_TIMEOUT_MS = 60_000;
 const READY_POLL_MS = 100;
 const RETRY_DELAY_MS = 250;
 
-/** Transient startup rejections from api.rs ("EffectCraft is not running yet") — retried once. */
+/** Transient startup rejections from api.rs ("Studio is not running yet" in the shipped dist) — retried once. */
 const NOT_READY_RE = /not running yet|not ready|still (loading|starting)|starting up/i;
 const DISCONNECTED_RE = /request dropped/i;
 
@@ -66,9 +72,11 @@ export interface AttachOptions {
   /** Expected editor version prefix; a mismatch emits an "error" event (attach still resolves). */
   readonly version?: string;
   /**
-   * Pre-attach event handler: sees the early "ready" emission and the
-   * version-mismatch "error" that fire before `attachEditorBridge` resolves.
-   * Routed into the same bus as `on(…)`.
+   * Pre-attach event handler: sees the early "ready" emission, the
+   * version-mismatch "error" and the handshake "error"s (`EDITOR_LOAD_FAILED`
+   * when the dist's wasm failed to boot, `EDITOR_NOT_READY` on timeout) that
+   * fire before `attachEditorBridge` resolves. Routed into the same bus as
+   * `on(…)`.
    */
   readonly onEvent?: (event: EditorEventName, payload: unknown) => void;
 }
@@ -171,10 +179,12 @@ function withTimeout<T>(label: string, promise: Promise<T>, timeoutMs: number): 
 }
 
 /**
- * Poll for `effectcraftLoad.readyMs` (upstream) or an optional `ready()` hook
- * (future-proofing) until the editor reports ready.
+ * Poll for `effectcraftLoad.readyMs` (the dist sets it once `ec.start()`
+ * returns) or fail fast on `effectcraftLoad.error` — the exact two signals
+ * the shipped host page writes (`apps/web/public/editor/index.html`), and the
+ * same pair the upstream smoke test waits for.
  *
- * The handshake is the one place the bridge polls: upstream exposes no ready
+ * The handshake is the one place the bridge polls: the dist exposes no ready
  * event, and `window.effectcraft` exists before the app runs. The `on(…)`
  * event bus below never polls.
  */
@@ -185,12 +195,10 @@ async function waitForReady(iframe: HTMLIFrameElement, readyTimeoutMs: number): 
     const ec = w?.effectcraft;
     const load = w?.effectcraftLoad;
     if (ec && load) {
+      // Order matters: the dist sets `error` on any boot failure and never
+      // `readyMs`; if both are somehow present, the failure wins.
       if (load.error !== undefined) {
-        throw new BridgeError(
-          "EDITOR_NOT_READY",
-          `EffectCraft failed to start: ${load.error}`,
-          false,
-        );
+        throw new BridgeError("EDITOR_LOAD_FAILED", `editor failed to start: ${load.error}`, false);
       }
       if (load.readyMs !== undefined) return;
       // A ready() hook (not in upstream v0.13): awaited once, bounded by the deadline.
@@ -216,6 +224,62 @@ async function waitForReady(iframe: HTMLIFrameElement, readyTimeoutMs: number): 
   }
 }
 
+// ---------------------------------------------------------------------------
+// Editor load state — the M3.7 failure seam (BUILD_PLAN §M3 task 7)
+// ---------------------------------------------------------------------------
+
+/** The editor wasm's boot phase, read from the dist's `effectcraftLoad`. */
+export type EditorLoadStatus = "loading" | "ready" | "failed";
+
+/**
+ * A snapshot of the editor's boot state, taken from the shipped dist's
+ * `window.effectcraftLoad` (`apps/web/public/editor/index.html`):
+ * `{}` while loading, `wasmMs` once the module compiled, `readyMs` once
+ * `ec.start()` returned, `error` when the wasm failed to boot.
+ */
+export interface EditorLoadState {
+  /** `loading` until `readyMs`/`error` appears (or the globals are not yet visible). */
+  readonly status: EditorLoadStatus;
+  /** Present when `status === "failed"` — the dist's `String(e)`. */
+  readonly error?: string;
+  /** Set once the wasm module compiled (present on both ready and failed boots). */
+  readonly wasmMs?: number;
+  /** Set once `ec.start()` returned (present only on a ready boot). */
+  readonly readyMs?: number;
+}
+
+/**
+ * Read the editor's boot state synchronously — the public seam for "the wasm
+ * failed to boot" (M3.7). Works before (and without) `attachEditorBridge`:
+ * the host page can poll this while it shows its loading screen, then render
+ * the failure + retry UI the moment `status === "failed"`, and call
+ * `attachEditorBridge` once `status === "ready"`.
+ *
+ * - Returns `{ status: "loading" }` while the iframe has not exposed the
+ *   dist globals yet (including cross-origin reads, which throw and are
+ *   swallowed — the state is genuinely unknowable from this frame).
+ * - Same-origin only, like the rest of the bridge (§6.1).
+ *
+ * The `attachEditorBridge` rejection is the async counterpart: it fails with
+ * `BridgeError` code `EDITOR_LOAD_FAILED` carrying the same `error` string.
+ */
+export function editorLoadState(iframe: HTMLIFrameElement): EditorLoadState {
+  let load: EffectcraftLoad | undefined;
+  try {
+    load = (iframe.contentWindow as EffectcraftWindow | null)?.effectcraftLoad;
+  } catch {
+    return { status: "loading" }; // cross-origin: the dist's globals are not readable
+  }
+  if (!load) return { status: "loading" };
+  if (load.error !== undefined) {
+    return { status: "failed", error: load.error, wasmMs: load.wasmMs, readyMs: load.readyMs };
+  }
+  if (load.readyMs !== undefined) {
+    return { status: "ready", wasmMs: load.wasmMs, readyMs: load.readyMs };
+  }
+  return { status: "loading", wasmMs: load.wasmMs };
+}
+
 /** Where the editor is loaded relative to the current origin. Same-origin only (§6.1). */
 export function sameOrigin(iframe: HTMLIFrameElement): boolean {
   const src = iframe.getAttribute("src") ?? "";
@@ -229,13 +293,21 @@ export function sameOrigin(iframe: HTMLIFrameElement): boolean {
 
 /**
  * Attach to the editor iframe. Resolves once `window.effectcraft` exists and
- * reports ready (`effectcraftLoad.readyMs`, or an optional `ready()` hook),
- * or rejects with `BridgeError` `EDITOR_NOT_READY`.
+ * reports ready (`effectcraftLoad.readyMs`, or an optional `ready()` hook).
+ *
+ * Rejects with a `BridgeError` when the editor cannot boot:
+ * - `EDITOR_LOAD_FAILED` — the dist's `effectcraftLoad.error` is set (the wasm
+ *   failed to boot; the `error` string is in the message). Use
+ *   {@link editorLoadState} to observe this without awaiting the handshake.
+ * - `EDITOR_NOT_READY` — the handshake timed out (default 60 s).
+ *
+ * A load failure or handshake timeout is also emitted on the event bus as an
+ * `"error"` event (visible pre-attach via `AttachOptions.onEvent`).
  *
  * Every resolved method call is wrapped with a timeout (default 15 s), a
  * single retry on transient "not ready" rejections, and `BridgeError`
  * normalization (`EDITOR_TIMEOUT` | `EDITOR_CALL_FAILED` | `EDITOR_NOT_READY`
- * | `EDITOR_DISCONNECTED`).
+ * | `EDITOR_LOAD_FAILED` | `EDITOR_DISCONNECTED`).
  */
 export function attachEditorBridge(
   iframe: HTMLIFrameElement,
@@ -250,6 +322,17 @@ export function attachEditorBridge(
     }
   }
   let disposed = false;
+
+  /** The handshake, shared by attach and `bridge.ready()`: emits bus "error"s. */
+  async function awaitReady(): Promise<void> {
+    try {
+      await waitForReady(iframe, readyTimeoutMs);
+    } catch (err) {
+      const bridgeErr = err instanceof BridgeError ? err : classify("ready", err);
+      bus.emit("error", bridgeErr);
+      throw bridgeErr;
+    }
+  }
 
   async function call<T>(
     label: string,
@@ -332,7 +415,7 @@ export function attachEditorBridge(
   const detachFns: Array<() => void> = [];
 
   return (async (): Promise<EditorBridge> => {
-    await waitForReady(iframe, readyTimeoutMs);
+    await awaitReady();
 
     const w = contentWindowOf(iframe);
     if (!w) {
@@ -360,7 +443,7 @@ export function attachEditorBridge(
         if (disposed) {
           throw new BridgeError("EDITOR_DISCONNECTED", "bridge is disposed", false);
         }
-        await waitForReady(iframe, readyTimeoutMs);
+        await awaitReady();
       },
 
       inspect(): Promise<UiInspect> {

@@ -23,7 +23,7 @@
  */
 
 import { z } from "zod";
-import type { AgentBatchInput } from "./batch.js";
+import type { AgentBatchInput } from "./batch";
 
 // ---------------------------------------------------------------------------
 // Raw upstream surface (do not grow beyond what the sources verify)

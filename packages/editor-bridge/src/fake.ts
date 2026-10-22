@@ -30,7 +30,7 @@
  * `ui.click`, `ui.key` are rejected as unknown methods).
  */
 
-import type { PropValue } from "./types.js";
+import type { PropValue } from "./types";
 
 // ---------------------------------------------------------------------------
 // Model
@@ -1636,4 +1636,4 @@ export function createFakeEditor(overrides: FakeEditorOverrides = {}): FakeEdito
 }
 
 // Test-only adapter (subpath "@studio/editor-bridge/fake").
-export { attachFakeBridge, type FakeBridgeOptions } from "./attachFake.js";
+export { attachFakeBridge, type FakeBridgeOptions } from "./attachFake";
