@@ -153,9 +153,9 @@ describe("streamChatCompletion", () => {
   });
 
   it("tolerates CRLF line endings and a final frame without trailing newline", async () => {
-    const crlf = `data: ${JSON.stringify({ choices: [{ delta: { content: "a" } }] })}\r\n\r\n`.concat(
-      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" } }] })}\r\n`,
-    );
+    const crlf =
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "a" } }] })}\r\n\r\n` +
+      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" } }] })}\r\n`;
     const events = await collect(
       streamChatCompletion(clientDeps({ fetch: scriptedFetch([sseResponse([crlf])]) }), {
         model: "studio-fast",
