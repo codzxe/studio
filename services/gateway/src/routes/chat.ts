@@ -33,17 +33,14 @@ import {
 import { StudioError } from "@studio/config";
 import type { AgentMessage, Repos } from "@studio/db";
 
-import {
-  AUTO_APPLY_SETTING_UNAVAILABLE,
-  autoApplyDecision,
-} from "../auto-apply.js";
+import { AUTO_APPLY_SETTING_UNAVAILABLE, autoApplyDecision } from "../auto-apply.js";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
 import { pathParam } from "../http.js";
 import { TOOL_RESULT_TIMEOUT_MS } from "../litellm/runner.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
-import { resolvePlan } from "../plan.js";
 import type { CompilePlanResult } from "../plan-compiler.js";
+import { resolvePlan } from "../plan.js";
 import {
   type AgentRun,
   type AgentRunHistoryTurn,

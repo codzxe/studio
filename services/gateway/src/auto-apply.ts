@@ -146,11 +146,13 @@ export type AutoApplyDecision =
 export const AUTO_APPLY_REASON_MESSAGES: Readonly<Record<AutoApplyReason, string>> = {
   eligible: "This plan qualifies for auto-apply.",
   "setting-disabled": "Auto-apply is off for your account — review and apply it yourself.",
-  "setting-unavailable": "Your auto-apply setting couldn't be read, so nothing applies automatically.",
+  "setting-unavailable":
+    "Your auto-apply setting couldn't be read, so nothing applies automatically.",
   "compile-failed": "The plan didn't finish compiling, so there is nothing safe to auto-apply.",
   "risk-not-low": "Auto-apply only covers low-risk plans — this one needs your review.",
   "approval-required": "This plan asks for your approval, so it waits for you.",
-  "intent-not-auto-applyable": "Only edits, styling and animation auto-apply; this plan does more than that.",
+  "intent-not-auto-applyable":
+    "Only edits, styling and animation auto-apply; this plan does more than that.",
   "command-not-reversible": "This plan uses commands outside the reversible auto-apply set.",
   "credits-above-ceiling": "This plan's estimated cost is above the auto-apply limit.",
   "too-many-steps": "This plan doesn't fit the auto-apply size range.",

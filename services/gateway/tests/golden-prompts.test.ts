@@ -35,12 +35,14 @@
 // goal, (2) the structured-output round returns the fixture's plan JSON, (3)
 // the run answers.
 //
-// FINDINGS G-1..G-8 (documented in ./golden-plans.ts) are PINNED here as
-// today's actual behavior: 6 fixtures compile to a typed fail-closed
-// `empty_batch` fatal (args-shape divergence between the M5-A write-tool
-// schemas and the M5-B compiler translation), gp-11 pins the G-3 partial
-// drop, gp-06 pins the G-2 silent typography drop. Fix the seam, flip
-// `expected.compile`, and this suite becomes the acceptance test.
+// FINDINGS G-1..G-8 (documented in ./golden-plans.ts) are FLIPPED here per the
+// M5 wave-2 integrator fix (translate() now reads the LANDED M5-A write-tool
+// shapes; G-3 zero-command steps are fatally empty_step; G-4 makes the
+// model's declared risk a floor; G-7 maps path "name" → layer.rename; D-21
+// gives apply_preset the plan's affectedLayers fallback): ALL 12 fixtures
+// now COMPILE and assert their full goldens — this suite is the acceptance
+// test for the fix. G-5 (save_version is annotation-only) and G-8 (orphan
+// resolution requests on create-only plans) remain pinned by design.
 //
 // Deterministic: fake loopback SSE only; DB-gated wire block skipped without
 // Postgres (same gate as chat-loop). Full file well under 30 s with the DB.
@@ -473,16 +475,23 @@ describe("golden prompts — REAL compiler + REAL contracts deps (compile covera
     expect(fatal.issues[0]?.code).toBe(fx.expected.fatalCode);
   });
 
-  it("gp-06 pins the G-2 silent typography drop: font/size/fill never reach the compiled batch", () => {
+  it("gp-06 pins the G-2 FIX: the validated typography (font/size/fill) reaches the compiled batch 1:1", () => {
     const fx = fixtureById("gp-06-create-text-typography");
     const ok = expectOk(compileFixture(fx));
     expect(ok.batch.steps).toEqual([
       {
         command: "layer.newText",
-        // The write-tool args use font/size/fill; the compiler reads
-        // fontSize/fontFamily/color (none of which the STRICT schema allows)
-        // — only text/name/position survive. Pinned exactly.
-        params: { text: "Studio Launch", name: "Launch Title", position: [960, 540] },
+        // The write-tool args use font/size/fill and the FIXED compiler maps
+        // them 1:1 (it no longer looks for fontSize/fontFamily/color, which
+        // the STRICT schema forbids). Pinned exactly — no silent drop.
+        params: {
+          text: "Studio Launch",
+          name: "Launch Title",
+          position: [960, 540],
+          font: "Inter",
+          size: 96,
+          fill: "#F5F1E8",
+        },
       },
     ]);
   });
@@ -508,14 +517,56 @@ describe("golden prompts — REAL compiler + REAL contracts deps (compile covera
     expect(ok.estimatedCredits).toBe(1.88);
   });
 
-  it("gp-11 pins the G-3 partial drop: 3 plan steps compile to a 1-command batch (warn only)", () => {
+  it("gp-11 pins the G-3 FIX: all 3 plan steps compile — the compound plan is COMPLETE", () => {
     const fx = fixtureById("gp-11-lower-third-compound");
     const ok = expectOk(compileFixture(fx));
     expect(fx.scriptedModelPlan.steps).toHaveLength(3);
-    expect(commandIds(ok.batch)).toEqual(["layer.newText"]);
-    // The set_keyframes step translated to ZERO commands — warn severity only.
-    expect(warnCodes(ok)).toContain("unusable_args");
+    expect(commandIds(ok.batch)).toEqual(["layer.newText", "prop.addKey", "prop.addKey"]);
+    // The set_keyframes step now COMPILES (M5-A shape): no unusable_args,
+    // no zero-command drop — what the card shows is what Apply performs.
+    expect(warnCodes(ok)).not.toContain("unusable_args");
     expect(ok.saveVersion).toEqual({ label: "Lower third v1" });
+  });
+
+  it("a mixed plan with a zero-command step is fatally empty_step under the REAL deps (G-3)", () => {
+    // apply_preset with layers omitted AND no affectedLayers names has no
+    // target under the D-21 fallback ⇒ zero commands ⇒ the WHOLE plan is
+    // fatally incomplete — the user never approves 2 steps and gets 1.
+    const result = compilePlan(
+      EDIT_PLAN_SCHEMA.parse({
+        intent: "animate",
+        summary: "Create then pop",
+        risk: "low",
+        requiresApproval: false,
+        affectedLayers: [],
+        estimatedCredits: 2,
+        steps: [
+          {
+            title: "Create a text layer",
+            tool: "studio.create_text",
+            args: { text: "Hello", name: "Headline" },
+            batch: {
+              label: "Create a text layer",
+              steps: [{ command: "create_text", params: { text: "Hello" } }],
+            },
+          },
+          {
+            title: "Pop the selection",
+            tool: "studio.apply_preset",
+            args: { preset: { builtinId: "pop-in" } },
+            batch: {
+              label: "Pop the selection",
+              steps: [{ command: "apply_preset", params: {} }],
+            },
+          },
+        ],
+      }),
+      defaultCompileDeps(),
+    );
+    const fatal = expectFatal(result);
+    expect(fatal.issues.some((issue) => issue.code === "empty_step" && issue.step === 2)).toBe(
+      true,
+    );
   });
 
   it("compilation is deterministic: every fixture compiles deep-equal twice", () => {
@@ -686,7 +737,7 @@ d(
       20_000,
     );
 
-    it("the wire pins G-3 exactly: gp-11 shows 3 plan steps but a 1-command compiled batch", async () => {
+    it("the wire pins the G-3 FIX: gp-11's 3 plan steps compile to a COMPLETE 3-command batch", async () => {
       const fx = fixtureById("gp-11-lower-third-compound");
       const ctx = await newFixture("golden-g3");
       fake.enqueue(
@@ -718,17 +769,29 @@ d(
 
       // What the PLAN CARD shows: the model's 3 steps (create + animate + save).
       expect(planEvent.plan.steps).toHaveLength(3);
-      // What the APPLIED BATCH would perform: 1 command — the slide-in
-      // animation translated to ZERO commands with warn severity only (G-3).
       expect(planEvent.plan.steps.map((step) => step.title)).toEqual([
         "Create the lower-third text",
         "Slide in from the left",
         "Save the version",
       ]);
+      // What the APPLIED BATCH performs post-G-3-fix: EXACTLY those edits —
+      // the create_text step, BOTH slide-in keyframes, and the save_version
+      // step as the annotation (never a batch step). No silent partial drop.
       const g3Batch = planEvent.compiledBatch;
       if (g3Batch === undefined) throw new Error("gp-11 plan event was not enriched");
-      expect(g3Batch.steps).toHaveLength(1);
-      expect(commandIds(g3Batch)).toEqual(["layer.newText"]);
+      expect(commandIds(g3Batch)).toEqual(["layer.newText", "prop.addKey", "prop.addKey"]);
+      expect(g3Batch.steps[1]?.params).toMatchObject({
+        layer: "Speaker Lower Third",
+        path: "transform/position",
+        time: 0,
+        value: [-400, 940],
+      });
+      expect(g3Batch.steps[2]?.params).toMatchObject({
+        layer: "Speaker Lower Third",
+        path: "transform/position",
+        time: 0.6,
+        value: [120, 940],
+      });
     });
   },
 );

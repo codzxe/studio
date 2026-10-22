@@ -13,11 +13,11 @@
 //      poisons die at EDIT_PLAN_SCHEMA; schema-valid poisons get TYPED fatals;
 //      and every ok:true batch is registry-clean (only AGENT_COMMAND_IDS, no
 //      poison needles, no dunder keys anywhere).
-//   C. FINDING F-5 (report-only pins) — the compiler's translate() reads the
-//      OLD draft args shapes: five tools compile PERFECT, current-contracts
-//      args to zero commands (PROPOSAL_INVALID today), create_text silently
-//      drops validated typography fields, and a mixed plan silently drops the
-//      drifted step. Flip these pins when plan-compiler.ts is fixed.
+//   C. FINDING F-5 — FIXED (M5 wave-2 integrator): translate() reads the
+//      LANDED M5-A shapes. The drift probes are the fix's ACCEPTANCE pins
+//      (perfect current-shape args COMPILE to their registry commands), the
+//      old draft vocabulary answers typed invalid_args fatals, and a mixed
+//      plan with ANY zero-command step is fatally empty_step (G-3).
 //   D. AGENT_BATCH_SCHEMA bounds (§8.5) + PLAN_EVENT_SCHEMA — the wire batch
 //      rejects every bound violation; FINDING F-6 pins that the wire gate is
 //      BOUNDS-ONLY (a dunder/shadow command parses) — the registry gate is the
@@ -452,13 +452,13 @@ describe("M5-N safety — the plan compiler under hostile plans (typed issues, c
 });
 
 // ---------------------------------------------------------------------------
-// C. FINDING F-5 — the args-shape drift between the landed contracts schemas
-//    and the compiler's translate() (report-only pins; flip when fixed)
+// C. FINDING F-5 — FIXED by the M5 wave-2 integrator: translate() reads the
+//    LANDED M5-A write-tool shapes (M5-S flipped acceptance pins)
 // ---------------------------------------------------------------------------
 
-describe("M5-N FINDING F-5 — the compiler reads the OLD draft args shapes (drift pins)", () => {
+describe("M5-N FINDING F-5 — FIXED: the compiler reads the LANDED M5-A args shapes (acceptance pins)", () => {
   it.each(COMPILER_DRIFT_PROBES.map((fixture) => [fixture.id]))(
-    "%s: perfect CURRENT-contracts args (FINDING F-5, report-only)",
+    "%s: perfect CURRENT-contracts args compile to the pinned registry command",
     (fixtureId) => {
       const probe = COMPILER_DRIFT_PROBES.find((item) => item.id === fixtureId);
       if (probe === undefined) throw new Error("fixture missing");
@@ -467,49 +467,103 @@ describe("M5-N FINDING F-5 — the compiler reads the OLD draft args shapes (dri
       const argsCheck = schema.safeParse(JSON.parse(probe.argsJson));
       expect(argsCheck.success, `${probe.id}: the landed schema accepts these args`).toBe(true);
 
-      // 2. …but the compiler translates them with the old field names.
+      // 2. …and the FIXED compiler TRANSLATES them (the F-5 flip): exactly the
+      //    pinned registry command, registry-clean, §8.5-valid, dunder-free.
       const plan = writePlan([writeStep(probe.tool, JSON.parse(probe.argsJson))]);
       const result = compileHostile(plan);
-      if (probe.compiledToday === "empty") {
-        // F-5 as it stands: zero commands → every perfectly-argued call for
-        // set_properties / set_keyframes / add_effect / apply_preset answers
-        // PROPOSAL_INVALID. FLIP THIS BLOCK when translate() reads the
-        // current shapes (the block above stays green either way).
-        expect(result.ok, `${probe.id}: drift pin — currently compiles to nothing`).toBe(false);
-        if (!result.ok) {
-          expect(result.issues.map((issue) => issue.code)).toContain("empty_batch");
-        }
-      } else {
-        // create_text compiles but SILENTLY DROPS the validated typography
-        // fields (font/style/size/fill) — the compiled params carry only the
-        // old-shape fields (text/name/position).
-        expect(result.ok, `${probe.id}: drift pin — currently compiles partially`).toBe(true);
-        if (result.ok) {
-          const step = result.batch.steps[0];
-          expect(step?.command).toBe("layer.newText");
-          expect(step?.params).toEqual({
-            text: "M5N-DRIFT-CREATE-TEXT",
-            name: "Title",
-            position: [960, 540],
-          });
-        }
+      expect(result.ok, `${probe.id}: F-5 fixed — the step compiles`).toBe(true);
+      if (!result.ok) throw new Error("unreachable");
+      expect(
+        result.batch.steps.map((step) => step.command),
+        probe.id,
+      ).toEqual([probe.expectedCommand]);
+      for (const step of result.batch.steps) {
+        expect(AGENT_COMMAND_IDS, `${probe.id}: command ${step.command}`).toContain(step.command);
+      }
+      expect(AGENT_BATCH_SCHEMA.safeParse(result.batch).success, probe.id).toBe(true);
+      expect(hasNoDunderKeys(result.batch), probe.id).toBe(true);
+
+      // 3. Needle discipline: a VALUE the user approved rides the batch as
+      //    inert data; a needle hidden in an editor-side passthrough
+      //    (effect params / preset args) NEVER reaches the batch — warned as
+      //    uncompilable_arg instead.
+      const serialized = JSON.stringify(result.batch);
+      expect(
+        serialized.includes(probe.needle),
+        `${probe.id}: needle rides=${probe.needleRidesBatch}`,
+      ).toBe(probe.needleRidesBatch);
+      if (!probe.needleRidesBatch) {
+        expect(
+          result.warnings.some((issue) => issue.code === "uncompilable_arg"),
+          probe.id,
+        ).toBe(true);
       }
       expectPrototypeClean();
     },
   );
 
-  it("FINDING F-5 (sharpest edge): a mixed plan SILENTLY DROPS the drifted step from the applied batch", () => {
+  it("F-5 flip: the OLD draft args vocabulary is now REJECTED by the landed schemas (typed invalid_args fatals)", () => {
+    // The compiler no longer speaks `updates`/`keyframes`+`time`/`targets`/
+    // bare-string effect+preset — and the LANDED strict schemas reject those
+    // shapes outright, so the compile answers the §8.9 repair-turn fatal.
+    const oldVocabulary: Array<[keyof typeof WRITE_TOOL_ARGS_SCHEMAS, Record<string, unknown>]> = [
+      ["set_properties", { updates: [{ layer: "Headline", path: "x", value: 1 }] }],
+      [
+        "set_keyframes",
+        {
+          layer: "Headline",
+          propertyPath: "transform/opacity",
+          keyframes: [{ time: 0, value: 1 }],
+        },
+      ],
+      ["add_effect", { layer: "Headline", effect: "Gaussian Blur" }],
+      ["apply_preset", { preset: "Fade In", targets: ["Headline"] }],
+    ];
+    for (const [tool, args] of oldVocabulary) {
+      expect(WRITE_TOOL_ARGS_SCHEMAS[tool].safeParse(args).success, tool).toBe(false);
+      const result = compileHostile(writePlan([writeStep(tool, args)]));
+      expect(result.ok, tool).toBe(false);
+      if (!result.ok) {
+        expect(
+          result.issues.some((issue) => issue.code === "invalid_args"),
+          tool,
+        ).toBe(true);
+      }
+      expectPrototypeClean();
+    }
+  });
+
+  it("F-5 (sharpest edge) FLIPPED: the mixed plan compiles BOTH steps — approve two edits, apply two edits", () => {
     // The user approves a plan card that says "create a Title AND set the
-    // Headline text"; the compiled batch carries ONLY the create_text step —
-    // the set_properties translation is silently empty (warn unusable_args),
-    // so Apply would run HALF the approved plan. Flip when translate() is
-    // aligned with the landed schemas.
+    // Headline text"; post-fix the compiled batch performs EXACTLY that — the
+    // set_properties value rides the batch as inert data, and no step dropped.
     const result = compileHostile(DRIFT_MIXED_PLAN);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
-    expect(result.batch.steps.map((step) => step.command)).toEqual(["layer.newText"]);
-    expect(JSON.stringify(result.batch).includes("M5N-DRIFT-MIXED-PROP")).toBe(false);
-    expect(result.warnings.map((issue) => issue.code)).toContain("unusable_args");
+    expect(result.batch.steps.map((step) => step.command)).toEqual(["layer.newText", "prop.set"]);
+    expect(JSON.stringify(result.batch).includes("M5N-DRIFT-MIXED-PROP")).toBe(true);
+    expect(result.warnings.map((issue) => issue.code)).not.toContain("unusable_args");
+    expectPrototypeClean();
+  });
+
+  it("G-3: a mixed plan with ANY zero-command step is fatally empty_step — never a partial batch", () => {
+    // create_text compiles; apply_preset has NO target (layers omitted AND the
+    // plan declares no affectedLayers — the D-21 fallback has nothing to fall
+    // back to) ⇒ zero commands ⇒ the WHOLE plan is rejected as incomplete.
+    const plan = writePlan(
+      [
+        writeStep("create_text", { text: "M5N-G3-TEXT", name: "Title" }),
+        writeStep("apply_preset", { preset: { builtinId: "pop-in" } }),
+      ],
+      { affectedLayers: [] },
+    );
+    const result = compileHostile(plan);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((issue) => issue.code === "empty_step" && issue.step === 2)).toBe(
+        true,
+      );
+    }
     expectPrototypeClean();
   });
 });
@@ -725,7 +779,7 @@ describe("M5-N safety — a poisoned plan NEVER yields a poisoned compiledBatch 
     expectExactlyCuratedToolsSent(fetchCalls);
     expectPrototypeClean();
   });
-  it("FINDING F-5 at the runner wire: PERFECT set_properties args propose NOTHING today", async () => {
+  it("F-5 FIX at the runner wire: PERFECT set_properties args now PROPOSE the compiled batch", async () => {
     const drift = COMPILER_DRIFT_PROBES.find((item) => item.id === "drift-set-properties");
     if (drift === undefined) throw new Error("fixture missing");
     const { runner, fetchCalls, stream } = makeRunner([
@@ -735,7 +789,11 @@ describe("M5-N safety — a poisoned plan NEVER yields a poisoned compiledBatch 
         finish("tool_calls"),
         DONE,
       ]),
-      sseResponse([textDelta("The change could not be proposed."), finish("stop"), DONE]),
+      sseResponse([
+        textDelta("Proposed the text change — apply it from the card."),
+        finish("stop"),
+        DONE,
+      ]),
     ]);
 
     const outcome = await runToOutcome(runner, makeRun(), stream);
@@ -748,14 +806,42 @@ describe("M5-N safety — a poisoned plan NEVER yields a poisoned compiledBatch 
       name: "studio.set_properties",
       args: JSON.parse(drift.argsJson),
     });
-    // …and STILL nothing executes: the drift (F-5) turns the perfect args into
-    // an empty translation → PROPOSAL_INVALID (fail-closed). Flip with F-5.
-    const result = stream.events.find(
+    // …and the F-5 fix means they COMPILE: the proposal is the pinned
+    // WRITE_TOOL_RESULT_SCHEMA envelope carrying the cross-product prop.set.
+    const toolResult = stream.events.find(
       (event) => event.type === "tool.result" && event.toolCallId === "call_write",
     );
-    expect(result).toMatchObject({ result: { error: "PROPOSAL_INVALID" } });
+    expect(toolResult).toMatchObject({
+      type: "tool.result",
+      toolCallId: "call_write",
+      result: {
+        proposedBatch: {
+          label: "Agent: Set 1 property on 1 layer",
+          steps: [
+            {
+              command: "prop.set",
+              params: {
+                layer: "Headline",
+                path: "text/sourceText",
+                value: "M5N-DRIFT-SET-PROPERTIES",
+              },
+            },
+          ],
+        },
+        note: PROPOSED_BATCH_NOTE,
+      },
+    });
+    // Law #5: the model is fed the REDACTED envelope — summary + step count +
+    // note ONLY; the compiled registry command id never enters its context.
     const toolMessage = fetchCalls[1]?.body.messages.find((message) => message.role === "tool");
-    expect(String(toolMessage?.content).includes("PROPOSAL_INVALID")).toBe(true);
+    const rawFeedback = String(toolMessage?.content);
+    expect(rawFeedback).not.toContain("prop.set");
+    expect(JSON.parse(rawFeedback)).toEqual({
+      proposed: true,
+      summary: "Set 1 property on 1 layer",
+      note: PROPOSED_BATCH_NOTE,
+      stepCount: 1,
+    });
     expectExactlyCuratedToolsSent(fetchCalls);
     expectEngineStringsConfinedToToolData(fetchCalls);
     expectPrototypeClean();
@@ -776,9 +862,9 @@ describe("M5-N safety — a poisoned plan NEVER yields a poisoned compiledBatch 
 
     const outcome = await runToOutcome(runner, makeRun(), stream);
     expect(outcome.kind).toBe("completed");
-    // Even a PROPOSAL result must be the pinned envelope or the typed refusal —
-    // never a raw engine command string (this run refuses via F-5; the M4-N
-    // suite proves the proposing shape with a stub compiler).
+    // F-5 fixed: this run now PROPOSES — the model still only ever sees the
+    // REDACTED envelope (summary + note + step count), never the compiled
+    // registry command id (law #5).
     for (const call of fetchCalls.slice(1)) {
       const toolMessage = call.body.messages.find((message) => message.role === "tool");
       if (toolMessage === undefined) continue;
