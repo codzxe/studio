@@ -48,6 +48,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   RATE_LIMITED: 429,
   AUTH_REQUIRED: 401,
   FORBIDDEN: 403,
+  MODEL_NOT_ENTITLED: 403,
   VALIDATION_FAILED: 400,
   INTERNAL: 500,
   // gateway-only wire codes (outside the config catalog; safe add-only)
