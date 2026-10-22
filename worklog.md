@@ -164,3 +164,23 @@ Work Log:
 Stage Summary:
 - Baseline GREEN: 9/9 typecheck, 962 tests, PG17 live+migrated+seeded, deps installed.
 - Remaining build surface defined → dispatching builder waves W4+ (shell/hub, editor host+mock dist, agent runtime+chat UI, plan compiler+apply, billing UI, collab, worker+renders, evals, CI, docs debt).
+---
+Task ID: W4-ed
+Agent: main-orchestrator (continuation session)
+Task: Build the REAL EffectCraft wasm editor from the vendored pin and remove EffectCraft branding (user directive; ADR-0006 decision 10); commit the dist per D-17.
+
+Work Log:
+- Re-established context from worklog + docs (BUILD_PLAN, ADR-0006, DECISIONS D-17, AGENTS law, gap/editor.md); re-provisioned the GitHub token (~/.git-credentials + .secrets, repo access verified).
+- Completed the interrupted toolchain prep: wasm-bindgen-cli 0.2.129. The official musl prebuilt OOM-kills (exit 137) on the 76 MB wasm - musl allocator; a glibc SOURCE build (-j2, 160 crates, warm registry) handles it.
+- Wrote + applied de-brand patch 0001 (scripts/debrand_editor.py, scripts/make_studio_assets.py): word-boundary rename EffectCraft/ArtCraft -> Studio across engine+ui-egui+i18n catalogs (66 files, keys and values together), empty links.rs constants feature-gate the promo chrome (header Discord/GitHub/web buttons, Home community foot + sibling rows, About links, Help menu upstream docs/community entries incl. F1), TREE Help block rewritten keeping in-app items, mark swapped to the original Studio keyframe-diamond (docs/brand/studio-mark.png + PWA icons + favicon), xtask icon path repointed, grammar pass (an Studio -> a Studio). Technical identifiers kept: window.effectcraft, <EffectCraftProject>, lowercase cache/crate names. Residual scan: 0 in scope. Attribution sidecars preserved/extended, never renamed.
+- D-17 order followed: patch landed in fork codzxe/effectcraft branch studio FIRST (commit 0afc18e, pushed; upstream remote added), format-patch saved to editor/patches/0001-debrand.patch, changed files rsynced into editor/.
+- Built the full wasm release graph on the 2-core/4 GB box: upstream [profile.release] lto=thin+codegen-units=1 OOM-kills rustc (boa_engine SIGKILL); chunked foreground runs (scripts/build_editor_web.sh, timeout 560 x N, -j1 + CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 env override) - 656 crates compiled clean, zero errors (only pre-existing upstream pointer_wrap dead-code warning). Background processes do NOT survive between tool calls on this box (nohup+setsid both reaped) - chunked foreground is the pattern.
+- cargo xtask web -> dist: 76.2 MB wasm / 76.4 MB total; copied to apps/web/public/editor/ and committed (76 MB push verified: HEAD == origin/main a8fbe0a). De-brand verified in the dist (title/description/loading/error/manifest/PWA icons all Studio). brotli q8 14.5 MB = within the S6 <18 MB transfer budget (gzip 19.8 MB fallback) - docs/performance.md created as the S6 waiver/measurement ledger.
+- Host Rust test suites (cargo test --workspace/clippy/xtask wasm) NOT run: the host debug+incremental ladder fills the 9.9 GB disk (hit 100% twice, target/debug deleted). Compile gate for the whole patched tree is green (wasm release). Owed on a bigger box; recorded in editor/UPSTREAM.md gate status + docs/phases/M0.md.
+- Wrote docs/phases/M0.md (the missing M0 evidence file: baseline/tag, pin, fork, patch 0001, build proof, dist sizes, honest not-proven list incl. LiteLLM script, CI workflows, browser check). Updated editor/UPSTREAM.md (patch table + dist record + gate status) and editor/patches/README.md (fork-first patch protocol).
+
+Stage Summary:
+- Deliverable: REAL de-branded EffectCraft editor dist committed at apps/web/public/editor/ (76.2 MB wasm, 14.5 MB brotli) - the M3 host no longer has a missing-editor blocker.
+- Fork: codzxe/effectcraft studio@0afc18e = pin 9db7f3b2 + de-brand patch 0001; patch protocol documented in editor/patches/README.md.
+- Editor chrome is de-branded: no EffectCraft/ArtCraft marks, names, links or icons in any user-visible surface; original Studio keyframe mark everywhere; upstream attribution fully preserved (sidecars, ATTRIBUTION.md, licences page).
+- Owed/next: cargo test/clippy/xtask wasm on a real CI box; browser E2E of /editor/ (M3); re-tuned dist (cg1+wasm-opt) for the 58 MB/10-12 MB target; M3 host page wiring (iframe + attachEditorBridge to the live window.effectcraft) is the next build wave.

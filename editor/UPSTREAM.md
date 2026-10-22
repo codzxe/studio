@@ -34,6 +34,12 @@ rsync -a --exclude=.git --exclude=target effectcraft-upstream/ ../studio/editor/
   (`request`, `execute`, `inspect`, `renderFrame`, `addFile`, `saveToBrowser`,
   `readFile`, `screenshot`) and that `engine.batch` is atomic with one-undo-step.
 
+Gate status at patch 0001 (2026-10-22, build box 2 cores / 4 GB / 9.9 GB disk):
+`cargo xtask web` **done** (656-crate wasm32 release graph, zero errors, dist committed).
+`cargo test --workspace`, clippy and `xtask wasm` are **owed on a bigger box**: the host
+debug+incremental ladder does not fit on this disk (filled to 100% twice). Evidence and
+the reproduction recipe: [docs/phases/M0.md](../docs/phases/M0.md).
+
 ## Product patches
 
 Patches live in `patches/` as git format-patch artifacts, generated from the fork
