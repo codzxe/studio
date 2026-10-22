@@ -259,6 +259,8 @@ export function ChatProvider({
     const created = client.threads
       .create(projectId)
       .then((thread): string => {
+        // eslint-disable-next-line no-console -- dbg
+        console.log("[dbg] threads.create resolved", thread.id);
         threadCreateRef.current = null;
         if (generation === threadGenerationRef.current) {
           threadIdRef.current = thread.id;
@@ -277,6 +279,8 @@ export function ChatProvider({
 
   useEffect(() => {
     if (threadId === null) return;
+    // eslint-disable-next-line no-console -- dbg
+    console.log("[dbg] controller effect", threadId);
     const created = createChatController({ client, workspaceId, projectId, threadId });
     controllerRef.current = created;
     setController(created);
@@ -310,6 +314,8 @@ export function ChatProvider({
         // Fresh context right before the wire send (§5): the strip/estimates
         // re-render with what is actually being sent; the flags ride the body.
         const collected = await collectContextSnapshot(bridge, { flags, pinned });
+        // eslint-disable-next-line no-console -- dbg
+        console.log("[dbg] send collect done");
         collectSeqRef.current += 1; // supersede any in-flight on-demand collect
         setContextSnapshot(collected);
         const wire: ChatSendInput = {
