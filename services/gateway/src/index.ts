@@ -134,6 +134,7 @@ if (isInvokedDirectly()) {
   } catch (error) {
     // EnvFatalError and friends print safely on their own; anything else
     // still never echoes values (only names).
+    // biome-ignore lint/suspicious/noConsole: server entrypoint must print startup failures to stderr
     console.error(
       "[gateway] failed to start:",
       error instanceof Error ? error.message : String(error),

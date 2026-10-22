@@ -121,8 +121,8 @@ export function versionsRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
       if (contentType.includes("multipart/form-data")) {
         const form = await c.req.parseBody();
-        const descriptorPart = form["descriptor"];
-        const filePart = form["file"];
+        const descriptorPart = form.descriptor;
+        const filePart = form.file;
         if (typeof descriptorPart !== "string" || !(filePart instanceof File)) {
           throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
             status: 400,
@@ -205,28 +205,25 @@ export function versionsRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
       const objectKey = snapshotKey(workspace.id, projectId, actualSha);
       await deps.storage.put(objectKey, bytes);
-      try {
-        const { version } = await deps.repos.versions.upload(workspace.id, {
-          projectId,
-          expectedVersionId: descriptor.baseVersionId,
-          objectKey,
-          sha256: actualSha,
-          sizeBytes: bytes.byteLength,
-          label: descriptor.label,
-          agentRunId: descriptor.agentRunId,
-          createdBy: c.get("auth").user.id,
-        });
-        await audit(deps, c, workspace.id, "version.uploaded", projectId, {
-          versionId: version.id,
-          sha256: actualSha,
-        });
-        return ok(c, toDto(version), 201);
-      } catch (error) {
-        // The DB row is the source of truth; orphaned blobs are reclaimed by
-        // the storage lifecycle policy (§9.2 content addressing makes them
-        // safe: any future upload of the same bytes reuses the key).
-        throw error;
-      }
+      // Orphaned blobs (row insert failed) are reclaimed by the storage
+      // lifecycle policy (§9.2 content addressing makes them safe: any future
+      // upload of the same bytes reuses the key); the DB row is the source of
+      // truth, so typed repo errors propagate untouched.
+      const { version } = await deps.repos.versions.upload(workspace.id, {
+        projectId,
+        expectedVersionId: descriptor.baseVersionId,
+        objectKey,
+        sha256: actualSha,
+        sizeBytes: bytes.byteLength,
+        label: descriptor.label,
+        agentRunId: descriptor.agentRunId,
+        createdBy: c.get("auth").user.id,
+      });
+      await audit(deps, c, workspace.id, "version.uploaded", projectId, {
+        versionId: version.id,
+        sha256: actualSha,
+      });
+      return ok(c, toDto(version), 201);
     },
   );
 

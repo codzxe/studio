@@ -171,7 +171,7 @@ export function idempotencyMiddleware(): MiddlewareHandler<AppBindings> {
         // Concurrent duplicate: wait for the in-flight handler, then replay.
         await deps.idempotency.waitFor(key);
         const after = deps.idempotency.lookup(key);
-        if (after !== null && after.complete) {
+        if (after?.complete) {
           c.header("x-idempotent-replay", "true");
           return c.newResponse(JSON.stringify(after.body), asStatus(after.status), {
             "content-type": after.contentType,
@@ -190,7 +190,7 @@ export function idempotencyMiddleware(): MiddlewareHandler<AppBindings> {
       // Lost a begin race: wait for the in-flight handler, then replay.
       await deps.idempotency.waitFor(key);
       const after = deps.idempotency.lookup(key);
-      if (after !== null && after.complete) {
+      if (after?.complete) {
         c.header("x-idempotent-replay", "true");
         return c.newResponse(JSON.stringify(after.body), asStatus(after.status), {
           "content-type": after.contentType,
