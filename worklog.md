@@ -1179,3 +1179,22 @@ Stage Summary:
 - M7 BACKEND IS LANDED: comments (replies/resolve/anchors/D-15), presence (heartbeat+poll), lease UX (queue/election/enforcement per D-23), versions/activity (restore/labels/diff/feed/export), share tokens (public page + guest comments + rate limits). Remaining: ALL M7 UI (comments UI, presence/lease banners, version timeline, activity feed, share/review page) + collab E2E + Playwright.
 - D-23 (lease enforcement scope: chat allowed, apply gated) and D-24 (version label mutability) are recorded in the owning agents' worklogs; adopt into DECISIONS.md at M7 closeout.
 - Dispatch pattern holds: 5 concurrent = reliable; batches of 5 with orphan-recovery as routine.
+
+---
+Task ID: M7-wave4-closeout
+Agent: main-orchestrator
+Task: Wave-4 dispatch recovery + closeout (M7 UI suite + M6-K µc unification). All 5 dispatches orphaned (adapter overload), all 5 completed server-side; integrator verified, fixed, gated, landed.
+
+Work Log:
+- M7-F comments UI: components/comments (anchor chips, threaded panel, resolved filters, prefilled anchors from ui.inspect, tree with orphan promotion + cycle cutting + depth cap).
+- M7-G presence + lease UI: presence strip + use-presence poller (beat 120s visible/pause hidden), lease banner (holder/queued/viewer + countdown + takeover toast), client read-only gate (bridge mutations blocked locally under another's lease, reads pass, apply surfaces 409 LEASE_HELD, D-23 chat allowed — pinned).
+- M7-H versions/activity UI: /history route (timeline + labels inline, §9.3 restore confirm dialog, structural diff summaries, activity feed, admin audit export).
+- M7-I share page: (share)/s/[token] public route (password gate + 429, player surface per the public manifest, guest comments with name/email + rate limits, request access, noindex, NO editor for anonymous).
+- M6-K µc unification (F-J1 HIGH money fix): chat.ts/apply.ts ledger.reserve/settle now convert credits→µc at the boundary (run rows keep whole credits per D-12; SSE credits event stays display units; balance µc→credits via the shared credits-display module); invoices wire read added (F-J3); mixed-unit journey proof (credits-units.test.ts); pins flipped across chat-loop/apply-flow/billing-e2e/auto-apply/reconciliation.
+- Integrator fixes: tree.ts depthOf (cycle/orphan cut now returns the chain-so-far depth — orphan descendants keep depth 2; only promoted roots are 1), the boolean-length cycle test assertion, whitespace-insensitive hostile-layer anchor pin, a11y role=group lint on the filter row + presence output, biome format.
+- Full-repo gates at close, serial: gateway 667/667, web 1013/1013, db 190/190, contracts 188/188, api-client 129/129, config 104/104, ui 52/52, editor-bridge 70/70 — 2413 total, zero red.
+
+Stage Summary:
+- M7 IS LANDED end-to-end: comments (anchored, threaded, guest), presence (heartbeat+poll), lease UX (queue/election/enforcement client+server), versions/activity (restore/labels/diff/feed/export), public share/review. Remaining for M7 closeout: collab E2E (lease race/expiry/anchors/revocation/guest abuse at the journey level), Playwright M7 specs, evidence files.
+- M6 fully closed INCLUDING the µc unification tail.
+- Next: wave 5 = M7 journey-level collab E2E + Playwright M7 + docs closeout (M5/M6/M7 evidence files, DECISIONS D-23/D-24, BUILD_PLAN status) + full-repo final gates.
