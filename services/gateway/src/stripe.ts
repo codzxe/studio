@@ -283,7 +283,7 @@ export function createStripeSeam(env: StudioEnv, options: StripeSeamOptions = {}
           })
           .then((clock) => ({
             id: clock.id,
-            frozenTime: clock.frozenTime,
+            frozenTime: clock.frozen_time,
             status: clock.status,
           })),
       );
