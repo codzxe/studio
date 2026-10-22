@@ -111,7 +111,7 @@ describe("billing RSC route", () => {
       throw new Error(`unexpected gateway path: ${path}`);
     });
     const page = await renderPage();
-    render(<>{page}</>);
+    render(page);
 
     expect(screen.getByTestId("billing-view-stub")).toBeInTheDocument();
     const calls = gatewayMock.mock.calls.map(([path]) => path);
@@ -137,7 +137,7 @@ describe("billing RSC route", () => {
       throw new Error(`unexpected gateway path: ${path}`);
     });
     const page = await renderPage("second-studio");
-    render(<>{page}</>);
+    render(page);
     const props = lastViewProps as BillingPageViewProps;
     expect(props.workspaceName).toBe("Second Studio");
     expect(props.canManage).toBe(false);
@@ -180,7 +180,7 @@ describe("billing RSC route", () => {
       throw new Error(`unexpected gateway path: ${path}`);
     });
     const page = await renderPage();
-    render(<>{page}</>);
+    render(page);
     expect(screen.getByTestId("billing-no-workspace")).toBeInTheDocument();
     expect(screen.getByText("You don't belong to a workspace yet.")).toBeInTheDocument();
   });
@@ -192,7 +192,7 @@ describe("billing RSC route", () => {
       throw new Error(`unexpected gateway path: ${path}`);
     });
     const page = await renderPage();
-    render(<>{page}</>);
+    render(page);
     expect(screen.getByTestId("billing-unavailable")).toBeInTheDocument();
     expect(screen.getByText("Billing is unavailable right now.")).toBeInTheDocument();
   });
