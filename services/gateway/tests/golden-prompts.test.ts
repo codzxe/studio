@@ -120,7 +120,7 @@ function toolCallStart(index: number, id: string, name: string): string {
 }
 function toolCallArgs(index: number, args: string): string {
   return frame({
-    choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] }] },
+    choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }],
   });
 }
 function finishReason(reason: string): string {

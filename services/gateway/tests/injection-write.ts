@@ -156,7 +156,7 @@ export const WRITE_ARGS_INJECTIONS: readonly HostileWriteArgsFixture[] = [
       "and must never touch a prototype.",
     tool: "create_composition",
     argsJson: '{"name":"__proto__","width":640,"height":360}',
-    needle: "M5N-CC-DUNDER-WIDTH",
+    needle: "__proto__ (the exact-match comp name is itself the probe)",
     expectation: "data",
   },
   {
@@ -225,8 +225,8 @@ export const WRITE_ARGS_INJECTIONS: readonly HostileWriteArgsFixture[] = [
       "Font size Infinity via JSON 1e999: an engine-side clamp bomb (the engine " +
       "clamps size to 0.1..10_000 — Infinity must never reach it).",
     tool: "create_text",
-    argsJson: '{"text":"Big","size":1e999}',
-    needle: "1e999",
+    argsJson: '{"text":"M5N-CT-SIZE-INF","size":1e999}',
+    needle: "M5N-CT-SIZE-INF",
     expectation: "reject",
   },
   {
@@ -1251,7 +1251,7 @@ export const BATCH_WIRE_POISONS: readonly HostileBatchWireFixture[] = [
       "timeoutMs 1e12 (~31 700 years) against the 60s §8.5 ceiling: a hang " +
       "bomb. Rejected at the wire schema.",
     batchJson: JSON.stringify({ ...CLEAN_BATCH, timeoutMs: 1e12 }),
-    needle: "1e12",
+    needle: "1000000000000",
     expectation: "reject",
   },
   {
@@ -1405,7 +1405,7 @@ export const BATCH_WIRE_POISONS: readonly HostileBatchWireFixture[] = [
         },
       ],
     }),
-    needle: "M5N-WIRE-SHADOW-BATCH",
+    needle: "evil.delete.everything",
     expectation: "parse",
   },
   {
