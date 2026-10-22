@@ -83,14 +83,17 @@ export const PAID_PLAN_IDS = ["starter", "pro", "studio"] as const satisfies rea
 export const PAID_PLAN_ID_SCHEMA = z.enum(PAID_PLAN_IDS);
 
 /**
- * Plan → model entitlements (§8.2 "Plan gating" + §10.1 Models column):
- * trial→fast, starter→fast, pro→fast+smart, studio→all.
+ * Plan → model entitlements (§8.2 "Plan gating" + §10.1 Models column),
+ * ALIGNED with the M6-A catalog (D-4/D-8, 2026-10-24): trial is a state on
+ * the Starter row (fast only — pinned by the models route + billing E2E);
+ * every paid plan gets fast+smart; studio-vision is NOT in the v1 picker
+ * (D-8: reserved for the eval harness / vision critic).
  */
 export const PLAN_MODEL_ENTITLEMENTS: Readonly<Record<PlanId, readonly ModelId[]>> = {
   trial: ["studio-fast"],
-  starter: ["studio-fast"],
+  starter: ["studio-fast", "studio-smart"],
   pro: ["studio-fast", "studio-smart"],
-  studio: ["studio-fast", "studio-smart", "studio-vision"],
+  studio: ["studio-fast", "studio-smart"],
 };
 
 /** Models a plan member may select (§8.2). */

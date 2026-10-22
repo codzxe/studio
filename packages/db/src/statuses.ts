@@ -8,7 +8,10 @@ import type { RenderStatus, RunStatus } from "./schema.js";
  */
 
 const RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
-  queued: ["running", "cancelled"],
+  // "failed" is legal from queued: a refused credit hold or a pre-stream
+  // validation failure must never orphan the row as queued (M6-J F-J5 — the
+  // run never streamed, so failed is the honest terminal state).
+  queued: ["running", "failed", "cancelled"],
   running: ["awaiting_approval", "completed", "failed", "cancelled"],
   awaiting_approval: ["running", "completed", "failed", "cancelled"],
   completed: [],
