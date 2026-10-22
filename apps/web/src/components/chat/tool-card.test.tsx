@@ -4,9 +4,9 @@
  * and the render_preview image rule. Deterministic; no network; jsdom.
  */
 
+import type { ToolCardState } from "@/lib/chat/types";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ToolCardState } from "@/lib/chat/types";
 import { TOOL_CARD_LABELS, ToolCard } from "./tool-card";
 
 function card(overrides: Partial<ToolCardState> = {}): ToolCardState {
@@ -95,9 +95,7 @@ describe("ToolCard — status marks", () => {
   });
 
   it("done shows ✓ and failed shows ! plus the extracted human message", () => {
-    const first = render(
-      <ToolCard card={card({ status: "done", result: { ok: true } })} />,
-    );
+    const first = render(<ToolCard card={card({ status: "done", result: { ok: true } })} />);
     expect(screen.getByTestId("tool-card-status-mark")).toHaveTextContent("✓");
     first.unmount();
 
@@ -110,9 +108,7 @@ describe("ToolCard — status marks", () => {
       />,
     );
     expect(screen.getByTestId("tool-card-status-mark")).toHaveTextContent("!");
-    expect(screen.getByTestId("tool-card-summary").textContent).toBe(
-      "The editor did not respond.",
-    );
+    expect(screen.getByTestId("tool-card-summary").textContent).toBe("The editor did not respond.");
   });
 
   it("falls back to the error code when the failure shape carries no message", () => {

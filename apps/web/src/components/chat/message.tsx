@@ -10,8 +10,8 @@
  *   ChatMessageViewProps + ChatMessageView.
  */
 
-import type { ReactElement } from "react";
 import type { ChatUiMessage } from "@/lib/chat/types";
+import type { ReactElement } from "react";
 import { Markdown } from "./markdown";
 import { PlanCard } from "./plan-card";
 import { ToolCard } from "./tool-card";
@@ -77,9 +77,7 @@ export function ChatMessageView({ message, isStreaming }: ChatMessageViewProps):
           ))}
         </div>
       ) : null}
-      {message.plan ? (
-        <PlanCard plan={message.plan} applied={false} />
-      ) : null}
+      {message.plan ? <PlanCard plan={message.plan} applied={false} /> : null}
       {message.credits ? (
         <p data-testid="chat-credits" className="text-caption text-muted">
           {message.credits.committed} credits used · balance {message.credits.balance}

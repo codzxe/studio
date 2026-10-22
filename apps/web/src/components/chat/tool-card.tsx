@@ -16,10 +16,10 @@
  * text or copied to the clipboard.
  */
 
-import { type ReactElement, useState } from "react";
 import type { ToolCardState } from "@/lib/chat/types";
 import { Button, Spinner } from "@studio/ui";
 import { ChevronDown } from "lucide-react";
+import { type ReactElement, useState } from "react";
 
 /** Friendly names for the 5 registered M4 tools (unknown ids fall back to the raw name). */
 export const TOOL_CARD_LABELS: Readonly<Record<string, string>> = {
@@ -122,13 +122,21 @@ function StatusMark({ status }: { status: ToolCardState["status"] }) {
   }
   if (status === "done") {
     return (
-      <span data-testid="tool-card-status-mark" aria-hidden="true" className="shrink-0 text-success">
+      <span
+        data-testid="tool-card-status-mark"
+        aria-hidden="true"
+        className="shrink-0 text-success"
+      >
         ✓
       </span>
     );
   }
   return (
-    <span data-testid="tool-card-status-mark" aria-hidden="true" className="shrink-0 font-bold text-danger">
+    <span
+      data-testid="tool-card-status-mark"
+      aria-hidden="true"
+      className="shrink-0 font-bold text-danger"
+    >
       !
     </span>
   );
@@ -181,7 +189,10 @@ export function ToolCard({ card }: ToolCardProps): ReactElement {
         <span className="shrink-0 truncate font-medium">{label}</span>
         <StatusMark status={card.status} />
         {summary !== "" ? (
-          <span data-testid="tool-card-summary" className="min-w-0 flex-1 truncate text-caption text-muted">
+          <span
+            data-testid="tool-card-summary"
+            className="min-w-0 flex-1 truncate text-caption text-muted"
+          >
             {summary}
           </span>
         ) : (
@@ -226,7 +237,9 @@ export function ToolCard({ card }: ToolCardProps): ReactElement {
                 data-testid="tool-card-result"
                 className="overflow-x-auto rounded-xs border border-subtle bg-elevated p-2"
               >
-                <code className="font-mono text-mono text-secondary">{formatJson(card.result)}</code>
+                <code className="font-mono text-mono text-secondary">
+                  {formatJson(card.result)}
+                </code>
               </pre>
             </div>
           ) : null}

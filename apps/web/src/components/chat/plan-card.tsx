@@ -14,8 +14,8 @@
  */
 
 import type { EditPlan } from "@studio/contracts";
-import type { ReactElement } from "react";
 import { Badge } from "@studio/ui";
+import type { ReactElement } from "react";
 
 export interface PlanCardProps {
   plan: EditPlan;

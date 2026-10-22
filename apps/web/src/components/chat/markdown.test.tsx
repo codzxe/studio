@@ -113,7 +113,7 @@ describe("Markdown — pinned subset vectors", () => {
     render(
       <Markdown
         text={
-          "I found **three text layers**. Plan:\n\n- Keyframe Scale\n- Add overshoot\n\n```json\n{\"risk\": \"low\"}\n```"
+          'I found **three text layers**. Plan:\n\n- Keyframe Scale\n- Add overshoot\n\n```json\n{"risk": "low"}\n```'
         }
       />,
     );

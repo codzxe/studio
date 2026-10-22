@@ -10,14 +10,17 @@ import { ChatBanner, type ChatBannerProps } from "./banners";
 const KINDS = ["info", "warning", "error", "success"] as const;
 
 describe("ChatBanner", () => {
-  it.each(KINDS)("kind %s renders data-kind, an icon and the message (never colour-only)", (kind) => {
-    render(<ChatBanner kind={kind} message="Something happened." />);
-    const banner = screen.getByTestId("chat-banner");
-    expect(banner).toHaveAttribute("data-kind", kind);
-    expect(banner).toHaveTextContent("Something happened.");
-    // The status icon is always present alongside the tone.
-    expect(banner.querySelector("svg")).not.toBeNull();
-  });
+  it.each(KINDS)(
+    "kind %s renders data-kind, an icon and the message (never colour-only)",
+    (kind) => {
+      render(<ChatBanner kind={kind} message="Something happened." />);
+      const banner = screen.getByTestId("chat-banner");
+      expect(banner).toHaveAttribute("data-kind", kind);
+      expect(banner).toHaveTextContent("Something happened.");
+      // The status icon is always present alongside the tone.
+      expect(banner.querySelector("svg")).not.toBeNull();
+    },
+  );
 
   it("maps each kind to its documented tone (info neutral, warning amber, error red, success green)", () => {
     const tones: Record<(typeof KINDS)[number], string> = {
@@ -92,6 +95,8 @@ describe("RunPausedBanner", () => {
   it("carries the exact RUN_PAUSED_ERROR message from the chat engine", async () => {
     const { RUN_PAUSED_ERROR } = await import("@/lib/chat/run-state");
     render(<RunPausedBanner onRetry={() => {}} />);
-    expect(screen.getByTestId("chat-banner-run-paused")).toHaveTextContent(RUN_PAUSED_ERROR.message);
+    expect(screen.getByTestId("chat-banner-run-paused")).toHaveTextContent(
+      RUN_PAUSED_ERROR.message,
+    );
   });
 });
