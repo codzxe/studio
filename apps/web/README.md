@@ -79,6 +79,11 @@ with these headers (mirrored in `next.config.ts` for the dev server):
   dev origin `http://localhost:3000`. better-auth validates the URL at
   module-evaluation time, so it must be absolute (the gateway mounts auth
   under `/v1/auth`, docs/PRODUCT_ARCHITECTURE.md §7.1/§7.2).
+- `GATEWAY_INTERNAL_URL` — server-side (RSC/route-handler) base URL of the
+  gateway for `/v1` calls with session-cookie forwarding (the gateway listens
+  on 8787; Caddy fronts it in production). Default: `http://127.0.0.1:8787`.
+  Browser-side calls stay same-origin (`/v1/…` via the static server proxy)
+  and never use this var.
 - `EDITOR_DEV_SERVER_URL` — optional dev proxy for `/editor/:path*`.
 
 ## Turbopack and NodeNext barrels (`@studio/config`)

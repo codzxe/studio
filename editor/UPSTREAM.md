@@ -42,11 +42,13 @@ the reproduction recipe: [docs/phases/M0.md](../docs/phases/M0.md).
 
 ## Product patches
 
-Patches live in `patches/` as git format-patch artifacts, generated from the fork
-`codzxe/effectcraft` branch `studio` (remote `origin`; `upstream` = `storytold/effectcraft`).
-Per DECISIONS.md D-17 they land in the fork first, then the changed files are rsynced into
-this tree. `crates/ui-egui` is only touched where a binding rule forces it (ADR-0006
-decision 10 branding removal); every change is listed below.
+Patches live in `patches/` as diff artifacts against the pin. **Single-repo policy
+(user directive 2026-10-22, DECISIONS.md D-17): this vendored tree is the canonical
+source of truth** — changes are made directly here and recorded below; the artifacts
+are kept for provenance only. The `codzxe/effectcraft` fork used to produce patch
+0001 is deprecated and flagged for deletion. `crates/ui-egui` is only touched where
+a binding rule forces it (ADR-0006 decision 10 branding removal); every change is
+listed below.
 
 | Patch | Subject | Fork commit | Scope |
 |---|---|---|---|

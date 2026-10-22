@@ -13,8 +13,10 @@
     "lint": "biome check src tests"
   },
   "dependencies": {
+    "@studio/api-client": "workspace:*",
     "@studio/config": "workspace:*",
     "@studio/contracts": "workspace:*",
+    "@studio/editor-bridge": "workspace:*",
     "@studio/ui": "workspace:*",
     "better-auth": "^1.7.12",
     "lucide-react": "^1.61.0",
