@@ -5,7 +5,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ChatBanner, type ChatBannerProps } from "./banners";
+import { ChatBanner, type ChatBannerProps, RunPausedBanner } from "./banners";
 
 const KINDS = ["info", "warning", "error", "success"] as const;
 

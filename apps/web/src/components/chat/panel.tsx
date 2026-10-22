@@ -41,6 +41,9 @@
 import type { PointerEvent as ReactPointerEvent, ReactElement, ReactNode } from "react";
 import { useRef, useState } from "react";
 import { type ChatLayout, MIN_PANEL } from "./layout";
+// Convenience re-export: M4-J's slot imports the pill from the panel module
+// (the pinned canonical home is pill.tsx — both import paths work).
+export { ChatCollapsedPill, type ChatCollapsedPillProps } from "./pill";
 import { useChatLayout } from "./use-layout";
 
 export interface ChatPanelProps {
@@ -142,8 +145,10 @@ export function ChatPanel({
 
   // --- floating: header drag + SE resize (shared pointer machinery) ------
 
-  const onGripPointerDown = (kind: DragState["kind"]) => (e: ReactPointerEvent<HTMLElement>) => {
-    if (layout.mode !== "floating" || e.button !== 0) return;
+  const onGripPointerDown = (kind: DragState["kind"]) => (e: ReactPointerEvent<HTMLElement>): void => {
+    // Interactive header children (model picker, buttons, …) never drag:
+    // excluded by closest() AND by any child that stops propagation itself.
+    if (layout.mode !== "floating" || e.button !== 0 || isInteractiveTarget(e.target)) return;
     dragRef.current = { pointerId: e.pointerId, kind, startX: e.clientX, startY: e.clientY, origin: layout };
     setDragging(true);
     capturePointer(e.currentTarget, e.pointerId);

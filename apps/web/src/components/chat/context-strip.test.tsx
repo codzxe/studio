@@ -147,10 +147,11 @@ describe("ContextStrip — chips", () => {
       const chip = screen.getByTestId(`context-pinned-${index}`);
       expect(within(chip).queryByRole("button")).not.toBeInTheDocument();
     }
-    // blocks + pinned + the trailing "+" chip.
+    // blocks + pinned + the trailing "+" chip (the ✕ buttons are excluded).
     const strip = screen.getByTestId("context-strip");
-    const chips = within(strip).getAllByTestId(/^context-(chip-|pinned-|strip-add)/);
-    expect(chips).toHaveLength(BLOCKS.length + 2 + 1);
+    expect(within(strip).getAllByTestId(/^context-chip-(?!remove-)/)).toHaveLength(BLOCKS.length);
+    expect(within(strip).getAllByTestId(/^context-pinned-\d+$/)).toHaveLength(2);
+    expect(within(strip).getByTestId("context-strip-add")).toBeInTheDocument();
   });
 
   it("renders pinned chips even with no blocks", () => {

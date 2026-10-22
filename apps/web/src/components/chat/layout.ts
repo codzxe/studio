@@ -62,7 +62,8 @@ const MAX_PANEL = { w: 720, h: 900 } as const;
 const VIEWPORT_SHARE = 0.9;
 
 function finiteOr(value: number | undefined, fallback: number): number {
-  return Number.isFinite(value) ? value : fallback;
+  // `Number.isFinite` is not a type predicate in lib.d.ts — assert the narrowed arm.
+  return Number.isFinite(value) ? (value as number) : fallback;
 }
 
 function clampNumber(value: number, min: number, max: number): number {
