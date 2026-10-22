@@ -718,3 +718,19 @@ Work Log:
 Stage Summary:
 - Repo is now truly self-contained per D-17: `editor/` is the only tracked EffectCraft source; the reference clone is local-only tooling, invisible to clones.
 - No code paths touched; no gates required beyond a clean `git status` after sync (verified).
+
+---
+Task ID: M5-prep
+Agent: main-orchestrator
+Task: M5/M6/M7 kickoff — read BUILD_PLAN §M5/§M6/§M7 + M4 closeout state, verify the REAL engine command registry (558 cmd! ids; layer.newText/comp.new/prop.set/prop.addKey/anim.applyPreset/effect.apply/edit.undo/engine.batch all confirmed in editor/crates/engine/src/commands/*), write docs/phases/M5-SEAMS.md (binding wave-1 contract), pre-create non-conflicting stubs (contracts write-tools.ts, command-registry.ts, routes/apply.ts + barrels; gateway routes/apply.ts + app.ts mount).
+
+Work Log:
+- Read BUILD_PLAN §M5 (agent edits) / §M6 (billing) / §M7 (collaboration) — full task lists captured.
+- Read M4.md closeout + DECISIONS D-1..D-20 + M4-SEAMS architecture; M4 exit state: 1090 tests green, chat loop proven server-side, F-1 + ledger bugs fixed.
+- Verified the real command surface: 558 mutating cmd! ids + 52 query ids; key write commands confirmed by grep (comp.new, layer.newText with ~50 typography params, prop.set, prop.addKey, anim.applyPreset, effect.apply, text.insert, edit.undo/redo, engine.batch atomic).
+- Wrote docs/phases/M5-SEAMS.md: target flow, pinned interfaces (command-registry, write-tools, plan-compiler CompilePlanResult, db apply columns, apply/undo routes, ApplyController), 10-agent ownership map, coexistence rules.
+- Pre-wired stubs + barrels (contracts index + routes index + gateway app.ts mount) so 10 concurrent agents never edit shared files; typecheck 0 errors both packages before dispatch.
+
+Stage Summary:
+- M5 Wave 1 dispatched next: M5-A write-tools, M5-B plan-compiler, M5-C gateway chat wiring, M5-D db apply/undo, M5-E apply API, M5-F web apply controller, M5-G plan card, M5-H preview, M5-I agent UX, M5-J command registry.
+- M6 waves (Stripe/billing/entitlements/abuse) and M7 waves (comments/presence/leases/share/versions) planned to follow per BUILD_PLAN task lists.
