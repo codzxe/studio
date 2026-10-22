@@ -204,7 +204,7 @@ export class RunLog {
         return Promise.resolve({ ok: true, result: event.result });
       }
     }
-    if (this.signal !== null && this.signal.aborted) {
+    if (this.signal?.aborted === true) {
       return Promise.resolve({ ok: false, reason: "aborted" });
     }
     return new Promise<ToolWaitResult>((resolveWait) => {
