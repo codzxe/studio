@@ -39,6 +39,7 @@ import type { StudioStreamEvent } from "@studio/contracts";
 
 import { type ApplicablePlan, type LayerResolutionRequest, RESOLVE_TOKEN_PREFIX } from "./apply";
 import type {
+  ChatBlockedCreditsState,
   ChatUiError,
   ChatUiMessage,
   ChatUiState,
@@ -46,6 +47,7 @@ import type {
   RunPhase,
   ToolCardState,
 } from "./types";
+import { INSUFFICIENT_CREDITS_CODE } from "./types";
 
 /** Phases that mean "a run just ended" — steer queues flush on these. */
 export const TERMINAL_RUN_PHASES: ReadonlySet<RunPhase> = new Set<RunPhase>([
@@ -72,6 +74,38 @@ export const RUN_PAUSED_ERROR: ChatUiError = {
   message: "Run paused. Check your connection.",
   retryable: true,
 };
+
+// ---------------------------------------------------------------------------
+// M6-H: credits visibility + the typed zero-balance block (§8.8/§12)
+// ---------------------------------------------------------------------------
+
+/**
+ * M6-H: derives the typed blocked state from an `INSUFFICIENT_CREDITS`
+ * failure (the §7.3 message is human-safe copy — law #1). Pure.
+ */
+function blockedCreditsFrom(error: {
+  readonly code: string;
+  readonly message: string;
+}): ChatBlockedCreditsState {
+  return { reason: "insufficient-credits", message: error.message };
+}
+
+/**
+ * M6-H: the NEWEST §7.4 `credits` snapshot on the thread — the terminal
+ * `credits` event the gateway emits when it settles the run (reserved →
+ * commit/refund), which carries the post-run `balance`. Values are integer
+ * MICROcredits (D-12; the same units `GET /v1/credits` reports). Pure; `null`
+ * when no run has reported credits yet.
+ */
+export function latestCreditsSnapshot(
+  state: ChatUiState,
+): NonNullable<ChatUiMessage["credits"]> | null {
+  for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+    const message = state.messages[index];
+    if (message?.credits !== undefined) return message.credits;
+  }
+  return null;
+}
 
 /**
  * Client-driven §8.1 transitions the CONTROLLER dispatches (never the
@@ -152,7 +186,10 @@ export function applyClientAction(state: ChatUiState, action: ChatClientAction):
       // A new send only starts from idle or a terminal phase; a live run
       // takes the steer queue instead.
       if (LIVE_RUN_PHASES.has(state.phase)) return state;
-      return { ...state, phase: "sending", error: undefined };
+      // M6-H: a fresh send re-arms the credits block — the server re-enforces
+      // the §8.8 gate on the wire (honest client-side UX only, never a
+      // permanent client lock).
+      return { ...state, phase: "sending", error: undefined, blocked: undefined };
     }
     case "chat.stop": {
       if (!LIVE_RUN_PHASES.has(state.phase)) return state;
@@ -170,7 +207,18 @@ export function applyClientAction(state: ChatUiState, action: ChatClientAction):
     }
     case "chat.error": {
       if (!LIVE_RUN_PHASES.has(state.phase)) return state;
-      return { ...state, phase: "failed", error: action.error };
+      // M6-H: a 402 INSUFFICIENT_CREDITS (§8.8 — the POST never started a
+      // run) additionally records the TYPED blocked state. It is NOT
+      // retryable (the §7.3 envelope says so — no retry loop); the way out
+      // is the top-up CTA, and `chat.submit` clears the block.
+      return {
+        ...state,
+        phase: "failed",
+        error: action.error,
+        ...(action.error.code === INSUFFICIENT_CREDITS_CODE
+          ? { blocked: blockedCreditsFrom(action.error) }
+          : {}),
+      };
     }
   }
 }
@@ -575,6 +623,9 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
       phase: "streaming",
       activeRunId: event.runId,
       error: undefined,
+      // M6-H: the server accepted the run, so the workspace could fund it —
+      // any stale typed block is over.
+      blocked: undefined,
       lastSeq: event.seq,
     };
   }
@@ -591,7 +642,7 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
   switch (event.type) {
     case "run.started": {
       // Replay of the active run's start with a later seq — nothing to create.
-      if (!frozen) next = { ...next, phase: resumeConfirm(next.phase) };
+      if (!frozen) next = { ...next, phase: resumeConfirm(next.phase), blocked: undefined };
       break;
     }
     case "message.delta": {
@@ -680,7 +731,7 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
       // a client tool whose result lands on the card); approval UI is M5.
       break;
     case "run.completed": {
-      next = { ...next, phase: "done", error: undefined };
+      next = { ...next, phase: "done", error: undefined, blocked: undefined };
       break;
     }
     case "run.failed": {
@@ -688,6 +739,10 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
         ...next,
         phase: "failed",
         error: { code: event.code, message: event.message, retryable: event.retryable },
+        // M6-H (defensive symmetry): a terminal failure carrying the §8.8
+        // code records the typed block too — the shipped gateway 402s BEFORE
+        // streaming, but the fold stays honest for any stream that says so.
+        ...(event.code === INSUFFICIENT_CREDITS_CODE ? { blocked: blockedCreditsFrom(event) } : {}),
       };
       break;
     }

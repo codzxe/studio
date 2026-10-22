@@ -13,6 +13,9 @@
  * only and no-ops in jsdom).
  */
 
+import { ChatApiContext, type ChatContextApi } from "@/lib/chat/provider";
+import { createInitialChatUiState } from "@/lib/chat/run-state";
+import type { ChatUiState } from "@/lib/chat/types";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -30,7 +33,13 @@ afterEach(() => {
 interface ComposerHarness {
   readonly onSend: ReturnType<typeof vi.fn>;
   readonly onStop: ReturnType<typeof vi.fn>;
+  readonly rerender: (snapshot: ChatUiState | null, overrides?: Partial<ChatComposerProps>) => void;
   readonly unmount: () => void;
+}
+
+/** Minimal fake chat api — the composer's M6-H block reads `snapshot` only. */
+function fakeChatApi(snapshot: ChatUiState): ChatContextApi {
+  return { snapshot } as unknown as ChatContextApi;
 }
 
 function renderComposer(overrides: Partial<ChatComposerProps> = {}): ComposerHarness {
@@ -39,7 +48,54 @@ function renderComposer(overrides: Partial<ChatComposerProps> = {}): ComposerHar
   const view = render(
     <ChatComposer streaming={false} onSend={onSend} onStop={onStop} {...overrides} />,
   );
-  return { onSend, onStop, unmount: view.unmount };
+  return {
+    onSend,
+    onStop,
+    rerender: (_snapshot, nextOverrides = {}) => {
+      view.rerender(
+        <ChatComposer
+          streaming={false}
+          onSend={onSend}
+          onStop={onStop}
+          {...overrides}
+          {...nextOverrides}
+        />,
+      );
+    },
+    unmount: view.unmount,
+  };
+}
+
+/** Provider-wrapped mount — the M6-H evidence rides the ChatProvider context. */
+function renderComposerInChat(
+  snapshot: ChatUiState,
+  overrides: Partial<ChatComposerProps> = {},
+): ComposerHarness {
+  const onSend = vi.fn();
+  const onStop = vi.fn();
+  const view = render(
+    <ChatApiContext.Provider value={fakeChatApi(snapshot)}>
+      <ChatComposer streaming={false} onSend={onSend} onStop={onStop} {...overrides} />
+    </ChatApiContext.Provider>,
+  );
+  return {
+    onSend,
+    onStop,
+    rerender: (nextSnapshot, nextOverrides = {}) => {
+      view.rerender(
+        <ChatApiContext.Provider value={nextSnapshot === null ? null : fakeChatApi(nextSnapshot)}>
+          <ChatComposer
+            streaming={false}
+            onSend={onSend}
+            onStop={onStop}
+            {...overrides}
+            {...nextOverrides}
+          />
+        </ChatApiContext.Provider>,
+      );
+    },
+    unmount: view.unmount,
+  };
 }
 
 function box(): HTMLTextAreaElement {
@@ -54,6 +110,54 @@ const CREDITS_LOCKED: NonNullable<ChatComposerProps["disabled"]> = {
   reason: "credits",
   message: "You're out of credits.",
 };
+
+// ---------------------------------------------------------------------------
+// M6-H snapshot fixtures (the ChatProvider evidence the block region reads)
+// ---------------------------------------------------------------------------
+
+function baseSnapshot(overrides: Partial<ChatUiState>): ChatUiState {
+  return { ...createInitialChatUiState(), ...overrides };
+}
+
+/** The typed 402 block (run-state's chat.error fold). */
+function snapshotBlocked402(message = "This workspace is out of credits."): ChatUiState {
+  return baseSnapshot({
+    phase: "failed",
+    blocked: { reason: "insufficient-credits", message },
+    error: { code: "INSUFFICIENT_CREDITS", message, retryable: false },
+  });
+}
+
+/** The legacy error-only path (no typed block — same wire code). */
+function snapshotError402(): ChatUiState {
+  return baseSnapshot({
+    phase: "failed",
+    error: {
+      code: "INSUFFICIENT_CREDITS",
+      message: "This workspace is out of credits.",
+      retryable: false,
+    },
+  });
+}
+
+/** A drained wallet: the terminal credits event says balance 0 µc, no error. */
+function snapshotZeroBalance(): ChatUiState {
+  return baseSnapshot({
+    phase: "done",
+    activeRunId: "run_drained",
+    lastSeq: 4,
+    messages: [
+      {
+        id: "run_drained",
+        role: "assistant",
+        text: "Done.",
+        runId: "run_drained",
+        toolCards: [],
+        credits: { reserved: 2, committed: 2, balance: 0 },
+      },
+    ],
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Basics (§3.4 anatomy, §10 button size, a11y)
@@ -234,35 +338,129 @@ describe("ChatComposer — streaming", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Disabled states (§12 + §3.4 credits → Upgrade)
+// M6-H — the zero-balance block (§8.8/§12; BUILD_PLAN §M6 task 4)
+// ---------------------------------------------------------------------------
+
+describe("ChatComposer — M6-H credits block", () => {
+  it("the typed 402 block locks the composer with the LowCreditBanner + /w/billing CTA", () => {
+    const harness = renderComposerInChat(snapshotBlocked402());
+    const textarea = box();
+    expect(textarea).toBeDisabled();
+    expect(sendButton()).toBeDisabled();
+    expect(screen.getByTestId("chat-credits-block")).toHaveAttribute(
+      "data-block-source",
+      "http-402",
+    );
+    expect(screen.getByTestId("low-credit-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("low-credit-topup")).toHaveAttribute("href", "/w/billing");
+    expect(screen.getByText("This workspace is out of credits.")).toBeInTheDocument();
+
+    fireEvent.change(textarea, { target: { value: "draft while broke" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
+    fireEvent.click(sendButton());
+    expect(harness.onSend).not.toHaveBeenCalled();
+  });
+
+  it("zero balance WITHOUT a 402: the terminal credits event alone blocks the send (§8.8)", () => {
+    const harness = renderComposerInChat(snapshotZeroBalance());
+    expect(box()).toBeDisabled();
+    expect(screen.getByTestId("chat-credits-block")).toHaveAttribute(
+      "data-block-source",
+      "zero-balance",
+    );
+    expect(screen.getByText("You're out of credits.")).toBeInTheDocument();
+    expect(screen.getByTestId("low-credit-topup")).toHaveAttribute("href", "/w/billing");
+
+    fireEvent.keyDown(box(), { key: "Enter", metaKey: true });
+    expect(harness.onSend).not.toHaveBeenCalled();
+  });
+
+  it("the 402 on snapshot.error (pre-block legacy path) blocks the same way with the §7.3 message", () => {
+    const harness = renderComposerInChat(snapshotError402());
+    expect(box()).toBeDisabled();
+    expect(screen.getByTestId("chat-credits-block")).toHaveAttribute(
+      "data-block-source",
+      "http-402",
+    );
+    expect(screen.getByText("This workspace is out of credits.")).toBeInTheDocument();
+    expect(screen.getByTestId("low-credit-banner")).toBeInTheDocument();
+    expect(harness.onSend).not.toHaveBeenCalled();
+  });
+
+  it("the banner CTA re-arms the composer (re-check = the next send; server re-enforces)", () => {
+    const harness = renderComposerInChat(snapshotBlocked402());
+    expect(box()).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("low-credit-topup"));
+
+    // The banner is gone and sends re-arm — the next POST is the re-check.
+    expect(screen.queryByTestId("chat-credits-block")).not.toBeInTheDocument();
+    expect(box()).toBeEnabled();
+
+    fireEvent.change(box(), { target: { value: "try again" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(harness.onSend).toHaveBeenCalledTimes(1);
+    expect(harness.onSend).toHaveBeenCalledWith("try again");
+  });
+
+  it("fresh 402 evidence re-blocks after a re-arm (no permanent lock, no stale unblock)", () => {
+    const harness = renderComposerInChat(snapshotBlocked402());
+    fireEvent.click(screen.getByTestId("low-credit-topup"));
+    expect(screen.queryByTestId("chat-credits-block")).not.toBeInTheDocument();
+
+    // A NEW 402 (fresh evidence object) — the block re-arms honestly.
+    harness.rerender(snapshotBlocked402());
+    expect(screen.getByTestId("chat-credits-block")).toBeInTheDocument();
+    expect(box()).toBeDisabled();
+  });
+
+  it("streaming + credits block: Stop outranks the lock (§8.3) and steer stays dead", () => {
+    const harness = renderComposerInChat(snapshotZeroBalance(), { streaming: true });
+    expect(screen.getByRole("button", { name: "Stop streaming" })).toBeInTheDocument();
+    expect(screen.getByTestId("chat-credits-block")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop streaming" }));
+    expect(harness.onStop).toHaveBeenCalledTimes(1);
+    expect(harness.onSend).not.toHaveBeenCalled();
+  });
+
+  it("a hostile blocked message renders as inert text (law #1: strings are data)", () => {
+    const hostile = snapshotBlocked402("<img src=x onerror=alert(1)>");
+    renderComposerInChat(hostile);
+    expect(document.body.querySelector("img")).toBeNull();
+    expect(screen.getByTestId("chat-credits-block")).toBeInTheDocument();
+    expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Disabled states (§12 + §3.4 credits → LowCreditBanner + Top-up CTA)
 // ---------------------------------------------------------------------------
 
 describe("ChatComposer — disabled states", () => {
-  it("credits: textarea disabled, §12 message shown, Upgrade CTA dispatches studio:chat-upgrade, no send", () => {
+  it("credits prop lock: textarea disabled, §12 message shown, banner + /w/billing CTA, no send", () => {
     const harness = renderComposer({ disabled: CREDITS_LOCKED });
     const textarea = box();
     expect(textarea).toBeDisabled();
     expect(screen.getByText("You're out of credits.")).toBeInTheDocument();
-
-    const upgrade = screen.getByRole("button", { name: "Upgrade" });
-    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
-
-    const heard: CustomEvent[] = [];
-    const listener = (event: Event) => {
-      heard.push(event as CustomEvent);
-    };
-    window.addEventListener("studio:chat-upgrade", listener);
-    fireEvent.click(upgrade);
-    window.removeEventListener("studio:chat-upgrade", listener);
-
-    expect(heard).toHaveLength(1);
-    expect(heard[0]?.type).toBe("studio:chat-upgrade");
+    expect(screen.getByTestId("low-credit-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("low-credit-topup")).toHaveAttribute("href", "/w/billing");
+    // The retired M4 Upgrade placeholder is gone for good.
+    expect(screen.queryByRole("button", { name: "Upgrade" })).not.toBeInTheDocument();
 
     // Keyboard paths are dead while locked.
     fireEvent.keyDown(textarea, { key: "Enter" });
     fireEvent.keyDown(textarea, { key: "Enter", metaKey: true });
     expect(harness.onSend).not.toHaveBeenCalled();
     expect(harness.onStop).not.toHaveBeenCalled();
+
+    // The CTA click re-arms the prop lock too (the server re-checks).
+    fireEvent.click(screen.getByTestId("low-credit-topup"));
+    expect(screen.queryByTestId("chat-credits-block")).not.toBeInTheDocument();
+    fireEvent.change(textarea, { target: { value: "rearmed" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(harness.onSend).toHaveBeenCalledTimes(1);
+    expect(harness.onSend).toHaveBeenCalledWith("rearmed");
   });
 
   it("editor reason: the §12 message shows under the composer and nothing sends", () => {

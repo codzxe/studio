@@ -22,6 +22,13 @@ import { GatewayError } from "../errors.js";
 import { ok, page } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { resolvePlan } from "../plan.js";
+import {
+  RECONCILE_REQUEST_SCHEMA,
+  createRepoReconcileSources,
+  createSpendSource,
+  reconcileWindowProblem,
+  reconcileWorkspace,
+} from "../reconciliation.js";
 
 const RESERVED_SCAN_LIMIT = 500;
 
@@ -109,6 +116,51 @@ export function creditsRoutes(deps: GatewayDeps): Hono<AppBindings> {
         kind: kind.success ? kind.data : undefined,
       });
       return page(c, result.items.map(toEntryDto), result.nextCursor);
+    },
+  );
+
+  // ── Reconciliation job (BUILD_PLAN §M6 task 3; core in ../reconciliation.ts) ──
+  //
+  // REPORT-ONLY unless the caller passes { mode: "reconcile" }. Admin role;
+  // Idempotency-Key is enforced by the global POST middleware (§7.2). The
+  // external spend seam is createSpendSource(deps.env) — null on boxes without
+  // LITELLM_SPEND_KEY (the local/test reality), so the job degrades to
+  // local-ledger-only reconciliation. Batch/cron callers use
+  // runReconciliationSweep() (services/gateway/src/reconciliation.ts header
+  // has the operator recipe — no scheduler is wired in v1).
+  app.post(
+    "/v1/credits/reconcile",
+    requireWorkspace("admin"),
+    async (c: AppContext): Promise<Response> => {
+      const parsed = RECONCILE_REQUEST_SCHEMA.safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) {
+        throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
+          status: 400,
+          hint: "Send sinceTs and uptoTs as ISO-8601 window bounds.",
+          requestId: c.get("requestId"),
+        });
+      }
+      const sinceTs = new Date(parsed.data.sinceTs);
+      const uptoTs = new Date(parsed.data.uptoTs);
+      const problem = reconcileWindowProblem({ sinceTs, uptoTs }, new Date());
+      if (problem !== null) {
+        throw new GatewayError("VALIDATION_FAILED", problem, {
+          status: 400,
+          hint: "The window must be ordered, at most 92 days, and end no later than now.",
+          requestId: c.get("requestId"),
+        });
+      }
+      const report = await reconcileWorkspace(
+        c.get("workspace").id,
+        { sinceTs, uptoTs },
+        {
+          sources: createRepoReconcileSources(deps.repos),
+          spend: createSpendSource(deps.env),
+          logger: deps.logger,
+        },
+        { mode: parsed.data.mode, note: parsed.data.note },
+      );
+      return ok(c, report);
     },
   );
 

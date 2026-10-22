@@ -17,6 +17,7 @@ import {
   applyUserMessage,
   createInitialChatUiState,
   foldEvent,
+  latestCreditsSnapshot,
 } from "./run-state";
 import type { ChatUiState } from "./types";
 
@@ -458,5 +459,116 @@ describe("applyClientAction", () => {
     expect(error.error?.code).toBe("INSUFFICIENT_CREDITS");
     const idle = createInitialChatUiState();
     expect(applyClientAction(idle, { type: "chat.paused" })).toBe(idle);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M6-H — the typed zero-balance block (§8.8 INSUFFICIENT_CREDITS 402) + the
+// latest terminal credits snapshot (BP §M6 task 4; D-12 µc).
+// ---------------------------------------------------------------------------
+
+describe("M6-H credits block — chat.error 402 fold", () => {
+  it("a 402 INSUFFICIENT_CREDITS chat.error records the typed blocked state (human-safe message, no retry)", () => {
+    const sending: ChatUiState = { ...createInitialChatUiState(), phase: "sending" };
+    const failed = applyClientAction(sending, {
+      type: "chat.error",
+      error: {
+        code: "INSUFFICIENT_CREDITS",
+        message: "This workspace is out of credits.",
+        retryable: false,
+      },
+    });
+    expect(failed.phase).toBe("failed");
+    expect(failed.blocked).toEqual({
+      reason: "insufficient-credits",
+      message: "This workspace is out of credits.",
+    });
+  });
+
+  it("any other §7.3 error code leaves the blocked state UNSET", () => {
+    const sending: ChatUiState = { ...createInitialChatUiState(), phase: "sending" };
+    const failed = applyClientAction(sending, {
+      type: "chat.error",
+      error: { code: "RATE_LIMITED", message: "Too many requests.", retryable: true },
+    });
+    expect(failed.blocked).toBeUndefined();
+  });
+
+  it("chat.submit re-arms: a fresh send clears the typed block (the server re-checks on the wire)", () => {
+    const sending: ChatUiState = { ...createInitialChatUiState(), phase: "sending" };
+    const blocked = applyClientAction(sending, {
+      type: "chat.error",
+      error: { code: "INSUFFICIENT_CREDITS", message: "Out of credits.", retryable: false },
+    });
+    const resubmitted = applyClientAction(blocked, { type: "chat.submit" });
+    expect(resubmitted.phase).toBe("sending");
+    expect(resubmitted.blocked).toBeUndefined();
+  });
+});
+
+describe("M6-H credits block — run.failed / run.started / run.completed folds", () => {
+  it("a terminal run.failed carrying INSUFFICIENT_CREDITS records the block; run.completed clears it", () => {
+    const streaming: ChatUiState = foldEvent(
+      withUserMessage(),
+      START_A as Extract<StudioStreamEvent, { type: "run.started" }>,
+    );
+    const failed = foldEvent(streaming, {
+      type: "run.failed",
+      runId: RUN_A,
+      seq: 9,
+      code: "INSUFFICIENT_CREDITS",
+      message: "This workspace is out of credits.",
+      retryable: false,
+    });
+    expect(failed.blocked).toEqual({
+      reason: "insufficient-credits",
+      message: "This workspace is out of credits.",
+    });
+    const recovered = foldEvent(failed, {
+      type: "run.started",
+      runId: RUN_B,
+      seq: 0,
+      model: "studio-fast",
+    });
+    expect(recovered.blocked).toBeUndefined();
+  });
+
+  it("a new run taking over clears any stale block (the server could fund it)", () => {
+    const blocked: ChatUiState = {
+      ...withUserMessage(),
+      phase: "failed",
+      activeRunId: null,
+      blocked: { reason: "insufficient-credits", message: "Out of credits." },
+      error: { code: "INSUFFICIENT_CREDITS", message: "Out of credits.", retryable: false },
+    };
+    const takeover = foldEvent(blocked, {
+      type: "run.started",
+      runId: RUN_B,
+      seq: 0,
+      model: "studio-smart",
+    });
+    expect(takeover.phase).toBe("streaming");
+    expect(takeover.blocked).toBeUndefined();
+  });
+});
+
+describe("M6-H latestCreditsSnapshot", () => {
+  it("returns the NEWEST terminal credits snapshot on the thread (µc balance)", () => {
+    const done = APPLIED.reduce((state, event) => foldEvent(state, event), withUserMessage());
+    const credits = latestCreditsSnapshot(done);
+    const expected = APPLIED.filter((event) => event.type === "credits").at(-1);
+    expect(credits).not.toBeNull();
+    expect(expected?.type).toBe("credits");
+    expect(credits?.balance).toBe(expected?.type === "credits" ? expected.balance : undefined);
+  });
+
+  it("is null before any run reported credits; survives a trailing message without them", () => {
+    expect(latestCreditsSnapshot(createInitialChatUiState())).toBeNull();
+    const withCredits = APPLIED.reduce(
+      (state, event) => foldEvent(state, event),
+      withUserMessage(),
+    );
+    const plusUser = applyUserMessage(withCredits, { id: "msg_user_2", text: "again" });
+    expect(latestCreditsSnapshot(plusUser)?.balance).not.toBeUndefined();
   });
 });
