@@ -53,11 +53,13 @@ and a bridge-chosen value (hostile project data). Demonstration:
 through to Object.prototype (FINDING F-1)" — the test cleans up after itself).
 Blast radius in a real tab: every `for…in` loop and every truthiness check on
 the polluted keys app-wide; `paths:["toString"]` overwrites
-`Object.prototype.toString`; `layerIds:["constructor"]` writes onto the
-`Object` constructor function; a dunder `paths` entry can rebind
-`Object.prototype`'s own [[Prototype]]. Not triggerable by project data alone —
-it needs the model to emit dunder ids — but that is exactly the
-injected-model threat this milestone defends against. Suggested fix (one line
+`Object.prototype.toString`; `layerIds:["constructor"]` writes onto the `Object`
+constructor function. (A dunder `paths` entry against `Object.prototype` itself
+throws a TypeError — `Object.prototype` is an immutable-prototype exotic
+object — which the executor degrades to `TOOL_FAILED`; against a normal layer
+id it silently rebinds that entry's local prototype.) Not triggerable by
+project data alone — it needs the model to emit dunder ids — but that is
+exactly the injected-model threat this milestone defends against. Suggested fix (one line
 plus schema hardening): create `layers` with `Object.create(null)` (or use a
 `Map`) and/or add a `.refine` rejecting `/^__proto__$|^constructor$|^prototype$/`
 in `layerIds`/`paths` (`packages/contracts/src/tools.ts`, M4-A's seam —
