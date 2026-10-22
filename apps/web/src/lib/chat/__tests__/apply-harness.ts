@@ -34,10 +34,6 @@
  *   `saveNow:agent-apply` → `applyRun`.
  */
 
-import type { SaveOutcome } from "@/lib/editor-session";
-import type { EditorBridge } from "@studio/editor-bridge";
-import { attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
-import type { FakeEditor } from "@studio/editor-bridge/fake";
 import {
   type ApplicablePlan,
   type ApplyApiClient,
@@ -47,6 +43,10 @@ import {
   type UndoOutcome,
   createApplyController,
 } from "@/lib/chat/apply";
+import type { SaveOutcome } from "@/lib/editor-session";
+import type { EditorBridge } from "@studio/editor-bridge";
+import { attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
+import type { FakeEditor } from "@studio/editor-bridge/fake";
 
 // ---------------------------------------------------------------------------
 // Options + records
