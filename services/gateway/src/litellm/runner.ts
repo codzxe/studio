@@ -55,13 +55,17 @@ import {
   type ModelId,
   type PlanIntent,
   type PlanRisk,
+  PROPOSED_BATCH_NOTE,
   type ToolDefinition,
   getTool,
   TOOL_LIST,
+  WRITE_TOOL_RESULT_SCHEMA,
   WRITE_TOOL_IDS,
+  studioWriteToolId,
 } from "@studio/contracts";
 
 import { type Logger, nullLogger } from "../logger.js";
+import { compilePlan as compilePlanWithCompiler, defaultCompileDeps } from "../plan-compiler.js";
 import type { AgentRun, AgentRunOutcome, AgentRunStream, AgentRunner } from "../runner.js";
 import {
   type AggregatedToolCall,
@@ -140,19 +144,34 @@ export type CompilePlanResult =
 export type CompilePlanFn = (input: CompilePlanInput) => Promise<CompilePlanResult>;
 
 /**
- * DEFAULT compiler seam. services/gateway/src/plan-compiler.ts (M5-B) had
- * NOT landed when M5-C wired this — the runner codes against the pinned
- * interface above instead of importing it. INTEGRATOR FLIP (one line): once
- * ../plan-compiler.ts exists, replace this stub with
- * `import { compilePlan } from "../plan-compiler.js"` and pass it as the
- * deps default below (the deps override stays for tests). Until then every
- * compile degrades to a typed ok:false — write tools answer PROPOSAL_INVALID
- * and plan events carry no compiledBatch. Nothing ever executes here.
+ * DEFAULT compilePlan: M5-B's SERVER-SIDE plan compiler
+ * (../plan-compiler.ts, landed mid-flight) with its default deps (registry +
+ * write tools read from contracts at CALL time — with M5-J's registry stub
+ * empty, compiles degrade to typed ok:false "unknown_command" until it
+ * lands: write tools answer PROPOSAL_INVALID and plan events stay
+ * un-enriched; propose-only, never an execution, never a throw).
+ *
+ * The adapter also projects M5-B's richer result (readonly arrays + additive
+ * placeholders/warnings fields) onto this module's pinned seam types; if
+ * M5-B's file drifts mid-flight, this is the ONE reconcile point.
  */
-const planCompilerUnavailable: CompilePlanFn = async () => ({
-  ok: false,
-  issues: [{ message: "The plan compiler is not wired into this build yet." }],
-});
+const defaultCompilePlan: CompilePlanFn = async (input) => {
+  const result = compilePlanWithCompiler(input, defaultCompileDeps());
+  if (result.ok) {
+    return {
+      ok: true,
+      batch: result.batch,
+      risk: result.risk,
+      estimatedCredits: result.estimatedCredits,
+      resolutionRequests: result.resolutionRequests.map((request) => ({
+        requestId: request.requestId,
+        layerName: request.layerName,
+        disambiguation: [...request.disambiguation],
+      })),
+    };
+  }
+  return { ok: false, issues: result.issues };
+};
 
 // ---------------------------------------------------------------------------
 // Tool surface (§8.4: curated only — 5 read + 8 write = 13)
@@ -165,11 +184,12 @@ export const RUNNER_READ_TOOLS: readonly ToolDefinition[] = TOOL_LIST.filter(
 
 /**
  * The 8 write tools (BUILD_PLAN §M5.1), ids taken from contracts
- * WRITE_TOOL_IDS — lookup through the curated catalog, never an invented
- * id. PROPOSE-ONLY (§8.4 rules 1-5): results are proposed batches.
+ * WRITE_TOOL_IDS via studioWriteToolId (lockstep with the curated catalog —
+ * never an invented id). PROPOSE-ONLY (§8.4 rules 1-5): results are proposed
+ * batches (WRITE_TOOL_RESULT_SCHEMA).
  */
-export const RUNNER_WRITE_TOOLS: readonly ToolDefinition[] = WRITE_TOOL_IDS.map((id) =>
-  getTool(`studio.${id}`),
+export const RUNNER_WRITE_TOOLS: readonly ToolDefinition[] = WRITE_TOOL_IDS.map(
+  (id) => getTool(studioWriteToolId(id)),
 ).filter(
   (tool): tool is ToolDefinition => tool !== undefined && tool.kind === "write",
 );
@@ -368,44 +388,49 @@ function clamp280(value: string): string {
     : `${value.slice(0, MAX_PLAN_SUMMARY_LENGTH - 1)}…`;
 }
 
-/** Deterministic HUMAN summary of one write-tool call (§8.6 display data). */
+/** Deterministic HUMAN summary of one write-tool call (§8.6 display data;
+ * args shapes per contracts write-tools.ts — layers BY NAME, STRICT objects). */
 export function writeToolSummary(toolId: string, args: Record<string, unknown>): string {
+  const layerNames = array(args.layers)
+    .map((layer) =>
+      typeof layer === "object" && layer !== null
+        ? str((layer as Record<string, unknown>).name)
+        : "",
+    )
+    .filter((name) => name !== "");
   switch (toolId) {
     case "studio.create_composition":
-      return `Create composition "${str(args.name)}" (${str(args.width)}×${str(args.height)})`;
+      return `Create composition "${str(args.name)}"`;
     case "studio.create_text": {
       const content = str(args.text);
       const label = str(args.name) || (content.length > 40 ? `${content.slice(0, 39)}…` : content);
       return `Add text layer "${label}"`;
     }
     case "studio.set_properties": {
-      const updates = array(args.updates);
-      const layers = new Set(
-        updates
-          .map((update) =>
-            typeof update === "object" && update !== null
-              ? str((update as Record<string, unknown>).layer)
-              : "",
-          )
-          .filter((layer) => layer !== ""),
-      );
-      const noun = updates.length === 1 ? "property" : "properties";
-      return `Set ${updates.length} ${noun} on ${layers.size === 0 ? 1 : layers.size} layer${
-        layers.size > 1 ? "s" : ""
-      }`;
+      const updates = array(args.properties).length;
+      const noun = updates === 1 ? "property" : "properties";
+      const layers = layerNames.length === 0 ? 1 : layerNames.length;
+      return `Set ${updates} ${noun} on ${layers} layer${layers > 1 ? "s" : ""}`;
     }
     case "studio.add_effect":
-      return `Add effect "${str(args.effect)}" to layer "${str(args.layer)}"`;
-    case "studio.set_keyframes":
-      return `Set ${array(args.keyframes).length} keyframes on ${str(args.propertyPath)} of layer "${str(
-        args.layer,
-      )}"`;
-    case "studio.apply_preset":
-      return `Apply preset "${str(args.preset)}" to ${array(args.targets).length} layer${
-        array(args.targets).length === 1 ? "" : "s"
+      return `Add effect "${effectName(args.effect)}" to ${layerNames.length} layer${
+        layerNames.length === 1 ? "" : "s"
       }`;
+    case "studio.set_keyframes":
+      return `Set ${array(args.keys).length} keyframes on ${str(args.propertyPath)} of ${
+        layerNames.length
+      } layer${layerNames.length === 1 ? "" : "s"}`;
+    case "studio.apply_preset": {
+      const preset =
+        typeof args.preset === "object" && args.preset !== null
+          ? str((args.preset as Record<string, unknown>).name) ||
+            str((args.preset as Record<string, unknown>).builtinId)
+          : "";
+      const targets = layerNames.length > 0 ? layerNames.length : 1; // omitted layers ⇒ current selection
+      return `Apply preset "${preset}" to ${targets} layer${targets === 1 ? "" : "s"}`;
+    }
     case "studio.undo_run":
-      return str(args.runId) === "" ? "Undo the most recent agent run" : `Undo agent run ${str(args.runId)}`;
+      return "Undo the most recent applied agent run"; // undo_run takes NO args (one undo step, law #6)
     case "studio.save_version":
       return str(args.label) === ""
         ? "Save a version snapshot of the project"
@@ -413,6 +438,13 @@ export function writeToolSummary(toolId: string, args: Record<string, unknown>):
     default:
       return `Propose ${toolId.replace(/^studio\./, "")}`;
   }
+}
+
+function effectName(effect: unknown): string {
+  if (typeof effect === "object" && effect !== null) {
+    return str((effect as Record<string, unknown>).name);
+  }
+  return "";
 }
 
 /** Affected-layer rows for the carrier plan (§8.6 card data; bounded ≤ 50). */
@@ -424,25 +456,37 @@ function writeToolAffectedLayers(
   const push = (name: string, change: string): void => {
     if (name !== "" && layers.length < MAX_PLAN_AFFECTED_LAYERS) layers.push({ name, change });
   };
+  const namedLayers = array(args.layers)
+    .map((layer) =>
+      typeof layer === "object" && layer !== null
+        ? str((layer as Record<string, unknown>).name)
+        : "",
+    )
+    .filter((name) => name !== "");
   switch (toolId) {
-    case "studio.set_properties":
-      for (const update of array(args.updates)) {
-        if (typeof update !== "object" || update === null) continue;
-        const record = update as Record<string, unknown>;
-        push(str(record.layer), `Set ${str(record.path)}`);
-      }
+    case "studio.set_properties": {
+      const change = `Set ${array(args.properties).length} propert${
+        array(args.properties).length === 1 ? "y" : "ies"
+      }`;
+      for (const name of namedLayers) push(name, change);
       break;
+    }
     case "studio.add_effect":
-      push(str(args.layer), `Add effect "${str(args.effect)}"`);
+      for (const name of namedLayers) push(name, `Add effect "${effectName(args.effect)}"`);
       break;
     case "studio.set_keyframes":
-      push(str(args.layer), `Keyframes on ${str(args.propertyPath)}`);
+      for (const name of namedLayers) push(name, `Keyframes on ${str(args.propertyPath)}`);
       break;
-    case "studio.apply_preset":
-      for (const target of array(args.targets)) {
-        push(typeof target === "string" ? target : "", `Apply preset "${str(args.preset)}"`);
-      }
+    case "studio.apply_preset": {
+      const change = `Apply preset ${
+        typeof args.preset === "object" && args.preset !== null
+          ? str((args.preset as Record<string, unknown>).name) ||
+            str((args.preset as Record<string, unknown>).builtinId)
+          : ""
+      }`;
+      for (const name of namedLayers) push(name, change);
       break;
+    }
     default:
       break;
   }
@@ -513,9 +557,9 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
   const bearer =
     deps.virtualKey !== undefined && deps.virtualKey !== "" ? deps.virtualKey : deps.apiKey;
   const tools = openAiToolSpecs();
-  // M5-B seam: the pinned compiler when wired, the typed-unavailable stub
-  // until then (see planCompilerUnavailable above).
-  const compilePlan = deps.compilePlan ?? planCompilerUnavailable;
+  // M5-B seam: the injected compiler for tests, the real ../plan-compiler.ts
+  // default otherwise (see defaultCompilePlan above).
+  const runCompilePlan = deps.compilePlan ?? defaultCompilePlan;
   const clientDeps = {
     baseUrl: deps.baseUrl,
     bearer,
@@ -616,7 +660,7 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
        * failing the run (defense-in-depth for the M5-B handoff). */
       const compilePlanSafe = async (input: CompilePlanInput): Promise<CompilePlanResult> => {
         try {
-          return await compilePlan(input);
+          return await runCompilePlan(input);
         } catch (error) {
           logger.error("plan_compiler_threw", {
             runId: run.runId,
@@ -806,36 +850,64 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
             const carrier = writeToolCarrierPlan(writeTool, validated.args);
             const compiled = await compilePlanSafe({ plan: carrier });
             if (compiled.ok) {
-              // Client envelope: ONLY the proposed batch + human summary (+
-              // the server-recomputed metadata the compile carries).
-              stream.emit({
-                type: "tool.result",
-                toolCallId: call.id,
-                result: {
-                  proposedBatch: compiled.batch,
-                  summary: carrier.summary,
-                  risk: compiled.risk,
-                  estimatedCredits: compiled.estimatedCredits,
-                  resolutionRequests: [...compiled.resolutionRequests],
+              // Client envelope = the pinned WRITE_TOOL_RESULT_SCHEMA
+              // (contracts write-tools.ts): ONLY the proposed batch + the
+              // canonical proposed-only note — the human summary rides the
+              // batch label ("Agent: <summary>"). Boundary re-check (law #2)
+              // before the result goes on the wire; a compiler result that
+              // fails the pinned shape degrades to PROPOSAL_INVALID below.
+              const checked = WRITE_TOOL_RESULT_SCHEMA.safeParse({
+                proposedBatch: {
+                  label: compiled.batch.label,
+                  steps: compiled.batch.steps,
                 },
+                note: PROPOSED_BATCH_NOTE,
               });
-              await stream.yieldToStream();
-              if (signal.aborted) return cancelled();
-              // LAW #5 / M4-SAFETY B2: the model is fed a REDACTED envelope —
-              // human summary + counts ONLY. The compiled registry command
-              // ids inside proposedBatch never enter the model conversation.
-              conversation.push({
-                role: "tool",
-                tool_call_id: call.id,
-                content: JSON.stringify({
-                  proposed: true,
-                  summary: carrier.summary,
+              if (checked.success) {
+                stream.emit({
+                  type: "tool.result",
+                  toolCallId: call.id,
+                  result: checked.data,
+                });
+                await stream.yieldToStream();
+                if (signal.aborted) return cancelled();
+                logger.debug("write_tool_proposed", {
+                  runId: run.runId,
+                  tool: writeTool.id,
+                  steps: compiled.batch.steps.length,
                   risk: compiled.risk,
                   estimatedCredits: compiled.estimatedCredits,
-                  stepCount: compiled.batch.steps.length,
                   resolutionRequests: compiled.resolutionRequests.length,
-                }),
-              });
+                });
+                // LAW #5 / M4-SAFETY B2: the model is fed a REDACTED
+                // envelope — the human summary + step count + the
+                // proposed-only note ONLY. The compiled registry command ids
+                // inside proposedBatch never enter the model conversation.
+                conversation.push({
+                  role: "tool",
+                  tool_call_id: call.id,
+                  content: JSON.stringify({
+                    proposed: true,
+                    summary: carrier.summary,
+                    note: PROPOSED_BATCH_NOTE,
+                    stepCount: compiled.batch.steps.length,
+                  }),
+                });
+              } else {
+                // Pinned-envelope violation (compiler drift): degrade safely.
+                const rejected = {
+                  error: "PROPOSAL_INVALID",
+                  message: "The proposed change did not pass the proposal contract.",
+                };
+                stream.emit({ type: "tool.result", toolCallId: call.id, result: rejected });
+                await stream.yieldToStream();
+                if (signal.aborted) return cancelled();
+                conversation.push({
+                  role: "tool",
+                  tool_call_id: call.id,
+                  content: JSON.stringify(rejected),
+                });
+              }
             } else {
               // Compile rejected (typed issues — the run survives; the model
               // may adapt within the step cap). Mirrors PLAN_INVALID.

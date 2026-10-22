@@ -7,9 +7,9 @@ import {
   KEYFRAME_INTERPOLATION_SCHEMA,
   MAX_WRITE_TOOL_ARGS_BYTES,
   PROPOSED_BATCH_NOTE,
+  WRITE_TOOLS,
   WRITE_TOOL_ARGS_SCHEMAS,
   WRITE_TOOL_IDS,
-  WRITE_TOOLS,
   WRITE_TOOL_RESULT_SCHEMA,
   type WriteToolId,
   firstDunderKeyLocation,
@@ -220,9 +220,7 @@ describe("write-tools: create_text args (real layer.newText subset)", () => {
     expect(schema.safeParse({ text: "Hi", position: [-1_000_000, 1_000_000] }).success).toBe(true);
     expect(schema.safeParse({ text: "Hi", position: [1_000_001, 0] }).success).toBe(false);
     expect(schema.safeParse({ text: "Hi", position: [0] }).success).toBe(false); // [x, y] only
-    expect(
-      schema.safeParse({ text: "Hi", box: [0, 0, 1_000_000, 1_000_000] }).success,
-    ).toBe(true);
+    expect(schema.safeParse({ text: "Hi", box: [0, 0, 1_000_000, 1_000_000] }).success).toBe(true);
     expect(schema.safeParse({ text: "Hi", box: [0, 0, 0, 50] }).success).toBe(false); // w ≥ 1
     expect(schema.safeParse({ text: "Hi", size: 0.1 }).success).toBe(true);
     expect(schema.safeParse({ text: "Hi", size: 10_000 }).success).toBe(true);
@@ -275,9 +273,7 @@ describe("write-tools: set_properties args", () => {
       path: `transform/opacity/${i}`,
       value: i,
     }));
-    expect(
-      schema.safeParse({ layers: [{ name: "L" }], properties: updates }).success,
-    ).toBe(true);
+    expect(schema.safeParse({ layers: [{ name: "L" }], properties: updates }).success).toBe(true);
     expect(
       schema.safeParse({
         layers: [{ name: "L" }],
@@ -388,9 +384,9 @@ describe("write-tools: add_effect args", () => {
   it("bounds: ≤ 50 layers; effect names are human, not plugin paths or dunder", () => {
     expect(schema.safeParse({ ...base, layers: layerNames(50) }).success).toBe(true);
     expect(schema.safeParse({ ...base, layers: layerNames(51) }).success).toBe(false);
-    expect(schema.safeParse({ layers: base.layers, effect: { name: "x".repeat(121) } }).success).toBe(
-      false,
-    );
+    expect(
+      schema.safeParse({ layers: base.layers, effect: { name: "x".repeat(121) } }).success,
+    ).toBe(false);
     for (const bad of ["C:/plugins/blur.plugin", "dir\\blur", "__proto__", ""]) {
       expect(schema.safeParse({ layers: base.layers, effect: { name: bad } }).success, bad).toBe(
         false,
@@ -453,15 +449,15 @@ describe("write-tools: set_keyframes args", () => {
   });
 
   it("bounds: timeSeconds 0..36000, propertyPath ≤ 200, dunder-free", () => {
-    expect(
-      schema.safeParse({ ...base, keys: [{ timeSeconds: 36000, value: 1 }] }).success,
-    ).toBe(true);
-    expect(
-      schema.safeParse({ ...base, keys: [{ timeSeconds: -0.1, value: 1 }] }).success,
-    ).toBe(false);
-    expect(
-      schema.safeParse({ ...base, keys: [{ timeSeconds: 36001, value: 1 }] }).success,
-    ).toBe(false);
+    expect(schema.safeParse({ ...base, keys: [{ timeSeconds: 36000, value: 1 }] }).success).toBe(
+      true,
+    );
+    expect(schema.safeParse({ ...base, keys: [{ timeSeconds: -0.1, value: 1 }] }).success).toBe(
+      false,
+    );
+    expect(schema.safeParse({ ...base, keys: [{ timeSeconds: 36001, value: 1 }] }).success).toBe(
+      false,
+    );
     expect(
       schema.safeParse({ ...base, propertyPath: "__proto__", keys: base.keys as unknown[] })
         .success,
@@ -513,15 +509,11 @@ describe("write-tools: apply_preset args", () => {
   });
 
   it("layers are optional, BY NAME, ≤ 50; args is a bounded passthrough", () => {
-    expect(
-      schema.safeParse({ preset: { name: "In" }, layers: layerNames(50) }).success,
-    ).toBe(true);
-    expect(
-      schema.safeParse({ preset: { name: "In" }, layers: layerNames(51) }).success,
-    ).toBe(false);
-    expect(
-      schema.safeParse({ preset: { name: "In" }, layers: [] }).success,
-    ).toBe(false); // omit instead of empty
+    expect(schema.safeParse({ preset: { name: "In" }, layers: layerNames(50) }).success).toBe(true);
+    expect(schema.safeParse({ preset: { name: "In" }, layers: layerNames(51) }).success).toBe(
+      false,
+    );
+    expect(schema.safeParse({ preset: { name: "In" }, layers: [] }).success).toBe(false); // omit instead of empty
     const dunder = jsonWithDunder('{"__proto__":{"polluted":true}}');
     expect(schema.safeParse({ preset: { name: "In" }, args: dunder }).success).toBe(false);
     expect(
@@ -567,9 +559,7 @@ describe("write-tools: dunder-safe helpers (F-1 class)", () => {
   it("firstDunderKeyLocation finds nested dunder keys with a location", () => {
     expect(firstDunderKeyLocation({ a: { b: 1 } })).toBeUndefined();
     expect(firstDunderKeyLocation(jsonWithDunder('{"a":{"__proto__":1}}'))).toBe("a.__proto__");
-    expect(firstDunderKeyLocation(jsonWithDunder('[0,{"constructor":1}]'))).toBe(
-      "[1].constructor",
-    );
+    expect(firstDunderKeyLocation(jsonWithDunder('[0,{"constructor":1}]'))).toBe("[1].constructor");
     expect(firstDunderKeyLocation(jsonWithDunder('{"prototype":1}'))).toBe("prototype");
   });
 
@@ -622,9 +612,9 @@ describe("write-tools: proposed-batch result envelope", () => {
   });
 
   it("is strict and bounds label/steps/note", () => {
-    expect(
-      WRITE_TOOL_RESULT_SCHEMA.safeParse({ ...validResult(), executed: true }).success,
-    ).toBe(false);
+    expect(WRITE_TOOL_RESULT_SCHEMA.safeParse({ ...validResult(), executed: true }).success).toBe(
+      false,
+    );
     expect(
       WRITE_TOOL_RESULT_SCHEMA.safeParse({
         ...validResult(),
@@ -683,7 +673,7 @@ describe("write-tools: proposed-batch result envelope", () => {
   it("PROPOSED_BATCH_NOTE is a valid, bounded note", () => {
     expect(PROPOSED_BATCH_NOTE.length).toBeGreaterThan(0);
     expect(PROPOSED_BATCH_NOTE.length).toBeLessThanOrEqual(1000);
-    expect(WRITE_TOOL_RESULT_SCHEMA.shape.note.safeParse(PROPOSED_BATCH_NOTE).success).toBe(true);
+    expect(WRITE_TOOL_RESULT_SCHEMA.safeParse(validResult()).success).toBe(true); // uses the note
   });
 });
 

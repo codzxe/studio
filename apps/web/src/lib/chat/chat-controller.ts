@@ -328,6 +328,125 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     listeners.clear();
   };
 
+  // -------------------------------------------------------------------------
+  // M5 apply/undo gestures (§6.2/§M5.4/§M5.5) — the plan card (M5-G) gets
+  // these as onApply/onCancel/onUndo/onReapply props. Void by design: the
+  // card reads its state back from the store, like send/stop/retry.
+  // -------------------------------------------------------------------------
+
+  /** Folds the busy state, runs the gesture, folds the typed outcome. */
+  const runApplyGesture = (
+    plan: ApplicablePlan,
+    gesture: (apply: ApplyController) => Promise<ApplyOutcome>,
+  ): void => {
+    if (disposed) return;
+    commit(applyClientAction(snapshot, { type: "chat.plan.apply", runId: plan.runId }));
+    const engine = options.apply;
+    if (engine === undefined) {
+      // Wave-1 coexistence: no apply engine wired — the card explains and
+      // nothing executes (no engine.batch, no save, no applyRun).
+      commit(
+        applyClientAction(snapshot, {
+          type: "chat.plan.apply-failed",
+          runId: plan.runId,
+          error: APPLY_UNAVAILABLE,
+        }),
+      );
+      return;
+    }
+    void gesture(engine)
+      .then((outcome) => {
+        if (disposed) return;
+        if (outcome.ok) {
+          commit(
+            applyClientAction(snapshot, {
+              type: "chat.plan.applied",
+              runId: plan.runId,
+              versionId: outcome.versionId,
+              ...(outcome.creditsCommitted !== undefined
+                ? { creditsCommitted: outcome.creditsCommitted }
+                : {}),
+            }),
+          );
+          return;
+        }
+        commit(
+          applyClientAction(snapshot, {
+            type: "chat.plan.apply-failed",
+            runId: plan.runId,
+            error: applyOutcomeError(outcome),
+          }),
+        );
+      })
+      .catch(() => {
+        // The apply engine never throws; a rejection here is a broken engine —
+        // the card still settles honestly instead of spinning forever.
+        if (disposed) return;
+        commit(
+          applyClientAction(snapshot, {
+            type: "chat.plan.apply-failed",
+            runId: plan.runId,
+            error: { code: "APPLY_FAILED", message: "The plan could not be applied.", retryable: false },
+          }),
+        );
+      });
+  };
+
+  const apply = (plan: ApplicablePlan): void => {
+    runApplyGesture(plan, (engine) => engine.apply(plan));
+  };
+
+  const reapply = (plan: ApplicablePlan): void => {
+    runApplyGesture(plan, (engine) => engine.reapply(plan));
+  };
+
+  const undo = (runId: string): void => {
+    if (disposed) return;
+    commit(applyClientAction(snapshot, { type: "chat.plan.undo", runId }));
+    const engine = options.apply;
+    if (engine === undefined) {
+      commit(
+        applyClientAction(snapshot, {
+          type: "chat.plan.undo-failed",
+          runId,
+          error: APPLY_UNAVAILABLE,
+        }),
+      );
+      return;
+    }
+    void engine
+      .undo(runId)
+      .then((outcome) => {
+        if (disposed) return;
+        if (outcome.ok) {
+          commit(applyClientAction(snapshot, { type: "chat.plan.undone", runId }));
+        } else {
+          commit(
+            applyClientAction(snapshot, {
+              type: "chat.plan.undo-failed",
+              runId,
+              error: undoOutcomeError(outcome),
+            }),
+          );
+        }
+      })
+      .catch(() => {
+        if (disposed) return;
+        commit(
+          applyClientAction(snapshot, {
+            type: "chat.plan.undo-failed",
+            runId,
+            error: { code: "UNDO_FAILED", message: "The run could not be undone.", retryable: false },
+          }),
+        );
+      });
+  };
+
+  const dismissPlan = (runId: string): void => {
+    if (disposed) return;
+    commit(applyClientAction(snapshot, { type: "chat.plan.dismiss", runId }));
+  };
+
   return {
     get runId(): string | null {
       return snapshot.activeRunId;
@@ -342,6 +461,10 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     send,
     stop,
     retry,
+    apply,
+    undo,
+    reapply,
+    dismissPlan,
     dispose,
   };
 }

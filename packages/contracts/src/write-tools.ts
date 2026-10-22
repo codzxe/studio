@@ -175,10 +175,9 @@ export function isJsonSerializableValue(value: unknown): boolean {
   const onPath = new WeakSet<object>();
   const check = (node: unknown): boolean => {
     if (node === null) return true;
-    const type = typeof node;
-    if (type === "string" || type === "boolean") return true;
-    if (type === "number") return Number.isFinite(node);
-    if (type !== "object") return false;
+    if (typeof node === "string" || typeof node === "boolean") return true;
+    if (typeof node === "number") return Number.isFinite(node);
+    if (typeof node !== "object") return false;
     if (onPath.has(node)) return false; // cycle — JSON.stringify would throw
     onPath.add(node);
     let result: boolean;
@@ -186,9 +185,7 @@ export function isJsonSerializableValue(value: unknown): boolean {
       result = node.every(check);
     } else {
       const proto = Object.getPrototypeOf(node);
-      result =
-        (proto === Object.prototype || proto === null) &&
-        Object.values(node).every(check);
+      result = (proto === Object.prototype || proto === null) && Object.values(node).every(check);
     }
     onPath.delete(node);
     return result;
@@ -243,14 +240,23 @@ const LAYER_REFS_SCHEMA = z
  * keys/values for effect params or preset args. Keys and values are
  * dunder-checked and JSON-checked; the whole args object is additionally
  * size-bounded by `withArgsSizeBound` (§8.5 2 MB).
+ *
+ * The checks run in `z.preprocess` on the RAW input because Zod REBUILDS
+ * records/objects while parsing and an own `__proto__` key (as produced by
+ * JSON.parse — no accessor involved) is silently DROPPED before any output
+ * refinement can see it (verified against zod 4: a plain `z.record` output
+ * lacks the key entirely). Rejecting at the raw boundary is the only way to
+ * fail loudly instead of silently dropping model-emitted keys.
  */
-const PASSTHROUGH_RECORD_SCHEMA = z
-  .record(z.string(), z.unknown())
-  .superRefine((params, ctx) => {
-    for (const issue of freeFormValueIssues(params)) {
-      ctx.addIssue({ code: "custom", path: [], message: issue.message });
+const PASSTHROUGH_RECORD_SCHEMA = z.preprocess(
+  (raw, ctx) => {
+    for (const issue of freeFormValueIssues(raw)) {
+      ctx.addIssue({ code: "custom", message: issue.message });
     }
-  });
+    return raw;
+  },
+  z.record(z.string(), z.unknown()),
+);
 
 /** Color: `#rrggbb` / `#rrggbbaa` or [r,g,b] / [r,g,b,a] with channels 0..255
  * (mirrors the engine's text color params — text_doc.rs `color_json`). */
@@ -258,11 +264,7 @@ const COLOR_SCHEMA = z.union([
   z.string().regex(/^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/, {
     message: "color must be #rrggbb or #rrggbbaa",
   }),
-  z.tuple([
-    z.number().min(0).max(255),
-    z.number().min(0).max(255),
-    z.number().min(0).max(255),
-  ]),
+  z.tuple([z.number().min(0).max(255), z.number().min(0).max(255), z.number().min(0).max(255)]),
   z.tuple([
     z.number().min(0).max(255),
     z.number().min(0).max(255),
@@ -299,24 +301,10 @@ function withArgsSizeBound<T extends z.ZodObject>(schema: T): T {
 
 export const CREATE_COMPOSITION_ARGS_SCHEMA = z.strictObject({
   name: z.string().min(1).max(MAX_COMPOSITION_NAME_LENGTH),
-  width: z
-    .number()
-    .int()
-    .min(MIN_COMPOSITION_DIMENSION)
-    .max(MAX_COMPOSITION_DIMENSION)
-    .optional(),
-  height: z
-    .number()
-    .int()
-    .min(MIN_COMPOSITION_DIMENSION)
-    .max(MAX_COMPOSITION_DIMENSION)
-    .optional(),
+  width: z.number().int().min(MIN_COMPOSITION_DIMENSION).max(MAX_COMPOSITION_DIMENSION).optional(),
+  height: z.number().int().min(MIN_COMPOSITION_DIMENSION).max(MAX_COMPOSITION_DIMENSION).optional(),
   frameRate: z.number().min(MIN_FRAME_RATE).max(MAX_FRAME_RATE).optional(),
-  durationSeconds: z
-    .number()
-    .min(MIN_DURATION_SECONDS)
-    .max(MAX_DURATION_SECONDS)
-    .optional(),
+  durationSeconds: z.number().min(MIN_DURATION_SECONDS).max(MAX_DURATION_SECONDS).optional(),
 });
 
 /**
@@ -578,45 +566,48 @@ export const WRITE_TOOLS: readonly WriteToolDefinition[] = [
 /**
  * The proposed-batch tool result envelope. `proposedBatch` mirrors the §8.5
  * batch steps (the same shape §8.6 plans carry as data); `note` always tells
- * the model the batch is proposed, never executed. Step params are
- * dunder-checked and the whole envelope is bounded to the §8.5 2 MB payload.
+ * the model the batch is proposed, never executed. The dunder/JSON guards
+ * run in `z.preprocess` on the RAW payload — step params are records, and
+ * Zod's record rebuild silently drops own `__proto__` keys before output
+ * refinements run (see PASSTHROUGH_RECORD_SCHEMA) — and the whole envelope
+ * is bounded to the §8.5 2 MB payload.
  */
-export const WRITE_TOOL_RESULT_SCHEMA = z
-  .strictObject({
-    proposedBatch: z.strictObject({
-      label: z.string().min(1).max(MAX_BATCH_LABEL_LENGTH),
-      steps: z.array(BATCH_STEP_SCHEMA).min(1).max(MAX_BATCH_STEPS),
+export const WRITE_TOOL_RESULT_SCHEMA = z.preprocess(
+  (raw, ctx) => {
+    for (const issue of freeFormValueIssues(raw)) {
+      ctx.addIssue({ code: "custom", message: issue.message });
+    }
+    return raw;
+  },
+  z
+    .strictObject({
+      proposedBatch: z.strictObject({
+        label: z.string().min(1).max(MAX_BATCH_LABEL_LENGTH),
+        steps: z.array(BATCH_STEP_SCHEMA).min(1).max(MAX_BATCH_STEPS),
+      }),
+      note: z.string().min(1).max(MAX_RESULT_NOTE_LENGTH),
+    })
+    .superRefine((result, ctx) => {
+      let serialized: string | undefined;
+      try {
+        serialized = JSON.stringify(result.proposedBatch);
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          path: ["proposedBatch"],
+          message: "proposed batch must be JSON-serializable",
+        });
+        return;
+      }
+      if (serialized !== undefined && serialized.length > MAX_BATCH_BYTES) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["proposedBatch"],
+          message: `proposed batch exceeds the ${MAX_BATCH_BYTES}-byte serialized limit`,
+        });
+      }
     }),
-    note: z.string().min(1).max(MAX_RESULT_NOTE_LENGTH),
-  })
-  .superRefine((result, ctx) => {
-    const dunder = firstDunderKeyLocation(result.proposedBatch.steps);
-    if (dunder !== undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["proposedBatch", "steps"],
-        message: `dunder key "${dunder}" is not allowed in step params`,
-      });
-    }
-    let serialized: string | undefined;
-    try {
-      serialized = JSON.stringify(result.proposedBatch);
-    } catch {
-      ctx.addIssue({
-        code: "custom",
-        path: ["proposedBatch"],
-        message: "proposed batch must be JSON-serializable",
-      });
-      return;
-    }
-    if (serialized !== undefined && serialized.length > MAX_BATCH_BYTES) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["proposedBatch"],
-        message: `proposed batch exceeds the ${MAX_BATCH_BYTES}-byte serialized limit`,
-      });
-    }
-  });
+);
 
 export type WriteToolResult = z.infer<typeof WRITE_TOOL_RESULT_SCHEMA>;
 

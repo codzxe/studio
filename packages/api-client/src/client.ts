@@ -16,9 +16,12 @@
 import {
   ACQUIRE_LEASE_SCHEMA,
   ACTIVITY_QUERY_SCHEMA,
+  APPLY_REQUEST_SCHEMA,
   type AcceptedInvite,
   type AcquireLeaseRequest,
   type ActivityEntry,
+  type ApplyRequest,
+  type ApplyResponse,
   type Asset,
   CANCEL_RUN_SCHEMA,
   CHECKOUT_SCHEMA,
@@ -72,6 +75,9 @@ import {
   type SignedUrlResponse,
   type Thread,
   type ThreadMessage,
+  UNDO_REQUEST_SCHEMA,
+  type UndoRequest,
+  type UndoResponse,
   UPLOAD_VERSION_SCHEMA,
   type Workspace,
   isErr,
@@ -91,6 +97,7 @@ import {
 import {
   ACCEPTED_INVITE_SCHEMA,
   ACTIVITY_ENTRY_SCHEMA,
+  APPLY_RESPONSE_SCHEMA,
   ASSET_SCHEMA,
   CHECKOUT_RESPONSE_SCHEMA,
   COMMENT_SCHEMA,
@@ -121,6 +128,7 @@ import {
   SIGNED_URL_RESPONSE_SCHEMA,
   THREAD_MESSAGE_SCHEMA,
   THREAD_SCHEMA,
+  UNDO_RESPONSE_SCHEMA,
   UPLOAD_VERSION_RESPONSE_SCHEMA,
   type UploadVersionResponse,
   WORKSPACE_SCHEMA,
@@ -514,6 +522,17 @@ export interface ApiClient {
     cancel(runId: string, body?: CancelRunRequest, options?: CallOptions): Promise<null>;
     /** POST /v1/runs/:id/events — client tool result / apply result (§8.7). */
     postEvent(runId: string, body: RunEventRequest, options?: CallOptions): Promise<null>;
+    /**
+     * POST /v1/runs/:id/apply — record an applied plan (§8.7): commits the
+     * plan credits (§8.8/D-20). Replays (same idempotency key, or the same
+     * batch + version with a fresh key) return the original outcome.
+     */
+    applyRun(runId: string, body: ApplyRequest, options?: CallOptions): Promise<ApplyResponse>;
+    /**
+     * POST /v1/runs/:id/undo — undo an applied run as ONE step (§8.7);
+     * free after a committed apply (no ledger mutation).
+     */
+    undoRun(runId: string, body: UndoRequest, options?: CallOptions): Promise<UndoResponse>;
   };
   readonly models: {
     /** GET /v1/models — workspace plan + the models selectable on it (§8.2). */
@@ -781,6 +800,22 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         impl.mutate("POST", `/runs/${encodeId(runId)}/events`, {
           body,
           bodySchema: RUN_EVENT_REQUEST_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      applyRun: async (runId, body, options) =>
+        impl.mutate("POST", `/runs/${encodeId(runId)}/apply`, {
+          body,
+          bodySchema: APPLY_REQUEST_SCHEMA,
+          responseSchema: APPLY_RESPONSE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      undoRun: async (runId, body, options) =>
+        impl.mutate("POST", `/runs/${encodeId(runId)}/undo`, {
+          body,
+          bodySchema: UNDO_REQUEST_SCHEMA,
+          responseSchema: UNDO_RESPONSE_SCHEMA,
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),

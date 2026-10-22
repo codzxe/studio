@@ -140,7 +140,10 @@ function main() {
   const pin = readEnginePin();
   const warnings = [];
   const registrations = [];
-  for (const fileName of fs.readdirSync(COMMANDS_DIR).filter((f) => f.endsWith(".rs")).sort()) {
+  for (const fileName of fs
+    .readdirSync(COMMANDS_DIR)
+    .filter((f) => f.endsWith(".rs"))
+    .sort()) {
     const source = fs.readFileSync(path.join(COMMANDS_DIR, fileName), "utf8");
     scanRegistrations(source, fileName, "cmd", registrations, warnings);
     scanRegistrations(source, fileName, "query", registrations, warnings);
@@ -155,7 +158,9 @@ function main() {
   for (const reg of registrations) {
     if (reg.kind === "cmd") {
       if (seenCmd.has(reg.id)) {
-        warnings.push(`duplicate cmd id "${reg.id}" (${reg.fileName}:${reg.line}); keeping the first`);
+        warnings.push(
+          `duplicate cmd id "${reg.id}" (${reg.fileName}:${reg.line}); keeping the first`,
+        );
         continue;
       }
       seenCmd.add(reg.id);
@@ -164,7 +169,9 @@ function main() {
       seenQuery.add(reg.id);
       queries.push(reg.id);
     } else {
-      warnings.push(`duplicate query id "${reg.id}" (${reg.fileName}:${reg.line}); keeping the first`);
+      warnings.push(
+        `duplicate query id "${reg.id}" (${reg.fileName}:${reg.line}); keeping the first`,
+      );
     }
   }
   ids.sort();
@@ -201,7 +208,8 @@ function main() {
   fs.mkdirSync(path.dirname(FIXTURE_PATH), { recursive: true });
   fs.writeFileSync(FIXTURE_PATH, `${JSON.stringify(fixture, null, 2)}\n`);
 
-  for (const warning of warnings) process.stderr.write(`extract-engine-registry: warning: ${warning}\n`);
+  for (const warning of warnings)
+    process.stderr.write(`extract-engine-registry: warning: ${warning}\n`);
   process.stdout.write(
     `${JSON.stringify({
       enginePin: pin,

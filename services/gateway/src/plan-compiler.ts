@@ -52,10 +52,13 @@
 // a typed envelope and compilePlan NEVER throws, even on hostile input).
 
 import {
+  AGENT_COMMAND_REGISTRY,
   EDIT_PLAN_SCHEMA,
+  type EditPlan,
   estimateCredits,
   type AgentBatch,
   type BatchStep,
+  checkBatchCommands,
   type CommandSchema,
   MAX_BATCH_BYTES,
   MAX_BATCH_LABEL_LENGTH,
@@ -63,8 +66,8 @@ import {
   MAX_PLAN_AFFECTED_LAYERS,
   type PlanRisk,
   PLAN_RISK_ORDER,
-  checkBatchCommands,
   validateBatchRefs,
+  WRITE_TOOL_ARGS_SCHEMAS,
 } from "@studio/contracts";
 import type { ZodTypeAny } from "zod";
 
@@ -167,7 +170,7 @@ export interface CompileDeps {
 /** SEAMS input shape ({plan} + future resolution context). compilePlan also
  * accepts a bare EditPlan for convenience — both are normalized. */
 export interface CompilePlanInput {
-  readonly plan: import("./plan-compiler-types.js").EditPlan;
+  readonly plan: EditPlan;
 }
 
 /** Compile outcome (M5-SEAMS pinned, plus additive fields the brief pins:
@@ -214,7 +217,7 @@ const AGENT_LABEL_PREFIX = "Agent: ";
 const DELETE_ISH_COMMAND = /(?:^|\.)(?:delete|remove|purge)/;
 /** render/export-ish ids force ≥ medium risk (none emitted by the 8 tools). */
 const RENDER_ISH_COMMAND = /^(?:render|export)\./;
-/** History commands revert/steal project state — not "low" risk. */
+/** History commands revert project state — never "low" risk. */
 const HISTORY_COMMANDS: ReadonlySet<string> = new Set(["edit.undo", "edit.redo"]);
 
 /** A preset string that looks like a filesystem path (law #5 hazard). */
@@ -258,19 +261,15 @@ function stableStringify(value: unknown, depth = 0): string {
     case "number":
       return Number.isFinite(value) ? String(value) : '"<nan>"';
     case "boolean":
-      return String(value);
     case "bigint":
       return String(value);
-    case "undefined":
-    case "function":
-    case "symbol":
-      return '"<unserializable>"';
     default: {
       if (Array.isArray(value)) {
         return `[${value.map((item) => stableStringify(item, depth + 1)).join(",")}]`;
       }
-      const keys = Object.keys(value).sort();
-      const body = keys
+      if (typeof value !== "object") return '"<unserializable>"';
+      const body = Object.keys(value)
+        .sort()
         .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key], depth + 1)}`)
         .join(",");
       return `{${body}}`;
@@ -288,8 +287,9 @@ function riskMax(a: PlanRisk, b: PlanRisk): PlanRisk {
 
 /**
  * Recomputed plan risk from the COMPILED commands plus an optional tool-catalog
- * floor. Delete-ish/effect.remove/render/export ⇒ at least medium; nothing of
- * the sort ⇒ low. Exported for tests and future registry widening.
+ * floor. delete-ish / effect.remove / render/export / edit.undo+redo ⇒ at
+ * least medium; nothing of the sort ⇒ low. Exported for tests and future
+ * registry widening.
  */
 export function recomputePlanRisk(
   steps: ReadonlyArray<Pick<BatchStep, "command">>,
@@ -322,7 +322,7 @@ interface StepTranslation {
 }
 
 interface NormalizedTool {
-  readonly id: string;
+  readonly bareId: string;
   readonly argsSchema?: ZodTypeAny;
   readonly risk?: PlanRisk;
 }
@@ -332,16 +332,11 @@ class Compiler {
   readonly fatals: PlanIssue[] = [];
   private readonly compiledSteps: BatchStep[] = [];
   private readonly sites: Array<LocalLayerSite & { planStep: number; globalStep: number }> = [];
-  private readonly createdToolRisks: PlanRisk[] = [];
+  private readonly toolRisks: PlanRisk[] = [];
   private saveVersion: SaveVersionAnnotation | undefined;
   private saveVersionStep: number | undefined;
 
-  constructor(private readonly deps: CompileDeps) {}
-
-  private hasIssueBudget(severity: PlanIssueSeverity): boolean {
-    const count = severity === "fatal" ? this.fatals.length : this.warnings.length;
-    return count < MAX_ISSUES;
-  }
+  constructor(private readonly depsRegistry: CommandSchema) {}
 
   private pushIssue(issue: PlanIssue): void {
     const target = issue.severity === "fatal" ? this.fatals : this.warnings;
@@ -357,11 +352,11 @@ class Compiler {
     this.pushIssue({ severity: "warn", code, message: clip(message), ...extra });
   }
 
-  /** Translate one plan step's args; returns its command steps. */
+  /** Translate one plan step's curated args into registry command steps. */
   translate(planStep: number, tool: string, args: unknown): StepTranslation {
     const steps: BatchStep[] = [];
     const sites: LocalLayerSite[] = [];
-    const argsObj = isPlainObject(args) ? args : {};
+    const argsObj: Record<string, unknown> = isPlainObject(args) ? args : {};
     const add = (command: string, params: Record<string, unknown>): void => {
       steps.push({ command, params });
     };
@@ -372,7 +367,7 @@ class Compiler {
       this.warn("unusable_args", `field \`${field}\` ${why}`, { step: planStep, tool });
     };
     const compilesToNothing = (): void => {
-      this.warn("empty_step", `step compiled to no engine commands`, { step: planStep, tool });
+      this.warn("empty_step", "step compiled to no engine commands", { step: planStep, tool });
     };
 
     switch (tool) {
@@ -413,15 +408,13 @@ class Compiler {
         const color = readString(argsObj, "color");
         if (color !== undefined) params.fill = color;
         const position = argsObj.position;
-        if (Array.isArray(position) && position.length >= 2) {
-          const [x, y] = position;
+        if (position !== undefined) {
+          const [x, y] = Array.isArray(position) ? position : [];
           if (isFiniteNumber(x) && isFiniteNumber(y)) {
             params.position = [x, y];
           } else {
             unusable("position", "is not a [x, y] number pair");
           }
-        } else if (position !== undefined) {
-          unusable("position", "is not a [x, y] number pair");
         }
         if (Object.keys(params).length === 0) {
           compilesToNothing();
@@ -488,8 +481,8 @@ class Compiler {
           if (easing !== undefined && easing !== "linear") {
             this.warn(
               "uncompilable_arg",
-              `easing \`${clip(easing, 24)}\` is editor-side keyframe interpolation; ` +
-                "the keyframe compiles with the engine default (set it via the timeline after apply)",
+              `easing \`${clip(easing, 24)}\` is editor-side keyframe interpolation; the ` +
+                "keyframe compiles with the engine default (set it via the timeline after apply)",
               { step: planStep, tool, param: "easing" },
             );
           }
@@ -517,8 +510,8 @@ class Compiler {
             for (const key of Object.keys(effectParams).sort()) {
               this.warn(
                 "uncompilable_arg",
-                `effect parameter \`${clip(key, 40)}\` cannot be compiled server-side ` +
-                  "(the effect instance index is editor state); set it via set_properties after apply",
+                `effect parameter \`${clip(key, 40)}\` cannot be compiled server-side (the ` +
+                  "effect instance index is editor state); set it via set_properties after apply",
                 { step: planStep, tool, param: key },
               );
             }
@@ -574,7 +567,8 @@ class Compiler {
       }
 
       case "save_version": {
-        const label = readString(argsObj, "label");
+        const rawLabel = argsObj.label;
+        const label = typeof rawLabel === "string" ? rawLabel : undefined;
         if (this.saveVersion !== undefined && this.saveVersionStep !== undefined) {
           this.warn("duplicate_save_version", "an earlier save_version step was superseded (the last labels the version)", {
             step: this.saveVersionStep,
@@ -596,14 +590,19 @@ class Compiler {
     return { steps, sites };
   }
 
-  /** Validate the model's PROPOSED batch for one step (advisory — warn only). */
-  validateProposed(planStep: number, tool: string, proposed: readonly BatchStep[], translated: readonly BatchStep[]): void {
-    const warn = this.warn.bind(this);
-    // Own-property allowlist scan (a "__proto__" id must not resolve through
-    // the prototype chain) — see M5-SEAMS "never invent a command id".
+  /** Validate the model's PROPOSED batch for one step (advisory — warn only:
+   * the compiled translation wins, law #5). */
+  validateProposed(
+    planStep: number,
+    tool: string,
+    proposed: readonly BatchStep[],
+    translated: readonly BatchStep[],
+  ): void {
+    // Own-property allowlist scan — a "__proto__" id must not resolve through
+    // the prototype chain (SEAMS: "never invent a command id").
     for (const [index, step] of proposed.entries()) {
-      if (!registryHas(this.deps.registry, step.command)) {
-        warn("unknown_command", `proposed command \`${clip(step.command, 64)}\` is not in the agent registry`, {
+      if (!registryHas(this.depsRegistry, step.command)) {
+        this.warn("unknown_command", `proposed command \`${clip(step.command, 64)}\` is not in the agent registry`, {
           step: planStep,
           tool,
           command: step.command,
@@ -613,9 +612,9 @@ class Compiler {
     }
     // Required params for the KNOWN proposed commands (reuse the contracts
     // helper; unknown-command duplicates were handled above).
-    for (const issue of checkBatchCommands({ steps: proposed }, this.deps.registry)) {
+    for (const issue of checkBatchCommands({ steps: [...proposed] }, this.depsRegistry)) {
       if (issue.reason !== "missing_required_param") continue;
-      warn("missing_required_param", `proposed \`${issue.command}\` is missing required param \`${issue.param}\``, {
+      this.warn("missing_required_param", `proposed \`${issue.command}\` is missing required param \`${issue.param}\``, {
         step: planStep,
         tool,
         command: issue.command,
@@ -626,13 +625,13 @@ class Compiler {
     // Backwards-only $N.key refs (§8.5) within the proposed batch's own
     // 1-based numbering.
     for (const issue of validateBatchRefs(proposed)) {
-      warn("unresolvable_ref", `proposed batch has $-reference \`${issue.ref.raw}\` (${issue.reason})`, {
+      this.warn("unresolvable_ref", `proposed batch has $-reference \`${issue.ref.raw}\` (${issue.reason})`, {
         step: planStep,
         tool,
         batchStep: issue.step,
       });
     }
-    // Disagreement: the compiled translation wins (law #5) — warn, never merge.
+    // Disagreement: the compiled translation wins — warn, never merge.
     const agrees =
       proposed.length === translated.length &&
       proposed.every(
@@ -641,7 +640,7 @@ class Compiler {
           stableStringify(step.params) === stableStringify(translated[index]?.params),
       );
     if (!agrees) {
-      warn("batch_mismatch", "the model's proposed batch disagrees with the compiled translation; the translation stands", {
+      this.warn("batch_mismatch", "the model's proposed batch disagrees with the compiled translation; the translation stands", {
         step: planStep,
         tool,
       });
@@ -649,13 +648,13 @@ class Compiler {
   }
 
   /** Merge one plan step's translation into the single atomic batch. */
-  merge(planStep: number, tool: string, translation: StepTranslation, toolRisk: PlanRisk | undefined): void {
+  merge(planStep: number, translation: StepTranslation, toolRisk: PlanRisk | undefined): void {
     const base = this.compiledSteps.length;
     for (const step of translation.steps) this.compiledSteps.push(step);
     for (const site of translation.sites) {
       this.sites.push({ ...site, planStep, globalStep: base + site.localStep });
     }
-    this.createdToolRisks.push(toolRisk ?? "low");
+    this.toolRisks.push(toolRisk ?? "low");
   }
 
   steps(): readonly BatchStep[] {
@@ -667,7 +666,7 @@ class Compiler {
   }
 
   toolRiskFloor(): PlanRisk {
-    return this.createdToolRisks.reduce<PlanRisk>((floor, risk) => riskMax(floor, risk), "low");
+    return this.toolRisks.reduce<PlanRisk>((floor, risk) => riskMax(floor, risk), "low");
   }
 
   annotation(): SaveVersionAnnotation | undefined {
@@ -688,16 +687,19 @@ function lookupWriteTool(deps: CompileDeps, tool: string): NormalizedTool | unde
     if (!Object.prototype.hasOwnProperty.call(deps.writeTools, candidate)) continue;
     const entry = deps.writeTools[candidate];
     if (entry !== null && typeof entry === "object" && "safeParse" in entry && typeof entry.safeParse === "function") {
-      return { id: candidate, argsSchema: entry as ZodTypeAny };
+      return { bareId: bare, argsSchema: entry as ZodTypeAny };
     }
     if (isPlainObject(entry)) {
       const def = entry as Record<string, unknown>;
       const args = def.args;
       const risk = def.risk;
       return {
-        id: candidate,
+        bareId: bare,
         argsSchema:
-          args !== null && typeof args === "object" && "safeParse" in args && typeof (args as ZodTypeAny).safeParse === "function"
+          args !== null &&
+          typeof args === "object" &&
+          "safeParse" in args &&
+          typeof (args as ZodTypeAny).safeParse === "function"
             ? (args as ZodTypeAny)
             : undefined,
         risk: risk === "low" || risk === "medium" || risk === "high" ? risk : undefined,
@@ -707,20 +709,36 @@ function lookupWriteTool(deps: CompileDeps, tool: string): NormalizedTool | unde
   return undefined;
 }
 
+/** Write `value` at a `layer`/`layers[i]`-style path inside a params object. */
+function applyParamPath(params: Record<string, unknown>, path: string, value: string | number): void {
+  const match = /^([A-Za-z0-9_]+)(?:\[(\d+)\])?$/.exec(path);
+  if (match === null) return;
+  const key = match[1];
+  if (key === undefined) return;
+  const indexText = match[2];
+  if (indexText === undefined) {
+    params[key] = value;
+    return;
+  }
+  const list = params[key];
+  if (Array.isArray(list)) {
+    const index = Number.parseInt(indexText, 10);
+    if (index >= 0 && index < list.length) list[index] = value;
+  }
+}
+
+function isCompileInput(value: unknown): value is CompilePlanInput {
+  return isPlainObject(value) && "plan" in value && isPlainObject(value.plan);
+}
+
 // ---------------------------------------------------------------------------
 // Main entry (SEAMS: typed, never throws)
 // ---------------------------------------------------------------------------
 
-function isCompileInput(value: unknown): value is CompilePlanInput {
-  return (
-    isPlainObject(value) && "plan" in value && typeof value.plan === "object" && value.plan !== null && !Array.isArray(value.plan)
-  );
-}
+function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
+  const compiler = new Compiler(deps.registry);
 
-function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
-  const compiler = new Compiler(deps);
-
-  // -- 0. pre-flight: the plan must serialize (cycles/NaN-safe) and be sane.
+  // -- 0. pre-flight: the plan must serialize (cycle-hostile) and be sane.
   let serializedPlan: string;
   try {
     serializedPlan = JSON.stringify(plan) ?? "null";
@@ -734,8 +752,7 @@ function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
   }
 
   // -- 1. defense-in-depth re-validation against the §8.6 schema (the runner
-  // validates first; hostile direct calls stop here). Zod never throws on
-  // data — but a hostile "schema-less" path is still wrapped (law #1).
+  // validates first; hostile direct calls stop here).
   const parsed = EDIT_PLAN_SCHEMA.safeParse(plan);
   if (!parsed.success) {
     const messages = parsed.error.issues.slice(0, 5).map((issue) => issue.message);
@@ -760,37 +777,42 @@ function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
       });
       continue;
     }
-    const bareTool = tool.id.replace(STUDIO_TOOL_PREFIX, "");
 
     if (tool.argsSchema !== undefined) {
-      let argsCheck: { success: boolean; messages?: string[] };
+      let argsOk = true;
+      let argsMessage = "";
       try {
         const safe = tool.argsSchema.safeParse(planStep.args);
-        argsCheck = safe.success
-          ? { success: true }
-          : { success: false, messages: safe.error.issues.slice(0, 5).map((issue) => issue.message) };
+        if (!safe.success) {
+          argsOk = false;
+          argsMessage = safe.error.issues
+            .slice(0, 5)
+            .map((issue) => issue.message)
+            .join("; ");
+        }
       } catch {
-        argsCheck = { success: false, messages: ["args could not be validated"] };
+        argsOk = false;
+        argsMessage = "args could not be validated";
       }
-      if (!argsCheck.success) {
-        compiler.fatal("invalid_args", `args for \`${bareTool}\` failed validation: ${argsCheck.messages?.join("; ")}`, {
+      if (!argsOk) {
+        compiler.fatal("invalid_args", `args for \`${tool.bareId}\` failed validation: ${argsMessage}`, {
           step: position,
-          tool: bareTool,
+          tool: tool.bareId,
         });
         continue;
       }
     }
 
-    const translation = compiler.translate(position, bareTool, planStep.args);
-    compiler.validateProposed(position, bareTool, planStep.batch.steps, translation.steps);
-    compiler.merge(position, bareTool, translation, tool.risk);
+    const translation = compiler.translate(position, tool.bareId, planStep.args);
+    compiler.validateProposed(position, tool.bareId, planStep.batch.steps, translation.steps);
+    compiler.merge(position, translation, tool.risk);
   }
-
-  // -- 3. bounds + registry gate on the COMPILED batch (violations are fatal).
-  const steps = [...compiler.steps()];
   if (compiler.fatals.length > 0) {
     return { ok: false, issues: compiler.fatals };
   }
+
+  // -- 3. bounds + registry gate on the COMPILED batch (violations are fatal).
+  const steps: BatchStep[] = [...compiler.steps()];
   if (steps.length === 0) {
     compiler.fatal("empty_batch", "the plan compiles to an empty command batch (only annotation steps)");
     return { ok: false, issues: compiler.fatals };
@@ -813,6 +835,8 @@ function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
       });
     }
   }
+  // The compiled batch is name-based by construction — refs are validated as
+  // defense-in-depth anyway (§8.5 backwards-only $N.key).
   for (const issue of validateBatchRefs(steps)) {
     compiler.fatal("unresolvable_ref", `compiled batch has $-reference \`${issue.ref.raw}\` (${issue.reason})`, {
       batchStep: issue.step,
@@ -822,16 +846,7 @@ function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
     return { ok: false, issues: compiler.fatals };
   }
 
-  const label = `${AGENT_LABEL_PREFIX}${clip(editPlan.summary, MAX_BATCH_LABEL_LENGTH - AGENT_LABEL_PREFIX.length)}`;
-  const batch: AgentBatch = { label, atomic: true, steps };
-
-  const serializedBatch = JSON.stringify(batch);
-  if (serializedBatch !== undefined && serializedBatch.length > MAX_BATCH_BYTES) {
-    compiler.fatal("batch_too_large", `the compiled batch exceeds the ${MAX_BATCH_BYTES}-byte limit (${serializedBatch.length} bytes)`);
-    return { ok: false, issues: compiler.fatals };
-  }
-
-  // -- 4. layer-name resolution requests + placeholders (names stay names in
+  // -- 4. layer-name resolution: requests + placeholders (names stay names in
   // the batch; the client substitutes ids via the bridge — §8.7).
   const declaredNames: string[] = [];
   const disambiguation = new Map<string, string[]>();
@@ -854,6 +869,15 @@ function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
     return { ok: false, issues: compiler.fatals };
   }
 
+  const warnedUndeclared = new Set<string>();
+  for (const site of compiler.layerSites()) {
+    if (declaredNames.includes(site.layerName) || warnedUndeclared.has(site.layerName)) continue;
+    warnedUndeclared.add(site.layerName);
+    compiler.warn("undeclared_layer", `layer \`${clip(site.layerName, 64)}\` is used by a step but not declared in the plan`, {
+      step: site.planStep,
+    });
+  }
+
   const resolved = new Map<string, string | number>();
   if (deps.layerResolver !== undefined) {
     for (const name of uniqueNames) {
@@ -861,9 +885,7 @@ function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
         const id = deps.layerResolver(name);
         if (id !== undefined) resolved.set(name, id);
       } catch {
-        compiler.warn("resolver_error", "the layer resolver failed; the layer name stays in the batch", {
-          tool: "layerResolver",
-        });
+        compiler.warn("resolver_error", "the layer resolver failed; the layer name stays in the batch");
       }
     }
   }
@@ -883,16 +905,11 @@ function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
   for (const site of compiler.layerSites()) {
     const resolvedId = resolved.get(site.layerName);
     if (resolvedId !== undefined) {
-      // Substitute the authoritative id (never fabricated — resolver-provided).
+      // Substitute the authoritative id (resolver-provided, never fabricated).
       const step = steps[site.globalStep];
       if (step !== undefined) applyParamPath(step.params, site.param, resolvedId);
       placeholders.push({ step: site.globalStep + 1, param: site.param, layerName: site.layerName, resolvedId });
       continue;
-    }
-    if (!declaredNames.includes(site.layerName)) {
-      compiler.warn("undeclared_layer", `layer \`${clip(site.layerName, 64)}\` is used by a step but not declared in the plan`, {
-        step: site.planStep,
-      });
     }
     placeholders.push({
       step: site.globalStep + 1,
@@ -902,11 +919,24 @@ function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
     });
   }
 
-  // -- 5. risk + credits recomputed server-side (never the model's numbers).
+  // -- 5. assemble the ONE atomic batch (§8.4/§8.5: "Agent: <summary>").
+  const label = `${AGENT_LABEL_PREFIX}${clip(editPlan.summary, MAX_BATCH_LABEL_LENGTH - AGENT_LABEL_PREFIX.length)}`;
+  const batch: AgentBatch = { label, atomic: true, steps };
+
+  const serializedBatch = JSON.stringify(batch);
+  if (serializedBatch !== undefined && serializedBatch.length > MAX_BATCH_BYTES) {
+    compiler.fatal(
+      "batch_too_large",
+      `the compiled batch exceeds the ${MAX_BATCH_BYTES}-byte limit (${serializedBatch.length} bytes)`,
+    );
+    return { ok: false, issues: compiler.fatals };
+  }
+
+  // -- 6. risk + credits recomputed server-side (never the model's numbers).
   const risk = recomputePlanRisk(steps, compiler.toolRiskFloor());
   const estimatedCredits = estimateCredits({ risk, steps: editPlan.steps });
 
-  // -- 6. dedupe advisory issues (unknown/param warns can double-report).
+  // -- 7. dedupe advisory issues (unknown/param warns can double-report).
   const seen = new Set<string>();
   const warnings = compiler.warnings.filter((issue) => {
     const key = `${issue.code}|${issue.step ?? ""}|${issue.batchStep ?? ""}|${issue.command ?? ""}|${issue.param ?? ""}`;
@@ -915,7 +945,7 @@ function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
     return true;
   });
 
-  const result: CompilePlanResult = {
+  const base: CompilePlanResult = {
     ok: true,
     batch,
     risk,
@@ -925,27 +955,7 @@ function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
     warnings,
   };
   const annotation = compiler.annotation();
-  if (annotation !== undefined) {
-    return { ...result, saveVersion: annotation };
-  }
-  return result;
-}
-
-/** Write `value` at a `param`/`layers[i]`-style path inside a params object. */
-function applyParamPath(params: Record<string, unknown>, path: string, value: string | number): void {
-  const match = /^([A-Za-z0-9_]+)(?:\[(\d+)\])?$/.exec(path);
-  if (match === null) return;
-  const [, key, indexText] = match;
-  if (key === undefined) return;
-  if (indexText === undefined) {
-    params[key] = value;
-    return;
-  }
-  const list = params[key];
-  if (Array.isArray(list)) {
-    const index = Number.parseInt(indexText, 10);
-    if (index >= 0 && index < list.length) list[index] = value;
-  }
+  return annotation !== undefined ? { ...base, saveVersion: annotation } : base;
 }
 
 /**
@@ -953,10 +963,10 @@ function applyParamPath(params: Record<string, unknown>, path: string, value: st
  * layer-name resolution requests, recomputed risk + credits, and typed issues.
  * Accepts a bare EditPlan or a SEAMS CompilePlanInput. NEVER throws (law #1).
  */
-export function compilePlan(planOrInput: EditPlanLike | CompilePlanInput, deps: CompileDeps): CompilePlanResult {
+export function compilePlan(planOrInput: EditPlan | CompilePlanInput, deps: CompileDeps): CompilePlanResult {
   try {
     const plan = isCompileInput(planOrInput) ? planOrInput.plan : planOrInput;
-    return compile(plan, deps);
+    return compilePlanInner(plan, deps);
   } catch {
     // Absolute backstop: no stack traces, no details (law #1).
     return {
@@ -967,39 +977,11 @@ export function compilePlan(planOrInput: EditPlanLike | CompilePlanInput, deps: 
 }
 
 /**
- * Live deps from the M5-A/M5-J contract surfaces (read at CALL time so peer
- * stubs landing mid-wave are picked up). With today's stubs the registry is
- * empty — every compiled command would fail the allowlist — callers wiring
- * the real flow should inject a registry fixture until M5-J lands.
+ * Live deps from the M5-A/M5-J contract surfaces, read at CALL time (ESM live
+ * bindings) so peer stubs landing mid-wave are picked up. With today's stubs
+ * the registry is empty — every compiled command fails the allowlist — wire
+ * the real flow only after M5-J lands, or inject a registry fixture.
  */
 export function defaultCompileDeps(): CompileDeps {
-  const registry = AGENT_COMMAND_REGISTRY_LIVE();
-  const writeTools = WRITE_TOOL_SCHEMAS_LIVE();
-  return { registry, writeTools };
+  return { registry: AGENT_COMMAND_REGISTRY, writeTools: WRITE_TOOL_ARGS_SCHEMAS };
 }
-
-// Live-binding indirection: importing the peer constants directly at module
-// scope is fine in ESM (bindings are live), but keeping the reads here makes
-// the "call-time" contract explicit and keeps this module importable even if
-// a peer renames mid-wave (the indirection fails loudly at the call site).
-import { AGENT_COMMAND_REGISTRY, WRITE_TOOL_ARGS_SCHEMAS } from "@studio/contracts";
-
-function AGENT_COMMAND_REGISTRY_LIVE(): CommandSchema {
-  return AGENT_COMMAND_REGISTRY;
-}
-
-function WRITE_TOOL_SCHEMAS_LIVE(): WriteToolsDep {
-  return WRITE_TOOL_ARGS_SCHEMAS;
-}
-
-/** Structural EditPlan type for the tolerant entry (runtime validation is
- * EDIT_PLAN_SCHEMA; the type only shapes the signature). */
-export type EditPlanLike = {
-  intent: string;
-  summary: string;
-  risk: string;
-  requiresApproval: boolean;
-  affectedLayers: ReadonlyArray<{ id?: number; name: string; change: string }>;
-  estimatedCredits: number;
-  steps: ReadonlyArray<{ title: string; tool: string; args: unknown; batch: { label: string; steps: unknown[] } }>;
-};

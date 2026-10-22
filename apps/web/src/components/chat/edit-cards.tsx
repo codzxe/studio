@@ -98,11 +98,7 @@ export function humanizeEditError(failure: EditErrorFailure): string {
   return EDIT_ERROR_GENERIC_COPY;
 }
 
-export function EditErrorCard({
-  failure,
-  onRetry,
-  onDismiss,
-}: EditErrorCardProps): ReactElement {
+export function EditErrorCard({ failure, onRetry, onDismiss }: EditErrorCardProps): ReactElement {
   const copy = humanizeEditError(failure);
   return (
     <section
@@ -178,10 +174,7 @@ export function ClarifyCard({ plan, onAnswer, onDismiss }: ClarifyCardProps): Re
       className="flex w-full flex-col gap-2 rounded-sm border border-strong bg-elevated px-3 py-2"
     >
       <div className="flex w-full items-start gap-2">
-        <p
-          data-testid="edit-clarify-question"
-          className="min-w-0 flex-1 text-body-s text-primary"
-        >
+        <p data-testid="edit-clarify-question" className="min-w-0 flex-1 text-body-s text-primary">
           <span aria-hidden="true" className="mr-1 text-muted">
             ?
           </span>
@@ -201,12 +194,7 @@ export function ClarifyCard({ plan, onAnswer, onDismiss }: ClarifyCardProps): Re
         ) : null}
       </div>
       {candidates.length > 0 ? (
-        <div
-          data-testid="edit-clarify-answers"
-          className="flex w-full flex-wrap gap-1.5"
-          role="group"
-          aria-label="Suggested answers"
-        >
+        <div data-testid="edit-clarify-answers" className="flex w-full flex-wrap gap-1.5">
           {candidates.map((name, index) => (
             <button
               key={`${index}-${name}`}

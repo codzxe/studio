@@ -135,8 +135,8 @@ export function applyClientAction(state: ChatUiState, action: ChatClientAction):
   // The M5 `chat.plan.*` gestures fold the plan's per-message runtime only
   // (applyPlanAction) — the thread phase keeps its exact M4 semantics so
   // sends/steer/reconnect behave byte-identically.
-  if (action.type.startsWith("chat.plan.")) {
-    return applyPlanAction(state, action as PlanGestureAction);
+  if (isPlanGesture(action)) {
+    return applyPlanAction(state, action);
   }
   switch (action.type) {
     case "chat.submit": {
@@ -341,6 +341,11 @@ function mapMessageOfRun(
 
 /** The `chat.plan.*` subset of {@link ChatClientAction} (the M5 card gestures). */
 export type PlanGestureAction = Extract<ChatClientAction, { type: `chat.plan.${string}` }>;
+
+/** Type guard narrowing a client action to its M5 `chat.plan.*` arms. */
+function isPlanGesture(action: ChatClientAction): action is PlanGestureAction {
+  return action.type.startsWith("chat.plan.");
+}
 
 /** Folds one `chat.plan.*` gesture onto the message's planRuntime (pure). */
 function applyPlanAction(state: ChatUiState, action: PlanGestureAction): ChatUiState {

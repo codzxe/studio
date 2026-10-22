@@ -179,7 +179,8 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
         history,
       };
 
-      // Stream finalization: settle/refund, terminal event, run row, steps.
+      // Stream finalization: settle/refund, terminal event, run row, steps
+      // (agent_steps single writer — see recordSteps below).
       let finalized = false;
       const finalize = async (outcome: AgentRunOutcome): Promise<void> => {
         if (finalized) return;
@@ -408,6 +409,17 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
     return null; // system/tool rows are not user-facing history
   }
 
+  /**
+   * agent_steps SINGLE WRITER (M4 tail #2, fixed by M5-C): finalize walks
+   * the run log ONCE and writes exactly one row per tool event — every
+   * tool.started becomes a row with its args (status "running"), every
+   * tool.result a row with its payload (status "success"), both keyed by the
+   * wire `seq` (correlates 1:1 with the SSE/replay evidence; (run_id, seq)
+   * UNIQUE makes replays idempotent). The runs-route event sink no longer
+   * inserts step rows — this is the only writer, so one client tool call is
+   * exactly TWO rows (args + result), server-resolved tools included. Run
+   * once per run (the `finalized` guard); duplicate seqs are swallowed.
+   */
   async function recordSteps(workspaceId: string, log: RunLog, runId: string): Promise<void> {
     for (const event of log.all()) {
       try {

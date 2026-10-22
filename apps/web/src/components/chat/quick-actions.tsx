@@ -115,7 +115,11 @@ export function selectionNamesOf(
   if (context === null || context === undefined) return null;
   const block = context.blocks.find((entry) => entry?.kind === "selection");
   const data = block?.data;
-  if (typeof data !== "object" || data === null || !Array.isArray((data as { layers?: unknown }).layers)) {
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    !Array.isArray((data as { layers?: unknown }).layers)
+  ) {
     return null;
   }
   const layers = (data as { layers: readonly unknown[] }).layers;
@@ -175,12 +179,7 @@ export interface QuickActionsProps {
 export function QuickActions({ actions, onSeed }: QuickActionsProps): ReactElement | null {
   if (actions.length === 0) return null;
   return (
-    <div
-      data-testid="chat-quick-actions"
-      className="flex w-full flex-wrap gap-1.5"
-      role="group"
-      aria-label="Quick actions"
-    >
+    <div data-testid="chat-quick-actions" className="flex w-full flex-wrap gap-1.5">
       {actions.map((action) => (
         <button
           key={action.id}
