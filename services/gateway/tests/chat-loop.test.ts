@@ -32,7 +32,6 @@ import type { z } from "zod";
 
 import {
   CONTEXT_SELECTION_SCHEMA,
-  type ContextSelection,
   type RunRecord,
   STUDIO_STREAM_EVENT_SCHEMA,
   type StudioStreamEvent,

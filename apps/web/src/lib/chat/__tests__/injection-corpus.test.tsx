@@ -33,8 +33,8 @@ import { Markdown } from "@/components/chat/markdown";
 import { ChatThread } from "@/components/chat/thread";
 import { ToolCard } from "@/components/chat/tool-card";
 import { collectContextSnapshot } from "@/lib/chat/context";
+import { type ToolExecutorDeps, executeClientTool } from "@/lib/chat/tool-executor";
 import type { ToolCardState } from "@/lib/chat/types";
-import { executeClientTool, type ToolExecutorDeps } from "@/lib/chat/tool-executor";
 import {
   type InjectionFixture,
   MARKDOWN_SWEEP,
@@ -55,11 +55,11 @@ import {
  * because ESCAPED text legitimately contains those byte sequences — the
  * dangerous form is precisely a real element/attribute, which this catches.)
  */
-const NEVER_ELEMENTS =
-  "script, iframe, img, a, object, embed, [onclick], [onerror], [onload]";
+const NEVER_ELEMENTS = "script, iframe, img, a, object, embed, [onclick], [onerror], [onload]";
 
 /** ToolCard/ContextStrip legitimately contain <button>; everything else is banned. */
-const NEVER_ELEMENTS_EXCEPT_BUTTONS = "script, iframe, a, object, embed, [onclick], [onerror], [onload]";
+const NEVER_ELEMENTS_EXCEPT_BUTTONS =
+  "script, iframe, a, object, embed, [onclick], [onerror], [onload]";
 
 /** The visible marker a safe render must keep on screen (data not lost). */
 function visibleNeedle(fixture: InjectionFixture): string {
@@ -135,7 +135,13 @@ describe("corpus — tool card safety (hostile results render as text)", () => {
     (fixtureId) => {
       const fixture = toolResultFixture(fixtureId);
       const { container } = render(
-        <ToolCard card={injCard({ name: fixture.tool, args: { include: ["projectSummary"] }, result: fixture.result })} />,
+        <ToolCard
+          card={injCard({
+            name: fixture.tool,
+            args: { include: ["projectSummary"] },
+            result: fixture.result,
+          })}
+        />,
       );
       // Collapsed: no dangerous element either way.
       expect(container.querySelector(NEVER_ELEMENTS_EXCEPT_BUTTONS)).toBeNull();
@@ -149,9 +155,7 @@ describe("corpus — tool card safety (hostile results render as text)", () => {
         expect(image.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
         expect(container.textContent?.includes("CORPUSPNG")).toBe(false);
         // …and the fake "nextInstruction" field is displayed as inert text.
-        expect(screen.getByTestId("tool-card-result").textContent).toContain(
-          "nextInstruction",
-        );
+        expect(screen.getByTestId("tool-card-result").textContent).toContain("nextInstruction");
         expect(screen.getByTestId("tool-card-result").textContent).toContain(fixture.needle);
       } else if (fixture.id === "proto-keys-result") {
         // The pollution payload renders (constructor key path) as TEXT and
@@ -267,7 +271,10 @@ function stubClient() {
   return { client, events };
 }
 
-function executorDeps(bridge: EditorBridge): { deps: ToolExecutorDeps; events: ReturnType<typeof stubClient>["events"] } {
+function executorDeps(bridge: EditorBridge): {
+  deps: ToolExecutorDeps;
+  events: ReturnType<typeof stubClient>["events"];
+} {
   const { client, events } = stubClient();
   return {
     deps: {
@@ -319,9 +326,7 @@ describe("corpus — client tool executor immunity", () => {
     const bridge = {
       inspect: async () => ({ selectedLayers: [7], activeComp: 1 }),
       query: async <T,>(command: string): Promise<T> =>
-        command === "comp.info"
-          ? ({ id: 1, name: "Main", layers: [protoLayer] } as T)
-          : ({} as T),
+        command === "comp.info" ? ({ id: 1, name: "Main", layers: [protoLayer] } as T) : ({} as T),
     } as unknown as EditorBridge;
     const { deps, events } = executorDeps(bridge);
     await executeClientTool(
