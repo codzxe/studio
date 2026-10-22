@@ -54,3 +54,8 @@ editor/rustc-*.json
 # Required at build time by crates/text/src/fonts.rs include_bytes! — see D-17, editor/UPSTREAM.md
 !editor/assets/fonts/
 !editor/assets/fonts/**
+
+# local reference clone for editor patch/pin work — never tracked (phantom
+# submodule removed W5-hygiene: fresh clones get editor/ only, which is the
+# self-contained vendored source per D-17)
+/effectcraft-upstream/
