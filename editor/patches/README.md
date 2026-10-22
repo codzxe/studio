@@ -1,15 +1,21 @@
 # editor/patches — product patches over the vendored pin
 
-Every patch is a git format-patch artifact generated from the fork
-**`codzxe/effectcraft`, branch `studio`** (which carries the pin `9db7f3b2` plus our
-commits; its `upstream` remote is `storytold/effectcraft`). Per
-`docs/DECISIONS.md` D-17 the workflow is:
+**Single-repo policy (user directive, 2026-10-22; DECISIONS.md D-17): the vendored
+source in `editor/` is the canonical source of truth.** There is no fork workflow —
+patches are made directly in this tree and recorded here as diff artifacts for
+provenance against the pin `9db7f3b21700fd821f215782ed1c82afe077880f` (see
+`../UPSTREAM.md`). A local reference clone of upstream may exist at
+`/home/z/my-project/effectcraft-upstream` (excluded from the repo) purely for
+diffing/re-pinning — never as the place where product changes live.
 
-1. apply the change in the fork checkout (`/home/z/my-project/effectcraft-upstream`),
-2. commit on `studio`, push to `codzxe/effectcraft`,
-3. `git format-patch -1 --stdout > patches/NNNN-subject.patch`,
-4. `git diff --name-only` in the fork and copy exactly those files into `editor/`,
-5. update the patch table in `../UPSTREAM.md`.
+Workflow for a new patch (DECISIONS.md D-17):
+
+1. make the change directly in `editor/` (this tree, committed to `codzxe/studio`),
+2. generate the artifact against the pin, e.g. from the reference clone:
+   `git -C effectcraft-upstream diff <pin> -- <files> > patches/NNNN-subject.patch`
+   (for patch 0001 the equivalent artifact was produced from the since-deprecated
+   fork branch `studio` @ `0afc18e`),
+3. update the patch table in `../UPSTREAM.md`.
 
 Rules (ADR-0006 "Upstream policy"):
 
