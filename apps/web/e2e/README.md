@@ -7,6 +7,17 @@ a real browser, the real editor wasm dist (`/editor/`, committed under
 better-auth session — and the read-only agent answering through the mock
 runner's deterministic stream.
 
+`m5-agent-edits.spec.ts` is the §M5 task-8 companion (prompt → plan →
+preview → apply → undo → redo) over the same boot recipe — **no extra setup
+steps**: the high-risk leg cannot come from `MOCK_MODEL` (whose one plan is
+low-risk by construction), so the spec installs its own scripted-gateway
+leg via `page.route("**/v1/threads/*/chat", …)` and fulfills the SSE POST
+with §7.4-exact frames; everything else (auth, editor, fixture project,
+models, threads) stays real. Its apply → undo → re-apply journey is
+`test.fixme` until the M5 thread-layer wiring lands (the spec header
+documents the flip); the two ACTIVE scenarios + the editor-unchanged
+baseline run on every CI pass.
+
 It is **not runnable on the build-fleet box**: that box has no browsers and
 no dev servers (docs/AGENTS.md), which is why `@playwright/test` is not a
 devDependency there. `apps/web/tsconfig.json` therefore **excludes** `e2e/`
@@ -243,8 +254,16 @@ PNGs. Generate them on the first run and **commit** them:
 ```sh
 pnpm --filter @studio/web e2e:update-snapshots
 # → apps/web/e2e/chat.spec.ts-snapshots/editor-unchanged-chat-{collapsed,open}-chromium-<platform>.png
-git add apps/web/e2e/chat.spec.ts-snapshots
+# → apps/web/e2e/m5-agent-edits.spec.ts-snapshots/editor-unchanged-m5-{readonly,journey}-chromium-<platform>.png
+git add apps/web/e2e/chat.spec.ts-snapshots apps/web/e2e/m5-agent-edits.spec.ts-snapshots
 ```
+
+The M5 spec's baselines follow the same policy/mask style: the ACTIVE
+`editor-unchanged-m5-readonly.png` is taken after a plan-bearing read-only
+run; `editor-unchanged-m5-journey.png` (chat chrome **and** the canvas
+viewport masked — "editor unchanged outside the canvas area") is generated
+alongside but only asserted once the fixme'd apply → undo journey flips
+active.
 
 Baseline policy:
 

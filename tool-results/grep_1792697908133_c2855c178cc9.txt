@@ -1,0 +1,252 @@
+/home/z/my-project/apps/web/src/components/chat/message.tsx:16:import { PlanCard } from "./plan-card";
+/home/z/my-project/apps/web/src/components/chat/message.tsx:80:      {message.plan ? <PlanCard plan={message.plan} applied={false} /> : null}
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:2: * PlanPreview tests (M5-H) — the M5-G plan-card preview slot: loading →
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:14:  type PlanPreviewController,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:15:  createPlanPreviewController,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:24:import { PlanCard } from "./plan-card";
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:25:import { PlanPreview } from "./plan-preview";
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:110:    expect(screen.getByTestId("plan-preview-frames")).toBeInTheDocument();
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:118:describe("PlanPreview — loading → before/after frames", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:122:      <PlanPreview bridge={bridge} batch={batch()} timeTicks={secondsToTicks(0.5)} />,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:127:      screen.getByTestId("plan-preview-panel").getAttribute("data-status"),
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:129:    expect(screen.getByTestId("plan-preview-loading")).toBeInTheDocument();
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:133:    expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "ready");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:134:    expect(screen.getByTestId("plan-preview-caption")).toHaveTextContent("Preview · 00:00.5");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:135:    expect(screen.getByTestId("plan-preview-time")).toHaveTextContent("00:00.5");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:136:    expect(screen.getByTestId("plan-preview-source")).toHaveTextContent("chosen time");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:137:    expect(screen.getByTestId("plan-preview-before-label")).toHaveTextContent("Before");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:138:    expect(screen.getByTestId("plan-preview-after-label")).toHaveTextContent("After");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:140:    const before = screen.getByTestId("plan-preview-before-img");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:141:    const after = screen.getByTestId("plan-preview-after-img");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:145:    expect(screen.getByTestId("plan-preview-note")).toHaveTextContent(/nothing is applied/i);
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:150:    render(<PlanPreview bridge={bridge} batch={batch()} />);
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:152:    expect(screen.getByTestId("plan-preview-caption")).toHaveTextContent("Preview · 00:01.5");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:153:    expect(screen.getByTestId("plan-preview-source")).toHaveTextContent("playhead");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:154:    expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "ready");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:159:    render(<PlanPreview bridge={bridge} batch={batch()} plan={planWith({ timeSeconds: 0.45 })} />);
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:161:    expect(screen.getByTestId("plan-preview-time")).toHaveTextContent("00:00.5"); // 0.45s → decisecond rounding
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:162:    expect(screen.getByTestId("plan-preview-source")).toHaveTextContent("first affected time");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:163:    expect(screen.getByTestId("plan-preview-caption")).toHaveAttribute("data-time-source", "plan");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:170:      <PlanPreview bridge={counter.wrapped} batch={batch("A")} timeTicks={secondsToTicks(1)} />,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:176:      <PlanPreview bridge={counter.wrapped} batch={batch("A")} timeTicks={secondsToTicks(1)} />,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:179:      expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "ready");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:184:      <PlanPreview bridge={counter.wrapped} batch={batch("B")} timeTicks={secondsToTicks(1)} />,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:195:describe("PlanPreview — failure states", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:200:      <PlanPreview
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:209:      expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "failed");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:216:    const panel = screen.getByTestId("plan-preview-failure");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:218:    expect(screen.getByTestId("plan-preview-failure-title")).toHaveTextContent(
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:221:    expect(screen.getByTestId("plan-preview-failure-message")).toHaveTextContent("nope");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:222:    expect(screen.getByTestId("plan-preview-failure-explain")).toHaveTextContent(
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:225:    expect(screen.getByTestId("plan-preview-retry")).toBeInTheDocument();
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:232:      <PlanPreview
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:241:      expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "failed");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:246:    expect(screen.getByTestId("plan-preview-failure")).toHaveAttribute("data-restored", "false");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:247:    expect(screen.getByTestId("plan-preview-failure-explain")).toHaveTextContent(
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:254:    render(<PlanPreview bridge={bridge} batch={batch()} timeTicks={secondsToTicks(1)} />);
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:257:      expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "failed");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:259:    fireEvent.click(screen.getByTestId("plan-preview-retry"));
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:261:    expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "ready");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:265:    render(<PlanPreview batch={batch()} />);
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:266:    expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "failed");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:267:    expect(screen.getByTestId("plan-preview-failure-message")).toHaveTextContent(
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:277:describe("PlanPreview — controller injection", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:279:    const controller: PlanPreviewController = createPlanPreviewController({ bridge: makeBridge() });
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:282:      <PlanPreview controller={controller} batch={batch()} timeTicks={secondsToTicks(1)} />,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:291:    const controller = createPlanPreviewController({ bridge: makeBridge() });
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:292:    render(<PlanPreview controller={controller} batch={batch()} timeTicks={secondsToTicks(0.5)} />);
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:294:    expect(screen.getByTestId("plan-preview-source")).toHaveTextContent("chosen time");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:298:  it("slots into M5-G's PlanCard `preview` ReactNode seam (exactly one wrapper, one panel)", async () => {
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:302:      <PlanCard
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:304:        preview={<PlanPreview bridge={bridge} batch={batch()} plan={plan} />}
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:308:    expect(screen.getAllByTestId("plan-preview")).toHaveLength(1); // M5-G's wrapper
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:310:    expect(screen.getAllByTestId("plan-preview-panel")).toHaveLength(1); // my panel
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:312:      screen.getByTestId("plan-preview-frames"),
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:321:describe("PlanPreview — hostile data renders as data", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:326:      <PlanPreview bridge={bridge} batch={batch()} timeTicks={secondsToTicks(1)} />,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:330:    const before = screen.getByTestId("plan-preview-before-img");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:340:    render(<PlanPreview bridge={bridge} batch={batch()} timeTicks={secondsToTicks(1)} />);
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:343:      expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "failed");
+/home/z/my-project/apps/web/src/components/chat/plan-preview.test.tsx:345:    const message = screen.getByTestId("plan-preview-failure-message");
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:17: *  * the OPTIONAL `preview` slot (M5-H's PlanPreview injects through the
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:45: * `note` keep working — message.tsx's `<PlanCard plan={…} applied={false} />`
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:53: *   PlanCardProps + PlanCard, PlanCardStatus, PLAN_CARD_STATUSES,
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:64:export type PlanCardStatus =
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:75:export const PLAN_CARD_STATUSES: readonly PlanCardStatus[] = [
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:97:export interface PlanCardProps {
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:106:  status?: PlanCardStatus;
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:134:   * Preview slot (M5-H PlanPreview via the thread layer — never imported
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:181:export function PlanCard({
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:198:}: PlanCardProps): ReactElement {
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:199:  const status: PlanCardStatus = statusProp ?? (applied === true ? "applied" : "proposed");
+/home/z/my-project/apps/web/src/components/chat/plan-card.tsx:365:        <div data-testid="plan-preview" className="mt-3 border-t border-subtle pt-2">
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:2: * PlanCard tests (M5-G) — the full apply/undo card: §6.2 layout (risk badge,
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:20:import { PLAN_CARD_STATUSES, PlanCard } from "./plan-card";
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:54:describe("PlanCard — §6.2 layout", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:56:    render(<PlanCard plan={plan()} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:64:    render(<PlanCard plan={plan()} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:76:    render(<PlanCard plan={plan()} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:91:    render(<PlanCard plan={plan()} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:101:    render(<PlanCard plan={plan({ affectedLayers: [] })} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:111:    render(<PlanCard plan={plan({ affectedLayers })} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:118:    render(<PlanCard plan={plan()} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:123:    render(<PlanCard plan={plan()} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:129:    render(<PlanCard plan={plan()} applied={false} note="Custom note." />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:134:describe("PlanCard — risk badges (§6.2)", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:136:    render(<PlanCard plan={plan({ risk: "low" })} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:144:    render(<PlanCard plan={plan({ risk: "medium" })} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:151:    render(<PlanCard plan={plan({ risk: "high" })} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:162:    render(<PlanCard plan={plan({ risk: "low" })} applied={false} risk="high" />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:178:      const rendered = render(<PlanCard plan={plan({ intent })} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:188:describe("PlanCard — M4 backward compatibility", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:190:    render(<PlanCard plan={plan()} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:203:    render(<PlanCard plan={plan()} applied />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:209:describe("PlanCard — proposed actions (§6.2 Apply/Cancel)", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:213:    render(<PlanCard plan={plan()} applied={false} onApply={onApply} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:223:    render(<PlanCard plan={plan()} applied={false} onApply={onApply} onCancel={onCancel} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:232:    const readOnly = render(<PlanCard plan={plan({ risk: "high" })} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:239:      <PlanCard plan={plan({ risk: "high" })} applied={false} onApply={onApply} />,
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:258:    render(<PlanCard plan={plan({ risk: "high" })} applied={false} onApply={onApply} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:280:describe("PlanCard — states matrix (M5)", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:283:      const rendered = render(<PlanCard plan={plan()} applied={false} status={status} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:293:      <PlanCard
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:312:      <PlanCard plan={plan()} applied={false} status="applied" versionLabel="12" onUndo={onUndo} />,
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:322:    render(<PlanCard plan={plan()} applied={false} status="applied" />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:329:    render(<PlanCard plan={plan()} applied={false} status="undone" onReapply={onReapply} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:340:      <PlanCard
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:358:      <PlanCard
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:375:      <PlanCard plan={plan()} applied={false} status="conflict" statusDetail="VERSION_CONFLICT" />,
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:390:      <PlanCard
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:413:      <PlanCard
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:429:    render(<PlanCard plan={plan()} applied={false} status="cancelled" />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:436:describe("PlanCard — credits are never client math", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:438:    render(<PlanCard plan={plan()} applied={false} estimatedCredits={7.5} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:445:    render(<PlanCard plan={plan()} applied={false} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:450:describe("PlanCard — preview slot (M5-H via the thread layer)", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:453:      <PlanCard
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:460:    const preview = screen.getByTestId("plan-preview");
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:469:    render(<PlanCard plan={plan()} applied={false} onApply={() => {}} />);
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:470:    expect(screen.queryByTestId("plan-preview")).not.toBeInTheDocument();
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:474:describe("PlanCard — hostile strings stay DATA (M4-N corpus)", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:480:      <PlanCard
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:524:      <PlanCard
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:542:      <PlanCard
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:560:describe("PlanCard — tokens-only style law (no raw hex, law #8)", () => {
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:561:  const cases: ReadonlyArray<[string, Partial<Parameters<typeof PlanCard>[0]>]> = [
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:584:      <PlanCard plan={plan(overrides)} applied={false} note="note" {...props} />,
+/home/z/my-project/apps/web/src/components/chat/plan-card.test.tsx:598:      <PlanCard plan={plan({ risk: "high" })} applied={false} onApply={() => {}} />,
+/home/z/my-project/apps/web/src/components/marketing/agent-story.tsx:58:export function PlanCard() {
+/home/z/my-project/apps/web/src/components/marketing/agent-story.tsx:133:        <PlanCard />
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:25: * exactly one of `controller` (from `createPlanPreviewController({bridge})`)
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:32:  type PlanPreviewController,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:33:  type PlanPreviewFailure,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:34:  type PlanPreviewState,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:35:  type PlanPreviewTimeSource,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:36:  createPlanPreviewController,
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:51:const TIME_SOURCE_LABEL: Readonly<Record<PlanPreviewTimeSource, string>> = {
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:57:export interface PlanPreviewProps {
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:65:  readonly onPreviewFailed?: (failure: PlanPreviewFailure) => void;
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:66:  /** The card's controller (created via `createPlanPreviewController({bridge})`). */
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:67:  readonly controller?: PlanPreviewController;
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:114:  failure: PlanPreviewFailure | null;
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:121:      data-testid="plan-preview-failure"
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:125:      <p data-testid="plan-preview-failure-title" className="text-caption text-danger">
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:129:        data-testid="plan-preview-failure-message"
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:134:      <p data-testid="plan-preview-failure-explain" className="text-caption text-muted">
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:142:        data-testid="plan-preview-retry"
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:154:const NEVER_STATE: PlanPreviewState = {
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:160:const idleSnapshot = (): PlanPreviewState => NEVER_STATE;
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:162:export function PlanPreview({
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:169:}: PlanPreviewProps): ReactElement {
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:171:  const effectiveController = useMemo<PlanPreviewController | null>(() => {
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:173:    if (bridge !== undefined) return createPlanPreviewController({ bridge });
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:207:  const state: PlanPreviewState = useSyncExternalStore(
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:218:      <div data-testid="plan-preview-panel" data-status="failed">
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:234:      data-testid="plan-preview-panel"
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:240:          data-testid="plan-preview-loading"
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:251:        <div data-testid="plan-preview-frames">
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:253:            data-testid="plan-preview-caption"
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:258:            <span data-testid="plan-preview-time">{timecodeLabel(state.pair.timeSeconds)}</span>
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:260:            <span data-testid="plan-preview-source">
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:268:              testId="plan-preview-before"
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:274:              testId="plan-preview-after"
+/home/z/my-project/apps/web/src/components/chat/plan-preview.tsx:278:          <p data-testid="plan-preview-note" className="mt-1 text-caption text-muted">
+/home/z/my-project/apps/web/src/lib/chat/apply.ts:3: * docs/phases/M5-SEAMS.md (`ApplyController`, pinned).
+/home/z/my-project/apps/web/src/lib/chat/apply.ts:64:// Pinned types (M5-SEAMS `ApplyController` + the runtime ports this engine needs)
+/home/z/my-project/apps/web/src/lib/chat/apply.ts:284:export interface CreateApplyControllerOptions {
+/home/z/my-project/apps/web/src/lib/chat/apply.ts:302:export interface ApplyController {
+/home/z/my-project/apps/web/src/lib/chat/apply.ts:538:export function createApplyController(options: CreateApplyControllerOptions): ApplyController {
+/home/z/my-project/apps/web/src/lib/chat/tool-executor.test.ts:11: * zero bridge calls (the law #6 backstop — only the ApplyController batches).
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:27:  type CreateApplyControllerOptions,
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:30:  createApplyController,
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:78:  controller: ReturnType<typeof createApplyController>;
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:154:  const controllerOptions: CreateApplyControllerOptions = {
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:169:    controller: createApplyController(controllerOptions),
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:205:describe("createApplyController.apply", () => {
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:316:describe("createApplyController.apply — layer resolution", () => {
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:332:    const controller = createApplyController({
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:414:describe("createApplyController.apply — failure mapping", () => {
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:494:describe("createApplyController.undo", () => {
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:522:    const controller = createApplyController({
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:563:describe("createApplyController.reapply", () => {
+/home/z/my-project/apps/web/src/lib/chat/apply.test.ts:599:describe("createApplyController — dunder/name-injection safety", () => {
+/home/z/my-project/apps/web/src/lib/chat/chat-controller.ts:39:import type { ApplyController, ApplyOutcome, ApplicablePlan, UndoOutcome } from "./apply";
+/home/z/my-project/apps/web/src/lib/chat/chat-controller.ts:78:  readonly apply?: ApplyController;
+/home/z/my-project/apps/web/src/lib/chat/chat-controller.ts:105:   * M5 (§6.2 "Apply", BUILD_PLAN §M5.4): ONE user gesture → the ApplyController
+/home/z/my-project/apps/web/src/lib/chat/chat-controller.ts:340:    gesture: (apply: ApplyController) => Promise<ApplyOutcome>,
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:27:  type PlanPreviewFailureCode,
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:31:  createPlanPreviewController,
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:195:): Promise<{ code: PlanPreviewFailureCode; restored: boolean; message: string }> {
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:205:    error as { failure: { code: PlanPreviewFailureCode; restored: boolean; message: string } }
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:386:// createPlanPreviewController — generation guard, serialization, sources
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:389:describe("createPlanPreviewController", () => {
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:392:    const controller = createPlanPreviewController({ bridge });
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:411:    const controller = createPlanPreviewController({ bridge });
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:432:    const controller = createPlanPreviewController({ bridge });
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:443:    const controller = createPlanPreviewController({ bridge });
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:460:    const controller = createPlanPreviewController({ bridge });
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:474:    const controller = createPlanPreviewController({ bridge: observed.wrapped });
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:502:    const controller = createPlanPreviewController({ bridge: observed.wrapped });
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:531:    const controller = createPlanPreviewController({ bridge: undoBlips });
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:558:    const controller = createPlanPreviewController({ bridge: observed.wrapped });
+/home/z/my-project/apps/web/src/lib/chat/preview.test.ts:589:    const controller = createPlanPreviewController({ bridge: gated.wrapped });
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:92:export type PlanPreviewFailureCode =
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:102:export interface PlanPreviewFailure {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:103:  readonly code: PlanPreviewFailureCode;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:112:  readonly failure: PlanPreviewFailure;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:114:  constructor(failure: PlanPreviewFailure) {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:129:  code: PlanPreviewFailureCode,
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:137:function unknownFailure(error: unknown): PlanPreviewFailure {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:146:export interface PlanPreviewFrame {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:156:export type PlanPreviewTimeSource = "explicit" | "plan" | "playhead";
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:159:export interface PlanPreviewTime {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:161:  readonly source: PlanPreviewTimeSource;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:179:  code: PlanPreviewFailureCode,
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:201:  code: PlanPreviewFailureCode,
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:202:): Promise<PlanPreviewFrame> {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:238:): Promise<PlanPreviewFrame> {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:264:): Promise<PlanPreviewFrame> {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:273:  let rendered: PlanPreviewFrame | null = null;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:274:  let renderFailure: PlanPreviewFailure | null = null;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:294:  const fallback: PlanPreviewFailure = {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:412:export interface PlanPreviewPair {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:413:  readonly before: PlanPreviewFrame;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:414:  readonly after: PlanPreviewFrame;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:420:  readonly timeSource: PlanPreviewTimeSource;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:423:export type PlanPreviewStatus = "idle" | "loading" | "ready" | "failed";
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:425:export interface PlanPreviewState {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:426:  readonly status: PlanPreviewStatus;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:427:  readonly pair: PlanPreviewPair | null;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:428:  readonly failure: PlanPreviewFailure | null;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:431:export const INITIAL_PLAN_PREVIEW_STATE: PlanPreviewState = {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:438:export type PlanPreviewCapture =
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:439:  | { readonly status: "ready"; readonly pair: PlanPreviewPair }
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:440:  | { readonly status: "failed"; readonly failure: PlanPreviewFailure }
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:443:export interface PlanPreviewCaptureOptions extends CaptureTimeOptions {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:448:export interface PlanPreviewController {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:450:  getSnapshot(): PlanPreviewState;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:457:  capture(batch: AgentBatchInput, opts?: PlanPreviewCaptureOptions): Promise<PlanPreviewCapture>;
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:462:export interface PlanPreviewControllerDeps {
+/home/z/my-project/apps/web/src/lib/chat/preview.ts:466:const STALE: PlanPreviewCapture = { status: "stale" };
+
+[Showing results with pagination = limit: 250]
