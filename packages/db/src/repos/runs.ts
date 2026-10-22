@@ -17,7 +17,7 @@ import {
   user,
 } from "../schema.js";
 import { assertRunTransition, isTerminalRunStatus } from "../statuses.js";
-import { type WorkspaceId, requireNonEmpty } from "./shared.js";
+import { type WorkspaceId, isUniqueViolation, requireNonEmpty } from "./shared.js";
 
 /** Runs repository — one agent turn from prompt to applied result (§3.1, §7.4). */
 export interface RunCreateInput {
@@ -262,11 +262,9 @@ export function createRunsRepo(db: StudioDb): RunsRepo {
         if (!step) throw DbError.conflict("Could not insert step");
         return step;
       } catch (error) {
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          (error as { code?: unknown }).code === "23505"
-        ) {
+        // UNIQUE(run_id, seq) — 23505 arrives WRAPPED in drizzle's `.cause`
+        // chain, so the check must walk it (shared.ts isUniqueViolation).
+        if (isUniqueViolation(error)) {
           throw DbError.conflict(`Step ${input.seq} already exists for this run`);
         }
         throw error;
