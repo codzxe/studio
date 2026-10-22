@@ -281,3 +281,21 @@ Work Log:
 Stage Summary:
 - Deliverable: the M3 editor host is BUILT and wired to the REAL dist — RSC route, boot/failure UI, load+autosave orchestration, chrome, keyboard seams, read-only enforcement, conflict recovery UX, and the api-client is Turbopack-safe. The /editor/ page now exists in the signed-in shell with all M3.5/6/7 surfaces component-tested against the fake bridge + fake session client.
 - Leftovers/owed (recorded, not blockers): (1) Playwright browser E2E of the real wasm dist (open/edit/save/reload + visual regression vs upstream) — owed to CI like the cargo test suite (box constraints: no dev servers); (2) api-client versions.upload alignment (above); (3) gateway heartbeat semantics for the held lease — the host re-checks on focus; a background heartbeat client was NOT built (M2 lease repo has renew; wire it if the product needs long sessions without focus); (4) M4 chat consumes chat-shortcut-bus.
+---
+Task ID: M4-prep
+Agent: main-orchestrator
+Task: Start M4 (chat + read-only agent -> LiteLLM runner) with a multi-agent wave fleet per user directive ("use multiple agents like 100 agents in waves... don't ask for permission again").
+
+Work Log:
+- Verified M3 fully landed (git log: M3-A/M3-B/M3-C/M3 closeout all committed+pushed; 97/97 web, 102/102 api-client, 70/70 bridge, 42/42 gateway).
+- New token (ghp_Wylj..., scopes incl. delete_repo) already persisted in ~/.secrets/github-token + ~/.git-credentials; fork codzxe/effectcraft verified GONE (GET/DELETE 404) -> D-17 + M0.md updated from "flagged for manual deletion" to "deleted 2026-10-23".
+- Recon for M4: BUILD_PLAN §M4 (tasks 1-7), PA §7.4/§8.1-8.9, ECUX §2-13, gap/milestones M4 rows + A8 (studio-vision: include alias in LiteLLM config at M4, UI exposure gated by plan), D-5 (shortcuts), D-16 (OpenAI-compatible runner, MOCK_MODEL default), D-18 (chat chrome).
+- Verified existing machinery: chat.ts route (reserve/stream/finalize/replay/idempotency), runner.ts seam (AgentRunner, RunLog, RunRegistry, MockRunner, UnavailableRunner "Wave 4 replaces this"), runs.ts events sink (tool.result accepted only for expected toolCallId), contracts (events/models/tools/routes incl. CHAT_REQUEST_SCHEMA without model field), api-client (chat.stream SSE + runs.postEvent + threads), bridge (query surface: project.summary/comp.info/layer.tree/prop.get/edit.history.list/ui.inspect/renderFrame/screenshot), chat-shortcut-bus from M3-A.
+- KEY ARCHITECTURE RULING (pinned, from the docs): 4 read tools execute CLIENT-side via the bridge (get_context/list_layers/get_properties/render_preview -> POST /v1/runs/:id/events); studio.plan_edit is SERVER-side (runner structured-output call -> emits {type:"plan"}); NO write tools registered (M4.6). ContextSelection flags gate what the client executor may return.
+- Wrote docs/phases/M4-SEAMS.md: full pinned seam map (8 seams) + ownership table for the 16-agent fleet across 3 waves + fleet protocol. THIS FILE IS BINDING FOR ALL M4 AGENTS.
+- Fleet plan: Wave 1 = M4-A (LiteLLM runner) | M4-A2 (models+plan entitlements) | M4-B (web chat engine) | M4-C (context collector) | M4-C2 (tool executor) | M4-D (LiteLLM infra) — 6 parallel. Wave 2 = UI: M4-E panel/layout | M4-F thread/cards | M4-G composer | M4-G2 header/picker/footer | M4-H context UI | M4-J page integration — 6 parallel. Wave 3 = M4-K gateway E2E loop | M4-L web integration | M4-M Playwright CI spec | M4-N injection/safety corpus — 4 parallel. Integrator reconciles + gates + commits between waves.
+- Note on "100 agents": fleet sized by non-overlapping file ownership (law #12); 16 dispatches x 3 waves is the safe maximum; further splitting would create merge hazards.
+
+Stage Summary:
+- M4-SEAMS.md is the single contract reference; all briefs quote their slice and point here.
+- D-17 fork-deletion debt CLOSED. Next: dispatch Wave 1 (6 parallel subagents).
