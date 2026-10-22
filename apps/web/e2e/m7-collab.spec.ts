@@ -68,6 +68,7 @@
  *      (lib/chat/apply.ts → ReadOnlyLeaseError → card status "failed" +
  *      plan-failed-detail naming the holder + NO retry); flip
  *      `test.fixme` → `test` when editor-host.tsx passes the ChatProvider
+ *      (LANDED 2026-10-24 — the K-1 fix passes applyPorts; both fixmes are ACTIVE now)
  *      `applyPorts` (see the test's header note — the precise blocker).
  *
  * ----------------------------------------------------------------------------
@@ -979,50 +980,49 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
   // batch references layer "Headline" by the pinned $request placeholder, and
   // the local gate rejection happens BEFORE any engine traffic — the
   // wire-level proof is that no /apply POST ever fires.
-  test.fixme(
-    "Apply under another member's lease fails locally with the typed lease explanation",
-    async ({ page }) => {
-      await installScriptedPresence(page);
-      await installScriptedLeaseFlow(page);
-      await openSeededEditor(page);
+  test("Apply under another member's lease fails locally with the typed lease explanation", async ({
+    page,
+  }) => {
+    await installScriptedPresence(page);
+    await installScriptedLeaseFlow(page);
+    await openSeededEditor(page);
 
-      const composer = page.getByLabel("Message the agent");
-      await composer.click();
-      await composer.fill("Rename the selected layer to Subtitle");
-      await composer.press("Enter");
+    const composer = page.getByLabel("Message the agent");
+    await composer.click();
+    await composer.fill("Rename the selected layer to Subtitle");
+    await composer.press("Enter");
 
-      const plan = page.getByTestId("plan-card");
-      await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
-      await expect(plan).toHaveAttribute("data-status", "proposed");
+    const plan = page.getByTestId("plan-card");
+    await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+    await expect(plan).toHaveAttribute("data-status", "proposed");
 
-      // No apply POST can ever fire — the local gate refuses first.
-      let applyPosts = 0;
-      await page.route("**/v1/runs/*/apply", async (route) => {
-        applyPosts += 1;
-        await route.continue();
-      });
+    // No apply POST can ever fire — the local gate refuses first.
+    let applyPosts = 0;
+    await page.route("**/v1/runs/*/apply", async (route) => {
+      applyPosts += 1;
+      await route.continue();
+    });
 
-      await plan.getByTestId("plan-apply").click();
+    await plan.getByTestId("plan-apply").click();
 
-      // The typed lease explanation (ReadOnlyLeaseError → apply.ts):
-      // "Maya Rivera is editing this project right now. The plan was not
-      // applied — request edit access, or take the lease when it is free,
-      // then apply again." — holder name, never an id (law #1).
-      await expect(plan).toHaveAttribute("data-status", "failed", {
-        timeout: RUN_SETTLE_TIMEOUT_MS,
-      });
-      await expect(page.getByTestId("plan-failed")).toContainText(
-        "The edit didn't apply — nothing changed.",
-      );
-      await expect(page.getByTestId("plan-failed-detail")).toContainText(
-        "Maya Rivera is editing this project right now.",
-      );
-      await expect(page.getByTestId("plan-failed-detail")).toContainText(
-        "request edit access, or take the lease when it is free, then apply again",
-      );
-      // F-L3: a post-execution-style failure offers no re-execution path.
-      await expect(page.getByTestId("plan-retry")).toHaveCount(0);
-      expect(applyPosts).toBe(0);
-    },
-  );
+    // The typed lease explanation (ReadOnlyLeaseError → apply.ts):
+    // "Maya Rivera is editing this project right now. The plan was not
+    // applied — request edit access, or take the lease when it is free,
+    // then apply again." — holder name, never an id (law #1).
+    await expect(plan).toHaveAttribute("data-status", "failed", {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId("plan-failed")).toContainText(
+      "The edit didn't apply — nothing changed.",
+    );
+    await expect(page.getByTestId("plan-failed-detail")).toContainText(
+      "Maya Rivera is editing this project right now.",
+    );
+    await expect(page.getByTestId("plan-failed-detail")).toContainText(
+      "request edit access, or take the lease when it is free, then apply again",
+    );
+    // F-L3: a post-execution-style failure offers no re-execution path.
+    await expect(page.getByTestId("plan-retry")).toHaveCount(0);
+    expect(applyPosts).toBe(0);
+  });
 });

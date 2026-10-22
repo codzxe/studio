@@ -107,6 +107,9 @@ export interface AutosaveController {
   readonly dirty: boolean;
   markDirty(reason?: string): void;
   saveNow(reason: string): Promise<SaveOutcome>;
+  /** The session's current version (the advancing autosave chain head) — the
+   * M5 apply/reapply gate's honest source. `null` only pre-boot/disposed. */
+  currentVersion(): VersionRef | null;
   dispose(): void;
 }
 
