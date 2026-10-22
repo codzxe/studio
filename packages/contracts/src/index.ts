@@ -7,10 +7,12 @@
 // §7.2 endpoint domain under ./routes.
 
 export * from "./envelope.js";
+export * from "./command-registry.js";
 export * from "./engine-batch.js";
 export * from "./edit-plan.js";
 export * from "./events.js";
 export * from "./models.js";
 export * from "./tools.js";
+export * from "./write-tools.js";
 
 export * from "./routes/index.js";

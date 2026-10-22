@@ -1,6 +1,7 @@
 // @studio/contracts — route domain barrel: one file per §7.2 domain.
 
 export * from "./activity.js";
+export * from "./apply.js";
 export * from "./assets.js";
 export * from "./billing.js";
 export * from "./chat.js";
