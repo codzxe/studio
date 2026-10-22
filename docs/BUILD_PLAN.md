@@ -1,6 +1,6 @@
 # Studio Build Plan
 
-Status: **in execution** · 2026-10-22 · Waves W0–W3 + W4-ed (real de-branded editor dist vendored + committed, M0 evidence) + W5 (single-repo policy, fork removed) + **M3 landed** (bridge hardened 70/70 tests, editor-session engine, /w/[slug]/editor host page + autosave wiring, 97/97 web suite — evidence: docs/phases/M3.md) · completion map: docs/phases/gap/ · rulings: docs/DECISIONS.md
+Status: **in execution** · 2026-10-22 · Waves W0–W3 + W4-ed (real de-branded editor dist vendored + committed, M0 evidence) + W5 (single-repo policy, fork removed) + **M3 landed** (bridge hardened 70/70 tests, editor-session engine, /w/[slug]/editor host page + autosave wiring, 97/97 web suite — evidence: docs/phases/M3.md) + **M4 landed** (read-only agent chat end-to-end: LiteLLM runner behind the real wire, 5 read tools with client-side executor + server-side plan_edit, full chat UI overlay, entitlements, injection-proofed — 1090 tests repo-wide; evidence: docs/phases/M4.md) · completion map: docs/phases/gap/ · rulings: docs/DECISIONS.md
 
 This is the execution plan for the EffectCraft-based product. It replaces the
 PhotoCraft-specific phases in `docs/BUILD_PROMPT.md` §2, §7–§10, §20 and §24. The

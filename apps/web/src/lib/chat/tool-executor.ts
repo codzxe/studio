@@ -396,11 +396,16 @@ async function runGetProperties(
     for (const path of paths) pairs.push({ layer, path });
   }
 
-  const layers: Record<string, Record<string, unknown>> = {};
+  // Null-prototype accumulators (M4-N F-1 fix): layer ids and property paths
+  // are MODEL-CHOSEN strings — on a plain `{}` a `__proto__` key would hit the
+  // accessor and write through to Object.prototype. On null-prototype objects
+  // every key is inert data; hostile ids survive as data, the prototype is
+  // untouchable.
+  const layers: Record<string, Record<string, unknown>> = Object.create(null);
   await mapLimit(pairs, 4, async (pair) => {
     let entry: Record<string, unknown> | undefined = layers[pair.layer];
     if (entry === undefined) {
-      entry = {};
+      entry = Object.create(null) as Record<string, unknown>;
       layers[pair.layer] = entry;
     }
     entry[pair.path] = await propOrNotFound(deps.bridge, pair.layer, pair.path);

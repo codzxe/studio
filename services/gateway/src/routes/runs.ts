@@ -51,9 +51,16 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       seq: step.seq,
       tool: step.tool,
       status:
-        step.status === "started" || step.status === "succeeded" || step.status === "failed"
-          ? step.status
-          : "skipped",
+        // DB writers emit "running"/"success" (and legacy "started"/"succeeded");
+        // the wire vocabulary (RUN_RECORD_SCHEMA) is started/succeeded/failed/
+        // skipped — translate in ONE place instead of at every writer.
+        step.status === "running" || step.status === "started"
+          ? "started"
+          : step.status === "success" || step.status === "succeeded"
+            ? "succeeded"
+            : step.status === "failed"
+              ? "failed"
+              : "skipped",
       durationMs: step.durationMs,
     })),
     reservedCredits: run.reservedCredits,

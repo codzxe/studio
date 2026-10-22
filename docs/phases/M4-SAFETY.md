@@ -35,11 +35,11 @@ not exist in M4.** No write tool is registered (gateway runner: `kind ===
 proposal-only data. An injection can at worst waste steps (bounded by the
 step cap) or mislead prose (see §5 limits).
 
-## 2. Findings (report-only — none fixed by M4-N; law #12)
+## 2. Findings (F-1 FIXED by the integrator 2026-10-23, immediately after M4-N reported it; the rest stand as reported)
 
-**F-1 (HIGH, client-side prototype pollution write primitive; needs an owner
-fix) — `apps/web/src/lib/chat/tool-executor.ts` `runGetProperties`,
-lines 399–406.**
+**F-1 (HIGH, client-side prototype pollution write primitive; FIXED by the
+integrator 2026-10-23) — `apps/web/src/lib/chat/tool-executor.ts`
+`runGetProperties`.**
 `const layers = {}` … `layers[pair.layer]` (READ, line 401) … `layers[pair.layer]
 = entry` (line 404) … `entry[pair.path] = value` (line 406). A layer id of
 `"__proto__"` passes the gateway's Zod schema (`layerIds` is an array of
@@ -50,7 +50,8 @@ and a bridge-chosen value (hostile project data). Demonstration:
 `get_properties {layerIds:["__proto__"], paths:["corpusProbeM4N"]}` →
 `Object.hasOwn(Object.prototype, "corpusProbeM4N") === true` (proved in
 `injection-corpus.test.tsx` → "get_properties: a __proto__ layer id writes
-through to Object.prototype (FINDING F-1)" — the test cleans up after itself).
+through to Object.prototype (FINDING F-1)" — the test was rewritten when the
+fix landed; see below).
 Blast radius in a real tab: every `for…in` loop and every truthiness check on
 the polluted keys app-wide; `paths:["toString"]` overwrites
 `Object.prototype.toString`; `layerIds:["constructor"]` writes onto the `Object`
@@ -101,7 +102,7 @@ call…"); M4 never compiles or applies anything.
 | Step cap (§8.9) | `runner.ts` `maxSteps` | `injection.test.ts` → "multi-tool-per-round looping hits RUN_STEP_LIMIT" (2 valid calls × 3 rounds → hard stop at exactly `maxSteps` provider calls) |
 | Markdown renderer safety (§3.3 "escape everything") | `components/chat/markdown.tsx` | `injection-corpus.test.tsx` → "markdown escape": all 14 markdown-surface corpus payloads render with zero created elements (`script,iframe,img,a,object,embed,[onclick],[onerror],[onload]`), zero unescaped tag openers in innerHTML, visible text preserved; `[label](url)` shows label, drops URL, never an anchor; fenced HTML inert |
 | Tool-card safety + `pngBase64` redaction | `components/chat/tool-card.tsx` | `injection-corpus.test.tsx` → "tool card safety": all 5 hostile results render as TEXT (collapsed + expanded); the PNG blob renders as a `data:image/png;base64,` `<img>` ONLY and never appears in any text surface (collapsed summary included); hostile `message` in the failure shape becomes the collapsed summary as text |
-| Executor immunity + deep-merge safety | `lib/chat/tool-executor.ts` | `injection-corpus.test.tsx` → "executor immunity": 6 corpus payloads ride `get_context` verbatim as JSON-serializable data; `__proto__` own-keys in bridge results SURVIVE the `{...layer, tree}` spread as data with `Object.prototype` untouched; F-1 pinned (report-only, self-cleaning) |
+| Executor immunity + deep-merge safety | `lib/chat/tool-executor.ts` | `injection-corpus.test.tsx` → "executor immunity": 6 corpus payloads ride `get_context` verbatim as JSON-serializable data; `__proto__` own-keys in bridge results SURVIVE the `{...layer, tree}` spread as data with `Object.prototype` untouched; F-1 pinned as FIXED (boundary rejection + null-prototype accumulators) |
 | Context chips + aria-live text-only rendering | `lib/chat/context.ts` + `components/chat/context-strip.tsx` + `thread.tsx` | `injection-corpus.test.tsx` → "context chips": corpus-named comps/layers flow into `ContextStrip` labels verbatim, render as text with zero HTML interpretation; hostile pinned labels too; the thread's `role="log"` aria-live region announces hostile model text as data |
 
 All gates at close: gateway 124/124 (10 files, `DATABASE_URL` exported),
@@ -151,7 +152,15 @@ its threat model in `threat`; every payload carries a distinctive single-line
    hostile *bridge* could feed adversarial results to the model; the corpus
    proves that buys no tool and no engine string — but it can still color the
    model's answer.
-3. **F-1 is open** until an owner fixes `runGetProperties` (report-only here).
+3. **F-1 is CLOSED** — fixed two layers deep by the integrator the same day:
+   (1) boundary — `@studio/contracts` `get_properties` args now use
+   `DUNDER_ID_SCHEMA` (rejects `__proto__`/`prototype`/`constructor` ids) so
+   `validateToolArgs` fails the call BEFORE any bridge access;
+   (2) depth — the executor's accumulators are null-prototype objects
+   (`Object.create(null)`), so even a future validation drift cannot reach
+   `Object.prototype`. Proof: `injection-corpus.test.tsx` → "get_properties:
+   dunder layer ids are REJECTED at the boundary and never reach a bridge
+   (FINDING F-1, FIXED)" + the benign-ids regression test.
 4. **Repair turns and plan attempts give the model extra rounds** — bounded
    by `maxSteps` (proven for the adversarial multi-tool loop) and by the
    2-attempt plan rule.

@@ -8,13 +8,20 @@ import type { LedgerKind } from "./schema.js";
  *   grant   +N     reserve −N     commit −M     refund +R     adjust ±N
  *
  * - `balance = SUM(amount)` over the workspace ledger.
- * - Reserves deduct pessimistically; `commit` realizes the actual cost;
- *   `refund` releases the unspent remainder of a hold.
+ * - Reserves deduct pessimistically; `commit` realizes the actual cost ON
+ *   TOP of the hold, so a successful settle must release the FULL hold:
+ *   refund = outstanding. The run then nets exactly −actual_cost:
+ *
+ *       −N (reserve) − M (commit) + N (refund) = −M
+ *
+ *   (Writing refund = N − M double-charges by M: the reserve already
+ *   deducted N, and the commit deducts M again — the 2026-10-23 finding
+ *   pinned by services/gateway/tests/chat-loop.test.ts.)
  * - Per run:  outstanding = Σ|reserve| − Σrefund − Σ|commit|  (≥ 0).
- *   On success the run nets −actual_cost (commit M + refund N−M against a
- *   reserve of N); on failure/cancel it nets 0 (full refund) — exactly the
- *   doc's "refund the difference on success; refund the full reserve on
- *   failure/cancel".
+ *   On success the run nets −actual_cost; on failure/cancel it nets 0
+ *   (full refund) — the doc's "refund the difference on success" is the
+ *   NET effect (N − M released); the ledger entries realize it by releasing
+ *   the full hold while committing the actual cost.
  */
 
 /** §8.8: reserve = ceil(estimated × 1.2), minimum 1. */
@@ -46,8 +53,9 @@ export function outstandingReserve(
 }
 
 /**
- * Split an actual cost against a run's outstanding hold:
- * commit is capped by the hold; the remainder is refunded.
+ * Split an actual cost against a run's outstanding hold. The commit is
+ * capped by the hold; the FULL hold is refunded so the run nets −commit
+ * (see the header: balance = SUM, the reserve already deducted).
  */
 export function planSettlement(
   outstanding: number,
@@ -63,7 +71,7 @@ export function planSettlement(
     throw DbError.validation("actualCost must be ≥ 0");
   }
   const commit = Math.min(Math.ceil(actualCost), outstanding);
-  const refund = Math.max(0, outstanding - commit);
+  const refund = outstanding;
   return { commit, refund };
 }
 
