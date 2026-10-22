@@ -43,20 +43,19 @@ describe("models: §10.1 plan entitlements", () => {
   it("trial→fast, starter→fast, pro→fast+smart, studio→all (§8.2/§10.1)", () => {
     expect([...PLAN_IDS]).toEqual(["trial", "starter", "pro", "studio"]);
     expect(PLAN_MODEL_ENTITLEMENTS.trial).toEqual(["studio-fast"]);
-    expect(PLAN_MODEL_ENTITLEMENTS.starter).toEqual(["studio-fast"]);
+    expect(PLAN_MODEL_ENTITLEMENTS.starter).toEqual(["studio-fast", "studio-smart"]);
     expect(PLAN_MODEL_ENTITLEMENTS.pro).toEqual(["studio-fast", "studio-smart"]);
-    expect(PLAN_MODEL_ENTITLEMENTS.studio).toEqual([
-      "studio-fast",
-      "studio-smart",
-      "studio-vision",
-    ]);
+    // D-8: studio-vision is NOT in the v1 picker on any plan (catalog-aligned).
+    expect(PLAN_MODEL_ENTITLEMENTS.studio).toEqual(["studio-fast", "studio-smart"]);
   });
 
   it("modelAllowedForPlan gates each alias per plan", () => {
+    // Aligned with the M6-A catalog (D-4/D-8): trial fast-only; paid fast+smart;
+    // vision never in the v1 picker.
     const expectations: Record<ModelId, boolean[]> = {
       "studio-fast": [true, true, true, true],
-      "studio-smart": [false, false, true, true],
-      "studio-vision": [false, false, false, true],
+      "studio-smart": [false, true, true, true],
+      "studio-vision": [false, false, false, false],
     };
     PLAN_IDS.forEach((plan, planIndex) => {
       for (const model of MODEL_IDS) {
@@ -70,7 +69,7 @@ describe("models: §10.1 plan entitlements", () => {
   it("allowedModelsForPlan mirrors the entitlements map; default = most capable", () => {
     expect(allowedModelsForPlan("pro")).toEqual(["studio-fast", "studio-smart"]);
     expect(defaultModelForPlan("trial")).toBe("studio-fast");
-    expect(defaultModelForPlan("studio")).toBe("studio-vision");
+    expect(defaultModelForPlan("studio")).toBe("studio-smart");
   });
 
   it("paid plans exclude trial (checkout never sells a trial, §10.1)", () => {
