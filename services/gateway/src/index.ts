@@ -70,7 +70,7 @@ export async function startServer(): Promise<RunningServer> {
     repos,
     storage: storageChoice.driver,
     local: storageChoice.local,
-    runner: createRunnerForEnv(env.app.mockModel),
+    runner: createRunnerForEnv(env, logger),
     runs: new RunRegistry(),
     limiter: createInMemoryRateLimiter(),
     idempotency: createInMemoryIdempotencyStore(),

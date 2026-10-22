@@ -26,8 +26,8 @@
  * never interpolated into anything executable (prompt assembly is server-side).
  */
 
-import type { EditorBridge } from "@studio/editor-bridge";
 import type { ContextSelection, PinnedContextItem } from "@studio/contracts";
+import type { EditorBridge } from "@studio/editor-bridge";
 import { estimateTokens } from "./tokens";
 
 // ---------------------------------------------------------------------------
@@ -325,7 +325,10 @@ function unavailable(kind: BlockKind, base: string): ContextBlock {
 }
 
 /** layer.tree params per the query.rs/fake.ts registry; comp is omitted when unknown so the engine defaults to its active comp. */
-function layerTreeParams(layer: number, activeComp: number | null | undefined): Record<string, unknown> {
+function layerTreeParams(
+  layer: number,
+  activeComp: number | null | undefined,
+): Record<string, unknown> {
   const params: Record<string, unknown> = { layer, depth: SELECTION_TREE_DEPTH };
   if (typeof activeComp === "number") params.comp = activeComp;
   return params;
@@ -339,7 +342,9 @@ function lastEntries(history: unknown, max: number): unknown {
   return history; // unexpected shape: pass through verbatim rather than guess
 }
 
-async function safeInspect(bridge: EditorBridge): Promise<Awaited<ReturnType<EditorBridge["inspect"]>> | null> {
+async function safeInspect(
+  bridge: EditorBridge,
+): Promise<Awaited<ReturnType<EditorBridge["inspect"]>> | null> {
   try {
     return await bridge.inspect();
   } catch {
@@ -347,7 +352,11 @@ async function safeInspect(bridge: EditorBridge): Promise<Awaited<ReturnType<Edi
   }
 }
 
-async function safeQuery<T>(bridge: EditorBridge, command: string, params?: unknown): Promise<T | null> {
+async function safeQuery<T>(
+  bridge: EditorBridge,
+  command: string,
+  params?: unknown,
+): Promise<T | null> {
   try {
     return await bridge.query<T>(command, params ?? {});
   } catch {

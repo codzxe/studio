@@ -15,25 +15,34 @@
 //     run.cancelled and refund the full outstanding reserve (§8.9)
 //
 // The model side is an AgentRunner seam (runner.ts): MockRunner when
-// MOCK_MODEL=true, UnavailableRunner (RUN_MODEL_UNAVAILABLE, refunded)
-// until the LiteLLM runner lands in Wave 4.
+// MOCK_MODEL=true, the LiteLLM runner otherwise (D-16) — streaming via the
+// OpenAI-compatible proxy, client read tools resolved through the run log's
+// tool-result wait seam (Seam 2), studio.plan_edit structured server-side.
 
 import { Hono } from "hono";
 
 import {
   CHAT_REQUEST_SCHEMA,
   defaultModelForPlan,
+  modelAllowedForPlan,
+  type ModelId,
+  type PlanId,
   type StudioStreamEvent,
 } from "@studio/contracts";
 
 import { StudioError } from "@studio/config";
+import type { AgentMessage } from "@studio/db";
 
+import { GatewayError } from "../errors.js";
 import { pathParam } from "../http.js";
+import { TOOL_RESULT_TIMEOUT_MS } from "../litellm/runner.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
+import { resolvePlan } from "../plan.js";
 import {
   estimateRunCredits,
   reserveAmountFor,
   type AgentRun,
+  type AgentRunHistoryTurn,
   type AgentRunOutcome,
   type AgentRunStream,
   type RunLog,
@@ -42,6 +51,30 @@ import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 
 /** Safety ceiling for one streaming run; afterwards the run is cancelled. */
 const CHAT_TIMEOUT_MS = 120_000;
+
+/** §8.3: the model sees the thread's last 6 turns. */
+const HISTORY_TURNS = 6;
+
+/**
+ * Model selection with plan entitlements (§8.2 "Plan gating", §10.1; M4
+ * Seam 1). Exported for unit tests. `requested` unset → the plan's default;
+ * set but not entitled → MODEL_NOT_ENTITLED (403, never leaks plan data).
+ */
+export function resolveChatModel(input: {
+  readonly requested: ModelId | undefined;
+  readonly plan: PlanId;
+  readonly requestId: string;
+}): ModelId {
+  if (input.requested !== undefined && !modelAllowedForPlan(input.requested, input.plan)) {
+    throw new GatewayError("MODEL_NOT_ENTITLED", "That model isn't available on your plan.", {
+      status: 403,
+      hint: "Pick one of the models shown in the model picker.",
+      retryable: false,
+      requestId: input.requestId,
+    });
+  }
+  return input.requested ?? defaultModelForPlan(input.plan);
+}
 
 export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -75,7 +108,14 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
       return sseResponse(c, existing.log, c.req.header("last-event-id"));
     }
 
-    const model = defaultModelForPlan("trial");
+    // Model selection with plan entitlements (§8.2/§10.1): resolvePlan is the
+    // M6 swap point; MODEL_NOT_ENTITLED never starts a run.
+    const plan = await resolvePlan(workspace.id);
+    const model = resolveChatModel({ requested: request.model, plan, requestId });
+
+    // §8.3 "last 6 turns" — loaded BEFORE this run's user turn is persisted,
+    // so history never contains the message the model is answering.
+    const history = await loadHistory(deps, workspace.id, threadId);
 
     // Persist the user turn before the run exists (§9.1 agent_messages).
     await deps.repos.threads.addMessage(workspace.id, {
@@ -133,6 +173,7 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
       context: request.context,
       pinned: request.pinned,
       reservedCredits: reserveAmount,
+      history,
     };
 
     // Stream finalization: settle/refund, terminal event, run row, steps.
@@ -234,6 +275,9 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
       emit: (payload) => log.emit(payload),
       yieldToStream: () => new Promise<void>((resolveYield) => setImmediate(resolveYield)),
       expectToolCall: (toolCallId, tool) => log.expectToolCall(toolCallId, tool),
+      // Seam 2: the runner waits for the client's POST /v1/runs/:id/events;
+      // timeout → EDITOR_DISCONNECTED inside the LiteLLM runner.
+      waitForToolResult: (toolCallId) => log.waitToolResult(toolCallId, TOOL_RESULT_TIMEOUT_MS),
       signal,
     };
 
@@ -319,6 +363,38 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
     // socket disconnects; both funnel into the same finalize.
     return sseResponseFromStream(stream);
   });
+
+  /**
+   * §8.3 "last 6 turns": newest-first repo page → oldest-first turns. Only
+   * user/assistant rows are user-facing history; the run's own message is
+   * not persisted yet at call time.
+   */
+  async function loadHistory(
+    gatewayDeps: GatewayDeps,
+    workspaceId: string,
+    threadId: string,
+  ): Promise<AgentRunHistoryTurn[]> {
+    const page = await gatewayDeps.repos.threads.listMessages(workspaceId, threadId, {
+      limit: HISTORY_TURNS,
+    });
+    const turns: AgentRunHistoryTurn[] = [];
+    for (const message of [...page.items].reverse()) {
+      const turn = historyTurn(message);
+      if (turn !== null) turns.push(turn);
+    }
+    return turns;
+  }
+
+  function historyTurn(message: AgentMessage): AgentRunHistoryTurn | null {
+    const content = message.contentJson as { message?: unknown; text?: unknown };
+    if (message.role === "user" && typeof content?.message === "string") {
+      return { role: "user", content: content.message };
+    }
+    if (message.role === "assistant" && typeof content?.text === "string") {
+      return { role: "assistant", content: content.text };
+    }
+    return null; // system/tool rows are not user-facing history
+  }
 
   async function recordSteps(workspaceId: string, log: RunLog, runId: string): Promise<void> {
     for (const event of log.all()) {
