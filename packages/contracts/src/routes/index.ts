@@ -10,6 +10,7 @@ export * from "./credits.js";
 export * from "./invites.js";
 export * from "./leases.js";
 export * from "./me.js";
+export * from "./models.js";
 export * from "./projects.js";
 export * from "./renders.js";
 export * from "./runs.js";

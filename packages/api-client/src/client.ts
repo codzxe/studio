@@ -48,6 +48,7 @@ import {
   LEDGER_QUERY_SCHEMA,
   type LedgerEntry,
   type MeResponse,
+  type ModelsResponse,
   PAGINATION_QUERY_SCHEMA,
   PATCH_PROJECT_SCHEMA,
   PATCH_WORKSPACE_SCHEMA,
@@ -101,6 +102,7 @@ import {
   LEDGER_ENTRY_SCHEMA,
   type LeaseAcquireResponse,
   ME_RESPONSE_SCHEMA,
+  MODELS_RESPONSE_SCHEMA,
   PAGE_ACTIVITY_SCHEMA,
   PAGE_ASSETS_SCHEMA,
   PAGE_COMMENTS_SCHEMA,
@@ -130,6 +132,11 @@ import {
   streamChat,
 } from "./sse";
 import { isAbortError, sleepWithAbort } from "./utils";
+
+// The §8.2/§10.1 wire type of `models.list()` — re-exported from the public
+// surface (the package barrel re-exports this module) so model-picker
+// consumers don't need a separate @studio/contracts import for it.
+export type { ModelsResponse };
 
 // ---------------------------------------------------------------------------
 // Options and shapes
@@ -508,6 +515,10 @@ export interface ApiClient {
     /** POST /v1/runs/:id/events — client tool result / apply result (§8.7). */
     postEvent(runId: string, body: RunEventRequest, options?: CallOptions): Promise<null>;
   };
+  readonly models: {
+    /** GET /v1/models — workspace plan + the models selectable on it (§8.2). */
+    list(options?: CallOptions): Promise<ModelsResponse>;
+  };
   readonly credits: {
     get(options?: CallOptions): Promise<CreditsSummary>;
     ledger(query?: LedgerQueryInput, options?: CallOptions): Promise<Page<LedgerEntry>>;
@@ -773,6 +784,10 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
+    },
+    models: {
+      list: async (options) =>
+        impl.get("/models", undefined, MODELS_RESPONSE_SCHEMA, options?.signal),
     },
     credits: {
       get: async (options) =>

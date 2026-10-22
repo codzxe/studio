@@ -1,0 +1,101 @@
+# ===========================================================================
+# docker-compose.litellm.yml — standalone LiteLLM stack for DEPLOYMENT boxes.
+#
+#   ⚠ THE DEV BOX FOR THIS REPO HAS NO DOCKER (docs/AGENTS.md environment
+#   truth). scripts/dev-litellm.sh detects that and points at the runbook.
+#   This file targets real deployment hosts (§14.2: one Linux box is enough
+#   for beta; LiteLLM may run on that box or split out onto its own).
+#
+# What it runs (PRODUCT_ARCHITECTURE §8.2 · runbook: docs/deploy/LITELLM.md):
+#   litellm    — OpenAI-compatible proxy on 127.0.0.1:4000 serving the
+#                studio-fast / studio-smart / studio-vision aliases from
+#                deploy/litellm/config.yaml (provider identities live ONLY
+#                in that file).
+#   litellm-db — dedicated PostgreSQL 17 for LiteLLM's own data (virtual
+#                keys, budgets, spend tables). Deliberately SEPARATE from the
+#                app control-plane DB: a proxy outage/leak must never touch
+#                auth/projects/credits data, and spend rows are M6's
+#                reconciliation source.
+#
+# Relationship to infra/compose/docker-compose.yml: the full-stack compose
+# also embeds a `litellm` service (same aliases, DB in the shared Postgres
+# instance). Use THIS stack when LiteLLM runs standalone; use one or the
+# other against a given LITELLM_BASE_URL — never both.
+#
+# Bring-up (from the repo root; or use scripts/dev-litellm.sh):
+#   docker compose --env-file .env -f docker-compose.litellm.yml up -d
+#
+# Env for ${VAR} interpolation (repo .env or a dedicated file — .env* is
+# gitignored; these are DEPLOYMENT-layer knobs, NOT part of the 34-var app
+# env contract in packages/config/src/env.ts):
+#   LITELLM_MASTER_KEY   REQUIRED  proxy admin key: sk-master-$(openssl rand -hex 24)
+#   OPENAI_API_KEY       per config.yaml primary models (unset → those aliases 401)
+#   ANTHROPIC_API_KEY    per config.yaml fallback models
+#   LITELLM_DATABASE_URL optional  defaults to the litellm-db service below
+#   LITELLM_DB_USER / LITELLM_DB_PASSWORD / LITELLM_DB_NAME  defaults litellm/litellm/litellm — EDIT-ME
+# The APP only ever sees LITELLM_BASE_URL / LITELLM_API_KEY / LITELLM_VIRTUAL_KEY
+# (packages/config/src/env.ts); its keys are minted at runtime via
+# POST /key/generate — see docs/deploy/LITELLM.md §Keys.
+# ===========================================================================
+name: studio-litellm
+
+services:
+  litellm:
+    # LiteLLM's documented stable release channel. EDIT-ME for production:
+    # pin an immutable digest (image digest or an exact release tag) so
+    # `up -d` on a later date cannot surprise you with a new major.
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      - ./deploy/litellm/config.yaml:/app/config.yaml:ro # aliases + tier fallbacks
+    environment:
+      # Proxy admin key (ops only — never handed to the app).
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY (sk-master-…) — see docs/deploy/LITELLM.md}
+      # LiteLLM budget/spend DB (the litellm-db service below). Override only
+      # to point at an external Postgres.
+      LITELLM_DATABASE_URL: ${LITELLM_DATABASE_URL:-postgres://${LITELLM_DB_USER:-litellm}:${LITELLM_DB_PASSWORD:-litellm}@litellm-db:5432/${LITELLM_DB_NAME:-litellm}}
+      # Provider credentials for the aliases in deploy/litellm/config.yaml
+      # (add/remove to match the models you configured there):
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+    ports:
+      # Loopback ONLY — the proxy must never be internet-facing; the app
+      # (native) uses http://127.0.0.1:4000 (= LITELLM_BASE_URL default). If
+      # the gateway runs INSIDE this compose network instead, point it at
+      # http://litellm:4000 (see infra/compose for the full-stack pattern).
+      - "127.0.0.1:4000:4000"
+    networks: [litellm]
+    # No container healthcheck on purpose: the image's toolset varies between
+    # releases; the runbook + scripts/dev-litellm.sh probe
+    # GET /health/liveliness from outside instead.
+
+  litellm-db:
+    # Dedicated PostgreSQL 17 for LiteLLM's own schema (virtual keys,
+    # budgets, spend tables) — SEPARATE from the app control-plane DB.
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LITELLM_DB_USER:-litellm}
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm} # EDIT-ME in production
+      POSTGRES_DB: ${LITELLM_DB_NAME:-litellm}
+    volumes:
+      - litellm-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    # Not published to the host on purpose: only the litellm service talks to
+    # it (in-network). Ops access: `docker compose exec litellm-db psql -U …`.
+    networks: [litellm]
+
+networks:
+  litellm:
+    driver: bridge
+
+volumes:
+  litellm-db-data:

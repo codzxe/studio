@@ -57,7 +57,9 @@ const EXTRA_NOTES: Readonly<Record<string, readonly string[]>> = {
     "#   (the generator prints a fresh suggestion to the terminal each run)",
   ],
   LITELLM_BASE_URL: [
-    "# Local default: LiteLLM proxy — venv (`litellm --config infra/litellm/config.yaml`) or compose `litellm` service.",
+    "# Local default: LiteLLM proxy on loopback — `bash scripts/dev-litellm.sh`",
+    "# (repo-root docker-compose.litellm.yml), a venv (`litellm --config deploy/litellm/config.yaml`)",
+    "# or the infra/compose `litellm` service. Runbook: docs/deploy/LITELLM.md.",
   ],
   EDITOR_DEV_SERVER_URL: [
     "# Local default: `cargo xtask web --serve 8765` from editor/, proxied under the editor path.",
@@ -83,6 +85,7 @@ const HEADER = [
   "# Local defaults below assume the native dev services (no Docker, no sudo):",
   "#   pnpm dev:pg                        # PostgreSQL 17 @ 127.0.0.1:5432",
   "#   bash scripts/dev-valkey.sh start  # Valkey 8 @ 127.0.0.1:6379 (optional)",
+  "#   bash scripts/dev-litellm.sh start  # LiteLLM proxy @ 127.0.0.1:4000 (Docker boxes; optional)",
   "#   pnpm editor:serve                 # editor dev server @ 127.0.0.1:8765",
   "# ===========================================================================",
   "",
