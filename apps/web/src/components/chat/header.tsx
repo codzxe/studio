@@ -34,7 +34,6 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-  cn,
 } from "@studio/ui";
 import { Maximize2, MoreHorizontal, PanelRight, X } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
@@ -135,7 +134,7 @@ export function ChatHeader(props: ChatHeaderProps): ReactElement {
         <Button
           variant="ghost"
           size="sm"
-          className={cn("h-7 shrink-0 gap-1 px-2 text-secondary hover:text-primary")}
+          className="h-7 shrink-0 gap-1 px-2 text-secondary hover:text-primary"
           data-testid="chat-context-button"
           onClick={props.onContextClick}
         >

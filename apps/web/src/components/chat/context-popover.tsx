@@ -79,9 +79,7 @@ export function ContextPopover({
 }: ContextPopoverProps): ReactElement {
   // Optimistic pending-uncheck presentation layer (see file header). Pruned
   // against the incoming kinds so parent state always wins once it lands.
-  const [unchecked, setUnchecked] = useState<ReadonlySet<keyof ContextSelection>>(
-    () => new Set(),
-  );
+  const [unchecked, setUnchecked] = useState<ReadonlySet<keyof ContextSelection>>(() => new Set());
   const activeKinds = useMemo(() => new Set(blocks.map((block) => block.kind)), [blocks]);
   const pending = useMemo(() => {
     const next = new Set<keyof ContextSelection>();
@@ -92,7 +90,9 @@ export function ContextPopover({
   }, [unchecked, activeKinds]);
 
   const toggle = (block: ContextBlock): void => {
-    const on = !pending.has(block.kind);
+    // `pending` = locally unchecked rows: a pending row toggles back ON, a
+    // (still checked) row toggles OFF.
+    const on = pending.has(block.kind);
     onToggleBlock(block.kind, on);
     setUnchecked((prev) => {
       const next = new Set(prev);
@@ -128,7 +128,9 @@ export function ContextPopover({
 
         {pinned.length > 0 ? (
           <div data-testid="context-pinned-list" className="px-3 pb-3">
-            <Badge variant="neutral" className="mb-1.5">Pinned</Badge>
+            <Badge variant="neutral" className="mb-1.5">
+              Pinned
+            </Badge>
             <div className="flex flex-wrap gap-1.5">
               {pinned.map((item, index) => (
                 <span
@@ -178,20 +180,16 @@ export function ContextPopover({
                 }`}
               >
                 {!pending.has(block.kind) ? (
-                  <Check
-                    size={11}
-                    strokeWidth={3}
-                    aria-hidden="true"
-                    className="text-signal-ink"
-                  />
+                  <Check size={11} strokeWidth={3} aria-hidden="true" className="text-signal-ink" />
                 ) : null}
               </button>
-              <span className="min-w-0 flex-1 truncate text-body-s text-primary" title={block.label}>
+              <span
+                className="min-w-0 flex-1 truncate text-body-s text-primary"
+                title={block.label}
+              >
                 {block.label}
               </span>
-              <span className="shrink-0 text-caption text-muted">
-                {estimateLabel(block)}
-              </span>
+              <span className="shrink-0 text-caption text-muted">{estimateLabel(block)}</span>
             </li>
           ))}
           {blocks.length === 0 ? (

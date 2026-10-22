@@ -39,7 +39,11 @@ const BLOCKS: readonly ContextBlock[] = [
 const TOTAL = 1854;
 
 /** Lazy frame block: the tool executor renders it on demand, data stays undefined. */
-const FRAME_BLOCK: ContextBlock = { kind: "currentFrame", label: "Frame preview", tokenEstimate: 0 };
+const FRAME_BLOCK: ContextBlock = {
+  kind: "currentFrame",
+  label: "Frame preview",
+  tokenEstimate: 0,
+};
 
 const FRAME_PIN: PinnedContextItem = { kind: "frame", label: "Frame 00:03.1" };
 const COMMENT_PIN: PinnedContextItem = { kind: "comment", label: "Comment: timing" };
@@ -243,9 +247,7 @@ describe("ContextPopover — pinned chips", () => {
     expect(within(section).getByText("Pinned")).toBeInTheDocument();
     expect(within(section).getByText("▣")).toBeInTheDocument();
     expect(within(section).getByText("✎")).toBeInTheDocument();
-    expect(within(section).getByTestId("context-pinned-1")).toHaveTextContent(
-      "Comment: timing",
-    );
+    expect(within(section).getByTestId("context-pinned-1")).toHaveTextContent("Comment: timing");
 
     const remove = within(section).getByTestId("context-pinned-remove-1");
     expect(remove).toHaveAccessibleName("Remove Comment: timing from context");

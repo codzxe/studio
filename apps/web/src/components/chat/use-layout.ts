@@ -28,6 +28,10 @@ import {
   saveLayout,
 } from "./layout";
 
+// Convenience re-exports so consumers (M4-J's slot) can import the whole
+// layout surface from one module; `layout.ts` stays the canonical owner.
+export type { ChatLayout, ChatMode } from "./layout";
+
 /** The clamp viewport (the editor host fills the window; verified M3-A). */
 export interface ChatViewport {
   readonly w: number;
