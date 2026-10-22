@@ -13,7 +13,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: false,
     setupFiles: ["./vitest.setup.ts"],
-    include: ["tests/**/*.test.{ts,tsx}"],
+    include: ["tests/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
     // Radix + jsdom: keep long-ish timeouts for the animation-free environment.
     testTimeout: 10_000,
   },
