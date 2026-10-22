@@ -64,6 +64,18 @@ export interface ToolDefinition {
 // Args stubs (§8.3 budgets: depth-2 layer trees, ≤12 properties, 1200 px frames)
 // ---------------------------------------------------------------------------
 
+/**
+ * Dunder keys are never legitimate identifiers (M4-N F-1: a model-chosen
+ * `__proto__` layer id could otherwise reach object-key accumulators —
+ * rejected at the boundary, §12.2 defense-in-depth).
+ */
+const DUNDER_ID_SCHEMA = z
+  .string()
+  .min(1)
+  .refine((v) => v !== "__proto__" && v !== "prototype" && v !== "constructor", {
+    message: "dunder keys are not valid identifiers",
+  });
+
 const CONTEXT_BLOCK_SCHEMA = z.enum([
   "projectSummary",
   "activeComp",
@@ -121,8 +133,8 @@ export const TOOL_LIST: readonly ToolDefinition[] = [
       "Read property values (transform, opacity, text, effect parameters) for up to 12 layers " +
       "or property paths. Provide explicit `paths` to read specific properties only.",
     args: z.object({
-      layerIds: z.array(z.string().min(1)).min(1).max(12),
-      paths: z.array(z.string().min(1)).max(12).optional(),
+      layerIds: z.array(DUNDER_ID_SCHEMA).min(1).max(12),
+      paths: z.array(DUNDER_ID_SCHEMA).max(12).optional(),
     }),
   },
   {

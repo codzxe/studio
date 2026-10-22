@@ -70,16 +70,16 @@ describe("outstandingReserve", () => {
 });
 
 describe("planSettlement", () => {
-  it("success under estimate: commit actual, refund the difference (§8.8)", () => {
-    expect(planSettlement(24, 18)).toEqual({ commit: 18, refund: 6 });
+  it("success under estimate: commit actual, release the full hold (§8.8 — run nets −actual)", () => {
+    expect(planSettlement(24, 18)).toEqual({ commit: 18, refund: 24 });
   });
 
-  it("success at exactly the reserve: no refund entry", () => {
-    expect(planSettlement(24, 24)).toEqual({ commit: 24, refund: 0 });
+  it("success at exactly the reserve: commit the hold, release the hold (nets −hold)", () => {
+    expect(planSettlement(24, 24)).toEqual({ commit: 24, refund: 24 });
   });
 
   it("overage is capped by the hold (billing reconciles the rest via adjust)", () => {
-    expect(planSettlement(24, 40)).toEqual({ commit: 24, refund: 0 });
+    expect(planSettlement(24, 40)).toEqual({ commit: 24, refund: 24 });
   });
 
   it("zero cost after reserve: everything is refunded", () => {

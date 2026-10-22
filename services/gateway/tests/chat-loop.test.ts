@@ -738,15 +738,12 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     // §8.8 exit criterion: commit ≥ 1 and capped by the reserve.
     expect(credits.committed).toBeGreaterThanOrEqual(1);
     expect(credits.committed).toBeLessThanOrEqual(credits.reserved);
-    // LEDGER BUG PIN (reported to the fleet, NOT fixed here — law #12): the
-    // current settle refunds `outstanding − commit` instead of releasing the
-    // full hold, so a completed run nets −2×commit rather than −commit
-    // (§8.8 "refund the difference on success"). packages/db's own
-    // integration test pins the doc-correct balance (82) and observes 64 —
-    // RED whenever DATABASE_URL is a postgres URL. This E2E pins the
-    // OBSERVED entry arithmetic: balance = grant − reserve − commit +
-    // (reserve − commit).
-    expect(credits.balance).toBe(100 - expectedReserve - 1 + (expectedReserve - 1));
+    // §8.8 ledger semantics (FIXED 2026-10-23 by the integrator — the
+    // original settle refunded `outstanding − commit` while the reserve
+    // had already deducted N and the commit deducted M on top, double-
+    // charging every completed run by M; planSettlement now releases the
+    // FULL hold): a completed run nets exactly −commit.
+    expect(credits.balance).toBe(100 - 1);
 
     // The runner only ever registered the 5 read tools (M4.6: no write path).
     expect(fake.calls.length).toBe(2);
@@ -754,9 +751,8 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     const toolNames = (fake.calls[0]?.body.tools ?? []).map((tool) => tool.function.name).sort();
     expect(toolNames).toEqual(READ_TOOL_IDS);
 
-    // Ledger: reserve −N, commit −1, refund +(N−1) — see the LEDGER BUG PIN
-    // above (a completed run currently nets −2×commit; the entries below are
-    // the planSettlement contract as built).
+    // Ledger: reserve −N, commit −1, refund +N (full hold release) — the
+    // §8.8 contract: the run nets −1.
     await waitFor(
       "the run row to complete",
       async () => (await getRun(fx, runId)).status === "completed",
@@ -769,8 +765,8 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     }
     expect(byKind.reserve).toEqual([-expectedReserve]);
     expect(byKind.commit).toEqual([-1]);
-    expect(byKind.refund).toEqual([expectedReserve - 1]);
-    expect(await balanceOf(fx.workspaceId)).toBe(100 - expectedReserve - 1 + (expectedReserve - 1));
+    expect(byKind.refund).toEqual([expectedReserve]);
+    expect(await balanceOf(fx.workspaceId)).toBe(100 - 1);
 
     // Run row.
     const record = await getRun(fx, runId);
@@ -848,8 +844,8 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
       (entry) => entry.runId === runId && entry.kind === "reserve",
     );
     expect(reserves.length).toBe(1);
-    // Observed ledger arithmetic (see the LEDGER BUG PIN in test 1).
-    expect(await balanceOf(fx.workspaceId)).toBe(98);
+    // Fixed §8.8 semantics: the completed run nets −1 (see test 1).
+    expect(await balanceOf(fx.workspaceId)).toBe(99);
   });
 
   it("3a. reconnect: a live run resumes after Last-Event-ID; the tool result posted mid-reconnect lands once", async () => {

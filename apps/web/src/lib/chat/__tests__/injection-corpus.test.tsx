@@ -341,14 +341,16 @@ describe("corpus — client tool executor immunity", () => {
     expectPrototypeClean();
   });
 
-  it("get_properties: a __proto__ layer id writes through to Object.prototype (FINDING F-1, report-only) — cleaned up here", async () => {
-    // FINDING (report-only — tool-executor.ts is M4-C2's file, law #12):
-    // runGetProperties does `layers[pair.layer]` on a plain `{}` — a READ of
-    // "__proto__" returns the OBJECT PROTOTYPE via the accessor getter, so the
-    // follow-up `entry[pair.path] = value` writes DIRECTLY onto
-    // Object.prototype with a model-chosen key (`paths` is a free string array)
-    // and a bridge-chosen value (hostile project data). Both args pass the
-    // gateway's Zod schema (arrays of strings). Recorded in M4-SAFETY.md.
+  it("get_properties: dunder layer ids are REJECTED at the boundary and never reach a bridge (FINDING F-1, FIXED)", async () => {
+    // FINDING F-1 (FIXED by the integrator after M4-N reported it):
+    // layerIds/paths are MODEL-CHOSEN strings that end up as object keys in
+    // the result accumulator. Fix is two layers deep:
+    //   1. boundary — @studio/contracts get_properties args now use
+    //      DUNDER_ID_SCHEMA (rejects "__proto__"/"prototype"/"constructor"),
+    //      so validateToolArgs fails the call BEFORE any bridge access;
+    //   2. depth — the executor's accumulators are null-prototype objects
+    //      (tool-executor.ts), so even a future validation drift cannot write
+    //      through to Object.prototype.
     const { deps, events } = executorDeps(hostileBridge("props"));
     await executeClientTool(
       {
@@ -359,19 +361,31 @@ describe("corpus — client tool executor immunity", () => {
       },
       deps,
     );
-    // The poisoned write LANDED on Object.prototype (the vulnerability).
-    expect(Object.hasOwn(Object.prototype, "corpusProbeM4N")).toBe(true);
-    expect(Object.hasOwn(Object.prototype, "text/sourceText")).toBe(true);
-    // The dunder id itself never appears in the posted result (own-key lost —
-    // data fidelity quirk); the benign layer id posts normally.
-    const result = events[0]?.body.result as { layers: Record<string, unknown> };
-    expect(Object.hasOwn(result.layers, "l1")).toBe(true);
-    expect(Object.hasOwn(result.layers, "__proto__")).toBe(false);
-    // Cleanup: leave Object.prototype exactly as we found it.
-    Reflect.deleteProperty(Object.prototype, "corpusProbeM4N");
-    Reflect.deleteProperty(Object.prototype, "text/sourceText");
+    // Layer 1 — the args never execute: one RUN_INVALID_TOOL result, zero
+    // prop.get bridge queries (the hostile bridge records every query).
+    expect(events).toHaveLength(1);
+    const result = events[0]?.body.result as { error: string };
+    expect(result.error).toBe("RUN_INVALID_TOOL");
+    expect((deps.bridge as unknown as { calls: string[] }).calls ?? []).toEqual([]);
+    // Layer 2 — Object.prototype is untouchable end-to-end.
     expect(Object.hasOwn(Object.prototype, "corpusProbeM4N")).toBe(false);
     expect(Object.hasOwn(Object.prototype, "text/sourceText")).toBe(false);
+    expectPrototypeClean();
+  });
+
+  it("get_properties: benign ids still post normally after the F-1 fix", async () => {
+    const { deps, events } = executorDeps(hostileBridge("props"));
+    await executeClientTool(
+      {
+        runId: "run_inj",
+        toolCallId: "call_inj",
+        name: "studio.get_properties",
+        args: { layerIds: ["l1"], paths: ["text/sourceText"] },
+      },
+      deps,
+    );
+    const result = events[0]?.body.result as { layers: Record<string, unknown> };
+    expect(Object.hasOwn(result.layers, "l1")).toBe(true);
     expectPrototypeClean();
   });
 

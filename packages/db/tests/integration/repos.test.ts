@@ -129,6 +129,18 @@ describe.skipIf(!hasDb)("repos (integration)", { timeout: 30_000 }, () => {
 
   it("leases: single writer, refusal, renewal, release", async () => {
     const project = await repos.projects.create(wsA, { name: "Leased", createdBy: userId });
+    // The second writer is a REAL user row: project_leases.user_id has an FK
+    // to "user" (previously "usr_other" had no row — 23503 on acquire).
+    const otherUserId = `usr_test_${randomUUID().slice(0, 8)}`;
+    await db
+      .insert(schema.user)
+      .values({
+        id: otherUserId,
+        name: "Other",
+        email: `${otherUserId}@studio.test`,
+        emailVerified: true,
+      })
+      .onConflictDoNothing();
     const first = await repos.leases.acquire(wsA, project.id, {
       userId,
       sessionId: "sess_1",
@@ -136,7 +148,7 @@ describe.skipIf(!hasDb)("repos (integration)", { timeout: 30_000 }, () => {
     expect(first.acquired).toBe(true);
 
     const second = await repos.leases.acquire(wsA, project.id, {
-      userId: "usr_other",
+      userId: otherUserId,
       sessionId: "sess_2",
     });
     expect(second.acquired).toBe(false);
@@ -152,7 +164,7 @@ describe.skipIf(!hasDb)("repos (integration)", { timeout: 30_000 }, () => {
     expect(released.released).toBe(true);
 
     const again = await repos.leases.acquire(wsA, project.id, {
-      userId: "usr_other",
+      userId: otherUserId,
       sessionId: "sess_2",
     });
     expect(again.acquired).toBe(true);
@@ -201,8 +213,9 @@ describe.skipIf(!hasDb)("repos (integration)", { timeout: 30_000 }, () => {
       idempotencyKey: `${runId}:settle`,
     });
     expect(settle1.commit?.amount).toBe(-18);
-    expect(settle1.refund?.amount).toBe(6);
-    // net effect: −18; balance back to 82
+    expect(settle1.refund?.amount).toBe(24);
+    // net effect: −18 (hold 24 released in full, actual 18 committed);
+    // balance back to 82
     expect(await repos.ledger.balance(wsA)).toBe(82);
 
     const settle2 = await repos.ledger.settle(wsA, {
