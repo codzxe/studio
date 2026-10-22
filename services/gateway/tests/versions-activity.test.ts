@@ -137,16 +137,20 @@ async function uploadRaw(
   });
   if (typeof options.baseVersionId === "string") query.set("baseVersionId", options.baseVersionId);
   if (options.label !== undefined) query.set("label", options.label);
-  const response = await api(server.base, `/v1/projects/${projectId}/versions?${query.toString()}`, {
-    method: "POST",
-    jar: ws.jar,
-    headers: {
-      "x-workspace-id": ws.id,
-      "idempotency-key": unique("upload"),
-      "content-type": "application/octet-stream",
+  const response = await api(
+    server.base,
+    `/v1/projects/${projectId}/versions?${query.toString()}`,
+    {
+      method: "POST",
+      jar: ws.jar,
+      headers: {
+        "x-workspace-id": ws.id,
+        "idempotency-key": unique("upload"),
+        "content-type": "application/octet-stream",
+      },
+      rawBody: new Uint8Array(fixture.bytes),
     },
-    rawBody: new Uint8Array(fixture.bytes),
-  });
+  );
   expect(response.status).toBe(201);
   const body = (await response.json()) as { data: VersionRow };
   return body.data;
@@ -709,12 +713,16 @@ d("restore + label respect the single-writer lease (§11, M7-C guard)", () => {
     expect(blockedRestore.status).toBe(409);
     expect(await errorCode(blockedRestore)).toBe("LEASE_HELD");
 
-    const blockedLabel = await api(server.base, `/v1/projects/${projectId}/versions/${v1Id}/label`, {
-      method: "POST",
-      jar: ws.jar,
-      headers: { "x-workspace-id": ws.id, "idempotency-key": unique("label") },
-      body: { label: "nope" },
-    });
+    const blockedLabel = await api(
+      server.base,
+      `/v1/projects/${projectId}/versions/${v1Id}/label`,
+      {
+        method: "POST",
+        jar: ws.jar,
+        headers: { "x-workspace-id": ws.id, "idempotency-key": unique("label") },
+        body: { label: "nope" },
+      },
+    );
     expect(blockedLabel.status).toBe(409);
     expect(await errorCode(blockedLabel)).toBe("LEASE_HELD");
 

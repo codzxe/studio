@@ -105,11 +105,7 @@ export function createPresenceRepo(db: StudioDb): PresenceRepo {
 
   async function assertUser(userId: string): Promise<string> {
     const id = requireNonEmpty(userId, "userId");
-    const [row] = await db
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(user.id, id))
-      .limit(1);
+    const [row] = await db.select({ id: user.id }).from(user).where(eq(user.id, id)).limit(1);
     if (!row) throw DbError.notFound("user");
     return id;
   }
@@ -151,9 +147,7 @@ export function createPresenceRepo(db: StudioDb): PresenceRepo {
       const projectId = await assertProject(workspaceId, input.projectId);
       const userId = await assertUser(input.userId);
       const compId =
-        input.compId === undefined || input.compId === null
-          ? null
-          : requireCompId(input.compId);
+        input.compId === undefined || input.compId === null ? null : requireCompId(input.compId);
       const playheadTicks =
         input.playheadTicks === undefined || input.playheadTicks === null
           ? null

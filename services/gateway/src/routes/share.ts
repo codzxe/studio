@@ -46,8 +46,8 @@ import {
   type ShareManifestAsset,
 } from "@studio/contracts";
 
-import type { Comment, ShareToken } from "@studio/db";
 import { StudioError } from "@studio/config";
+import type { Comment, ShareToken } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
 import { ok, page, pathParam } from "../http.js";

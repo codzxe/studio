@@ -36,8 +36,8 @@ import { StudioError } from "@studio/config";
 
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
-import { requireLeaseForMutation } from "../lease-guard.js";
 import { ok, pathParam } from "../http.js";
+import { requireLeaseForMutation } from "../lease-guard.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { audit } from "./projects.js";
 

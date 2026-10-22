@@ -169,7 +169,11 @@ export function createShareTokensRepo(db: StudioDb): ShareTokensRepo {
         .select()
         .from(shareTokens)
         .where(
-          and(eq(shareTokens.projectId, projectId), eq(shareTokens.tokenHash, tokenHash), activeFilter()),
+          and(
+            eq(shareTokens.projectId, projectId),
+            eq(shareTokens.tokenHash, tokenHash),
+            activeFilter(),
+          ),
         )
         .limit(1);
       return row ?? null;
@@ -196,7 +200,9 @@ export function createShareTokensRepo(db: StudioDb): ShareTokensRepo {
         })
         .from(shareTokens)
         .innerJoin(projects, eq(shareTokens.projectId, projects.id))
-        .where(and(eq(shareTokens.tokenHash, tokenHash), activeFilter(), isNull(projects.deletedAt)))
+        .where(
+          and(eq(shareTokens.tokenHash, tokenHash), activeFilter(), isNull(projects.deletedAt)),
+        )
         .limit(1);
       if (!row) return null;
       return {

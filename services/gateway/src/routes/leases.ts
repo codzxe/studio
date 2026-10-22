@@ -21,13 +21,13 @@
 
 import { Hono } from "hono";
 
-import { leaseDecision } from "@studio/db";
 import { ACQUIRE_LEASE_SCHEMA, type LeaseQueueEntry } from "@studio/contracts";
+import { leaseDecision } from "@studio/db";
 
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
-import { memberDisplayName } from "../lease-guard.js";
 import { ok, pathParam } from "../http.js";
+import { memberDisplayName } from "../lease-guard.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { audit } from "./projects.js";
 
@@ -168,7 +168,7 @@ export function leasesRoutes(deps: GatewayDeps): Hono<AppBindings> {
         queue = await deps.repos.leases.requestQueue(workspace.id, projectId);
       }
 
-      const active = snapshot !== null && snapshot.isHeld ? snapshot.lease : null;
+      const active = snapshot?.isHeld ? snapshot.lease : null;
       const holder =
         active === null
           ? null
@@ -178,9 +178,7 @@ export function leasesRoutes(deps: GatewayDeps): Hono<AppBindings> {
               // The row persists no tenure start: acquiredAt is DERIVED as the
               // start of the holder's current renewal window (expiresAt − TTL).
               // The banner's countdown must read expiresAt.
-              acquiredAt: new Date(
-                active.expiresAt.getTime() - deps.env.lease.ttlMs,
-              ).toISOString(),
+              acquiredAt: new Date(active.expiresAt.getTime() - deps.env.lease.ttlMs).toISOString(),
               expiresAt: active.expiresAt.toISOString(),
             };
 

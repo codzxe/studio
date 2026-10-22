@@ -180,9 +180,7 @@ export function createCommentsRepo(db: StudioDb): CommentsRepo {
         cursor = await this.get(workspaceId, cursor.parentId);
       }
       if (parentDepth >= MAX_COMMENT_DEPTH) {
-        throw DbError.validation(
-          `Comment threads are limited to ${MAX_COMMENT_DEPTH} levels`,
-        );
+        throw DbError.validation(`Comment threads are limited to ${MAX_COMMENT_DEPTH} levels`);
       }
 
       // The reply inherits the parent's full anchor (thread integrity).

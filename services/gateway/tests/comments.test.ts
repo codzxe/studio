@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Repos } from "@studio/db";
 
-import { type AppBindings, type GatewayDeps } from "../src/context.js";
+import type { AppBindings, GatewayDeps } from "../src/context.js";
 import { toErrorEnvelope } from "../src/errors.js";
 import { createInMemoryRateLimiter } from "../src/rate-limit.js";
 import { createGuestComment } from "../src/routes/comments.js";
@@ -423,11 +423,12 @@ d("threaded list: D-15 server-side compId filter + cursor pagination", () => {
     expect(page1.items).toHaveLength(2);
     expect(page1.items.every((row) => row.compId === "comp_A")).toBe(true);
     expect(page1.nextCursor).not.toBeNull();
-
+    const cursor = page1.nextCursor ?? "";
+    expect(cursor).not.toBe("");
     const page2 = await listComments(
       ws,
       projectId,
-      `?compId=comp_A&limit=2&cursor=${encodeURIComponent(page1.nextCursor!)}`,
+      `?compId=comp_A&limit=2&cursor=${encodeURIComponent(cursor)}`,
     );
     expect(page2.status).toBe(200);
     expect(page2.items).toHaveLength(1);
@@ -662,10 +663,7 @@ describe("createGuestComment (pinned M7-E handler, direct deps injection)", () =
     deps: GatewayDeps,
     routeClass?: "auth" | "chat" | "mutation" | "read",
   ): Hono<AppBindings> {
-    const handler = createGuestComment(
-      deps,
-      routeClass === undefined ? undefined : { routeClass },
-    );
+    const handler = createGuestComment(deps, routeClass === undefined ? undefined : { routeClass });
     const app = new Hono<AppBindings>();
     app.use("*", async (c, next) => {
       c.set("deps", deps);

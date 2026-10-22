@@ -16,8 +16,8 @@ import {
 import type { Project } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
-import { requireLeaseForMutation } from "../lease-guard.js";
 import { ok, page, pathParam } from "../http.js";
+import { requireLeaseForMutation } from "../lease-guard.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
 

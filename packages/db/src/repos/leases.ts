@@ -4,9 +4,9 @@ import type { StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import {
   DEFAULT_LEASE_TTL_MS,
+  LEASE_REQUEST_QUEUE_CAP,
   type LeaseDecision,
   type LeaseRequestEntry,
-  LEASE_REQUEST_QUEUE_CAP,
   isLeaseHeld,
   leaseDecision,
   nextHolderOf,
@@ -106,10 +106,7 @@ export interface LeasesRepo {
    * §M7 task 3 takeover: pop the OLDEST queued requester after a release or
    * expiry — they become the notified next holder. `null` when nobody waits.
    */
-  electNextHolder(
-    workspaceId: WorkspaceId,
-    projectId: string,
-  ): Promise<LeaseRequestEntry | null>;
+  electNextHolder(workspaceId: WorkspaceId, projectId: string): Promise<LeaseRequestEntry | null>;
 }
 
 /**

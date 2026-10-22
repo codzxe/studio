@@ -170,7 +170,11 @@ interface AcquireOutcome {
   readonly readOnly: boolean;
 }
 
-async function acquire(ws: Workspace, projectId: string, sessionId: string): Promise<AcquireOutcome> {
+async function acquire(
+  ws: Workspace,
+  projectId: string,
+  sessionId: string,
+): Promise<AcquireOutcome> {
   const response = await api(activeServer.base, `/v1/projects/${projectId}/lease`, {
     method: "POST",
     jar: ws.jar,
