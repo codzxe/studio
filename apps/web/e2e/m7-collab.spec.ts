@@ -483,13 +483,19 @@ test.describe("M7 comments — anchored threads over the real editor", () => {
     await page.getByTestId("comments-filter-all").click();
     await expect(thread).toBeVisible();
 
-    // The comp-filter menu lists the live project's comps (D-15).
+    // The comp-filter menu lists the live project's comps (D-15); picking
+    // "All comps" closes the menu and keeps the thread visible.
     await page.getByTestId("comments-comp-filter").click();
     await expect(page.getByTestId("comments-comp-menu")).toBeVisible();
+    const mainOption = page
+      .locator('[data-testid^="comments-comp-option-"]')
+      .filter({ hasText: "Main" });
+    await expect(mainOption).toBeVisible();
+    await page.getByTestId("comments-comp-option-all").click();
+    await expect(page.getByTestId("comments-comp-menu")).toHaveCount(0);
     await expect(
-      page.locator('[data-testid^="comments-comp-option-"]').filter({ hasText: "Main" }),
+      page.locator('[data-testid^="comment-thread-"]').filter({ hasText: rootBody }),
     ).toBeVisible();
-    await page.keyboard.press("Escape");
 
     // RELOAD PERSISTENCE — the §M7 exit criterion: the anchored, resolved
     // thread survives a full editor reboot (the rows live in Postgres).
@@ -537,10 +543,9 @@ test.describe("M7 presence + lease — who is viewing, who is editing", () => {
     await expect(strip).toHaveAttribute("data-viewer-count", "3");
     await expect(strip).toHaveAttribute("aria-label", "3 people are viewing");
     await expect(strip.locator('[data-testid="presence-viewer"]')).toHaveCount(3);
-    const self = strip.locator('[data-testid="presence-viewer"]').filter({
-      has: page.locator('[data-self="true"]'),
-    });
-    await expect(self).toHaveCount(1);
+    await expect(
+      strip.locator('[data-testid="presence-viewer"][data-self="true"]'),
+    ).toHaveCount(1);
 
     // The REAL lease-state (nothing scripted here): the M3 session acquired
     // the seeded project's lease on open, so the banner's mount poll reads
@@ -815,7 +820,9 @@ test.describe("M7 share — public review journey (no editor for anonymous)", ()
     await expect(page.getByTestId("share-composer-success")).toContainText("Comment posted.", {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
-    const guestRow = page.locator('[data-testid^="share-comment-"]').filter({ hasText: guestBody });
+    const guestRow = page.getByTestId("share-comment-list").locator("li").filter({
+      hasText: guestBody,
+    });
     await expect(guestRow).toBeVisible();
     await expect(guestRow.getByTestId("share-comment-author")).toHaveText("Riley Reviewer");
     await expect(guestRow.getByTestId("share-comment-body")).toContainText(guestBody);
