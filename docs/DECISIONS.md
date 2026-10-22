@@ -22,7 +22,7 @@ here, **the ruling wins**. Cite as `DECISIONS.md D-n` in code comments where rel
 | D-14 | Member management | Member removal, role change and API-key endpoints are IN scope for the M1 tail (Wave A) — they were exit-criteria for M1, missing from W2/W3. |
 | D-15 | Comments comp filtering | `compId` filter is **server-side** (query param), not client-side. |
 | D-16 | Model provider on this box | Real runners speak the OpenAI-compatible HTTP contract (LiteLLM aliases `studio-fast`/`studio-smart`, per PA §7). Base URL + key come from env (`MODEL_BASE_URL_*` / `MODEL_API_KEY_*`). `MOCK_MODEL=true` stays the default in local `.env` and tests; production rejects it (as built). |
-| D-17 | Editor dist on this box | The sanctioned stand-in is the **badged mock editor** at `apps/web/public/editor/` (see AGENTS.md "Editor strategy"); the real wasm dist is a CI artifact, owed, per `editor/UPSTREAM.md`. |
+| D-17 | Editor dist on this box | **Real EffectCraft only — no mocks.** The Rust toolchain is installed and the wasm dist is built from the vendored pin (`cargo xtask web`) and committed to `apps/web/public/editor/` as a build artifact (size + date recorded in `editor/UPSTREAM.md`). Upstream fork lives at `codzxe/effectcraft` on branch `studio` (our name) — vendor patches land there first, then rsync into `editor/`. |
 | D-18 | Chat overlay chrome | Floating default over the editor; dockable sidebar + collapsed pill persist via localStorage (ECUX §2). Never restyle the editor; overlay may not render inside the iframe bounds when docked-left on narrow viewports — clamp instead. |
 
 ## Ambiguity docket (resolved by the above)

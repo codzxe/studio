@@ -49,3 +49,8 @@ editor/rustc-*.json
 
 # portable local services (native dev without Docker)
 .local/
+
+# Vendored EffectCraft bundles SIL OFL 1.1 fonts (upstream assets, with .attribution files).
+# Required at build time by crates/text/src/fonts.rs include_bytes! — see D-17, editor/UPSTREAM.md
+!editor/assets/fonts/
+!editor/assets/fonts/**
