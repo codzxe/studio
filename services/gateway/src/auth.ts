@@ -81,12 +81,18 @@ export interface GatewayAuth {
   listOrganizations(headers: Headers): Promise<readonly WorkspaceSummary[]>;
   /** Resolves by id or slug; null when absent OR the caller is not a member (§12.1). */
   getFullWorkspace(headers: Headers, candidate: string): Promise<FullWorkspace | null>;
-  createWorkspace(headers: Headers, body: { name: string; slug: string; userId?: string }): Promise<WorkspaceSummary>;
+  createWorkspace(
+    headers: Headers,
+    body: { name: string; slug: string; userId?: string },
+  ): Promise<WorkspaceSummary>;
   updateWorkspace(
     headers: Headers,
     body: { organizationId: string; data: { name?: string; slug?: string; metadata?: unknown } },
   ): Promise<WorkspaceSummary>;
-  inviteMember(headers: Headers, body: { organizationId: string; email: string; role: string }): Promise<InviteInfo>;
+  inviteMember(
+    headers: Headers,
+    body: { organizationId: string; email: string; role: string },
+  ): Promise<InviteInfo>;
   acceptInvitation(headers: Headers, invitationId: string): Promise<AcceptedInviteInfo>;
   checkSlug(headers: Headers, slug: string): Promise<{ available: boolean }>;
 }
@@ -115,9 +121,14 @@ function throwFromAuthError(error: unknown): never {
     // §12.1: membership and existence are never confirmed to strangers —
     // both the missing-workspace and the not-a-member failures read as 404.
     if (lower.includes("invitation not found")) {
-      throw new GatewayError("INVITE_NOT_FOUND", "That invite is no longer available.", { status: 404 });
+      throw new GatewayError("INVITE_NOT_FOUND", "That invite is no longer available.", {
+        status: 404,
+      });
     }
-    if (lower.includes("user is not a member of the organization") || lower.includes("organization not found")) {
+    if (
+      lower.includes("user is not a member of the organization") ||
+      lower.includes("organization not found")
+    ) {
       throw new GatewayError("NOT_FOUND", "Workspace not found.", { status: 404 });
     }
     if (lower.includes("slug already taken")) {
@@ -127,13 +138,23 @@ function throwFromAuthError(error: unknown): never {
       });
     }
     if (lower.includes("recipient of the invitation")) {
-      throw new GatewayError("INVITE_RECIPIENT_MISMATCH", "This invite was issued to a different email.", { status: 403 });
+      throw new GatewayError(
+        "INVITE_RECIPIENT_MISMATCH",
+        "This invite was issued to a different email.",
+        { status: 403 },
+      );
     }
     if (status === 404) {
-      throw new GatewayError("NOT_FOUND", "That resource was not found.", { status: 404, hint: message });
+      throw new GatewayError("NOT_FOUND", "That resource was not found.", {
+        status: 404,
+        hint: message,
+      });
     }
     if (status === 409) {
-      throw new GatewayError("CONFLICT", "That request conflicted with the current state.", { status: 409, hint: message });
+      throw new GatewayError("CONFLICT", "That request conflicted with the current state.", {
+        status: 409,
+        hint: message,
+      });
     }
     if (status === 403 || lower.includes("you are not")) {
       throw new GatewayError("FORBIDDEN", "You don't have permission to do that.", {
@@ -142,9 +163,15 @@ function throwFromAuthError(error: unknown): never {
       });
     }
     if (status === 400 || status === 422) {
-      throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", { status: 400, hint: message });
+      throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
+        status: 400,
+        hint: message,
+      });
     }
-    throw new GatewayError("INTERNAL", "Something went wrong on our side.", { status: 500, cause: error });
+    throw new GatewayError("INTERNAL", "Something went wrong on our side.", {
+      status: 500,
+      cause: error,
+    });
   }
   throw error;
 }
@@ -250,11 +277,17 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
       // as null so the middleware renders the §12.1 404 (never a leak).
       let raw: unknown;
       try {
-        raw = await call<unknown>("getFullOrganization", { headers, query: { organizationId: candidate } });
+        raw = await call<unknown>("getFullOrganization", {
+          headers,
+          query: { organizationId: candidate },
+        });
       } catch (error) {
         if (error instanceof GatewayError && error.code === "NOT_FOUND") {
           try {
-            raw = await call<unknown>("getFullOrganization", { headers, query: { organizationSlug: candidate } });
+            raw = await call<unknown>("getFullOrganization", {
+              headers,
+              query: { organizationSlug: candidate },
+            });
           } catch (again) {
             if (again instanceof GatewayError && again.code === "NOT_FOUND") return null;
             throw again;
@@ -306,7 +339,9 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
         role: asString(record.role) ?? "viewer",
         status: asString(record.status) ?? "pending",
         expiresAt:
-          typeof expiresAt === "string" || typeof expiresAt === "number" || expiresAt instanceof Date
+          typeof expiresAt === "string" ||
+          typeof expiresAt === "number" ||
+          expiresAt instanceof Date
             ? new Date(expiresAt as string | number | Date).toISOString()
             : null,
       };
@@ -319,7 +354,8 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
       const member = asRecord(record.member);
       return {
         inviteId: asString(invitation.id) ?? invitationId,
-        organizationId: asString(member.organizationId) ?? asString(invitation.organizationId) ?? "",
+        organizationId:
+          asString(member.organizationId) ?? asString(invitation.organizationId) ?? "",
         role: asString(member.role) ?? "viewer",
       };
     },

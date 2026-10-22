@@ -4,12 +4,17 @@
 
 import { Hono } from "hono";
 
-import { ACCEPT_INVITE_SCHEMA, INVITE_MEMBER_SCHEMA, type AcceptedInvite, type Invite } from "@studio/contracts";
+import {
+  ACCEPT_INVITE_SCHEMA,
+  type AcceptedInvite,
+  INVITE_MEMBER_SCHEMA,
+  type Invite,
+} from "@studio/contracts";
 
-import { ok, pathParam } from "../http.js";
-import { GatewayError } from "../errors.js";
-import { requireAuth, resolveWorkspaceContext } from "../middleware.js";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
+import { GatewayError } from "../errors.js";
+import { ok, pathParam } from "../http.js";
+import { requireAuth, resolveWorkspaceContext } from "../middleware.js";
 
 export function invitesRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -40,7 +45,8 @@ export function invitesRoutes(deps: GatewayDeps): Hono<AppBindings> {
       workspaceId: invite.organizationId || context.id,
       email: invite.email,
       role: parsed.data.role,
-      status: invite.status === "accepted" || invite.status === "revoked" ? invite.status : "pending",
+      status:
+        invite.status === "accepted" || invite.status === "revoked" ? invite.status : "pending",
       expiresAt: invite.expiresAt,
       createdAt: new Date().toISOString(),
     };
@@ -67,7 +73,10 @@ export function invitesRoutes(deps: GatewayDeps): Hono<AppBindings> {
     const body: AcceptedInvite = {
       inviteId: accepted.inviteId,
       workspaceId: accepted.organizationId,
-      role: accepted.role === "owner" || accepted.role === "admin" || accepted.role === "editor" ? accepted.role : "viewer",
+      role:
+        accepted.role === "owner" || accepted.role === "admin" || accepted.role === "editor"
+          ? accepted.role
+          : "viewer",
     };
     try {
       await deps.repos.audit.append(accepted.organizationId, {

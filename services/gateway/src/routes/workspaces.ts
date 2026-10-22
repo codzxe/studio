@@ -7,17 +7,22 @@ import { Hono } from "hono";
 
 import { CREATE_WORKSPACE_SCHEMA, PATCH_WORKSPACE_SCHEMA, type Workspace } from "@studio/contracts";
 
-import { ok, pathParam } from "../http.js";
-import { GatewayError } from "../errors.js";
-import { requireAuth, resolveWorkspaceContext } from "../middleware.js";
 import { can } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
+import { GatewayError } from "../errors.js";
+import { ok, pathParam } from "../http.js";
+import { requireAuth, resolveWorkspaceContext } from "../middleware.js";
 
 export function workspacesRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
   app.use("/v1/workspaces/*", requireAuth());
 
-  const toWorkspace = (org: { id: string; name: string; slug: string; createdAt: string | null }): Workspace => ({
+  const toWorkspace = (org: {
+    id: string;
+    name: string;
+    slug: string;
+    createdAt: string | null;
+  }): Workspace => ({
     id: org.id,
     name: org.name,
     slug: org.slug,
@@ -28,7 +33,10 @@ export function workspacesRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
   app.get("/v1/workspaces", async (c: AppContext): Promise<Response> => {
     const orgs = await deps.auth.listOrganizations(c.req.raw.headers);
-    return ok(c, orgs.map((org) => toWorkspace(org)));
+    return ok(
+      c,
+      orgs.map((org) => toWorkspace(org)),
+    );
   });
 
   app.post("/v1/workspaces", async (c: AppContext): Promise<Response> => {
@@ -52,7 +60,11 @@ export function workspacesRoutes(deps: GatewayDeps): Hono<AppBindings> {
       });
     }
 
-    const workspace = await deps.auth.createWorkspace(c.req.raw.headers, { name, slug, userId: user.id });
+    const workspace = await deps.auth.createWorkspace(c.req.raw.headers, {
+      name,
+      slug,
+      userId: user.id,
+    });
     await audit(c, workspace.id, "workspace.created", workspace.id, "workspace");
     return ok(c, toWorkspace(workspace), 201);
   });
@@ -124,7 +136,11 @@ export function workspacesRoutes(deps: GatewayDeps): Hono<AppBindings> {
       });
     } catch (error) {
       // Audit is important but must not fail the user-visible mutation.
-      deps.logger.warn("audit_failed", { action, workspaceId, detail: error instanceof Error ? error.message : "unknown" });
+      deps.logger.warn("audit_failed", {
+        action,
+        workspaceId,
+        detail: error instanceof Error ? error.message : "unknown",
+      });
     }
   }
 

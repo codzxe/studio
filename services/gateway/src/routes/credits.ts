@@ -6,13 +6,18 @@
 
 import { Hono } from "hono";
 
-import { LEDGER_KIND_SCHEMA, LEDGER_QUERY_SCHEMA, type CreditsSummary, type LedgerEntry } from "@studio/contracts";
+import {
+  type CreditsSummary,
+  LEDGER_KIND_SCHEMA,
+  LEDGER_QUERY_SCHEMA,
+  type LedgerEntry,
+} from "@studio/contracts";
 
-import { ok, page } from "../http.js";
-import { GatewayError } from "../errors.js";
-import { requireAuth, requireWorkspace } from "../middleware.js";
+import { type LedgerEntry as DbLedgerEntry, outstandingReserve } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
-import { outstandingReserve, type LedgerEntry as DbLedgerEntry } from "@studio/db";
+import { GatewayError } from "../errors.js";
+import { ok, page } from "../http.js";
+import { requireAuth, requireWorkspace } from "../middleware.js";
 
 /** §10.1 illustrative monthly credit allowance per plan (stub until billing). */
 export const PLAN_MONTHLY_CREDITS: Readonly<Record<string, number>> = Object.freeze({
@@ -70,27 +75,31 @@ export function creditsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     return ok(c, body, 200);
   });
 
-  app.get("/v1/credits/ledger", requireWorkspace("viewer"), async (c: AppContext): Promise<Response> => {
-    const parsed = LEDGER_QUERY_SCHEMA.safeParse({
-      cursor: c.req.query("cursor"),
-      limit: c.req.query("limit"),
-    });
-    if (!parsed.success) {
-      throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
-        status: 400,
-        hint: "Check the pagination parameters.",
-        requestId: c.get("requestId"),
+  app.get(
+    "/v1/credits/ledger",
+    requireWorkspace("viewer"),
+    async (c: AppContext): Promise<Response> => {
+      const parsed = LEDGER_QUERY_SCHEMA.safeParse({
+        cursor: c.req.query("cursor"),
+        limit: c.req.query("limit"),
       });
-    }
-    const kind = LEDGER_KIND_SCHEMA.safeParse(c.req.query("kind"));
-    const workspaceId = c.get("workspace").id;
-    const result = await deps.repos.ledger.list(workspaceId, {
-      cursor: parsed.data.cursor ?? null,
-      limit: parsed.data.limit,
-      kind: kind.success ? kind.data : undefined,
-    });
-    return page(c, result.items.map(toEntryDto), result.nextCursor);
-  });
+      if (!parsed.success) {
+        throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
+          status: 400,
+          hint: "Check the pagination parameters.",
+          requestId: c.get("requestId"),
+        });
+      }
+      const kind = LEDGER_KIND_SCHEMA.safeParse(c.req.query("kind"));
+      const workspaceId = c.get("workspace").id;
+      const result = await deps.repos.ledger.list(workspaceId, {
+        cursor: parsed.data.cursor ?? null,
+        limit: parsed.data.limit,
+        kind: kind.success ? kind.data : undefined,
+      });
+      return page(c, result.items.map(toEntryDto), result.nextCursor);
+    },
+  );
 
   return app;
 }

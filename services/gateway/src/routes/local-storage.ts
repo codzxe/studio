@@ -17,26 +17,76 @@ export function localStorageRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
   app.get("/v1/local-storage/:token", async (c): Promise<Response> => {
     if (local === null) {
-      return c.json({ error: { code: "NOT_FOUND", message: "Not found.", retryable: false, requestId: c.get("requestId") } }, 404);
+      return c.json(
+        {
+          error: {
+            code: "NOT_FOUND",
+            message: "Not found.",
+            retryable: false,
+            requestId: c.get("requestId"),
+          },
+        },
+        404,
+      );
     }
     const key = local.tokens.consume(pathParam(c, "token"), "GET");
     if (key === null) {
-      return c.json({ error: { code: "NOT_FOUND", message: "Not found.", retryable: false, requestId: c.get("requestId") } }, 404);
+      return c.json(
+        {
+          error: {
+            code: "NOT_FOUND",
+            message: "Not found.",
+            retryable: false,
+            requestId: c.get("requestId"),
+          },
+        },
+        404,
+      );
     }
     const bytes = await local.read(key);
     if (bytes === null) {
-      return c.json({ error: { code: "NOT_FOUND", message: "Not found.", retryable: false, requestId: c.get("requestId") } }, 404);
+      return c.json(
+        {
+          error: {
+            code: "NOT_FOUND",
+            message: "Not found.",
+            retryable: false,
+            requestId: c.get("requestId"),
+          },
+        },
+        404,
+      );
     }
     return c.body(new Uint8Array(bytes), 200, { "content-type": "application/octet-stream" });
   });
 
   app.put("/v1/local-storage/:token", async (c): Promise<Response> => {
     if (local === null) {
-      return c.json({ error: { code: "NOT_FOUND", message: "Not found.", retryable: false, requestId: c.get("requestId") } }, 404);
+      return c.json(
+        {
+          error: {
+            code: "NOT_FOUND",
+            message: "Not found.",
+            retryable: false,
+            requestId: c.get("requestId"),
+          },
+        },
+        404,
+      );
     }
     const key = local.tokens.consume(pathParam(c, "token"), "PUT");
     if (key === null) {
-      return c.json({ error: { code: "NOT_FOUND", message: "Not found.", retryable: false, requestId: c.get("requestId") } }, 404);
+      return c.json(
+        {
+          error: {
+            code: "NOT_FOUND",
+            message: "Not found.",
+            retryable: false,
+            requestId: c.get("requestId"),
+          },
+        },
+        404,
+      );
     }
     // Stream the request body straight to disk (no double buffering).
     await local.put(key, c.req.raw.body as ReadableStream<Uint8Array>);

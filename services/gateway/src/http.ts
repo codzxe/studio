@@ -2,8 +2,8 @@
 // extraction and Zod validation at the boundary (§7.2: every route is
 // Zod-validated; schemas come from @studio/contracts).
 
-import { okEnvelope, StudioError } from "@studio/config";
 import { zValidator } from "@hono/zod-validator";
+import { StudioError, okEnvelope } from "@studio/config";
 import type { Context } from "hono";
 import type { z } from "zod";
 
@@ -35,7 +35,10 @@ export function pathParam(c: AppContext, name: string): string {
  * never reaches the handler — the error boundary renders VALIDATION_FAILED
  * (generic message; the invalid input is never echoed, §7.3).
  */
-export function validate<S extends z.ZodType, Target extends "json" | "query">(target: Target, schema: S) {
+export function validate<S extends z.ZodType, Target extends "json" | "query">(
+  target: Target,
+  schema: S,
+) {
   return zValidator(target, schema, (result, context) => {
     if (!result.success) {
       const c = context as unknown as Context<AppBindings>;

@@ -6,10 +6,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  ModelUnavailableError,
-  streamChatCompletion,
   type ModelStreamEvent,
+  ModelUnavailableError,
   type OpenAIChatMessage,
+  streamChatCompletion,
 } from "../src/litellm/openai.js";
 
 // ---------------------------------------------------------------------------
@@ -29,13 +29,17 @@ function textDelta(content: string): string {
 function toolCallStart(index: number, id: string, name: string): string {
   return frame({
     choices: [
-      { delta: { tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }] } },
+      {
+        delta: { tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }] },
+      },
     ],
   });
 }
 
 function toolCallArgs(index: number, args: string): string {
-  return frame({ choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }] });
+  return frame({
+    choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }],
+  });
 }
 
 function finish(reason: string): string {
@@ -43,7 +47,10 @@ function finish(reason: string): string {
 }
 
 function usageFrame(promptTokens: number, completionTokens: number): string {
-  return frame({ choices: [], usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens } });
+  return frame({
+    choices: [],
+    usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
+  });
 }
 
 const DONE = "data: [DONE]\n\n";
@@ -144,9 +151,17 @@ describe("streamChatCompletion", () => {
       { type: "text", delta: "there" },
       {
         type: "tool_call",
-        call: { index: 0, id: "call_a", name: "studio.get_context", arguments: '{"include":["activeComp"]}' },
+        call: {
+          index: 0,
+          id: "call_a",
+          name: "studio.get_context",
+          arguments: '{"include":["activeComp"]}',
+        },
       },
-      { type: "tool_call", call: { index: 1, id: "call_b", name: "studio.list_layers", arguments: "{}" } },
+      {
+        type: "tool_call",
+        call: { index: 1, id: "call_b", name: "studio.list_layers", arguments: "{}" },
+      },
       { type: "finish", reason: "tool_calls" },
       { type: "usage", usage: { inputTokens: 120, outputTokens: 30 } },
     ]);
@@ -154,8 +169,8 @@ describe("streamChatCompletion", () => {
 
   it("tolerates CRLF line endings and a final frame without trailing newline", async () => {
     const crlf =
-      `data: ${JSON.stringify({ choices: [{ delta: { content: "a" } }] })}\r\n\r\n` +
-      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" } }] })}\r\n`;
+      frame({ choices: [{ delta: { content: "a" } }] }).replaceAll("\n", "\r\n") +
+      frame({ choices: [{ delta: {}, finish_reason: "stop" }] }).replace(/\n+$/, "");
     const events = await collect(
       streamChatCompletion(clientDeps({ fetch: scriptedFetch([sseResponse([crlf])]) }), {
         model: "studio-fast",

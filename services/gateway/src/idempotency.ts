@@ -28,7 +28,14 @@ export interface IdempotencyStore {
   /** Reserve the key; false when already taken (concurrent duplicate). */
   begin(key: string, payloadHash: string, now?: number): boolean;
   /** Store the final result. */
-  complete(key: string, payloadHash: string, status: number, body: unknown, contentType: string, now?: number): void;
+  complete(
+    key: string,
+    payloadHash: string,
+    status: number,
+    body: unknown,
+    contentType: string,
+    now?: number,
+  ): void;
   /** Drop an in-flight reservation (handler failed before responding). */
   release(key: string): void;
   /** Resolve when the in-flight handler completes or releases the key. */
@@ -137,6 +144,8 @@ export async function fingerprintPayload(request: Request): Promise<string> {
     }
   }
   const hash = createHash("sha256");
-  hash.update(`${request.method} ${request.url} ${contentType} ${request.headers.get("content-length") ?? ""}`);
+  hash.update(
+    `${request.method} ${request.url} ${contentType} ${request.headers.get("content-length") ?? ""}`,
+  );
   return hash.digest("hex");
 }

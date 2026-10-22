@@ -6,8 +6,8 @@
 
 import { Hono } from "hono";
 
-import { AUTH_MOUNT_PATH } from "./env.js";
 import type { AppBindings, GatewayDeps } from "./context.js";
+import { AUTH_MOUNT_PATH } from "./env.js";
 import { toErrorEnvelope } from "./errors.js";
 import {
   accessLogMiddleware,
@@ -77,7 +77,25 @@ export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
         status,
       });
     }
-    return c.json(envelope, status as 200 | 201 | 400 | 401 | 402 | 403 | 404 | 409 | 413 | 415 | 429 | 500 | 502 | 503 | 504);
+    return c.json(
+      envelope,
+      status as
+        | 200
+        | 201
+        | 400
+        | 401
+        | 402
+        | 403
+        | 404
+        | 409
+        | 413
+        | 415
+        | 429
+        | 500
+        | 502
+        | 503
+        | 504,
+    );
   });
 
   // Default 404: { error: { code: "NOT_FOUND", … } }.

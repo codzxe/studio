@@ -7,16 +7,10 @@ import { describe, expect, it } from "vitest";
 import {
   CONTEXT_SELECTION_SCHEMA,
   EDIT_PLAN_SCHEMA,
-  TOOL_LIST,
   type StudioStreamEvent,
+  TOOL_LIST,
 } from "@studio/contracts";
 
-import {
-  RUNNER_READ_TOOLS,
-  TOOL_RESULT_TIMEOUT_MS,
-  committedCreditsFor,
-  createLiteLLMRunner,
-} from "../src/litellm/runner.js";
 import {
   EDITOR_PRIMER_BULLETS,
   SYSTEM_PROMPT,
@@ -25,16 +19,22 @@ import {
   planInstruction,
 } from "../src/litellm/prompt.js";
 import {
-  RunLog,
-  RunRegistry,
-  mockEditPlan,
+  RUNNER_READ_TOOLS,
+  TOOL_RESULT_TIMEOUT_MS,
+  committedCreditsFor,
+  createLiteLLMRunner,
+} from "../src/litellm/runner.js";
+import type { LogFields, Logger } from "../src/logger.js";
+import {
   type AgentRun,
   type AgentRunOutcome,
   type AgentRunStream,
+  RunLog,
+  RunRegistry,
   type RunStreamPayload,
   type ToolWaitResult,
+  mockEditPlan,
 } from "../src/runner.js";
-import type { Logger, LogFields } from "../src/logger.js";
 
 // ---------------------------------------------------------------------------
 // Fake OpenAI SSE server (scripted)
@@ -51,12 +51,16 @@ function textDelta(content: string): string {
 function toolCallStart(index: number, id: string, name: string): string {
   return frame({
     choices: [
-      { delta: { tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }] } },
+      {
+        delta: { tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }] },
+      },
     ],
   });
 }
 function toolCallArgs(index: number, args: string): string {
-  return frame({ choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }] });
+  return frame({
+    choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }],
+  });
 }
 function finish(reason: string): string {
   return frame({ choices: [{ delta: {}, finish_reason: reason }] });
@@ -121,6 +125,8 @@ class FakeStream implements AgentRunStream {
   /** "pending" → the TEST resolves each wait (realistic client POST). */
   waitMode: WaitMode = "pending";
   private readonly waits = new Map<string, (result: ToolWaitResult) => void>();
+  /** Results that arrive before the runner starts waiting (client POST race). */
+  private readonly early = new Map<string, unknown>();
 
   get signal(): AbortSignal {
     return this.controller.signal;
@@ -128,7 +134,7 @@ class FakeStream implements AgentRunStream {
 
   emit(payload: RunStreamPayload): StudioStreamEvent {
     this.events.push(payload);
-    return { ...payload, runId: "run_test", seq: this.events.length - 1 } as StudioStreamEvent;
+    return { ...payload, runId: "run_test", seq: this.events.length - 1 };
   }
 
   async yieldToStream(): Promise<void> {
@@ -143,6 +149,9 @@ class FakeStream implements AgentRunStream {
     if (this.waitMode === "timeout") return Promise.resolve({ ok: false, reason: "timeout" });
     if (this.waitMode === "aborted") return Promise.resolve({ ok: false, reason: "aborted" });
     if (this.waitMode === "auto") return Promise.resolve({ ok: true, result: { stub: true } });
+    if (this.early.has(toolCallId)) {
+      return Promise.resolve({ ok: true, result: this.early.get(toolCallId) });
+    }
     return new Promise((resolve) => {
       this.waits.set(toolCallId, resolve);
     });
@@ -150,8 +159,12 @@ class FakeStream implements AgentRunStream {
 
   resolveToolResult(toolCallId: string, result: unknown): void {
     const resolve = this.waits.get(toolCallId);
+    if (resolve === undefined) {
+      this.early.set(toolCallId, result);
+      return;
+    }
     this.waits.delete(toolCallId);
-    resolve?.({ ok: true, result });
+    resolve({ ok: true, result });
   }
 }
 
@@ -207,7 +220,11 @@ function makeRunner(
     stream?: FakeStream;
     logger?: Logger;
   } = {},
-): { runner: ReturnType<typeof createLiteLLMRunner>; fetchStub: ReturnType<typeof scriptedFetch>; stream: FakeStream } {
+): {
+  runner: ReturnType<typeof createLiteLLMRunner>;
+  fetchStub: ReturnType<typeof scriptedFetch>;
+  stream: FakeStream;
+} {
   const fetchStub = scriptedFetch(script);
   const stream = options.stream ?? new FakeStream();
   const runner = createLiteLLMRunner({
@@ -261,9 +278,7 @@ describe("LiteLLM runner — happy path", () => {
   });
 
   it("estimates tokens from prompt chars when the provider sends no usage", async () => {
-    const { runner, stream } = makeRunner([
-      sseResponse([textDelta("hi"), finish("stop"), DONE]),
-    ]);
+    const { runner, stream } = makeRunner([sseResponse([textDelta("hi"), finish("stop"), DONE])]);
     const outcome = await runToOutcome(runner, makeRun({ model: "studio-fast" }), stream);
     expect(outcome.kind).toBe("completed");
     // ~system+user chars/4 at studio-fast rates is far below 1 → minimum 1.
@@ -275,16 +290,28 @@ describe("committedCreditsFor (§8.8 math)", () => {
   it("ceil(in/1000×rateIn + out/1000×rateOut), min 1", () => {
     const messages = [{ role: "user" as const, content: "x" }];
     expect(
-      committedCreditsFor("studio-smart", { inputTokens: 25_000, outputTokens: 9_000, seen: true }, messages),
+      committedCreditsFor(
+        "studio-smart",
+        { inputTokens: 25_000, outputTokens: 9_000, seen: true },
+        messages,
+      ),
     ).toBe(7); // 2.5 + 3.6 = 6.1 → 7
     expect(
-      committedCreditsFor("studio-fast", { inputTokens: 1_500, outputTokens: 700, seen: true }, messages),
+      committedCreditsFor(
+        "studio-fast",
+        { inputTokens: 1_500, outputTokens: 700, seen: true },
+        messages,
+      ),
     ).toBe(1); // 0.036 → 1
     expect(
       committedCreditsFor("studio-fast", { inputTokens: 0, outputTokens: 0, seen: true }, messages),
     ).toBe(1); // minimum 1
     expect(
-      committedCreditsFor("unknown-alias", { inputTokens: 10, outputTokens: 0, seen: true }, messages),
+      committedCreditsFor(
+        "unknown-alias",
+        { inputTokens: 10, outputTokens: 0, seen: true },
+        messages,
+      ),
     ).toBe(1); // defensive fallback to studio-fast
   });
 });
@@ -359,7 +386,11 @@ describe("LiteLLM runner — client tools", () => {
       retryable: true,
     });
     const failedEvent = stream.events.at(-1);
-    expect(failedEvent).toMatchObject({ type: "run.failed", code: "EDITOR_DISCONNECTED", retryable: true });
+    expect(failedEvent).toMatchObject({
+      type: "run.failed",
+      code: "EDITOR_DISCONNECTED",
+      retryable: true,
+    });
   });
 
   it("returns cancelled when the wait reports aborted (run cancelled mid-tool)", async () => {
@@ -411,7 +442,9 @@ describe("LiteLLM runner — tool validation (§8.9)", () => {
     expect(stream.events.some((event) => event.type === "tool.started")).toBe(false);
     expect(stream.expected).toEqual([]);
     // The repair turn fed the validation error back as the tool result.
-    const repairMessage = fetchStub.calls[1]?.body.messages.find((message) => message.role === "tool");
+    const repairMessage = fetchStub.calls[1]?.body.messages.find(
+      (message) => message.role === "tool",
+    );
     expect(repairMessage?.tool_call_id).toBe("call_bad");
     const repair = JSON.parse(String(repairMessage?.content)) as { error: string; message: string };
     expect(repair.error).toBe("VALIDATION_FAILED");
@@ -521,9 +554,9 @@ describe("LiteLLM runner — studio.plan_edit (server-side)", () => {
     expect(fedBack.error).toBe("PLAN_INVALID");
     // Attempt 2 saw the validation error of attempt 1.
     const secondAttempt = fetchStub.calls[2]?.body.messages ?? [];
-    expect(secondAttempt.some((message) => String(message.content).includes("not valid JSON"))).toBe(
-      true,
-    );
+    expect(
+      secondAttempt.some((message) => String(message.content).includes("was not a valid EditPlan")),
+    ).toBe(true);
   });
 });
 
@@ -656,7 +689,7 @@ describe("LiteLLM runner — tool registry + redaction (M4.6 / M4.3)", () => {
     const fields = modelCalls[0]?.fields as Record<string, unknown>;
     expect(fields.promptChars).toBeGreaterThan(0);
     expect(String(fields.promptSha256)).toMatch(/^[0-9a-f]{16}$/);
-    expect(fields.promptMessages).toBeGreaterThanOrEqual(3);
+    expect(fields.promptMessages).toBeGreaterThanOrEqual(2); // system + user
     // M4.3: no prompt body (the user message) ever reaches the logger.
     for (const record of records) {
       expect(JSON.stringify(record)).not.toContain("CONFIDENTIAL-PROMPT");

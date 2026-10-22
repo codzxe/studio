@@ -7,7 +7,7 @@
 
 import { createRequire } from "node:module";
 
-import { getEnv, type StudioEnv } from "@studio/config";
+import { type StudioEnv, getEnv } from "@studio/config";
 
 /** The typed, grouped, frozen Studio configuration (see @studio/config). */
 export type Env = StudioEnv;

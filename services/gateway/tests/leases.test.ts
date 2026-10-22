@@ -7,11 +7,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   CookieJar,
   HAS_DATABASE,
+  type RunningTestServer,
   api,
   bootServer,
   unique,
   uniqueEmail,
-  type RunningTestServer,
 } from "./helpers.js";
 
 const d = describe.skipIf(!HAS_DATABASE);
@@ -42,7 +42,11 @@ async function newWorkspaceWithEditor(): Promise<{ ws: Workspace; editorJar: Coo
   let response = await api(server.base, "/v1/auth/sign-up/email", {
     method: "POST",
     jar: ownerJar,
-    body: { email: uniqueEmail("leaseowner"), password: "Passw0rd!longenough", name: "Lease Owner" },
+    body: {
+      email: uniqueEmail("leaseowner"),
+      password: "Passw0rd!longenough",
+      name: "Lease Owner",
+    },
   });
   expect(response.status).toBe(200);
   response = await api(server.base, "/v1/workspaces", {
@@ -117,12 +121,18 @@ async function acquire(
   const parsed = (await response.json()) as { data?: LeaseDecisionDto; error?: { code: string } };
   return {
     status: response.status,
-    body: parsed.data ?? ({ acquired: false, holderName: null, expiresAt: "", readOnly: false } as LeaseDecisionDto),
+    body:
+      parsed.data ??
+      ({ acquired: false, holderName: null, expiresAt: "", readOnly: false } as LeaseDecisionDto),
     errCode: parsed.error?.code,
   };
 }
 
-async function release(ws: Workspace, jar: CookieJar, projectId: string): Promise<{ released: boolean }> {
+async function release(
+  ws: Workspace,
+  jar: CookieJar,
+  projectId: string,
+): Promise<{ released: boolean }> {
   const response = await api(server.base, `/v1/projects/${projectId}/lease`, {
     method: "DELETE",
     jar,
@@ -165,17 +175,22 @@ d("lease lifecycle (§9.3, §11)", () => {
   });
 
   it("the holder re-acquiring renews the lease (expiresAt extends)", async () => {
-    const first = (await acquire(ws, ws.ownerJar, projectId, "session-owner-0003")).body as LeaseDecisionDto;
-    const later = (await acquire(ws, ws.ownerJar, projectId, "session-owner-0004")).body as LeaseDecisionDto;
+    const first = (await acquire(ws, ws.ownerJar, projectId, "session-owner-0003"))
+      .body as LeaseDecisionDto;
+    const later = (await acquire(ws, ws.ownerJar, projectId, "session-owner-0004"))
+      .body as LeaseDecisionDto;
     expect(later.acquired).toBe(true);
     expect(later.readOnly).toBe(false);
-    expect(new Date(later.expiresAt).getTime()).toBeGreaterThanOrEqual(new Date(first.expiresAt).getTime());
+    expect(new Date(later.expiresAt).getTime()).toBeGreaterThanOrEqual(
+      new Date(first.expiresAt).getTime(),
+    );
   });
 
   it("the holder releases; the other editor can then acquire", async () => {
     const released = await release(ws, ws.ownerJar, projectId);
     expect(released.released).toBe(true);
-    const taken = (await acquire(ws, editorJar, projectId, "session-editor-0005")).body as LeaseDecisionDto;
+    const taken = (await acquire(ws, editorJar, projectId, "session-editor-0005"))
+      .body as LeaseDecisionDto;
     expect(taken.acquired).toBe(true);
     expect(taken.holderName).toBe("Lease Editor");
   });
@@ -190,7 +205,8 @@ d("lease lifecycle (§9.3, §11)", () => {
     await acquire(ws, ws.ownerJar, projectId, "session-owner-0006");
     // TTL is 1500ms — the other editor waits it out and takes over.
     await new Promise((resolve) => setTimeout(resolve, SHORT_TTL_MS + 600));
-    const stolen = (await acquire(ws, editorJar, projectId, "session-editor-0007")).body as LeaseDecisionDto;
+    const stolen = (await acquire(ws, editorJar, projectId, "session-editor-0007"))
+      .body as LeaseDecisionDto;
     expect(stolen.acquired).toBe(true);
     expect(stolen.holderName).toBe("Lease Editor");
   });

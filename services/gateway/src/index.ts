@@ -13,21 +13,18 @@ import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
 import { sql } from "drizzle-orm";
 
-import { createDb, createAuth, createRepos } from "@studio/db";
+import { createAuth, createDb, createRepos } from "@studio/db";
 
-import { adaptBetterAuth } from "./auth.js";
 import { buildApp } from "./app.js";
-import {
-  createInMemoryChatReplayStore,
-  type GatewayDeps,
-} from "./context.js";
+import { adaptBetterAuth } from "./auth.js";
+import { type GatewayDeps, createInMemoryChatReplayStore } from "./context.js";
 import { AUTH_MOUNT_PATH, GATEWAY_VERSION, authBaseFor, getGatewayEnv, parsePort } from "./env.js";
 import { createInMemoryIdempotencyStore } from "./idempotency.js";
 import { createLogger } from "./logger.js";
 import { createInMemoryRateLimiter } from "./rate-limit.js";
 import { RunRegistry, createRunnerForEnv } from "./runner.js";
-import { createStripeSeam } from "./stripe.js";
 import { createStorage } from "./storage.js";
+import { createStripeSeam } from "./stripe.js";
 
 export interface RunningServer {
   readonly port: number;
