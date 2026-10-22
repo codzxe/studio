@@ -156,6 +156,32 @@ export interface ChatUiError {
 }
 
 /**
+ * M6-H (BUILD_PLAN §M6 task 4, EDITOR_CHAT_UX §12, DECISIONS D-12): the §7.3
+ * wire code the gateway returns when the workspace balance cannot fund a run
+ * (HTTP 402, services/gateway/src/routes/chat.ts — the §8.8 pre-model-call
+ * gate). Pinned as a const so the reducer and the block region can never
+ * drift from the server's spelling.
+ */
+export const INSUFFICIENT_CREDITS_CODE = "INSUFFICIENT_CREDITS" as const;
+
+/**
+ * M6-H: the TYPED zero-balance block recorded when a chat POST/stream fails
+ * with `INSUFFICIENT_CREDITS` (402) — or a terminal `run.failed` carries the
+ * same code. Client-side UX truth ONLY: the server re-enforces on every send
+ * (the block never fabricates a balance, it just stops wasted requests);
+ * `chat.submit` clears it so a re-armed send re-checks against the server.
+ */
+export interface ChatBlockedCreditsState {
+  readonly reason: "insufficient-credits";
+  /**
+   * Human-safe copy (law #1): the server's §7.3 envelope message verbatim
+   * ("This workspace is out of credits.") or, for the derived zero-balance
+   * arm, the §12 copy. Never codes, ids or provider internals.
+   */
+  readonly message: string;
+}
+
+/**
  * Whole-thread snapshot. One immutable object per change — `getSnapshot` must
  * be referentially stable between changes for `useSyncExternalStore`.
  */
@@ -165,6 +191,13 @@ export interface ChatUiState {
   /** The run currently streaming; the most recent run while terminal. */
   readonly activeRunId: string | null;
   readonly error?: ChatUiError;
+  /**
+   * M6-H: the typed zero-balance block (see {@link ChatBlockedCreditsState}).
+   * Set when the thread's last failure is `INSUFFICIENT_CREDITS`, cleared by
+   * `chat.submit` / `run.started` / `run.completed` — a fresh send re-checks
+   * against the server (honest client-side UX; the 402 is server-enforced).
+   */
+  readonly blocked?: ChatBlockedCreditsState;
   /** Highest §7.4 seq folded for the ACTIVE run; replays at/below it are no-ops. */
   readonly lastSeq: number;
 }
