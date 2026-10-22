@@ -33,6 +33,8 @@ import {
   type BillingState,
   CHECKOUT_SCHEMA,
   type CheckoutResponse,
+  INVOICES_QUERY_SCHEMA,
+  type InvoiceRecord,
   PORTAL_SCHEMA,
   type PortalResponse,
   TOPUP_SCHEMA,
@@ -67,7 +69,7 @@ import type {
   WorkspaceContext,
 } from "../context.js";
 import { GatewayError } from "../errors.js";
-import { ok } from "../http.js";
+import { ok, page } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { effectivePlan, installSubscriptionReader } from "../plan.js";
 import { outstandingReserveForWorkspace } from "./credits.js";
@@ -691,6 +693,59 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
         topUpPacks: TOP_UP_PACKS.map((pack) => ({ packId: pack.packId, credits: pack.credits })),
       };
       return ok(c, body);
+    },
+  );
+
+  // ── GET /v1/billing/invoices — the recorded invoice history (F-J3) ─────
+  //
+  // The §M6 wire read for the invoices the webhook persists (invoice.paid /
+  // invoice.voided → repos.invoices.record, M6-D): newest-first,
+  // cursor-paginated, workspace-scoped (law #3 — cross-tenant rows are never
+  // visible, a stranger's list is simply empty). `viewer` is the member floor:
+  // every workspace member can read their billing history; no money moves on
+  // a GET. `amountCents` is MONEY in Stripe minor units, never credits (D-12
+  // keeps the credit ledger in its own µc domain).
+  app.get(
+    "/v1/billing/invoices",
+    requireWorkspace("viewer"),
+    async (c: AppContext): Promise<Response> => {
+      const parsed = INVOICES_QUERY_SCHEMA.safeParse({
+        cursor: c.req.query("cursor"),
+        limit: c.req.query("limit"),
+      });
+      if (!parsed.success) {
+        throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
+          status: 400,
+          hint: "Check the pagination parameters.",
+          requestId: c.get("requestId"),
+        });
+      }
+      const invoices = invoicesRepo(deps.repos);
+      if (invoices === null) {
+        throw new GatewayError("SERVICE_UNAVAILABLE", "The database is not reachable right now.", {
+          status: 503,
+          retryable: true,
+          hint: "Invoice history needs billing persistence. Try again once the database is up.",
+          requestId: c.get("requestId"),
+        });
+      }
+      const result = await invoices.list(c.get("workspace").id, {
+        cursor: parsed.data.cursor ?? null,
+        limit: parsed.data.limit,
+      });
+      const rows: InvoiceRecord[] = result.items.map((invoice) => ({
+        id: invoice.id,
+        stripeInvoiceId: invoice.stripeInvoiceId,
+        amountCents: invoice.amountCents,
+        currency: invoice.currency,
+        status: invoice.status,
+        periodStart: toIso(invoice.periodStart),
+        periodEnd: toIso(invoice.periodEnd),
+        hostedUrl: invoice.hostedUrl,
+        pdfUrl: invoice.pdfUrl,
+        createdAt: invoice.createdAt.toISOString(),
+      }));
+      return page(c, rows, result.nextCursor);
     },
   );
 

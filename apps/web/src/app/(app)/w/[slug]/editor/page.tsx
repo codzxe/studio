@@ -1,3 +1,4 @@
+import { CommentsRegion } from "@/components/comments/comments-region";
 import { EmptyState } from "@studio/ui";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
@@ -233,5 +234,27 @@ export default async function EditorPage({ params }: EditorPageProps) {
     );
   }
 
-  return <EditorHost payload={resolution.payload} />;
+  return (
+    <>
+      <EditorHost payload={resolution.payload} />
+      {/*
+        M7-F COMMENTS SLOT REGION — the comments UI mount (BUILD_PLAN §M7 task 1).
+        The editor-host files are M7-G's this wave, so the region mounts here,
+        self-sufficient: it boots its own workspace-scoped ApiClient and
+        attaches a dedicated read-only bridge to the host's iframe (discovered
+        by its stable testid). If the integrator later prefers the IN-HOST
+        mount, move this one line into editor-host.tsx as:
+          <CommentsRegion workspaceId={payload.workspaceId}
+            projectId={payload.manifest.project.id}
+            projectName={payload.manifest.project.name}
+            client={sessionHandle.api} bridge={chatBridge} />
+        and DELETE this slot (one mount, never two).
+      */}
+      <CommentsRegion
+        workspaceId={resolution.payload.workspaceId}
+        projectId={resolution.payload.manifest.project.id}
+        projectName={resolution.payload.manifest.project.name}
+      />
+    </>
+  );
 }

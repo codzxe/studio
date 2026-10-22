@@ -21,6 +21,7 @@
 import { z } from "zod";
 
 import { PAID_PLAN_ID_SCHEMA, type PlanId } from "../models.js";
+import { type Id, PAGINATION_QUERY_SCHEMA } from "./common.js";
 
 /** `POST /v1/billing/checkout` body: the paid plan to subscribe to (D-4). */
 export const CHECKOUT_SCHEMA = z.strictObject({
@@ -171,3 +172,46 @@ export interface TrialResponse {
   /** When the trial ends (ISO-8601). */
   readonly trialEnd: string;
 }
+
+// ---------------------------------------------------------------------------
+// Invoices — the recorded Stripe invoice history (BP §M6 task 2; the F-J3
+// wire read: rows are recorded by the invoice.paid / invoice.voided webhook
+// handler through repos.invoices)
+// ---------------------------------------------------------------------------
+
+/** `invoice.status` on the wire — the `invoices.status` DB vocabulary (§9.1). */
+export const INVOICE_STATUSES = [
+  "draft",
+  "open",
+  "paid",
+  "void",
+  "uncollectible",
+] as const satisfies readonly string[];
+
+export const INVOICE_STATUS_SCHEMA = z.enum(INVOICE_STATUSES);
+
+export type InvoiceStatusWire = z.infer<typeof INVOICE_STATUS_SCHEMA>;
+
+/** One recorded Stripe invoice — a `GET /v1/billing/invoices` row. */
+export interface InvoiceRecord {
+  readonly id: Id;
+  readonly stripeInvoiceId: string;
+  /**
+   * MONEY in Stripe minor units (e.g. US cents) — never credits; the credit
+   * ledger is its own D-12 microcredit domain (§9.1 `invoices.amount_cents`).
+   */
+  readonly amountCents: number;
+  /** ISO 4217 lowercase 3-letter code, e.g. 'usd'. */
+  readonly currency: string;
+  readonly status: InvoiceStatusWire;
+  readonly periodStart: string | null;
+  readonly periodEnd: string | null;
+  readonly hostedUrl: string | null;
+  readonly pdfUrl: string | null;
+  readonly createdAt: string;
+}
+
+/** `GET /v1/billing/invoices` query — newest-first, cursor-paginated (§7.2). */
+export const INVOICES_QUERY_SCHEMA = PAGINATION_QUERY_SCHEMA;
+
+export type InvoicesQuery = z.infer<typeof INVOICES_QUERY_SCHEMA>;

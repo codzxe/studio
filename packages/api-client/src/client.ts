@@ -52,9 +52,11 @@ import {
   type Err,
   IDEMPOTENCY_KEY_SCHEMA,
   INVITE_MEMBER_SCHEMA,
+  INVOICES_QUERY_SCHEMA,
   ISSUE_SHARE_LINK_SCHEMA,
   type Invite,
   type InviteMemberRequest,
+  type InvoiceRecord,
   type IssueShareLinkRequest,
   LEDGER_QUERY_SCHEMA,
   type LedgerEntry,
@@ -157,6 +159,7 @@ import {
   PAGE_ACTIVITY_SCHEMA,
   PAGE_ASSETS_SCHEMA,
   PAGE_COMMENTS_SCHEMA,
+  PAGE_INVOICES_SCHEMA,
   PAGE_LEDGER_SCHEMA,
   PAGE_MESSAGES_SCHEMA,
   PAGE_PROJECTS_SCHEMA,
@@ -679,6 +682,10 @@ export interface ApiClient {
     state(options?: CallOptions): Promise<BillingState>;
     /** POST /v1/billing/trial — start the card-required 14-day trial. */
     startTrial(body?: TrialRequest, options?: CallOptions): Promise<TrialResponse>;
+    /** GET /v1/billing/invoices — the workspace's recorded Stripe invoices
+     * (F-J3), newest-first, cursor-paginated. `amountCents` is money in
+     * Stripe minor units, never credits. */
+    invoices(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<InvoiceRecord>>;
   };
   readonly renders: {
     create(body: QueueRenderRequest, options?: CallOptions): Promise<RenderJob>;
@@ -1145,6 +1152,13 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
+      invoices: async (query, options) =>
+        impl.get(
+          "/billing/invoices",
+          queryOf(INVOICES_QUERY_SCHEMA, query),
+          PAGE_INVOICES_SCHEMA,
+          options?.signal,
+        ),
     },
     renders: {
       create: async (body, options) =>

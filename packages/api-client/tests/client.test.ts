@@ -526,6 +526,7 @@ describe("createApiClient — surface map", () => {
     await ignore(paginated.credits.ledger());
     await ignore(recorder.billing.checkout({ planId: "pro" }));
     await ignore(recorder.billing.portal({ returnUrl: "https://app/studio.example.com" }));
+    await ignore(paginated.billing.invoices());
     await ignore(
       recorder.renders.create({
         projectId: "p1",
@@ -575,6 +576,7 @@ describe("createApiClient — surface map", () => {
       "/credits/ledger",
       "/billing/checkout",
       "/billing/portal",
+      "/billing/invoices",
       "/renders",
       "/renders/rnd_1",
       "/projects/p1/comments",
@@ -585,6 +587,80 @@ describe("createApiClient — surface map", () => {
       "/projects/p1/activity",
       "/projects/p1/audit-export",
     ]);
+  });
+});
+
+// F-J3 wire: GET /v1/billing/invoices — recorded Stripe invoices, money in
+// Stripe minor units (cents), never credits (the credit ledger is its own
+// D-12 microcredit domain).
+describe("createApiClient — billing.invoices (F-J3)", () => {
+  it("GETs /billing/invoices, serializes the cursor, and parses the page", async () => {
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(
+        jsonOk({
+          items: [
+            {
+              id: "inv_1",
+              stripeInvoiceId: "in_stripe_1",
+              amountCents: 1200,
+              currency: "usd",
+              status: "paid",
+              periodStart: "2026-10-01T00:00:00.000Z",
+              periodEnd: "2026-10-31T23:59:59.000Z",
+              hostedUrl: "https://stripe.test/i",
+              pdfUrl: "https://stripe.test/i.pdf",
+              createdAt: "2026-10-31T23:59:59.000Z",
+              organizationId: "ws_1", // not on the wire shape — schema-stripped
+            },
+          ],
+          nextCursor: "cur_2",
+        }),
+      ),
+    );
+    const result = await client.billing.invoices({ cursor: "cur_1", limit: 25 });
+    expect(calls[0]?.input).toBe(`${BASE}/billing/invoices?cursor=cur_1&limit=25`);
+    const firstCall = calls[0];
+    if (firstCall === undefined) throw new Error("no recorded call");
+    expect(header(firstCall, "idempotency-key")).toBeNull(); // GETs never carry one
+    expect(result.items).toHaveLength(1);
+    const invoice = result.items[0];
+    if (invoice === undefined) throw new Error("no invoice row");
+    expect(invoice).toMatchObject({
+      id: "inv_1",
+      stripeInvoiceId: "in_stripe_1",
+      amountCents: 1200,
+      currency: "usd",
+      status: "paid",
+    });
+    expect("organizationId" in invoice).toBe(false);
+    expect(result.nextCursor).toBe("cur_2");
+  });
+
+  it("rejects an off-vocabulary invoice status client-side (contracts bound)", async () => {
+    const { client } = makeClient(() =>
+      Promise.resolve(
+        jsonOk({
+          items: [
+            {
+              id: "inv_1",
+              stripeInvoiceId: "in_stripe_1",
+              amountCents: 1200,
+              currency: "usd",
+              status: "refunded", // NOT in INVOICE_STATUSES
+              periodStart: null,
+              periodEnd: null,
+              hostedUrl: null,
+              pdfUrl: null,
+              createdAt: "2026-10-31T23:59:59.000Z",
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+    );
+    await expectAsyncFail(client.billing.invoices(), (error) => {
+      expect(error.code).toBe("MALFORMED_RESPONSE");
+    });
   });
 });
 

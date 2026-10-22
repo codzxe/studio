@@ -55,9 +55,9 @@
 //    PLAN_MODEL_ENTITLEMENTS still says starter→[studio-fast] while the
 //    @studio/config catalog says starter→[fast,smart]. Journey 2 converts
 //    to PRO (both sources agree there) and pins the drift as a finding.
-//  - F-J3 (VISIBILITY GAP): invoices are persisted (M6-D repo) but have NO
-//    wire read yet (GET /v1/billing/invoices does not exist) — journey 7
-//    proves the record via the repo and flags the missing route.
+//  - F-J3 (VISIBILITY GAP, LANDED by M6-K): invoices are persisted (M6-D
+//    repo) and NOW wire-readable — GET /v1/billing/invoices (cursor
+//    pagination, workspace-scoped) is walked in journey 7.
 //  - F-J4 (RECONCILIATION JOB): no reconciliation report endpoint is landed
 //    at this tree yet — journey 7 uses direct ledger sums via the
 //    /v1/credits/ledger endpoint walk, the documented fallback.
@@ -842,13 +842,14 @@ interface ChatFixture {
   readonly threadId: string;
 }
 
-/** Seeds chat credits straight through the ledger repo (M4-K precedent). */
-async function grantChatCredits(workspaceId: string, amount: number): Promise<void> {
+/** Seeds whole-credit chat fixtures straight through the ledger repo as D-12 µc. */
+async function grantChatCredits(workspaceId: string, credits: number): Promise<void> {
+  const microcredits = credits * 1_000_000; // D-12: 1 credit = 1_000_000 µc
   const seeded = await repos().ledger.grant(workspaceId, {
-    amount,
+    amount: microcredits,
     idempotencyKey: unique("seed"),
   });
-  expect(seeded.entry.amount).toBe(amount);
+  expect(seeded.entry.amount).toBe(microcredits);
 }
 
 /** A workspace's project + ONE uploaded version + ONE thread. */
@@ -1016,6 +1017,45 @@ async function walkLedgerEndpoint(ws: Workspace, limit: number): Promise<LedgerE
     cursor = body.nextCursor;
   }
   return entries;
+}
+
+/** The wire shape of GET /v1/billing/invoices rows (contracts InvoiceRecord). */
+interface InvoiceEntryDto {
+  readonly id: string;
+  readonly stripeInvoiceId: string;
+  readonly amountCents: number;
+  readonly currency: string;
+  readonly status: string;
+  readonly periodStart: string | null;
+  readonly periodEnd: string | null;
+  readonly hostedUrl: string | null;
+  readonly pdfUrl: string | null;
+  readonly createdAt: string;
+}
+
+/** Walks GET /v1/billing/invoices through every cursor page (F-J3 wire read). */
+async function walkInvoicesEndpoint(ws: Workspace, limit: number): Promise<InvoiceEntryDto[]> {
+  const rows: InvoiceEntryDto[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const path =
+      cursor === null
+        ? `/v1/billing/invoices?limit=${limit}`
+        : `/v1/billing/invoices?limit=${limit}&cursor=${encodeURIComponent(cursor)}`;
+    const response = await api(server.base, path, {
+      jar: ws.jar,
+      headers: { "x-workspace-id": ws.id },
+    });
+    expect(response.status).toBe(200);
+    const body = (await okData(response)) as {
+      items: InvoiceEntryDto[];
+      nextCursor: string | null;
+    };
+    rows.push(...body.items);
+    if (body.nextCursor === null) break;
+    cursor = body.nextCursor;
+  }
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -1198,18 +1238,25 @@ d("M6-J journey 3 — money conservation across runs", () => {
     const tail = await firstStream.rest();
     const all = expectValidStream([...head, ...tail]);
     expect(joinedText(all)).toBe("The comp Main has 1 layer.");
-    expect(findCredits(all)).toMatchObject({ reserved: 2, committed: 1, balance: GRANT - 1 });
+    expect(findCredits(all)).toMatchObject({
+      reserved: 2,
+      committed: 1,
+      // DISPLAY units (D-12): the µc ledger balance (49_000_000) shown as
+      // whole credits — the SSE event conversion M6-K landed.
+      balance: 49,
+    });
     await waitFor("run completion", async () => (await getRun(fx, runId)).status === "completed");
 
-    // D-20 settle semantics: entries reserve −2 / commit −1 / refund +2 —
-    // the FULL hold is released, so the run nets exactly the usage commit.
+    // D-20 settle semantics (µc, D-12): entries reserve −2_000_000 /
+    // commit −1_000_000 / refund +2_000_000 — the FULL hold is released, so
+    // the run nets exactly the usage commit (1 credit).
     const runEntries = await ledgerOfRun(ws.id, runId);
     const byKind = kindsOf(runEntries);
-    expect(byKind.reserve).toEqual([-2]);
-    expect(byKind.commit).toEqual([-1]);
-    expect(byKind.refund).toEqual([2]);
-    expect(sumAmounts(runEntries)).toBe(-1);
-    expect(await balanceOf(ws.id)).toBe(GRANT - 1);
+    expect(byKind.reserve).toEqual([-2 * 1_000_000]);
+    expect(byKind.commit).toEqual([-1 * 1_000_000]);
+    expect(byKind.refund).toEqual([2 * 1_000_000]);
+    expect(sumAmounts(runEntries)).toBe(-1 * 1_000_000);
+    expect(await balanceOf(ws.id)).toBe(GRANT - 1 * 1_000_000);
 
     // ── a cancelled run refunds fully (nets exactly 0) ────────────────────
     openai.enqueue(getContextRound("call_m6j_money_2"), answerFromToolResult());
@@ -1237,16 +1284,16 @@ d("M6-J journey 3 — money conservation across runs", () => {
     );
     const cancelEntries = await ledgerOfRun(ws.id, cancelledRunId);
     const cancelKinds = kindsOf(cancelEntries);
-    expect(cancelKinds.reserve).toEqual([-2]);
-    expect(cancelKinds.refund).toEqual([2]);
+    expect(cancelKinds.reserve).toEqual([-2 * 1_000_000]);
+    expect(cancelKinds.refund).toEqual([2 * 1_000_000]);
     expect(cancelKinds.commit).toBeUndefined(); // usage never committed
     expect(sumAmounts(cancelEntries)).toBe(0);
-    expect(await balanceOf(ws.id)).toBe(GRANT - 1); // unchanged: full refund
+    expect(await balanceOf(ws.id)).toBe(GRANT - 1 * 1_000_000); // unchanged: full refund
 
     // ── never negative, part 1: EXACT ZERO → the route gate 402s before any
     // run.started — no run row, no ledger row, no model call ───────────────
     await repos().ledger.adjust(ws.id, {
-      amount: -(GRANT - 1),
+      amount: -(GRANT - 1 * 1_000_000),
       idempotencyKey: unique("drain"),
     });
     expect(await balanceOf(ws.id)).toBe(0);
@@ -1269,9 +1316,9 @@ d("M6-J journey 3 — money conservation across runs", () => {
     expect((await repos().ledger.list(ws.id, {})).items.length).toBe(entriesBefore);
     expect(await balanceOf(ws.id)).toBe(0);
 
-    // ── never negative, part 2: balance 1 < reserve 2 → the LEDGER reserve
-    // gate refuses the hold — 402, the run row records the failure, and the
-    // balance stays ≥ 0 ────────────────────────────────────────────────────
+    // ── never negative, part 2: balance 1 credit < reserve 2 credits → the
+    // LEDGER reserve gate refuses the hold (1_000_000 µc < 2_000_000 µc) —
+    // 402, the run row records the failure, and the balance stays ≥ 0 ─────
     await grantChatCredits(ws.id, 1);
     openai.enqueue(textRound("unused"));
     const fourth = await chatStream(fx, {
@@ -1290,7 +1337,7 @@ d("M6-J journey 3 — money conservation across runs", () => {
     // the pre-fix orphaned-queued drift. No ledger row for the hold, still.
     expect(refusedRun.status).toBe("failed");
     expect(refusedRun.errorCode).toBe("INSUFFICIENT_CREDITS");
-    expect(await balanceOf(ws.id)).toBe(1); // never negative
+    expect(await balanceOf(ws.id)).toBe(1 * 1_000_000); // never negative
 
     // The invariant across EVERY entry written by the journey so far.
     const everyEntry = (await repos().ledger.list(ws.id, {})).items;
@@ -1369,7 +1416,7 @@ d("M6-J journey 4 — top-up journey", () => {
     const events2 = expectValidStream(frames);
     expect(events2.at(-1)).toMatchObject({ type: "run.completed" });
     expect(findCredits(events2).committed).toBe(1);
-    expect(await balanceOf(ws.id)).toBe(100_000_000 - 1);
+    expect(await balanceOf(ws.id)).toBe(100_000_000 - 1_000_000);
   });
 });
 
@@ -1744,8 +1791,8 @@ d("M6-J journey 7 — reconciliation visibility", () => {
     expect(completedRun.committedCredits).toBe(1);
     expect(cancelledRun.committedCredits).toBe(0);
 
-    // A paid invoice for the workspace (recorded + listed — M6-D repo; the
-    // wire read for invoices is F-J3, not landed yet).
+    // A paid invoice for the workspace (recorded + listed — M6-D repo) and
+    // WIRE-READABLE (F-J3, landed by M6-K: GET /v1/billing/invoices below).
     const invoiceDelivered = await deliver(
       fake,
       script(fake, "invoice.paid", {
@@ -1766,6 +1813,28 @@ d("M6-J journey 7 — reconciliation visibility", () => {
     expect(invoices.items[0]?.amountCents).toBe(1200);
     expect(invoices.items[0]?.currency).toBe("usd");
     expect(invoices.items[0]?.status).toBe("paid");
+
+    // (0) F-J3 wire read: GET /v1/billing/invoices walks the SAME row through
+    // the real route — limit 1 forces the cursor walk — with the exact wire
+    // shape (money in cents, never credits) and NO extra fields.
+    const invoiceRows = await walkInvoicesEndpoint(ws, 1);
+    expect(invoiceRows).toHaveLength(1);
+    expect(invoiceRows[0]).toEqual({
+      id: invoices.items[0]?.id,
+      stripeInvoiceId: invoices.items[0]?.stripeInvoiceId,
+      amountCents: 1200,
+      currency: "usd",
+      status: "paid",
+      periodStart: null,
+      periodEnd: null,
+      hostedUrl: null,
+      pdfUrl: null,
+      createdAt: invoices.items[0]?.createdAt.toISOString(),
+    });
+    // Tenant isolation (law #3): a stranger's workspace sees an empty page,
+    // never this workspace's rows.
+    const stranger = await newWorkspace();
+    expect(await walkInvoicesEndpoint(stranger, 10)).toEqual([]);
 
     // (1) The ledger is VISIBLE: walk the endpoint through every cursor
     // page (limit 2 forces multiple pages over the journey's entries).
@@ -1794,7 +1863,7 @@ d("M6-J journey 7 — reconciliation visibility", () => {
     // (3) The kinds RECONCILE: the sum of every amount equals the balance
     // on every surface, and the newest entry's balanceAfter is that sum.
     const total = sumAmounts(entries);
-    expect(total).toBe(100_000_000 - 1); // the top-up grant minus the one commit
+    expect(total).toBe(100_000_000 - 1_000_000); // the top-up grant minus the one commit
     const balance = await balanceOf(ws.id);
     expect(total).toBe(balance);
     const credits = await creditsOf(ws);
@@ -1804,15 +1873,16 @@ d("M6-J journey 7 — reconciliation visibility", () => {
     expect((state.credits as Record<string, unknown>).balance).toBe(balance);
     expect(at(entries, 0).balanceAfter).toBe(balance); // newest-first
 
-    // Σ|commit| equals the committed usage the runs recorded.
+    // Σ|commit| equals the committed usage the runs recorded (the row is
+    // whole credits, the ledger µc — ×1_000_000 reconciles the dialects).
     const commits = entries.filter((entry) => entry.kind === "commit");
     expect(commits).toHaveLength(1);
-    expect(Math.abs(sumAmounts(commits))).toBe(completedRun.committedCredits ?? 0);
+    expect(Math.abs(sumAmounts(commits))).toBe((completedRun.committedCredits ?? 0) * 1_000_000);
 
     // Per-run conservation: completed nets exactly −commit; cancelled nets 0.
     const completedEntries = entries.filter((entry) => entry.runId === completedRunId);
     expect(completedEntries.length).toBe(3); // reserve + commit + refund
-    expect(sumAmounts(completedEntries)).toBe(-(completedRun.committedCredits ?? 0));
+    expect(sumAmounts(completedEntries)).toBe(-(completedRun.committedCredits ?? 0) * 1_000_000);
     const cancelledEntries = entries.filter((entry) => entry.runId === cancelledRunId);
     expect(cancelledEntries.length).toBe(2); // reserve + refund
     expect(sumAmounts(cancelledEntries)).toBe(0);

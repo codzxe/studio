@@ -105,9 +105,12 @@ async function newFixture(ws: Workspace): Promise<{ projectId: string; threadId:
   return { projectId: project.id, threadId: thread.id };
 }
 
-async function grant(ws: Workspace, amount: number): Promise<void> {
+/** 1 credit = 1_000_000 µc (D-12) — the ledger-row multiplier in this file. */
+const MICRO = 1_000_000;
+
+async function grant(ws: Workspace, credits: number): Promise<void> {
   await server.deps.repos.ledger.grant(ws.id, {
-    amount,
+    amount: credits * MICRO,
     idempotencyKey: unique("grant"),
   });
 }
@@ -118,8 +121,17 @@ interface SeededRun {
 }
 
 /**
- * Mirrors the chat.ts finalize path exactly (M4-K/apply-flow precedent):
+ * Seeds the chat.ts finalize LEDGER path (M4-K/apply-flow precedent):
  * reserve → settle (commit + full-hold refund, D-20) → run-row update.
+ * `reserve`/`actual` are RAW ledger magnitudes: the µc sections below pass
+ * whole credits × 1_000_000 (the post-M6-K chat dialect, D-12); the
+ * external-spend section deliberately keeps CREDIT magnitudes — the core's
+ * external comparison is credit math (spendCreditsForModel) comparing raw
+ * like-for-like. The run row is seeded in the LEDGER's dialect on purpose:
+ * the recon core compares shared-dialect magnitudes, so its comparisons stay
+ * exact here — while the REAL post-fix chat rows carry whole credits (D-12
+ * row ruling) against µc ledger entries; that core-side µc↔credits conversion
+ * is flagged to the reconciliation owner (M6-K finding, worklog).
  * `setRow: false` simulates a finalize that crashed after the settle —
  * the exact drift reconciliation exists to catch.
  */
@@ -214,25 +226,26 @@ d("windowed sums are exact (D-20)", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 100);
-    const run = await seedCompletedRun(ws, fx, { reserve: 24, actual: 18 });
+    const run = await seedCompletedRun(ws, fx, { reserve: 24 * MICRO, actual: 18 * MICRO });
 
     const report = await coreReport(ws, windowAround(t0));
     expect(report.ledger).toEqual({
-      grants: 100,
-      reserves: 24,
+      grants: 100 * MICRO,
+      reserves: 24 * MICRO,
       outstandingReserves: 0,
-      commits: 18,
-      refunds: 24,
+      commits: 18 * MICRO,
+      refunds: 24 * MICRO,
       adjusts: 0,
       entryCount: 4,
     });
     expect(report.usage).toEqual({
-      runs: { discovered: 1, settledInWindow: 1, committedCredits: 18 },
+      runs: { discovered: 1, settledInWindow: 1, committedCredits: 18 * MICRO },
       renders: { count: 0, credits: 0 },
-      usageSum: 18,
+      usageSum: 18 * MICRO,
     });
-    // D-20: the run nets exactly −actual (reserve −24, commit −18, refund +24).
-    expect(report.balance).toBe(82);
+    // D-20: the run nets exactly −actual (µc: reserve −24M, commit −18M,
+    // refund +24M).
+    expect(report.balance).toBe(82 * MICRO);
     expect(report.discrepancies).toEqual([]);
     expect(report.action).toMatchObject({ attempted: false, skippedReason: "no_mismatch" });
     expect(report.external).toMatchObject({ source: "none", spendCredits: null, error: null });
@@ -245,7 +258,7 @@ d("windowed sums are exact (D-20)", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 40);
-    await seedCompletedRun(ws, fx, { reserve: 10, actual: 6 });
+    await seedCompletedRun(ws, fx, { reserve: 10 * MICRO, actual: 6 * MICRO });
 
     // Lower edge: everything was created before `since` → nothing in window.
     const after = await coreReport(ws, {
@@ -263,7 +276,7 @@ d("windowed sums are exact (D-20)", () => {
     });
     expect(before.ledger.entryCount).toBe(0);
     expect(before.usage.usageSum).toBe(0);
-    expect(before.balance).toBe(34); // balance is window-independent (SUM)
+    expect(before.balance).toBe(34 * MICRO); // balance is window-independent (SUM)
     expect(before.discrepancies).toEqual([]);
   });
 
@@ -372,12 +385,12 @@ d("zombie reserve detection (D-19)", () => {
       threadId: fx.threadId,
       projectId: fx.projectId,
       model: "studio-smart",
-      reservedCredits: 10,
+      reservedCredits: 10 * MICRO,
     });
     await server.deps.repos.runs.update(ws.id, run.id, { status: "running" });
     await server.deps.repos.ledger.reserve(ws.id, {
       runId: run.id,
-      amount: 10,
+      amount: 10 * MICRO,
       idempotencyKey: `chat:${run.id}:reserve`,
     });
 
@@ -388,16 +401,16 @@ d("zombie reserve detection (D-19)", () => {
     expect(zombie).toMatchObject({
       code: "zombie_reserve",
       runId: run.id,
-      outstanding: 10,
+      outstanding: 10 * MICRO,
       runStatus: "running",
     });
-    expect(stale.ledger.outstandingReserves).toBe(10);
-    expect(stale.balance).toBe(40);
+    expect(stale.ledger.outstandingReserves).toBe(10 * MICRO);
+    expect(stale.balance).toBe(40 * MICRO);
 
     // default grace (30 min) → the same fresh hold is just live, not a zombie
     const fresh = await coreReport(ws, windowAround(t0));
     expect(codes(fresh)).toEqual([]);
-    expect(fresh.ledger.outstandingReserves).toBe(10);
+    expect(fresh.ledger.outstandingReserves).toBe(10 * MICRO);
 
     // zombies are NEVER auto-released: reconcile mode adjusts nothing here
     const staleReconcile = await coreReport(ws, windowAround(t0), {
@@ -417,14 +430,14 @@ d("zombie reserve detection (D-19)", () => {
     const ghostRunId = `run_missing_${unique("ghost")}`;
     await server.deps.repos.ledger.reserve(ws.id, {
       runId: ghostRunId,
-      amount: 5,
+      amount: 5 * MICRO,
       idempotencyKey: unique("ghost-reserve"),
     });
     const report = await coreReport(ws, windowAround(t0), { zombieGraceMs: 0 });
     expect(codes(report)).toEqual(["zombie_reserve"]);
     expect(report.discrepancies[0]).toMatchObject({
       runId: ghostRunId,
-      outstanding: 5,
+      outstanding: 5 * MICRO,
       runStatus: "missing",
     });
   });
@@ -440,22 +453,26 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 100);
-    const run = await seedCompletedRun(ws, fx, { reserve: 20, actual: 12, setRow: false });
+    const run = await seedCompletedRun(ws, fx, {
+      reserve: 20 * MICRO,
+      actual: 12 * MICRO,
+      setRow: false,
+    });
 
     const report = await coreReport(ws, windowAround(t0));
     expect(codes(report)).toEqual(["ledger_usage_mismatch"]);
     expect(discrepancyOf(report, "ledger_usage_mismatch")).toMatchObject({
       code: "ledger_usage_mismatch",
-      ledgerCommitSum: 12,
+      ledgerCommitSum: 12 * MICRO,
       usageSum: 0,
-      delta: -12,
+      delta: -12 * MICRO,
       runsUsage: 0,
       rendersUsage: 0,
       runCount: 1,
       renderCount: 0,
     });
     expect(discrepancyOf(report, "ledger_usage_mismatch").runDrift).toEqual([
-      { runId: run.runId, ledgerCommits: 12, rowCommitted: 0 },
+      { runId: run.runId, ledgerCommits: 12 * MICRO, rowCommitted: 0 },
     ]);
     expect(report.action).toMatchObject({ attempted: false, skippedReason: "report_only" });
     expect(await adjustEntries(ws)).toEqual([]);
@@ -466,7 +483,7 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 100);
-    await seedCompletedRun(ws, fx, { reserve: 20, actual: 12, setRow: false });
+    await seedCompletedRun(ws, fx, { reserve: 20 * MICRO, actual: 12 * MICRO, setRow: false });
     const window = windowAround(t0);
 
     const first = await coreReport(ws, window, { mode: "reconcile", note: "incident-42" });
@@ -474,17 +491,21 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
       attempted: true,
       applied: true,
       replayed: false,
-      adjustAmount: 12,
+      adjustAmount: 12 * MICRO,
     });
-    expect(first.action.balanceAfter).toBe(100); // 100 − 20 + 20 − 12 + 12
+    expect(first.action.balanceAfter).toBe(100 * MICRO); // 100M − 20M + 20M − 12M + 12M
     const adjusts = await adjustEntries(ws);
-    expect(adjusts).toEqual([{ id: expect.any(String), amount: 12 }]);
+    expect(adjusts).toEqual([{ id: expect.any(String), amount: 12 * MICRO }]);
 
     // replaying the SAME window (same sinceTs ⇒ same idempotency key) is free
     const replay = await coreReport(ws, window, { mode: "reconcile" });
-    expect(replay.action).toMatchObject({ applied: true, replayed: true, adjustAmount: 12 });
+    expect(replay.action).toMatchObject({
+      applied: true,
+      replayed: true,
+      adjustAmount: 12 * MICRO,
+    });
     expect(await adjustEntries(ws)).toHaveLength(1);
-    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(100);
+    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(100 * MICRO);
 
     // the true-up entry carries the reconciliation note + window metadata
     const listed = await server.deps.repos.ledger.list(ws.id, { kind: "adjust", limit: 100 });
@@ -493,7 +514,7 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
     expect(metadata.note).toBe("incident-42");
     expect(metadata.windowStart).toBe(window.sinceTs.toISOString());
     expect(metadata.usageSum).toBe(0);
-    expect(metadata.ledgerCommitSum).toBe(12);
+    expect(metadata.ledgerCommitSum).toBe(12 * MICRO);
 
     // a SHIFTED window start is a different idempotency key — the documented
     // operator-beware semantics (re-true-upping an overlapping window
@@ -508,7 +529,7 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
     );
     expect(shifted.action).toMatchObject({ applied: true, replayed: false });
     expect(await adjustEntries(ws)).toHaveLength(2);
-    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(112);
+    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(112 * MICRO);
   });
 
   it("the idempotency key is derived from (workspace, windowStart) only", () => {
@@ -529,7 +550,7 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
       projectId: fx.projectId,
       compId: "comp-main",
       format: "mp4",
-      credits: 3,
+      credits: 3 * MICRO, // µc dialect — the usage side must match the ledger's
       createdBy: ws.userId,
     });
 
@@ -537,15 +558,15 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
     expect(codes(report)).toEqual(["ledger_usage_mismatch"]);
     expect(report.discrepancies[0]).toMatchObject({
       ledgerCommitSum: 0,
-      usageSum: 3,
-      delta: 3,
-      rendersUsage: 3,
+      usageSum: 3 * MICRO,
+      delta: 3 * MICRO,
+      rendersUsage: 3 * MICRO,
       renderCount: 1,
     });
 
     const fixed = await coreReport(ws, windowAround(t0), { mode: "reconcile" });
-    expect(fixed.action).toMatchObject({ applied: true, adjustAmount: -3 });
-    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(97);
+    expect(fixed.action).toMatchObject({ applied: true, adjustAmount: -3 * MICRO });
+    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(97 * MICRO);
   });
 
   it("refuses a true-up that would make the balance negative (D-12)", async () => {
@@ -553,22 +574,27 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 5);
-    const run = await seedCompletedRun(ws, fx, { reserve: 3, actual: 2, setRow: false });
-    // the run row claims 12 committed while the ledger committed 2 → the
-    // true-up would charge 10 on a balance of 3 → the ledger must refuse.
-    await server.deps.repos.runs.update(ws.id, run.runId, { committedCredits: 12 });
+    const run = await seedCompletedRun(ws, fx, {
+      reserve: 3 * MICRO,
+      actual: 2 * MICRO,
+      setRow: false,
+    });
+    // the run row claims 12M µc committed while the ledger committed 2M µc →
+    // the true-up would charge 10M µc on a balance of 3M µc → the ledger must
+    // refuse (D-12).
+    await server.deps.repos.runs.update(ws.id, run.runId, { committedCredits: 12 * MICRO });
 
     const report = await coreReport(ws, windowAround(t0), { mode: "reconcile" });
     expect(codes(report)).toEqual(["ledger_usage_mismatch"]);
-    expect(report.discrepancies[0]).toMatchObject({ delta: 10 });
+    expect(report.discrepancies[0]).toMatchObject({ delta: 10 * MICRO });
     expect(report.action).toMatchObject({
       attempted: true,
       applied: false,
-      adjustAmount: -10,
+      adjustAmount: -10 * MICRO,
       skippedReason: "adjust_refused_by_ledger",
     });
     expect(await adjustEntries(ws)).toEqual([]);
-    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(3);
+    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(3 * MICRO);
   });
 
   it("flags a negative balance as a critical discrepancy (D-12: must NEVER)", async () => {
@@ -576,14 +602,17 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
     const t0 = Date.now();
     await grant(ws, 10);
     await server.deps.repos.ledger.adjust(ws.id, {
-      amount: -15,
+      amount: -15 * MICRO,
       idempotencyKey: unique("clawback"),
       allowNegativeBalance: true,
     });
     const report = await coreReport(ws, windowAround(t0));
     expect(codes(report)).toContain("negative_balance");
-    expect(report.discrepancies[0]).toMatchObject({ code: "negative_balance", balance: -5 });
-    expect(report.balance).toBe(-5);
+    expect(report.discrepancies[0]).toMatchObject({
+      code: "negative_balance",
+      balance: -5 * MICRO,
+    });
+    expect(report.balance).toBe(-5 * MICRO);
   });
 });
 
@@ -664,6 +693,14 @@ function litellmSource(fetchImpl: typeof fetch, logger?: Logger): LiteLLMSpendSo
     logger,
   });
 }
+
+// DIALECT NOTE (M6-K): this section deliberately keeps CREDIT-magnitude
+// ledger seeds (grant 100 = 100 µc etc.) — the core's EXTERNAL comparison is
+// credit math (spendCreditsForModel, the M4-A runner math) and it compares
+// raw like-for-like, so a matching spend (7 credits) needs a 7-magnitude
+// ledger commit. Once the reconciliation core converts ledger µc → credits
+// at its comparison surfaces (the M6-K worklog finding: real post-fix runs
+// write µc commits vs credit spend), these seeds should flip to µc.
 
 d("external spend source (LiteLLM seam)", () => {
   it("createSpendSource is null without a spend credential (the local reality)", async () => {
@@ -1048,7 +1085,7 @@ d("route: POST /v1/credits/reconcile", () => {
     const report = result.body.data as ReconcileReport;
     expect(report.external.source).toBe("none");
     expect(report.mode).toBe("report");
-    expect(report.ledger.grants).toBe(10);
+    expect(report.ledger.grants).toBe(10 * MICRO);
   });
 
   it('writes the true-up only with mode "reconcile", ledger-idempotent per window', async () => {
@@ -1056,7 +1093,11 @@ d("route: POST /v1/credits/reconcile", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 100);
-    await seedCompletedRun(ws, fx, { reserve: 20, actual: 12, setRow: false });
+    await seedCompletedRun(ws, fx, {
+      reserve: 20 * MICRO,
+      actual: 12 * MICRO,
+      setRow: false,
+    });
     const body = { ...routeWindow(t0), mode: "reconcile" as const };
 
     // default report POST never writes
@@ -1071,7 +1112,7 @@ d("route: POST /v1/credits/reconcile", () => {
     expect(appliedReport.action).toMatchObject({
       applied: true,
       replayed: false,
-      adjustAmount: 12,
+      adjustAmount: 12 * MICRO,
     });
     expect(await adjustEntries(ws)).toHaveLength(1);
 
@@ -1080,7 +1121,7 @@ d("route: POST /v1/credits/reconcile", () => {
     const replayedReport = replayed.body.data as ReconcileReport;
     expect(replayedReport.action).toMatchObject({ applied: true, replayed: true });
     expect(await adjustEntries(ws)).toHaveLength(1);
-    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(100);
+    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(100 * MICRO);
   });
 
   it("never leaks another workspace's rows into a report", async () => {
@@ -1090,11 +1131,11 @@ d("route: POST /v1/credits/reconcile", () => {
     await grant(a, 100);
     await grant(b, 7);
     const bReport = (await postReconcile(b, routeWindow(t0))).body.data as ReconcileReport;
-    expect(bReport.ledger).toMatchObject({ grants: 7, entryCount: 1, commits: 0 });
+    expect(bReport.ledger).toMatchObject({ grants: 7 * MICRO, entryCount: 1, commits: 0 });
     expect(bReport.usage.usageSum).toBe(0);
     expect(JSON.stringify(bReport)).not.toContain(a.id);
     expect((await postReconcile(a, routeWindow(t0))).body.data as ReconcileReport).toMatchObject({
-      ledger: { grants: 100 },
+      ledger: { grants: 100 * MICRO },
     });
   });
 });
@@ -1111,7 +1152,11 @@ d("runReconciliationSweep (operator cron entry point)", () => {
     const t0 = Date.now();
     await grant(clean, 5);
     await grant(drifted, 100);
-    await seedCompletedRun(drifted, fx, { reserve: 20, actual: 12, setRow: false });
+    await seedCompletedRun(drifted, fx, {
+      reserve: 20 * MICRO,
+      actual: 12 * MICRO,
+      setRow: false,
+    });
 
     const { logger, records } = spyLogger();
     const summary = await runReconciliationSweep({
@@ -1131,7 +1176,7 @@ d("runReconciliationSweep (operator cron entry point)", () => {
     expect(driftedReport).not.toBeNull();
     expect(driftedReport?.discrepancies[0]).toMatchObject({
       code: "ledger_usage_mismatch",
-      delta: -12,
+      delta: -12 * MICRO,
     });
     // an unknown workspace reconciles empty (repos read as empty/0), never throws
     expect(perWorkspace.get("ws_nonexistent")?.report?.ledger.entryCount).toBe(0);

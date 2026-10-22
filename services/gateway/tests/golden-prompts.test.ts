@@ -923,8 +923,10 @@ async function newFixture(prefix: string): Promise<WireFixture> {
   expect(wsResponse.status).toBe(201);
   const ws = (await wsResponse.json()) as { data: { id: string } };
 
+  // D-12 (M6-K µc unification): the chat route reserves integer MICROcredits
+  // (1 credit = 1_000_000 µc) — grant 100 credits so the runs can hold.
   await server.deps.repos.ledger.grant(ws.data.id, {
-    amount: 100,
+    amount: 100 * 1_000_000,
     idempotencyKey: unique("grant"),
   });
 

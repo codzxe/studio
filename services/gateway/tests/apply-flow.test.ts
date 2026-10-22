@@ -59,6 +59,11 @@
 //   apply.test.ts proves. This file pins the live-loop side of D-20: exactly
 //   ONE commit entry, no apply-time deduction, no double refund.
 //
+// * UNITS (M6-K µc unification, D-12): the pinned ledger magnitudes are
+//   integer MICROcredits (reserve/commit/refund = whole credits × 1_000_000);
+//   the SSE `credits` event, the run ROW and the apply response's
+//   creditsCommitted stay whole credits (display units).
+//
 // * GUARD ORDER (test 5): a re-apply of an ALREADY-APPLIED run answers 409
 //   RUN_ALREADY_APPLIED (lifecycle guard) BEFORE the §9.3 lineage checks
 //   could answer VERSION_CONFLICT — one apply per run row (M5-D), re-running
@@ -523,9 +528,11 @@ async function newWorkspace(prefix: string): Promise<{ jar: CookieJar; id: strin
   return { jar, id: ws.data.id };
 }
 
-async function grantCredits(workspaceId: string, amount: number): Promise<void> {
+async function grantCredits(workspaceId: string, credits: number): Promise<void> {
+  // D-12: the ledger stores integer MICROcredits — grants convert at this
+  // boundary (M6-K µc unification).
   await server.deps.repos.ledger.grant(workspaceId, {
-    amount,
+    amount: credits * 1_000_000,
     idempotencyKey: unique("grant"),
   });
 }
@@ -941,19 +948,19 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     expect(rawRun.resultVersionId).toBe(versionId); // first apply doubles as the result version
     expect(rawRun.status).toBe("completed"); // apply never flips the run status (M5-D)
 
-    // Ledger (D-20): exactly ONE commit entry — the chat finalize's usage
+    // Ledger (µc, D-12): exactly ONE commit entry — the chat finalize's usage
     // commit; the apply added no entries (outstanding was 0) and no second
-    // deduction exists. The run nets −1 = its single commit.
+    // deduction exists. The run nets −1 credit = its single commit.
     const ledger = await runLedger(fx.workspaceId, runId);
     const byKind: Record<string, number[]> = {};
     for (const entry of ledger) {
       byKind[entry.kind] = [...(byKind[entry.kind] ?? []), entry.amount];
     }
-    expect(byKind.reserve).toEqual([-expectedReserve]);
-    expect(byKind.commit).toEqual([-1]);
-    expect(byKind.refund).toEqual([expectedReserve]);
+    expect(byKind.reserve).toEqual([-expectedReserve * 1_000_000]);
+    expect(byKind.commit).toEqual([-1 * 1_000_000]);
+    expect(byKind.refund).toEqual([expectedReserve * 1_000_000]);
     expect(ledger.filter((entry) => entry.idempotencyKey.includes("apply:"))).toHaveLength(0);
-    expect(await balanceOf(fx.workspaceId)).toBe(100 - 1);
+    expect(await balanceOf(fx.workspaceId)).toBe((100 - 1) * 1_000_000);
 
     // Exactly ONE version created for the run (§8.7: ONE batch = ONE version).
     const versions = await versionsOf(fx.workspaceId, fx.projectId, runId);
@@ -1016,7 +1023,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     const versions = await versionsOf(fx.workspaceId, fx.projectId, runId);
     expect(versions.byRun).toBe(1);
     expect(versions.total).toBe(versionsAfterFirst.total);
-    expect(await balanceOf(fx.workspaceId)).toBe(99);
+    expect(await balanceOf(fx.workspaceId)).toBe(99 * 1_000_000);
   });
 
   it("3. double-apply without idempotency (fresh keys, a new sha) → 409 RUN_ALREADY_APPLIED, state untouched", async () => {
@@ -1329,8 +1336,8 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
   it("10. insufficient credits at apply → 402 INSUFFICIENT_CREDITS BEFORE any state change; a retry after a top-up succeeds", async () => {
     const fx = await newFixture("broke", 5);
-    const { runId, plan } = await planRun(fx); // reserve −2, chat settle → balance 4
-    expect(await balanceOf(fx.workspaceId)).toBe(4);
+    const { runId, plan } = await planRun(fx); // reserve −2 credits, chat settle → balance 4 credits
+    expect(await balanceOf(fx.workspaceId)).toBe(4 * 1_000_000);
 
     // The client uploads its post-batch version first (that is the D-6 flow)
     // — uploads cost nothing; then the wallet is drained to zero.
@@ -1341,7 +1348,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
       agentRunId: runId,
     });
     await server.deps.repos.ledger.adjust(fx.workspaceId, {
-      amount: -4,
+      amount: -4 * 1_000_000,
       idempotencyKey: unique("drain"),
     });
     expect(await balanceOf(fx.workspaceId)).toBe(0);
