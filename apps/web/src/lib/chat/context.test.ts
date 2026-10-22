@@ -1,13 +1,13 @@
+import type { ContextSelection, PinnedContextItem } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { type FakeEditor, attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
-import type { ContextSelection, PinnedContextItem } from "@studio/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
   type ContextBlock,
+  DEFAULT_FLAGS,
   type SelectedPropertiesBlockData,
   type SelectionBlockData,
-  DEFAULT_FLAGS,
   autoFlags,
   collectContextSnapshot,
   commentsBlockPlaceholder,
@@ -59,10 +59,7 @@ function byKind(blocks: ContextBlock[], kind: ContextBlock["kind"]): ContextBloc
 }
 
 /** A bridge whose inspect reports a multi-layer selection (upstream multi-select; the fake selects only the newest layer). */
-function withSelection(
-  bridge: EditorBridge,
-  selectedLayers: number[],
-): EditorBridge {
+function withSelection(bridge: EditorBridge, selectedLayers: number[]): EditorBridge {
   return {
     ...bridge,
     inspect: async () => ({ ...(await bridge.inspect()), selectedLayers }),
@@ -151,7 +148,9 @@ describe("collectContextSnapshot", () => {
     expect(labels.recentCommands).toBe("Recent commands");
     expect(labels.comments).toBe("Comments");
 
-    const summary = byKind(snap.blocks, "projectSummary").data as { items: Array<{ name: string }> };
+    const summary = byKind(snap.blocks, "projectSummary").data as {
+      items: Array<{ name: string }>;
+    };
     expect(summary.items[0]?.name).toBe("Main");
     const comp = byKind(snap.blocks, "activeComp").data as { name: string; width: number };
     expect(comp.name).toBe("Main");
@@ -189,13 +188,20 @@ describe("collectContextSnapshot", () => {
     }
 
     const blockSum = snap.blocks.reduce((n, b) => n + b.tokenEstimate, 0);
-    expect(snap.totalTokenEstimate).toBe(blockSum + estimateTokens(pinned[0]) + estimateTokens(pinned[1]));
+    expect(snap.totalTokenEstimate).toBe(
+      blockSum + estimateTokens(pinned[0]) + estimateTokens(pinned[1]),
+    );
   });
 
   it("omits blocks whose flags are off", async () => {
     const { bridge } = setup();
     const snap = await collectContextSnapshot(bridge, { flags: DEFAULT_FLAGS });
-    expect(kinds(snap.blocks)).toEqual(["projectSummary", "activeComp", "playhead", "focusedPanel"]);
+    expect(kinds(snap.blocks)).toEqual([
+      "projectSummary",
+      "activeComp",
+      "playhead",
+      "focusedPanel",
+    ]);
   });
 
   it("returns no blocks at all when every flag is off", async () => {
@@ -227,9 +233,9 @@ describe("collectContextSnapshot", () => {
     expect(data.layers).toHaveLength(2);
     expect(data.layers[0]).not.toBeNull();
     expect(data.layers[1]).toBeNull();
-    expect((byKind(snap.blocks, "selectedProperties").data as SelectedPropertiesBlockData).layer).toBe(
-      a.layer,
-    );
+    expect(
+      (byKind(snap.blocks, "selectedProperties").data as SelectedPropertiesBlockData).layer,
+    ).toBe(a.layer);
   });
 
   it("caps selection reads and reports truncation beyond the cap", async () => {
@@ -321,7 +327,9 @@ describe("collectContextSnapshot degradation", () => {
     expect(byKind(snap.blocks, "playhead").label).toBe("Playhead (unavailable)");
     expect(byKind(snap.blocks, "focusedPanel").label).toBe("Panel (unavailable)");
     expect(byKind(snap.blocks, "selection").label).toBe("Selection (unavailable)");
-    expect(byKind(snap.blocks, "selectedProperties").label).toBe("Selected properties (unavailable)");
+    expect(byKind(snap.blocks, "selectedProperties").label).toBe(
+      "Selected properties (unavailable)",
+    );
     expect(byKind(snap.blocks, "activeComp").label).toBe("Comp: Main"); // engine's own active comp
   });
 
@@ -332,7 +340,12 @@ describe("collectContextSnapshot degradation", () => {
       flags: { ...DEFAULT_FLAGS, selection: true, selectedProperties: true },
     });
     expect(byKind(snap.blocks, "activeComp").label).toBe("Comp (unavailable)");
-    expect(kinds(snap.blocks)).toEqual(["projectSummary", "activeComp", "playhead", "focusedPanel"]);
+    expect(kinds(snap.blocks)).toEqual([
+      "projectSummary",
+      "activeComp",
+      "playhead",
+      "focusedPanel",
+    ]);
   });
 
   it("trims recent commands to the last 10 history entries", async () => {

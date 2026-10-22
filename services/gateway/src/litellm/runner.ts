@@ -37,12 +37,7 @@ import {
 } from "@studio/contracts";
 
 import { nullLogger, type Logger } from "../logger.js";
-import type {
-  AgentRun,
-  AgentRunOutcome,
-  AgentRunner,
-  AgentRunStream,
-} from "../runner.js";
+import type { AgentRun, AgentRunOutcome, AgentRunner, AgentRunStream } from "../runner.js";
 import {
   ModelUnavailableError,
   streamChatCompletion,
@@ -165,7 +160,8 @@ function applyUsage(usage: UsageAccumulator, event: ModelStreamEvent): void {
 }
 
 function messageChars(message: OpenAIChatMessage): number {
-  return JSON.stringify(message)?.length ?? 0;
+  const serialized = JSON.stringify(message);
+  return serialized === undefined ? 0 : serialized.length;
 }
 
 /**
@@ -237,35 +233,46 @@ function planValidationError(raw: unknown): string {
 // The runner
 // ---------------------------------------------------------------------------
 
+interface ModelRound {
+  readonly text: string;
+  readonly calls: readonly AggregatedToolCall[];
+}
+
+interface PlanAttempt {
+  readonly plan: EditPlan | null;
+  readonly errorMessage?: string;
+  readonly cancelled?: true;
+}
+
 export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
   const logger = deps.logger ?? nullLogger;
-  const bearer = deps.virtualKey !== undefined && deps.virtualKey !== "" ? deps.virtualKey : deps.apiKey;
+  const bearer =
+    deps.virtualKey !== undefined && deps.virtualKey !== "" ? deps.virtualKey : deps.apiKey;
   const tools = openAiToolSpecs();
-
-  interface ModelRound {
-    readonly text: string;
-    readonly calls: readonly AggregatedToolCall[];
-  }
+  const clientDeps = {
+    baseUrl: deps.baseUrl,
+    bearer,
+    fetch: deps.fetch,
+    sleep: deps.sleep,
+  };
 
   /** Stream one model call; `onDelta` streams text out (main rounds only). */
   async function readModelRound(
-    run: AgentRun,
+    model: string,
     messages: readonly OpenAIChatMessage[],
     usage: UsageAccumulator,
     options: { readonly withTools: boolean; readonly onDelta?: (delta: string) => void },
+    signal: AbortSignal,
   ): Promise<ModelRound> {
     const request: ChatCompletionRequest = {
-      model: run.model,
+      model,
       messages,
       tools: options.withTools ? tools : undefined,
-      signal: optionsSignal(run),
+      signal,
     };
     let text = "";
     const calls: AggregatedToolCall[] = [];
-    for await (const event of streamChatCompletion(
-      { baseUrl: deps.baseUrl, bearer, fetch: deps.fetch, sleep: deps.sleep },
-      request,
-    )) {
+    for await (const event of streamChatCompletion(clientDeps, request)) {
       applyUsage(usage, event);
       if (event.type === "text") {
         text += event.delta;
@@ -277,19 +284,65 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
     return { text, calls };
   }
 
+  /**
+   * studio.plan_edit (§8.4): server-side structured-output call to the SAME
+   * alias — a strict JSON prompt validated with EDIT_PLAN_SCHEMA, 2 attempts
+   * (the second appends the validation error). Never emits message deltas;
+   * the plan reaches the client via the {type:"plan"} event.
+   */
+  async function serverSidePlan(
+    model: string,
+    goal: string,
+    conversation: readonly OpenAIChatMessage[],
+    usage: UsageAccumulator,
+    signal: AbortSignal,
+  ): Promise<PlanAttempt> {
+    const attemptMessages: OpenAIChatMessage[] = [
+      ...conversation,
+      { role: "user", content: planInstruction(goal) },
+    ];
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      if (signal.aborted) return { plan: null, cancelled: true };
+      let round: ModelRound;
+      try {
+        round = await readModelRound(model, attemptMessages, usage, { withTools: false }, signal);
+      } catch (error) {
+        if (signal.aborted) return { plan: null, cancelled: true };
+        if (error instanceof ModelUnavailableError) {
+          return { plan: null, errorMessage: "The model service is unavailable right now." };
+        }
+        return { plan: null, errorMessage: "The plan could not be generated." };
+      }
+      const parsed = extractJsonObject(round.text);
+      const validation = planValidationError(parsed);
+      if (parsed !== undefined && validation === "") {
+        return { plan: EDIT_PLAN_SCHEMA.parse(parsed) };
+      }
+      if (attempt === 2) {
+        return {
+          plan: null,
+          errorMessage:
+            validation === ""
+              ? "The plan was not valid JSON."
+              : `The proposed plan failed validation: ${validation}`,
+        };
+      }
+      attemptMessages.push({ role: "assistant", content: round.text });
+      attemptMessages.push({
+        role: "user",
+        content:
+          `That was not a valid EditPlan: ${validation || "not valid JSON"}. ` +
+          "Respond again with STRICT JSON only — no prose, no markdown fences — matching the EditPlan shape exactly.",
+      });
+    }
+    return { plan: null, errorMessage: "The proposed plan failed validation twice." };
+  }
+
   return {
     async start(run: AgentRun, stream: AgentRunStream): Promise<AgentRunOutcome> {
       const signal = stream.signal;
       const usage: UsageAccumulator = { inputTokens: 0, outputTokens: 0, seen: false };
       const conversation: OpenAIChatMessage[] = [...buildMessages(run)];
-
-      function requestOptions(withTools: boolean, messages: readonly OpenAIChatMessage[]): ChatCompletionRequest {
-        return { model: run.model, messages, tools: withTools ? tools : undefined, signal };
-      }
-
-      stream.emit({ type: "run.started", model: run.model });
-      await stream.yieldToStream();
-      if (signal.aborted) return { kind: "cancelled" };
 
       const cancelled = (): AgentRunOutcome => ({ kind: "cancelled" });
       const failed = (code: string, message: string, retryable: boolean): AgentRunOutcome => ({
@@ -299,8 +352,9 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
         retryable,
       });
 
-      let invalidToolCalls = 0;
-      let rounds = 0;
+      stream.emit({ type: "run.started", model: run.model });
+      await stream.yieldToStream();
+      if (signal.aborted) return cancelled();
 
       const modelFailure = (error: unknown): AgentRunOutcome => {
         if (signal.aborted || (error instanceof Error && error.name === "AbortError")) {
@@ -316,16 +370,16 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
         return failed("INTERNAL", "Something went wrong on our side.", true);
       };
 
+      let invalidToolCalls = 0;
+      let rounds = 0;
+
       while (true) {
         if (signal.aborted) return cancelled();
         if (rounds >= deps.maxSteps) {
-          return failed(
-            "RUN_STEP_LIMIT",
-            "The agent used too many steps for one message.",
-            false,
-          );
+          return failed("RUN_STEP_LIMIT", "The agent used too many steps for one message.", false);
         }
         rounds += 1;
+        // M4.3 redaction: length + sha256 prefix only — never the body.
         const fingerprint = fingerprintMessages(conversation);
         logger.debug("litellm_model_call", {
           runId: run.runId,
@@ -338,12 +392,18 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
 
         let round: ModelRound;
         try {
-          round = await readModelRound(run, conversation, usage, {
-            withTools: true,
-            onDelta: (delta) => {
-              stream.emit({ type: "message.delta", delta });
+          round = await readModelRound(
+            run.model,
+            conversation,
+            usage,
+            {
+              withTools: true,
+              onDelta: (delta) => {
+                stream.emit({ type: "message.delta", delta });
+              },
             },
-          });
+            signal,
+          );
         } catch (error) {
           return modelFailure(error);
         }
@@ -398,13 +458,13 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
           if (validated.name === "studio.plan_edit") {
             const goal = (validated.args as { goal?: unknown }).goal;
             const plan = await serverSidePlan(
-              run,
+              run.model,
               typeof goal === "string" ? goal : "",
               conversation,
               usage,
-              stream,
+              signal,
             );
-            if (plan.cancelled !== undefined) return cancelled();
+            if (plan.cancelled === true) return cancelled();
             if (plan.plan !== null) {
               stream.emit({ type: "plan", plan: plan.plan });
               stream.emit({ type: "tool.result", toolCallId: call.id, result: plan.plan });
@@ -424,10 +484,7 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
               conversation.push({
                 role: "tool",
                 tool_call_id: call.id,
-                content: JSON.stringify({
-                  error: "PLAN_INVALID",
-                  message: plan.errorMessage,
-                }),
+                content: JSON.stringify({ error: "PLAN_INVALID", message: plan.errorMessage }),
               });
             }
           } else {
@@ -462,73 +519,4 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
       // in-flight provider fetch/stream and every tool-result wait.
     },
   };
-
-  // ---------------------------------------------------------------------------
-
-  function optionsSignal(run: AgentRun): AbortSignal {
-    void run;
-    throw new Error("unused — see requestOptions in start()");
-  }
-}
-
-// ---------------------------------------------------------------------------
-// studio.plan_edit — server-side structured output (§8.4/§8.6, 2 attempts)
-// ---------------------------------------------------------------------------
-
-interface PlanAttempt {
-  readonly plan: EditPlan | null;
-  readonly errorMessage?: string;
-  readonly cancelled?: true;
-}
-
-async function serverSidePlan(
-  run: AgentRun,
-  goal: string,
-  conversation: readonly OpenAIChatMessage[],
-  usage: UsageAccumulator,
-  stream: AgentRunStream,
-): Promise<PlanAttempt> {
-  void run;
-  const attemptMessages: OpenAIChatMessage[] = [
-    ...conversation,
-    { role: "user", content: planInstruction(goal) },
-  ];
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    if (stream.signal.aborted) return { plan: null, cancelled: true };
-    let round: { text: string };
-    try {
-      round = await readPlanRound(attemptMessages, stream.signal, usage);
-    } catch (error) {
-      if (stream.signal.aborted) return { plan: null, cancelled: true };
-      if (error instanceof ModelUnavailableError) {
-        return {
-          plan: null,
-          errorMessage: "The model service is unavailable right now.",
-        };
-      }
-      return { plan: null, errorMessage: "The plan could not be generated." };
-    }
-    const parsed = extractJsonObject(round.text);
-    const validation = planValidationError(parsed);
-    if (parsed !== undefined && validation === "") {
-      return { plan: EDIT_PLAN_SCHEMA.parse(parsed) };
-    }
-    if (attempt === 2) {
-      return {
-        plan: null,
-        errorMessage:
-          validation === ""
-            ? "The plan was not valid JSON."
-            : `The proposed plan failed validation: ${validation}`,
-      };
-    }
-    attemptMessages.push({ role: "assistant", content: round.text });
-    attemptMessages.push({
-      role: "user",
-      content:
-        `That was not a valid EditPlan: ${validation || "not valid JSON"}. ` +
-        "Respond again with STRICT JSON only — no prose, no markdown fences — matching the EditPlan shape exactly.",
-    });
-  }
-  return { plan: null, errorMessage: "The proposed plan failed validation twice." };
 }

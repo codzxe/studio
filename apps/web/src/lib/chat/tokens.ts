@@ -12,10 +12,11 @@ export function estimateTokens(value: unknown): number {
   if (value === null || value === undefined || value === "") return 0;
   let text: string;
   try {
-    text = JSON.stringify(value);
+    // JSON.stringify returns undefined for functions/symbols and throws for
+    // circular refs/bigint — both degrade to String() so estimation never
+    // breaks context collection.
+    text = JSON.stringify(value) ?? String(value);
   } catch {
-    // Unserializable (circular refs, bigint, …): fall back to String() rather
-    // than throw — token estimation must never break context collection.
     text = String(value);
   }
   if (text.length === 0) return 0;

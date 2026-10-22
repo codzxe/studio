@@ -161,7 +161,7 @@ export async function* streamChatCompletion(
         throw new DOMException("The run was cancelled.", "AbortError");
       }
       if (attempt === MAX_ATTEMPTS - 1) break;
-      await sleep(RETRY_BACKOFF_MS[attempt]);
+      await sleep(RETRY_BACKOFF_MS[attempt] ?? 1_000);
     }
   }
   if (response === null) {
