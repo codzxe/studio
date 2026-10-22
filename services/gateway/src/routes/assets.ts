@@ -2,6 +2,12 @@
 // POST a descriptor, PUT the bytes to the returned signed URL. v1 accepts
 // client-declared sha256+size and trusts object-storage HEAD on read
 // (verify-by-head lands with the worker wave).
+//
+// §M7 task 3 (read-only): an upload scoped to a project via the OPTIONAL
+// `projectId` query parameter goes through the lease gate — only the ACTIVE
+// holder may add project-scoped assets while someone is editing. Unscoped
+// uploads target the shared workspace library and are never lease-blocked
+// (the lease governs the project, not the team library).
 
 import { Hono } from "hono";
 
@@ -15,6 +21,7 @@ import {
 import { type Asset, createId } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
+import { requireLeaseForMutation } from "../lease-guard.js";
 import { ok, page, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
@@ -81,6 +88,15 @@ export function assetsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       });
     }
 
+    // §M7 task 3: a project-scoped upload (optional ?projectId=) belongs to
+    // the lease holder — a non-holder gets 409 LEASE_HELD; cross-tenant or
+    // unknown project ids 404 through the gate's tenant-filtered read. The
+    // repo re-asserts tenancy on insert, as it always has.
+    const scopeProjectId = c.req.query("projectId");
+    if (scopeProjectId !== undefined && scopeProjectId !== "") {
+      await requireLeaseForMutation(deps, c, scopeProjectId);
+    }
+
     // Object key per §9.2. The repo mints the row id; the key embeds a
     // pre-generated asset-shaped id (documented deviation: key id ≠ row id —
     // assets are always looked up by row.objectKey, never by reconstructing
@@ -97,6 +113,8 @@ export function assetsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       width: descriptor.width ?? null,
       height: descriptor.height ?? null,
       durationTicks: descriptor.durationTicks ?? null,
+      projectId:
+        scopeProjectId !== undefined && scopeProjectId !== "" ? scopeProjectId : null,
       createdBy: c.get("auth").user.id,
     });
 

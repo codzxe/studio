@@ -5,10 +5,12 @@ import { type CommentsRepo, createCommentsRepo } from "./comments.js";
 import { type InvoicesRepo, createInvoicesRepo } from "./invoices.js";
 import { type LeasesRepo, createLeasesRepo } from "./leases.js";
 import { type LedgerRepo, createLedgerRepo } from "./ledger.js";
+import { type PresenceRepo, createPresenceRepo } from "./presence.js";
 import { type ProjectsRepo, createProjectsRepo } from "./projects.js";
 import { type RendersRepo, createRendersRepo } from "./renders.js";
 import { type RunsRepo, createRunsRepo } from "./runs.js";
 import { type SettingsRepo, createSettingsRepo } from "./settings.js";
+import { type ShareTokensRepo, createShareTokensRepo } from "./share-tokens.js";
 import { type SubscriptionsRepo, createSubscriptionsRepo } from "./subscriptions.js";
 import { type ThreadsRepo, createThreadsRepo } from "./threads.js";
 import { type VersionsRepo, createVersionsRepo } from "./versions.js";
@@ -45,6 +47,19 @@ export type {
 } from "./invoices.js";
 export type { SettingsRepo } from "./settings.js";
 export type { WebhookEventsRepo, WebhookSeenInput } from "./webhook-events.js";
+export type {
+  ShareTokensRepo,
+  ShareTokenIssueInput,
+  ShareTokenRevokeInput,
+  ShareTokenView,
+  ResolvedShare,
+} from "./share-tokens.js";
+export type {
+  PresenceRepo,
+  PresenceViewer,
+  PresenceBeatInput,
+  PresenceViewersOptions,
+} from "./presence.js";
 
 /** The full tenant-scoped repository bundle. */
 export interface Repos {
@@ -62,6 +77,9 @@ export interface Repos {
   readonly invoices: InvoicesRepo;
   readonly settings: SettingsRepo;
   readonly webhookEvents: WebhookEventsRepo;
+  /** §M7: share-link tokens (issue/verify/revoke) + presence heartbeats. */
+  readonly shareTokens: ShareTokensRepo;
+  readonly presence: PresenceRepo;
 }
 
 export function createRepos(db: StudioDb): Repos {
@@ -80,5 +98,7 @@ export function createRepos(db: StudioDb): Repos {
     invoices: createInvoicesRepo(db),
     settings: createSettingsRepo(db),
     webhookEvents: createWebhookEventsRepo(db),
+    shareTokens: createShareTokensRepo(db),
+    presence: createPresenceRepo(db),
   };
 }

@@ -23,13 +23,18 @@ import {
   ID_SCHEMA,
   PAGINATION_QUERY_SCHEMA,
   RESTORE_VERSION_SCHEMA,
+  SET_VERSION_LABEL_SCHEMA,
   UPLOAD_VERSION_SCHEMA,
   type ProjectVersion as VersionDto,
+  type VersionTimelineEntry,
 } from "@studio/contracts";
-
+// buildVersionDiff + VersionTimelineRow are root-exported from @studio/db
+// (version-logic); the wire timeline/diff TYPES come from @studio/contracts.
+import { type VersionTimelineRow, buildVersionDiff } from "@studio/db";
 import type { ProjectVersion } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
+import { requireLeaseForMutation } from "../lease-guard.js";
 import { ok, page, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { sha256Hex, snapshotKey } from "../storage.js";
@@ -73,6 +78,18 @@ export function versionsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     createdAt: version.createdAt.toISOString(),
   });
 
+  /**
+   * M7 task 4 timeline entry: the version row plus the timeline display
+   * fields — author display name, agent-run presence (agentRunId ≠ null) and
+   * the 12-char sha256 prefix (full hashes never appear in user copy).
+   */
+  const toTimelineDto = (row: VersionTimelineRow): VersionTimelineEntry => ({
+    ...toDto(row),
+    createdByName: row.createdByName,
+    isAgent: row.agentRunId !== null,
+    sha256Prefix: row.sha256.slice(0, 12),
+  });
+
   app.get(
     "/v1/projects/:id/versions",
     requireWorkspace("viewer"),
@@ -89,11 +106,11 @@ export function versionsRoutes(deps: GatewayDeps): Hono<AppBindings> {
         });
       }
       const workspaceId = c.get("workspace").id;
-      const result = await deps.repos.versions.list(workspaceId, pathParam(c, "id"), {
+      const result = await deps.repos.versions.timeline(workspaceId, pathParam(c, "id"), {
         cursor: query.data.cursor ?? null,
         limit: query.data.limit,
       });
-      return page(c, result.items.map(toDto), result.nextCursor);
+      return page(c, result.items.map(toTimelineDto), result.nextCursor);
     },
   );
 
@@ -105,6 +122,12 @@ export function versionsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       const projectId = pathParam(c, "id");
       const maxBytes = deps.env.storage.projectMaxBytes;
       const requestId = c.get("requestId");
+
+      // §M7 task 3 read-only gate, FIRST in the handler: cross-tenant ids 404
+      // through the guard's tenant-filtered lease read (law #3), and a held
+      // project refuses bytes BEFORE any buffering/hashing/storage happens.
+      // The editor's autosave loop holds the lease, so holder uploads pass.
+      await requireLeaseForMutation(deps, c, projectId);
 
       const contentType = c.req.header("content-type") ?? "";
       const contentLength = Number.parseInt(c.req.header("content-length") ?? "", 10);
@@ -228,34 +251,132 @@ export function versionsRoutes(deps: GatewayDeps): Hono<AppBindings> {
   );
 
   app.post(
-    "/v1/projects/:id/versions/:version/restore",
+    "/v1/projects/:id/versions/:versionId/restore",
     requireWorkspace("editor"),
     async (c: AppContext): Promise<Response> => {
       const workspace = c.get("workspace");
       const projectId = pathParam(c, "id");
-      const parsed = RESTORE_VERSION_SCHEMA.safeParse(await c.req.json().catch(() => ({})));
+      const versionId = pathParam(c, "versionId");
+      const parsed = RESTORE_VERSION_SCHEMA.safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) {
-        throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
+        throw new GatewayError("VALIDATION_FAILED", "Restoring needs a confirmation label.", {
           status: 400,
-          hint: "The optional note is at most 280 characters.",
+          hint: 'Send { "confirmLabel": "…" } naming the version you are restoring — no bare restores.',
           requestId: c.get("requestId"),
         });
       }
+      // §M7 task 3 read-only gate: a restore creates a new version (a project
+      // write) — same holder-only rule as the upload path.
+      await requireLeaseForMutation(deps, c, projectId);
+
+      // Confirm-with-confirmation target check: the version must belong to
+      // this project BEFORE anything mutates (§12.1 — cross-tenant 404s).
+      // Version rows are immutable, so this read cannot go stale against the
+      // restore transaction below.
+      const source = await deps.repos.versions.get(workspace.id, projectId, versionId);
+
       // §9.3: restoring creates a NEW version whose parent is the restored
-      // one; history is never rewritten (the repo enforces this).
+      // one; history is never rewritten (the repo enforces this). The new
+      // row's label records where it came from; the typed confirmation +
+      // optional note land in the audit entry (restore metadata).
       const { version } = await deps.repos.versions.restore(workspace.id, {
         projectId,
-        versionId: pathParam(c, "version"),
+        versionId,
         createdBy: c.get("auth").user.id,
-        label: parsed.data.note,
+        label: `Restored from v${source.version}`,
       });
-      await audit(deps, c, workspace.id, "version.restored", projectId, {
-        versionId: version.id,
-        restoredFrom: pathParam(c, "version"),
+      await auditVersion(deps, c, workspace.id, "version.restored", version.id, {
+        projectId,
+        restoredFromId: source.id,
+        restoredFromVersion: source.version,
+        confirmLabel: parsed.data.confirmLabel,
+        note: parsed.data.note ?? null,
       });
       return ok(c, toDto(version), 201);
     },
   );
 
+  app.post(
+    "/v1/projects/:id/versions/:versionId/label",
+    requireWorkspace("editor"),
+    async (c: AppContext): Promise<Response> => {
+      const workspace = c.get("workspace");
+      const projectId = pathParam(c, "id");
+      const versionId = pathParam(c, "versionId");
+      const parsed = SET_VERSION_LABEL_SCHEMA.safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) {
+        throw new GatewayError("VALIDATION_FAILED", "Version labels are 1–120 characters.", {
+          status: 400,
+          hint: 'Send { "label": "…" }.',
+          requestId: c.get("requestId"),
+        });
+      }
+      // §M7 task 3 read-only gate: a label edit is a project-scoped mutation —
+      // same holder-only rule as upload/restore.
+      await requireLeaseForMutation(deps, c, projectId);
+      // §9.3/D-24 candidate: the label column is the ONLY mutable version field.
+      const version = await deps.repos.versions.setLabel(workspace.id, {
+        projectId,
+        versionId,
+        label: parsed.data.label,
+      });
+      await auditVersion(deps, c, workspace.id, "version.labeled", version.id, {
+        projectId,
+        label: parsed.data.label,
+      });
+      return ok(c, toDto(version));
+    },
+  );
+
+  app.get(
+    "/v1/projects/:id/versions/:versionId/diff",
+    requireWorkspace("viewer"),
+    async (c: AppContext): Promise<Response> => {
+      const workspaceId = c.get("workspace").id;
+      const projectId = pathParam(c, "id");
+      const versionId = pathParam(c, "versionId");
+      const version = await deps.repos.versions.get(workspaceId, projectId, versionId);
+      const parent =
+        version.parentVersionId !== null
+          ? await deps.repos.versions.get(workspaceId, projectId, version.parentVersionId)
+          : null;
+      // Structural diff only (M7 v1): size delta, parent linkage, authorship
+      // change, time gap — never snapshot content or raw hashes in the copy.
+      return ok(c, buildVersionDiff(version, parent));
+    },
+  );
+
   return app;
+}
+
+/**
+ * Audit a version-targeted mutation (M7 task 4). Targets the VERSION row,
+ * not the project — the activity feed resolves version-targeted rows back to
+ * the project through the version join (repos/audit.listForProject). An
+ * audit hiccup must never fail the mutation (§7.1 posture, mirrors
+ * routes/projects.ts `audit`).
+ */
+async function auditVersion(
+  deps: GatewayDeps,
+  c: AppContext,
+  workspaceId: string,
+  action: string,
+  versionId: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await deps.repos.audit.append(workspaceId, {
+      actorId: c.get("auth").user.id,
+      action,
+      targetType: "version",
+      targetId: versionId,
+      metadata,
+    });
+  } catch (error) {
+    deps.logger.warn("audit_failed", {
+      action,
+      workspaceId,
+      detail: error instanceof Error ? error.message : "unknown",
+    });
+  }
 }

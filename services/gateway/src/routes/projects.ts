@@ -16,6 +16,7 @@ import {
 import type { Project } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
+import { requireLeaseForMutation } from "../lease-guard.js";
 import { ok, page, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
@@ -152,6 +153,9 @@ export function projectsRoutes(deps: GatewayDeps): Hono<AppBindings> {
           requestId: c.get("requestId"),
         });
       }
+      // §M7 task 3 read-only: metadata edits belong to the lease holder — a
+      // non-holder under an ACTIVE lease gets 409 LEASE_HELD (free/expired pass).
+      await requireLeaseForMutation(deps, c, pathParam(c, "id"));
       const project = await deps.repos.projects.patch(workspace.id, pathParam(c, "id"), {
         name: parsed.data.name,
         description: parsed.data.description,

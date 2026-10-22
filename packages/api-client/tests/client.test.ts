@@ -497,7 +497,9 @@ describe("createApiClient — surface map", () => {
     await ignore(recorder.projects.delete("p1"));
     await ignore(recorder.projects.manifest("p1"));
     await ignore(paginated.versions.list("p1"));
-    await ignore(recorder.versions.restore("p1", "ver_1", { note: "back" }));
+    await ignore(recorder.versions.restore("p1", "ver_1", { confirmLabel: "v1" }));
+    await ignore(recorder.versions.label("p1", "ver_1", { label: "shipped cut" }));
+    await ignore(recorder.versions.diff("p1", "ver_1"));
     await ignore(recorder.leases.acquire("p1", { sessionId: "sess_12345678" }));
     await ignore(recorder.leases.release("p1"));
     await ignore(paginated.assets.list());
@@ -535,8 +537,12 @@ describe("createApiClient — surface map", () => {
     );
     await ignore(recorder.renders.get("rnd_1"));
     await ignore(paginated.comments.list("p1"));
+    await ignore(paginated.comments.listThreadedComments("p1"));
     await ignore(recorder.comments.create("p1", { compId: "cmp_1", body: "note" }));
+    await ignore(recorder.comments.replyComment("cmt_1", { body: "reply note" }));
+    await ignore(recorder.comments.resolveComment("cmt_1"));
     await ignore(paginated.activity.list("p1"));
+    await ignore(recorder.activity.auditExport("p1"));
 
     const paths = calls.map((call) => call.input.replace(BASE, "").split("?")[0]);
     expect(paths).toEqual([
@@ -552,6 +558,8 @@ describe("createApiClient — surface map", () => {
       "/projects/p1/manifest",
       "/projects/p1/versions",
       "/projects/p1/versions/ver_1/restore",
+      "/projects/p1/versions/ver_1/label",
+      "/projects/p1/versions/ver_1/diff",
       "/projects/p1/lease",
       "/projects/p1/lease",
       "/assets",
@@ -571,7 +579,11 @@ describe("createApiClient — surface map", () => {
       "/renders/rnd_1",
       "/projects/p1/comments",
       "/projects/p1/comments",
+      "/projects/p1/comments",
+      "/comments/cmt_1/replies",
+      "/comments/cmt_1/resolve",
       "/projects/p1/activity",
+      "/projects/p1/audit-export",
     ]);
   });
 });

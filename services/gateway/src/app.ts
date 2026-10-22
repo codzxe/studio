@@ -30,9 +30,11 @@ import { leasesRoutes } from "./routes/leases.js";
 import { localStorageRoutes } from "./routes/local-storage.js";
 import { meRoutes } from "./routes/me.js";
 import { modelsRoutes } from "./routes/models.js";
+import { presenceRoutes } from "./routes/presence.js";
 import { projectsRoutes } from "./routes/projects.js";
 import { rendersRoutes } from "./routes/renders.js";
 import { runsRoutes } from "./routes/runs.js";
+import { shareAuthedRoutes, sharePublicRoutes } from "./routes/share.js";
 import { threadsRoutes } from "./routes/threads.js";
 import { versionsRoutes } from "./routes/versions.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
@@ -123,6 +125,17 @@ export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
   // the baseURL pathname, hence createAuth receives `${APP_URL}/v1/auth`.
   app.on(["POST", "GET"], `${AUTH_MOUNT_PATH}/*`, (c) => deps.auth.handler(c.req.raw));
 
+  // M7-E (§M7 task 5): the PUBLIC share surface, /v1/share/*. Mounted BEFORE
+  // the idempotency middleware (below): anonymous share-page POSTs — guest
+  // comments via the pinned createGuestComment handler + request-access —
+  // cannot carry an Idempotency-Key, so they bypass the §7.2 idempotency
+  // gate and rely on this router's own per-IP fixed windows + password
+  // gates instead (Hono runs the earlier-matching POST handler and stops
+  // there; every earlier middleware — requestId/log/CORS/rate-limit — still
+  // applies). No requireAuth anywhere in this router: the token (or token +
+  // x-share-password) IS the capability.
+  app.route("/", sharePublicRoutes(deps));
+
   app.use("*", idempotencyMiddleware());
 
   app.route("/", healthRoutes(deps));
@@ -142,7 +155,9 @@ export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
   app.route("/", billingRoutes(deps));
   app.route("/", rendersRoutes(deps));
   app.route("/", commentsRoutes(deps));
+  app.route("/", shareAuthedRoutes(deps));
   app.route("/", activityRoutes(deps));
+  app.route("/", presenceRoutes(deps));
   if (deps.local !== null) {
     app.route("/", localStorageRoutes(deps));
   }
