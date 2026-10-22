@@ -15,7 +15,11 @@
 
 import { Hono } from "hono";
 
-import { type ActivityEntry, type AuditExportRow, PAGINATION_QUERY_SCHEMA } from "@studio/contracts";
+import {
+  type ActivityEntry,
+  type AuditExportRow,
+  PAGINATION_QUERY_SCHEMA,
+} from "@studio/contracts";
 
 import type { Repos } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
@@ -85,7 +89,11 @@ export function activityRoutes(deps: GatewayDeps): Hono<AppBindings> {
         cursor: parsed.data.cursor ?? null,
         limit: parsed.data.limit,
       });
-      return page(c, result.items.map((entry) => toDto(entry, projectId)), result.nextCursor);
+      return page(
+        c,
+        result.items.map((entry) => toDto(entry, projectId)),
+        result.nextCursor,
+      );
     },
   );
 

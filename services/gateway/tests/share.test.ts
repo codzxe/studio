@@ -617,8 +617,9 @@ d("share manifest: player surface with NO internal ids", () => {
       "url",
       "version",
     ]);
-    expect(typeof version.url).toBe("string");
-    expect(version.url.length).toBeGreaterThan(0);
+    const signedUrl = version.url as string;
+    expect(typeof signedUrl).toBe("string");
+    expect(signedUrl.length).toBeGreaterThan(0);
     expect(Array.isArray(manifest.assets)).toBe(true);
 
     // The §12.1 leak pin: NO workspace/project/version ids ride as VALUES

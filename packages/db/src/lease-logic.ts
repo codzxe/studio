@@ -111,8 +111,6 @@ export function queueRequestDecision(
  * they are the notified next holder; the acquire itself stays the atomic
  * upsert in repos/leases.ts (fairness is UX, single-writer is the invariant).
  */
-export function nextHolderOf(
-  entries: readonly LeaseRequestEntry[],
-): LeaseRequestEntry | null {
+export function nextHolderOf(entries: readonly LeaseRequestEntry[]): LeaseRequestEntry | null {
   return entries[0] ?? null;
 }

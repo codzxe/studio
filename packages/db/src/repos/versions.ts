@@ -4,16 +4,10 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import type { StudioDb, StudioTx } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
+import { type Project, type ProjectVersion, projectVersions, projects, user } from "../schema.js";
 import {
-  type Project,
-  type ProjectVersion,
-  projectVersions,
-  projects,
-  user,
-} from "../schema.js";
-import {
-  assertExpectedVersion,
   type VersionTimelineRow,
+  assertExpectedVersion,
   buildRestorePlan,
   nextVersionNumber,
 } from "../version-logic.js";

@@ -4,9 +4,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { type StudioDb, createDb } from "../../src/db.js";
 import { DbError } from "../../src/errors-lite.js";
-import { PRESENCE_TTL_MS } from "../../src/repos/presence.js";
 import { migrateDatabase } from "../../src/migrate.js";
 import { type Repos, createRepos } from "../../src/repos/index.js";
+import { PRESENCE_TTL_MS } from "../../src/repos/presence.js";
 import * as schema from "../../src/schema.js";
 
 /**
@@ -150,9 +150,11 @@ describe.skipIf(!hasDb)("share + presence persistence (integration)", { timeout:
       expiresInDays: 7,
     });
     expect(token.passwordHash).toBe(`scrypt$${salt}$${digest}`);
-    expect(token.expiresAt).not.toBeNull();
-    expect(token.expiresAt!.getTime()).toBeGreaterThan(Date.now() + 6 * 24 * 3600 * 1000);
-    expect(token.expiresAt!.getTime()).toBeLessThan(Date.now() + 8 * 24 * 3600 * 1000);
+    const expiresAt = token.expiresAt;
+    expect(expiresAt).not.toBeNull();
+    if (expiresAt === null) throw new Error("expiresAt missing");
+    expect(expiresAt.getTime()).toBeGreaterThan(Date.now() + 6 * 24 * 3600 * 1000);
+    expect(expiresAt.getTime()).toBeLessThan(Date.now() + 8 * 24 * 3600 * 1000);
   });
 
   it("a duplicate token_hash is a typed CONFLICT (unique index through the wrap)", async () => {
@@ -169,12 +171,26 @@ describe.skipIf(!hasDb)("share + presence persistence (integration)", { timeout:
   it("verifyByHash resolves the live token scoped to the project; wrong scope/hash → null", async () => {
     const projectId = await projectIn(wsA, "Verify");
     const { raw, hash } = mintToken();
-    const token = await repos.shareTokens.issue(wsA, { projectId, createdBy: userId, tokenHash: hash });
+    const token = await repos.shareTokens.issue(wsA, {
+      projectId,
+      createdBy: userId,
+      tokenHash: hash,
+    });
     const verified = await repos.shareTokens.verifyByHash(projectId, hash);
     expect(verified?.id).toBe(token.id);
     // the RAW token can never verify (hash-only storage)
-    expect(await repos.shareTokens.verifyByHash(projectId, createHash("sha256").update(raw).update("x").digest("hex"))).toBeNull();
-    expect(await repos.shareTokens.verifyByHash(projectId, createHash("sha256").update("wrong").digest("hex"))).toBeNull();
+    expect(
+      await repos.shareTokens.verifyByHash(
+        projectId,
+        createHash("sha256").update(raw).update("x").digest("hex"),
+      ),
+    ).toBeNull();
+    expect(
+      await repos.shareTokens.verifyByHash(
+        projectId,
+        createHash("sha256").update("wrong").digest("hex"),
+      ),
+    ).toBeNull();
     // a different project never sees the token
     const other = await projectIn(wsA, "Verify Other");
     expect(await repos.shareTokens.verifyByHash(other, hash)).toBeNull();
@@ -214,7 +230,11 @@ describe.skipIf(!hasDb)("share + presence persistence (integration)", { timeout:
   it("resolveByHash carries the project + workspace context the public routes need", async () => {
     const projectId = await projectIn(wsA, "Resolve Context");
     const { hash } = mintToken();
-    const token = await repos.shareTokens.issue(wsA, { projectId, createdBy: userId, tokenHash: hash });
+    const token = await repos.shareTokens.issue(wsA, {
+      projectId,
+      createdBy: userId,
+      tokenHash: hash,
+    });
     const resolved = await repos.shareTokens.resolveByHash(hash);
     expect(resolved?.token.id).toBe(token.id);
     expect(resolved?.projectId).toBe(projectId);
@@ -373,9 +393,9 @@ describe.skipIf(!hasDb)("share + presence persistence (integration)", { timeout:
     await expect(
       repos.presence.beat(wsA, { projectId, userId, displayName: "X", compId: "x".repeat(121) }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
-    await expect(
-      repos.presence.viewers(wsB, projectId),
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(repos.presence.viewers(wsB, projectId)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
   });
 
   it("PRESENCE_TTL_MS matches the contracts pin (LEASE_HEARTBEAT_MS × 2 = 240s)", () => {

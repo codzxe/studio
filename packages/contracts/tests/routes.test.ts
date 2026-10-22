@@ -7,8 +7,8 @@ import {
   CANCEL_RUN_SCHEMA,
   CHAT_REQUEST_SCHEMA,
   CHECKOUT_SCHEMA,
-  COMMENT_REPLY_SCHEMA,
   COMMENTS_QUERY_SCHEMA,
+  COMMENT_REPLY_SCHEMA,
   CONTEXT_SELECTION_SCHEMA,
   CREATE_ASSET_SCHEMA,
   CREATE_COMMENT_SCHEMA,
@@ -386,9 +386,15 @@ describe("routes: comments + activity", () => {
     };
     expect(GUEST_COMMENT_SCHEMA.safeParse(guest).success).toBe(true);
     expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestName: "" }).success).toBe(false);
-    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestName: "x".repeat(81) }).success).toBe(false);
-    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestEmail: "x".repeat(201) }).success).toBe(false);
-    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestEmail: "not-an-email" }).success).toBe(false);
+    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestName: "x".repeat(81) }).success).toBe(
+      false,
+    );
+    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestEmail: "x".repeat(201) }).success).toBe(
+      false,
+    );
+    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestEmail: "not-an-email" }).success).toBe(
+      false,
+    );
     expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, authorId: "u1" }).success).toBe(false); // no author rides guest input
   });
 

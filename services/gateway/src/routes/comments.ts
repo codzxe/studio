@@ -12,12 +12,12 @@ import { Hono } from "hono";
 
 import { StudioError } from "@studio/config";
 import {
-  COMMENT_REPLY_SCHEMA,
   COMMENTS_QUERY_SCHEMA,
+  COMMENT_REPLY_SCHEMA,
   CREATE_COMMENT_SCHEMA,
+  type Comment as CommentDto,
   GUEST_COMMENT_SCHEMA,
   RESOLVE_COMMENT_SCHEMA,
-  type Comment as CommentDto,
 } from "@studio/contracts";
 
 import type { Comment } from "@studio/db";
@@ -143,13 +143,11 @@ export function commentsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     async (c: AppContext): Promise<Response> => {
       const workspace = c.get("workspace");
       const commentId = pathParam(c, "id");
-      const parsed = RESOLVE_COMMENT_SCHEMA.safeParse(
-        (await c.req.json().catch(() => null)) ?? {},
-      );
+      const parsed = RESOLVE_COMMENT_SCHEMA.safeParse((await c.req.json().catch(() => null)) ?? {});
       if (!parsed.success) {
         throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
           status: 400,
-          hint: "Send an empty body to resolve, or { \"resolved\": false } to reopen.",
+          hint: 'Send an empty body to resolve, or { "resolved": false } to reopen.',
           requestId: c.get("requestId"),
         });
       }

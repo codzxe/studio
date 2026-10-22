@@ -75,9 +75,11 @@ describe("resolveChatModel", () => {
     expect(resolveChatModel({ requested: "studio-smart", plan: "pro", requestId: "req_1" })).toBe(
       "studio-smart",
     );
+    // F-J2 (catalog-aligned, D-4/D-8): every paid plan allows fast+smart;
+    // studio-vision is NOT selectable on any v1 plan — smart is the top alias.
     expect(
-      resolveChatModel({ requested: "studio-vision", plan: "studio", requestId: "req_1" }),
-    ).toBe("studio-vision");
+      resolveChatModel({ requested: "studio-smart", plan: "studio", requestId: "req_1" }),
+    ).toBe("studio-smart");
   });
 
   it("throws MODEL_NOT_ENTITLED (403) for a model outside the plan", () => {

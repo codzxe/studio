@@ -4,13 +4,7 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import type { StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import {
-  type AuditLogEntry,
-  auditLog,
-  projectVersions,
-  projects,
-  user,
-} from "../schema.js";
+import { type AuditLogEntry, auditLog, projectVersions, projects, user } from "../schema.js";
 import { type WorkspaceId, requireNonEmpty } from "./shared.js";
 
 /**
@@ -160,7 +154,9 @@ export function createAuditRepo(db: StudioDb): AuditRepo {
                   .select({ id: projectVersions.id })
                   .from(projectVersions)
                   .innerJoin(projects, eq(projectVersions.projectId, projects.id))
-                  .where(and(eq(projects.workspaceId, workspaceId), eq(projectVersions.projectId, id))),
+                  .where(
+                    and(eq(projects.workspaceId, workspaceId), eq(projectVersions.projectId, id)),
+                  ),
               ),
             ),
             cursor
@@ -189,9 +185,7 @@ export function createAuditRepo(db: StudioDb): AuditRepo {
     async exportForProject(workspaceId, projectId, limit) {
       const id = requireNonEmpty(projectId, "projectId");
       const requested =
-        limit !== undefined && Number.isInteger(limit) && limit > 0
-          ? limit
-          : AUDIT_EXPORT_MAX_ROWS;
+        limit !== undefined && Number.isInteger(limit) && limit > 0 ? limit : AUDIT_EXPORT_MAX_ROWS;
       const bound = Math.min(requested, AUDIT_EXPORT_MAX_ROWS);
       const rows = await db
         .select({ entry: auditLog, actorName: user.name, actorEmail: user.email })
@@ -208,7 +202,9 @@ export function createAuditRepo(db: StudioDb): AuditRepo {
                   .select({ id: projectVersions.id })
                   .from(projectVersions)
                   .innerJoin(projects, eq(projectVersions.projectId, projects.id))
-                  .where(and(eq(projects.workspaceId, workspaceId), eq(projectVersions.projectId, id))),
+                  .where(
+                    and(eq(projects.workspaceId, workspaceId), eq(projectVersions.projectId, id)),
+                  ),
               ),
             ),
           ),

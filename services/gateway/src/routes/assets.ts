@@ -21,8 +21,8 @@ import {
 import { type Asset, createId } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
-import { requireLeaseForMutation } from "../lease-guard.js";
 import { ok, page, pathParam } from "../http.js";
+import { requireLeaseForMutation } from "../lease-guard.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
 import { assetKey, sanitizeName } from "../storage.js";
@@ -113,8 +113,7 @@ export function assetsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       width: descriptor.width ?? null,
       height: descriptor.height ?? null,
       durationTicks: descriptor.durationTicks ?? null,
-      projectId:
-        scopeProjectId !== undefined && scopeProjectId !== "" ? scopeProjectId : null,
+      projectId: scopeProjectId !== undefined && scopeProjectId !== "" ? scopeProjectId : null,
       createdBy: c.get("auth").user.id,
     });
 

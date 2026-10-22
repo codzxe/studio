@@ -1285,11 +1285,11 @@ d("M6-J journey 3 — money conservation across runs", () => {
     const threadRuns = await runsOfThread(ws.id, fx.threadId);
     // listByThread is newest-first: the refused hold is the newest row.
     const refusedRun = at(threadRuns, 0);
-    // F-J5 (pinned ACTUAL behavior — see the file header): the row is
-    // orphaned as "queued" (the route's failed-update is refused by the
-    // status machine and swallowed), with NO ledger row for the hold.
-    expect(refusedRun.status).toBe("queued");
-    expect(refusedRun.errorCode).toBeNull();
+    // F-J5 FIXED (2026-10-24): queued→failed is legal, so the refused hold
+    // lands an HONEST terminal row (failed + INSUFFICIENT_CREDITS) instead of
+    // the pre-fix orphaned-queued drift. No ledger row for the hold, still.
+    expect(refusedRun.status).toBe("failed");
+    expect(refusedRun.errorCode).toBe("INSUFFICIENT_CREDITS");
     expect(await balanceOf(ws.id)).toBe(1); // never negative
 
     // The invariant across EVERY entry written by the journey so far.
