@@ -35,7 +35,6 @@ import {
   type PlanSummary,
   type PortalResponse,
   type Project,
-  type ProjectLease,
   type ProjectManifest,
   type ProjectVersion,
   RENDER_FORMAT_SCHEMA,
@@ -213,15 +212,37 @@ export const UPLOAD_VERSION_RESPONSE_SCHEMA = z.object({
 }) satisfies z.ZodType<UploadVersionResponse>;
 
 // ---------------------------------------------------------------------------
-// Leases
+// Leases — the REAL §7.2 wire response (compat note, first real consumer)
 // ---------------------------------------------------------------------------
+// `POST /v1/projects/:id/lease` answers with the acquire/renew OUTCOME, not
+// the §9.1 lease row the contracts `ProjectLease` interface documents:
+//   { acquired, holderName, expiresAt, readOnly }   (gateway leases.ts ok body)
+// `acquired: false` + `readOnly: true` = another editor holds the lease and
+// this session must open read-only (§9.3). The gateway suite (leases.test.ts)
+// pins this shape against live Postgres; follow-up for the contracts owner:
+// add a LeaseAcquireResponse type so the row/response drift is documented in
+// one place.
 
-export const PROJECT_LEASE_SCHEMA = z.object({
-  projectId: idSchema,
-  userId: idSchema,
-  sessionId: z.string(),
+export interface LeaseAcquireResponse {
+  /** `true` = we hold (or just renewed) the lease. */
+  readonly acquired: boolean;
+  /** Display name of the current holder (the gateway resolves ids to names). */
+  readonly holderName: string;
+  readonly expiresAt: string;
+  /** `true` = this session must open read-only (§9.3: a refused acquire). */
+  readonly readOnly: boolean;
+}
+
+export const LEASE_ACQUIRE_RESPONSE_SCHEMA = z.object({
+  acquired: z.boolean(),
+  holderName: z.string(),
   expiresAt: isoSchema,
-}) satisfies z.ZodType<ProjectLease>;
+  readOnly: z.boolean(),
+}) satisfies z.ZodType<LeaseAcquireResponse>;
+
+export const LEASE_RELEASE_RESPONSE_SCHEMA = z.object({
+  released: z.boolean(),
+}) satisfies z.ZodType<{ released: boolean }>;
 
 // ---------------------------------------------------------------------------
 // Assets

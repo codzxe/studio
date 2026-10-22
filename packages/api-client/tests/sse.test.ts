@@ -1,8 +1,8 @@
 import { INITIAL_RUN_STATE, type StudioStreamEvent, applyEvents } from "@studio/contracts";
 import { describe, expect, it } from "vitest";
 
-import { ApiError, isApiError } from "../src/api-error.js";
-import { createApiClient } from "../src/client.js";
+import { ApiError, isApiError } from "../src/api-error";
+import { createApiClient } from "../src/client";
 import {
   type ChatStreamController,
   type ChatStreamDoneReason,
@@ -14,7 +14,7 @@ import {
   StreamEventNormalizer,
   createSseParser,
   streamChat,
-} from "../src/sse.js";
+} from "../src/sse";
 import {
   byteChunkArrays,
   controlledStream,
@@ -22,7 +22,7 @@ import {
   jsonOk,
   sseLines,
   sseResponse,
-} from "./helpers.js";
+} from "./helpers";
 
 const BASE = "https://api.studio.test/v1";
 

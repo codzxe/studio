@@ -8,7 +8,8 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     // Fleet precedent (W2-Q): no rootDir/outDir; tests sit next to src/ and
-    // `tsc --noEmit` is the gate. Relative imports keep the .js extension.
+    // `tsc --noEmit` is the gate. Internal relative imports are EXTENSIONLESS
+    // (Bundler resolution; Turbopack-safe — M3-A conversion, see W5-prep recon).
     "noEmit": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]

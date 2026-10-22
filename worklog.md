@@ -240,3 +240,27 @@ Stage Summary:
 - Deliverable: packages/editor-bridge is Turbopack-safe (extensionless internal imports) and verified against the REAL shipped dist surface; load-failure seam added for M3.7; 70/70 tests + typecheck + lint green.
 - Key handoff facts for M3-A: poll editorLoadState(iframe) for the loading UI; attach once status==="ready"; branch on err.code==="EDITOR_LOAD_FAILED" (or status==="failed") for the retry screen; dirty flag = query("project.summary").dirty; dist startup rejection string is "Studio is not running yet" (bridge retries once).
 - Leftovers/blockers: none in-package. Noted (not mine): docs/phases/gap/packages.md:641 still lists the old 4-code set (reader snapshot, descriptive only); apps/web still has zero @studio/editor-bridge imports (M3-A's job); api-client/contracts still NodeNext .js imports (other owners).
+---
+Task ID: M3-B
+Agent: M3-B subagent (interrupted mid-flight) + main-orchestrator (completion, per user's "don't redo work" directive)
+Task: Editor session engine — M3.3 load sequence + M3.4 autosave/versioning (D-6) in apps/web/src/lib/editor-session.
+
+Work Log:
+- M3-B subagent wrote the full file set (index/types/internal/load/autosave/sha256/testing + 4 test files) but was stopped by the user's new-token message mid-refactor (type moves into types.ts incomplete, suite never run, no worklog, no commit). Integrator took over the leftovers instead of re-dispatching.
+- Completed the interrupted refactor: re-exports (AutosaveController/AutosaveHooks from autosave.ts; UploadVersionResult/VersionRef from testing.ts; LoadProjectSessionOptions/CreateAutosaveControllerOptions via index.ts from types.ts); union discrimination for UploadVersionResult via "conflict" in result; client cast via unknown; TS 5.7 ArrayBuffer-generic fixes (Uint8Array<ArrayBuffer> at digest + BlobPart sites); readonly->mutable copy in testing.ts.
+- Debugged sha256HexFallback producing wrong digests on ALL inputs: derived the SHA-256 K table from first principles (fractional cube roots of the first 64 primes) and diffed — K[29] was 0xd5a1691e, correct constant is 0xd5a79147. One-character-class typo; fixed + 16 vector tests (incl. node:crypto cross-checks) now green. Debug scripts removed after use.
+- Fixed 2 latent test bugs (never run before interruption): controller.dirty is the cached view as of the last project.summary read (refreshes each tick), so the post-edit assertion now checks the editor's own state; the transient-failures test needed a fresh edit before its 7th upload (cadence-resumed assertion).
+- Engine hardening (real upstream semantics verified): upstream file.save* calls mark_saved() so project.summary flips dirty->clean the moment we persist locally — saveOnce now sets proactiveDirty ("the cloud is owed this save") after passing the dirty gate, so failed-upload retries never silently no-op on the flipped state; cleared on success/dedup. This also keeps controller.dirty truthful while uploads fail.
+- Stabilized fake-timer tests under parallel-worker CPU contention: the save chain crosses a REAL async seam (jsdom WebCrypto subtle.digest resolves on Node's threadpool) — pump/tickUntilUploaded/wait loops now interleave realSleep(1) via node:timers/promises (bypasses faked globals). 4 consecutive full-suite runs: 62/62.
+- apps/web/vitest.config.ts include widened to src/**/*.test.{ts,tsx} (colocated tests run by default now); M3-B's local vitest workaround (vitest.local.config.ts) deleted; M3-B's probe.test.ts (swept into the M3-C commit) removed.
+- Security hygiene: .github-token was TRACKED in git (committed with the since-dead ghp_tYa... token) — git rm --cached + already in .git/info/excludes. Dead token remains in history; current tokens never staged (verified). NOTE: the token file itself stays local-only from now on.
+- Gates: web typecheck 0 errors, biome clean, 62/62 tests (4x stable). Committed + pushed via git-sync "M3-B: ...".
+
+Stage Summary:
+- Deliverable: apps/web/src/lib/editor-session — the pinned M3-A seam is FINAL and tested:
+  loadProjectSession({bridge, client, projectId}) -> {openedPath, activeComp, missingAssets[], assetPaths};
+  createAutosaveController({bridge, client, projectId, baseVersion, hooks?, intervalMs?=30s(D-6), maxConsecutiveErrors?=5, immediateRetries?=2}) -> {get dirty, markDirty, saveNow(reason)->SaveOutcome, dispose};
+  EditorSessionClient seam: getManifest/downloadProjectFile/downloadAsset/uploadVersion (uploadVersion resolves {ok:true,version}|{ok:false,conflict:true,serverVersion?}|{ok:false,error} — NEVER throws for conflicts);
+  hooks: onSaved/onConflict(serverVersion)/onError. Fake client harness: editor-session/testing.ts (createFakeEditorSessionClient with injectable failures/hangs + call recording).
+- Key facts for M3-A: autosave handles the whole D-6 cadence internally (30s ticks poll project.summary dirty + proactiveDirty); page responsibilities = call saveNow('manual'|'agent-apply'|'before-close') at the right moments, render onSaved/onConflict/onError, and mount the engine after bridge.ready(); conflicts park the controller terminally (recovery = reload server version, new controller); load failure of individual assets never blocks the open (missingAssets -> banner data).
+- sha256Hex is exported for the page's upload seam if it wants to pre-compute (uses WebCrypto with a verified sync fallback).

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { type ApiError, isApiError } from "../src/api-error.js";
-import { createApiClient } from "../src/client.js";
-import { type RecordedCall, jsonErr, jsonOk, textResponse } from "./helpers.js";
+import { type ApiError, isApiError } from "../src/api-error";
+import { createApiClient } from "../src/client";
+import { type RecordedCall, jsonErr, jsonOk, textResponse } from "./helpers";
 
 function header(call: RecordedCall, name: string): string | null {
   if (call.init?.headers === undefined) return null;
@@ -573,6 +573,60 @@ describe("createApiClient — surface map", () => {
       "/projects/p1/comments",
       "/projects/p1/activity",
     ]);
+  });
+});
+
+// The §7.2 lease wire is the acquire/renew OUTCOME (gateway leases.ts):
+// { acquired, holderName, expiresAt, readOnly } — NOT the §9.1 lease row.
+// The M3-A editor host is the first real consumer; these pin the compat fix.
+describe("createApiClient — leases (real §7.2 wire)", () => {
+  it("parses a refused acquire as the read-only outcome", async () => {
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(
+        jsonOk({
+          acquired: false,
+          holderName: "Dana Flow",
+          expiresAt: "2026-10-15T09:07:00Z",
+          readOnly: true,
+        }),
+      ),
+    );
+    const lease = await client.leases.acquire("prj_1", { sessionId: "sess_12345678" });
+    expect(lease).toEqual({
+      acquired: false,
+      holderName: "Dana Flow",
+      expiresAt: "2026-10-15T09:07:00Z",
+      readOnly: true,
+    });
+    const post = calls[0];
+    expect(post?.init?.method).toBe("POST");
+    expect(post?.input).toBe(`${BASE}/projects/prj_1/lease`);
+    expect(header(post ?? ({} as RecordedCall), "Idempotency-Key")).toBeTruthy();
+  });
+
+  it("parses a successful acquire (renew with the same sessionId)", async () => {
+    const { client } = makeClient(() =>
+      Promise.resolve(
+        jsonOk({
+          acquired: true,
+          holderName: "Maya",
+          expiresAt: "2026-10-15T09:11:00Z",
+          readOnly: false,
+        }),
+      ),
+    );
+    const lease = await client.leases.acquire("prj_1", { sessionId: "sess_12345678" });
+    expect(lease.acquired).toBe(true);
+    expect(lease.readOnly).toBe(false);
+  });
+
+  it("parses the release outcome { released }", async () => {
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({ released: true })));
+    const outcome = await client.leases.release("prj_1");
+    expect(outcome).toEqual({ released: true });
+    const del = calls[0];
+    expect(del?.init?.method).toBe("DELETE");
+    expect(del?.input).toBe(`${BASE}/projects/prj_1/lease`);
   });
 });
 

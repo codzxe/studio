@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 // Smoke check (not committed): validateFixtures + reduceEvents on the demo runs.
 import { reduceEvents } from "@studio/contracts";
-import { fixtures, validateFixtures } from "../src/fixtures.js";
+import { fixtures, validateFixtures } from "../src/fixtures";
 
 const issues = validateFixtures();
 it("fixtures valid", () => {
