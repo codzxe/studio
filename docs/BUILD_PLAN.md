@@ -1,6 +1,6 @@
 # Studio Build Plan
 
-Status: **accepted direction** · 2026-10-21 · Implementation not started
+Status: **in execution** · 2026-10-22 · Waves W0–W3 landed (skeleton, editor pin, contracts, db, bridge, gateway+42 tests, web shell) · completion map: docs/phases/gap/ · rulings: docs/DECISIONS.md
 
 This is the execution plan for the EffectCraft-based product. It replaces the
 PhotoCraft-specific phases in `docs/BUILD_PROMPT.md` §2, §7–§10, §20 and §24. The
