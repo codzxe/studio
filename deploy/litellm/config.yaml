@@ -1,0 +1,139 @@
+# ===========================================================================
+# deploy/litellm/config.yaml — LiteLLM proxy config for the Studio chat agent
+# (PRODUCT_ARCHITECTURE.md §8.2 model routing · runbook: docs/deploy/LITELLM.md)
+#
+# THE RULE OF THIS FILE — provider identities live ONLY here.
+# The Studio gateway never names a provider model: it requests the aliases
+# below (`studio-fast` / `studio-smart` / `studio-vision`, mirrored 1:1 by
+# MODEL_CATALOG in @studio/contracts) over LiteLLM's OpenAI-compatible API.
+# Switching providers = editing THIS file + the deployment env, never app code.
+#
+# SECRETS COME FROM THE DEPLOYMENT ENV, NEVER THIS FILE:
+#   general_settings.master_key   ← LITELLM_MASTER_KEY    (proxy admin; ops only)
+#   general_settings.database_url ← LITELLM_DATABASE_URL  (LiteLLM Postgres:
+#                                    virtual keys, budgets, spend tables)
+#   provider credentials          ← OPENAI_API_KEY / ANTHROPIC_API_KEY / …
+#   (`os.environ/<VAR>` references — see `litellm_params.api_key` below.)
+#
+# The keys the APP sends are NOT configured here: the gateway's bearer key is
+# `LITELLM_VIRTUAL_KEY ?? LITELLM_API_KEY` (M4-SEAMS.md Seam 3), minted at
+# runtime via /key/generate (see the runbook §Keys). LITELLM_API_KEY /
+# LITELLM_VIRTUAL_KEY / LITELLM_BASE_URL are app-contract env vars
+# (packages/config/src/env.ts) — everything else in this header is a
+# deployment-layer secret.
+#
+# Deployment surface:
+#   compose  : repo-root docker-compose.litellm.yml (litellm + its own Postgres 17)
+#   dev boot : scripts/dev-litellm.sh (no-ops with a pointer on Docker-less boxes)
+#   runbook  : docs/deploy/LITELLM.md (keys, budgets, usage, redaction, health)
+# ===========================================================================
+
+# ── model aliases (§8.2) ─────────────────────────────────────────────────────
+# `model_name` is the public alias; `litellm_params.model` is the provider id.
+# Swap providers freely under an alias — the app never notices. Examples of
+# equivalent swaps: `openai/gpt-4o-mini` → `azure/<deployment-name>`,
+# `bedrock/anthropic.claude-3-5-haiku-…`, `vertex_ai/gemini-2.0-flash`,
+# `ollama/llama3.1` (self-hosted) — keep the api_key: os.environ/… pattern.
+model_list:
+  # ── studio-fast — cheap/fast tier (§8.2) ──────────────────────────────────
+  # "Cheap planning, classification, quick edits" — default model for
+  # trial/starter plans (PLAN_MODEL_ENTITLEMENTS in @studio/contracts).
+  - model_name: studio-fast
+    litellm_params:
+      model: openai/gpt-4o-mini # EDIT-ME: any small/fast model your provider account allows
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Same-tier fallback for studio-fast. NOT one of the app's MODEL_IDS —
+  # clients never request it directly; it exists as a fallback target only.
+  # Keep fallbacks INSIDE the tier (§8.2: "provider failure → secondary model
+  # within the same tier; never silently downgrade a paid user to a weaker
+  # model without telling them").
+  - model_name: studio-fast-fallback
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-latest # EDIT-ME: any cheap/fast model from another provider
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ── studio-smart — frontier tier (§8.2) ───────────────────────────────────
+  # "Main agent, multi-step edits, tool use" — pro/studio plans.
+  - model_name: studio-smart
+    litellm_params:
+      model: openai/gpt-4o # EDIT-ME: your frontier model
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Same-tier fallback: another frontier model, NOT a fast-tier downgrade.
+  - model_name: studio-smart-fallback
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-latest # EDIT-ME: frontier-class alternative
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ── studio-vision — multimodal tier (§8.2; gap/milestones ruling A8) ──────
+  # "Frame/screenshot understanding" for studio.render_preview analysis.
+  # Alias ships at M4 per A8; UI exposure is gated by the Studio plan
+  # entitlement and it is metered separately — do not hand it to cheaper keys.
+  - model_name: studio-vision
+    litellm_params:
+      model: openai/gpt-4o # vision-capable multimodal model; EDIT-ME per account
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Same-tier fallback: another vision-capable (image-input) model.
+  - model_name: studio-vision-fallback
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-latest # multimodal: accepts images
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+# ── fallback routing (router-level) ──────────────────────────────────────────
+# On provider failure LiteLLM retries the same-tier `-fallback` alias before
+# surfacing an error. Tiers NEVER cross-fall-back: a smart-tier request may
+# not silently land on a fast-tier model (§8.2) — the tiers differ in credit
+# rates and plan entitlements, so a cross-tier hop would mis-bill or leak a
+# paid capability. Fallback targets are plain model_list entries (above).
+fallbacks:
+  - model: studio-fast
+    fallbacks: [{ "model": "studio-fast-fallback" }]
+  - model: studio-smart
+    fallbacks: [{ "model": "studio-smart-fallback" }]
+  - model: studio-vision
+    fallbacks: [{ "model": "studio-vision-fallback" }]
+
+# ── proxy behaviour ──────────────────────────────────────────────────────────
+litellm_settings:
+  # Drop unsupported params instead of failing the call (provider drift).
+  drop_params: true
+  # NO anonymous telemetry to the maintainers (self-hosted posture).
+  telemetry: false
+  # Response caching stays OFF. Deliberate: chat prompts embed per-tenant
+  # project context — cached responses would leak context across tenants and
+  # poison usage capture. Do not enable cache_response in production.
+  cache_response: false
+  # Request retries — kept small: the gateway's runner adds its own 2-retry
+  # backoff on top (M4-SEAMS.md Seam 3), so the end-to-end worst case stays
+  # bounded. Add `request_timeout` as a whole-request ceiling for long
+  # streaming tool runs (seconds).
+  num_retries: 2
+  request_timeout: 300
+
+# ── proxy admin & persistence ────────────────────────────────────────────────
+general_settings:
+  # Proxy admin key — ops ONLY (mints keys, reads spend). Never in app env.
+  # Generate: LITELLM_MASTER_KEY="sk-master-$(openssl rand -hex 24)".
+  # NOTE: keep the sk- prefix — LiteLLM key management expects it.
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+  # LiteLLM Postgres: virtual keys, budgets and the spend tables (M6
+  # reconciliation source). OPTIONAL — leave LITELLM_DATABASE_URL unset for
+  # a minimal deployment WITHOUT virtual keys/budgets/spend (dev-only shape;
+  # the runbook always deploys WITH the DB). The docker-compose.litellm.yml
+  # stack provides this via its dedicated postgres:17 service, separate from
+  # the app control-plane DATABASE_URL.
+  database_url: os.environ/LITELLM_DATABASE_URL
+
+  # Admin routes (/key/generate, /key/info, /key/list, /spend/…) stay
+  # ENABLED (false = not disabled): ops mints the platform key and
+  # per-workspace virtual keys through them, master-key protected. Set true
+  # only if you pre-provision every key out-of-band and never mint at runtime.
+  disable_proxy_admin_routes: false
+
+  # store_model_in_db is intentionally NOT set (off): provider identities live
+  # in THIS file (reviewed, git-tracked) — models added via the admin UI/API
+  # would break that invariant and bypass review.
+# ===========================================================================

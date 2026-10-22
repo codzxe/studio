@@ -9,14 +9,19 @@
 // against (§7.4 rule: results accepted only for the expected toolCallId).
 //
 // Runners:
-//   * MockRunner        — env MOCK_MODEL=true: run.started → text deltas →
-//                         a small valid EditPlan ("rename layer") →
-//                         studio.get_context tool.started/result → done.
-//   * UnavailableRunner  — MOCK_MODEL=false: run.started → run.failed
-//                         RUN_MODEL_UNAVAILABLE (no charge). Wave 4 replaces
-//                         this with the LiteLLM runner behind the same seam.
+//   * MockRunner     — env MOCK_MODEL=true: run.started → text deltas →
+//                      a small valid EditPlan ("rename layer") →
+//                      studio.get_context tool.started/result → done.
+//   * LiteLLMRunner  — MOCK_MODEL=false: the REAL OpenAI-compatible runner
+//                      (src/litellm/, D-16): streams via the LiteLLM proxy,
+//                      executes the 4 client read tools through the
+//                      tool-result wait seam below, resolves studio.plan_edit
+//                      server-side as a structured-output call, and converts
+//                      usage → committed credits (§8.8).
 
 import { randomUUID } from "node:crypto";
+
+import type { StudioEnv } from "@studio/config";
 
 import {
   EDIT_PLAN_SCHEMA,
@@ -28,10 +33,19 @@ import {
 } from "@studio/contracts";
 import { computeReserveAmount } from "@studio/db";
 
+import { createLiteLLMRunner } from "./litellm/runner.js";
+import { nullLogger, type Logger } from "./logger.js";
+
 /** All 12 §7.4 payloads minus the runId/seq the log assigns. */
 export type RunStreamPayload = {
   [K in StudioStreamEvent["type"]]: Omit<Extract<StudioStreamEvent, { type: K }>, "runId" | "seq">;
 }[StudioStreamEvent["type"]];
+
+/** One prior thread turn handed to the model as prompt history (§8.3). */
+export interface AgentRunHistoryTurn {
+  readonly role: "user" | "assistant";
+  readonly content: string;
+}
 
 export interface AgentRun {
   readonly runId: string;
@@ -45,7 +59,16 @@ export interface AgentRun {
   readonly pinned: readonly PinnedContextItem[];
   /** Integer credits held for this run (already reserved by the route). */
   readonly reservedCredits: number;
+  /** Last turns of thread history BEFORE this run's message (§8.3 "last 6
+   * turns"); the chat route loads them from the threads repo. Optional so the
+   * MockRunner and unit harnesses can omit it. */
+  readonly history?: readonly AgentRunHistoryTurn[];
 }
+
+/** Result of waiting for a client-reported tool result (§7.4 / M4 Seam 2). */
+export type ToolWaitResult =
+  | { readonly ok: true; readonly result: unknown }
+  | { readonly ok: false; readonly reason: "timeout" | "aborted" };
 
 /** What the runner hands back to the chat route for ledger finalization. */
 export interface AgentRunStream {
@@ -54,6 +77,14 @@ export interface AgentRunStream {
   yieldToStream(): Promise<void>;
   /** Register a toolCallId whose client-reported result will be accepted. */
   expectToolCall(toolCallId: string, tool: string): void;
+  /**
+   * Wait for the editor client to POST the result of `toolCallId` via
+   * /v1/runs/:id/events (M4 Seam 2). The chat route wires this to the run
+   * log's own tool.result events with the runner's TOOL_RESULT_TIMEOUT_MS;
+   * the LiteLLM runner maps `timeout` → run.failed EDITOR_DISCONNECTED and
+   * `aborted` → cancelled.
+   */
+  waitForToolResult(toolCallId: string): Promise<ToolWaitResult>;
   /** Aborted when the client disconnects or POST /runs/:id/cancel fires. */
   readonly signal: AbortSignal;
 }
@@ -79,12 +110,14 @@ export class RunLog {
   private readonly events: StudioStreamEvent[] = [];
   private readonly listeners = new Set<(event: StudioStreamEvent) => void>();
   private readonly expectedTools = new Map<string, string>();
+  private readonly signal: AbortSignal | null;
   private plan: EditPlan | null = null;
   private terminal: StudioStreamEvent | null = null;
   private nextSeq = 0;
 
-  constructor(runId: string) {
+  constructor(runId: string, signal?: AbortSignal) {
     this.runId = runId;
+    this.signal = signal ?? null;
   }
 
   emit(payload: RunStreamPayload): StudioStreamEvent {
@@ -148,6 +181,48 @@ export class RunLog {
   toolNameFor(toolCallId: string): string | null {
     return this.expectedTools.get(toolCallId) ?? null;
   }
+
+  /**
+   * Wait for the run's own `tool.result` event for `toolCallId` — the runs
+   * route emits it when the editor client POSTs /v1/runs/:id/events (§7.4).
+   * M4 Seam 2: never rejects; resolves `{ ok: false, reason: "timeout" }`
+   * after `timeoutMs`, `aborted` when the run's signal fired first, and
+   * `{ ok: true, result }` if the result already arrived before the wait.
+   */
+  waitToolResult(toolCallId: string, timeoutMs: number): Promise<ToolWaitResult> {
+    for (const event of this.events) {
+      if (event.type === "tool.result" && event.toolCallId === toolCallId) {
+        return Promise.resolve({ ok: true, result: event.result });
+      }
+    }
+    if (this.signal !== null && this.signal.aborted) {
+      return Promise.resolve({ ok: false, reason: "aborted" });
+    }
+    return new Promise<ToolWaitResult>((resolveWait) => {
+      let settled = false;
+      const settle = (result: ToolWaitResult): void => {
+        if (settled) return;
+        settled = true;
+        this.signal?.removeEventListener("abort", onAbort);
+        clearTimeout(timer);
+        unsubscribe();
+        resolveWait(result);
+      };
+      const unsubscribe = this.subscribe((event) => {
+        if (event.type === "tool.result" && event.toolCallId === toolCallId) {
+          settle({ ok: true, result: event.result });
+        }
+      });
+      const onAbort = (): void => {
+        settle({ ok: false, reason: "aborted" });
+      };
+      this.signal?.addEventListener("abort", onAbort, { once: true });
+      const timer = setTimeout(() => {
+        settle({ ok: false, reason: "timeout" });
+      }, timeoutMs);
+      timer.unref?.();
+    });
+  }
 }
 
 interface RegistryEntry {
@@ -159,8 +234,10 @@ export class RunRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
 
   register(runId: string): { log: RunLog; signal: AbortSignal } {
-    const log = new RunLog(runId);
     const controller = new AbortController();
+    // The log sees the same signal so waitToolResult can resolve `aborted`
+    // the moment the run is cancelled (client abort / POST cancel).
+    const log = new RunLog(runId, controller.signal);
     this.entries.set(runId, { log, controller });
     return { log, signal: controller.signal };
   }
@@ -305,28 +382,22 @@ export function createMockRunner(): AgentRunner {
 }
 
 // ---------------------------------------------------------------------------
-// UnavailableRunner (MOCK_MODEL=false — LiteLLM lands in Wave 4)
+// Runner selection (D-16): mock for local dev/tests, LiteLLM in production.
 // ---------------------------------------------------------------------------
 
-export function createUnavailableRunner(): AgentRunner {
-  return {
-    async start(run, stream) {
-      stream.emit({ type: "run.started", model: run.model });
-      await stream.yieldToStream();
-      return {
-        kind: "failed",
-        code: "RUN_MODEL_UNAVAILABLE",
-        message: "The model service is unavailable right now.",
-        retryable: true,
-      };
-    },
-    cancel() {
-      // Nothing to cancel upstream (§8.9: provider down → no charge).
-    },
-  };
-}
-
-/** Runner by env: mock when MOCK_MODEL, unavailable otherwise (Wave 4 TODO). */
-export function createRunnerForEnv(mockModel: boolean): AgentRunner {
-  return mockModel ? createMockRunner() : createUnavailableRunner();
+/**
+ * Runner by env: MockRunner when MOCK_MODEL=true (local dev + tests), the
+ * real LiteLLM runner otherwise (D-16). `maxSteps` is the model round cap
+ * (env CHAT_MAX_STEPS, `env.agent.chatMaxSteps`); the logger is used ONLY for
+ * redacted metadata (prompt lengths + sha256 prefixes — never bodies).
+ */
+export function createRunnerForEnv(env: StudioEnv, logger: Logger = nullLogger): AgentRunner {
+  if (env.app.mockModel) return createMockRunner();
+  return createLiteLLMRunner({
+    baseUrl: env.litellm.baseUrl,
+    apiKey: env.litellm.apiKey,
+    virtualKey: env.litellm.virtualKey,
+    maxSteps: env.agent.chatMaxSteps,
+    logger,
+  });
 }

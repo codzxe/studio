@@ -28,6 +28,7 @@ import { invitesRoutes } from "./routes/invites.js";
 import { leasesRoutes } from "./routes/leases.js";
 import { localStorageRoutes } from "./routes/local-storage.js";
 import { meRoutes } from "./routes/me.js";
+import { modelsRoutes } from "./routes/models.js";
 import { projectsRoutes } from "./routes/projects.js";
 import { rendersRoutes } from "./routes/renders.js";
 import { runsRoutes } from "./routes/runs.js";
@@ -116,6 +117,7 @@ export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
   app.route("/", threadsRoutes(deps));
   app.route("/", chatRoutes(deps));
   app.route("/", runsRoutes(deps));
+  app.route("/", modelsRoutes(deps));
   app.route("/", creditsRoutes(deps));
   app.route("/", billingRoutes(deps));
   app.route("/", rendersRoutes(deps));

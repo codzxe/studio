@@ -30,6 +30,7 @@ import {
   type ManifestAsset,
   type MeResponse,
   type Membership,
+  type ModelsResponse,
   PLAN_ID_SCHEMA,
   type Page,
   type PlanSummary,
@@ -335,6 +336,23 @@ export const RUN_RECORD_SCHEMA = z.object({
   createdAt: isoSchema,
   completedAt: isoSchema.nullable(),
 }) satisfies z.ZodType<RunRecord>;
+
+// ---------------------------------------------------------------------------
+// Models — GET /v1/models (§8.2/§10.1 entitlement read)
+// ---------------------------------------------------------------------------
+
+export const MODELS_RESPONSE_SCHEMA = z.object({
+  plan: PLAN_ID_SCHEMA,
+  models: z.array(
+    z.object({
+      id: MODEL_ID_SCHEMA,
+      tier: z.enum(["fast", "smart", "vision"]),
+      use: z.string(),
+      creditsPer1kInput: z.number(),
+      creditsPer1kOutput: z.number(),
+    }),
+  ),
+}) satisfies z.ZodType<ModelsResponse>;
 
 // ---------------------------------------------------------------------------
 // Credits / billing
