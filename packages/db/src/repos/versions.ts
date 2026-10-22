@@ -60,6 +60,13 @@ export interface VersionsRepo {
     options?: VersionListOptions,
   ): Promise<Page<ProjectVersion>>;
   get(workspaceId: WorkspaceId, projectId: string, versionId: string): Promise<ProjectVersion>;
+  /**
+   * M5.4 apply flow: fetch a version by id scoped to the workspace alone (the
+   * run row supplies the project; a version of another tenant's project or
+   * an unknown id reads as NOT_FOUND — §12.1). Read-only; versions stay
+   * immutable (§9.3).
+   */
+  getById(workspaceId: WorkspaceId, versionId: string): Promise<ProjectVersion>;
 }
 
 interface InsertVersionArgs {
@@ -257,6 +264,18 @@ export function createVersionsRepo(db: StudioDb): VersionsRepo {
             eq(projects.workspaceId, workspaceId),
           ),
         )
+        .limit(1);
+      if (!row) throw DbError.notFound("version");
+      return row.version;
+    },
+
+    async getById(workspaceId, versionId) {
+      const id = requireNonEmpty(versionId, "versionId");
+      const [row] = await db
+        .select({ version: projectVersions })
+        .from(projectVersions)
+        .innerJoin(projects, eq(projectVersions.projectId, projects.id))
+        .where(and(eq(projectVersions.id, id), eq(projects.workspaceId, workspaceId)))
         .limit(1);
       if (!row) throw DbError.notFound("version");
       return row.version;

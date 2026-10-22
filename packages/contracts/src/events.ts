@@ -12,7 +12,8 @@
 
 import { z } from "zod";
 
-import { EDIT_PLAN_SCHEMA, type EditPlan } from "./edit-plan.js";
+import { EDIT_PLAN_SCHEMA, type EditPlan, PLAN_RISK_SCHEMA } from "./edit-plan.js";
+import { AGENT_BATCH_SCHEMA } from "./engine-batch.js";
 
 // ---------------------------------------------------------------------------
 // Event schemas (§7.4 exact, plus the mandatory runId + monotonic seq)
@@ -61,11 +62,38 @@ export const TOOL_RESULT_EVENT_SCHEMA = z.object({
   result: z.unknown(),
 });
 
+/**
+ * One layer-id disambiguation request emitted by the server-side plan
+ * compiler (M5-SEAMS): the compiled batch references a layer BY NAME and the
+ * CLIENT resolves the id via the bridge (`list_layers`) when applying —
+ * layer ids never enter the model context (§8.7).
+ */
+export const LAYER_RESOLUTION_REQUEST_SCHEMA = z.object({
+  requestId: z.string().min(1),
+  layerName: z.string().min(1),
+  disambiguation: z.array(z.string()),
+});
+
+export type LayerResolutionRequest = z.infer<typeof LAYER_RESOLUTION_REQUEST_SCHEMA>;
+
 export const PLAN_EVENT_SCHEMA = z.object({
   type: z.literal("plan"),
   runId: runIdField,
   seq: seqField,
   plan: EDIT_PLAN_SCHEMA,
+  // M5 (BUILD_PLAN §M5.1/§M5.2, M5-SEAMS): the gateway plan-compiler runs
+  // server-side when studio.plan_edit resolves and its output is attached
+  // here. ALL FOUR FIELDS ARE OPTIONAL — the wire stays BACKWARDS COMPATIBLE:
+  // M4 events carry none of them, M4 consumers keep parsing (z.object strips
+  // unknown keys on older schema copies; absent fields parse on this one).
+  /** Compiled `engine.batch` payload (§8.5); absent ⇒ the plan is display-only. */
+  compiledBatch: AGENT_BATCH_SCHEMA.optional(),
+  /** Layer names the client must disambiguate before applying. */
+  resolutionRequests: z.array(LAYER_RESOLUTION_REQUEST_SCHEMA).optional(),
+  /** Server-recomputed risk (never the model's self-declared value). */
+  risk: PLAN_RISK_SCHEMA.optional(),
+  /** Server-recomputed deterministic credit estimate (§8.8). */
+  estimatedCredits: z.number().nonnegative().optional(),
 });
 
 export const PREVIEW_EVENT_SCHEMA = z.object({

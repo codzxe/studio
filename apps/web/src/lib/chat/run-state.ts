@@ -21,16 +21,31 @@
  *    `run.completed` that lands after a local stop flips `cancelled` →
  *    `done`; §8.3 "cancellation never auto-undoes an applied batch").
  *  * `preview`/`approval.required` advance the cursor but change nothing
- *    else in M4 (approval UI is M5; previews ride tool cards).
+ *    else in M4 (previews ride tool cards).
+ *
+ * M5 (BUILD_PLAN §M5.3–§M5.5): a `plan` event may additionally carry the
+ * server-compiled batch + layer-resolution requests + the base version
+ * (M5-C adds them to the wire; the SSE reader strips unknown keys until
+ * then). When present they fold into the message's `planRuntime` for the
+ * ApplyController (M5-F); the thread phase is untouched, so M4 behavior is
+ * byte-identical without them.
  *
  * Client-driven transitions (§8.1 states the USER causes — submit, stop, the
- * §8.4 reconnect banner, the pause) never consume a seq; they live in
- * `applyClientAction`.
+ * §8.4 reconnect banner, the pause, and the M5 apply/undo gestures) never
+ * consume a seq; they live in `applyClientAction`.
  */
 
 import type { StudioStreamEvent } from "@studio/contracts";
 
-import type { ChatUiError, ChatUiMessage, ChatUiState, RunPhase, ToolCardState } from "./types";
+import type { LayerResolutionRequest } from "./apply";
+import type {
+  ChatUiError,
+  ChatUiMessage,
+  ChatUiState,
+  PlanRuntime,
+  RunPhase,
+  ToolCardState,
+} from "./types";
 
 /** Phases that mean "a run just ended" — steer queues flush on these. */
 export const TERMINAL_RUN_PHASES: ReadonlySet<RunPhase> = new Set<RunPhase>([
@@ -64,14 +79,35 @@ export const RUN_PAUSED_ERROR: ChatUiError = {
  * (local phase settles immediately; a late terminal event reconciles it);
  * `chat.reconnecting` the §8.4 banner (also dispatched when resuming a
  * RUN_PAUSED run — only while a resumable stream exists); `chat.paused`
- * backoff exhausted; `chat.error` a fatal send/stream error.
+ * backoff exhausted; `chat.error` a fatal send/stream error. The
+ * `chat.plan.*` arms are the M5 apply/undo gestures — they fold the plan's
+ * per-message runtime only (see `PlanRuntime`), never the thread phase.
  */
 export type ChatClientAction =
   | { readonly type: "chat.submit" }
   | { readonly type: "chat.stop" }
   | { readonly type: "chat.reconnecting" }
   | { readonly type: "chat.paused" }
-  | { readonly type: "chat.error"; readonly error: ChatUiError };
+  | { readonly type: "chat.error"; readonly error: ChatUiError }
+  // M5 plan-card gestures (§6.2/§M5.4/§M5.5) — they fold the message's
+  // planRuntime, never the thread phase. Pinned seam names for M5-G:
+  // onApply / onCancel / onUndo / onReapply.
+  | { readonly type: "chat.plan.apply"; readonly runId: string }
+  | {
+      readonly type: "chat.plan.applied";
+      readonly runId: string;
+      readonly versionId: string;
+      readonly creditsCommitted?: number;
+    }
+  | {
+      readonly type: "chat.plan.apply-failed";
+      readonly runId: string;
+      readonly error: ChatUiError;
+    }
+  | { readonly type: "chat.plan.undo"; readonly runId: string }
+  | { readonly type: "chat.plan.undone"; readonly runId: string }
+  | { readonly type: "chat.plan.undo-failed"; readonly runId: string; readonly error: ChatUiError }
+  | { readonly type: "chat.plan.dismiss"; readonly runId: string };
 
 /**
  * Appends the user's message to the thread. Pure: the caller owns the id
@@ -96,6 +132,15 @@ export function applyUserMessage(
  * the SAME state reference (a no-op).
  */
 export function applyClientAction(state: ChatUiState, action: ChatClientAction): ChatUiState {
+  // The M5 `chat.plan.*` gestures fold the plan's per-message runtime only
+  // (applyPlanAction) — the thread phase keeps its exact M4 semantics so
+  // sends/steer/reconnect behave byte-identically.
+  if (action.type.startsWith("chat.plan.")) {
+    return applyPlanAction(
+      state,
+      action as ChatClientAction & { type: `chat.plan.${string}` },
+    );
+  }
   switch (action.type) {
     case "chat.submit": {
       // A new send only starts from idle or a terminal phase; a live run
@@ -208,6 +253,146 @@ function isTerminalEvent(event: StudioStreamEvent): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// M5 plan-runtime helpers (compiled batch + resolution requests + lifecycle)
+// ---------------------------------------------------------------------------
+
+/**
+ * The `plan` event, extended with the M5 runtime fields (M5-C adds them to
+ * the wire; absent — and stripped by the SSE reader — until that lands).
+ * Presence-checked + narrowly validated below: a malformed runtime folds as
+ * a plain M4 plan (card data only, no apply surface).
+ */
+type PlanEventWithRuntime = Extract<StudioStreamEvent, { type: "plan" }> & {
+  readonly compiledBatch?: unknown;
+  readonly resolutionRequests?: unknown;
+  readonly baseVersionId?: unknown;
+};
+
+/** `steps: [{command, params}]` with a non-empty label — the §8.5 apply payload. */
+function parseCompiledBatch(value: unknown): PlanRuntime["compiledBatch"] | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.label !== "string" || record.label.length === 0) return null;
+  if (!Array.isArray(record.steps) || record.steps.length === 0) return null;
+  const steps: Array<{ command: string; params: Record<string, unknown> }> = [];
+  for (const step of record.steps) {
+    if (typeof step !== "object" || step === null) return null;
+    const stepRecord = step as Record<string, unknown>;
+    if (typeof stepRecord.command !== "string" || stepRecord.command.length === 0) return null;
+    if (typeof stepRecord.params !== "object" || stepRecord.params === null) return null;
+    steps.push({
+      command: stepRecord.command,
+      params: stepRecord.params as Record<string, unknown>,
+    });
+  }
+  const timeoutMs =
+    typeof record.timeoutMs === "number" && Number.isInteger(record.timeoutMs) && record.timeoutMs > 0
+      ? record.timeoutMs
+      : undefined;
+  return timeoutMs === undefined
+    ? { label: record.label, atomic: true, steps }
+    : { label: record.label, atomic: true, steps, timeoutMs };
+}
+
+/** `[{requestId, layerName, disambiguation?}]` — the §8.7 client-side bindings. */
+function parseResolutionRequests(value: unknown): readonly LayerResolutionRequest[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const out: LayerResolutionRequest[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) return undefined;
+    const record = entry as Record<string, unknown>;
+    if (typeof record.requestId !== "string" || record.requestId.length === 0) return undefined;
+    if (typeof record.layerName !== "string") return undefined;
+    const hints = Array.isArray(record.disambiguation)
+      ? record.disambiguation.filter((hint): hint is string => typeof hint === "string")
+      : [];
+    out.push({ requestId: record.requestId, layerName: record.layerName, disambiguation: hints });
+  }
+  return out;
+}
+
+/**
+ * Builds the message's `planRuntime` from a plan event when it carries the M5
+ * payload; `null` when it does not (the M4 card shape stays as-is).
+ */
+export function planRuntimeFromEvent(event: StudioStreamEvent): PlanRuntime | null {
+  if (event.type !== "plan") return null;
+  const extended = event as PlanEventWithRuntime;
+  const compiledBatch = parseCompiledBatch(extended.compiledBatch);
+  if (compiledBatch === null) return null;
+  const resolutionRequests = parseResolutionRequests(extended.resolutionRequests);
+  const baseVersionId =
+    typeof extended.baseVersionId === "string" && extended.baseVersionId.length > 0
+      ? extended.baseVersionId
+      : undefined;
+  return {
+    compiledBatch,
+    ...(resolutionRequests !== undefined ? { resolutionRequests } : {}),
+    ...(baseVersionId !== undefined ? { baseVersionId } : {}),
+    outcome: "idle",
+  };
+}
+
+/** Maps the message bound to `runId` (older runs included — cards stay live). */
+function mapMessageOfRun(
+  state: ChatUiState,
+  runId: string,
+  update: (message: ChatUiMessage) => ChatUiMessage,
+): readonly ChatUiMessage[] {
+  return state.messages.map((message) => (message.runId === runId ? update(message) : message));
+}
+
+/** Folds one `chat.plan.*` gesture onto the message's planRuntime (pure). */
+function applyPlanAction(state: ChatUiState, action: ChatClientAction & { type: `chat.plan.${string}` }): ChatUiState {
+  const runId = action.runId;
+  const foldRuntime = (update: (runtime: PlanRuntime) => PlanRuntime): ChatUiState => ({
+    ...state,
+    messages: mapMessageOfRun(state, runId, (message) => {
+      if (message.planRuntime === undefined) return message; // no M5 payload on this card
+      return { ...message, planRuntime: update(message.planRuntime) };
+    }),
+  });
+
+  switch (action.type) {
+    case "chat.plan.apply":
+      return foldRuntime((runtime) =>
+        runtime.outcome === "idle" || runtime.outcome === "apply-failed" || runtime.outcome === "undone"
+          ? { ...runtime, outcome: "applying", error: undefined }
+          : runtime,
+      );
+    case "chat.plan.applied":
+      return foldRuntime((runtime) =>
+        runtime.outcome === "applying"
+          ? {
+              ...runtime,
+              outcome: "applied",
+              versionId: action.versionId,
+              error: undefined,
+            }
+          : runtime,
+      );
+    case "chat.plan.apply-failed":
+      return foldRuntime((runtime) =>
+        runtime.outcome === "applying" ? { ...runtime, outcome: "apply-failed", error: action.error } : runtime,
+      );
+    case "chat.plan.undo":
+      return foldRuntime((runtime) =>
+        runtime.outcome === "applied" ? { ...runtime, outcome: "undoing" } : runtime,
+      );
+    case "chat.plan.undone":
+      return foldRuntime((runtime) =>
+        runtime.outcome === "undoing" ? { ...runtime, outcome: "undone", error: undefined } : runtime,
+      );
+    case "chat.plan.undo-failed":
+      return foldRuntime((runtime) =>
+        runtime.outcome === "undoing" ? { ...runtime, outcome: "undo-failed", error: action.error } : runtime,
+      );
+    case "chat.plan.dismiss":
+      return foldRuntime((runtime) => ({ ...runtime, dismissed: true }));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // foldEvent — the §7.4 → §8.1 reducer
 // ---------------------------------------------------------------------------
 
@@ -301,10 +486,19 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
     }
     case "plan": {
       if (frozen) break;
+      const planRuntime = planRuntimeFromEvent(event);
       next = {
         ...next,
         phase: resumeConfirm(next.phase),
-        messages: mapActiveMessage(next, (message) => ({ ...message, plan: event.plan })),
+        messages: mapActiveMessage(next, (message) => ({
+          ...message,
+          plan: event.plan,
+          // A NEW plan event resets the card's runtime (fresh compiled batch,
+          // fresh lifecycle); without the M5 payload the runtime clears.
+          ...(planRuntime === null
+            ? { planRuntime: undefined }
+            : { planRuntime }),
+        })),
       };
       break;
     }
