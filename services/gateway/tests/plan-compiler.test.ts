@@ -107,11 +107,20 @@ const REGISTRY: CommandSchema = {
     ],
   },
   "edit.undo": { id: "edit.undo", title: "Undo", params: [] },
+  "layer.rename": {
+    id: "layer.rename",
+    title: "Rename",
+    // layer.rs:1653 "{layer?, name}" — the G-7 target of set_properties path "name".
+    params: [
+      { name: "layer", required: false, type: "string" },
+      { name: "name", required: true, type: "string" },
+    ],
+  },
   "layer.newSolid": { id: "layer.newSolid", title: "Solid…", params: [] },
 };
 
-// The M5-A write-tool surface (mirrors packages/contracts/src/tools.ts §8.4,
-// so tests survive M5-A's mid-flight edits — deps are injected, never shared).
+// The M5-A write-tool surface — mirrors the LANDED schemas in
+// packages/contracts/src/write-tools.ts (deps are injected, never shared).
 // Typed as Record<ToolId, WriteToolDef> (required keys) so noUncheckedIndexedAccess
 // cannot smuggle `undefined` into fixture reads.
 const WRITE_TOOL_IDS = [
@@ -128,72 +137,100 @@ const WRITE_TOOL_IDS = [
 type FixtureToolId = (typeof WRITE_TOOL_IDS)[number];
 
 const HEX_COLOR = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
-const EASING = z.enum(["linear", "ease-in", "ease-out", "ease-in-out"]);
+// Fixture mirrors of the LANDED M5-A leaf schemas (write-tools.ts): same arg
+// NAMES + BOUNDS, but deliberately NON-strict and without the 2 MB
+// total-args superRefine — hostile args carrying extra keys must reach
+// translate() (never a schema bounce) for the dunder/pollution probes, and
+// the compiler's own batch_too_large gate below needs oversized args to PASS
+// args validation. Risk metadata mirrors the real WRITE_TOOLS badges.
+const SAFE_NAME_FIXTURE = z.string().min(1).max(120);
+const LAYER_REFS_FIXTURE = z.array(z.object({ name: SAFE_NAME_FIXTURE })).min(1).max(50);
+const PROPERTY_PATH_FIXTURE = z.string().min(1).max(200);
+const COLOR_FIXTURE = z.union([
+  HEX_COLOR,
+  z.tuple([z.number(), z.number(), z.number()]),
+  z.tuple([z.number(), z.number(), z.number(), z.number()]),
+]);
+const COORD_FIXTURE = z.number().min(-1_000_000).max(1_000_000);
+const BOX_SIZE_FIXTURE = z.number().min(1).max(1_000_000);
 
 const WRITE_TOOLS: Record<FixtureToolId, WriteToolDef> = {
   create_composition: {
     args: z.object({
-      name: z.string().min(1).max(120),
-      width: z.number().int().min(16).max(8192),
-      height: z.number().int().min(16).max(8192),
-      frameRate: z.number().positive().max(480).default(30),
-      durationSeconds: z.number().positive().max(3600).default(10),
+      name: z.string().min(1).max(80),
+      width: z.number().int().min(1).max(8192).optional(),
+      height: z.number().int().min(1).max(8192).optional(),
+      frameRate: z.number().min(1).max(120).optional(),
+      durationSeconds: z.number().min(0.01).max(36_000).optional(),
     }),
     risk: "medium",
   },
   create_text: {
     args: z.object({
-      compId: z.string().min(1).optional(),
-      text: z.string().min(1).max(5000),
-      name: z.string().min(1).max(120).optional(),
-      fontSize: z.number().positive().max(2000).optional(),
-      fontFamily: z.string().min(1).max(200).optional(),
-      color: HEX_COLOR.optional(),
-      position: z.tuple([z.number(), z.number()]).optional(),
+      text: z.string().min(1).max(2000),
+      name: SAFE_NAME_FIXTURE.optional(),
+      position: z.tuple([COORD_FIXTURE, COORD_FIXTURE]).optional(),
+      box: z.tuple([COORD_FIXTURE, COORD_FIXTURE, BOX_SIZE_FIXTURE, BOX_SIZE_FIXTURE]).optional(),
+      font: z.string().min(1).max(200).optional(),
+      style: z.string().min(1).max(200).optional(),
+      size: z.number().min(0.1).max(10_000).optional(),
+      fill: COLOR_FIXTURE.optional(),
+      stroke: COLOR_FIXTURE.optional(),
+      strokeWidth: z.number().min(0).max(1000).optional(),
+      tracking: z.number().min(-10_000).max(10_000).optional(),
+      leading: z.number().min(0).max(10_000).optional(),
     }),
     risk: "low",
   },
   set_properties: {
     args: z.object({
-      updates: z
-        .array(z.object({ layer: z.string().min(1), path: z.string().min(1), value: z.unknown() }))
+      layers: LAYER_REFS_FIXTURE,
+      properties: z
+        .array(z.object({ path: PROPERTY_PATH_FIXTURE, value: z.unknown() }))
         .min(1)
-        .max(50),
+        .max(100),
     }),
     risk: "low",
   },
   set_keyframes: {
     args: z.object({
-      layer: z.string().min(1),
-      propertyPath: z.string().min(1),
-      keyframes: z
+      layers: LAYER_REFS_FIXTURE,
+      propertyPath: PROPERTY_PATH_FIXTURE,
+      keys: z
         .array(
           z.object({
-            time: z.number().nonnegative(),
+            timeSeconds: z.number().min(0).max(36_000),
             value: z.unknown(),
-            easing: EASING.optional(),
+            interpolation: z.enum(["linear", "bezier", "hold"]).optional(),
           }),
         )
         .min(1)
-        .max(200),
+        .max(500),
     }),
     risk: "low",
   },
   add_effect: {
     args: z.object({
-      layer: z.string().min(1),
-      effect: z.string().min(1),
+      layers: LAYER_REFS_FIXTURE,
+      effect: z.object({ name: SAFE_NAME_FIXTURE }),
       params: z.record(z.string(), z.unknown()).optional(),
     }),
     risk: "medium",
   },
   apply_preset: {
     args: z.object({
-      preset: z.string().min(1).max(200),
-      targets: z.array(z.string().min(1)).min(1).max(50),
+      preset: z.union([
+        z.object({ name: SAFE_NAME_FIXTURE }),
+        z.object({ builtinId: SAFE_NAME_FIXTURE }),
+      ]),
+      layers: LAYER_REFS_FIXTURE.optional(),
+      args: z.record(z.string(), z.unknown()).optional(),
     }),
     risk: "medium",
   },
+  // Documented mirror deviation: the REAL UNDO_RUN_ARGS_SCHEMA is strict {}
+  // (a runId answers invalid_args there); this fixture KEEPS runId optional so
+  // the compiler's defensive undo_run_target warn stays exercisable here.
   undo_run: { args: z.object({ runId: z.string().min(1).optional() }), risk: "medium" },
   save_version: { args: z.object({ label: z.string().max(280).optional() }), risk: "low" },
 };
