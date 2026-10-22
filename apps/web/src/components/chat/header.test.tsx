@@ -6,10 +6,10 @@
  * primitives (Radix popover/menu behind them); no network, no fake timers.
  */
 
+import type { RunPhase } from "@/lib/chat/types";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RunPhase } from "@/lib/chat/types";
 import { ChatHeader } from "./header";
 import type { ModelsListEntry } from "./model-picker";
 
@@ -188,9 +188,7 @@ describe("ChatHeader — more menu", () => {
     const menu = screen.getByTestId("chat-more-menu");
     expect(within(menu).getByRole("menuitem", { name: "New chat" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Reset position" })).toBeInTheDocument();
-    expect(
-      within(menu).getByRole("menuitem", { name: "Keyboard shortcuts" }),
-    ).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Keyboard shortcuts" })).toBeInTheDocument();
     // History / Clear context are M5/M4-H — absent per the pinned props.
     expect(within(menu).queryByText("History")).not.toBeInTheDocument();
     expect(within(menu).queryByText("Clear context")).not.toBeInTheDocument();

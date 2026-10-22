@@ -1,3 +1,4 @@
+import type { ApiClient } from "@studio/api-client";
 import type { EditorSessionClient, ManifestAssetInfo, VersionRef } from "@/lib/editor-session";
 
 /**
@@ -58,4 +59,10 @@ export interface EditorSessionFactory {
   readonly client: EditorSessionClient;
   /** The lease check/save-suspension port. */
   readonly leases: LeasePort;
+  /**
+   * The workspace-scoped `ApiClient` the M4 chat overlay rides (M4-J). The
+   * production factory (`createApiSession`) always provides it; injected test
+   * sessions may omit it, in which case the host mounts no chat layer.
+   */
+  readonly api?: ApiClient;
 }

@@ -1,6 +1,8 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import { Brand } from "@studio/config";
+import { type EditorBridge, attachEditorBridge } from "@studio/editor-bridge";
 import {
   BootFailureBanner,
   BootOverlay,
@@ -12,10 +14,12 @@ import {
   SaveErrorBanner,
   SavedChip,
 } from "./banners";
-import type { ChatShortcutBus } from "./chat-shortcut-bus";
+import { ChatPanelSlot } from "./chat-panel-slot";
+import { editorChatShortcutBus, type ChatShortcutBus } from "./chat-shortcut-bus";
 import { ProjectBar } from "./project-bar";
 import type { EditorHostPayload, EditorSessionFactory } from "./types";
 import { useEditorSession } from "./use-editor-session";
+import { ChatProvider } from "@/lib/chat/provider";
 
 /**
  * `EditorHost` — the editor page body (M3.5/M3.6/M3.7, BUILD_PLAN §M3 tasks
@@ -42,6 +46,50 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
   const session = useEditorSession({ payload, sessionFactory, shortcutBus });
   const { state } = session;
   const projectName = payload.manifest.project.name;
+  const bus = shortcutBus ?? editorChatShortcutBus;
+
+  // ---------------------------------------------------------------------------
+  // M4-J: the chat overlay over the editor (additive only — D-18). The host
+  // attaches a SECOND bridge to the same booted iframe for the chat's
+  // read-only queries (the M3 session bridge stays the load/save authority);
+  // it exists only while the editor is open AND the session factory exposed
+  // an api-client. Test sessions without `api` mount no chat layer at all.
+  // ---------------------------------------------------------------------------
+  const chatClient = session.api;
+  const [chatBridge, setChatBridge] = useState<EditorBridge | null>(null);
+  useEffect(() => {
+    if (state.phase !== "open" || chatClient === undefined) return;
+    const iframe = session.iframeRef.current;
+    if (iframe === null) return;
+    let disposed = false;
+    attachEditorBridge(iframe).then(
+      (bridge) => {
+        if (disposed) bridge.dispose();
+        else setChatBridge(bridge);
+      },
+      () => {
+        // Chat stays dormant when the handshake fails; the M3 session's own
+        // bridge/ banners own the editor-open failure UX.
+      },
+    );
+    return () => {
+      disposed = true;
+      setChatBridge((current) => {
+        current?.dispose();
+        return null;
+      });
+    };
+  }, [state.phase, session, chatClient]);
+
+  // D-18: sidebar mode "changes only the iframe width" — the viewport wrapper
+  // resizes (never restyles) the editor; the iframe keeps its own classes.
+  const [chatSidebar, setChatSidebar] = useState<{ docked: boolean; widthPx: number }>({
+    docked: false,
+    widthPx: 420,
+  });
+  const handleSidebarDock = useCallback((docked: boolean, widthPx: number): void => {
+    setChatSidebar({ docked, widthPx: Math.round(widthPx) });
+  }, []);
 
   const savedLabel =
     state.savedVersion === undefined
@@ -62,18 +110,43 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
       className="fixed inset-0 overflow-hidden bg-app"
     >
       {/* The editor: full-bleed, same-origin, restyled by NOBODY (rule 7).
-          Keyed by bootAttempt so Retry remounts a fresh wasm boot. */}
-      <iframe
-        key={session.bootAttempt}
-        ref={session.iframeRef}
-        src="/editor/?empty"
-        title={`${Brand.productName} editor`}
-        data-testid="editor-iframe"
-        className="absolute inset-0 h-full w-full border-0"
-      />
+          Keyed by bootAttempt so Retry remounts a fresh wasm boot.
+          M4-J: the wrapper div carries the sidebar-mode width (D-18 — the
+          editor only ever sees a viewport resize; its own styles are untouched). */}
+      <div
+        data-testid="editor-viewport"
+        className="absolute inset-0"
+        style={chatSidebar.docked ? { width: `calc(100% - ${chatSidebar.widthPx}px)` } : undefined}
+      >
+        <iframe
+          key={session.bootAttempt}
+          ref={session.iframeRef}
+          src="/editor/?empty"
+          title={`${Brand.productName} editor`}
+          data-testid="editor-iframe"
+          className="absolute inset-0 h-full w-full border-0"
+        />
+      </div>
 
       {/* M3.5 chrome — floating, auto-hides via CSS (hover sliver / focus). */}
       <ProjectBar projectName={projectName} readOnly={state.readOnly} />
+
+      {/* M4-J chat overlay — additive layer over the editor (D-18). The layer
+          root swallows no editor clicks (pointer-events: none); the panel and
+          the collapsed pill re-enable pointer events on their own subtrees. */}
+      {chatBridge !== null && chatClient !== undefined ? (
+        <div className="pointer-events-none absolute inset-0 z-30" data-testid="chat-layer">
+          <ChatProvider
+            client={chatClient}
+            bridge={chatBridge}
+            workspaceId={payload.workspaceId}
+            projectId={payload.manifest.project.id}
+            shortcutBus={bus}
+          >
+            {(api) => <ChatPanelSlot api={api} onSidebarDock={handleSidebarDock} />}
+          </ChatProvider>
+        </div>
+      ) : null}
 
       {/* M3.7 boot UI (covers the iframe while the wasm boots / fails). */}
       {state.phase === "booting" && state.boot === "loading" ? (

@@ -22,7 +22,11 @@ export interface ChatFooterProps {
   shortcutHint: string;
 }
 
-export function ChatFooter({ modelLabel, creditEstimate, shortcutHint }: ChatFooterProps): ReactElement {
+export function ChatFooter({
+  modelLabel,
+  creditEstimate,
+  shortcutHint,
+}: ChatFooterProps): ReactElement {
   return (
     <footer
       data-testid="chat-footer"
@@ -45,10 +49,7 @@ export function ChatFooter({ modelLabel, creditEstimate, shortcutHint }: ChatFoo
       <span aria-hidden="true" className="shrink-0">
         {" · "}
       </span>
-      <span
-        data-testid="chat-footer-shortcut"
-        className="ml-auto shrink-0 whitespace-nowrap"
-      >
+      <span data-testid="chat-footer-shortcut" className="ml-auto shrink-0 whitespace-nowrap">
         {shortcutHint}
       </span>
     </footer>

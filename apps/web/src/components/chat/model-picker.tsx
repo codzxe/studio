@@ -23,11 +23,11 @@
  * radius-md, elevation 1); the active model carries the --signal ring.
  */
 
+import { Badge, Button, Popover, PopoverContent, PopoverTrigger, cn } from "@studio/ui";
 import { Check, ChevronDown, Eye, Sparkles, Zap } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useState } from "react";
 import type { ReactElement } from "react";
-import { Badge, Button, Popover, PopoverContent, PopoverTrigger, cn } from "@studio/ui";
 
 /** Wave-2 pinned contract: one `GET /v1/models` wire item (M4-A2, Seam 1). */
 export interface ModelsListEntry {
@@ -91,9 +91,7 @@ function formatCredits(value: number): string {
 function formatRate(entry: ModelsListEntry): string {
   const input = formatCredits(entry.creditsPer1kInput);
   const output = formatCredits(entry.creditsPer1kOutput);
-  return input === output
-    ? `≈${input} cr /1k tokens`
-    : `≈${input}–${output} cr /1k tokens`;
+  return input === output ? `≈${input} cr /1k tokens` : `≈${input}–${output} cr /1k tokens`;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,11 +130,7 @@ function ModelOption({ entry, active, locked, onPick }: ModelOptionProps): React
         <span className="truncate text-body-s font-medium text-primary">
           {modelDisplayName(entry.id)}
         </span>
-        <Badge
-          variant="neutral"
-          data-testid={`chat-model-tier-${entry.id}`}
-          className="shrink-0"
-        >
+        <Badge variant="neutral" data-testid={`chat-model-tier-${entry.id}`} className="shrink-0">
           {modelTierLabel(entry.tier)}
         </Badge>
         {active ? (
@@ -220,12 +214,7 @@ export function ModelPicker({
     >
       {activeEntry !== null ? <TierGlyph tier={activeEntry.tier} /> : null}
       <span className="max-w-28 truncate">{triggerLabel}</span>
-      <ChevronDown
-        size={14}
-        strokeWidth={2}
-        aria-hidden="true"
-        className="shrink-0 text-muted"
-      />
+      <ChevronDown size={14} strokeWidth={2} aria-hidden="true" className="shrink-0 text-muted" />
     </Button>
   );
 
