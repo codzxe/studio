@@ -32,9 +32,10 @@
 //   Through the REAL compile seam (defaultCompileDeps: the M5-A contracts
 //   write-tool schemas + the M5-J registry) that plan CANNOT compile — see
 //   the next pin. The plan here uses two studio.create_text steps (both
-//   registry ids, layer.newText) with two DECLARED affected layers, so the
-//   live route still emits a real compiledBatch AND real resolutionRequests
-//   (lr-1/lr-2 for the declared layer names). Test 12 pins the drift itself.
+//   compiled to the registry id layer.newText) with two DECLARED affected
+//   layers, so the live route still emits a real compiledBatch AND real
+//   resolutionRequests (lr-1/lr-2 for the declared layer names). Test 12
+//   pins the drift itself at the live wire.
 //
 // * M5-A ⇄ M5-B ARGS-VOCABULARY DRIFT (test 12, live-wire proof):
 //   plan-compiler.ts translate() reads the M5-B fixture vocabulary
@@ -47,7 +48,7 @@
 //   write tool (set_properties/add_effect/set_keyframes/apply_preset) is
 //   affected; create_composition/create_text/undo_run are not. Owner: M5-B
 //   plan-compiler.ts (translate must accept the M5-A contracts shapes) or a
-//   ruling; NOT fixed here.
+//   DECISIONS ruling; NOT fixed here (law #12).
 //
 // * D-20 IN THE LIVE LOOP (test 1): the chat finalize settles the run's
 //   whole hold at run.completed (reserve −N, commit −M usage, refund +N per
@@ -239,7 +240,7 @@ class FakeOpenAIServer {
 }
 
 // ---------------------------------------------------------------------------
-// Scripted model rounds (M5 flow: plan_edit → plan JSON → final answer)
+// Scripted model rounds (the M5 flow: plan_edit → plan JSON → final answer)
 // ---------------------------------------------------------------------------
 
 /** Round 1: the model calls studio.plan_edit with a goal. */
@@ -258,12 +259,7 @@ function planEditRound(toolCallId: string, goal: string): ScriptEntry {
  * risk "high" + estimatedCredits 99 — the server recomputes both.
  */
 function planJsonRound(plan: unknown): ScriptEntry {
-  return () => [
-    textDelta(JSON.stringify(plan)),
-    usageChunk(50, 12),
-    finishReason("stop"),
-    DONE,
-  ];
+  return () => [textDelta(JSON.stringify(plan)), usageChunk(50, 12), finishReason("stop"), DONE];
 }
 
 /** A plain final text answer, no tool calls. */
@@ -401,6 +397,7 @@ class SseStream {
 const TERMINAL_TYPES = new Set(["run.completed", "run.failed", "run.cancelled"]);
 
 type PlanEvent = Extract<StudioStreamEvent, { type: "plan" }>;
+type ToolResultEvent = Extract<StudioStreamEvent, { type: "tool.result" }>;
 type CreditsEvent = Extract<StudioStreamEvent, { type: "credits" }>;
 
 function findPlan(events: readonly StudioStreamEvent[]): PlanEvent {
@@ -413,6 +410,12 @@ function findCredits(events: readonly StudioStreamEvent[]): CreditsEvent {
   const credits = events.find((event): event is CreditsEvent => event.type === "credits");
   if (credits === undefined) throw new Error("no credits event on the wire");
   return credits;
+}
+
+function findToolResult(events: readonly StudioStreamEvent[]): ToolResultEvent {
+  const result = events.find((event): event is ToolResultEvent => event.type === "tool.result");
+  if (result === undefined) throw new Error("no tool.result event on the wire");
+  return result;
 }
 
 function typeSeq(events: readonly StudioStreamEvent[]): string[] {
@@ -502,7 +505,11 @@ async function newWorkspace(prefix: string): Promise<{ jar: CookieJar; id: strin
   const signup = await api(server.base, "/v1/auth/sign-up/email", {
     method: "POST",
     jar,
-    body: { email: uniqueEmail(prefix), password: "Passw0rd!longenough", name: "Apply Flow Tester" },
+    body: {
+      email: uniqueEmail(prefix),
+      password: "Passw0rd!longenough",
+      name: "Apply Flow Tester",
+    },
   });
   expect(signup.status).toBe(200);
   const wsResponse = await api(server.base, "/v1/workspaces", {
@@ -527,55 +534,20 @@ async function balanceOf(workspaceId: string): Promise<number> {
   return server.deps.repos.ledger.balance(workspaceId);
 }
 
-/** Fresh workspace + credits + project + ONE base version + one thread. */
-async function newFixture(prefix: string, credits = 100): Promise<Fixture> {
-  const ws = await newWorkspace(prefix);
-  await grantCredits(ws.id, credits);
-  const projectResponse = await api(server.base, "/v1/projects", {
-    method: "POST",
-    jar: ws.jar,
-    headers: { "x-workspace-id": ws.id, "idempotency-key": unique("prj") },
-    body: { name: unique("Apply Flow Project") },
-  });
-  expect(projectResponse.status).toBe(201);
-  const project = (await projectResponse.json()) as { data: { id: string } };
-  const { versionId } = await uploadVersion(ws, project.data.id, {});
-  const threadResponse = await api(server.base, `/v1/projects/${project.data.id}/threads`, {
-    method: "POST",
-    jar: ws.jar,
-    headers: { "x-workspace-id": ws.id, "idempotency-key": unique("thr") },
-    body: { title: "Apply flow thread" },
-  });
-  expect(threadResponse.status).toBe(201);
-  const thread = (await threadResponse.json()) as { data: { id: string } };
-  return {
-    jar: ws.jar,
-    workspaceId: ws.id,
-    projectId: project.data.id,
-    baseVersionId: versionId,
-    threadId: thread.data.id,
-  };
-}
-
 /**
  * Uploads a version through the REAL versions route (raw-bytes form) — the
  * client's saveNow("agent-apply") path (D-6). baseVersionId omitted ⇒ the
  * project's first snapshot; agentRunId set ⇒ the version this run created.
  */
 async function uploadVersion(
-  ws: { readonly jar: CookieJar; readonly id?: string },
+  jar: CookieJar,
+  workspaceId: string,
   projectId: string,
   options: { baseVersionId?: string; agentRunId?: string; label?: string },
 ): Promise<{ versionId: string; sha256: string }> {
-  const jar = ws.jar;
-  const workspaceId =
-    ws.id !== undefined ? ws.id : (ws as unknown as { workspaceId: string }).workspaceId;
   const bytes = Buffer.from(`{"apply-flow-fixture":"${unique("v")}"}`, "utf8");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const query = new URLSearchParams({
-    sha256,
-    sizeBytes: String(bytes.byteLength),
-  });
+  const query = new URLSearchParams({ sha256, sizeBytes: String(bytes.byteLength) });
   if (typeof options.baseVersionId === "string") query.set("baseVersionId", options.baseVersionId);
   if (options.agentRunId !== undefined) query.set("agentRunId", options.agentRunId);
   if (options.label !== undefined) query.set("label", options.label);
@@ -594,6 +566,36 @@ async function uploadVersion(
   return { versionId: body.data.id, sha256 };
 }
 
+/** Fresh workspace + credits + project + ONE base version + one thread. */
+async function newFixture(prefix: string, credits = 100): Promise<Fixture> {
+  const ws = await newWorkspace(prefix);
+  await grantCredits(ws.id, credits);
+  const projectResponse = await api(server.base, "/v1/projects", {
+    method: "POST",
+    jar: ws.jar,
+    headers: { "x-workspace-id": ws.id, "idempotency-key": unique("prj") },
+    body: { name: unique("Apply Flow Project") },
+  });
+  expect(projectResponse.status).toBe(201);
+  const project = (await projectResponse.json()) as { data: { id: string } };
+  const base = await uploadVersion(ws.jar, ws.id, project.data.id, {});
+  const threadResponse = await api(server.base, `/v1/projects/${project.data.id}/threads`, {
+    method: "POST",
+    jar: ws.jar,
+    headers: { "x-workspace-id": ws.id, "idempotency-key": unique("thr") },
+    body: { title: "Apply flow thread" },
+  });
+  expect(threadResponse.status).toBe(201);
+  const thread = (await threadResponse.json()) as { data: { id: string } };
+  return {
+    jar: ws.jar,
+    workspaceId: ws.id,
+    projectId: project.data.id,
+    baseVersionId: base.versionId,
+    threadId: thread.data.id,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // THE PLAN — a small real-command plan the LIVE compiler accepts
 // ---------------------------------------------------------------------------
@@ -604,7 +606,7 @@ const PLAN_SUMMARY = "Add two text layers";
  * Two studio.create_text steps → two registry layer.newText commands.
  * Deliberately HOSTILE numbers (risk "high", estimatedCredits 99): the
  * server recomputes both from the compiled commands (never the model's).
- * Fixture self-check: parses against EDIT_PLAN_SCHEMA (§8.6).
+ * Fixture self-check below: parses against EDIT_PLAN_SCHEMA (§8.6).
  */
 const PLAN = {
   intent: "edit",
@@ -644,7 +646,8 @@ const COMPILED_STEPS = [
   { command: "layer.newText", params: { text: "World", name: "Sub" } },
 ] as const;
 
-// Fixture sanity: the plan parses against the §8.6 schema the runner uses.
+// Fixture sanity: the scripted plan parses against the §8.6 schema the
+// runner validates with — corpus self-check, fails loudly on fixture drift.
 EDIT_PLAN_SCHEMA.parse(PLAN);
 
 /** sha256 of the exact engine payload (mirrors M5-F batchSha256Hex(engineBatchPayload)). */
@@ -694,7 +697,11 @@ async function getRun(fx: Fixture, runId: string): Promise<RunRecord> {
 }
 
 /** Poll until probe() is true (the finalize writes DB rows after the terminal frame). */
-async function waitFor(description: string, probe: () => Promise<boolean>, timeoutMs = 4000): Promise<void> {
+async function waitFor(
+  description: string,
+  probe: () => Promise<boolean>,
+  timeoutMs = 4000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await probe()) return;
@@ -705,6 +712,8 @@ async function waitFor(description: string, probe: () => Promise<boolean>, timeo
   }
 }
 
+const PLAN_MESSAGE = "Add the two text layers we discussed";
+
 /**
  * Drives ONE full planning run through the real chat route: the model calls
  * studio.plan_edit (round 1), the server-side structured-output round returns
@@ -713,9 +722,13 @@ async function waitFor(description: string, probe: () => Promise<boolean>, timeo
  */
 async function planRun(
   fx: Fixture,
-  message = "Add the two text layers we discussed",
+  message = PLAN_MESSAGE,
 ): Promise<{ runId: string; events: StudioStreamEvent[]; plan: PlanEvent }> {
-  fake.enqueue(planEditRound("call_apply_flow_plan", message), planJsonRound(PLAN), finalAnswerRound("Planned — apply it from the card whenever you're ready."));
+  fake.enqueue(
+    planEditRound("call_apply_flow_plan", message),
+    planJsonRound(PLAN),
+    finalAnswerRound("Planned — apply it from the card whenever you're ready."),
+  );
   const response = await chatStream(fx, {
     message,
     context: {},
@@ -737,11 +750,14 @@ async function planRun(
   ]);
   const runId = events[0]?.runId;
   if (runId === undefined) throw new Error("no run.started event");
-  await waitFor("the run row to complete", async () => (await getRun(fx, runId)).status === "completed");
+  await waitFor(
+    "the run row to complete",
+    async () => (await getRun(fx, runId)).status === "completed",
+  );
   return { runId, events, plan: findPlan(events) };
 }
 
-interface ApplyCallResult {
+interface CallResult {
   readonly status: number;
   readonly headers: Headers;
   readonly body: Record<string, unknown>;
@@ -752,7 +768,7 @@ async function applyCall(
   runId: string,
   body: Record<string, unknown>,
   transportKey: string,
-): Promise<ApplyCallResult> {
+): Promise<CallResult> {
   const response = await api(server.base, `/v1/runs/${runId}/apply`, {
     method: "POST",
     jar: fx.jar,
@@ -766,11 +782,7 @@ async function applyCall(
   };
 }
 
-async function undoCall(
-  fx: Fixture,
-  runId: string,
-  transportKey: string,
-): Promise<ApplyCallResult> {
+async function undoCall(fx: Fixture, runId: string, transportKey: string): Promise<CallResult> {
   const response = await api(server.base, `/v1/runs/${runId}/undo`, {
     method: "POST",
     jar: fx.jar,
@@ -782,6 +794,15 @@ async function undoCall(
     headers: response.headers,
     body: (await response.json()) as Record<string, unknown>,
   };
+}
+
+/** The error envelope of a non-2xx call result ({code, message, …}). */
+function errOf(result: CallResult): Record<string, unknown> {
+  const error = result.body.error;
+  if (error === undefined || typeof error !== "object") {
+    throw new Error(`expected an error envelope, got ${JSON.stringify(result.body)}`);
+  }
+  return error as Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -810,24 +831,23 @@ async function versionsOf(workspaceId: string, projectId: string, runId?: string
   return {
     total: items.length,
     byRun: runId === undefined ? 0 : items.filter((version) => version.agentRunId === runId).length,
-    rows: items,
   };
 }
 
 /**
  * The client's full apply gesture: upload the post-batch snapshot as a NEW
- * version (agentRunId = run) and POST the apply with the compiled batch's
- * sha256 + the resolved layer ids.
+ * version (agentRunId = run, D-6) and POST the apply with the compiled
+ * batch's sha256 + the resolved layer ids (§8.7).
  */
 async function applyPlan(
   fx: Fixture,
   runId: string,
   plan: PlanEvent,
   transportKey: string,
-): Promise<{ result: ApplyCallResult; versionId: string; batchSha256: string }> {
+): Promise<{ result: CallResult; versionId: string; batchSha256: string }> {
   const batch = plan.compiledBatch;
   if (batch === undefined) throw new Error("the plan event carried no compiledBatch");
-  const { versionId } = await uploadVersion(fx, fx.projectId, {
+  const { versionId } = await uploadVersion(fx.jar, fx.workspaceId, fx.projectId, {
     baseVersionId: fx.baseVersionId,
     agentRunId: runId,
     label: "agent-apply",
@@ -856,7 +876,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     const fx = await newFixture("happy");
     const expectedReserve = reserveAmountFor(
       estimateRunCredits({
-        message: "Add the two text layers we discussed",
+        message: PLAN_MESSAGE,
         context: CONTEXT_SELECTION_SCHEMA.parse({}),
         pinned: [],
       }),
@@ -875,11 +895,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
       steps: [...COMPILED_STEPS],
     });
     expect(plan.resolutionRequests).toEqual([
-      {
-        requestId: "lr-1",
-        layerName: "Headline",
-        disambiguation: ["Add a headline text layer"],
-      },
+      { requestId: "lr-1", layerName: "Headline", disambiguation: ["Add a headline text layer"] },
       {
         requestId: "lr-2",
         layerName: "Sub",
@@ -923,7 +939,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
     // Ledger (D-20): exactly ONE commit entry — the chat finalize's usage
     // commit; the apply added no entries (outstanding was 0) and no second
-    // deduction exists. Run nets −1 = its single commit.
+    // deduction exists. The run nets −1 = its single commit.
     const ledger = await runLedger(fx.workspaceId, runId);
     const byKind: Record<string, number[]> = {};
     for (const entry of ledger) {
@@ -959,7 +975,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     const versionsAfterFirst = await versionsOf(fx.workspaceId, fx.projectId, runId);
 
     // Network retry: same Idempotency-Key header + same logical body → the
-    // middleware replays the STORED response byte-for-byte.
+    // middleware replays the STORED response.
     const retry = await applyCall(
       fx,
       runId,
@@ -980,15 +996,16 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
     // Fresh transport key, same logical apply (same sha + version): the
     // route's own replay branch answers the recorded outcome — and the
-    // settle is keyed apply:{runId}:settle, so no entry is ever written twice.
-    const freshKey = await applyCall(
+    // settle is keyed apply:{runId}:settle, so nothing is written twice.
+    const freshKey = unique("apply");
+    const replayed = await applyCall(
       fx,
       runId,
-      { batchSha256: first.batchSha256, versionId: first.versionId, idempotencyKey: unique("apply") },
-      unique("apply"),
+      { batchSha256: first.batchSha256, versionId: first.versionId, idempotencyKey: freshKey },
+      freshKey,
     );
-    expect(freshKey.status).toBe(200);
-    expect(freshKey.body.data).toEqual(firstBody.data);
+    expect(replayed.status).toBe(200);
+    expect(replayed.body.data).toEqual(firstBody.data);
 
     // No second version, no second commit, no balance movement.
     expect(await runLedger(fx.workspaceId, runId)).toEqual(ledgerAfterFirst);
@@ -1004,40 +1021,24 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     const first = await applyPlan(fx, runId, plan, unique("apply"));
     expect(first.result.status).toBe(200);
     const ledgerAfterFirst = await runLedger(fx.workspaceId, runId);
-    const stateAfterFirst = await server.deps.repos.runs.getPlanState(fx.workspaceId, runId);
 
     // The client re-applies the same run with a NEW idempotency key and a
     // different batch digest: one run = one apply (M5-D recordApplied).
+    const key = unique("apply");
     const second = await applyCall(
       fx,
       runId,
-      {
-        batchSha256: anySha(),
-        versionId: first.versionId,
-        idempotencyKey: unique("apply"),
-      },
-      unique("apply"),
+      { batchSha256: anySha(), versionId: first.versionId, idempotencyKey: key },
+      key,
     );
     expect(second.status).toBe(409);
-    const parsed = await envelope(
-      await api(server.base, `/v1/runs/${runId}/apply`, {
-        method: "POST",
-        jar: fx.jar,
-        headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("apply") },
-        body: {
-          batchSha256: anySha(),
-          versionId: first.versionId,
-          idempotencyKey: unique("apply"),
-        },
-      }),
-    );
-    expect(parsed.err).toMatchObject({ code: "RUN_ALREADY_APPLIED", retryable: false });
+    expect(errOf(second)).toMatchObject({ code: "RUN_ALREADY_APPLIED", retryable: false });
 
     // State untouched: the recorded apply never moves.
     const state = await server.deps.repos.runs.getPlanState(fx.workspaceId, runId);
     expect(state.appliedBatchSha256).toBe(first.batchSha256);
     expect(state.appliedVersionId).toBe(first.versionId);
-    expect(state.status).toBe(stateAfterFirst.status);
+    expect(state.status).toBe("applied");
     expect(await runLedger(fx.workspaceId, runId)).toEqual(ledgerAfterFirst);
     expect((await versionsOf(fx.workspaceId, fx.projectId, runId)).byRun).toBe(1);
   });
@@ -1049,39 +1050,30 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     if (batch === undefined) throw new Error("no compiledBatch");
 
     // The client executes + uploads the run's version (head → v2)…
-    const appliedVersion = await uploadVersion(fx, fx.projectId, {
+    const appliedVersion = await uploadVersion(fx.jar, fx.workspaceId, fx.projectId, {
       baseVersionId: fx.baseVersionId,
       agentRunId: runId,
     });
     // …then keeps working: ANOTHER upload moves the head to v3.
-    await uploadVersion(fx, fx.projectId, { baseVersionId: appliedVersion.versionId });
+    await uploadVersion(fx.jar, fx.workspaceId, fx.projectId, {
+      baseVersionId: appliedVersion.versionId,
+    });
     const balanceBefore = await balanceOf(fx.workspaceId);
     const ledgerBefore = await runLedger(fx.workspaceId, runId);
 
+    const key = unique("apply");
     const result = await applyCall(
       fx,
       runId,
       {
         batchSha256: shaOfCompiledBatch(batch),
         versionId: appliedVersion.versionId,
-        idempotencyKey: unique("apply"),
+        idempotencyKey: key,
       },
-      unique("apply"),
+      key,
     );
     expect(result.status).toBe(409);
-    const parsed = await envelope(
-      await api(server.base, `/v1/runs/${runId}/apply`, {
-        method: "POST",
-        jar: fx.jar,
-        headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("apply") },
-        body: {
-          batchSha256: shaOfCompiledBatch(batch),
-          versionId: appliedVersion.versionId,
-          idempotencyKey: unique("apply"),
-        },
-      }),
-    );
-    expect(parsed.err).toMatchObject({
+    expect(errOf(result)).toMatchObject({
       code: "VERSION_CONFLICT",
       message: "The project changed while this plan was open.",
       retryable: false,
@@ -1103,37 +1095,28 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     expect(first.result.status).toBe(200);
 
     // The project moves on (a plain user autosave — a NEW head).
-    const drifted = await uploadVersion(fx, fx.projectId, {
+    const drifted = await uploadVersion(fx.jar, fx.workspaceId, fx.projectId, {
       baseVersionId: first.versionId,
     });
 
     // "Re-apply" the applied run against the drifted head: BP M5.5 blocks
     // it, and the route answers with the lifecycle 409 — the §9.3 lineage
     // checks never run for an already-applied run (one apply per run row).
+    const batch = plan.compiledBatch;
+    if (batch === undefined) throw new Error("no compiledBatch");
+    const key = unique("apply");
     const retry = await applyCall(
       fx,
       runId,
       {
-        batchSha256: shaOfCompiledBatch(plan.compiledBatch ?? { label: "x", steps: [] }),
+        batchSha256: shaOfCompiledBatch(batch),
         versionId: drifted.versionId,
-        idempotencyKey: unique("apply"),
+        idempotencyKey: key,
       },
-      unique("apply"),
+      key,
     );
     expect(retry.status).toBe(409);
-    const parsed = await envelope(
-      await api(server.base, `/v1/runs/${runId}/apply`, {
-        method: "POST",
-        jar: fx.jar,
-        headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("apply") },
-        body: {
-          batchSha256: shaOfCompiledBatch(plan.compiledBatch ?? { label: "x", steps: [] }),
-          versionId: drifted.versionId,
-          idempotencyKey: unique("apply"),
-        },
-      }),
-    );
-    expect(parsed.err).toMatchObject({
+    expect(errOf(retry)).toMatchObject({
       code: "RUN_ALREADY_APPLIED",
       message: "This run's plan was already applied.",
     });
@@ -1190,36 +1173,29 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
     // The reapply gate: an undone run cannot be applied again (one apply per
     // run row, M5-D) — re-planning is the path; the card explains.
+    const key = unique("apply");
     const reapply = await applyCall(
       fx,
       runId,
-      { batchSha256: anySha(), versionId: applied.versionId, idempotencyKey: unique("apply") },
-      unique("apply"),
+      { batchSha256: anySha(), versionId: applied.versionId, idempotencyKey: key },
+      key,
     );
     expect(reapply.status).toBe(409);
-    expect((await envelope(Promise.resolve(new Response(JSON.stringify(reapply.body), { status: reapply.status })))).err?.code ?? (reapply.body.error as { code: string }).code).toBe("RUN_ALREADY_APPLIED");
+    expect(errOf(reapply)).toMatchObject({ code: "RUN_ALREADY_APPLIED" });
     expect(await planStatus(fx.workspaceId, runId)).toBe("undone");
   });
 
   it("7. undo before apply → 409 RUN_NOT_APPLIED; undo replays (same key AND fresh key) → idempotent 200 with no second write", async () => {
     const fx = await newFixture("undobefore");
-    const { runId } = await planRun(fx);
+    const { runId, plan } = await planRun(fx);
 
-    const early = await undoCall(fx, runId, unique("undo"));
+    const earlyKey = unique("undo");
+    const early = await undoCall(fx, runId, earlyKey);
     expect(early.status).toBe(409);
-    const earlyEnvelope = await envelope(
-      await api(server.base, `/v1/runs/${runId}/undo`, {
-        method: "POST",
-        jar: fx.jar,
-        headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("undo") },
-        body: { idempotencyKey: unique("undo") },
-      }),
-    );
-    expect(earlyEnvelope.err).toMatchObject({ code: "RUN_NOT_APPLIED", retryable: false });
+    expect(errOf(early)).toMatchObject({ code: "RUN_NOT_APPLIED", retryable: false });
     expect(await planStatus(fx.workspaceId, runId)).toBe("proposed");
 
     // Apply, then undo once; capture the recorded undoneAt.
-    const { plan } = await planRun(fx);
     const applied = await applyPlan(fx, runId, plan, unique("apply"));
     expect(applied.result.status).toBe(200);
     const undoKey = unique("undo");
@@ -1248,20 +1224,21 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     const { runId, plan } = await planRun(fx);
     const intruder = await newWorkspace("tenant-b");
     await grantCredits(intruder.id, 100);
+    const batch = plan.compiledBatch;
+    if (batch === undefined) throw new Error("no compiledBatch");
 
     const intrusionApply = await api(server.base, `/v1/runs/${runId}/apply`, {
       method: "POST",
       jar: intruder.jar,
       headers: { "x-workspace-id": intruder.id, "idempotency-key": unique("apply") },
       body: {
-        batchSha256: shaOfCompiledBatch(plan.compiledBatch ?? { label: "x", steps: [] }),
+        batchSha256: shaOfCompiledBatch(batch),
         versionId: fx.baseVersionId,
         idempotencyKey: unique("apply"),
       },
     });
     expect(intrusionApply.status).toBe(404);
-    const applyParsed = await envelope(intrusionApply);
-    expect(applyParsed.err).toMatchObject({ code: "RUN_NOT_FOUND" });
+    expect((await envelope(intrusionApply)).err).toMatchObject({ code: "RUN_NOT_FOUND" });
 
     const intrusionUndo = await api(server.base, `/v1/runs/${runId}/undo`, {
       method: "POST",
@@ -1277,11 +1254,10 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
       headers: { "x-workspace-id": intruder.id },
     });
     expect(intrusionGet.status).toBe(404);
+    expect((await envelope(intrusionGet)).err).toMatchObject({ code: "RUN_NOT_FOUND" });
 
     // The tenant's own run is untouched by every attempt.
     expect(await planStatus(fx.workspaceId, runId)).toBe("proposed");
-    expect(fake.calls.filter((call) => call.authorization === "Bearer sk-test-litellm-fake").length)
-      .toBeGreaterThan(0);
   });
 
   it("9. unknown run → 404; malformed body and non-hex sha → 400 VALIDATION_FAILED, no state change", async () => {
@@ -1291,14 +1267,18 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     const balanceBefore = await balanceOf(fx.workspaceId);
 
     // Unknown run (a well-formed body on a run id that does not exist).
-    const unknown = await api(server.base, `/v1/runs/${unique("run")}/apply`, {
+    const unknownApply = await api(server.base, `/v1/runs/${unique("run")}/apply`, {
       method: "POST",
       jar: fx.jar,
       headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("apply") },
-      body: { batchSha256: anySha(), versionId: fx.baseVersionId, idempotencyKey: unique("apply") },
+      body: {
+        batchSha256: anySha(),
+        versionId: fx.baseVersionId,
+        idempotencyKey: unique("apply"),
+      },
     });
-    expect(unknown.status).toBe(404);
-    expect((await envelope(unknown)).err).toMatchObject({ code: "RUN_NOT_FOUND" });
+    expect(unknownApply.status).toBe(404);
+    expect((await envelope(unknownApply)).err).toMatchObject({ code: "RUN_NOT_FOUND" });
     const unknownUndo = await api(server.base, `/v1/runs/${unique("run")}/undo`, {
       method: "POST",
       jar: fx.jar,
@@ -1309,23 +1289,25 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     expect((await envelope(unknownUndo)).err).toMatchObject({ code: "RUN_NOT_FOUND" });
 
     // Malformed body: no fields at all.
-    const malformed = await applyCall(fx, runId, {}, unique("apply"));
+    const key = unique("apply");
+    const malformed = await applyCall(fx, runId, {}, key);
     expect(malformed.status).toBe(400);
-    expect(malformed.body.error).toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(errOf(malformed)).toMatchObject({ code: "VALIDATION_FAILED" });
 
-    // Wrong sha: not 64 lowercase hex (uppercase + short forms both fail).
+    // Wrong sha: not 64 lowercase hex (uppercase, short, garbage all fail).
     for (const badSha of ["A".repeat(64), "z".repeat(63), "not-a-sha"]) {
+      const badKey = unique("apply");
       const bad = await applyCall(
         fx,
         runId,
-        { batchSha256: badSha, versionId: fx.baseVersionId, idempotencyKey: unique("apply") },
-        unique("apply"),
+        { batchSha256: badSha, versionId: fx.baseVersionId, idempotencyKey: badKey },
+        badKey,
       );
       expect(bad.status).toBe(400);
-      expect(bad.body.error).toMatchObject({ code: "VALIDATION_FAILED" });
+      expect(errOf(bad)).toMatchObject({ code: "VALIDATION_FAILED" });
     }
 
-    // Malformed undo body (no idempotency key).
+    // Malformed undo body (no idempotency key in the body).
     const badUndo = await api(server.base, `/v1/runs/${runId}/undo`, {
       method: "POST",
       jar: fx.jar,
@@ -1333,6 +1315,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
       body: {},
     });
     expect(badUndo.status).toBe(400);
+    expect((await envelope(badUndo)).err).toMatchObject({ code: "VALIDATION_FAILED" });
 
     // No state changed: still proposed, same balance, the plan row intact.
     expect(await server.deps.repos.runs.getPlanState(fx.workspaceId, runId)).toEqual(stateBefore);
@@ -1349,7 +1332,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     // — uploads cost nothing; then the wallet is drained to zero.
     const batch = plan.compiledBatch;
     if (batch === undefined) throw new Error("no compiledBatch");
-    const { versionId } = await uploadVersion(fx, fx.projectId, {
+    const { versionId } = await uploadVersion(fx.jar, fx.workspaceId, fx.projectId, {
       baseVersionId: fx.baseVersionId,
       agentRunId: runId,
     });
@@ -1360,14 +1343,15 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     expect(await balanceOf(fx.workspaceId)).toBe(0);
     const ledgerBefore = await runLedger(fx.workspaceId, runId);
 
+    const brokeKey = unique("apply");
     const broke = await applyCall(
       fx,
       runId,
-      { batchSha256: shaOfCompiledBatch(batch), versionId, idempotencyKey: unique("apply") },
-      unique("apply"),
+      { batchSha256: shaOfCompiledBatch(batch), versionId, idempotencyKey: brokeKey },
+      brokeKey,
     );
     expect(broke.status).toBe(402);
-    expect(broke.body.error).toMatchObject({ code: "INSUFFICIENT_CREDITS", retryable: false });
+    expect(errOf(broke)).toMatchObject({ code: "INSUFFICIENT_CREDITS", retryable: false });
 
     // BEFORE any state change: still proposed, no applied columns, no new
     // ledger rows, balance still zero, the version row still there.
@@ -1382,11 +1366,12 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     // A top-up unblocks the SAME apply gesture (fresh key — the 402 is cached
     // under the drained attempt's key): the 402 left no poisoned state.
     await grantCredits(fx.workspaceId, 10);
+    const retryKey = unique("apply");
     const retried = await applyCall(
       fx,
       runId,
-      { batchSha256: shaOfCompiledBatch(batch), versionId, idempotencyKey: unique("apply") },
-      unique("apply"),
+      { batchSha256: shaOfCompiledBatch(batch), versionId, idempotencyKey: retryKey },
+      retryKey,
     );
     expect(retried.status).toBe(200);
     expect(retried.body.data).toMatchObject({ applied: true, versionId });
@@ -1408,17 +1393,16 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
       expect((AGENT_COMMAND_IDS as readonly string[]).includes(step.command)).toBe(true);
       expect(isAgentCommand(step.command)).toBe(true);
     }
-    // The batch as a whole parses against the §8.5 contract.
     expect(plan.compiledBatch?.steps).toEqual([...COMPILED_STEPS]);
 
     // The provider wire: exactly the 13 curated ids — the 5 read tools plus
-    // the 8 PROPOSE-ONLY write tools, nothing else (no raw engine ids).
+    // the 8 PROPOSE-ONLY write tools, nothing else (no raw engine ids ever
+    // register as callable functions).
     expect(fake.calls.length).toBe(3); // plan_edit round + plan round + final answer
     expect(fake.calls[0]?.authorization).toBe("Bearer sk-test-litellm-fake");
     const toolNames = (fake.calls[0]?.body.tools ?? []).map((tool) => tool.function.name).sort();
     expect(toolNames).toEqual(WIRE_TOOL_IDS);
     expect(WIRE_TOOL_IDS).toHaveLength(13);
-    expect(WIRE_TOOL_IDS.filter((id) => id.startsWith("studio.")).length + 0).toBe(13);
 
     // The server-side plan round is a TOOLS-FREE structured-output call.
     expect(fake.calls[1]?.body.tools).toBeUndefined();
@@ -1428,16 +1412,12 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     // never enter the model conversation (they ride the plan EVENT only).
     const finalRound = fake.calls[2]?.body.messages ?? [];
     const toolMessages = finalRound.filter((message) => message.role === "tool");
-    const planFeedback = JSON.parse(String(toolMessages.at(-1)?.content ?? "{}")) as Record<
-      string,
-      unknown
-    >;
-    expect(planFeedback).toEqual(PLAN);
-    expect(String(toolMessages.at(-1)?.content)).not.toContain("compiledBatch");
-    expect(String(toolMessages.at(-1)?.content)).not.toContain("resolutionRequests");
+    const rawFeedback = String(toolMessages.at(-1)?.content ?? "");
+    expect(JSON.parse(rawFeedback)).toEqual(PLAN);
+    expect(rawFeedback).not.toContain("compiledBatch");
+    expect(rawFeedback).not.toContain("resolutionRequests");
 
-    // The client read tool surface on the wire is the §8.4 catalog: plan_edit
-    // is server-resolved — no client tool.result events were expected.
+    // The server-resolved plan call produced exactly ONE tool.result event.
     expect(events.filter((event) => event.type === "tool.result")).toHaveLength(1);
   });
 
@@ -1454,8 +1434,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
       pinned: [],
     });
     const stream = new SseStream(response);
-    const frames = await stream.rest();
-    const events = expectValidStream(frames);
+    const events = expectValidStream(await stream.rest());
     expect(typeSeq(events)).toEqual([
       "run.started",
       "tool.started",
@@ -1470,11 +1449,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
     // The tool result is the pinned WRITE_TOOL_RESULT_SCHEMA envelope: ONLY
     // the proposed batch + the canonical proposed-only note (§8.4 rule 3).
-    const proposed = events.find(
-      (event): event is Extract<StudioStreamEvent, { type: "tool.result" }> =>
-        event.type === "tool.result",
-    );
-    if (proposed === undefined) throw new Error("no tool.result event");
+    const proposed = findToolResult(events);
     expect(proposed.result).toEqual({
       proposedBatch: {
         label: 'Agent: Add text layer "Headline"',
@@ -1485,7 +1460,9 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
     // Law #5: the model is fed the REDACTED envelope — summary + step count
     // + note ONLY; the compiled registry command id never enters its context.
-    const feedback = (fake.calls[1]?.body.messages ?? []).filter((message) => message.role === "tool");
+    const feedback = (fake.calls[1]?.body.messages ?? []).filter(
+      (message) => message.role === "tool",
+    );
     const rawFeedback = String(feedback.at(-1)?.content);
     expect(rawFeedback).not.toContain("layer.newText");
     expect(JSON.parse(rawFeedback)).toEqual({
@@ -1517,12 +1494,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     const driftStream = new SseStream(driftResponse);
     const driftEvents = expectValidStream(await driftStream.rest());
     expect(driftEvents.at(-1)).toMatchObject({ type: "run.completed" });
-    const driftResult = driftEvents.find(
-      (event): event is Extract<StudioStreamEvent, { type: "tool.result" }> =>
-        event.type === "tool.result",
-    );
-    if (driftResult === undefined) throw new Error("no drift tool.result");
-    expect(driftResult.result).toEqual({
+    expect(findToolResult(driftEvents).result).toEqual({
       error: "PROPOSAL_INVALID",
       message: "the plan compiles to an empty command batch (only annotation steps)",
     });
