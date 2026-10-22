@@ -153,6 +153,7 @@ class FakeStream implements AgentRunStream {
 
   emit(payload: RunStreamPayload) {
     this.events.push(payload);
+    return { ...payload, runId: "run_m5n", seq: this.events.length - 1 };
   }
 
   async yieldToStream(): Promise<void> {
@@ -356,7 +357,7 @@ describe("M5-N safety — write-tool args: every hostile payload is rejected or 
   it("the dunder rejection holds for EVERY tool that takes a layer/name/params surface", () => {
     // Cross-tool dunder matrix: one dunder probe per tool that accepts names —
     // none may pass its args boundary with the dunder intact (F-1 class).
-    const probes: Record<string, { layers?: unknown; name?: unknown; params?: unknown }> = {
+    const probes: Record<string, unknown> = {
       set_properties: { layers: [{ name: "prototype" }] },
       add_effect: { layers: [{ name: "constructor" }] },
       set_keyframes: { layers: [{ name: "__proto__" }] },
@@ -521,11 +522,12 @@ describe("M5-N safety — §8.5 batch bounds on the wire (AGENT_BATCH_SCHEMA + P
   it.each(BATCH_WIRE_POISONS.map((fixture) => [fixture.id]))("%s", (fixtureId) => {
     const fixture = batchWireFixture(fixtureId);
     const payload = JSON.parse(fixture.batchJson);
-    let parsed: { success: boolean; data?: unknown };
+    let parsed: { success: boolean; data?: unknown } | undefined;
     expect(() => {
       parsed = AGENT_BATCH_SCHEMA.safeParse(payload);
     }).not.toThrow();
-    expect(parsed!.success, fixture.id).toBe(fixture.expectation === "parse");
+    if (parsed === undefined) throw new Error("safeParse did not return");
+    expect(parsed.success, fixture.id).toBe(fixture.expectation === "parse");
     expectPrototypeClean();
   });
 
