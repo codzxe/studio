@@ -8,12 +8,22 @@
  */
 
 import { type ApiClient, ApiError } from "@studio/api-client";
-import { type FakeEditor, attachFakeBridge, createFakeEditor, FAKE_PNG_BASE64 } from "@studio/editor-bridge/fake";
-import type { EditorBridge } from "@studio/editor-bridge";
 import type { ContextSelection } from "@studio/contracts";
+import type { EditorBridge } from "@studio/editor-bridge";
+import {
+  FAKE_PNG_BASE64,
+  type FakeEditor,
+  attachFakeBridge,
+  createFakeEditor,
+} from "@studio/editor-bridge/fake";
 import { describe, expect, it } from "vitest";
 
-import { createToolExecutor, executeClientTool, type ClientToolCall, type ToolExecutorDeps } from "./tool-executor";
+import {
+  type ClientToolCall,
+  type ToolExecutorDeps,
+  createToolExecutor,
+  executeClientTool,
+} from "./tool-executor";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -70,7 +80,10 @@ function makeStubClient(opts: StubClientOptions = {}) {
         attempts.push(options?.idempotencyKey);
         if (opts.failTimes !== undefined && postCalls <= opts.failTimes) {
           throw new ApiError({
-            code: opts.failureStatus === 0 || opts.failureStatus === undefined ? "NETWORK_ERROR" : "VALIDATION_FAILED",
+            code:
+              opts.failureStatus === 0 || opts.failureStatus === undefined
+                ? "NETWORK_ERROR"
+                : "VALIDATION_FAILED",
             message: "injected failure",
             status: opts.failureStatus ?? 0,
             retryable: (opts.failureStatus ?? 0) === 0,
@@ -148,7 +161,12 @@ function hangBridge(bridge: EditorBridge): EditorBridge {
   return { ...bridge, inspect: never, query: never, renderFrame: never };
 }
 
-function toolCall(name: string, args: unknown, toolCallId = "call_test_1", runId = "run_test"): ClientToolCall {
+function toolCall(
+  name: string,
+  args: unknown,
+  toolCallId = "call_test_1",
+  runId = "run_test",
+): ClientToolCall {
   return { runId, toolCallId, name, args };
 }
 
@@ -238,27 +256,48 @@ describe("executeClientTool happy paths", () => {
   it("studio.list_layers: comp.info listing + per-layer trees at the asked depth", async () => {
     const world = await makeWorld();
     await executeClientTool(toolCall("studio.list_layers", { depth: 3 }), world.deps);
-    await executeClientTool(toolCall("studio.list_layers", { compId: "Main" }, "call_test_2"), world.deps);
-    await executeClientTool(toolCall("studio.list_layers", { compId: "Nope" }, "call_test_3"), world.deps);
+    await executeClientTool(
+      toolCall("studio.list_layers", { compId: "Main" }, "call_test_2"),
+      world.deps,
+    );
+    await executeClientTool(
+      toolCall("studio.list_layers", { compId: "Nope" }, "call_test_3"),
+      world.deps,
+    );
 
     expect(world.events).toHaveLength(3);
 
     const first = resultOf(world.events[0] as PostedEvent);
-    expect(first.comp).toEqual({ id: 1, name: "Main", width: 1920, height: 1080, frameRate: 29.97, duration: 10 });
+    expect(first.comp).toEqual({
+      id: 1,
+      name: "Main",
+      width: 1920,
+      height: 1080,
+      frameRate: 29.97,
+      duration: 10,
+    });
     expect(first.layers).toHaveLength(1);
     const layer = (first.layers as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
     expect(layer.id).toBe(1);
     expect(layer.name).toBe("Hello");
     expect(layer.type).toBe("text");
     const tree = layer.tree as Record<string, unknown>;
-    const children = (tree.properties as Record<string, unknown>).children as Array<Record<string, unknown>>;
+    const children = (tree.properties as Record<string, unknown>).children as Array<
+      Record<string, unknown>
+    >;
     expect(children.some((child) => child.path === "transform/opacity")).toBe(true);
 
     // Verified wire params: comp.info {comp?} (empty = active), layer.tree {comp, layer, depth}.
     expect(world.calls.queries[0]).toEqual({ command: "comp.info", params: {} });
-    expect(world.calls.queries[1]).toEqual({ command: "layer.tree", params: { comp: 1, layer: 1, depth: 3 } });
+    expect(world.calls.queries[1]).toEqual({
+      command: "layer.tree",
+      params: { comp: 1, layer: 1, depth: 3 },
+    });
     expect(world.calls.queries[2]).toEqual({ command: "comp.info", params: { comp: "Main" } });
-    expect(world.calls.queries[3]).toEqual({ command: "layer.tree", params: { comp: 1, layer: 1, depth: 2 } });
+    expect(world.calls.queries[3]).toEqual({
+      command: "layer.tree",
+      params: { comp: 1, layer: 1, depth: 2 },
+    });
 
     // Unknown comp → whole-tool failure result (the primary query), still posted.
     const third = resultOf(world.events[2] as PostedEvent);
@@ -269,7 +308,10 @@ describe("executeClientTool happy paths", () => {
   it("studio.get_properties: per {layer, path} reads with per-item NOT_FOUND", async () => {
     const world = await makeWorld();
     await executeClientTool(
-      toolCall("studio.get_properties", { layerIds: ["1", "99"], paths: ["transform/opacity", "text/sourceText"] }),
+      toolCall("studio.get_properties", {
+        layerIds: ["1", "99"],
+        paths: ["transform/opacity", "text/sourceText"],
+      }),
       world.deps,
     );
 
@@ -289,7 +331,9 @@ describe("executeClientTool happy paths", () => {
   it("studio.get_properties: curated default paths when none are given", async () => {
     const world = await makeWorld();
     await executeClientTool(toolCall("studio.get_properties", { layerIds: ["1"] }), world.deps);
-    const layers = (resultOf(world.events[0] as PostedEvent).layers as Record<string, Record<string, unknown>>)["1"];
+    const layers = (
+      resultOf(world.events[0] as PostedEvent).layers as Record<string, Record<string, unknown>>
+    )["1"];
     if (layers === undefined) throw new Error("layer entry missing");
     expect(Object.keys(layers).sort()).toEqual([
       "text/sourceText",
@@ -329,7 +373,10 @@ describe("executeClientTool gating", () => {
   it("invalid args → RUN_INVALID_TOOL posted, no bridge call", async () => {
     const world = await makeWorld();
     await executeClientTool(toolCall("studio.get_properties", { layerIds: [] }), world.deps);
-    await executeClientTool(toolCall("studio.list_layers", { depth: 99 }, "call_test_2"), world.deps);
+    await executeClientTool(
+      toolCall("studio.list_layers", { depth: 99 }, "call_test_2"),
+      world.deps,
+    );
 
     expect(world.events).toHaveLength(2);
     expect(resultOf(world.events[0] as PostedEvent)).toMatchObject({ error: "RUN_INVALID_TOOL" });
@@ -343,7 +390,9 @@ describe("executeClientTool gating", () => {
   it("write tools → TOOL_FORBIDDEN, never executed (M4 registers none)", async () => {
     const world = await makeWorld();
     await executeClientTool(
-      toolCall("studio.set_properties", { updates: [{ layer: "1", path: "transform/opacity", value: 50 }] }),
+      toolCall("studio.set_properties", {
+        updates: [{ layer: "1", path: "transform/opacity", value: 50 }],
+      }),
       world.deps,
     );
     await executeClientTool(
@@ -384,15 +433,18 @@ describe("executeClientTool degradation", () => {
     await executeClientTool(toolCall("studio.list_layers", {}), world.deps);
 
     expect(world.events).toHaveLength(1);
-    const layers = resultOf(world.events[0] as PostedEvent).layers as Array<Record<string, unknown>>;
+    const layers = resultOf(world.events[0] as PostedEvent).layers as Array<
+      Record<string, unknown>
+    >;
     expect(layers[0]?.name).toBe("Hello");
     expect(layers[0]?.tree).toBeNull();
     expect(resultOf(world.events[0] as PostedEvent).error).toBeUndefined();
 
     const world2 = await makeWorld({ failOn: { "prop.get": "boom" } });
     await executeClientTool(toolCall("studio.get_context", {}), world2.deps);
-    const props = (resultOf(world2.events[0] as PostedEvent).selectedProperties as Record<string, unknown>)
-      .properties as Record<string, unknown>;
+    const props = (
+      resultOf(world2.events[0] as PostedEvent).selectedProperties as Record<string, unknown>
+    ).properties as Record<string, unknown>;
     expect(Object.keys(props)).toHaveLength(6);
     for (const value of Object.values(props)) expect(value).toBeNull();
   });
@@ -494,7 +546,9 @@ describe("createToolExecutor", () => {
 
   it("gives up silently after the retries are exhausted — never throws", async () => {
     const world = await makeWorld({ clientOpts: { failTimes: 5 } });
-    await expect(executeClientTool(toolCall("studio.list_layers", {}), world.deps)).resolves.toBeUndefined();
+    await expect(
+      executeClientTool(toolCall("studio.list_layers", {}), world.deps),
+    ).resolves.toBeUndefined();
     expect(world.postCalls()).toBe(3);
     expect(world.events).toHaveLength(0);
   });

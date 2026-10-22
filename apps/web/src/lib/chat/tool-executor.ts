@@ -94,7 +94,10 @@ const POST_ATTEMPTS = 3; // 1 try + 2 retries on transient failures
  * Runs one client tool call end-to-end and reports the outcome as a posted
  * §7.4 tool result. NEVER throws; NEVER posts twice for one call.
  */
-export async function executeClientTool(call: ClientToolCall, deps: ToolExecutorDeps): Promise<void> {
+export async function executeClientTool(
+  call: ClientToolCall,
+  deps: ToolExecutorDeps,
+): Promise<void> {
   let settled = false;
   const post = async (result: unknown): Promise<void> => {
     if (settled) return; // the guard may win while the work promise still lands
@@ -134,7 +137,9 @@ export async function executeClientTool(call: ClientToolCall, deps: ToolExecutor
  * double-executes or double-posts. Ids are retained for the executor's
  * lifetime (they are unique per run; replays must be no-ops, not re-runs).
  */
-export function createToolExecutor(deps: ToolExecutorDeps): (call: ClientToolCall) => Promise<void> {
+export function createToolExecutor(
+  deps: ToolExecutorDeps,
+): (call: ClientToolCall) => Promise<void> {
   const executed = new Set<string>();
   return (call: ClientToolCall): Promise<void> => {
     if (executed.has(call.toolCallId)) return Promise.resolve();
@@ -191,9 +196,15 @@ async function runReadTool(name: string, args: unknown, deps: ToolExecutorDeps):
       case "studio.list_layers":
         return await runListLayers(args as { compId?: string; depth?: number }, deps);
       case "studio.get_properties":
-        return await runGetProperties(args as { layerIds?: readonly string[]; paths?: readonly string[] }, deps);
+        return await runGetProperties(
+          args as { layerIds?: readonly string[]; paths?: readonly string[] },
+          deps,
+        );
       case "studio.render_preview":
-        return await runRenderPreview(args as { compId?: string; timeSeconds?: number; maxWidth?: number }, deps);
+        return await runRenderPreview(
+          args as { compId?: string; timeSeconds?: number; maxWidth?: number },
+          deps,
+        );
       default:
         // Unreachable (isClientTool filtered first) — stay honest anyway.
         return { error: "TOOL_FAILED", message: `Not a client tool: ${name}` };
@@ -206,7 +217,9 @@ async function runReadTool(name: string, args: unknown, deps: ToolExecutorDeps):
 /** Bridge/editor failure → the §7.4 failure result the model sees (seam 6). */
 function toolError(error: unknown): { error: string; message: string } {
   const code =
-    isBridgeError(error) && DISCONNECT_CODES.has(error.code) ? "EDITOR_DISCONNECTED" : "TOOL_FAILED";
+    isBridgeError(error) && DISCONNECT_CODES.has(error.code)
+      ? "EDITOR_DISCONNECTED"
+      : "TOOL_FAILED";
   return { error: code, message: messageOf(error) };
 }
 
@@ -214,9 +227,13 @@ function toolError(error: unknown): { error: string; message: string } {
 // studio.get_context — flags-gated + args-include-gated project snapshot
 // ---------------------------------------------------------------------------
 
-async function runGetContext(args: { include?: readonly string[] }, deps: ToolExecutorDeps): Promise<unknown> {
+async function runGetContext(
+  args: { include?: readonly string[] },
+  deps: ToolExecutorDeps,
+): Promise<unknown> {
   const include = args.include;
-  const wants = (block: ContextBlockKey): boolean => include === undefined || include.includes(block);
+  const wants = (block: ContextBlockKey): boolean =>
+    include === undefined || include.includes(block);
 
   // One ui.inspect anchors the ui-derived blocks; a failure nulls just those.
   const inspect = await quiet(() => deps.bridge.inspect());
@@ -259,7 +276,10 @@ async function runGetContext(args: { include?: readonly string[] }, deps: ToolEx
   }
 
   if (wants("focusedPanel")) {
-    result.focusedPanel = await flagOrRemoved(deps.flags.focusedPanel, async () => inspect?.focusedPanel ?? null);
+    result.focusedPanel = await flagOrRemoved(
+      deps.flags.focusedPanel,
+      async () => inspect?.focusedPanel ?? null,
+    );
   }
 
   if (wants("selectedProperties")) {
@@ -273,8 +293,11 @@ async function runGetContext(args: { include?: readonly string[] }, deps: ToolEx
   if (wants("recentCommands")) {
     result.recentCommands = await flagOrRemoved(deps.flags.recentCommands, () =>
       quiet(async () => {
-        const history = await deps.bridge.query<{ states?: unknown; current?: unknown }>("edit.history.list");
-        if (history === null || typeof history !== "object" || !Array.isArray(history.states)) return null;
+        const history = await deps.bridge.query<{ states?: unknown; current?: unknown }>(
+          "edit.history.list",
+        );
+        if (history === null || typeof history !== "object" || !Array.isArray(history.states))
+          return null;
         return { current: history.current ?? null, recent: history.states.slice(-10) };
       }),
     );
@@ -310,7 +333,10 @@ async function readSelectedProperties(bridge: EditorBridge, layerId: number): Pr
  *   2. `layer.tree {comp, layer, depth}` per layer — the depth-capped trees.
  * Per-layer tree failures degrade to `tree: null`; the listing still posts.
  */
-async function runListLayers(args: { compId?: string; depth?: number }, deps: ToolExecutorDeps): Promise<unknown> {
+async function runListLayers(
+  args: { compId?: string; depth?: number },
+  deps: ToolExecutorDeps,
+): Promise<unknown> {
   const compParam = args.compId;
   const depth = args.depth ?? 2;
   const info = await deps.bridge.query<Record<string, unknown>>(
@@ -321,7 +347,10 @@ async function runListLayers(args: { compId?: string; depth?: number }, deps: To
   const compRef = typeof info?.id === "number" ? info.id : compParam;
 
   const layers = await mapLimit(layersIn, 4, async (entry) => {
-    const layer = (typeof entry === "object" && entry !== null ? entry : {}) as Record<string, unknown>;
+    const layer = (typeof entry === "object" && entry !== null ? entry : {}) as Record<
+      string,
+      unknown
+    >;
     const id = typeof layer.id === "number" ? layer.id : null;
     const tree =
       id === null || compRef === undefined
@@ -357,7 +386,8 @@ async function runGetProperties(
   deps: ToolExecutorDeps,
 ): Promise<unknown> {
   const layerIds = args.layerIds ?? [];
-  const paths = args.paths === undefined || args.paths.length === 0 ? DEFAULT_PROP_PATHS : args.paths;
+  const paths =
+    args.paths === undefined || args.paths.length === 0 ? DEFAULT_PROP_PATHS : args.paths;
 
   // Flat pairs → bounded concurrency 4; a missing layer/path degrades to a
   // per-item {error:"NOT_FOUND"} entry (never abort, never drop the batch).
@@ -418,7 +448,11 @@ async function runRenderPreview(
 // Result POST (RUN_EVENT_REQUEST_SCHEMA, exact) + transient retries
 // ---------------------------------------------------------------------------
 
-async function postToolResult(call: ClientToolCall, deps: ToolExecutorDeps, result: unknown): Promise<void> {
+async function postToolResult(
+  call: ClientToolCall,
+  deps: ToolExecutorDeps,
+  result: unknown,
+): Promise<void> {
   // Exact RUN_EVENT_REQUEST_SCHEMA "tool.result" arm — strictObject, no extras.
   const body = { type: "tool.result" as const, toolCallId: call.toolCallId, result };
   // Same logical mutation across retries (law #4): one key per run+toolCall.
@@ -441,7 +475,9 @@ async function postToolResult(call: ClientToolCall, deps: ToolExecutorDeps, resu
 /** Network-ish (status 0), 408/429 and 5xx responses are transient; 4xx are answers, not flukes. */
 function isTransientPostFailure(error: unknown): boolean {
   if (isApiError(error)) {
-    return error.status === 0 || error.status === 408 || error.status === 429 || error.status >= 500;
+    return (
+      error.status === 0 || error.status === 408 || error.status === 429 || error.status >= 500
+    );
   }
   return true; // unknown shape (e.g. a stubbed fetch in tests) — retry defensively
 }
