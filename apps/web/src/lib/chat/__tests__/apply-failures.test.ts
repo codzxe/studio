@@ -66,8 +66,9 @@ import { BridgeError } from "@studio/editor-bridge";
 import { describe, expect, it } from "vitest";
 
 import type { ApplicablePlan, ApplyOutcome, UndoOutcome } from "@/lib/chat/apply";
-import { ALL_TEXT_FIXTURES } from "./injection-corpus";
 import {
+  type FailureHarness,
+  type RecordedExecuteCall,
   dimPlan,
   makeFailureHarness,
   newTextPlan,
@@ -75,9 +76,8 @@ import {
   renameLayer,
   settle,
   stepsPlan,
-  type FailureHarness,
-  type RecordedExecuteCall,
 } from "./apply-harness";
+import { ALL_TEXT_FIXTURES } from "./injection-corpus";
 
 // ---------------------------------------------------------------------------
 // Suite-wide helpers
@@ -273,9 +273,11 @@ describe("M5-L · mid-batch failure (poisoned step k)", () => {
     expect(first.ok).toBe(true);
     const before = harness.state();
 
-    const second = await harness.controller.apply(stepsPlan("Agent: second", [
-      { command: "prop.set", params: { layer: 1, path: "transform/opacity", value: 20 } },
-    ]));
+    const second = await harness.controller.apply(
+      stepsPlan("Agent: second", [
+        { command: "prop.set", params: { layer: 1, path: "transform/opacity", value: 20 } },
+      ]),
+    );
     expect(second).toMatchObject({ ok: false, reason: "engine-failed" });
     expect(harness.applyCalls).toHaveLength(1); // only the FIRST gesture posted
     expect(harness.saveReasons).toHaveLength(1); // only the FIRST gesture saved
@@ -314,23 +316,26 @@ describe("M5-L · editor disconnect", () => {
     expect(harness.events.map((event) => event.type)).toEqual(["apply.started", "apply.failed"]);
   });
 
-  it.each(DISCONNECT_CODES)("bridge code %s on engine.batch → editor-disconnected", async (code) => {
-    const harness = await makeFailureHarness();
-    harness.faults.rejectExecute(
-      "engine.batch",
-      new BridgeError(code, `execute engine.batch: simulated ${code}`),
-    );
+  it.each(DISCONNECT_CODES)(
+    "bridge code %s on engine.batch → editor-disconnected",
+    async (code) => {
+      const harness = await makeFailureHarness();
+      harness.faults.rejectExecute(
+        "engine.batch",
+        new BridgeError(code, `execute engine.batch: simulated ${code}`),
+      );
 
-    const outcome = await harness.controller.apply(
-      stepsPlan(BATCH_LABEL, [
-        { command: "prop.set", params: { layer: 1, path: "transform/opacity", value: 50 } },
-      ]),
-    );
+      const outcome = await harness.controller.apply(
+        stepsPlan(BATCH_LABEL, [
+          { command: "prop.set", params: { layer: 1, path: "transform/opacity", value: 50 } },
+        ]),
+      );
 
-    expect(outcome).toMatchObject({ ok: false, reason: "editor-disconnected" });
-    expect(harness.saveReasons).toHaveLength(0);
-    expect(harness.applyCalls).toHaveLength(0);
-  });
+      expect(outcome).toMatchObject({ ok: false, reason: "editor-disconnected" });
+      expect(harness.saveReasons).toHaveLength(0);
+      expect(harness.applyCalls).toHaveLength(0);
+    },
+  );
 
   it("EDITOR_CALL_FAILED stays engine-failed (vocabulary precision — only disconnect codes are disconnects)", async () => {
     const harness = await makeFailureHarness();
@@ -358,9 +363,7 @@ describe("M5-L · editor disconnect", () => {
 
     expect(outcome).toMatchObject({ ok: false, reason: "editor-disconnected" });
     // Zero engine.batch attempts — the batch was never even tried.
-    expect(
-      harness.executeCalls.filter((call) => call.command === "engine.batch"),
-    ).toHaveLength(0);
+    expect(harness.executeCalls.filter((call) => call.command === "engine.batch")).toHaveLength(0);
     expect(harness.saveReasons).toHaveLength(0);
     expect(harness.applyCalls).toHaveLength(0);
     expect(harness.timeline).toEqual(["query:comp.info"]);
@@ -487,9 +490,7 @@ describe("M5-L · version conflict (applyRun 409)", () => {
     expect(conflict).toMatchObject({ ok: false, reason: "conflict" });
 
     await settle(12); // nothing may re-run on its own
-    expect(
-      harness.executeCalls.filter((call) => call.command === "engine.batch"),
-    ).toHaveLength(1);
+    expect(harness.executeCalls.filter((call) => call.command === "engine.batch")).toHaveLength(1);
     expect(harness.applyCalls).toHaveLength(1);
 
     // A reapply "retry" (the card's Re-apply) is gated: base ≠ current.
@@ -501,9 +502,7 @@ describe("M5-L · version conflict (applyRun 409)", () => {
       );
     }
     // Still exactly ONE engine execution and ONE POST — no double-apply.
-    expect(
-      harness.executeCalls.filter((call) => call.command === "engine.batch"),
-    ).toHaveLength(1);
+    expect(harness.executeCalls.filter((call) => call.command === "engine.batch")).toHaveLength(1);
     expect(harness.applyCalls).toHaveLength(1);
     expect(harness.events.at(-1)?.type).toBe("apply.failed");
   });
@@ -647,15 +646,13 @@ describe("M5-L · saveNow failure after a successful engine.batch", () => {
     expect(second).toMatchObject({ ok: true });
 
     // The engine re-executed the SAME batch: the text layer now exists TWICE.
-    expect(
-      harness.executeCalls.filter((call) => call.command === "engine.batch"),
-    ).toHaveLength(2);
+    expect(harness.executeCalls.filter((call) => call.command === "engine.batch")).toHaveLength(2);
     expect(harness.state().layers).toHaveLength(3);
     expect(harness.state().layers.filter((layer) => layer.name.startsWith("Dup"))).toHaveLength(2);
     // …and the undo stack holds TWO entries for one logical edit.
-    expect(harness.state().undoLabels.filter((label) => label === "Agent: add a text layer")).toHaveLength(
-      2,
-    );
+    expect(
+      harness.state().undoLabels.filter((label) => label === "Agent: add a text layer"),
+    ).toHaveLength(2);
     expectAllCommandsAllowlisted(harness);
   });
 });
@@ -688,9 +685,7 @@ describe("M5-L · applyRun network failure after saveNow", () => {
     expect(harness.saveReasons).toEqual(["agent-apply"]);
     // …and the client did NOT auto-retry: one POST, one engine.batch.
     expect(harness.applyCalls).toHaveLength(1);
-    expect(
-      harness.executeCalls.filter((call) => call.command === "engine.batch"),
-    ).toHaveLength(1);
+    expect(harness.executeCalls.filter((call) => call.command === "engine.batch")).toHaveLength(1);
     expect(harness.timeline.at(-1)).toBe("applyRun");
   });
 
@@ -721,9 +716,7 @@ describe("M5-L · applyRun network failure after saveNow", () => {
     expect(secondBody.batchSha256).toBe(firstBody.batchSha256);
     expect(secondBody.versionId).toBe(firstBody.versionId);
     // The engine re-executed the batch for the retry gesture (see finding 6).
-    expect(
-      harness.executeCalls.filter((call) => call.command === "engine.batch"),
-    ).toHaveLength(2);
+    expect(harness.executeCalls.filter((call) => call.command === "engine.batch")).toHaveLength(2);
   });
 
   it("with a NON-deduped save the retry breaks the {batchSha256, versionId} pair the server dedupes on", async () => {
@@ -857,9 +850,7 @@ describe("M5-L · panic sweep", () => {
 
       const outcome = await harness.controller.apply(
         dimPlan({
-          resolutionRequests: [
-            { requestId: "r1", layerName: fixture.payload, disambiguation: [] },
-          ],
+          resolutionRequests: [{ requestId: "r1", layerName: fixture.payload, disambiguation: [] }],
         }),
       );
 
@@ -1012,8 +1003,9 @@ describe("M5-L · panic sweep", () => {
     const outcome = await harness.controller.apply(stepsPlan("Agent: bulk edit", steps));
 
     expect(outcome).toMatchObject({ ok: true });
-    const batch = harness.executeCalls.find((call) => call.command === "engine.batch")
-      ?.params as { steps?: ReadonlyArray<unknown> };
+    const batch = harness.executeCalls.find((call) => call.command === "engine.batch")?.params as {
+      steps?: ReadonlyArray<unknown>;
+    };
     expect(batch.steps).toHaveLength(150);
     // Still ONE folded undo step (law #6) — even a 150-step batch.
     expect(harness.state().undoLabels.at(-1)).toBe("Agent: bulk edit");
@@ -1032,195 +1024,194 @@ describe("M5-L · law #1 matrix (no raw error strings / stacks in user outcomes)
       { command: "prop.set", params: { layer: 1, path: "transform/opacity", value: 50 } },
     ];
 
-    const rows: ReadonlyArray<{ label: string; run: () => Promise<ApplyOutcome | UndoOutcome> }> =
-      [
-        {
-          label: "unknown command",
-          run: async () => {
-            const h = await makeFailureHarness();
-            return await h.controller.apply(
-              stepsPlan("Agent: bad", [{ command: "layer.explode", params: {} }]),
-            );
-          },
+    const rows: ReadonlyArray<{ label: string; run: () => Promise<ApplyOutcome | UndoOutcome> }> = [
+      {
+        label: "unknown command",
+        run: async () => {
+          const h = await makeFailureHarness();
+          return await h.controller.apply(
+            stepsPlan("Agent: bad", [{ command: "layer.explode", params: {} }]),
+          );
         },
-        {
-          label: "mid-batch poison",
-          run: async () => {
-            const h = await makeFailureHarness({
-              failOn: { "layer.rename": "invalid parameters for `layer.rename`: nope" },
-            });
-            return await h.controller.apply(poisonedMidBatchPlan());
-          },
+      },
+      {
+        label: "mid-batch poison",
+        run: async () => {
+          const h = await makeFailureHarness({
+            failOn: { "layer.rename": "invalid parameters for `layer.rename`: nope" },
+          });
+          return await h.controller.apply(poisonedMidBatchPlan());
         },
-        {
-          label: "disposed bridge",
-          run: async () => {
-            const h = await makeFailureHarness();
-            h.disposeInner();
-            return await h.controller.apply(stepsPlan("Agent: d", dimStep));
-          },
+      },
+      {
+        label: "disposed bridge",
+        run: async () => {
+          const h = await makeFailureHarness();
+          h.disposeInner();
+          return await h.controller.apply(stepsPlan("Agent: d", dimStep));
         },
-        {
-          label: "EDITOR_TIMEOUT",
-          run: async () => {
-            const h = await makeFailureHarness();
-            h.faults.rejectExecute(
-              "engine.batch",
-              new BridgeError("EDITOR_TIMEOUT", "execute engine.batch: timed out after 15000ms"),
-            );
-            return await h.controller.apply(stepsPlan("Agent: d", dimStep));
-          },
+      },
+      {
+        label: "EDITOR_TIMEOUT",
+        run: async () => {
+          const h = await makeFailureHarness();
+          h.faults.rejectExecute(
+            "engine.batch",
+            new BridgeError("EDITOR_TIMEOUT", "execute engine.batch: timed out after 15000ms"),
+          );
+          return await h.controller.apply(stepsPlan("Agent: d", dimStep));
         },
-        {
-          label: "invalid batch",
-          run: async () => {
-            const h = await makeFailureHarness();
-            return await h.controller.apply(
-              dimPlan({
-                compiledBatch: {
-                  label: "",
-                  atomic: true,
-                  steps: [],
-                } as unknown as ApplicablePlan["compiledBatch"],
-              }),
-            );
-          },
+      },
+      {
+        label: "invalid batch",
+        run: async () => {
+          const h = await makeFailureHarness();
+          return await h.controller.apply(
+            dimPlan({
+              compiledBatch: {
+                label: "",
+                atomic: true,
+                steps: [],
+              } as unknown as ApplicablePlan["compiledBatch"],
+            }),
+          );
         },
-        {
-          label: "unresolved token",
-          run: async () => {
-            const h = await makeFailureHarness();
-            return await h.controller.apply(
-              dimPlan({
-                resolutionRequests: undefined,
-                compiledBatch: {
-                  label: "Agent: ghost",
-                  atomic: true,
-                  steps: [
-                    {
-                      command: "prop.set",
-                      params: { layer: "$request:r1", path: "transform/opacity", value: 1 },
-                    },
-                  ],
-                },
-              }),
-            );
-          },
+      },
+      {
+        label: "unresolved token",
+        run: async () => {
+          const h = await makeFailureHarness();
+          return await h.controller.apply(
+            dimPlan({
+              resolutionRequests: undefined,
+              compiledBatch: {
+                label: "Agent: ghost",
+                atomic: true,
+                steps: [
+                  {
+                    command: "prop.set",
+                    params: { layer: "$request:r1", path: "transform/opacity", value: 1 },
+                  },
+                ],
+              },
+            }),
+          );
         },
-        {
-          label: "ambiguous name",
-          run: async () => {
-            const h = await makeFailureHarness();
-            await h.fake.execute("layer.newText", { text: "second" });
-            await renameLayer(h.fake, 2, "Hello");
-            return await h.controller.apply(dimPlan());
-          },
+      },
+      {
+        label: "ambiguous name",
+        run: async () => {
+          const h = await makeFailureHarness();
+          await h.fake.execute("layer.newText", { text: "second" });
+          await renameLayer(h.fake, 2, "Hello");
+          return await h.controller.apply(dimPlan());
         },
-        {
-          label: "not-found name",
-          run: async () => {
-            const h = await makeFailureHarness();
-            return await h.controller.apply(
-              dimPlan({
-                resolutionRequests: [{ requestId: "r1", layerName: "Missing", disambiguation: [] }],
-              }),
-            );
-          },
+      },
+      {
+        label: "not-found name",
+        run: async () => {
+          const h = await makeFailureHarness();
+          return await h.controller.apply(
+            dimPlan({
+              resolutionRequests: [{ requestId: "r1", layerName: "Missing", disambiguation: [] }],
+            }),
+          );
         },
-        {
-          label: "save error",
-          run: async () => {
-            const h = await makeFailureHarness({ saveMode: "error" });
-            return await h.controller.apply(dimPlan());
-          },
+      },
+      {
+        label: "save error",
+        run: async () => {
+          const h = await makeFailureHarness({ saveMode: "error" });
+          return await h.controller.apply(dimPlan());
         },
-        {
-          label: "save conflict",
-          run: async () => {
-            const h = await makeFailureHarness({ saveMode: "conflict" });
-            return await h.controller.apply(dimPlan());
-          },
+      },
+      {
+        label: "save conflict",
+        run: async () => {
+          const h = await makeFailureHarness({ saveMode: "conflict" });
+          return await h.controller.apply(dimPlan());
         },
-        {
-          label: "applyRun 409",
-          run: async () => {
-            const h = await makeFailureHarness({
-              applyRunError: new ApiError({
-                code: "VERSION_CONFLICT",
-                message: "The project changed while this plan was open.",
-                status: 409,
-              }),
-            });
-            return await h.controller.apply(dimPlan());
-          },
+      },
+      {
+        label: "applyRun 409",
+        run: async () => {
+          const h = await makeFailureHarness({
+            applyRunError: new ApiError({
+              code: "VERSION_CONFLICT",
+              message: "The project changed while this plan was open.",
+              status: 409,
+            }),
+          });
+          return await h.controller.apply(dimPlan());
         },
-        {
-          label: "applyRun 402",
-          run: async () => {
-            const h = await makeFailureHarness({
-              applyRunError: new ApiError({
-                code: "INSUFFICIENT_CREDITS",
-                message: "You need more credits to commit this run.",
-                status: 402,
-              }),
-            });
-            return await h.controller.apply(dimPlan());
-          },
+      },
+      {
+        label: "applyRun 402",
+        run: async () => {
+          const h = await makeFailureHarness({
+            applyRunError: new ApiError({
+              code: "INSUFFICIENT_CREDITS",
+              message: "You need more credits to commit this run.",
+              status: 402,
+            }),
+          });
+          return await h.controller.apply(dimPlan());
         },
-        {
-          label: "applyRun 429",
-          run: async () => {
-            const h = await makeFailureHarness({
-              applyRunError: new ApiError({
-                code: "RATE_LIMITED",
-                message: "Too many requests. Slow down for a moment, then retry.",
-                status: 429,
-              }),
-            });
-            return await h.controller.apply(dimPlan());
-          },
+      },
+      {
+        label: "applyRun 429",
+        run: async () => {
+          const h = await makeFailureHarness({
+            applyRunError: new ApiError({
+              code: "RATE_LIMITED",
+              message: "Too many requests. Slow down for a moment, then retry.",
+              status: 429,
+            }),
+          });
+          return await h.controller.apply(dimPlan());
         },
-        {
-          label: "applyRun network",
-          run: async () => {
-            const h = await makeFailureHarness({
-              applyRunError: networkError(new Error("fetch failed")),
-            });
-            return await h.controller.apply(dimPlan());
-          },
+      },
+      {
+        label: "applyRun network",
+        run: async () => {
+          const h = await makeFailureHarness({
+            applyRunError: networkError(new Error("fetch failed")),
+          });
+          return await h.controller.apply(dimPlan());
         },
-        {
-          label: "undo nothing",
-          run: async () => {
-            const h = await makeFailureHarness({ seed: false });
-            return await h.controller.undo("run_1");
-          },
+      },
+      {
+        label: "undo nothing",
+        run: async () => {
+          const h = await makeFailureHarness({ seed: false });
+          return await h.controller.undo("run_1");
         },
-        {
-          label: "undoRun 409",
-          run: async () => {
-            const h = await makeFailureHarness({
-              undoRunError: new ApiError({
-                code: "RUN_NOT_APPLIED",
-                message: "This run has not been applied yet.",
-                status: 409,
-              }),
-            });
-            await h.controller.apply(dimPlan());
-            return await h.controller.undo("run_1");
-          },
+      },
+      {
+        label: "undoRun 409",
+        run: async () => {
+          const h = await makeFailureHarness({
+            undoRunError: new ApiError({
+              code: "RUN_NOT_APPLIED",
+              message: "This run has not been applied yet.",
+              status: 409,
+            }),
+          });
+          await h.controller.apply(dimPlan());
+          return await h.controller.undo("run_1");
         },
-        {
-          label: "undoRun network",
-          run: async () => {
-            const h = await makeFailureHarness({
-              undoRunError: networkError(new Error("fetch failed")),
-            });
-            await h.controller.apply(dimPlan());
-            return await h.controller.undo("run_1");
-          },
+      },
+      {
+        label: "undoRun network",
+        run: async () => {
+          const h = await makeFailureHarness({
+            undoRunError: networkError(new Error("fetch failed")),
+          });
+          await h.controller.apply(dimPlan());
+          return await h.controller.undo("run_1");
         },
-      ];
+      },
+    ];
 
     expect(rows.length).toBeGreaterThanOrEqual(16);
     for (const row of rows) {

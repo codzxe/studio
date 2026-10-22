@@ -358,7 +358,9 @@ export const WRITE_ARGS_INJECTIONS: readonly HostileWriteArgsFixture[] = [
     tool: "set_properties",
     argsJson:
       '{"layers":[{"name":"Headline"}],"properties":[{"path":"text/sourceText","value":null}]}',
-    needle: "M5N-SP-VALUE-NULL (descriptive: null itself is the payload)",
+    // The marker is the null VALUE itself (strict args leave no room for a
+    // note field); the payload fragment is the needle.
+    needle: '"value":null',
     expectation: "data",
   },
   {
