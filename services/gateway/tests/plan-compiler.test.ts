@@ -563,9 +563,16 @@ describe("allowlist + proposed-batch validation", () => {
   });
 
   it("a compiled command missing a registry-required param is fatal", () => {
-    // prop.set without `value` — the registry (M5-J) is the authority (prop.rs).
+    // prop.set without `value` — the registry (M5-J) is the authority (prop.rs:
+    // "missing `value`"). The REAL M5-A schema already rejects value-less
+    // updates (zod v4 z.unknown() requires presence), so this exercises the
+    // defense-in-depth gate under a weak (stub-era) schema.
+    const weakDeps: CompileDeps = {
+      registry: REGISTRY,
+      writeTools: { set_properties: z.object({}).passthrough() },
+    };
     const issues = expectFatal(
-      compile(plan([step("set_properties", { updates: [{ layer: "Headline", path: "name" }] })])),
+      compile(plan([step("set_properties", { updates: [{ layer: "Headline", path: "name" }] })]), weakDeps),
       "missing_required_param",
     );
     expect(issues.find((issue) => issue.code === "missing_required_param")?.param).toBe("value");

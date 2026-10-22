@@ -36,6 +36,7 @@ import {
   STUDIO_STREAM_EVENT_SCHEMA,
   type StudioStreamEvent,
   TOOL_LIST,
+  WRITE_TOOL_IDS,
 } from "@studio/contracts";
 import type { AgentRun } from "@studio/db";
 
@@ -105,8 +106,11 @@ function usageChunk(promptTokens: number, completionTokens: number): string {
 }
 const DONE = "data: [DONE]\n\n";
 
-/** The 5 read tool ids (M4.6 hard rule: no write tool is ever registered). */
-const READ_TOOL_IDS = [...TOOL_LIST.filter((tool) => tool.kind === "read").map((t) => t.id)].sort();
+/** The 13 curated tool ids on the provider wire (M5.1: 5 read + 8 write). */
+const WIRE_TOOL_IDS = [
+  ...TOOL_LIST.filter((tool) => tool.kind === "read").map((tool) => tool.id),
+  ...WRITE_TOOL_IDS.map((id) => `studio.${id}`),
+].sort();
 
 class FakeOpenAIServer {
   private readonly queue: ScriptEntry[] = [];
@@ -745,11 +749,13 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     // FULL hold): a completed run nets exactly −commit.
     expect(credits.balance).toBe(100 - 1);
 
-    // The runner only ever registered the 5 read tools (M4.6: no write path).
+    // The runner registers exactly the 13 curated tools on the provider wire
+    // (M5.1: the 5 read tools + the 8 PROPOSE-ONLY write tools — nothing else).
     expect(fake.calls.length).toBe(2);
     expect(fake.calls[0]?.authorization).toBe("Bearer sk-test-litellm-fake");
     const toolNames = (fake.calls[0]?.body.tools ?? []).map((tool) => tool.function.name).sort();
-    expect(toolNames).toEqual(READ_TOOL_IDS);
+    expect(toolNames).toEqual(WIRE_TOOL_IDS);
+    expect(WIRE_TOOL_IDS).toHaveLength(13);
 
     // Ledger: reserve −N, commit −1, refund +N (full hold release) — the
     // §8.8 contract: the run nets −1.
@@ -778,21 +784,26 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     expect(record.errorCode).toBeNull();
     expect(record.completedAt).not.toBeNull();
 
-    // Steps: rows exist for the tool. TOLERANT COUNT — see the M4-A flagged
-    // quirk: runs.ts records a tool.result step row AND chat.ts finalize's
-    // recordSteps re-records tool.started/tool.result with the LOG seqs, so
-    // one tool call yields 3 rows (seq 0 result + seq 1 started + seq 2
-    // result). Assert semantics, not row count; (runId, seq) stays unique.
+    // Steps — agent_steps SINGLE WRITER (M4 tail #2, fixed by M5-C): the
+    // chat route's finalize recordSteps is the ONLY writer, keyed by the wire
+    // seq; the runs-route sink no longer inserts a row. One client tool call
+    // ⇒ EXACTLY 2 rows: args ("started" on the wire) + result ("succeeded"),
+    // at the seqs of the tool.started/tool.result SSE events.
     const steps = record.steps;
-    expect(steps.length).toBeGreaterThanOrEqual(2);
+    expect(steps.length).toBe(2);
     expect(steps.every((step) => step.tool === "studio.get_context")).toBe(true);
+    expect(steps.map((step) => step.seq)).toEqual([1, 2]); // run.started=0, tool.started=1, tool.result=2
     expect(new Set(steps.map((step) => step.seq)).size).toBe(steps.length);
+    expect(steps.map((step) => step.status).sort()).toEqual(["started", "succeeded"]);
     const rawRun = await server.deps.repos.runs.get(fx.workspaceId, runId);
     const withResult = rawRun.steps.filter(
       (step) =>
         (step.resultJson as { activeComp?: { name?: string } } | null)?.activeComp?.name === "Main",
     );
-    expect(withResult.length).toBeGreaterThanOrEqual(1);
+    expect(withResult.length).toBe(1);
+    const argsRow = rawRun.steps.find((step) => step.argsJson !== null);
+    expect(argsRow?.seq).toBe(1);
+    expect(argsRow?.status).toBe("running");
     expect(rawRun.steps.some((step) => step.argsJson !== null)).toBe(true);
 
     // Messages persisted: the user turn + the assistant answer (§9.1).
