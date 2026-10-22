@@ -362,3 +362,100 @@ Corrections to the seams above, discovered while building:
     typecheck 0 everywhere, biome clean (gateway's pre-existing W2/W3 lint
     debt cleared by the integrator in the wave-1 commit — behavior-identical
     fixes, suite re-verified).
+
+## Wave-2 UI contract (BINDING — M4-E/F/G/G2/H export exactly these; M4-J consumes)
+
+```ts
+// layout.ts (M4-E)
+export type ChatMode = "floating" | "sidebar" | "collapsed";
+export interface ChatLayout { mode: ChatMode; x: number; y: number; w: number; h: number }
+export const LAYOUT_STORAGE_KEY = "studio.chat.layout.v1";
+export const DEFAULT_LAYOUT: ChatLayout;            // floating ~380x520 near bottom-right
+export const MIN_PANEL = { w: 280, h: 320 } as const;
+export function clampLayout(l: ChatLayout, viewport: { w: number; h: number }): ChatLayout;
+export function loadLayout(): ChatLayout | null;    // localStorage JSON, clamped on restore
+export function saveLayout(l: ChatLayout): void;
+
+// use-layout.ts (M4-E) — 'use client' hook
+export function useChatLayout(): {
+  layout: ChatLayout;
+  setMode(mode: ChatMode): void;   // sidebar keeps last floating geometry; collapsed remembers it
+  move(x: number, y: number): void; resize(w: number, h: number): void; reset(): void;
+};
+
+// panel.tsx (M4-E) — the shell over the iframe; NO restyling of the editor/iframe
+export interface ChatPanelProps {
+  layout: ChatLayout; streaming: boolean;
+  header: ReactNode; strip?: ReactNode; thread: ReactNode; composer: ReactNode; footer?: ReactNode;
+  onCycleMode(): void; onClose(): void;
+}
+export function ChatPanel(props: ChatPanelProps): ReactElement | null; // collapsed mode renders nothing
+export interface ChatCollapsedPillProps { onExpand(): void; streaming: boolean }
+export function ChatCollapsedPill(props: ChatCollapsedPillProps): ReactElement;
+
+// thread.tsx (M4-F)
+export interface ChatThreadProps {
+  messages: readonly ChatUiMessage[]; phase: RunPhase; activeRunId: string | null;
+  onRetry(): void; emptyQuickActions: readonly { label: string; prompt: string }[];
+}
+export function ChatThread(props: ChatThreadProps): ReactElement;
+// tool-card.tsx
+export interface ToolCardProps { card: ToolCardState }
+export function ToolCard(props: ToolCardProps): ReactElement;
+// plan-card.tsx — informational ONLY in M4 (no Apply button)
+export interface PlanCardProps { plan: EditPlan; applied: false; note?: string }
+export function PlanCard(props: PlanCardProps): ReactElement;
+// banners.tsx
+export interface ChatBannerProps { kind: "info" | "warning" | "error" | "success";
+  message: string; actionLabel?: string; onAction?: () => void; onDismiss?: () => void }
+export function ChatBanner(props: ChatBannerProps): ReactElement;
+export function RunPausedBanner(props: { onRetry(): void }): ReactElement;
+
+// composer.tsx (M4-G)
+export interface ChatComposerProps {
+  streaming: boolean;
+  disabled?: { reason: "credits" | "plan" | "editor"; message: string } | null; // read-only lease NEVER disables chat
+  quickActions?: readonly { label: string; prompt: string }[];   // rendered when thread is empty
+  creditHint?: string;                                          // e.g. "Smart · ~12 credits"
+  onSend(message: string): void; onStop(): void;
+}
+export function ChatComposer(props: ChatComposerProps): ReactElement;
+
+// header.tsx (M4-G2)
+export interface ChatHeaderProps {
+  phase: RunPhase; title: string;
+  models: readonly ModelsListEntry[] | null;   // null = loading; [] = entitlement failure → picker hidden
+  activeModelId: string | null; onModelPick(id: string): void;
+  contextCount: number; onContextClick(): void;
+  onCycleMode(): void; onToggleDock(): void; onClose(): void;
+  onNewChat(): void; onResetPosition(): void; onShortcuts(): void;
+}
+export interface ModelsListEntry { id: string; tier: string; use: string; creditsPer1kInput: number; creditsPer1kOutput: number }
+export function ChatHeader(props: ChatHeaderProps): ReactElement;
+// footer.tsx (M4-G2)
+export interface ChatFooterProps { modelLabel: string; creditEstimate: string; shortcutHint: string }
+export function ChatFooter(props: ChatFooterProps): ReactElement;
+
+// context-strip.tsx (M4-H)
+export interface ContextStripProps {
+  blocks: readonly ContextBlock[]; totalTokenEstimate: number;
+  onRemoveBlock(kind: keyof ContextSelection): void; onAddContext(): void;
+}
+export function ContextStrip(props: ContextStripProps): ReactElement | null;
+// context-popover.tsx (M4-H)
+export interface ContextPopoverProps {
+  blocks: readonly ContextBlock[]; totalTokenEstimate: number;
+  onToggleBlock(kind: keyof ContextSelection, on: boolean): void;
+  onRemoveAll(): void; onDone(): void;
+}
+export function ContextPopover(props: ContextPopoverProps): ReactElement;
+```
+
+Styling rules for ALL wave-2 components: tokens only from `packages/ui` styles
+(`--color-panel`, `--color-elevated`, `--line-subtle`, `--signal` accent,
+13–14px UI text, 14/1.55 messages, 12px mono code, 6px card radius, buttons
+28–32px); dark-only; NO raw hex; NO avatars; sparkle mark instead. Reuse
+existing `packages/ui` components (button, popover, menu, select, kbd,
+textarea, tooltip, badge) where they fit — import from `@studio/ui`. Escape
+order per ECUX §9: popovers → panel. a11y: panel is a `complementary`
+landmark labelled "Agent"; thread `aria-live="polite"`.
