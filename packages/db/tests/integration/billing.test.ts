@@ -132,9 +132,7 @@ describe.skipIf(!hasDb)("billing persistence (integration)", { timeout: 30_000 }
     const winners = results.filter(
       (r): r is PromiseFulfilledResult<schema.Subscription> => r.status === "fulfilled",
     );
-    const losers = results.filter(
-      (r): r is PromiseRejectedResult => r.status === "rejected",
-    );
+    const losers = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
     expect(winners).toHaveLength(1);
     expect(losers).toHaveLength(1);
     expect(losers[0]?.reason).toMatchObject({ code: "CONFLICT" });
@@ -230,13 +228,21 @@ describe.skipIf(!hasDb)("billing persistence (integration)", { timeout: 30_000 }
   });
 
   it("cardFingerprintUsed: cross-workspace lookup for the one-trial-per-card rule", async () => {
-    // wsA registered fp_card_2 (previous test) — a DIFFERENT workspace asking
-    // about that fingerprint must learn which workspace already used it.
-    const used = await repos.subscriptions.cardFingerprintUsed("fp_card_2");
-    expect(used).toEqual({ organizationId: wsA });
+    // run-unique fingerprint (dev DB keeps rows from earlier test runs)
+    const fp = `fp_${randomUUID().slice(0, 8)}`;
+    await repos.subscriptions.ensureStripeCustomer(wsB, {
+      stripeCustomerId: `cus_${randomUUID().slice(0, 8)}`,
+      cardFingerprint: fp,
+    });
+    // a DIFFERENT workspace asking about that fingerprint must learn which
+    // workspace already used it (the lookup is cross-workspace BY DESIGN).
+    const used = await repos.subscriptions.cardFingerprintUsed(fp);
+    expect(used).toEqual({ organizationId: wsB });
 
     // an unused fingerprint is null (card may start a trial)
-    expect(await repos.subscriptions.cardFingerprintUsed("fp_unused")).toBeNull();
+    expect(
+      await repos.subscriptions.cardFingerprintUsed(`fp_unused_${randomUUID().slice(0, 8)}`),
+    ).toBeNull();
   });
 
   it("boundary validation: bad plan/status/currency/fingerprint are typed VALIDATION_FAILED", async () => {
