@@ -615,15 +615,166 @@ export const auditLog = pgTable(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Section 11 — Drizzle relations (main joins)
+// Section 11 — Billing, user settings, webhook idempotency (§M6)
+//
+// Decisions (documented for reviewers):
+// - One live subscription per workspace: UNIQUE(organization_id) on
+//   `subscriptions` — state is UPSERTED on that key (repos/subscriptions.ts),
+//   never duplicated per billing cycle; history lives in `invoices`.
+// - D-4: the trial is a subscription STATE, not a plan row — a trialing
+//   workspace carries plan_id='starter' + status='trialing'. plan_id='trial'
+//   is the pre-checkout placeholder until Stripe confirms the Starter
+//   subscription (BP M6 task 1 wording). Pricing/entitlements live in
+//   `@studio/config`; this table stores only the persisted state.
+// - BP M6.2: cancel NEVER deletes work. Cancellation is
+//   status='canceled' / cancel_at_period_end=true — no cascade ever reaches
+//   projects, versions or ledger rows from this section (all FKs cascade
+//   FROM organization only, i.e. workspace deletion cleans billing rows).
+// - `invoices.amount_cents` is MONEY (Stripe currency minor units, e.g. US
+//   cents) — a different unit from the credit ledger's integer microcredits
+//   (D-12); no conversion happens in this package.
+// - One Stripe customer per workspace: UNIQUE(organization_id) on
+//   `stripe_customers`. `card_fingerprint` is nullable and deliberately NOT
+//   unique — the one-trial-per-card abuse rule (BP M6 task 5) is a lookup
+//   (`cardFingerprintUsed`), not a DB constraint, because the same card may
+//   legitimately pay for several workspaces.
+// - `webhook_events` is the durable Stripe webhook idempotency store (law #4,
+//   BP M6 task 2): UNIQUE(provider, event_id) makes replays and concurrent
+//   deliveries resolve to `seen`. It is intentionally NOT tenant-scoped — it
+//   stores no tenant content (only provider event ids + payloads for audit).
+// - `user_settings` is per-USER (not per-workspace): auto_apply_enabled
+//   defaults to FALSE (the M5-O seam — agent edits are propose-only until the
+//   user opts in) and is enforced server-side by the apply route.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type PlanId = "trial" | "starter" | "pro" | "studio";
+
+export type SubscriptionStatus =
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "canceled"
+  | "incomplete"
+  | "grace";
+
+export type InvoiceStatus = "draft" | "open" | "paid" | "void" | "uncollectible";
+
+export const stripeCustomers = pgTable(
+  "stripe_customers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId("sc")),
+    organizationId: text("organization_id")
+      .notNull()
+      .references((): AnyPgColumn => organization.id, { onDelete: "cascade" }),
+    stripeCustomerId: text("stripe_customer_id").notNull(),
+    /** Stripe card fingerprint — the one-trial-per-card key (BP M6 task 5). */
+    cardFingerprint: text("card_fingerprint"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("stripe_customers_organization_uniq").on(t.organizationId),
+    index("stripe_customers_fingerprint_idx").on(t.cardFingerprint),
+  ],
+);
+
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId("sub")),
+    organizationId: text("organization_id")
+      .notNull()
+      .references((): AnyPgColumn => organization.id, { onDelete: "cascade" }),
+    planId: text("plan_id").$type<PlanId>().notNull(),
+    status: text("status").$type<SubscriptionStatus>().notNull(),
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    currentPeriodEnd: ts("current_period_end"),
+    trialEnd: ts("trial_end"),
+    cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    /** Set when a past-due subscription enters the dunning grace window. */
+    graceEnd: ts("grace_end"),
+    updatedAt: ts("updated_at")
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("subscriptions_organization_uniq").on(t.organizationId),
+    index("subscriptions_status_idx").on(t.status),
+  ],
+);
+
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId("inv")),
+    organizationId: text("organization_id")
+      .notNull()
+      .references((): AnyPgColumn => organization.id, { onDelete: "cascade" }),
+    stripeInvoiceId: text("stripe_invoice_id").notNull(),
+    /** Money, Stripe minor units (cents) — NOT credits; credit ledger is D-12 µc. */
+    amountCents: integer("amount_cents").notNull(),
+    /** ISO 4217 lowercase 3-letter code, e.g. 'usd'. */
+    currency: char("currency", { length: 3 }).notNull(),
+    status: text("status").$type<InvoiceStatus>().notNull(),
+    periodStart: ts("period_start"),
+    periodEnd: ts("period_end"),
+    hostedUrl: text("hosted_url"),
+    pdfUrl: text("pdf_url"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("invoices_workspace_stripe_uniq").on(t.organizationId, t.stripeInvoiceId),
+    index("invoices_workspace_created_idx").on(t.organizationId, t.createdAt.desc()),
+  ],
+);
+
+export const userSettings = pgTable("user_settings", {
+  userId: text("user_id")
+    .primaryKey()
+    .references((): AnyPgColumn => user.id, { onDelete: "cascade" }),
+  /** M5-O seam: OFF by default — agent edits stay propose-only until opt-in. */
+  autoApplyEnabled: boolean("auto_apply_enabled").notNull().default(false),
+  updatedAt: ts("updated_at")
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export const webhookEvents = pgTable(
+  "webhook_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId("whe")),
+    provider: text("provider").notNull(),
+    eventId: text("event_id").notNull(),
+    eventType: text("event_type"),
+    payloadJson: jsonb("payload_json"),
+    processedAt: ts("processed_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("webhook_events_provider_event_uniq").on(t.provider, t.eventId)],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section 12 — Drizzle relations (main joins)
 // `projects.currentVersionId` vs `project_versions.projectId` are two distinct
 // edges between the same tables → disambiguated with relationName.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const userRelations = relations(user, ({ many }) => ({
+export const userRelations = relations(user, ({ many, one }) => ({
   sessions: many(session),
   accounts: many(account),
   memberships: many(member),
+  settings: one(userSettings, {
+    fields: [user.id],
+    references: [userSettings.userId],
+  }),
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({
@@ -634,13 +785,24 @@ export const accountRelations = relations(account, ({ one }) => ({
   user: one(user, { fields: [account.userId], references: [user.id] }),
 }));
 
-export const organizationRelations = relations(organization, ({ many }) => ({
+export const organizationRelations = relations(organization, ({ many, one }) => ({
   members: many(member),
   invitations: many(invitation),
   projects: many(projects),
   assets: many(assets),
   ledgerEntries: many(creditLedger),
   auditEntries: many(auditLog),
+  // billing edges (§M6): unique-FK one-to-ones, house style = one() both sides
+  // (mirrors projects.lease), invoices stay one-to-many.
+  stripeCustomer: one(stripeCustomers, {
+    fields: [organization.id],
+    references: [stripeCustomers.organizationId],
+  }),
+  subscription: one(subscriptions, {
+    fields: [organization.id],
+    references: [subscriptions.organizationId],
+  }),
+  invoices: many(invoices),
 }));
 
 export const memberRelations = relations(member, ({ one }) => ({
@@ -789,8 +951,33 @@ export const auditLogRelations = relations(auditLog, ({ one }) => ({
   actor: one(user, { fields: [auditLog.actorId], references: [user.id] }),
 }));
 
+export const stripeCustomersRelations = relations(stripeCustomers, ({ one }) => ({
+  workspace: one(organization, {
+    fields: [stripeCustomers.organizationId],
+    references: [organization.id],
+  }),
+}));
+
+export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
+  workspace: one(organization, {
+    fields: [subscriptions.organizationId],
+    references: [organization.id],
+  }),
+}));
+
+export const invoicesRelations = relations(invoices, ({ one }) => ({
+  workspace: one(organization, {
+    fields: [invoices.organizationId],
+    references: [organization.id],
+  }),
+}));
+
+export const userSettingsRelations = relations(userSettings, ({ one }) => ({
+  user: one(user, { fields: [userSettings.userId], references: [user.id] }),
+}));
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Section 12 — Inferred domain types
+// Section 13 — Inferred domain types
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type User = typeof user.$inferSelect;
@@ -811,3 +998,8 @@ export type LedgerEntry = typeof creditLedger.$inferSelect;
 export type Render = typeof renders.$inferSelect;
 export type Comment = typeof comments.$inferSelect;
 export type AuditLogEntry = typeof auditLog.$inferSelect;
+export type StripeCustomer = typeof stripeCustomers.$inferSelect;
+export type Subscription = typeof subscriptions.$inferSelect;
+export type Invoice = typeof invoices.$inferSelect;
+export type UserSettings = typeof userSettings.$inferSelect;
+export type WebhookEvent = typeof webhookEvents.$inferSelect;

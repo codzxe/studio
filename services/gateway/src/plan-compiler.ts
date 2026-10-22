@@ -337,6 +337,10 @@ class Compiler {
   private saveVersion: SaveVersionAnnotation | undefined;
   private saveVersionStep: number | undefined;
 
+  /** Plan context (D-21): the plan's affectedLayers names — apply_preset's
+   * no-layers fallback. Set by compilePlanInner before the step loop. */
+  planLayerNames: readonly string[] = [];
+
   constructor(private readonly depsRegistry: CommandSchema) {}
 
   private pushIssue(issue: PlanIssue): void {
@@ -376,7 +380,25 @@ class Compiler {
       this.warn("unusable_args", `field \`${field}\` ${why}`, { step: planStep, tool });
     };
     const compilesToNothing = (): void => {
-      this.warn("empty_step", "step compiled to no engine commands", { step: planStep, tool });
+      // G-3 completeness ruling: a step that translates to ZERO commands
+      // makes the WHOLE plan fatally incomplete — the user must never approve
+      // N edits and silently get fewer (M5-M gp-11 finding).
+      this.fatal(
+        "empty_step",
+        "step compiled to no engine commands; the plan is rejected as incomplete",
+        { step: planStep, tool },
+      );
+    };
+    /** Read `[{name}]`-shaped layer refs (M5-A LAYER_REFS_SCHEMA) as names. */
+    const readLayerNames = (value: unknown): string[] => {
+      const names: string[] = [];
+      if (!Array.isArray(value)) return names;
+      for (const entry of value) {
+        const name = isPlainObject(entry) ? readString(entry, "name") : undefined;
+        if (name !== undefined) names.push(name);
+        else unusable("layers", "entry has no usable name (skipped)");
+      }
+      return names;
     };
 
     switch (tool) {
@@ -392,7 +414,7 @@ class Compiler {
         const duration = argsObj.durationSeconds;
         if (isFiniteNumber(duration)) params.duration = duration;
         else if (duration !== undefined) unusable("durationSeconds", "is not a finite number");
-        if (Object.keys(params).length === 0) {
+        if (params.name === undefined) {
           compilesToNothing();
           break;
         }
@@ -407,15 +429,28 @@ class Compiler {
         else if ("text" in argsObj) unusable("text", "is not a non-empty string");
         const name = readString(argsObj, "name");
         if (name !== undefined) params.name = name;
-        const compId = readString(argsObj, "compId");
-        if (compId !== undefined) params.comp = compId;
-        const fontSize = argsObj.fontSize;
-        if (isFiniteNumber(fontSize)) params.size = fontSize;
-        else if (fontSize !== undefined) unusable("fontSize", "is not a finite number");
-        const fontFamily = readString(argsObj, "fontFamily");
-        if (fontFamily !== undefined) params.font = fontFamily;
-        const color = readString(argsObj, "color");
-        if (color !== undefined) params.fill = color;
+        for (const key of ["font", "style", "fill", "stroke"] as const) {
+          const value = readString(argsObj, key);
+          if (value !== undefined) params[key] = value;
+        }
+        for (const key of ["size", "strokeWidth", "tracking", "leading"] as const) {
+          const value = argsObj[key];
+          if (isFiniteNumber(value)) params[key] = value;
+          else if (value !== undefined) unusable(key, "is not a finite number");
+        }
+        const box = argsObj.box;
+        if (box !== undefined) {
+          const [bx, by, w, h] = Array.isArray(box) ? box : [];
+          if (isFiniteNumber(bx) && isFiniteNumber(by) && isFiniteNumber(w) && isFiniteNumber(h)) {
+            params.box = [bx, by, w, h];
+          } else {
+            unusable("box", "is not an [x, y, w, h] number tuple");
+          }
+        }
+        if (params.text === undefined) {
+          compilesToNothing();
+          break;
+        }
         const position = argsObj.position;
         if (position !== undefined) {
           const [x, y] = Array.isArray(position) ? position : [];
@@ -425,7 +460,7 @@ class Compiler {
             unusable("position", "is not a [x, y] number pair");
           }
         }
-        if (Object.keys(params).length === 0) {
+        if (params.text === undefined) {
           compilesToNothing();
           break;
         }
@@ -434,87 +469,115 @@ class Compiler {
       }
 
       case "set_properties": {
-        const updates = argsObj.updates;
-        if (!Array.isArray(updates)) {
-          unusable("updates", "is not an array");
+        // M5-A shape: {layers: [{name}], properties: [{path, value}]} ->
+        // cross-product prop.set per layer x property; a "name" path maps to
+        // layer.rename (G-7 -- rename was otherwise inexpressible).
+        const layers = readLayerNames(argsObj.layers);
+        const properties = argsObj.properties;
+        if (layers.length === 0) {
+          unusable("layers", "no usable named layers");
+          compilesToNothing();
           break;
         }
-        for (const update of updates) {
-          if (!isPlainObject(update)) {
-            unusable("updates", "contains a non-object entry (skipped)");
-            continue;
-          }
-          const layer = readString(update, "layer");
-          if (layer === undefined) {
-            // Without a layer the engine falls back to the EDITOR SELECTION —
-            // a wrong-target hazard; never compile that (skip + warn).
-            unusable(
-              "updates",
-              "entry has no layer; it would target the editor selection (skipped)",
-            );
-            continue;
-          }
-          const params: Record<string, unknown> = { layer };
-          const path = readString(update, "path");
-          if (path !== undefined) params.path = path;
-          if ("value" in update) params.value = update.value;
-          add("prop.set", params);
-          addSite("layer", layer);
+        if (!Array.isArray(properties)) {
+          unusable("properties", "is not an array");
+          compilesToNothing();
+          break;
         }
-        if (steps.length === 0 && updates.length > 0) compilesToNothing();
+        for (const property of properties) {
+          if (!isPlainObject(property)) {
+            unusable("properties", "contains a non-object entry (skipped)");
+            continue;
+          }
+          const path = readString(property, "path");
+          if (path === undefined) {
+            unusable("properties", "entry has no path (skipped)");
+            continue;
+          }
+          for (const layer of layers) {
+            if (path === "name") {
+              const value = readString(property, "value");
+              if (value === undefined) {
+                unusable("properties", "a rename needs a string value (skipped)");
+                continue;
+              }
+              add("layer.rename", { layer, name: value });
+            } else {
+              const params: Record<string, unknown> = { layer, path };
+              if ("value" in property) params.value = property.value;
+              add("prop.set", params);
+            }
+            addSite("layer", layer);
+          }
+        }
+        if (steps.length === 0) compilesToNothing();
         break;
       }
 
       case "set_keyframes": {
-        const layer = readString(argsObj, "layer");
-        const keyframes = argsObj.keyframes;
-        if (layer === undefined) {
-          // Selection-capture hazard, same rationale as set_properties.
-          unusable("layer", "is missing; keyframes would target the editor selection");
-          break;
-        }
-        if (!Array.isArray(keyframes)) {
-          unusable("keyframes", "is not an array");
-          break;
-        }
+        // M5-A shape: {layers: [{name}], propertyPath, keys: [{timeSeconds,
+        // value, interpolation?}]} -> cross-product prop.addKey per layer x key.
+        const layers = readLayerNames(argsObj.layers);
+        const keys = argsObj.keys;
         const propertyPath = readString(argsObj, "propertyPath");
-        for (const keyframe of keyframes) {
-          if (!isPlainObject(keyframe)) {
-            unusable("keyframes", "contains a non-object entry (skipped)");
+        if (layers.length === 0) {
+          unusable("layers", "no usable named layers");
+          compilesToNothing();
+          break;
+        }
+        if (!Array.isArray(keys)) {
+          unusable("keys", "is not an array");
+          compilesToNothing();
+          break;
+        }
+        for (const key of keys) {
+          if (!isPlainObject(key)) {
+            unusable("keys", "contains a non-object entry (skipped)");
             continue;
           }
-          const params: Record<string, unknown> = { layer };
-          if (propertyPath !== undefined) params.path = propertyPath;
-          const time = keyframe.time;
-          if (isFiniteNumber(time)) params.time = time;
-          else if (time !== undefined) unusable("keyframes", "entry time is not a finite number");
-          if ("value" in keyframe) params.value = keyframe.value;
-          const easing = readString(keyframe, "easing");
-          if (easing !== undefined && easing !== "linear") {
-            this.warn(
-              "uncompilable_arg",
-              `easing \`${clip(easing, 24)}\` is editor-side keyframe interpolation; the keyframe compiles with the engine default (set it via the timeline after apply)`,
-              { step: planStep, tool, param: "easing" },
-            );
+          const time = key.timeSeconds;
+          const interpolation = readString(key, "interpolation");
+          for (const layer of layers) {
+            const params: Record<string, unknown> = { layer };
+            if (propertyPath !== undefined) params.path = propertyPath;
+            if (isFiniteNumber(time)) params.time = time;
+            else if (time !== undefined) {
+              unusable("keys", "entry timeSeconds is not a finite number");
+            }
+            if ("value" in key) params.value = key.value;
+            if (interpolation !== undefined && interpolation !== "linear") {
+              this.warn(
+                "uncompilable_arg",
+                `interpolation \`${clip(interpolation, 24)}\` is editor-side keyframe state; the key compiles with the engine default (set it via the timeline after apply)`,
+                { step: planStep, tool, param: "interpolation" },
+              );
+            }
+            add("prop.addKey", params);
+            addSite("layer", layer);
           }
-          add("prop.addKey", params);
-          addSite("layer", layer);
         }
-        if (steps.length === 0 && keyframes.length > 0) compilesToNothing();
+        if (steps.length === 0) compilesToNothing();
         break;
       }
 
       case "add_effect": {
-        const layer = readString(argsObj, "layer");
-        const effect = readString(argsObj, "effect");
-        if (layer === undefined) {
-          unusable("layer", "is missing; the effect would target the editor selection");
+        // M5-A shape: {layers: [{name}], effect: {name}, params?} ->
+        // effect.apply {layers: [names], effect: name}. Effect instance
+        // params are editor state (uncompilable server-side; warn + set via
+        // set_properties after apply).
+        const layers = readLayerNames(argsObj.layers);
+        if (layers.length === 0) {
+          unusable("layers", "no usable named layers");
+          compilesToNothing();
           break;
         }
-        const params: Record<string, unknown> = { layers: [layer] };
-        if (effect !== undefined) params.effect = effect;
+        const effectObj = argsObj.effect;
+        const effectName = isPlainObject(effectObj) ? readString(effectObj, "name") : undefined;
+        const params: Record<string, unknown> = { layers: [...layers] };
+        if (effectName !== undefined) params.effect = effectName;
+        else unusable("effect", "has no usable name");
         add("effect.apply", params);
-        addSite("layers[0]", layer);
+        layers.forEach((layer, index) => addSite(`layers[${index}]`, layer));
         const effectParams = argsObj.params;
         if (effectParams !== undefined) {
           if (isPlainObject(effectParams)) {
@@ -533,21 +596,26 @@ class Compiler {
       }
 
       case "apply_preset": {
-        const targets = argsObj.targets;
-        if (!Array.isArray(targets)) {
-          unusable("targets", "is not an array");
-          break;
-        }
-        const names: string[] = [];
-        for (const target of targets) {
-          if (typeof target === "string" && target.length > 0) names.push(target);
-          else unusable("targets", "contains a non-string entry (skipped)");
-        }
-        if (names.length === 0) {
+        // M5-A shape: {preset: {name}|{builtinId}, layers? [{name}], args?}.
+        // D-21 ruling: when `layers` is omitted the plan's affectedLayers
+        // names are the targets (never the live editor selection -- a
+        // selection-capture hazard the compiler refuses).
+        const explicitLayers = readLayerNames(argsObj.layers);
+        const layers =
+          explicitLayers.length > 0 ? explicitLayers : [...this.planLayerNames];
+        if (layers.length === 0) {
+          unusable(
+            "layers",
+            "no target layers: neither step layers nor plan affectedLayers name any",
+          );
           compilesToNothing();
           break;
         }
-        const preset = readString(argsObj, "preset");
+        const presetObj = argsObj.preset;
+        let preset: string | undefined;
+        if (isPlainObject(presetObj)) {
+          preset = readString(presetObj, "name") ?? readString(presetObj, "builtinId");
+        }
         if (preset !== undefined && PRESET_PATH_LIKE.test(preset)) {
           this.warn(
             "uncompilable_arg",
@@ -556,10 +624,24 @@ class Compiler {
             { step: planStep, tool, param: "preset" },
           );
         }
-        const params: Record<string, unknown> = { layers: names };
-        if (preset !== undefined) params.preset = preset;
+        if (preset === undefined) {
+          unusable("preset", "needs a name or builtinId");
+          compilesToNothing();
+          break;
+        }
+        const params: Record<string, unknown> = { layers: [...layers], preset };
+        const presetArgs = argsObj.args;
+        if (isPlainObject(presetArgs)) {
+          for (const key of Object.keys(presetArgs).sort()) {
+            this.warn(
+              "uncompilable_arg",
+              `preset arg \`${clip(key, 40)}\` is editor-side state; set it via set_properties after apply`,
+              { step: planStep, tool, param: key },
+            );
+          }
+        }
         add("anim.applyBuiltinPreset", params);
-        names.forEach((name, index) => addSite(`layers[${index}]`, name));
+        layers.forEach((layer, index) => addSite(`layers[${index}]`, layer));
         break;
       }
 
@@ -808,6 +890,9 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
     return { ok: false, issues: compiler.fatals };
   }
   const editPlan = parsed.data;
+  compiler.planLayerNames = editPlan.affectedLayers
+    .map((layer) => (typeof layer.name === "string" && layer.name.length > 0 ? layer.name : ""))
+    .filter((name) => name !== "");
 
   // -- 2. per-step: allowlist the tool, validate args, translate, validate
   // the proposed batch (warns only — the translation wins, law #5).
@@ -1019,7 +1104,10 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
   }
 
   // -- 6. risk + credits recomputed server-side (never the model's numbers).
-  const risk = recomputePlanRisk(steps, compiler.toolRiskFloor());
+  // G-4: the recomputed risk is a floor-safeguarded value -- the model's
+  // declared risk is never LOWERED (the card must never understate risk),
+  // but the command-based floors still raise it.
+  const risk = riskMax(recomputePlanRisk(steps, compiler.toolRiskFloor()), editPlan.risk);
   const estimatedCredits = estimateCredits({ risk, steps: editPlan.steps });
 
   // -- 7. dedupe advisory issues (unknown/param warns can double-report).
