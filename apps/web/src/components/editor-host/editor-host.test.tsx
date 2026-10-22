@@ -547,9 +547,11 @@ describe("EditorHost — M4-J chat layer", () => {
 
     // The overlay layer + the real provider mounted (models fetched through
     // the session's api client exactly once on open).
+    console.log("[t] stage 1");
     await waitFor(() => {
       expect(screen.getByTestId("chat-layer")).toBeInTheDocument();
     });
+    console.log("[t] stage 2");
     await waitFor(() => {
       expect(screen.getByTestId("chat-panel-slot-mock")).toBeInTheDocument();
     });
@@ -563,18 +565,26 @@ describe("EditorHost — M4-J chat layer", () => {
     expect(typeof mount.onSidebarDock).toBe("function");
 
     // The lazily-created thread uses the RSC payload's project id.
+    console.log("[t] stage 3", stub.calls.modelsListed);
     await act(async () => {
       mount.api.send({ message: "what is here?" });
     });
-    await waitFor(() => {
-      expect(stub.calls.threadsCreated).toEqual(["prj_test"]);
-    });
+    console.log("[t] stage 4");
+    for (let i = 0; i < 40; i++) {
+      // eslint-disable-next-line no-console
+      console.log("[t] poll", i, JSON.stringify(stub.calls.threadsCreated));
+      if (stub.calls.threadsCreated.length === 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(stub.calls.threadsCreated).toEqual(["prj_test"]);
     expect(screen.getByTestId("editor-iframe")).not.toHaveAttribute("style"); // never restyled
 
     // Sidebar dock (D-18): the viewport WRAPPER resizes; the iframe keeps its own styles.
+    console.log("[t] stage 5", JSON.stringify(stub.calls.threadsCreated));
     await act(async () => {
       mount.onSidebarDock(true, 380);
     });
+    console.log("[t] stage 6");
     expect(screen.getByTestId("editor-viewport")).toHaveStyle({ width: "calc(100% - 380px)" });
     await act(async () => {
       mount.onSidebarDock(false, 380);
