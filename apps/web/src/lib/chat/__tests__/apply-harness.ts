@@ -32,6 +32,10 @@
  * "NOTHING posted to the gateway / autosave never ran" byte-exactly:
  *   `query:comp.info` → `execute:engine.batch` → `markDirty:agent-apply` →
  *   `saveNow:agent-apply` → `applyRun`.
+ *
+ * The undo path is real too: the fake's `edit.undo` answers `{undone: label}`
+ * (mirroring edit.rs), so the F-L4 stack-blind guard pins against it — as
+ * does the redo stack (`edit.redo` answers `{redone: label}`).
  */
 
 import {
@@ -133,8 +137,10 @@ export interface FailureHarness {
   readonly fake: FakeEditor;
   readonly controller: {
     apply(plan: ApplicablePlan): Promise<ApplyOutcome>;
-    undo(runId: string): Promise<UndoOutcome>;
+    undo(runId: string, hint?: { readonly batchLabel?: string }): Promise<UndoOutcome>;
     reapply(plan: ApplicablePlan): Promise<ApplyOutcome>;
+    /** F-L1: the re-save-only recovery (the real controller always has it). */
+    retrySave(runId: string): Promise<ApplyOutcome>;
   };
   readonly faults: BridgeFaultControl;
   /** The REAL `attachFakeBridge` instance (dispose it for the genuine disconnect). */

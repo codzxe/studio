@@ -1,8 +1,9 @@
 // @studio/gateway — /v1/credits (§7.2, §8.8, §9.1 credit_ledger).
 //
-// Balance = SUM(amount) over the append-only ledger (@studio/db). `reserved`
-// is the outstanding hold of live runs, computed from the last ≤500 entries
-// (v1 approximation — a db-side aggregate lands with the billing wave).
+// Balance = SUM(amount) over the append-only ledger (@studio/db), in integer
+// MICROcredits (D-12) — the same units `GET /v1/billing/state` reports. The
+// included allowance comes from the plan catalog (entitlementsFor) through the
+// resolvePlan seam — never a per-route hardcoded table.
 
 import { Hono } from "hono";
 
@@ -14,20 +15,37 @@ import {
 } from "@studio/contracts";
 
 import { type LedgerEntry as DbLedgerEntry, outstandingReserve } from "@studio/db";
+
+import { entitlementsFor } from "@studio/config";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
 import { ok, page } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
-
-/** §10.1 illustrative monthly credit allowance per plan (stub until billing). */
-export const PLAN_MONTHLY_CREDITS: Readonly<Record<string, number>> = Object.freeze({
-  trial: 100,
-  starter: 1000,
-  pro: 3000,
-  studio: 8000,
-});
+import { resolvePlan } from "../plan.js";
 
 const RESERVED_SCAN_LIMIT = 500;
+
+/**
+ * The outstanding reserve of live runs, folded from the newest ≤500 ledger
+ * entries (v1 approximation — a db-side aggregate lands with the billing
+ * wave). Shared with `GET /v1/billing/state` so both reads agree exactly.
+ */
+export async function outstandingReserveForWorkspace(
+  deps: GatewayDeps,
+  workspaceId: string,
+): Promise<number> {
+  let cursor: string | null = null;
+  const entries: { kind: DbLedgerEntry["kind"]; amount: number }[] = [];
+  while (entries.length < RESERVED_SCAN_LIMIT) {
+    const result = await deps.repos.ledger.list(workspaceId, { cursor, limit: 100 });
+    for (const entry of result.items) {
+      entries.push({ kind: entry.kind, amount: entry.amount });
+    }
+    if (result.nextCursor === null || result.items.length === 0) break;
+    cursor = result.nextCursor;
+  }
+  return outstandingReserve(entries);
+}
 
 export function creditsRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -49,27 +67,20 @@ export function creditsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     const workspaceId = c.get("workspace").id;
     const balance = await deps.repos.ledger.balance(workspaceId);
 
-    let cursor: string | null = null;
-    const entries: { kind: DbLedgerEntry["kind"]; amount: number }[] = [];
-    // v1 approximation: the outstanding hold is folded from the newest
-    // ≤500 entries (live runs are short-lived). A db-side aggregate lands
-    // with the billing wave (FLEET NOTE in the worklog).
-    while (entries.length < RESERVED_SCAN_LIMIT) {
-      const result = await deps.repos.ledger.list(workspaceId, { cursor, limit: 100 });
-      for (const entry of result.items) {
-        entries.push({ kind: entry.kind, amount: entry.amount });
-      }
-      if (result.nextCursor === null || result.items.length === 0) break;
-      cursor = result.nextCursor;
-    }
-    const reserved = outstandingReserve(entries);
+    const reserved = await outstandingReserveForWorkspace(deps, workspaceId);
 
+    // M6 catalog swap (§M6 task 1): the plan + its monthly allowance come from
+    // the subscription row through the resolvePlan seam → the @studio/config
+    // catalog — never a route-local table. `purchasedCredits` stays summed at
+    // the ledger level (top-up grants raise `balance`); `renewsAt` is null
+    // here — `GET /v1/billing/state` carries the period end.
+    const plan = await resolvePlan(workspaceId);
     const body: CreditsSummary = {
       balance,
-      includedCredits: PLAN_MONTHLY_CREDITS.trial ?? 0,
+      includedCredits: entitlementsFor(plan).monthlyCreditAllowance,
       purchasedCredits: 0,
       reserved,
-      plan: "trial",
+      plan,
       renewsAt: null,
     };
     return ok(c, body, 200);

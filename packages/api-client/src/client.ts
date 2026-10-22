@@ -23,6 +23,7 @@ import {
   type ApplyRequest,
   type ApplyResponse,
   type Asset,
+  type BillingState,
   CANCEL_RUN_SCHEMA,
   CHECKOUT_SCHEMA,
   COMMENTS_QUERY_SCHEMA,
@@ -73,8 +74,14 @@ import {
   type RunEventRequest,
   type RunRecord,
   type SignedUrlResponse,
+  TOPUP_SCHEMA,
+  TRIAL_REQUEST_SCHEMA,
   type Thread,
   type ThreadMessage,
+  type TopUpRequest,
+  type TopUpResponse,
+  type TrialRequest,
+  type TrialResponse,
   UNDO_REQUEST_SCHEMA,
   UPLOAD_VERSION_SCHEMA,
   type UndoRequest,
@@ -99,6 +106,7 @@ import {
   ACTIVITY_ENTRY_SCHEMA,
   APPLY_RESPONSE_SCHEMA,
   ASSET_SCHEMA,
+  BILLING_STATE_SCHEMA,
   CHECKOUT_RESPONSE_SCHEMA,
   COMMENT_SCHEMA,
   CREATE_ASSET_RESPONSE_SCHEMA,
@@ -128,6 +136,7 @@ import {
   SIGNED_URL_RESPONSE_SCHEMA,
   THREAD_MESSAGE_SCHEMA,
   THREAD_SCHEMA,
+  TRIAL_RESPONSE_SCHEMA,
   UNDO_RESPONSE_SCHEMA,
   UPLOAD_VERSION_RESPONSE_SCHEMA,
   type UploadVersionResponse,
@@ -543,8 +552,17 @@ export interface ApiClient {
     ledger(query?: LedgerQueryInput, options?: CallOptions): Promise<Page<LedgerEntry>>;
   };
   readonly billing: {
+    /** POST /v1/billing/checkout — subscribe to a paid plan (D-4: trial is never a checkout target). */
     checkout(body: CheckoutRequest, options?: CallOptions): Promise<CheckoutResponse>;
+    /** POST /v1/billing/topup — buy a credit pack (one-time payment). */
+    topup(body: TopUpRequest, options?: CallOptions): Promise<TopUpResponse>;
+    /** POST /v1/billing/portal — Stripe customer portal session. */
     portal(body?: PortalRequest, options?: CallOptions): Promise<PortalResponse>;
+    /** GET /v1/billing/state — the ONE billing read the UI consumes (plan,
+     * subscription status incl. grace/trialing, entitlements, credits). */
+    state(options?: CallOptions): Promise<BillingState>;
+    /** POST /v1/billing/trial — start the card-required 14-day trial. */
+    startTrial(body?: TrialRequest, options?: CallOptions): Promise<TrialResponse>;
   };
   readonly renders: {
     create(body: QueueRenderRequest, options?: CallOptions): Promise<RenderJob>;
@@ -844,11 +862,29 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
+      topup: async (body, options) =>
+        impl.mutate("POST", "/billing/topup", {
+          body,
+          bodySchema: TOPUP_SCHEMA,
+          responseSchema: CHECKOUT_RESPONSE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
       portal: async (body, options) =>
         impl.mutate("POST", "/billing/portal", {
           body: body ?? {},
           bodySchema: PORTAL_SCHEMA,
           responseSchema: PORTAL_RESPONSE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      state: async (options) =>
+        impl.get("/billing/state", undefined, BILLING_STATE_SCHEMA, options?.signal),
+      startTrial: async (body, options) =>
+        impl.mutate("POST", "/billing/trial", {
+          body: body ?? {},
+          bodySchema: TRIAL_REQUEST_SCHEMA,
+          responseSchema: TRIAL_RESPONSE_SCHEMA,
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),

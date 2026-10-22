@@ -166,6 +166,27 @@ function attachAutoApplyVerdict(
   return { ...payload, autoApply: decision };
 }
 
+/**
+ * M5-Q baseVersionId emission (DECISIONS.md D-21, BP §M5.5): every plan
+ * event carries the version head the plan was compiled against — the SAME
+ * value the run row recorded at run start (`project.currentVersionId`, the
+ * single per-run cache — zero extra queries per plan event) and the SAME
+ * value /v1/runs/:id/apply's §9.3 lineage gate checks server-side
+ * (`version.parentVersionId === planState.baseVersionId`). The client's
+ * reapply gate (lib/chat/apply.ts `reapply`) therefore compares against
+ * exactly what the gateway will enforce; a plan event without the field
+ * (older gateways) leaves the client's gate failing closed. `null` (a
+ * project with no versions yet) omits the field rather than lying with an
+ * empty string.
+ */
+function attachPlanBaseVersion(
+  payload: RunStreamPayload,
+  baseVersionId: string | null,
+): RunStreamPayload {
+  if (payload.type !== "plan" || baseVersionId === null) return payload;
+  return { ...payload, baseVersionId };
+}
+
 export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
   app.use("/v1/threads/*", requireAuth());
@@ -233,6 +254,8 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
       const reserveAmount = reserveAmountFor(estimated);
 
       const runId = run.id;
+      /** M5-Q: the version head cached per-run at run start (D-21). */
+      const planBaseVersionId = project.currentVersionId;
       try {
         await deps.repos.ledger.reserve(workspace.id, {
           runId,
@@ -380,7 +403,16 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
       const streamApi: AgentRunStream = {
         // M5.6: the §7.3 verdict rides the plan event (UI guidance only).
-        emit: (payload) => log.emit(attachAutoApplyVerdict(payload, userAutoApply)),
+        // M5-Q: the plan event also carries the run's base version (D-21) —
+        // stamped at this ONE emit seam so MockRunner, LiteLLM and replays
+        // all inherit it (the stored log IS the replay source).
+        emit: (payload) =>
+          log.emit(
+            attachPlanBaseVersion(
+              attachAutoApplyVerdict(payload, userAutoApply),
+              planBaseVersionId,
+            ),
+          ),
         yieldToStream: () => new Promise<void>((resolveYield) => setImmediate(resolveYield)),
         expectToolCall: (toolCallId, tool) => log.expectToolCall(toolCallId, tool),
         // Seam 2: the runner waits for the client's POST /v1/runs/:id/events;

@@ -28,6 +28,7 @@ import {
   RESTORE_VERSION_SCHEMA,
   ROLE_SCHEMA,
   RUN_EVENT_REQUEST_SCHEMA,
+  TOPUP_SCHEMA,
   UPLOAD_VERSION_SCHEMA,
 } from "../src/routes/index.js";
 import type {
@@ -283,10 +284,13 @@ describe("routes: credits + billing", () => {
     expect(entry.kind).toBe("commit");
   });
 
-  it("checkout: exactly one of planId (paid only) or packId", () => {
+  it("checkout: planId (paid only); top-up packs are their own wire", () => {
     expect(CHECKOUT_SCHEMA.safeParse({ planId: "pro" }).success).toBe(true);
-    expect(CHECKOUT_SCHEMA.safeParse({ packId: "credits-1000" }).success).toBe(true);
-    expect(CHECKOUT_SCHEMA.safeParse({ planId: "pro", packId: "x" }).success).toBe(false);
+    // M6-C split the wire: pack purchases moved to POST /v1/billing/topup.
+    expect(CHECKOUT_SCHEMA.safeParse({ packId: "credits-1000" }).success).toBe(false);
+    expect(TOPUP_SCHEMA.safeParse({ packId: "credits100" }).success).toBe(true);
+    expect(TOPUP_SCHEMA.safeParse({ packId: "credits-1000" }).success).toBe(false);
+    expect(TOPUP_SCHEMA.safeParse({ packId: "credits100", planId: "pro" }).success).toBe(false);
     expect(CHECKOUT_SCHEMA.safeParse({}).success).toBe(false);
     expect(CHECKOUT_SCHEMA.safeParse({ planId: "trial" }).success).toBe(false); // trial never purchased
     expect(PLAN_ID_SCHEMA.options).toEqual(["trial", "starter", "pro", "studio"]);

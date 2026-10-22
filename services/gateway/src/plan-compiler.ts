@@ -15,10 +15,14 @@
 //
 //   create_composition → comp.new {name, width, height, frameRate,
 //                                  duration: args.durationSeconds}
-//   create_text        → layer.newText {text, name?, position?,
-//                                  size: fontSize?, font: fontFamily?,
-//                                  fill: color?, comp: compId?}
+//   create_text        → layer.newText {text, name?, position?, box?, font?,
+//                                  style?, size?, fill?, stroke?, strokeWidth?,
+//                                  tracking?, leading?} — colors take BOTH
+//                                  COLOR_SCHEMA forms (F-S1: a [r,g,b(,a)]
+//                                  channel array compiles to the engine's
+//                                  canonical #hex form, see engineColor)
 //   set_properties     → prop.set × update {layer, path, value}
+//                                  (path "name" → layer.rename, G-7/D-21)
 //   set_keyframes      → prop.addKey × keyframe {layer, path: propertyPath,
 //                                  time, value}
 //   add_effect         → effect.apply {effect, layers: [layer]}
@@ -64,7 +68,7 @@ import {
   MAX_PLAN_AFFECTED_LAYERS,
   PLAN_RISK_ORDER,
   type PlanRisk,
-  WRITE_TOOL_ARGS_SCHEMAS,
+  WRITE_TOOLS,
   checkBatchCommands,
   estimateCredits,
   validateBatchRefs,
@@ -283,6 +287,38 @@ function riskMax(a: PlanRisk, b: PlanRisk): PlanRisk {
 }
 
 // ---------------------------------------------------------------------------
+// Color (F-S1) — the engine's text-color convention, mirrored EXACTLY
+// ---------------------------------------------------------------------------
+
+/**
+ * The engine's text-color form (F-S1). `layer.newText` / `layer.setText`
+ * fill+stroke parse through the engine's own `color_json`
+ * (keyframe/src/text_doc.rs:956): a `#rrggbb` / `#rrggbbaa` string normalizes
+ * each channel as `u8 / 255`, while an ARRAY is read RAW into the internal
+ * 0..1 color space (no scaling — that arm exists for the engine's own
+ * 0..1-internal callers, e.g. script prelude `fill: [1, 1, 1, 1]`). The
+ * contracts COLOR_SCHEMA speaks 0..255 channels, so a schema-valid
+ * `[r, g, b]` / `[r, g, b, a]` array compiles into the engine's canonical hex
+ * string — the exact `/255` quantization the engine's own hex arm applies —
+ * and is NEVER passed through raw (a raw 0..255 array would land in a 0..1
+ * space and render as a blown-out color). Strings ride as-is (the common
+ * case and every existing golden).
+ */
+function engineColor(value: unknown): string | undefined {
+  if (typeof value === "string") return value.length > 0 ? value : undefined;
+  if (!Array.isArray(value)) return undefined;
+  if (value.length < 3 || value.length > 4) return undefined;
+  const channels: number[] = [];
+  for (const channel of value) {
+    if (typeof channel !== "number" || !Number.isFinite(channel)) return undefined;
+    // Clamp to the schema's 0..255 band before quantizing (the engine's hex
+    // arm parses exactly two hex digits per channel; Math.round halves up).
+    channels.push(Math.min(255, Math.max(0, Math.round(channel))));
+  }
+  return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+// ---------------------------------------------------------------------------
 // Risk recompute (brief: from compiled commands — never the model's number)
 // ---------------------------------------------------------------------------
 
@@ -429,9 +465,28 @@ class Compiler {
         else if ("text" in argsObj) unusable("text", "is not a non-empty string");
         const name = readString(argsObj, "name");
         if (name !== undefined) params.name = name;
-        for (const key of ["font", "style", "fill", "stroke"] as const) {
-          const value = readString(argsObj, key);
-          if (value !== undefined) params[key] = value;
+        const font = readString(argsObj, "font");
+        if (font !== undefined) params.font = font;
+        const style = readString(argsObj, "style");
+        if (style !== undefined) params.style = style;
+        // F-S1: fill/stroke accept BOTH COLOR_SCHEMA forms. Strings ride 1:1
+        // (the common case and every pre-existing golden); schema-valid
+        // [r, g, b(, a)] channel arrays are CONVERTED into the engine's
+        // canonical hex form (see engineColor) instead of being silently
+        // dropped — and anything else warns as unusable, never rides.
+        for (const key of ["fill", "stroke"] as const) {
+          const value = argsObj[key];
+          if (value === undefined) continue;
+          const color = engineColor(value);
+          if (color !== undefined) {
+            params[key] = color;
+          } else {
+            this.warn(
+              "unusable_args",
+              `field \`${key}\` is not a #hex color string or a [r, g, b(, a)] channel array`,
+              { step: planStep, tool, param: key },
+            );
+          }
         }
         for (const key of ["size", "strokeWidth", "tracking", "leading"] as const) {
           const value = argsObj[key];
@@ -601,8 +656,7 @@ class Compiler {
         // names are the targets (never the live editor selection -- a
         // selection-capture hazard the compiler refuses).
         const explicitLayers = readLayerNames(argsObj.layers);
-        const layers =
-          explicitLayers.length > 0 ? explicitLayers : [...this.planLayerNames];
+        const layers = explicitLayers.length > 0 ? explicitLayers : [...this.planLayerNames];
         if (layers.length === 0) {
           unusable(
             "layers",
@@ -1157,10 +1211,18 @@ export function compilePlan(
 
 /**
  * Live deps from the M5-A/M5-J contract surfaces, read at CALL time (ESM live
- * bindings) so peer stubs landing mid-wave are picked up. With today's stubs
- * the registry is empty — every compiled command fails the allowlist — wire
- * the real flow only after M5-J lands, or inject a registry fixture.
+ * bindings) so peer stubs landing mid-wave are picked up. The registry is the
+ * REAL curated command allowlist (M5-J); the write tools are the REAL M5-A
+ * catalog projected into the WriteToolDef shape (F-S2): each entry carries its
+ * args schema AND its risk badge, so lookupWriteTool's per-tool risk floor
+ * works on the live wire path (defaultCompileDeps previously passed the bare
+ * WRITE_TOOL_ARGS_SCHEMAS and the catalog badges never reached the recomputed
+ * risk). Built once — the catalog is frozen.
  */
+const CATALOG_WRITE_TOOLS: WriteToolsDep = Object.fromEntries(
+  WRITE_TOOLS.map((tool) => [tool.id, { args: tool.inputSchema, risk: tool.risk }]),
+);
+
 export function defaultCompileDeps(): CompileDeps {
-  return { registry: AGENT_COMMAND_REGISTRY, writeTools: WRITE_TOOL_ARGS_SCHEMAS };
+  return { registry: AGENT_COMMAND_REGISTRY, writeTools: CATALOG_WRITE_TOOLS };
 }

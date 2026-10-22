@@ -11,8 +11,15 @@
 // TOOL_LIST schemas from contracts (PRODUCT_ARCHITECTURE.md §8.4 — never
 // hand-rolled copies).
 
-import { TOOL_LIST, type ToolDefinition } from "@studio/contracts";
+import { TOOL_LIST, type ToolDefinition, isAgentCommand } from "@studio/contracts";
 import type { ZodError } from "zod";
+
+// F-6 (M5-R): the compiled-batch allowlist gate rides the same seam. The
+// client apply engine (apps/web/src/lib/chat/apply.ts) checks every
+// `engine.batch` step id against the SAME curated registry the gateway plan
+// compiler compiled with, BEFORE the batch reaches the editor — re-exported
+// here so no apps/web product module needs a runtime contracts import.
+export { isAgentCommand };
 
 /**
  * The 4 editor-read tools that execute CLIENT-side against the live bridge

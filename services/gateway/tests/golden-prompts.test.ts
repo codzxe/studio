@@ -496,6 +496,101 @@ describe("golden prompts — REAL compiler + REAL contracts deps (compile covera
     ]);
   });
 
+  it("gp-08 pins the F-S2 FIX: the catalog risk badge floors the model's declared low on the LIVE wire deps", () => {
+    // F-S2: defaultCompileDeps now projects the WRITE_TOOLS catalog
+    // ({args, risk} per tool) instead of the bare args schemas — the
+    // apply_preset MEDIUM badge reaches lookupWriteTool's tool-catalog risk
+    // floor, so the quick-action plan (model-declared "low", credits 1.5)
+    // compiles at medium / 1.88 ((1 + 0.5) × 1.25) on the REAL deps.
+    const fx = fixtureById("gp-08-quick-action-pop");
+    expect(fx.scriptedModelPlan.risk).toBe("low");
+    const ok = expectOk(compileFixture(fx));
+    expect(ok.risk).toBe("medium");
+    expect(ok.estimatedCredits).toBe(1.88);
+    expect(commandIds(ok.batch)).toEqual(["anim.applyBuiltinPreset"]);
+  });
+
+  it("F-S1 golden: create_text [r,g,b] / [r,g,b,a] color arrays compile into the engine's canonical #hex form — never dropped, never raw", () => {
+    // The contracts COLOR_SCHEMA accepts `#rrggbb(aa)` strings AND
+    // [r,g,b]/[r,g,b,a] channel arrays (0..255). The engine's text color
+    // parser (keyframe/src/text_doc.rs color_json) reads ARRAY channels RAW
+    // into its internal 0..1 space (its hex arm normalizes by /255), so the
+    // compiler CONVERTS the schema's channel arrays to the engine's canonical
+    // hex form — the exact /255 quantization the engine's own hex arm applies
+    // (clamped to the 0..255 band, rounded half up) — and never passes a raw
+    // 0..255 array through (it would render as a blown-out color).
+    const result = compilePlan(
+      EDIT_PLAN_SCHEMA.parse({
+        intent: "create",
+        summary: "Add a channel-array colored title",
+        risk: "low",
+        requiresApproval: false,
+        affectedLayers: [{ name: "Array Title", change: "new text layer" }],
+        estimatedCredits: 1,
+        steps: [
+          {
+            title: "Create the title",
+            tool: "studio.create_text",
+            args: {
+              text: "Channel Array",
+              name: "Array Title",
+              fill: [12.6, 34, 255],
+              stroke: [255, 0, 0, 128],
+            },
+            batch: {
+              label: "Create the title",
+              steps: [{ command: "layer.newText", params: { text: "Channel Array" } }],
+            },
+          },
+        ],
+      }),
+      defaultCompileDeps(),
+    );
+    const ok = expectOk(result);
+    expect(ok.batch.steps).toEqual([
+      {
+        command: "layer.newText",
+        params: {
+          text: "Channel Array",
+          name: "Array Title",
+          // 12.6 → Math.round(12.6) = 13 = 0x0d; alpha 128 rides as #rrggbbaa.
+          fill: "#0d22ff",
+          stroke: "#ff000080",
+        },
+      },
+    ]);
+  });
+
+  it("F-S1 live-wire arm: a non-color fill fails the STRICT schema as a typed invalid_args fatal — never dropped, never riding", () => {
+    // On the live deps the args validate against the REAL strict
+    // CREATE_TEXT_ARGS_SCHEMA BEFORE translate() runs: a non-color fill never
+    // reaches the translation at all — fail-closed, typed, no partial batch.
+    const result = compilePlan(
+      EDIT_PLAN_SCHEMA.parse({
+        intent: "create",
+        summary: "Add a bad-color title",
+        risk: "low",
+        requiresApproval: false,
+        affectedLayers: [{ name: "Bad Color", change: "new text layer" }],
+        estimatedCredits: 1,
+        steps: [
+          {
+            title: "Create the title",
+            tool: "studio.create_text",
+            args: { text: "Bad Color", fill: { not: "a color" } },
+            batch: {
+              label: "Create the title",
+              steps: [{ command: "layer.newText", params: { text: "Bad Color" } }],
+            },
+          },
+        ],
+      }),
+      defaultCompileDeps(),
+    );
+    const fatal = expectFatal(result);
+    expect(fatal.issues.some((issue) => issue.code === "invalid_args")).toBe(true);
+  });
+
   it("gp-07 pins the comp.new golden incl. the durationSeconds → duration mapping", () => {
     const ok = expectOk(compileFixture(fixtureById("gp-07-create-comp")));
     expect(ok.batch.steps).toEqual([

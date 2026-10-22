@@ -36,15 +36,17 @@
 
 import type { ChatRequest, StudioStreamEvent } from "@studio/contracts";
 
-import type { ApplyController, ApplyOutcome, ApplicablePlan, UndoOutcome } from "./apply";
+import type { ApplicablePlan, ApplyController, ApplyOutcome, UndoOutcome } from "./apply";
 import {
   LIVE_RUN_PHASES,
   RUN_PAUSED_ERROR,
   TERMINAL_RUN_PHASES,
+  applicablePlanOf,
   applyClientAction,
   applyUserMessage,
   createInitialChatUiState,
   foldEvent,
+  planRuntimeOf,
 } from "./run-state";
 import type {
   ChatControllerClient,
@@ -113,6 +115,24 @@ export interface ChatController {
   reapply(plan: ApplicablePlan): void;
   /** §6.2 "Cancel": the user dismissed the plan card for this run. */
   dismissPlan(runId: string): void;
+  /**
+   * M5-Q (F-L1/F-L3): re-save an executed-but-unsaved run — the apply engine's
+   * `retrySave` re-runs ONLY the D-6 upload + gateway report (the batch is
+   * never re-executed). The card's failed-state Try-again for save failures
+   * wires here; without the engine seam the gesture folds the honest
+   * unavailable error and nothing runs.
+   */
+  retrySave(runId: string): void;
+  /**
+   * M5-Q (§8.7): the user picked a candidate for an ambiguous layer name.
+   * Only valid from the ambiguous apply-failure state — the pick folds into
+   * the plan's runtime (requestId → layer id, pre-patched into the batch by
+   * `applicablePlanOf`) and IMMEDIATELY re-drives the apply. A hostile or
+   * unparseable candidate is a no-op (nothing executes). The parse mirrors
+   * apply.ts's pinned candidate format `"${layerName} (layer ${id})"`
+   * (apply.ts resolveRequests — keep in sync).
+   */
+  resolveCandidate(runId: string, requestId: string, candidate: string): void;
   /** Abort in-flight, drop the queue, unsubscribe every listener. */
   dispose(): void;
 }
@@ -172,6 +192,21 @@ const APPLY_UNAVAILABLE: ChatUiError = {
   message: "Applying plans is not available in this session.",
   retryable: false,
 };
+
+/**
+ * apply.ts's pinned candidate format is `"${layerName} (layer ${id})"`
+ * (resolveRequests — the ambiguous outcome's candidates). The id is parsed
+ * from the END so a hostile layer name that itself contains " (layer N)"
+ * cannot spoof a different id.
+ */
+const CANDIDATE_LAYER_ID_RE = /^[\s\S]* \(layer (\d+)\)$/;
+
+function layerIdOfCandidate(candidate: string): number | null {
+  const match = CANDIDATE_LAYER_ID_RE.exec(candidate);
+  if (match === null) return null;
+  const id = Number.parseInt(match[1] ?? "", 10);
+  return Number.isSafeInteger(id) && id >= 0 ? id : null;
+}
 
 export function createChatController(options: CreateChatControllerOptions): ChatController {
   let snapshot: ChatUiState = createInitialChatUiState();
@@ -375,6 +410,12 @@ export function createChatController(options: CreateChatControllerOptions): Chat
             type: "chat.plan.apply-failed",
             runId: plan.runId,
             error: applyOutcomeError(outcome),
+            // §8.7 (M5-Q): the ambiguous outcome's candidate strings ride the
+            // fold so the card can render pick buttons (apply.ts's pinned
+            // format).
+            ...(outcome.ok === false && outcome.reason === "ambiguous"
+              ? { candidates: outcome.candidates }
+              : {}),
           }),
         );
       })
@@ -386,7 +427,11 @@ export function createChatController(options: CreateChatControllerOptions): Chat
           applyClientAction(snapshot, {
             type: "chat.plan.apply-failed",
             runId: plan.runId,
-            error: { code: "APPLY_FAILED", message: "The plan could not be applied.", retryable: false },
+            error: {
+              code: "APPLY_FAILED",
+              message: "The plan could not be applied.",
+              retryable: false,
+            },
           }),
         );
       });
@@ -398,6 +443,64 @@ export function createChatController(options: CreateChatControllerOptions): Chat
 
   const reapply = (plan: ApplicablePlan): void => {
     runApplyGesture(plan, (engine) => engine.reapply(plan));
+  };
+
+  /** F-L1 (M5-Q): the re-save-only recovery — folds like an apply gesture. */
+  const retrySave = (runId: string): void => {
+    if (disposed) return;
+    commit(applyClientAction(snapshot, { type: "chat.plan.apply", runId }));
+    const engine = options.apply;
+    const retry = engine?.retrySave;
+    if (engine === undefined || retry === undefined) {
+      // No retry seam on this engine: explain, never execute anything.
+      commit(
+        applyClientAction(snapshot, {
+          type: "chat.plan.apply-failed",
+          runId,
+          error: APPLY_UNAVAILABLE,
+        }),
+      );
+      return;
+    }
+    void retry
+      .call(engine, runId)
+      .then((outcome) => {
+        if (disposed) return;
+        if (outcome.ok) {
+          commit(
+            applyClientAction(snapshot, {
+              type: "chat.plan.applied",
+              runId,
+              versionId: outcome.versionId,
+              ...(outcome.creditsCommitted !== undefined
+                ? { creditsCommitted: outcome.creditsCommitted }
+                : {}),
+            }),
+          );
+          return;
+        }
+        commit(
+          applyClientAction(snapshot, {
+            type: "chat.plan.apply-failed",
+            runId,
+            error: applyOutcomeError(outcome),
+          }),
+        );
+      })
+      .catch(() => {
+        if (disposed) return;
+        commit(
+          applyClientAction(snapshot, {
+            type: "chat.plan.apply-failed",
+            runId,
+            error: {
+              code: "APPLY_FAILED",
+              message: "The plan could not be applied.",
+              retryable: false,
+            },
+          }),
+        );
+      });
   };
 
   const undo = (runId: string): void => {
@@ -436,7 +539,11 @@ export function createChatController(options: CreateChatControllerOptions): Chat
           applyClientAction(snapshot, {
             type: "chat.plan.undo-failed",
             runId,
-            error: { code: "UNDO_FAILED", message: "The run could not be undone.", retryable: false },
+            error: {
+              code: "UNDO_FAILED",
+              message: "The run could not be undone.",
+              retryable: false,
+            },
           }),
         );
       });
@@ -445,6 +552,22 @@ export function createChatController(options: CreateChatControllerOptions): Chat
   const dismissPlan = (runId: string): void => {
     if (disposed) return;
     commit(applyClientAction(snapshot, { type: "chat.plan.dismiss", runId }));
+  };
+
+  const resolveCandidate = (runId: string, requestId: string, candidate: string): void => {
+    if (disposed) return;
+    // Only from the ambiguous apply-failure state — any other origin (a stale
+    // card, a scripted double-click) folds nothing and executes nothing.
+    const runtime = planRuntimeOf(snapshot, runId);
+    if (runtime === undefined || runtime.outcome !== "apply-failed") return;
+    if (runtime.error?.code !== "LAYER_AMBIGUOUS") return;
+    const layerId = layerIdOfCandidate(candidate);
+    if (layerId === null) return; // hostile/unparseable candidate: inert no-op
+    commit(applyClientAction(snapshot, { type: "chat.plan.resolve", runId, requestId, layerId }));
+    // The pick folded — re-drive the apply with the pre-patched plan.
+    const nextPlan = applicablePlanOf(snapshot, runId);
+    if (nextPlan === null) return;
+    apply(nextPlan);
   };
 
   return {
@@ -464,7 +587,9 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     apply,
     undo,
     reapply,
+    retrySave,
     dismissPlan,
+    resolveCandidate,
     dispose,
   };
 }

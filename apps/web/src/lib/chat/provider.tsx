@@ -55,6 +55,13 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import {
+  type ApplyAutosavePort,
+  type ApplyController,
+  type ApplyEngineEvent,
+  type ApplySessionPort,
+  createApplyController,
+} from "./apply";
 import { type ChatController, createChatController } from "./chat-controller";
 import { type ContextSnapshot, DEFAULT_FLAGS, autoFlags, collectContextSnapshot } from "./context";
 import { createInitialChatUiState } from "./run-state";
@@ -70,6 +77,22 @@ export type ChatModelSummary = ModelsResponse["models"][number];
 
 /** A context flag key — exactly the `ContextSelection` keys (§5.1). */
 export type ChatContextFlagKey = keyof ContextSelection;
+
+/**
+ * M5-Q (BUILD_PLAN §M5.4/§M5.5): the plan-card wiring surface the thread layer
+ * consumes (thread.tsx reads it via `useContext` — null-tolerant so a
+ * provider-less mount keeps rendering the read-only M4 card).
+ */
+export interface ChatPlanWiring {
+  /** True when the session's ApplyController is constructed (ports wired). */
+  readonly ready: boolean;
+  /** The thread controller (apply/undo/reapply/dismissPlan/resolveCandidate). */
+  readonly controller: ChatController | null;
+  /** The stable bridge — M5-H's PlanPreview creates its throwaway controller from it. */
+  readonly bridge: EditorBridge;
+  /** The session's current version id (reapply-drift gate, §M5.5); null without a port. */
+  readonly sessionVersionId: string | null;
+}
 
 /** Everything the panel slot (and any chat descendant) consumes. */
 export interface ChatContextApi {
@@ -125,6 +148,32 @@ export interface ChatContextApi {
   setPanelVisible(visible: boolean): void;
   /** Re-collect the context snapshot on demand (never throws; last write wins). */
   refreshContext(): void;
+  /** M5-Q: the plan-card wiring surface (see {@link ChatPlanWiring}); absent on
+   *  read-only/legacy api shapes — the thread then renders the M4 card. */
+  readonly planWiring?: ChatPlanWiring;
+}
+
+/**
+ * The M5-Q apply-session ports the HOST PAGE passes (it owns the M3-B
+ * autosave controller and the session's version pointer — see
+ * `use-editor-session`). With these the provider constructs ONE
+ * `ApplyController` per session (M5-F's `createApplyController`) wiring the
+ * REAL bridge + REAL autosave (`saveNow("agent-apply")`, D-6) + the
+ * api-client's `runs.applyRun`/`undoRun` + the reapply gate's version port.
+ * Absent (the read-only embed) the plan cards stay callback-less — the M4.6
+ * read-only property holds: no engine, no Apply control.
+ *
+ * Prefer a referentially STABLE object (a `useMemo`/module literal in the
+ * host); identity churn is harmless (the controller is a stateless closure
+ * over these ports) but stable ports keep the wiring object stable too.
+ */
+export interface ChatApplyPorts {
+  /** The M3-B autosave controller (D-6: the apply moment is saveNow("agent-apply")). */
+  readonly autosave: ApplyAutosavePort;
+  /** The version pointer — the §M5.5 reapply-drift gate; conservative when absent. */
+  readonly session?: ApplySessionPort;
+  /** Apply/undo milestone notifications for the host (banners, telemetry). */
+  readonly onEvent?: (event: ApplyEngineEvent) => void;
 }
 
 export interface ChatProviderProps {
@@ -136,6 +185,8 @@ export interface ChatProviderProps {
   readonly projectId: string;
   /** The M3 chat shortcut bus instance from the editor host. */
   readonly shortcutBus: ChatShortcutBus;
+  /** The M5 apply-session ports (see {@link ChatApplyPorts}); omit for read-only embeds. */
+  readonly applyPorts?: ChatApplyPorts;
   /** Render-prop: receives the api (no second context system needed). */
   readonly children: (api: ChatContextApi) => ReactNode;
 }
@@ -165,7 +216,13 @@ function toThreadError(error: unknown): ChatUiError {
   };
 }
 
-const ChatApiContext = createContext<ChatContextApi | null>(null);
+/**
+ * The chat api context (M5-Q: exported so `ChatThread` can read the plan-card
+ * wiring with a NULL-TOLERANT `useContext` — a provider-less mount (the M4
+ * thread tests, storybook embeds) reads `null` and renders the read-only
+ * card exactly as before).
+ */
+export const ChatApiContext = createContext<ChatContextApi | null>(null);
 
 export function ChatProvider({
   client,
@@ -173,6 +230,7 @@ export function ChatProvider({
   workspaceId,
   projectId,
   shortcutBus,
+  applyPorts,
   children,
 }: ChatProviderProps): ReactNode {
   // -- thread lifecycle ------------------------------------------------------
@@ -222,6 +280,57 @@ export function ChatProvider({
     () => createToolExecutor({ bridge, client, workspaceId, flags }),
     [bridge, client, workspaceId, flags],
   );
+
+  // -------------------------------------------------------------------------
+  // M5-Q: ONE ApplyController per session (BUILD_PLAN §M5.4/§M5.5). Built
+  // from the host's apply ports: the REAL bridge (ONE atomic engine.batch per
+  // gesture), the REAL M3-B autosave controller (D-6's saveNow("agent-apply")),
+  // the api-client's runs.applyRun/undoRun and the session's version pointer
+  // (the §M5.5 reapply gate). Without ports (read-only embeds) the card never
+  // grows an Apply control — the M4.6 property survives M5.
+  // -------------------------------------------------------------------------
+  const applyEngine = useMemo<ApplyController | null>(() => {
+    if (applyPorts === undefined) return null;
+    return createApplyController({
+      bridge,
+      autosave: applyPorts.autosave,
+      // CROSS-SEAM ADAPTER (M5-Q finding, documented): M5-F's ApplyApiClient
+      // pins `resolvedLayers[].layerId` as a NUMBER (engine layer ids), the
+      // wire contract (contracts RESOLVED_LAYER_SCHEMA → ID_SCHEMA) and the
+      // api-client pin a STRING — the adapter converts at this seam so the
+      // gateway's strict body validation passes. Neither pinned file changes.
+      api: {
+        runs: {
+          applyRun: (runId, body, options) =>
+            client.runs.applyRun(
+              runId,
+              {
+                batchSha256: body.batchSha256,
+                versionId: body.versionId,
+                idempotencyKey: body.idempotencyKey,
+                ...(body.resolvedLayers !== undefined
+                  ? {
+                      resolvedLayers: body.resolvedLayers.map((entry) => ({
+                        requestId: entry.requestId,
+                        layerId: String(entry.layerId),
+                      })),
+                    }
+                  : {}),
+              },
+              options,
+            ),
+          undoRun: (runId, body, options) => client.runs.undoRun(runId, body, options),
+        },
+      },
+      ...(applyPorts.session !== undefined ? { session: applyPorts.session } : {}),
+      ...(applyPorts.onEvent !== undefined ? { onEvent: applyPorts.onEvent } : {}),
+    });
+  }, [bridge, client, applyPorts]);
+  /** Read at controller-creation time without churning the thread lifecycle. */
+  const applyEngineRef = useRef<ApplyController | null>(null);
+  applyEngineRef.current = applyEngine;
+  /** The session's current version id — re-read on every provider render (§M5.5). */
+  const sessionVersionId = applyPorts?.session?.currentVersionId() ?? null;
 
   // -------------------------------------------------------------------------
   // Models: fetch once, retry once, then `[]` (picker hidden per wave-2 header)
@@ -277,7 +386,14 @@ export function ChatProvider({
 
   useEffect(() => {
     if (threadId === null) return;
-    const created = createChatController({ client, workspaceId, projectId, threadId });
+    const engine = applyEngineRef.current;
+    const created = createChatController({
+      client,
+      workspaceId,
+      projectId,
+      threadId,
+      ...(engine !== null ? { apply: engine } : {}),
+    });
     controllerRef.current = created;
     setController(created);
     // Promise-queue flush: every send that raced the thread creation goes out
@@ -451,6 +567,12 @@ export function ChatProvider({
     pinned,
     panelVisible,
     shortcutBus,
+    planWiring: {
+      ready: applyEngine !== null,
+      controller,
+      bridge,
+      sessionVersionId,
+    },
     send,
     stop,
     retry,

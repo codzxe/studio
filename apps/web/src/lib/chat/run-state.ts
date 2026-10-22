@@ -37,7 +37,7 @@
 
 import type { StudioStreamEvent } from "@studio/contracts";
 
-import type { ApplicablePlan, LayerResolutionRequest } from "./apply";
+import { type ApplicablePlan, type LayerResolutionRequest, RESOLVE_TOKEN_PREFIX } from "./apply";
 import type {
   ChatUiError,
   ChatUiMessage,
@@ -103,10 +103,19 @@ export type ChatClientAction =
       readonly type: "chat.plan.apply-failed";
       readonly runId: string;
       readonly error: ChatUiError;
+      /** M5-Q: the `ambiguous` outcome's candidate strings (§8.7 pick surface). */
+      readonly candidates?: readonly string[];
     }
   | { readonly type: "chat.plan.undo"; readonly runId: string }
   | { readonly type: "chat.plan.undone"; readonly runId: string }
   | { readonly type: "chat.plan.undo-failed"; readonly runId: string; readonly error: ChatUiError }
+  | {
+      /** M5-Q (§8.7): the user picked a candidate for an ambiguous layer name. */
+      readonly type: "chat.plan.resolve";
+      readonly runId: string;
+      readonly requestId: string;
+      readonly layerId: number;
+    }
   | { readonly type: "chat.plan.dismiss"; readonly runId: string };
 
 /**
@@ -263,6 +272,9 @@ type PlanEventWithRuntime = Extract<StudioStreamEvent, { type: "plan" }> & {
   readonly compiledBatch?: unknown;
   readonly resolutionRequests?: unknown;
   readonly baseVersionId?: unknown;
+  readonly risk?: unknown;
+  readonly estimatedCredits?: unknown;
+  readonly autoApply?: unknown;
 };
 
 /** `steps: [{command, params}]` with a non-empty label — the §8.5 apply payload. */
@@ -283,7 +295,9 @@ function parseCompiledBatch(value: unknown): PlanRuntime["compiledBatch"] | null
     });
   }
   const timeoutMs =
-    typeof record.timeoutMs === "number" && Number.isInteger(record.timeoutMs) && record.timeoutMs > 0
+    typeof record.timeoutMs === "number" &&
+    Number.isInteger(record.timeoutMs) &&
+    record.timeoutMs > 0
       ? record.timeoutMs
       : undefined;
   return timeoutMs === undefined
@@ -308,6 +322,25 @@ function parseResolutionRequests(value: unknown): readonly LayerResolutionReques
   return out;
 }
 
+/** The §7.3/D-22 verdict — `{mode: "auto"|"propose", reason}`, else undefined. */
+function parseAutoApply(value: unknown): PlanRuntime["autoApply"] {
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.mode !== "auto" && record.mode !== "propose") return undefined;
+  if (typeof record.reason !== "string" || record.reason.length === 0) return undefined;
+  return { mode: record.mode, reason: record.reason };
+}
+
+/** The server-recomputed risk (D-21: never the model's self-declared value). */
+function parseServerRisk(value: unknown): PlanRuntime["risk"] {
+  return value === "low" || value === "medium" || value === "high" ? value : undefined;
+}
+
+/** The server-recomputed deterministic credit estimate (§8.8). */
+function parseServerCredits(value: unknown): PlanRuntime["estimatedCredits"] {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
 /**
  * Builds the message's `planRuntime` from a plan event when it carries the M5
  * payload; `null` when it does not (the M4 card shape stays as-is).
@@ -322,10 +355,19 @@ export function planRuntimeFromEvent(event: StudioStreamEvent): PlanRuntime | nu
     typeof extended.baseVersionId === "string" && extended.baseVersionId.length > 0
       ? extended.baseVersionId
       : undefined;
+  // M5-Q: the SERVER-recomputed card values (risk/credits, D-21) + the D-22
+  // auto-apply verdict fold with the runtime — presence-checked so a hostile
+  // stream can only omit them, never fabricate client credit math.
+  const risk = parseServerRisk(extended.risk);
+  const estimatedCredits = parseServerCredits(extended.estimatedCredits);
+  const autoApply = parseAutoApply(extended.autoApply);
   return {
     compiledBatch,
     ...(resolutionRequests !== undefined ? { resolutionRequests } : {}),
     ...(baseVersionId !== undefined ? { baseVersionId } : {}),
+    ...(risk !== undefined ? { risk } : {}),
+    ...(estimatedCredits !== undefined ? { estimatedCredits } : {}),
+    ...(autoApply !== undefined ? { autoApply } : {}),
     outcome: "idle",
   };
 }
@@ -347,6 +389,48 @@ function isPlanGesture(action: ChatClientAction): action is PlanGestureAction {
   return action.type.startsWith("chat.plan.");
 }
 
+/**
+ * Merges one user pick into the runtime's pick map (M5-Q, §8.7). The map is
+ * rebuilt NULL-PROTOTYPE every time (M4-N F-1): request ids are model-adjacent
+ * strings — on a plain `{}` a `__proto__` id would rebind the accumulator's
+ * prototype (a spread of a null-proto object would LOSE the null proto, so the
+ * merge is an explicit copy loop).
+ */
+function mergePick(
+  existing: Readonly<Record<string, number>> | undefined,
+  requestId: string,
+  layerId: number,
+): Readonly<Record<string, number>> {
+  const next = Object.create(null) as Record<string, number>;
+  if (existing !== undefined) {
+    for (const [key, value] of Object.entries(existing)) next[key] = value;
+  }
+  next[requestId] = layerId;
+  return next;
+}
+
+/**
+ * Replaces every whole-string `$request:<requestId>` placeholder whose
+ * requestId carries a user pick with the chosen layer id (M5-Q). Deterministic
+ * deep clone with NULL-PROTOTYPE objects (the M4-N F-1 rule — mirrors
+ * apply.ts's `patchPlaceholders`; keep in sync with it).
+ */
+function patchUserPicks(value: unknown, picks: Readonly<Record<string, number>>): unknown {
+  if (typeof value === "string") {
+    if (!value.startsWith(RESOLVE_TOKEN_PREFIX)) return value;
+    const requestId = value.slice(RESOLVE_TOKEN_PREFIX.length);
+    const picked = picks[requestId];
+    return picked === undefined ? value : picked;
+  }
+  if (Array.isArray(value)) return value.map((item) => patchUserPicks(item, picks));
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = Object.create(null);
+    for (const [key, child] of Object.entries(value)) out[key] = patchUserPicks(child, picks);
+    return out;
+  }
+  return value;
+}
+
 /** Folds one `chat.plan.*` gesture onto the message's planRuntime (pure). */
 function applyPlanAction(state: ChatUiState, action: PlanGestureAction): ChatUiState {
   const runId = action.runId;
@@ -361,8 +445,10 @@ function applyPlanAction(state: ChatUiState, action: PlanGestureAction): ChatUiS
   switch (action.type) {
     case "chat.plan.apply":
       return foldRuntime((runtime) =>
-        runtime.outcome === "idle" || runtime.outcome === "apply-failed" || runtime.outcome === "undone"
-          ? { ...runtime, outcome: "applying", error: undefined }
+        runtime.outcome === "idle" ||
+        runtime.outcome === "apply-failed" ||
+        runtime.outcome === "undone"
+          ? { ...runtime, outcome: "applying", error: undefined, candidates: undefined }
           : runtime,
       );
     case "chat.plan.applied":
@@ -373,12 +459,20 @@ function applyPlanAction(state: ChatUiState, action: PlanGestureAction): ChatUiS
               outcome: "applied",
               versionId: action.versionId,
               error: undefined,
+              candidates: undefined,
             }
           : runtime,
       );
     case "chat.plan.apply-failed":
       return foldRuntime((runtime) =>
-        runtime.outcome === "applying" ? { ...runtime, outcome: "apply-failed", error: action.error } : runtime,
+        runtime.outcome === "applying"
+          ? {
+              ...runtime,
+              outcome: "apply-failed",
+              error: action.error,
+              ...(action.candidates !== undefined ? { candidates: action.candidates } : {}),
+            }
+          : runtime,
       );
     case "chat.plan.undo":
       return foldRuntime((runtime) =>
@@ -386,15 +480,63 @@ function applyPlanAction(state: ChatUiState, action: PlanGestureAction): ChatUiS
       );
     case "chat.plan.undone":
       return foldRuntime((runtime) =>
-        runtime.outcome === "undoing" ? { ...runtime, outcome: "undone", error: undefined } : runtime,
+        runtime.outcome === "undoing"
+          ? { ...runtime, outcome: "undone", error: undefined }
+          : runtime,
       );
     case "chat.plan.undo-failed":
       return foldRuntime((runtime) =>
-        runtime.outcome === "undoing" ? { ...runtime, outcome: "undo-failed", error: action.error } : runtime,
+        runtime.outcome === "undoing"
+          ? { ...runtime, outcome: "undo-failed", error: action.error }
+          : runtime,
       );
+    case "chat.plan.resolve":
+      // §8.7 (M5-Q): the user's candidate pick binds requestId → layer id; the
+      // pick is durable for this plan (kept across the re-driven attempt) and
+      // folds WITHOUT touching the outcome — the re-drive's own `chat.plan.apply`
+      // gesture follows immediately.
+      return foldRuntime((runtime) => ({
+        ...runtime,
+        resolutionPicks: mergePick(runtime.resolutionPicks, action.requestId, action.layerId),
+      }));
     case "chat.plan.dismiss":
       return foldRuntime((runtime) => ({ ...runtime, dismissed: true }));
   }
+}
+
+/**
+ * The apply inputs for one plan, straight out of its runtime — the pure core of
+ * {@link applicablePlanOf} (the thread layer passes a MESSAGE's runtime in,
+ * the same shape the store folds). M5-Q: the user's ambiguous-layer picks are
+ * PRE-PATCHED into the batch (`$request:` tokens → layer ids) and their
+ * requests drop out of `resolutionRequests`, so the re-driven apply skips name
+ * resolution for them (§8.7 — the pick is user authority).
+ */
+export function applicablePlanFromRuntime(runId: string, runtime: PlanRuntime): ApplicablePlan {
+  const picks = runtime.resolutionPicks;
+  const hasPicks = picks !== undefined && Object.keys(picks).length > 0;
+  const requests =
+    runtime.resolutionRequests?.filter((request) => picks?.[request.requestId] === undefined) ?? [];
+  const batch = hasPicks
+    ? {
+        ...runtime.compiledBatch,
+        steps: runtime.compiledBatch.steps.map((step) => ({
+          command: step.command,
+          params: patchUserPicks(step.params, picks ?? {}) as Record<string, unknown>,
+        })),
+      }
+    : runtime.compiledBatch;
+  return {
+    runId,
+    ...(runtime.baseVersionId !== undefined ? { baseVersionId: runtime.baseVersionId } : {}),
+    compiledBatch: batch,
+    ...(requests.length > 0 ? { resolutionRequests: requests } : {}),
+  };
+}
+
+/** The message bound to `runId`'s M5 plan runtime, if any (M5-Q helper). */
+export function planRuntimeOf(state: ChatUiState, runId: string): PlanRuntime | undefined {
+  return state.messages.find((entry) => entry.runId === runId)?.planRuntime;
 }
 
 /**
@@ -403,17 +545,9 @@ function applyPlanAction(state: ChatUiState, action: PlanGestureAction): ChatUiS
  * `null` when the message has no M5 runtime (no compiled batch to execute).
  */
 export function applicablePlanOf(state: ChatUiState, runId: string): ApplicablePlan | null {
-  const message = state.messages.find((entry) => entry.runId === runId);
-  const runtime = message?.planRuntime;
+  const runtime = planRuntimeOf(state, runId);
   if (runtime === undefined) return null;
-  return {
-    runId,
-    ...(runtime.baseVersionId !== undefined ? { baseVersionId: runtime.baseVersionId } : {}),
-    compiledBatch: runtime.compiledBatch,
-    ...(runtime.resolutionRequests !== undefined
-      ? { resolutionRequests: runtime.resolutionRequests }
-      : {}),
-  };
+  return applicablePlanFromRuntime(runId, runtime);
 }
 
 // ---------------------------------------------------------------------------
@@ -519,9 +653,7 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
           plan: event.plan,
           // A NEW plan event resets the card's runtime (fresh compiled batch,
           // fresh lifecycle); without the M5 payload the runtime clears.
-          ...(planRuntime === null
-            ? { planRuntime: undefined }
-            : { planRuntime }),
+          ...(planRuntime === null ? { planRuntime: undefined } : { planRuntime }),
         })),
       };
       break;

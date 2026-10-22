@@ -21,10 +21,11 @@
  * (event) => setComposerText((event as CustomEvent<string>).detail)).
  */
 
+import { ChatApiContext } from "@/lib/chat/provider";
 import type { ChatUiError, ChatUiMessage, RunPhase } from "@/lib/chat/types";
-import { type ReactElement, useEffect, useRef } from "react";
+import { type ReactElement, useContext, useEffect, useRef } from "react";
 import { ChatBanner, RunPausedBanner } from "./banners";
-import { ChatMessageView } from "./message";
+import { ChatMessageView, type PlanMessageWiring } from "./message";
 
 export interface ChatThreadProps {
   messages: readonly ChatUiMessage[];
@@ -41,6 +42,10 @@ export interface ChatThreadProps {
    */
   error?: ChatUiError;
 }
+
+// Re-exported for the thread layer's consumers (the wiring type is part of the
+// M5-Q seam — message.tsx consumes it).
+export type { PlanMessageWiring } from "./message";
 
 /** Window event quick-action chips dispatch (see the module header contract). */
 export const CHAT_QUICK_ACTION_EVENT = "studio:chat-quick-action";
@@ -62,6 +67,25 @@ export function ChatThread({
 }: ChatThreadProps): ReactElement {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
+
+  // M5-Q: the plan-card wiring — read straight from the ChatProvider context
+  // (NULL-TOLERANT: a provider-less mount — the M4 thread tests, embeds — reads
+  // null and every card stays the read-only M4 shape; no engine, no Apply).
+  // The slot (chat-panel-slot.tsx) keeps its pinned props: the wiring rides
+  // the context, not a new slot prop.
+  const chatApi = useContext(ChatApiContext);
+  const wiringApi = chatApi?.planWiring;
+  const planWiring: PlanMessageWiring | null =
+    wiringApi === undefined || wiringApi === null
+      ? null
+      : {
+          ready: wiringApi.ready,
+          controller: wiringApi.controller,
+          bridge: wiringApi.bridge,
+          sessionVersionId: wiringApi.sessionVersionId,
+          phase,
+          activeRunId,
+        };
 
   const virtualize = messages.length > VIRTUALIZE_THRESHOLD;
   const hiddenCount = virtualize ? messages.length - WINDOW_SIZE : 0;
@@ -164,6 +188,7 @@ export function ChatThread({
               <ChatMessageView
                 key={message.id}
                 message={message}
+                planWiring={planWiring}
                 isStreaming={
                   liveStream && message.role === "assistant" && message.runId === activeRunId
                 }

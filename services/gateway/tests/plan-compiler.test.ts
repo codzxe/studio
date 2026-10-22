@@ -1368,6 +1368,30 @@ describe("determinism + input forms", () => {
     expect(result.batch.steps).toHaveLength(2);
   });
 
+  it("an unusable COLOR under the stub-era (passthrough) schemas warns and never rides the batch (F-S1)", () => {
+    // F-S1's defense: a fill/stroke that is neither a #hex string nor a
+    // channel array is never silently dropped AND never rides raw — it warns
+    // as unusable_args (the strict live schemas reject such args earlier as a
+    // typed invalid_args fatal; the golden suite pins that arm).
+    const stubDeps: CompileDeps = {
+      registry: REGISTRY,
+      writeTools: Object.fromEntries(
+        Object.keys(WRITE_TOOLS).map((id) => [id, z.object({}).passthrough()]),
+      ),
+    };
+    const result = expectOk(
+      compile(
+        plan([step("create_text", { text: "Hi", fill: { not: "a color" }, stroke: [] })]),
+        stubDeps,
+      ),
+    );
+    const codes = warningCodes(result);
+    expect(codes.filter((code) => code === "unusable_args").length).toBeGreaterThanOrEqual(2);
+    expect(result.batch.steps[0]?.params).not.toHaveProperty("fill");
+    expect(result.batch.steps[0]?.params).not.toHaveProperty("stroke");
+    expect(result.batch.steps[0]?.params).toEqual({ text: "Hi" });
+  });
+
   it("a step that translates to ZERO commands is fatally empty_step (G-3) — no partial plan ever applies", () => {
     // Same stub-era passthrough world, but the second step has NO usable field
     // at all (no `text`) ⇒ zero commands. G-3: the WHOLE plan is rejected —
