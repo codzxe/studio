@@ -4,8 +4,19 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import type { StudioDb, StudioTx } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import { type Project, type ProjectVersion, projectVersions, projects } from "../schema.js";
-import { assertExpectedVersion, buildRestorePlan, nextVersionNumber } from "../version-logic.js";
+import {
+  type Project,
+  type ProjectVersion,
+  projectVersions,
+  projects,
+  user,
+} from "../schema.js";
+import {
+  assertExpectedVersion,
+  type VersionTimelineRow,
+  buildRestorePlan,
+  nextVersionNumber,
+} from "../version-logic.js";
 import { lockProject } from "./projects.js";
 import { type WorkspaceId, requireNonEmpty, requireNonNegativeInt } from "./shared.js";
 
@@ -16,7 +27,9 @@ import { type WorkspaceId, requireNonEmpty, requireNonNegativeInt } from "./shar
  *   locked FOR UPDATE, `expectedVersionId` must equal `projects.currentVersionId`
  *   or the caller gets a typed PROJECT_VERSION_CONFLICT, then the version row
  *   is inserted and `currentVersionId` advanced — atomically.
- * - No update paths exist: a version row is written once and never mutated.
+ * - No update paths exist EXCEPT `setLabel`: a version row's snapshot bytes,
+ *   hash, parent linkage and authorship are immutable; the human label is the
+ *   one piece of §9.3-allowed metadata that may change (D-24 candidate ruling).
  * - `restore` creates a NEW version whose parent is the restored one.
  */
 export interface VersionUploadInput {
@@ -40,9 +53,24 @@ export interface VersionRestoreInput {
   readonly label?: string;
 }
 
+/** `setLabel` input (M7 task 4): the ONLY mutable version field (D-24). */
+export interface VersionLabelInput {
+  readonly projectId: string;
+  readonly versionId: string;
+  /** 1–120 characters (TIMELINE_LABEL_SCHEMA bound, enforced again here). */
+  readonly label: string;
+}
+
 export interface VersionListOptions {
   readonly limit?: number;
   readonly cursor?: string | null;
+}
+
+export interface VersionRestoreResult {
+  readonly version: ProjectVersion;
+  readonly project: Project;
+  /** The restored source row (immutable §9.3) — for audit/label metadata. */
+  readonly source: ProjectVersion;
 }
 
 export interface VersionsRepo {
@@ -50,16 +78,29 @@ export interface VersionsRepo {
     workspaceId: WorkspaceId,
     input: VersionUploadInput,
   ): Promise<{ version: ProjectVersion; project: Project }>;
-  restore(
-    workspaceId: WorkspaceId,
-    input: VersionRestoreInput,
-  ): Promise<{ version: ProjectVersion; project: Project }>;
+  restore(workspaceId: WorkspaceId, input: VersionRestoreInput): Promise<VersionRestoreResult>;
   list(
     workspaceId: WorkspaceId,
     projectId: string,
     options?: VersionListOptions,
   ): Promise<Page<ProjectVersion>>;
+  /**
+   * M7 task 4 timeline: the same newest-first page as `list`, joined with the
+   * author's display name for the timeline UI. Cross-tenant project ids read
+   * as NOT_FOUND (§12.1).
+   */
+  timeline(
+    workspaceId: WorkspaceId,
+    projectId: string,
+    options?: VersionListOptions,
+  ): Promise<Page<VersionTimelineRow>>;
   get(workspaceId: WorkspaceId, projectId: string, versionId: string): Promise<ProjectVersion>;
+  /**
+   * M7 task 4 labels: conditional update of the `label` column ONLY — the
+   * one §9.3-allowed mutable field (D-24 candidate). Cross-tenant or unknown
+   * version/project reads as NOT_FOUND; no other column is ever touched.
+   */
+  setLabel(workspaceId: WorkspaceId, input: VersionLabelInput): Promise<ProjectVersion>;
   /**
    * M5.4 apply flow: fetch a version by id scoped to the workspace alone (the
    * run row supplies the project; a version of another tenant's project or
@@ -207,7 +248,7 @@ export function createVersionsRepo(db: StudioDb): VersionsRepo {
           createdBy: input.createdBy,
         });
         const updated = await advanceCurrentVersion(tx, input.projectId, version.id);
-        return { version, project: updated };
+        return { version, project: updated, source };
       });
     },
 
@@ -250,6 +291,77 @@ export function createVersionsRepo(db: StudioDb): VersionsRepo {
         nextCursor:
           hasMore && last ? encodeCursor({ t: last.createdAt.toISOString(), id: last.id }) : null,
       };
+    },
+
+    async timeline(workspaceId, projectId, options) {
+      // Same tenant scope + ordering as `list` (§12.1), plus the author join.
+      const project = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(and(eq(projects.id, projectId), eq(projects.workspaceId, workspaceId)))
+        .limit(1);
+      if (project.length === 0) throw DbError.notFound("project");
+
+      const limit = clampLimit(options?.limit);
+      const cursor = decodeCursor(options?.cursor ?? null);
+      const rows = await db
+        .select({ version: projectVersions, createdByName: user.name })
+        .from(projectVersions)
+        .leftJoin(user, eq(user.id, projectVersions.createdBy))
+        .where(
+          and(
+            eq(projectVersions.projectId, projectId),
+            cursor
+              ? or(
+                  lt(projectVersions.createdAt, new Date(cursor.t)),
+                  and(
+                    eq(projectVersions.createdAt, new Date(cursor.t)),
+                    lt(projectVersions.id, cursor.id),
+                  ),
+                )
+              : undefined,
+          ),
+        )
+        .orderBy(desc(projectVersions.createdAt), desc(projectVersions.id))
+        .limit(limit + 1);
+
+      const items: VersionTimelineRow[] = rows
+        .slice(0, limit)
+        .map((row) => ({ ...row.version, createdByName: row.createdByName }));
+      const last = items.at(-1);
+      const hasMore = rows.length > limit;
+      return {
+        items,
+        nextCursor:
+          hasMore && last ? encodeCursor({ t: last.createdAt.toISOString(), id: last.id }) : null,
+      };
+    },
+
+    async setLabel(workspaceId, input) {
+      const projectId = requireNonEmpty(input.projectId, "projectId");
+      const versionId = requireNonEmpty(input.versionId, "versionId");
+      const label = requireNonEmpty(input.label, "label");
+      if (label.length > 120) {
+        throw DbError.validation("label must be at most 120 characters");
+      }
+
+      // Tenant scope first (§12.1): cross-tenant project ids read as 404.
+      const project = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(and(eq(projects.id, projectId), eq(projects.workspaceId, workspaceId)))
+        .limit(1);
+      if (project.length === 0) throw DbError.notFound("project");
+
+      // Conditional update — the `label` column ONLY (§9.3/D-24 candidate);
+      // zero rows means the version id does not belong to this project.
+      const [row] = await db
+        .update(projectVersions)
+        .set({ label })
+        .where(and(eq(projectVersions.id, versionId), eq(projectVersions.projectId, projectId)))
+        .returning();
+      if (!row) throw DbError.notFound("version");
+      return row;
     },
 
     async get(workspaceId, projectId, versionId) {

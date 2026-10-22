@@ -36,6 +36,7 @@ import { StudioError } from "@studio/config";
 
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
+import { requireLeaseForMutation } from "../lease-guard.js";
 import { ok, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { audit } from "./projects.js";
@@ -76,6 +77,14 @@ export function applyRoutes(deps: GatewayDeps): Hono<AppBindings> {
       // Law #3: tenant-filtered load — cross-tenant and unknown ids read as
       // 404 RUN_NOT_FOUND (the repo + error boundary own the mapping).
       const { run } = await deps.repos.runs.get(workspace.id, runId);
+
+      // §M7 task 3 read-only gate (the agent edit gate, D-23): the caller
+      // must hold the project's ACTIVE lease to apply — a viewer may look and
+      // propose (chat/comment), but only the lease holder turns a plan into a
+      // version. Free/expired leases pass; replays by a non-holder while
+      // someone else holds answer 409 LEASE_HELD like any fresh apply.
+      await requireLeaseForMutation(deps, c, run.projectId);
+
       const planState = await deps.repos.runs.getPlanState(workspace.id, runId);
 
       // Same logical apply, replayed with a fresh transport key: return the
@@ -234,6 +243,10 @@ export function applyRoutes(deps: GatewayDeps): Hono<AppBindings> {
       }
 
       const { run } = await deps.repos.runs.get(workspace.id, runId);
+
+      // §M7 task 3: undo requires the lease too — same gate as apply (an undo
+      // reverts the ONE applied batch, which is a project write; §8.7).
+      await requireLeaseForMutation(deps, c, run.projectId);
       const planState = await deps.repos.runs.getPlanState(workspace.id, runId);
 
       if (planState.status === "proposed") {

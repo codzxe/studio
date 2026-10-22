@@ -233,14 +233,14 @@ d("version lifecycle (§9.3)", () => {
       method: "POST",
       jar: ws.jar,
       headers: { "x-workspace-id": ws.id, "idempotency-key": unique("restore") },
-      body: { note: "roll back to the first save" },
+      body: { confirmLabel: "first save", note: "roll back to the first save" },
     });
     expect(response.status).toBe(201);
     const body = (await response.json()) as { data: VersionDto };
     expect(body.data.version).toBe(3);
     expect(body.data.parentVersionId).toBe(v1Id);
     expect(body.data.sha256).toBe(v1.sha256);
-    expect(body.data.label).toBe("roll back to the first save");
+    expect(body.data.label).toBe("Restored from v1");
 
     const history = await listVersions(ws, projectId);
     expect(history.length).toBe(3);

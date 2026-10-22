@@ -9,6 +9,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -577,15 +578,27 @@ export const comments = pgTable(
     layerId: text("layer_id"),
     timeTicks: bigint("time_ticks", { mode: "number" }),
     body: text("body").notNull(),
-    authorId: text("author_id")
-      .notNull()
-      .references((): AnyPgColumn => user.id),
+    // M7 (§11): author_id is nullable — GUEST rows (share-link reviewers)
+    // have no user. Member rows keep authorId required at the repo layer
+    // (repos/comments.ts `create`); guests go through `createGuest`.
+    authorId: text("author_id").references((): AnyPgColumn => user.id),
     resolvedAt: ts("resolved_at"),
+    // M7 (§11): reply threading + resolver + guest/share provenance. Plain
+    // text columns WITHOUT FKs: comments are never hard-deleted in v1, so
+    // parent/resolver integrity is enforced in repos (same-project checks),
+    // and keeping the ALTER minimal avoids self-FK ordering hazards in the
+    // concurrent M7 wave. share_token_id is the issuing share_tokens.id.
+    parentId: text("parent_id"),
+    resolvedBy: text("resolved_by"),
+    guestName: text("guest_name"),
+    guestEmail: text("guest_email"),
+    shareTokenId: text("share_token_id"),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
   (t) => [
     index("comments_project_resolved_idx").on(t.projectId, t.resolvedAt),
     index("comments_project_created_idx").on(t.projectId, t.createdAt.desc()),
+    index("comments_parent_idx").on(t.parentId),
   ],
 );
 
@@ -766,7 +779,77 @@ export const webhookEvents = pgTable(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Section 12 — Drizzle relations (main joins)
+// Section 12 — Share links + presence (§M7 tasks 2/5)
+//
+// Decisions (documented for reviewers):
+// - `share_tokens.token_hash` stores sha256(raw token) ONLY: the raw token
+//   is returned ONCE in the issue response (route mints it via node:crypto),
+//   never persisted — a database leak must not leak usable share URLs.
+//   UNIQUE(token_hash) makes lookups index-backed and (theoretically)
+//   collision-detecting.
+// - `password_hash` is the FINISHED `scrypt$salt$hash` string produced by the
+//   GATEWAY route (node:crypto scryptSync): no argon2/bcrypt and NO db-side
+//   crypto deps — the repo takes the finished string and only validates its
+//   shape.
+// - Tenant scoping: share_tokens scope through project_id → projects.workspace_id
+//   (repos join projects, §12.1). The public lookup (verifyByHash/getByHash)
+//   is deliberately NOT workspace-filtered: the token IS the capability.
+// - Revocation/expiry are soft states (revoked_at / expires_at), checked on
+//   every public lookup — rows are kept for audit.
+// - `presence_heartbeats` is ephemeral state keyed by (project_id, user_id):
+//   upserted on every beat, swept by the repo when last_seen_at is older
+//   than the TTL (60s default, §M7 task 2). display_name is carried per
+//   beat (the UI shows friendly names without a user join); playhead_ticks
+//   is bigint mode:"number" like every ticks column.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const shareTokens = pgTable(
+  "share_tokens",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId("shr")),
+    projectId: text("project_id")
+      .notNull()
+      .references((): AnyPgColumn => projects.id, { onDelete: "cascade" }),
+    /** sha256(raw token), lowercase hex — the raw token is never stored. */
+    tokenHash: text("token_hash").notNull(),
+    /** `scrypt$<saltHex>$<hashHex>` produced by the gateway; null = no gate. */
+    passwordHash: text("password_hash"),
+    expiresAt: ts("expires_at"),
+    revokedAt: ts("revoked_at"),
+    createdBy: text("created_by")
+      .notNull()
+      .references((): AnyPgColumn => user.id),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("share_tokens_token_hash_uniq").on(t.tokenHash),
+    index("share_tokens_project_idx").on(t.projectId, t.createdAt.desc()),
+  ],
+);
+
+export const presenceHeartbeats = pgTable(
+  "presence_heartbeats",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references((): AnyPgColumn => projects.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references((): AnyPgColumn => user.id, { onDelete: "cascade" }),
+    /** Friendly name shown in the presence list (carried per beat). */
+    displayName: text("display_name").notNull(),
+    /** Active composition, when the viewer has one selected. */
+    compId: text("comp_id"),
+    playheadTicks: bigint("playhead_ticks", { mode: "number" }),
+    lastSeenAt: ts("last_seen_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.userId] })],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section 13 — Drizzle relations (main joins)
 // `projects.currentVersionId` vs `project_versions.projectId` are two distinct
 // edges between the same tables → disambiguated with relationName.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -830,6 +913,9 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
     fields: [projects.workspaceId],
     references: [organization.id],
   }),
+  // §M7: share links + ephemeral presence viewers
+  shareTokens: many(shareTokens),
+  presence: many(presenceHeartbeats),
   currentVersion: one(projectVersions, {
     fields: [projects.currentVersionId],
     references: [projectVersions.id],
@@ -947,6 +1033,22 @@ export const commentsRelations = relations(comments, ({ one }) => ({
   author: one(user, { fields: [comments.authorId], references: [user.id] }),
 }));
 
+export const shareTokensRelations = relations(shareTokens, ({ one }) => ({
+  project: one(projects, {
+    fields: [shareTokens.projectId],
+    references: [projects.id],
+  }),
+  creator: one(user, { fields: [shareTokens.createdBy], references: [user.id] }),
+}));
+
+export const presenceHeartbeatsRelations = relations(presenceHeartbeats, ({ one }) => ({
+  project: one(projects, {
+    fields: [presenceHeartbeats.projectId],
+    references: [projects.id],
+  }),
+  user: one(user, { fields: [presenceHeartbeats.userId], references: [user.id] }),
+}));
+
 export const auditLogRelations = relations(auditLog, ({ one }) => ({
   workspace: one(organization, {
     fields: [auditLog.workspaceId],
@@ -981,7 +1083,7 @@ export const userSettingsRelations = relations(userSettings, ({ one }) => ({
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Section 13 — Inferred domain types
+// Section 14 — Inferred domain types
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type User = typeof user.$inferSelect;
@@ -1007,3 +1109,5 @@ export type Subscription = typeof subscriptions.$inferSelect;
 export type Invoice = typeof invoices.$inferSelect;
 export type UserSettings = typeof userSettings.$inferSelect;
 export type WebhookEvent = typeof webhookEvents.$inferSelect;
+export type ShareToken = typeof shareTokens.$inferSelect;
+export type PresenceHeartbeat = typeof presenceHeartbeats.$inferSelect;

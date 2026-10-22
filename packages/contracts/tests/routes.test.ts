@@ -7,6 +7,7 @@ import {
   CANCEL_RUN_SCHEMA,
   CHAT_REQUEST_SCHEMA,
   CHECKOUT_SCHEMA,
+  COMMENT_REPLY_SCHEMA,
   COMMENTS_QUERY_SCHEMA,
   CONTEXT_SELECTION_SCHEMA,
   CREATE_ASSET_SCHEMA,
@@ -14,6 +15,7 @@ import {
   CREATE_PROJECT_SCHEMA,
   CREATE_THREAD_SCHEMA,
   CREATE_WORKSPACE_SCHEMA,
+  GUEST_COMMENT_SCHEMA,
   IDEMPOTENCY_KEY_SCHEMA,
   INVITE_MEMBER_SCHEMA,
   LEASE_TTL_MS,
@@ -28,6 +30,7 @@ import {
   RESTORE_VERSION_SCHEMA,
   ROLE_SCHEMA,
   RUN_EVENT_REQUEST_SCHEMA,
+  SET_VERSION_LABEL_SCHEMA,
   TOPUP_SCHEMA,
   UPLOAD_VERSION_SCHEMA,
 } from "../src/routes/index.js";
@@ -91,8 +94,20 @@ describe("routes: projects + versions", () => {
     expect(UPLOAD_VERSION_SCHEMA.safeParse({ ...valid, sha256: "zz" }).success).toBe(false);
     expect(UPLOAD_VERSION_SCHEMA.safeParse({ sha256: SHA, sizeBytes: 1 }).success).toBe(false);
     expect(UPLOAD_VERSION_SCHEMA.safeParse({ ...valid, agentRunId: "" }).success).toBe(false);
-    expect(RESTORE_VERSION_SCHEMA.safeParse({ note: "back to v3" }).success).toBe(true);
-    expect(RESTORE_VERSION_SCHEMA.safeParse({}).success).toBe(true);
+    // M7 task 4: confirm-with-confirmation — a restore must carry the typed
+    // confirmation label; a bare (or note-only) restore is invalid.
+    expect(RESTORE_VERSION_SCHEMA.safeParse({ confirmLabel: "v3" }).success).toBe(true);
+    expect(
+      RESTORE_VERSION_SCHEMA.safeParse({ confirmLabel: "v3", note: "back to v3" }).success,
+    ).toBe(true);
+    expect(RESTORE_VERSION_SCHEMA.safeParse({ note: "back to v3" }).success).toBe(false);
+    expect(RESTORE_VERSION_SCHEMA.safeParse({ confirmLabel: "" }).success).toBe(false);
+    expect(RESTORE_VERSION_SCHEMA.safeParse({}).success).toBe(false);
+    // Labels are the ONLY mutable version field (§9.3; D-24 candidate).
+    expect(SET_VERSION_LABEL_SCHEMA.safeParse({ label: "shipped cut" }).success).toBe(true);
+    expect(SET_VERSION_LABEL_SCHEMA.safeParse({ label: "" }).success).toBe(false);
+    expect(SET_VERSION_LABEL_SCHEMA.safeParse({ label: "x".repeat(121) }).success).toBe(false);
+    expect(SET_VERSION_LABEL_SCHEMA.safeParse({}).success).toBe(false);
   });
 });
 
@@ -333,19 +348,48 @@ describe("routes: comments + activity", () => {
     expect(CREATE_COMMENT_SCHEMA.safeParse({ ...valid, compId: undefined }).success).toBe(false);
     expect(CREATE_COMMENT_SCHEMA.safeParse({ compId: "c1", body: "" }).success).toBe(false);
     expect(RESOLVE_COMMENT_SCHEMA.safeParse({ resolved: true }).success).toBe(true);
+    expect(RESOLVE_COMMENT_SCHEMA.safeParse({}).success).toBe(true);
+    expect(RESOLVE_COMMENT_SCHEMA.parse({}).resolved).toBe(true); // empty body resolves
+    expect(RESOLVE_COMMENT_SCHEMA.parse({ resolved: false }).resolved).toBe(false);
+    expect(RESOLVE_COMMENT_SCHEMA.safeParse({ resolved: "yes" }).success).toBe(false);
     expect(COMMENTS_QUERY_SCHEMA.safeParse({ limit: 50, resolved: true }).success).toBe(true);
+    expect(COMMENTS_QUERY_SCHEMA.safeParse({ limit: 50, resolved: "true" }).success).toBe(true); // query-string booleans
+    expect(COMMENTS_QUERY_SCHEMA.parse({ limit: 50, resolved: "false" }).resolved).toBe(false);
     const comment: Comment = {
       id: "c1",
       projectId: "p1",
       compId: "comp1",
       layerId: null,
       timeTicks: null,
+      parentCommentId: null,
       body: "Tighten this",
       authorId: "u1",
+      guestName: null,
+      guestEmail: null,
       resolvedAt: null,
+      resolvedBy: null,
       createdAt: "2026-01-01T00:00:00Z",
     };
     expect(comment.resolvedAt).toBeNull();
+  });
+
+  it("reply/guest bodies: bounded, strict, guest identity shaped", () => {
+    expect(COMMENT_REPLY_SCHEMA.safeParse({ body: "agreed" }).success).toBe(true);
+    expect(COMMENT_REPLY_SCHEMA.safeParse({ body: "x".repeat(2001) }).success).toBe(false);
+    expect(COMMENT_REPLY_SCHEMA.safeParse({ body: "agreed", compId: "c1" }).success).toBe(false); // anchor is inherited, not sent
+
+    const guest = {
+      compId: "c1",
+      body: "From a client: the logo drifts",
+      guestName: "Alex Guest",
+      guestEmail: "alex@client.test",
+    };
+    expect(GUEST_COMMENT_SCHEMA.safeParse(guest).success).toBe(true);
+    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestName: "" }).success).toBe(false);
+    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestName: "x".repeat(81) }).success).toBe(false);
+    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestEmail: "x".repeat(201) }).success).toBe(false);
+    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, guestEmail: "not-an-email" }).success).toBe(false);
+    expect(GUEST_COMMENT_SCHEMA.safeParse({ ...guest, authorId: "u1" }).success).toBe(false); // no author rides guest input
   });
 
   it("pagination: limit ≤ 100, defaults to 50, cursor optional", () => {

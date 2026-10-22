@@ -1,14 +1,32 @@
-// @studio/gateway — /v1/projects/:id/lease (§7.2, §9.3, §11): the
-// single-writer lease. Acquire = renew (same body); the loser opens
-// read-only until the lease is released or expires (2-min heartbeat,
-// 5-min TTL from @studio/db lease-logic).
+// @studio/gateway — /v1/projects/:id/lease* (§7.2, §9.3, §11): the
+// single-writer lease + the M7 lease UX (BUILD_PLAN §M7 task 3 — "Alex is
+// editing" banner; request edit; release on close; expiry).
+//
+//   POST   /v1/projects/:id/lease          acquire or renew (same body)
+//   DELETE /v1/projects/:id/lease          release — then elects the OLDEST
+//                                          queued requester as the notified
+//                                          next holder (takeover on close)
+//   POST   /v1/projects/:id/lease-request  join the edit queue (dedupe per
+//                                          user, cap 20 — typed QUOTA_EXCEEDED)
+//   DELETE /v1/projects/:id/lease-request  leave the queue
+//   GET    /v1/projects/:id/lease-state    THE banner endpoint: holder, queue,
+//                                          youAre, canAcquire
+//
+// The loser of an acquire opens read-only until the lease is released or
+// expires (2-min heartbeat, 5-min TTL from @studio/db lease-logic). Read-only
+// enforcement itself lives in ../lease-guard.ts (D-23: chat stays allowed).
+//
+// Law #1: display names in human copy, never ids — unknown members render as
+// "Someone" (memberDisplayName).
 
 import { Hono } from "hono";
 
-import { ACQUIRE_LEASE_SCHEMA } from "@studio/contracts";
+import { leaseDecision } from "@studio/db";
+import { ACQUIRE_LEASE_SCHEMA, type LeaseQueueEntry } from "@studio/contracts";
 
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
+import { memberDisplayName } from "../lease-guard.js";
 import { ok, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { audit } from "./projects.js";
@@ -40,8 +58,7 @@ export function leasesRoutes(deps: GatewayDeps): Hono<AppBindings> {
       const holderName =
         result.holderId === c.get("auth").user.id
           ? c.get("auth").user.name
-          : (workspace.members.find((member) => member.userId === result.holderId)?.userName ??
-            result.holderId);
+          : memberDisplayName(c, result.holderId);
 
       if (result.acquired) {
         await audit(deps, c, workspace.id, "lease.acquired", pathParam(c, "id"), {
@@ -63,13 +80,138 @@ export function leasesRoutes(deps: GatewayDeps): Hono<AppBindings> {
     requireWorkspace("editor"),
     async (c: AppContext): Promise<Response> => {
       const workspace = c.get("workspace");
-      const result = await deps.repos.leases.release(workspace.id, pathParam(c, "id"), {
+      const projectId = pathParam(c, "id");
+      const result = await deps.repos.leases.release(workspace.id, projectId, {
         userId: c.get("auth").user.id,
       });
+
+      // §M7 task 3 "release on close": a release hands the baton to the OLDEST
+      // queued requester — they are the notified next holder and may acquire
+      // instantly (the atomic upsert stays the single writer arbiter).
+      let nextHolder: LeaseQueueEntry | null = null;
       if (result.released) {
-        await audit(deps, c, workspace.id, "lease.released", pathParam(c, "id"));
+        const elected = await deps.repos.leases.electNextHolder(workspace.id, projectId);
+        if (elected !== null) {
+          nextHolder = {
+            userId: elected.userId,
+            displayName: memberDisplayName(c, elected.userId),
+            queuedAt: elected.queuedAt.toISOString(),
+          };
+        }
+        await audit(deps, c, workspace.id, "lease.released", projectId, {
+          nextHolderUserId: nextHolder?.userId ?? null,
+        });
       }
-      return ok(c, { released: result.released });
+      return ok(c, { released: result.released, nextHolder });
+    },
+  );
+
+  app.post(
+    "/v1/projects/:id/lease-request",
+    requireWorkspace("editor"),
+    async (c: AppContext): Promise<Response> => {
+      const workspace = c.get("workspace");
+      const projectId = pathParam(c, "id");
+      const result = await deps.repos.leases.queueRequest(workspace.id, {
+        projectId,
+        userId: c.get("auth").user.id,
+      });
+      await audit(deps, c, workspace.id, "lease.requested", projectId, {
+        position: result.position,
+        duplicate: result.duplicate,
+      });
+      return ok(c, {
+        queued: result.queued,
+        position: result.position,
+        queueLength: result.queueLength,
+        queuedAt: result.queuedAt.toISOString(),
+        duplicate: result.duplicate,
+      });
+    },
+  );
+
+  app.delete(
+    "/v1/projects/:id/lease-request",
+    requireWorkspace("editor"),
+    async (c: AppContext): Promise<Response> => {
+      const workspace = c.get("workspace");
+      const projectId = pathParam(c, "id");
+      const result = await deps.repos.leases.cancelRequest(workspace.id, {
+        projectId,
+        userId: c.get("auth").user.id,
+      });
+      if (result.cancelled) {
+        await audit(deps, c, workspace.id, "lease.request_cancelled", projectId);
+      }
+      return ok(c, { cancelled: result.cancelled });
+    },
+  );
+
+  app.get(
+    "/v1/projects/:id/lease-state",
+    requireWorkspace("viewer"),
+    async (c: AppContext): Promise<Response> => {
+      const workspace = c.get("workspace");
+      const projectId = pathParam(c, "id");
+      const callerId = c.get("auth").user.id;
+      const now = new Date();
+
+      const snapshot = await deps.repos.leases.get(workspace.id, projectId);
+      let queue = await deps.repos.leases.requestQueue(workspace.id, projectId);
+
+      // §M7 task 3 "expiry": a lease row that has gone dead is observed HERE
+      // (lazily — there is no sweeper). The first state poll past the expiry
+      // elects the OLDEST queued requester: their entry pops (they are the
+      // notified next holder) and everyone can see the project is free.
+      if (snapshot !== null && !snapshot.isHeld && queue.length > 0) {
+        await deps.repos.leases.electNextHolder(workspace.id, projectId);
+        queue = await deps.repos.leases.requestQueue(workspace.id, projectId);
+      }
+
+      const active = snapshot !== null && snapshot.isHeld ? snapshot.lease : null;
+      const holder =
+        active === null
+          ? null
+          : {
+              userId: active.userId,
+              displayName: memberDisplayName(c, active.userId),
+              // The row persists no tenure start: acquiredAt is DERIVED as the
+              // start of the holder's current renewal window (expiresAt − TTL).
+              // The banner's countdown must read expiresAt.
+              acquiredAt: new Date(
+                active.expiresAt.getTime() - deps.env.lease.ttlMs,
+              ).toISOString(),
+              expiresAt: active.expiresAt.toISOString(),
+            };
+
+      const queuedEntry = queue.find((entry) => entry.userId === callerId);
+      const youAre =
+        active !== null && active.userId === callerId
+          ? "holder"
+          : queuedEntry !== undefined
+            ? "queued"
+            : "viewer";
+
+      // canAcquire: a POST /lease right now would win — free, expired, or
+      // already ours (re-acquire renews). Same classifier the acquire path
+      // uses, so the banner can never promise what the upsert would refuse.
+      const canAcquire =
+        leaseDecision(
+          active === null ? null : { userId: active.userId, expiresAt: active.expiresAt },
+          callerId,
+          now,
+        ).action === "acquire";
+
+      return ok(c, {
+        holder,
+        queue: queue.map((entry) => ({
+          userId: entry.userId,
+          displayName: memberDisplayName(c, entry.userId),
+          queuedAt: entry.queuedAt.toISOString(),
+        })),
+        youAre,
+        canAcquire,
+      });
     },
   );
 

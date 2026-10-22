@@ -291,12 +291,17 @@ describe.skipIf(!hasDb)("repos (integration)", { timeout: 30_000 }, () => {
       body: "looks good but the logo drifts",
       authorId: userId,
     });
-    const resolved = await repos.comments.resolve(wsA, comment.id);
+    const resolved = await repos.comments.resolve(wsA, {
+      commentId: comment.id,
+      resolvedBy: userId,
+    });
     expect(resolved.resolvedAt).not.toBeNull();
+    expect(resolved.resolvedBy).toBe(userId);
     const open = await repos.comments.list(wsA, project.id, { resolved: false });
     expect(open.items.some((c) => c.id === comment.id)).toBe(false);
     const unresolved = await repos.comments.unresolve(wsA, comment.id);
     expect(unresolved.resolvedAt).toBeNull();
+    expect(unresolved.resolvedBy).toBeNull();
     // cross-tenant comment is 404
     await expect(repos.comments.get(wsB, comment.id)).rejects.toBeInstanceOf(DbError);
   });

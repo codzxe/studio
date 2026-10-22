@@ -23,13 +23,16 @@ import {
   type ApplyRequest,
   type ApplyResponse,
   type Asset,
+  type AuditExport,
   type BillingState,
   CANCEL_RUN_SCHEMA,
   CHECKOUT_SCHEMA,
   COMMENTS_QUERY_SCHEMA,
+  COMMENT_REPLY_SCHEMA,
   CREATE_ASSET_SCHEMA,
   CREATE_COMMENT_SCHEMA,
   CREATE_PROJECT_SCHEMA,
+  CREATE_SHARE_COMMENT_SCHEMA,
   CREATE_THREAD_SCHEMA,
   CREATE_WORKSPACE_SCHEMA,
   type CancelRunRequest,
@@ -37,18 +40,22 @@ import {
   type CheckoutRequest,
   type CheckoutResponse,
   type Comment,
+  type CommentReplyRequest,
   type CreateAssetRequest,
   type CreateAssetResponse,
   type CreateCommentRequest,
   type CreateProjectRequest,
+  type CreateShareCommentRequest,
   type CreateThreadRequest,
   type CreateWorkspaceRequest,
   type CreditsSummary,
   type Err,
   IDEMPOTENCY_KEY_SCHEMA,
   INVITE_MEMBER_SCHEMA,
+  ISSUE_SHARE_LINK_SCHEMA,
   type Invite,
   type InviteMemberRequest,
+  type IssueShareLinkRequest,
   LEDGER_QUERY_SCHEMA,
   type LedgerEntry,
   type MeResponse,
@@ -57,22 +64,41 @@ import {
   PATCH_PROJECT_SCHEMA,
   PATCH_WORKSPACE_SCHEMA,
   PORTAL_SCHEMA,
+  PRESENCE_BEAT_SCHEMA,
+  PRESENCE_VIEWERS_SCHEMA,
   type Page,
   type PatchProjectRequest,
   type PatchWorkspaceRequest,
   type PortalRequest,
   type PortalResponse,
+  type PresenceBeatRequest,
+  type PresenceViewersResponse,
   type Project,
   type ProjectManifest,
   type ProjectVersion,
   QUEUE_RENDER_SCHEMA,
   type QueueRenderRequest,
+  REQUEST_ACCESS_SCHEMA,
+  RESOLVE_COMMENT_SCHEMA,
   RESTORE_VERSION_SCHEMA,
   RUN_EVENT_REQUEST_SCHEMA,
   type RenderJob,
+  type RequestAccessRequest,
+  type RequestAccessResponse,
+  type ResolveCommentRequestInput,
   type RestoreVersionRequest,
   type RunEventRequest,
   type RunRecord,
+  SET_VERSION_LABEL_SCHEMA,
+  SHARE_COMMENTS_QUERY_SCHEMA,
+  SHARE_PASSWORD_HEADER,
+  type SetVersionLabelRequest,
+  type ShareComment,
+  type ShareInfo,
+  type ShareLinkIssued,
+  type ShareLinkRevoked,
+  type ShareLinkView,
+  type ShareManifest,
   type SignedUrlResponse,
   TOPUP_SCHEMA,
   TRIAL_REQUEST_SCHEMA,
@@ -86,6 +112,8 @@ import {
   UPLOAD_VERSION_SCHEMA,
   type UndoRequest,
   type UndoResponse,
+  type VersionDiffSummary,
+  type VersionTimelineEntry,
   type Workspace,
   isErr,
   isOk,
@@ -114,8 +142,15 @@ import {
   INVITE_SCHEMA,
   LEASE_ACQUIRE_RESPONSE_SCHEMA,
   LEASE_RELEASE_RESPONSE_SCHEMA,
+  LEASE_REQUEST_CANCELLED_RESPONSE_SCHEMA,
+  LEASE_REQUEST_RESPONSE_SCHEMA,
+  LEASE_STATE_RESPONSE_SCHEMA,
   LEDGER_ENTRY_SCHEMA,
   type LeaseAcquireResponse,
+  type LeaseReleaseResponse,
+  type LeaseRequestCancelledResponse,
+  type LeaseRequestResponse,
+  type LeaseStateResponse,
   ME_RESPONSE_SCHEMA,
   MODELS_RESPONSE_SCHEMA,
   PAGE_ACTIVITY_SCHEMA,
@@ -124,15 +159,25 @@ import {
   PAGE_LEDGER_SCHEMA,
   PAGE_MESSAGES_SCHEMA,
   PAGE_PROJECTS_SCHEMA,
+  PAGE_SHARE_COMMENTS_SCHEMA,
+  PAGE_SHARE_LINKS_SCHEMA,
   PAGE_THREADS_SCHEMA,
   PAGE_VERSIONS_SCHEMA,
+  PAGE_VERSION_TIMELINE_SCHEMA,
   PAGE_WORKSPACES_SCHEMA,
   PORTAL_RESPONSE_SCHEMA,
   PROJECT_MANIFEST_SCHEMA,
   PROJECT_SCHEMA,
   PROJECT_VERSION_SCHEMA,
   RENDER_JOB_SCHEMA,
+  REQUEST_ACCESS_RESPONSE_SCHEMA,
   RUN_RECORD_SCHEMA,
+  SHARE_COMMENT_SCHEMA,
+  SHARE_INFO_SCHEMA,
+  SHARE_LINK_ISSUED_SCHEMA,
+  SHARE_LINK_REVOKED_SCHEMA,
+  SHARE_LINK_VIEW_SCHEMA,
+  SHARE_MANIFEST_SCHEMA,
   SIGNED_URL_RESPONSE_SCHEMA,
   THREAD_MESSAGE_SCHEMA,
   THREAD_SCHEMA,
@@ -172,6 +217,15 @@ export interface CallOptions {
   readonly idempotencyKey?: string;
 }
 
+/**
+ * Share-surface call options: everything in CallOptions plus the optional
+ * password that protected share tokens require (`x-share-password` header —
+ * never a query parameter, so it stays out of logs and referrers).
+ */
+export interface ShareCallOptions extends CallOptions {
+  readonly password?: string;
+}
+
 export interface ApiClientOptions {
   /**
    * API root INCLUDING the version segment. Default `"/v1"` (same-origin,
@@ -201,6 +255,7 @@ const DEFAULT_BASE_URL = "/v1";
 // applies the defaults before the request goes out.
 export type PaginationQueryInput = z.input<typeof PAGINATION_QUERY_SCHEMA>;
 export type CommentsQueryInput = z.input<typeof COMMENTS_QUERY_SCHEMA>;
+export type ShareCommentsQueryInput = z.input<typeof SHARE_COMMENTS_QUERY_SCHEMA>;
 export type LedgerQueryInput = z.input<typeof LEDGER_QUERY_SCHEMA>;
 export type ActivityQueryInput = z.input<typeof ACTIVITY_QUERY_SCHEMA>;
 
@@ -237,6 +292,8 @@ interface RequestPlan<T> {
   readonly responseSchema?: z.ZodType<T>;
   readonly idempotencyKey?: string;
   readonly signal?: AbortSignal;
+  /** Extra request headers (e.g. the share password gate header). */
+  readonly headers?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +364,9 @@ class ApiClientImpl {
     headers.set("Accept", "application/json");
     if (plan.body !== undefined) headers.set("Content-Type", "application/json");
     if (plan.idempotencyKey !== undefined) headers.set("Idempotency-Key", plan.idempotencyKey);
+    if (plan.headers !== undefined) {
+      for (const [name, value] of Object.entries(plan.headers)) headers.set(name, value);
+    }
     const init: RequestInit = {
       method: plan.method,
       headers,
@@ -389,8 +449,16 @@ class ApiClientImpl {
     query: Record<string, string | number | boolean | undefined> | undefined,
     schema: z.ZodType<T>,
     signal?: AbortSignal,
+    headers?: Record<string, string>,
   ): Promise<T> {
-    return this.request<T>({ method: "GET", path, query, responseSchema: schema, signal });
+    return this.request<T>({
+      method: "GET",
+      path,
+      query,
+      responseSchema: schema,
+      signal,
+      headers,
+    });
   }
 
   async mutate<T>(
@@ -402,6 +470,7 @@ class ApiClientImpl {
       responseSchema?: z.ZodType<T>;
       idempotencyKey?: string;
       signal?: AbortSignal;
+      headers?: Record<string, string>;
     },
   ): Promise<T> {
     const body =
@@ -415,6 +484,7 @@ class ApiClientImpl {
       responseSchema: plan.responseSchema,
       idempotencyKey: plan.idempotencyKey ?? this.autoKey(),
       signal: plan.signal,
+      headers: plan.headers,
     });
   }
 }
@@ -448,11 +518,12 @@ export interface ApiClient {
     manifest(id: string, options?: CallOptions): Promise<ProjectManifest>;
   };
   readonly versions: {
+    /** GET /v1/projects/:id/versions — the §M7.4 timeline (author name, agent-run presence, sha256 prefix). */
     list(
       projectId: string,
       query?: PaginationQueryInput,
       options?: CallOptions,
-    ): Promise<Page<ProjectVersion>>;
+    ): Promise<Page<VersionTimelineEntry>>;
     /**
      * Two-phase immutable snapshot upload (§9.2/§9.3): POST the JSON
      * descriptor (sha256 + baseVersionId; a stale base returns 409
@@ -471,13 +542,35 @@ export interface ApiClient {
       },
       options?: CallOptions,
     ): Promise<ProjectVersion>;
-    /** POST /v1/projects/:id/versions/:version/restore — restores as a NEW version (§9.3). */
+    /**
+     * POST /v1/projects/:id/versions/:versionId/restore — restores as a NEW
+     * version (§9.3; history is never rewritten). Confirm-with-confirmation:
+     * `body.confirmLabel` is REQUIRED — a bare restore is refused client-side
+     * and server-side. The idempotency key makes an accidental double-POST a
+     * replay instead of a second restore.
+     */
     restore(
       projectId: string,
       versionId: string,
-      body?: RestoreVersionRequest,
+      body: RestoreVersionRequest,
       options?: CallOptions,
     ): Promise<ProjectVersion>;
+    /**
+     * POST /v1/projects/:id/versions/:versionId/label — labels are the ONLY
+     * mutable field of a version row (§9.3 label metadata; D-24 candidate).
+     */
+    label(
+      projectId: string,
+      versionId: string,
+      body: SetVersionLabelRequest,
+      options?: CallOptions,
+    ): Promise<ProjectVersion>;
+    /**
+     * GET /v1/projects/:id/versions/:versionId/diff — structural summary vs
+     * the parent (size delta, authorship change, time gap); no deep content
+     * diff in v1.
+     */
+    diff(projectId: string, versionId: string, options?: CallOptions): Promise<VersionDiffSummary>;
   };
   readonly leases: {
     /**
@@ -491,8 +584,29 @@ export interface ApiClient {
       body: AcquireLeaseRequest,
       options?: CallOptions,
     ): Promise<LeaseAcquireResponse>;
-    /** DELETE /v1/projects/:id/lease; resolves `{ released }`. */
-    release(projectId: string, options?: CallOptions): Promise<{ released: boolean }>;
+    /**
+     * DELETE /v1/projects/:id/lease — release. When a queue exists, the
+     * response carries the §M7 takeover election: the OLDEST queued
+     * requester as `nextHolder` (their UI lets them acquire instantly).
+     */
+    release(projectId: string, options?: CallOptions): Promise<LeaseReleaseResponse>;
+    /**
+     * GET /v1/projects/:id/lease-state — the "Alex is editing" banner data
+     * (§M7 task 3): active holder, pending queue, the caller's standing and
+     * whether a `POST /lease` right now would win. Poll this for the banner.
+     */
+    leaseState(projectId: string, options?: CallOptions): Promise<LeaseStateResponse>;
+    /**
+     * POST /v1/projects/:id/lease-request — join the edit queue. Dedupes per
+     * user (re-requests keep the original position); a full queue is a typed
+     * QUOTA_EXCEEDED error (cap 20).
+     */
+    requestLease(projectId: string, options?: CallOptions): Promise<LeaseRequestResponse>;
+    /** DELETE /v1/projects/:id/lease-request — leave the edit queue. */
+    cancelLeaseRequest(
+      projectId: string,
+      options?: CallOptions,
+    ): Promise<LeaseRequestCancelledResponse>;
   };
   readonly assets: {
     list(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<Asset>>;
@@ -574,7 +688,28 @@ export interface ApiClient {
       query?: CommentsQueryInput,
       options?: CallOptions,
     ): Promise<Page<Comment>>;
+    /** GET /v1/projects/:id/comments — the flat threaded list (D-15: compId
+     * filters server-side; rows carry parentCommentId for tree building). */
+    listThreadedComments(
+      projectId: string,
+      query?: CommentsQueryInput,
+      options?: CallOptions,
+    ): Promise<Page<Comment>>;
     create(projectId: string, body: CreateCommentRequest, options?: CallOptions): Promise<Comment>;
+    /** POST /v1/comments/:id/replies — reply; the server inherits the
+     * parent's anchor and caps depth at 3. */
+    replyComment(
+      commentId: string,
+      body: CommentReplyRequest,
+      options?: CallOptions,
+    ): Promise<Comment>;
+    /** POST /v1/comments/:id/resolve — idempotent resolve; `resolved: false`
+     * reopens the thread (empty body resolves). */
+    resolveComment(
+      commentId: string,
+      body?: ResolveCommentRequestInput,
+      options?: CallOptions,
+    ): Promise<Comment>;
   };
   readonly activity: {
     list(
@@ -582,6 +717,83 @@ export interface ApiClient {
       query?: ActivityQueryInput,
       options?: CallOptions,
     ): Promise<Page<ActivityEntry>>;
+    /**
+     * GET /v1/projects/:id/audit-export — admin-only, bounded JSON export of
+     * the raw audit rows (ids/emails are compliance DATA here, never UI copy).
+     * Served as a Content-Disposition attachment; the client returns the
+     * parsed payload so hosts can also save it as a file.
+     */
+    auditExport(projectId: string, options?: CallOptions): Promise<AuditExport>;
+  };
+  readonly presence: {
+    /**
+     * POST /v1/projects/:id/presence — upsert my heartbeat and get the
+     * active viewers in ONE round-trip (the heartbeat IS the poll; no SSE
+     * in v1). Cadence for the editor SPA (see gateway routes/presence.ts
+     * for the full recipe): beat every LEASE_HEARTBEAT_MS (120s) while the
+     * tab is visible, pause while hidden, beat immediately on visible.
+     * No cursor/mouse data — the body is strict-schema'd server-side.
+     */
+    beatPresence(
+      projectId: string,
+      body?: PresenceBeatRequest,
+      options?: CallOptions,
+    ): Promise<PresenceViewersResponse>;
+    /**
+     * GET /v1/projects/:id/presence — the active viewers list (no write:
+     * does NOT refresh your own heartbeat; for read-only surfaces or a
+     * hidden tab that still wants to render the list).
+     */
+    listPresence(projectId: string, options?: CallOptions): Promise<PresenceViewersResponse>;
+  };
+  readonly share: {
+    /**
+     * PUBLIC — GET /v1/share/:token. Share metadata for the /s/:token page
+     * (project name, expiry, hasPassword) — never project content. No
+     * session needed: the token IS the capability.
+     */
+    getInfo(token: string, options?: ShareCallOptions): Promise<ShareInfo>;
+    /**
+     * PUBLIC — GET /v1/share/:token/manifest. The web player's read surface
+     * (signed URLs, no internal ids). Pass `password` for protected tokens.
+     */
+    getManifest(token: string, options?: ShareCallOptions): Promise<ShareManifest>;
+    /** PUBLIC — GET /v1/share/:token/comments (D-15: compId filters server-side). */
+    listComments(
+      token: string,
+      query?: ShareCommentsQueryInput,
+      options?: ShareCallOptions,
+    ): Promise<Page<ShareComment>>;
+    /**
+     * PUBLIC — POST /v1/share/:token/comments. Guest comment (name + email
+     * + anchor + body); per-IP rate-limited server-side (429 RATE_LIMITED).
+     */
+    createComment(
+      token: string,
+      body: CreateShareCommentRequest,
+      options?: ShareCallOptions,
+    ): Promise<ShareComment>;
+    /** PUBLIC — POST /v1/share/:token/request-access. Typed ok; the
+     * workspace sees the request in its activity feed (v1 notification). */
+    requestAccess(
+      token: string,
+      body: RequestAccessRequest,
+      options?: ShareCallOptions,
+    ): Promise<RequestAccessResponse>;
+    /**
+     * AUTHED — POST /v1/projects/:id/share-links (editor role). Mints a
+     * token and returns it ONCE: persist the /s/:token URL immediately —
+     * it can never be re-fetched (only sha256(token) is stored).
+     */
+    issueLink(
+      projectId: string,
+      body?: IssueShareLinkRequest,
+      options?: CallOptions,
+    ): Promise<ShareLinkIssued>;
+    /** AUTHED — GET /v1/projects/:id/share-links. Active links, NO token material. */
+    listLinks(projectId: string, options?: CallOptions): Promise<Page<ShareLinkView>>;
+    /** AUTHED — DELETE /v1/share/:id. Revoke (creator or admin); idempotent. */
+    revokeLink(id: string, options?: CallOptions): Promise<ShareLinkRevoked>;
   };
 }
 
@@ -624,6 +836,11 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   };
   const paginated = (query: unknown): Record<string, string | number | boolean | undefined> =>
     queryOf(PAGINATION_QUERY_SCHEMA, query);
+
+  // Share password → x-share-password header (never the query string, so
+  // logs/referrers never capture it). Undefined for open tokens.
+  const passwordHeaders = (options?: ShareCallOptions): Record<string, string> | undefined =>
+    options?.password === undefined ? undefined : { [SHARE_PASSWORD_HEADER]: options.password };
 
   const client: ApiClient = {
     // Every namespace method is `async` so client-side validation failures
@@ -709,7 +926,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         impl.get(
           `/projects/${encodeId(projectId)}/versions`,
           paginated(query),
-          PAGE_VERSIONS_SCHEMA,
+          PAGE_VERSION_TIMELINE_SCHEMA,
           options?.signal,
         ),
       upload: async (projectId, input, options) => uploadVersion(impl, projectId, input, options),
@@ -718,12 +935,31 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           "POST",
           `/projects/${encodeId(projectId)}/versions/${encodeId(versionId)}/restore`,
           {
-            body: body ?? {},
+            body,
             bodySchema: RESTORE_VERSION_SCHEMA,
             responseSchema: PROJECT_VERSION_SCHEMA,
             idempotencyKey: mutationKey(options) ?? impl.autoKey(),
             signal: options?.signal,
           },
+        ),
+      label: async (projectId, versionId, body, options) =>
+        impl.mutate(
+          "POST",
+          `/projects/${encodeId(projectId)}/versions/${encodeId(versionId)}/label`,
+          {
+            body,
+            bodySchema: SET_VERSION_LABEL_SCHEMA,
+            responseSchema: PROJECT_VERSION_SCHEMA,
+            idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+            signal: options?.signal,
+          },
+        ),
+      diff: async (projectId, versionId, options) =>
+        impl.get(
+          `/projects/${encodeId(projectId)}/versions/${encodeId(versionId)}/diff`,
+          undefined,
+          VERSION_DIFF_SUMMARY_SCHEMA,
+          options?.signal,
         ),
     },
     leases: {
@@ -738,6 +974,25 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       release: async (projectId, options) =>
         impl.mutate("DELETE", `/projects/${encodeId(projectId)}/lease`, {
           responseSchema: LEASE_RELEASE_RESPONSE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      leaseState: async (projectId, options) =>
+        impl.get(
+          `/projects/${encodeId(projectId)}/lease-state`,
+          undefined,
+          LEASE_STATE_RESPONSE_SCHEMA,
+          options?.signal,
+        ),
+      requestLease: async (projectId, options) =>
+        impl.mutate("POST", `/projects/${encodeId(projectId)}/lease-request`, {
+          responseSchema: LEASE_REQUEST_RESPONSE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      cancelLeaseRequest: async (projectId, options) =>
+        impl.mutate("DELETE", `/projects/${encodeId(projectId)}/lease-request`, {
+          responseSchema: LEASE_REQUEST_CANCELLED_RESPONSE_SCHEMA,
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
@@ -909,10 +1164,33 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           PAGE_COMMENTS_SCHEMA,
           options?.signal,
         ),
+      listThreadedComments: async (projectId, query, options) =>
+        impl.get(
+          `/projects/${encodeId(projectId)}/comments`,
+          queryOf(COMMENTS_QUERY_SCHEMA, query),
+          PAGE_COMMENTS_SCHEMA,
+          options?.signal,
+        ),
       create: async (projectId, body, options) =>
         impl.mutate("POST", `/projects/${encodeId(projectId)}/comments`, {
           body,
           bodySchema: CREATE_COMMENT_SCHEMA,
+          responseSchema: COMMENT_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      replyComment: async (commentId, body, options) =>
+        impl.mutate("POST", `/comments/${encodeId(commentId)}/replies`, {
+          body,
+          bodySchema: COMMENT_REPLY_SCHEMA,
+          responseSchema: COMMENT_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      resolveComment: async (commentId, body, options) =>
+        impl.mutate("POST", `/comments/${encodeId(commentId)}/resolve`, {
+          body: body ?? {},
+          bodySchema: RESOLVE_COMMENT_SCHEMA,
           responseSchema: COMMENT_SCHEMA,
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
@@ -926,6 +1204,98 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           PAGE_ACTIVITY_SCHEMA,
           options?.signal,
         ),
+      auditExport: async (projectId, options) =>
+        impl.get(
+          `/projects/${encodeId(projectId)}/audit-export`,
+          undefined,
+          AUDIT_EXPORT_SCHEMA,
+          options?.signal,
+        ),
+    },
+    presence: {
+      // Response validation reuses the contracts Zod schemas directly —
+      // presence response SHAPES are pinned there (PRESENCE_VIEWERS_SCHEMA),
+      // so there is nothing to mirror in ./response-schemas.ts.
+      beatPresence: async (projectId, body, options) =>
+        impl.mutate("POST", `/projects/${encodeId(projectId)}/presence`, {
+          body: body ?? {},
+          bodySchema: PRESENCE_BEAT_SCHEMA,
+          responseSchema: PRESENCE_VIEWERS_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      listPresence: async (projectId, options) =>
+        impl.get(
+          `/projects/${encodeId(projectId)}/presence`,
+          undefined,
+          PRESENCE_VIEWERS_SCHEMA,
+          options?.signal,
+        ),
+    },
+    share: {
+      getInfo: async (token, options) =>
+        impl.get(
+          `/share/${encodeId(token)}`,
+          undefined,
+          SHARE_INFO_SCHEMA,
+          options?.signal,
+          passwordHeaders(options),
+        ),
+      getManifest: async (token, options) =>
+        impl.get(
+          `/share/${encodeId(token)}/manifest`,
+          undefined,
+          SHARE_MANIFEST_SCHEMA,
+          options?.signal,
+          passwordHeaders(options),
+        ),
+      listComments: async (token, query, options) =>
+        impl.get(
+          `/share/${encodeId(token)}/comments`,
+          queryOf(SHARE_COMMENTS_QUERY_SCHEMA, query),
+          PAGE_SHARE_COMMENTS_SCHEMA,
+          options?.signal,
+          passwordHeaders(options),
+        ),
+      createComment: async (token, body, options) =>
+        impl.mutate("POST", `/share/${encodeId(token)}/comments`, {
+          body,
+          bodySchema: CREATE_SHARE_COMMENT_SCHEMA,
+          responseSchema: SHARE_COMMENT_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+          headers: passwordHeaders(options),
+        }),
+      requestAccess: async (token, body, options) =>
+        impl.mutate("POST", `/share/${encodeId(token)}/request-access`, {
+          body,
+          bodySchema: REQUEST_ACCESS_SCHEMA,
+          responseSchema: REQUEST_ACCESS_RESPONSE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+          headers: passwordHeaders(options),
+        }),
+      issueLink: async (projectId, body, options) =>
+        impl.mutate("POST", `/projects/${encodeId(projectId)}/share-links`, {
+          body: body ?? {},
+          bodySchema: ISSUE_SHARE_LINK_SCHEMA,
+          responseSchema: SHARE_LINK_ISSUED_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      listLinks: async (projectId, options) =>
+        impl.get(
+          `/projects/${encodeId(projectId)}/share-links`,
+          undefined,
+          PAGE_SHARE_LINKS_SCHEMA,
+          options?.signal,
+        ),
+      revokeLink: async (id, options) =>
+        impl.mutate("DELETE", `/share/${encodeId(id)}`, {
+          responseSchema: SHARE_LINK_REVOKED_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
     },
   };
   return Object.freeze(client);

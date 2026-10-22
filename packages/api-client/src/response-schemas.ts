@@ -17,6 +17,8 @@ import {
   type ActivityEntry,
   type ApplyResponse,
   type Asset,
+  type AuditExport,
+  type AuditExportRow,
   BILLING_STATUS_SCHEMA,
   type BillingEntitlements,
   type BillingState,
@@ -30,6 +32,8 @@ import {
   type Invite,
   LEDGER_KIND_SCHEMA,
   type LedgerEntry,
+  LEASE_QUEUE_ENTRY_SCHEMA,
+  type LeaseQueueEntry,
   MODEL_ID_SCHEMA,
   type ManifestAsset,
   type MeResponse,
@@ -45,15 +49,24 @@ import {
   RENDER_FORMAT_SCHEMA,
   ROLE_SCHEMA,
   type RenderJob,
+  type RequestAccessResponse,
   type RunRecord,
   type RunStepRecord,
   type SignedUrl,
   type SignedUrlResponse,
   TOP_UP_PACK_ID_SCHEMA,
+  type ShareComment,
+  type ShareInfo,
+  type ShareLinkIssued,
+  type ShareLinkRevoked,
+  type ShareLinkView,
+  type ShareManifest,
   type Thread,
   type ThreadMessage,
   type TrialResponse,
   type UndoResponse,
+  type VersionDiffSummary,
+  type VersionTimelineEntry,
   WORKSPACE_SLUG_SCHEMA,
   type Workspace,
 } from "@studio/contracts";
@@ -199,6 +212,39 @@ export const PROJECT_VERSION_SCHEMA = z.object({
   createdAt: isoSchema,
 }) satisfies z.ZodType<ProjectVersion>;
 
+// M7 task 4 — the version TIMELINE (superset of the version row: author
+// display name, agent-run presence, 12-char sha256 prefix for UI copy).
+export const PROJECT_VERSION_TIMELINE_SCHEMA = z.object({
+  id: idSchema,
+  projectId: idSchema,
+  version: z.number().int().positive(),
+  parentVersionId: nullableId,
+  sha256: z.string(),
+  sizeBytes: z.number().int().positive(),
+  label: z.string().nullable(),
+  agentRunId: nullableId,
+  createdBy: idSchema,
+  createdAt: isoSchema,
+  createdByName: z.string().nullable(),
+  isAgent: z.boolean(),
+  sha256Prefix: z.string().min(12).max(12),
+}) satisfies z.ZodType<VersionTimelineEntry>;
+
+// M7 task 4 — structural diff vs the parent (no deep content diff in v1).
+export const VERSION_DIFF_SUMMARY_SCHEMA = z.object({
+  fromParent: z
+    .object({
+      parentVersionId: idSchema,
+      parentVersion: z.number().int().positive(),
+      sizeDeltaBytes: z.number().int(),
+      labelChanged: z.boolean(),
+      authorChanged: z.boolean(),
+      createdGapMs: z.number().int().nonnegative(),
+    })
+    .nullable(),
+  summary: z.string().max(200),
+}) satisfies z.ZodType<VersionDiffSummary>;
+
 export interface UploadVersionResponse {
   readonly version: ProjectVersion;
   readonly upload: {
@@ -250,7 +296,36 @@ export const LEASE_ACQUIRE_RESPONSE_SCHEMA = z.object({
 
 export const LEASE_RELEASE_RESPONSE_SCHEMA = z.object({
   released: z.boolean(),
-}) satisfies z.ZodType<{ released: boolean }>;
+  // §M7 task 3 takeover: the OLDEST queued requester popped at release time.
+  // OPTIONAL in the client validator — pre-M7 gateways omit the field.
+  nextHolder: LEASE_QUEUE_ENTRY_SCHEMA.nullable().optional(),
+}) satisfies z.ZodType<LeaseReleaseResponse>;
+
+/** `DELETE /v1/projects/:id/lease` — release + the §M7 next-holder election. */
+export interface LeaseReleaseResponse {
+  readonly released: boolean;
+  readonly nextHolder?: LeaseQueueEntry | null;
+}
+
+// ── M7 lease UX (BUILD_PLAN §M7 task 3) ─────────────────────────────────────
+// contracts fixes the full Zod schemas for these wires (co-designed with the
+// gateway routes), so they are re-exported directly instead of mirrored:
+//   GET    /v1/projects/:id/lease-state   the "Alex is editing" banner data
+//   POST   /v1/projects/:id/lease-request join the edit queue (dedupe/cap)
+//   DELETE /v1/projects/:id/lease-request leave the queue
+export {
+  LEASE_REQUEST_CANCELLED_RESPONSE_SCHEMA,
+  LEASE_REQUEST_RESPONSE_SCHEMA,
+  LEASE_STATE_RESPONSE_SCHEMA,
+} from "@studio/contracts";
+export type {
+  LeaseQueueEntry,
+  LeaseRequestCancelledResponse,
+  LeaseRequestResponse,
+  LeaseStateHolder,
+  LeaseStateResponse,
+  LeaseYouAre,
+} from "@studio/contracts";
 
 // ---------------------------------------------------------------------------
 // Assets
@@ -474,9 +549,16 @@ export const COMMENT_SCHEMA = z.object({
   compId: idSchema,
   layerId: nullableId,
   timeTicks: z.number().int().nonnegative().nullable(),
+  // Threaded list (M7): parent link for client-side tree building.
+  parentCommentId: nullableId,
   body: z.string(),
-  authorId: idSchema,
+  // Null on guest rows (share-link comments) — see guestName.
+  authorId: nullableId,
+  guestName: z.string().nullable(),
+  guestEmail: z.string().nullable(),
   resolvedAt: isoSchema.nullable(),
+  // Resolver user id (recorded on resolve, cleared on reopen).
+  resolvedBy: nullableId,
   createdAt: isoSchema,
 }) satisfies z.ZodType<Comment>;
 
@@ -490,6 +572,30 @@ export const ACTIVITY_ENTRY_SCHEMA = z.object({
   targetId: nullableId,
   createdAt: isoSchema,
 }) satisfies z.ZodType<ActivityEntry>;
+
+// M7 task 4 — the ADMIN-ONLY audit export (ids/emails are compliance data in
+// this surface, never UI copy — see routes/activity.ts for the law-#1 nuance).
+export const AUDIT_EXPORT_ROW_SCHEMA = z.object({
+  id: idSchema,
+  actorId: nullableId,
+  actorName: z.string().nullable(),
+  actorEmail: z.string().nullable(),
+  action: z.string(),
+  targetType: z.string().nullable(),
+  targetId: nullableId,
+  metadata: z.unknown().nullable(),
+  ip: z.string().nullable(),
+  createdAt: isoSchema,
+}) satisfies z.ZodType<AuditExportRow>;
+
+export const AUDIT_EXPORT_SCHEMA = z.object({
+  projectId: idSchema,
+  generatedAt: isoSchema,
+  maxRows: z.number().int().positive(),
+  rowCount: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  rows: z.array(AUDIT_EXPORT_ROW_SCHEMA),
+}) satisfies z.ZodType<AuditExport>;
 
 // ---------------------------------------------------------------------------
 // Cursor pagination (§7.2 list endpoints)
@@ -506,9 +612,95 @@ export function pageSchema<T>(item: z.ZodType<T>) {
 export const PAGE_WORKSPACES_SCHEMA = pageSchema(WORKSPACE_SCHEMA);
 export const PAGE_PROJECTS_SCHEMA = pageSchema(PROJECT_SCHEMA);
 export const PAGE_VERSIONS_SCHEMA = pageSchema(PROJECT_VERSION_SCHEMA);
+export const PAGE_VERSION_TIMELINE_SCHEMA = pageSchema(PROJECT_VERSION_TIMELINE_SCHEMA);
 export const PAGE_ASSETS_SCHEMA = pageSchema(ASSET_SCHEMA);
 export const PAGE_THREADS_SCHEMA = pageSchema(THREAD_SCHEMA);
 export const PAGE_MESSAGES_SCHEMA = pageSchema(THREAD_MESSAGE_SCHEMA);
 export const PAGE_LEDGER_SCHEMA = pageSchema(LEDGER_ENTRY_SCHEMA);
 export const PAGE_COMMENTS_SCHEMA = pageSchema(COMMENT_SCHEMA);
 export const PAGE_ACTIVITY_SCHEMA = pageSchema(ACTIVITY_ENTRY_SCHEMA);
+
+// ---------------------------------------------------------------------------
+// Share links (M7-E; BUILD_PLAN §M7 task 5) — public + member surfaces
+// ---------------------------------------------------------------------------
+
+/** Issue response — the ONLY place the raw share token ever appears. */
+export const SHARE_LINK_ISSUED_SCHEMA = z.object({
+  id: idSchema,
+  token: z.string(),
+  expiresAt: isoSchema.nullable(),
+  hasPassword: z.boolean(),
+}) satisfies z.ZodType<ShareLinkIssued>;
+
+/** Active link for member lists — NO token material (hash never leaves the db). */
+export const SHARE_LINK_VIEW_SCHEMA = z.object({
+  id: idSchema,
+  projectId: idSchema,
+  createdBy: idSchema,
+  createdAt: isoSchema,
+  expiresAt: isoSchema.nullable(),
+  revokedAt: isoSchema.nullable(),
+  hasPassword: z.boolean(),
+}) satisfies z.ZodType<ShareLinkView>;
+
+/** Public share metadata: what is shared + how to unlock; never content. */
+export const SHARE_INFO_SCHEMA = z.object({
+  projectId: idSchema,
+  projectName: z.string(),
+  compId: nullableId,
+  expiresAt: isoSchema.nullable(),
+  hasPassword: z.boolean(),
+  requestAccessEmail: z.string().nullable(),
+}) satisfies z.ZodType<ShareInfo>;
+
+/** Public manifest asset — name/type/dimensions + signed URL, NO ids. */
+const SHARE_MANIFEST_ASSET_SCHEMA = z.object({
+  name: z.string(),
+  mime: z.string(),
+  width: z.number().nullable(),
+  height: z.number().nullable(),
+  durationTicks: z.number().nullable(),
+  url: z.string(),
+});
+
+/** Public web-player manifest — NO project/version/asset ids (leak pin). */
+export const SHARE_MANIFEST_SCHEMA = z.object({
+  currentVersion: z
+    .object({
+      version: z.number().int().nonnegative(),
+      label: z.string().nullable(),
+      sizeBytes: z.number().int().nonnegative(),
+      createdAt: isoSchema,
+      url: z.string(),
+    })
+    .nullable(),
+  assets: z.array(SHARE_MANIFEST_ASSET_SCHEMA),
+  updatedAt: isoSchema,
+}) satisfies z.ZodType<ShareManifest>;
+
+/** A comment as an anonymous reviewer sees it: no member ids, no guest emails. */
+export const SHARE_COMMENT_SCHEMA = z.object({
+  id: idSchema,
+  compId: idSchema,
+  layerId: nullableId,
+  timeTicks: z.number().int().nonnegative().nullable(),
+  parentCommentId: nullableId,
+  body: z.string(),
+  guestName: z.string().nullable(),
+  resolvedAt: isoSchema.nullable(),
+  createdAt: isoSchema,
+}) satisfies z.ZodType<ShareComment>;
+
+/** Request-access ack — v1 notification is the workspace's audit row. */
+export const REQUEST_ACCESS_RESPONSE_SCHEMA = z.object({
+  ok: z.literal(true),
+}) satisfies z.ZodType<RequestAccessResponse>;
+
+/** Revoke response — idempotent: the same revokedAt on a repeat DELETE. */
+export const SHARE_LINK_REVOKED_SCHEMA = z.object({
+  id: idSchema,
+  revokedAt: isoSchema.nullable(),
+}) satisfies z.ZodType<ShareLinkRevoked>;
+
+export const PAGE_SHARE_LINKS_SCHEMA = pageSchema(SHARE_LINK_VIEW_SCHEMA);
+export const PAGE_SHARE_COMMENTS_SCHEMA = pageSchema(SHARE_COMMENT_SCHEMA);
