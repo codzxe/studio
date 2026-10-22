@@ -58,7 +58,6 @@ import {
   type PortalRequest,
   type PortalResponse,
   type Project,
-  type ProjectLease,
   type ProjectManifest,
   type ProjectVersion,
   QUEUE_RENDER_SCHEMA,
@@ -87,7 +86,7 @@ import {
   malformedResponseError,
   networkError,
   uploadFailedError,
-} from "./api-error.js";
+} from "./api-error";
 import {
   ACCEPTED_INVITE_SCHEMA,
   ACTIVITY_ENTRY_SCHEMA,
@@ -97,7 +96,10 @@ import {
   CREATE_ASSET_RESPONSE_SCHEMA,
   CREDITS_SUMMARY_SCHEMA,
   INVITE_SCHEMA,
+  LEASE_ACQUIRE_RESPONSE_SCHEMA,
+  LEASE_RELEASE_RESPONSE_SCHEMA,
   LEDGER_ENTRY_SCHEMA,
+  type LeaseAcquireResponse,
   ME_RESPONSE_SCHEMA,
   PAGE_ACTIVITY_SCHEMA,
   PAGE_ASSETS_SCHEMA,
@@ -109,7 +111,6 @@ import {
   PAGE_VERSIONS_SCHEMA,
   PAGE_WORKSPACES_SCHEMA,
   PORTAL_RESPONSE_SCHEMA,
-  PROJECT_LEASE_SCHEMA,
   PROJECT_MANIFEST_SCHEMA,
   PROJECT_SCHEMA,
   PROJECT_VERSION_SCHEMA,
@@ -121,14 +122,14 @@ import {
   UPLOAD_VERSION_RESPONSE_SCHEMA,
   type UploadVersionResponse,
   WORKSPACE_SCHEMA,
-} from "./response-schemas.js";
+} from "./response-schemas";
 import {
   type ChatStreamController,
   type ChatStreamHandlers,
   type ChatStreamReconnectConfig,
   streamChat,
-} from "./sse.js";
-import { isAbortError, sleepWithAbort } from "./utils.js";
+} from "./sse";
+import { isAbortError, sleepWithAbort } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Options and shapes
@@ -455,14 +456,19 @@ export interface ApiClient {
     ): Promise<ProjectVersion>;
   };
   readonly leases: {
-    /** POST /v1/projects/:id/lease — acquire or renew (§11). */
+    /**
+     * POST /v1/projects/:id/lease — acquire or renew (same body, §11).
+     * Answers with the acquire outcome: `acquired: false` + `readOnly: true`
+     * means another editor holds the lease (§9.3). Heartbeat = re-acquire
+     * with the same `sessionId` while the tab is open.
+     */
     acquire(
       projectId: string,
       body: AcquireLeaseRequest,
       options?: CallOptions,
-    ): Promise<ProjectLease>;
-    /** DELETE /v1/projects/:id/lease; returns `null`. */
-    release(projectId: string, options?: CallOptions): Promise<null>;
+    ): Promise<LeaseAcquireResponse>;
+    /** DELETE /v1/projects/:id/lease; resolves `{ released }`. */
+    release(projectId: string, options?: CallOptions): Promise<{ released: boolean }>;
   };
   readonly assets: {
     list(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<Asset>>;
@@ -677,12 +683,13 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         impl.mutate("POST", `/projects/${encodeId(projectId)}/lease`, {
           body,
           bodySchema: ACQUIRE_LEASE_SCHEMA,
-          responseSchema: PROJECT_LEASE_SCHEMA,
+          responseSchema: LEASE_ACQUIRE_RESPONSE_SCHEMA,
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
       release: async (projectId, options) =>
         impl.mutate("DELETE", `/projects/${encodeId(projectId)}/lease`, {
+          responseSchema: LEASE_RELEASE_RESPONSE_SCHEMA,
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),

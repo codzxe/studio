@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { isApiError } from "../src/api-error.js";
-import { RETRY_DELAYS_MS, createApiClient } from "../src/client.js";
-import { jsonErr, jsonOk } from "./helpers.js";
+import { isApiError } from "../src/api-error";
+import { RETRY_DELAYS_MS, createApiClient } from "../src/client";
+import { jsonErr, jsonOk } from "./helpers";
 
 const BASE = "https://api.studio.test/v1";
 const ME = {

@@ -19,7 +19,6 @@ import {
   type ChatRequest,
   EDIT_PLAN_SCHEMA,
   type EditPlan,
-  type ProjectLease,
   type RunClientAction,
   STUDIO_STREAM_EVENT_SCHEMA,
   type ThreadMessage,
@@ -54,11 +53,12 @@ import {
   CREATE_ASSET_RESPONSE_SCHEMA,
   CREDITS_SUMMARY_SCHEMA,
   INVITE_SCHEMA,
+  LEASE_ACQUIRE_RESPONSE_SCHEMA,
   LEDGER_ENTRY_SCHEMA,
+  type LeaseAcquireResponse,
   type MANIFEST_ASSET_SCHEMA,
   ME_RESPONSE_SCHEMA,
   PAGE_ACTIVITY_SCHEMA,
-  PROJECT_LEASE_SCHEMA,
   PROJECT_MANIFEST_SCHEMA,
   PROJECT_SCHEMA,
   PROJECT_VERSION_SCHEMA,
@@ -67,7 +67,7 @@ import {
   THREAD_MESSAGE_SCHEMA,
   THREAD_SCHEMA,
   WORKSPACE_SCHEMA,
-} from "./response-schemas.js";
+} from "./response-schemas";
 
 /**
  * EffectCraft timeline tick rate (editor/crates/time: TICKS_PER_SECOND) —
@@ -1223,12 +1223,14 @@ const DEMO_CHAT_REQUEST: ChatRequest = {
   pinned: [{ kind: "composition", id: "cmp_demo_launch_main", label: "Comp: Main" }],
 } satisfies ChatRequest;
 
+// The §7.2 lease wire response (see response-schemas.ts compat note): the
+// demo editor HOLDS the lease on the demo project.
 const DEMO_LEASE = {
-  projectId: "prj_demo_launch_film",
-  userId: DEMO_USER_ID,
-  sessionId: "sess_demo_editor_01",
+  acquired: true,
+  holderName: "Dana Flow",
   expiresAt: "2026-10-15T09:07:00Z",
-} as const satisfies ProjectLease;
+  readOnly: false,
+} as const satisfies LeaseAcquireResponse;
 
 // ---------------------------------------------------------------------------
 // The fixtures object
@@ -1379,7 +1381,7 @@ export function validateFixtures(): string[] {
   for (const [i, row] of fixtures.renders.entries()) {
     check(`renders[${i}]`, RENDER_JOB_SCHEMA, row, issues);
   }
-  check("lease", PROJECT_LEASE_SCHEMA, fixtures.lease, issues);
+  check("lease", LEASE_ACQUIRE_RESPONSE_SCHEMA, fixtures.lease, issues);
   check("checkout", CHECKOUT_RESPONSE_SCHEMA, fixtures.checkout, issues);
   {
     const parsed = CHAT_REQUEST_SCHEMA.safeParse(fixtures.chatRequest);

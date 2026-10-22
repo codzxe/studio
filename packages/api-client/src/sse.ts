@@ -59,8 +59,8 @@ import {
   isErr,
 } from "@studio/contracts";
 
-import { ApiError, fromResponse, isApiError, networkError } from "./api-error.js";
-import { getAbortError, isAbortError, sleepWithAbort } from "./utils.js";
+import { ApiError, fromResponse, isApiError, networkError } from "./api-error";
+import { getAbortError, isAbortError, sleepWithAbort } from "./utils";
 
 // ---------------------------------------------------------------------------
 // SSE byte-stream parser (WHATWG event-stream framing)

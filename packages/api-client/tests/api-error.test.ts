@@ -2,7 +2,7 @@ import { ERROR_CATALOG } from "@studio/config";
 import { WIRE_ERROR_CODES } from "@studio/contracts";
 import { describe, expect, it } from "vitest";
 
-import { ApiError, fromResponse, isApiError } from "../src/api-error.js";
+import { ApiError, fromResponse, isApiError } from "../src/api-error";
 
 describe("ApiError", () => {
   it("carries the §7.3 body fields plus the HTTP status", () => {

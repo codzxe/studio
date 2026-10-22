@@ -7,8 +7,8 @@
 //   * response-schemas.ts — Zod mirrors of the contracts response interfaces
 //   * fixtures.ts     — deterministic dev/demo dataset (validateFixtures)
 
-export * from "./api-error.js";
-export * from "./client.js";
-export * from "./response-schemas.js";
-export * from "./sse.js";
-export * from "./fixtures.js";
+export * from "./api-error";
+export * from "./client";
+export * from "./response-schemas";
+export * from "./sse";
+export * from "./fixtures";
