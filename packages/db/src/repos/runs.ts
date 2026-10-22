@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
 import type { StudioDb } from "../db.js";
@@ -12,7 +12,9 @@ import {
   agentRuns,
   agentSteps,
   agentThreads,
+  projectVersions,
   projects,
+  user,
 } from "../schema.js";
 import { assertRunTransition, isTerminalRunStatus } from "../statuses.js";
 import { type WorkspaceId, requireNonEmpty } from "./shared.js";
@@ -34,6 +36,46 @@ export interface RunUpdateInput {
   readonly committedCredits?: number;
   readonly resultVersionId?: string | null;
   readonly errorCode?: string | null;
+}
+
+/**
+ * M5.4 — record the apply of a proposed plan: the ONE atomic engine.batch the
+ * run compiled to was executed client-side, `saveNow("agent-apply")` produced
+ * `versionId`, and the gateway now pins the batch digest + base version on the
+ * run row. Idempotency at this layer = rejection (a second apply is a CONFLICT;
+ * the route layer turns a replayed idempotency key into the original answer).
+ */
+export interface RecordAppliedInput {
+  readonly runId: string;
+  /** sha256 of the executed compiled batch — exactly 64 lowercase hex chars. */
+  readonly batchSha256: string;
+  /** The version created by this apply (must belong to the run's project). */
+  readonly versionId: string;
+  /**
+   * The version the client was on when the plan was proposed. Optional here: the
+   * run already captured it at create time. If given it must MATCH the recorded
+   * base (else PROJECT_VERSION_CONFLICT, §9.3) and is backfilled when the run
+   * predates the column or was created without a base.
+   */
+  readonly baseVersionId?: string | null;
+}
+
+/** M5.5 — undo the whole run as ONE step. Requires the run to be applied. */
+export interface RecordUndoneInput {
+  readonly runId: string;
+  readonly userId: string;
+}
+
+/** Plan lifecycle of a run (§M5.4/§M5.5): proposed → applied → undone. */
+export type PlanLifecycleStatus = "proposed" | "applied" | "undone";
+
+export interface PlanState {
+  readonly status: PlanLifecycleStatus;
+  readonly appliedAt: Date | null;
+  readonly appliedBatchSha256: string | null;
+  readonly appliedVersionId: string | null;
+  readonly baseVersionId: string | null;
+  readonly undoneAt: Date | null;
 }
 
 export interface StepCreateInput {
@@ -67,6 +109,41 @@ export interface RunsRepo {
     threadId: string,
     options?: ListOptions,
   ): Promise<Page<AgentRun>>;
+  /** M5.4: mark the run applied — the apply created `versionId` (ONE version). */
+  recordApplied(workspaceId: WorkspaceId, input: RecordAppliedInput): Promise<AgentRun>;
+  /** M5.5: mark the run undone — the version row is never deleted (§9.3). */
+  recordUndone(workspaceId: WorkspaceId, input: RecordUndoneInput): Promise<AgentRun>;
+  /** Plan lifecycle projection of a run — cross-tenant reads as NOT_FOUND. */
+  getPlanState(workspaceId: WorkspaceId, runId: string): Promise<PlanState>;
+}
+
+const SHA256_HEX = /^[a-f0-9]{64}$/;
+
+function requireBatchSha256(value: string, field: string): string {
+  const sha = requireNonEmpty(value, field);
+  if (!SHA256_HEX.test(sha)) {
+    throw DbError.validation(`${field} must be exactly 64 lowercase hex characters`);
+  }
+  return sha;
+}
+
+/** Pure projection of the apply/undo columns onto the plan lifecycle. */
+export function toPlanState(
+  run: Pick<
+    AgentRun,
+    "appliedAt" | "appliedBatchSha256" | "appliedVersionId" | "baseVersionId" | "undoneAt"
+  >,
+): PlanState {
+  const status: PlanLifecycleStatus =
+    run.appliedAt === null ? "proposed" : run.undoneAt === null ? "applied" : "undone";
+  return {
+    status,
+    appliedAt: run.appliedAt,
+    appliedBatchSha256: run.appliedBatchSha256,
+    appliedVersionId: run.appliedVersionId,
+    baseVersionId: run.baseVersionId,
+    undoneAt: run.undoneAt,
+  };
 }
 
 export function createRunsRepo(db: StudioDb): RunsRepo {
@@ -79,6 +156,20 @@ export function createRunsRepo(db: StudioDb): RunsRepo {
       .limit(1);
     if (!row) throw DbError.notFound("run");
     return row.run;
+  }
+
+  /** A version id that must exist AND belong to the run's project (§9.3 scope). */
+  async function requireProjectVersion(
+    projectId: string,
+    versionId: string,
+    what: string,
+  ): Promise<void> {
+    const [row] = await db
+      .select({ id: projectVersions.id })
+      .from(projectVersions)
+      .where(and(eq(projectVersions.id, versionId), eq(projectVersions.projectId, projectId)))
+      .limit(1);
+    if (!row) throw DbError.notFound(what);
   }
 
   return {
@@ -222,6 +313,108 @@ export function createRunsRepo(db: StudioDb): RunsRepo {
         nextCursor:
           hasMore && last ? encodeCursor({ t: last.createdAt.toISOString(), id: last.id }) : null,
       };
+    },
+
+    async recordApplied(workspaceId, input) {
+      const runId = requireNonEmpty(input.runId, "runId");
+      const versionId = requireNonEmpty(input.versionId, "versionId");
+      const batchSha256 = requireBatchSha256(input.batchSha256, "batchSha256");
+
+      // tenant filter FIRST (law #3): cross-tenant run ids read as 404.
+      const run = await requireRun(workspaceId, runId);
+      if (run.status === "cancelled") {
+        throw DbError.conflict("A cancelled run cannot be applied");
+      }
+      if (run.appliedAt !== null) {
+        throw DbError.conflict("This run was already applied");
+      }
+
+      // The applied version must be a version of THIS run's project.
+      await requireProjectVersion(run.projectId, versionId, "version");
+
+      // Base version: verify/backfill, never silently rewrite (§9.3).
+      let baseVersionId: string | undefined;
+      if (input.baseVersionId !== undefined && input.baseVersionId !== null) {
+        const claimed = requireNonEmpty(input.baseVersionId, "baseVersionId");
+        await requireProjectVersion(run.projectId, claimed, "base version");
+        if (run.baseVersionId !== null && run.baseVersionId !== claimed) {
+          throw DbError.versionConflict({
+            expectedVersionId: run.baseVersionId,
+            currentVersionId: claimed,
+          });
+        }
+        baseVersionId = claimed;
+      }
+
+      const values: Partial<typeof agentRuns.$inferInsert> = {
+        appliedAt: new Date(),
+        appliedBatchSha256: batchSha256,
+        appliedVersionId: versionId,
+        ...(baseVersionId !== undefined ? { baseVersionId } : {}),
+        // First applied version doubles as the run's result version; never
+        // overwrite an already-recorded result (immutability at the column).
+        ...(run.resultVersionId === null ? { resultVersionId: versionId } : {}),
+      };
+
+      // Guarded update: concurrent applies/late cancels lose the race here.
+      const [updated] = await db
+        .update(agentRuns)
+        .set(values)
+        .where(
+          and(
+            eq(agentRuns.id, run.id),
+            isNull(agentRuns.appliedAt),
+            ne(agentRuns.status, "cancelled"),
+          ),
+        )
+        .returning();
+      if (updated) return updated;
+
+      const [current] = await db.select().from(agentRuns).where(eq(agentRuns.id, run.id)).limit(1);
+      if (current?.appliedAt != null) {
+        throw DbError.conflict("This run was already applied");
+      }
+      throw DbError.conflict("A cancelled run cannot be applied");
+    },
+
+    async recordUndone(workspaceId, input) {
+      const runId = requireNonEmpty(input.runId, "runId");
+      const userId = requireNonEmpty(input.userId, "userId");
+
+      const run = await requireRun(workspaceId, runId);
+      if (run.appliedAt === null) {
+        throw DbError.conflict("This run has not been applied yet");
+      }
+      if (run.undoneAt !== null) {
+        throw DbError.conflict("This run was already undone");
+      }
+
+      const [actor] = await db
+        .select({ id: user.id })
+        .from(user)
+        .where(eq(user.id, userId))
+        .limit(1);
+      if (!actor) throw DbError.notFound("user");
+
+      const [updated] = await db
+        .update(agentRuns)
+        .set({ undoneAt: new Date(), undoneBy: userId })
+        .where(
+          and(eq(agentRuns.id, run.id), isNotNull(agentRuns.appliedAt), isNull(agentRuns.undoneAt)),
+        )
+        .returning();
+      if (updated) return updated;
+
+      const [current] = await db.select().from(agentRuns).where(eq(agentRuns.id, run.id)).limit(1);
+      if (current && current.appliedAt === null) {
+        throw DbError.conflict("This run has not been applied yet");
+      }
+      throw DbError.conflict("This run was already undone");
+    },
+
+    async getPlanState(workspaceId, runId) {
+      const run = await requireRun(workspaceId, requireNonEmpty(runId, "runId"));
+      return toPlanState(run);
     },
   };
 }

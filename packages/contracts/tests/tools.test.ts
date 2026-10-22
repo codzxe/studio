@@ -44,29 +44,43 @@ const VALID_ARGS: Record<string, unknown> = {
     durationSeconds: 10,
   },
   "studio.create_text": {
-    compId: "c1",
     text: "Hello",
     name: "Headline",
-    fontSize: 72,
-    fontFamily: "Inter",
-    color: "#0B0D10",
     position: [960, 540],
+    box: [100, 100, 800, 200],
+    font: "Inter",
+    style: "Bold",
+    size: 72,
+    fill: "#0B0D10",
+    stroke: [12, 34, 56],
+    strokeWidth: 2,
+    tracking: 10,
+    leading: 80,
   },
   "studio.set_properties": {
-    updates: [{ layer: "l1", path: "transform/opacity", value: 100 }],
+    layers: [{ name: "Headline" }],
+    properties: [{ path: "transform/opacity", value: 100 }],
   },
-  "studio.add_effect": { layer: "l1", effect: "blur", params: { radius: 4 } },
+  "studio.add_effect": {
+    layers: [{ name: "Headline" }],
+    effect: { name: "Gaussian Blur" },
+    params: { radius: 4 },
+  },
   "studio.set_keyframes": {
-    layer: "l1",
+    layers: [{ name: "Headline" }],
     propertyPath: "transform/scale",
-    keyframes: [
-      { time: 0, value: 20, easing: "ease-in-out" },
-      { time: 0.45, value: 110 },
-      { time: 0.7, value: 100 },
+    keys: [
+      { timeSeconds: 0, value: 20, interpolation: "bezier" },
+      { timeSeconds: 0.45, value: 110, interpolation: "hold" },
+      { timeSeconds: 0.7, value: 100, interpolation: "linear" },
     ],
   },
-  "studio.apply_preset": { preset: "kinetic-in", targets: ["l1", "l2"] },
-  "studio.undo_run": { runId: "run_1" },
+  "studio.apply_preset": {
+    preset: { name: "Kinetic In" },
+    layers: [{ name: "Headline" }],
+    args: { intensity: 0.8 },
+  },
+  "studio.undo_run": {},
   "studio.save_version": { label: "Before sound pass" },
 };
 
@@ -77,14 +91,23 @@ const INVALID_ARGS: Record<string, unknown> = {
   "studio.get_properties": { layerIds: [] },
   "studio.plan_edit": { goal: "" },
   "studio.render_preview": { maxWidth: 4096 }, // §8.3: 1200 px cap
-  "studio.create_composition": { name: "Main", width: 0, height: 1080 },
-  "studio.create_text": { text: "Hello", color: "red" },
-  "studio.set_properties": { updates: [{ layer: "l1" }] }, // missing path/value
-  "studio.add_effect": { layer: "", effect: "blur" },
-  "studio.set_keyframes": { layer: "l1", propertyPath: "p", keyframes: [] },
-  "studio.apply_preset": { preset: "kinetic-in", targets: [] },
-  "studio.undo_run": { runId: "" },
-  "studio.save_version": { label: "x".repeat(281) },
+  "studio.create_composition": { name: "Main", width: 0, height: 1080 }, // width < 1
+  "studio.create_text": { text: "Hello", fill: "red" }, // not a #rrggbb color
+  "studio.set_properties": { layers: [{ name: "Headline" }] }, // missing properties
+  "studio.add_effect": {
+    layers: [{ name: "Headline" }],
+    effect: { name: "C:/plugins/blur.plugin" }, // plugin path, not a human name
+  },
+  "studio.set_keyframes": {
+    layers: [{ name: "Headline" }],
+    propertyPath: "transform/scale",
+    keys: [], // min 1
+  },
+  "studio.apply_preset": {
+    preset: { name: "Kinetic In", builtinId: "kinetic-in" }, // both, not exactly one
+  },
+  "studio.undo_run": { runId: "run_1" }, // NO args allowed (strict)
+  "studio.save_version": { label: "x".repeat(121) }, // label ≤ 120
 };
 
 describe("tools: §8.4 catalog completeness", () => {

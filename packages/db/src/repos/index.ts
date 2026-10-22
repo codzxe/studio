@@ -16,7 +16,13 @@ export type { VersionsRepo } from "./versions.js";
 export type { LeasesRepo } from "./leases.js";
 export type { AssetsRepo } from "./assets.js";
 export type { ThreadsRepo } from "./threads.js";
-export type { RunsRepo } from "./runs.js";
+export type {
+  RunsRepo,
+  RecordAppliedInput,
+  RecordUndoneInput,
+  PlanState,
+  PlanLifecycleStatus,
+} from "./runs.js";
 export type { LedgerRepo } from "./ledger.js";
 export type { CommentsRepo } from "./comments.js";
 export type { RendersRepo } from "./renders.js";

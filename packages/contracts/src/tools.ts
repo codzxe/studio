@@ -7,10 +7,13 @@
 // Doc note: §8.4 says "~12 curated tools" and then lists exactly 13 rows —
 // all 13 are implemented; the doc's "~" is the wiggle room.
 //
-// Write tools are PROPOSAL-ONLY (§8.4 rules 1-5): each returns a proposed
-// batch, the client shows the plan/approval card, and on Apply the bridge
-// calls `engine.batch` with `atomic: true` and label `"Agent: <summary>"`.
-// No write tool ever executes anything by itself.
+// Write tools are PROPOSAL-ONLY (§8.4 rules 1-5, BUILD_PLAN §M5.1): each
+// returns a proposed batch (write-tools.ts WRITE_TOOL_RESULT_SCHEMA), the
+// client shows the plan/approval card, and on Apply the bridge calls
+// `engine.batch` with `atomic: true` and label `"Agent: <summary>"`. No write
+// tool ever executes anything by itself. The eight write-tool contracts
+// (curated STRICT args, dunder-safe, layers BY NAME) live in ./write-tools.ts
+// (M5-SEAMS seam) and are registered here as `studio.<id>` entries.
 //
 // Descriptions are model-facing: precise, no raw command ids (§8.4, §12.2 —
 // "the model sees curated tools, never raw commands").
@@ -18,6 +21,7 @@
 import { z } from "zod";
 
 import type { PlanRisk } from "./edit-plan.js";
+import { WRITE_TOOLS, studioWriteToolId } from "./write-tools.js";
 
 // ---------------------------------------------------------------------------
 // Tool identity
@@ -88,13 +92,24 @@ const CONTEXT_BLOCK_SCHEMA = z.enum([
   "comments",
 ]);
 
-const HEX_COLOR_SCHEMA = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
-
-const EASING_SCHEMA = z.enum(["linear", "ease-in", "ease-out", "ease-in-out"]);
-
 // ---------------------------------------------------------------------------
 // Catalog (§8.4 table, same order)
 // ---------------------------------------------------------------------------
+
+/**
+ * The eight write tools (§8.4), registered from their curated contracts in
+ * ./write-tools.ts (M5-SEAMS seam): STRICT dunder-safe args, layers BY NAME,
+ * proposal-only results. `studioWriteToolId` keeps the ids in lockstep with
+ * WRITE_TOOL_IDS so the two registries can never drift.
+ */
+const WRITE_TOOL_DEFS: readonly ToolDefinition[] = WRITE_TOOLS.map((tool) => ({
+  id: studioWriteToolId(tool.id),
+  kind: "write" as const,
+  risk: tool.risk,
+  description: tool.description,
+  args: tool.inputSchema,
+  returns: "proposed-batch" as const,
+}));
 
 export const TOOL_LIST: readonly ToolDefinition[] = [
   {
@@ -164,136 +179,7 @@ export const TOOL_LIST: readonly ToolDefinition[] = [
       maxWidth: z.number().int().min(16).max(1200).default(1200),
     }),
   },
-  {
-    id: "studio.create_composition",
-    kind: "write",
-    risk: "medium",
-    returns: "proposed-batch",
-    description:
-      "Propose creating a new composition with a name, pixel size, frame rate and duration in " +
-      "seconds. Returns the proposed change for review; nothing is executed until the user " +
-      "applies the plan.",
-    args: z.object({
-      name: z.string().min(1).max(120),
-      width: z.number().int().min(16).max(8192),
-      height: z.number().int().min(16).max(8192),
-      frameRate: z.number().positive().max(480).default(30),
-      durationSeconds: z.number().positive().max(3600).default(10),
-    }),
-  },
-  {
-    id: "studio.create_text",
-    kind: "write",
-    risk: "low",
-    returns: "proposed-batch",
-    description:
-      "Propose adding an editable text layer with content, optional font size/family, color and " +
-      "position to a composition. The text stays editable afterwards.",
-    args: z.object({
-      compId: z.string().min(1).optional(),
-      text: z.string().min(1).max(5000),
-      name: z.string().min(1).max(120).optional(),
-      fontSize: z.number().positive().max(2000).optional(),
-      fontFamily: z.string().min(1).max(200).optional(),
-      color: HEX_COLOR_SCHEMA.optional(),
-      position: z.tuple([z.number(), z.number()]).optional(),
-    }),
-  },
-  {
-    id: "studio.set_properties",
-    kind: "write",
-    risk: "low",
-    returns: "proposed-batch",
-    description:
-      "Propose setting property values on existing layers: transforms, opacity, text content, " +
-      "effect parameters. Each update names a layer, a property path and the new value.",
-    args: z.object({
-      updates: z
-        .array(
-          z.object({
-            layer: z.string().min(1),
-            path: z.string().min(1),
-            value: z.unknown(),
-          }),
-        )
-        .min(1)
-        .max(50),
-    }),
-  },
-  {
-    id: "studio.add_effect",
-    kind: "write",
-    risk: "medium",
-    returns: "proposed-batch",
-    description:
-      "Propose adding an effect from the effect registry to a layer, with optional parameters. " +
-      "Only effects the registry knows are accepted.",
-    args: z.object({
-      layer: z.string().min(1),
-      effect: z.string().min(1),
-      params: z.record(z.string(), z.unknown()).optional(),
-    }),
-  },
-  {
-    id: "studio.set_keyframes",
-    kind: "write",
-    risk: "low",
-    returns: "proposed-batch",
-    description:
-      "Propose creating or updating keyframes on an existing layer property: a list of times " +
-      "(seconds) and values, with optional easing. Time is seconds; timecode is display only.",
-    args: z.object({
-      layer: z.string().min(1),
-      propertyPath: z.string().min(1),
-      keyframes: z
-        .array(
-          z.object({
-            time: z.number().nonnegative(),
-            value: z.unknown(),
-            easing: EASING_SCHEMA.optional(),
-          }),
-        )
-        .min(1)
-        .max(200),
-    }),
-  },
-  {
-    id: "studio.apply_preset",
-    kind: "write",
-    risk: "medium",
-    returns: "proposed-batch",
-    description:
-      "Propose applying an animation or style preset to one or more target layers. Presets may " +
-      "change several properties at once; review the affected layers in the plan.",
-    args: z.object({
-      preset: z.string().min(1).max(200),
-      targets: z.array(z.string().min(1)).min(1).max(50),
-    }),
-  },
-  {
-    id: "studio.undo_run",
-    kind: "write",
-    risk: "medium",
-    returns: "proposed-batch",
-    description:
-      "Propose reverting an entire applied agent run as a single undo step (default: the most " +
-      "recent applied run). The run's version remains in project history.",
-    args: z.object({
-      runId: z.string().min(1).optional(),
-    }),
-  },
-  {
-    id: "studio.save_version",
-    kind: "write",
-    risk: "low",
-    returns: "proposed-batch",
-    description:
-      "Propose saving an immutable snapshot of the project with an optional label. Snapshots are " +
-      "content-addressed and never modify project content.",
-    args: z.object({
-      label: z.string().max(280).optional(),
-    }),
-  },
+  ...WRITE_TOOL_DEFS,
 ];
 
 export const TOOL_CATALOG: Readonly<Record<ToolId, ToolDefinition>> = Object.fromEntries(

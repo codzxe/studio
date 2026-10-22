@@ -5,9 +5,10 @@
  * This module models the whole THREAD (a message list where each assistant
  * message is bound to the run that produced it), not a single run — the
  * wave-2 UI agents (M4-E…M4-J) render `ChatUiState` straight out of the
- * controller's store. The M4 slice of the §8.1 state machine:
- * `awaiting_approval`/`applying`/`applied`/`undoing`/`undone` are M5 and are
- * deliberately NOT modeled here.
+ * controller's store. The M4 slice of the §8.1 state machine stays the
+ * thread `phase`; the M5 apply slice (`applying`/`applied`/`undoing`/`undone`)
+ * lives per-plan in `ChatUiMessage.planRuntime` (M5-F) so the thread phase
+ * keeps driving sends/steer/reconnect exactly as it did in M4.
  *
  * Boundary law (see lib/editor-session/types.ts, AGENTS.md hard rule):
  * - `@studio/contracts` is imported `import type` ONLY. The §7.4 event types
@@ -22,12 +23,15 @@
 
 import type { ChatStreamHandlers, ChatStreamReconnectConfig } from "@studio/api-client";
 import type {
+  AgentBatch,
   ChatRequest,
   ContextSelection,
   EditPlan,
   ModelId,
   PinnedContextItem,
 } from "@studio/contracts";
+
+import type { LayerResolutionRequest } from "./apply";
 
 // ---------------------------------------------------------------------------
 // Run phases (M4 slice of EDITOR_CHAT_UX §8.1) + per-run UI state
@@ -63,6 +67,36 @@ export interface ToolCardState {
   readonly deltaText?: string;
 }
 
+/**
+ * The M5 runtime payload of a `plan` event, beyond the M4 card data: the
+ * server-compiled batch the ApplyController executes, the layer names it
+ * still needs bound to ids, and the apply lifecycle of THIS plan (driven by
+ * user gestures — the stream never touches it; M5-G's plan card renders it).
+ */
+export interface PlanRuntime {
+  /** The server-compiled `engine.batch` payload (allowlisted + §8.5-validated). */
+  readonly compiledBatch: AgentBatch;
+  /** Layer names the plan references; resolved client-side at apply (§8.7). */
+  readonly resolutionRequests?: readonly LayerResolutionRequest[];
+  /** The version the plan was compiled against — the reapply gate (§M5.5). */
+  readonly baseVersionId?: string;
+  /** Apply lifecycle of this plan (user gestures fold it, never the stream). */
+  readonly outcome:
+    | "idle"
+    | "applying"
+    | "applied"
+    | "apply-failed"
+    | "undoing"
+    | "undone"
+    | "undo-failed";
+  /** The version the applied edit created (set on a successful apply). */
+  readonly versionId?: string;
+  /** The last apply/undo failure, rendered by the card (safe text). */
+  readonly error?: ChatUiError;
+  /** `onCancel` (§6.2): the user dismissed the card for this plan. */
+  readonly dismissed?: boolean;
+}
+
 /** One rendered thread message (§3.3). */
 export interface ChatUiMessage {
   readonly id: string;
@@ -73,6 +107,8 @@ export interface ChatUiMessage {
   readonly toolCards: readonly ToolCardState[];
   /** Latest `plan` event for the run — informational card in M4 (apply is M5). */
   readonly plan?: EditPlan;
+  /** Latest plan's M5 runtime (compiled batch + apply lifecycle). */
+  readonly planRuntime?: PlanRuntime;
   /** Latest `credits` snapshot for the run (§7.4). */
   readonly credits?: {
     readonly reserved: number;

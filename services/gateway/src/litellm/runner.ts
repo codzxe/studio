@@ -1,25 +1,40 @@
 // @studio/gateway — the LiteLLM agent runner (PRODUCT_ARCHITECTURE §8.1-§8.9,
-// D-16; M4-SEAMS Seam 3). REAL OpenAI-compatible runner behind the
-// AgentRunner seam — replaces the old UnavailableRunner.
+// D-16; M4-SEAMS Seam 3; M5-SEAMS "write tools wired into the loop").
+// REAL OpenAI-compatible runner behind the AgentRunner seam.
 //
 // Loop per run (§8.1 stack roles — the gateway never talks to a provider
 // directly, always through the LiteLLM proxy):
 //   1. emit run.started (model alias)
 //   2. stream from the model; text deltas → message.delta events
-//   3. tool calls: allowlist = the 5 READ tools only (M4.6 hard rule: NO
-//      write tool is ever registered). Unknown tool or args failing the
-//      TOOL_LIST Zod schema → ONE repair turn (validation error as the tool
-//      result); second offense → failed RUN_INVALID_TOOL (§8.9).
-//   4. client tools (get_context/list_layers/get_properties/render_preview):
-//      tool.started + expectToolCall, then waitForToolResult (Seam 2) — the
-//      editor executes via the bridge and POSTs /v1/runs/:id/events; timeout
-//      → failed EDITOR_DISCONNECTED "The editor didn't respond in time."
+//   3. tool calls: allowlist = the 13 CURATED tools (5 read + 8 write, ids
+//      pinned by contracts TOOL_LIST / WRITE_TOOL_IDS; §8.4). Unknown tool
+//      or args failing the tool's Zod schema → ONE repair turn (validation
+//      error as the tool result); second offense → failed RUN_INVALID_TOOL
+//      (§8.9).
+//   4. client read tools (get_context/list_layers/get_properties/
+//      render_preview): tool.started + expectToolCall, then
+//      waitForToolResult (Seam 2) — the editor executes via the bridge and
+//      POSTs /v1/runs/:id/events; timeout → failed EDITOR_DISCONNECTED.
 //   5. studio.plan_edit is SERVER-SIDE: a structured-output call to the SAME
 //      alias (strict JSON prompt + EDIT_PLAN_SCHEMA parse, 2 attempts) →
-//      emit {type:"plan"}; the validated plan is the tool result. The client
-//      does NOT execute plan_edit.
-//   6. repeat until finish or the round cap → failed RUN_STEP_LIMIT.
-//   7. usage → committedCredits: ceil(in/1000×rateIn + out/1000×rateOut),
+//      emit {type:"plan"} (M5: enriched with the server-side compile —
+//      compiledBatch/resolutionRequests/risk/estimatedCredits, all
+//      optional so M4 consumers keep parsing); the validated plan is the
+//      tool result. The client does NOT execute plan_edit.
+//   6. write tools (create_composition/create_text/set_properties/
+//      add_effect/set_keyframes/apply_preset/undo_run/save_version) are
+//      PROPOSE-ONLY (BUILD_PLAN §M5.1: "Each returns a proposed batch; no
+//      direct execution"): the runner resolves them SERVER-SIDE through
+//      the M5-B compile seam into a proposed AgentBatch + human summary —
+//      the tool.result envelope for the client carries the proposal;
+//      the MODEL is fed a redacted summary only (law #5: the compiled
+//      registry command ids never enter the model conversation); NOTHING
+//      executes in the gateway — the batch executes only when the client
+//      applies it (M5-F/M5-E, §8.7).
+//   7. repeat until finish or the round cap → failed RUN_STEP_LIMIT
+//      (D-1: write tools are model-loop steps too — the cap bounds the
+//      whole loop).
+//   8. usage → committedCredits: ceil(in/1000×rateIn + out/1000×rateOut),
 //      min 1, from MODEL_CATALOG; usage missing → tokens ≈ chars/4.
 //
 // Redaction (M4.3): the logger receives ONLY lengths + sha256 prefixes of
@@ -28,12 +43,22 @@
 import { z } from "zod";
 
 import {
+  type AgentBatch,
   EDIT_PLAN_SCHEMA,
   type EditPlan,
+  estimateCredits,
+  type LayerResolutionRequest,
+  MAX_BATCH_LABEL_LENGTH,
+  MAX_PLAN_AFFECTED_LAYERS,
+  MAX_PLAN_SUMMARY_LENGTH,
   MODEL_CATALOG,
   type ModelId,
-  TOOL_LIST,
+  type PlanIntent,
+  type PlanRisk,
   type ToolDefinition,
+  getTool,
+  TOOL_LIST,
+  WRITE_TOOL_IDS,
 } from "@studio/contracts";
 
 import { type Logger, nullLogger } from "../logger.js";
@@ -71,24 +96,94 @@ export interface LiteLLMRunnerDeps {
   readonly sleep?: (ms: number) => Promise<void>;
   /** Redacted-metadata-only logger (M4.3); defaults to silent. */
   readonly logger?: Logger;
+  /**
+   * M5-B plan-compiler seam (docs/phases/M5-SEAMS.md pinned interface —
+   * types below). Injectable so tests are deterministic and the integrator
+   * can wire M5-B's ../plan-compiler.ts as the default without touching
+   * the loop. Defaults to {@link planCompilerUnavailable} (typed ok:false)
+   * until M5-B lands — write tools then answer PROPOSAL_INVALID and plan
+   * events stay un-enriched; propose-only, never an execution.
+   */
+  readonly compilePlan?: CompilePlanFn;
 }
 
 // ---------------------------------------------------------------------------
-// Read-tool surface (M4.6: NOTHING else is ever registered)
+// M5-B plan-compiler seam (docs/phases/M5-SEAMS.md — PINNED interface)
 // ---------------------------------------------------------------------------
 
-/** Exactly the §8.4 read tools (5). No write tool is ever sent to a model. */
+/** M5-SEAMS pin: `CompilePlanInput { plan: EditPlan; } // + resolution context`. */
+export interface CompilePlanInput {
+  readonly plan: EditPlan;
+}
+
+/** M5-SEAMS pin: compile failures are typed issues — the compiler never throws. */
+export interface PlanIssue {
+  readonly message: string;
+  readonly step?: number;
+}
+
+/** M5-SEAMS pin: `ok:true` carries the compiled batch + server-recomputed risk/credits. */
+export type CompilePlanResult =
+  | {
+      readonly ok: true;
+      readonly batch: AgentBatch;
+      readonly risk: PlanRisk;
+      readonly estimatedCredits: number;
+      readonly resolutionRequests: readonly LayerResolutionRequest[];
+    }
+  | {
+      readonly ok: false;
+      readonly issues: readonly PlanIssue[];
+    };
+
+/** The compiler function shape the runner consumes (injectable via deps). */
+export type CompilePlanFn = (input: CompilePlanInput) => Promise<CompilePlanResult>;
+
+/**
+ * DEFAULT compiler seam. services/gateway/src/plan-compiler.ts (M5-B) had
+ * NOT landed when M5-C wired this — the runner codes against the pinned
+ * interface above instead of importing it. INTEGRATOR FLIP (one line): once
+ * ../plan-compiler.ts exists, replace this stub with
+ * `import { compilePlan } from "../plan-compiler.js"` and pass it as the
+ * deps default below (the deps override stays for tests). Until then every
+ * compile degrades to a typed ok:false — write tools answer PROPOSAL_INVALID
+ * and plan events carry no compiledBatch. Nothing ever executes here.
+ */
+const planCompilerUnavailable: CompilePlanFn = async () => ({
+  ok: false,
+  issues: [{ message: "The plan compiler is not wired into this build yet." }],
+});
+
+// ---------------------------------------------------------------------------
+// Tool surface (§8.4: curated only — 5 read + 8 write = 13)
+// ---------------------------------------------------------------------------
+
+/** Exactly the §8.4 read tools (5). */
 export const RUNNER_READ_TOOLS: readonly ToolDefinition[] = TOOL_LIST.filter(
   (tool) => tool.kind === "read",
 );
 
-const READ_TOOL_BY_ID: ReadonlyMap<string, ToolDefinition> = new Map(
-  RUNNER_READ_TOOLS.map((tool) => [tool.id, tool]),
+/**
+ * The 8 write tools (BUILD_PLAN §M5.1), ids taken from contracts
+ * WRITE_TOOL_IDS — lookup through the curated catalog, never an invented
+ * id. PROPOSE-ONLY (§8.4 rules 1-5): results are proposed batches.
+ */
+export const RUNNER_WRITE_TOOLS: readonly ToolDefinition[] = WRITE_TOOL_IDS.map((id) =>
+  getTool(`studio.${id}`),
+).filter(
+  (tool): tool is ToolDefinition => tool !== undefined && tool.kind === "write",
+);
+
+/** Everything registered on the provider wire: 5 read + 8 write = 13. */
+export const RUNNER_TOOLS: readonly ToolDefinition[] = [...RUNNER_READ_TOOLS, ...RUNNER_WRITE_TOOLS];
+
+const TOOL_BY_ID: ReadonlyMap<string, ToolDefinition> = new Map(
+  RUNNER_TOOLS.map((tool) => [tool.id, tool]),
 );
 
 /** Tool registrations for the provider, derived from the Zod args schemas. */
 function openAiToolSpecs(): OpenAIToolSpec[] {
-  return RUNNER_READ_TOOLS.map((tool) => ({
+  return RUNNER_TOOLS.map((tool) => ({
     type: "function" as const,
     function: {
       name: tool.id,
@@ -104,6 +199,12 @@ function toolParametersSchema(tool: ToolDefinition): Record<string, unknown> {
   return Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "$schema"));
 }
 
+/** The registered write-tool definition for `name`, or `null` for read tools. */
+function registeredWriteTool(name: string): ToolDefinition | null {
+  const tool = TOOL_BY_ID.get(name);
+  return tool !== undefined && tool.kind === "write" ? tool : null;
+}
+
 // ---------------------------------------------------------------------------
 // Tool-call validation (§8.9: one repair turn, then RUN_INVALID_TOOL)
 // ---------------------------------------------------------------------------
@@ -113,11 +214,11 @@ type ValidatedToolCall =
   | { readonly ok: false; readonly message: string };
 
 function validateToolCall(call: AggregatedToolCall): ValidatedToolCall {
-  const tool = READ_TOOL_BY_ID.get(call.name);
+  const tool = TOOL_BY_ID.get(call.name);
   if (tool === undefined) {
     return {
       ok: false,
-      message: `Unknown tool "${call.name}". Available tools: ${RUNNER_READ_TOOLS.map((t) => t.id).join(", ")}.`,
+      message: `Unknown tool "${call.name}". Available tools: ${RUNNER_TOOLS.map((t) => t.id).join(", ")}.`,
     };
   }
   let parsedArgs: unknown;
@@ -129,6 +230,11 @@ function validateToolCall(call: AggregatedToolCall): ValidatedToolCall {
       message: `Tool arguments for ${tool.id} must be a single valid JSON object.`,
     };
   }
+  // Args are validated against the tool's curated Zod schema from the
+  // contracts catalog (`tool.args` — complete for all 13 tools today).
+  // M5-A's WRITE_TOOL_ARGS_SCHEMAS registry is the pinned forward surface
+  // (M5-SEAMS); once it lands as the authoritative per-tool ZodObjects, the
+  // integrator flips this ONE lookup to consult it for write tools.
   const checked = tool.args.safeParse(parsedArgs);
   if (!checked.success) {
     const detail = checked.error.issues
@@ -229,6 +335,165 @@ function planValidationError(raw: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// Write-tool proposal carriers (BUILD_PLAN §M5.1 — propose-only, §8.7)
+// ---------------------------------------------------------------------------
+// The write-tool path REUSES the M5-B compilePlan per-step translation: the
+// validated tool call is wrapped as a ONE-STEP EditPlan carrier and handed
+// to the same seam studio.plan_edit uses. The carrier is SERVER-INTERNAL —
+// the model never sees it (it is built from the already-validated args).
+
+/** EditPlan intent per write tool (§8.6 vocabulary; undo/save are structural). */
+const WRITE_TOOL_INTENTS: Readonly<Record<string, PlanIntent>> = {
+  "studio.create_composition": "create",
+  "studio.create_text": "create",
+  "studio.set_properties": "edit",
+  "studio.add_effect": "style",
+  "studio.set_keyframes": "animate",
+  "studio.apply_preset": "animate",
+  "studio.undo_run": "organize",
+  "studio.save_version": "organize",
+};
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function array(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function clamp280(value: string): string {
+  return value.length <= MAX_PLAN_SUMMARY_LENGTH
+    ? value
+    : `${value.slice(0, MAX_PLAN_SUMMARY_LENGTH - 1)}…`;
+}
+
+/** Deterministic HUMAN summary of one write-tool call (§8.6 display data). */
+export function writeToolSummary(toolId: string, args: Record<string, unknown>): string {
+  switch (toolId) {
+    case "studio.create_composition":
+      return `Create composition "${str(args.name)}" (${str(args.width)}×${str(args.height)})`;
+    case "studio.create_text": {
+      const content = str(args.text);
+      const label = str(args.name) || (content.length > 40 ? `${content.slice(0, 39)}…` : content);
+      return `Add text layer "${label}"`;
+    }
+    case "studio.set_properties": {
+      const updates = array(args.updates);
+      const layers = new Set(
+        updates
+          .map((update) =>
+            typeof update === "object" && update !== null
+              ? str((update as Record<string, unknown>).layer)
+              : "",
+          )
+          .filter((layer) => layer !== ""),
+      );
+      const noun = updates.length === 1 ? "property" : "properties";
+      return `Set ${updates.length} ${noun} on ${layers.size === 0 ? 1 : layers.size} layer${
+        layers.size > 1 ? "s" : ""
+      }`;
+    }
+    case "studio.add_effect":
+      return `Add effect "${str(args.effect)}" to layer "${str(args.layer)}"`;
+    case "studio.set_keyframes":
+      return `Set ${array(args.keyframes).length} keyframes on ${str(args.propertyPath)} of layer "${str(
+        args.layer,
+      )}"`;
+    case "studio.apply_preset":
+      return `Apply preset "${str(args.preset)}" to ${array(args.targets).length} layer${
+        array(args.targets).length === 1 ? "" : "s"
+      }`;
+    case "studio.undo_run":
+      return str(args.runId) === "" ? "Undo the most recent agent run" : `Undo agent run ${str(args.runId)}`;
+    case "studio.save_version":
+      return str(args.label) === ""
+        ? "Save a version snapshot of the project"
+        : `Save a version snapshot labeled "${str(args.label)}"`;
+    default:
+      return `Propose ${toolId.replace(/^studio\./, "")}`;
+  }
+}
+
+/** Affected-layer rows for the carrier plan (§8.6 card data; bounded ≤ 50). */
+function writeToolAffectedLayers(
+  toolId: string,
+  args: Record<string, unknown>,
+): Array<{ name: string; change: string }> {
+  const layers: Array<{ name: string; change: string }> = [];
+  const push = (name: string, change: string): void => {
+    if (name !== "" && layers.length < MAX_PLAN_AFFECTED_LAYERS) layers.push({ name, change });
+  };
+  switch (toolId) {
+    case "studio.set_properties":
+      for (const update of array(args.updates)) {
+        if (typeof update !== "object" || update === null) continue;
+        const record = update as Record<string, unknown>;
+        push(str(record.layer), `Set ${str(record.path)}`);
+      }
+      break;
+    case "studio.add_effect":
+      push(str(args.layer), `Add effect "${str(args.effect)}"`);
+      break;
+    case "studio.set_keyframes":
+      push(str(args.layer), `Keyframes on ${str(args.propertyPath)}`);
+      break;
+    case "studio.apply_preset":
+      for (const target of array(args.targets)) {
+        push(typeof target === "string" ? target : "", `Apply preset "${str(args.preset)}"`);
+      }
+      break;
+    default:
+      break;
+  }
+  return layers;
+}
+
+/**
+ * The one-step EditPlan CARRIER handed to the compile seam for a write-tool
+ * call. CARRIER CONVENTION (M5-C ⇄ M5-B seam): the single step is the
+ * curated tool id + validated args — `steps[].tool` is authoritative for
+ * the compiler's per-step translation (M5-SEAMS: "the plan-compiler maps
+ * tool+args → registry command steps"), and the pseudo `batch.step.command`
+ * carries the UNPREFIXED tool id purely to satisfy PLAN_STEP_SCHEMA's
+ * non-empty batch bound. The compiler MUST NOT execute `steps[].batch`
+ * (model-proposed plan batches are validation targets, §8.7 — F-3 class).
+ * INTEGRATOR: if M5-B's CompilePlanInput grows a dedicated write-tool arm
+ * (e.g. `{ tool, args }`), flip this carrier to it and delete the convention.
+ */
+export function writeToolCarrierPlan(tool: ToolDefinition, args: unknown): EditPlan {
+  const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
+  const summary = clamp280(writeToolSummary(tool.id, record));
+  const carrier = {
+    intent: WRITE_TOOL_INTENTS[tool.id] ?? "edit",
+    summary,
+    risk: tool.risk,
+    requiresApproval: tool.risk !== "low",
+    affectedLayers: writeToolAffectedLayers(tool.id, record),
+    estimatedCredits: estimateCredits({ risk: tool.risk, steps: [{}] }),
+    steps: [
+      {
+        title: summary,
+        tool: tool.id,
+        args,
+        batch: {
+          label: `Agent: ${summary}`.slice(0, MAX_BATCH_LABEL_LENGTH),
+          steps: [{ command: tool.id.replace(/^studio\./, ""), params: record }],
+        },
+      },
+    ],
+  };
+  return EDIT_PLAN_SCHEMA.parse(carrier);
+}
+
+/** First compiler issue as a bounded model/tool message (mirrors PLAN_INVALID). */
+function compileIssueMessage(issues: readonly PlanIssue[]): string {
+  const first = issues[0]?.message ?? "The proposed change failed validation.";
+  const suffix = issues.length > 1 ? ` (+${issues.length - 1} more issues)` : "";
+  return `${first}${suffix}`.slice(0, MAX_PLAN_SUMMARY_LENGTH);
+}
+
+// ---------------------------------------------------------------------------
 // The runner
 // ---------------------------------------------------------------------------
 
@@ -248,6 +513,9 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
   const bearer =
     deps.virtualKey !== undefined && deps.virtualKey !== "" ? deps.virtualKey : deps.apiKey;
   const tools = openAiToolSpecs();
+  // M5-B seam: the pinned compiler when wired, the typed-unavailable stub
+  // until then (see planCompilerUnavailable above).
+  const compilePlan = deps.compilePlan ?? planCompilerUnavailable;
   const clientDeps = {
     baseUrl: deps.baseUrl,
     bearer,
@@ -342,6 +610,21 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
       const signal = stream.signal;
       const usage: UsageAccumulator = { inputTokens: 0, outputTokens: 0, seen: false };
       const conversation: OpenAIChatMessage[] = [...buildMessages(run)];
+
+      /** The pinned compile seam is "typed, never throws"; a violating
+       * compiler implementation degrades to a typed issue instead of
+       * failing the run (defense-in-depth for the M5-B handoff). */
+      const compilePlanSafe = async (input: CompilePlanInput): Promise<CompilePlanResult> => {
+        try {
+          return await compilePlan(input);
+        } catch (error) {
+          logger.error("plan_compiler_threw", {
+            runId: run.runId,
+            detail: error instanceof Error ? error.name : "unknown",
+          });
+          return { ok: false, issues: [{ message: "The plan compiler failed unexpectedly." }] };
+        }
+      };
 
       const cancelled = (): AgentRunOutcome => ({ kind: "cancelled" });
       const failed = (code: string, message: string, retryable: boolean): AgentRunOutcome => ({
@@ -458,6 +741,7 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
           await stream.yieldToStream();
           if (signal.aborted) return cancelled();
 
+          const writeTool = registeredWriteTool(validated.name);
           if (validated.name === "studio.plan_edit") {
             const goal = (validated.args as { goal?: unknown }).goal;
             const plan = await serverSidePlan(
@@ -469,7 +753,31 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
             );
             if (plan.cancelled === true) return cancelled();
             if (plan.plan !== null) {
-              stream.emit({ type: "plan", plan: plan.plan });
+              // M5 (§M5.2): run the server-side compiler on the plan and
+              // attach its output to the {type:"plan"} event — compiledBatch
+              // + resolutionRequests + server-recomputed risk/credits. All
+              // optional (back-compat); a compile failure emits the plan
+              // UN-enriched (still valid display data; Apply is gated
+              // downstream on compiledBatch's absence). The tool result and
+              // the model-facing content stay the BARE plan (M4 behavior)
+              // — the compiled registry command ids never reach the model.
+              const compiled = await compilePlanSafe({ plan: plan.plan });
+              if (compiled.ok) {
+                stream.emit({
+                  type: "plan",
+                  plan: plan.plan,
+                  compiledBatch: compiled.batch,
+                  resolutionRequests: [...compiled.resolutionRequests],
+                  risk: compiled.risk,
+                  estimatedCredits: compiled.estimatedCredits,
+                });
+              } else {
+                logger.debug("plan_compile_rejected", {
+                  runId: run.runId,
+                  issues: compiled.issues.length,
+                });
+                stream.emit({ type: "plan", plan: plan.plan });
+              }
               stream.emit({ type: "tool.result", toolCallId: call.id, result: plan.plan });
               await stream.yieldToStream();
               conversation.push({
@@ -488,6 +796,65 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
                 role: "tool",
                 tool_call_id: call.id,
                 content: JSON.stringify({ error: "PLAN_INVALID", message: plan.errorMessage }),
+              });
+            }
+          } else if (writeTool !== null) {
+            // M5.1 PROPOSE-ONLY write tool: resolve SERVER-SIDE through the
+            // compile seam. NOTHING executes in the gateway — the proposed
+            // batch executes only when the CLIENT applies it (§8.7, law #6:
+            // one atomic engine.batch = one undo step = one version).
+            const carrier = writeToolCarrierPlan(writeTool, validated.args);
+            const compiled = await compilePlanSafe({ plan: carrier });
+            if (compiled.ok) {
+              // Client envelope: ONLY the proposed batch + human summary (+
+              // the server-recomputed metadata the compile carries).
+              stream.emit({
+                type: "tool.result",
+                toolCallId: call.id,
+                result: {
+                  proposedBatch: compiled.batch,
+                  summary: carrier.summary,
+                  risk: compiled.risk,
+                  estimatedCredits: compiled.estimatedCredits,
+                  resolutionRequests: [...compiled.resolutionRequests],
+                },
+              });
+              await stream.yieldToStream();
+              if (signal.aborted) return cancelled();
+              // LAW #5 / M4-SAFETY B2: the model is fed a REDACTED envelope —
+              // human summary + counts ONLY. The compiled registry command
+              // ids inside proposedBatch never enter the model conversation.
+              conversation.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: JSON.stringify({
+                  proposed: true,
+                  summary: carrier.summary,
+                  risk: compiled.risk,
+                  estimatedCredits: compiled.estimatedCredits,
+                  stepCount: compiled.batch.steps.length,
+                  resolutionRequests: compiled.resolutionRequests.length,
+                }),
+              });
+            } else {
+              // Compile rejected (typed issues — the run survives; the model
+              // may adapt within the step cap). Mirrors PLAN_INVALID.
+              logger.debug("write_tool_compile_rejected", {
+                runId: run.runId,
+                tool: writeTool.id,
+                issues: compiled.issues.length,
+              });
+              const rejected = {
+                error: "PROPOSAL_INVALID",
+                message: compileIssueMessage(compiled.issues),
+              };
+              stream.emit({ type: "tool.result", toolCallId: call.id, result: rejected });
+              await stream.yieldToStream();
+              if (signal.aborted) return cancelled();
+              conversation.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: JSON.stringify(rejected),
               });
             }
           } else {

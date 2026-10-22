@@ -4,6 +4,7 @@ import {
   type AnyPgColumn,
   bigint,
   boolean,
+  char,
   index,
   integer,
   jsonb,
@@ -45,6 +46,17 @@ import { createId } from "./ids.js";
  *   repo transactions that hold the project row lock (src/repos/versions.ts),
  *   so integrity is enforced where the conflict rules live (§9.3) without
  *   making schema-level DELETE semantics impossible.
+ * - M5 apply/undo (§M5.4/§M5.5): the plan lifecycle (proposed → applied →
+ *   undone) lives on `agent_runs` — `applied_at`, `applied_batch_sha256`,
+ *   `applied_version_id`, `undone_at`, `undone_by` — because `project_versions`
+ *   is IMMUTABLE (§9.3): applying creates ONE version, undoing marks the run
+ *   and NEVER deletes or rewrites a version row. Unlike the circular pair
+ *   above, `agent_runs.base_version_id` / `applied_version_id` DO carry FKs to
+ *   `project_versions.id` (no cycle: `project_versions.agent_run_id` stays a
+ *   plain-text back-reference). All three FKs are `ON DELETE SET NULL` so a
+ *   cascading project delete never trips over cross-reference ordering
+ *   (mirrors `audit_log.actor_id` / `assets.project_id`). Same-project scope is
+ *   enforced in repos (a version of another project reads as NOT_FOUND).
  */
 
 const ts = (name: string) => timestamp(name, { withTimezone: true });
@@ -424,8 +436,23 @@ export const agentRuns = pgTable(
     planJson: jsonb("plan_json"),
     reservedCredits: integer("reserved_credits").notNull().default(0),
     committedCredits: integer("committed_credits").notNull().default(0),
-    baseVersionId: text("base_version_id"),
+    /** Version the client was on WHEN the plan was proposed (M5.5 re-apply rule). */
+    baseVersionId: text("base_version_id").references((): AnyPgColumn => projectVersions.id, {
+      onDelete: "set null",
+    }),
     resultVersionId: text("result_version_id"),
+    // M5 apply/undo (§M5.4/§M5.5) — plan lifecycle columns. A run is "proposed"
+    // until appliedAt is set; undo marks undoneAt/undoneBy and NEVER touches the
+    // (immutable, §9.3) project_versions row the apply created.
+    appliedAt: ts("applied_at"),
+    appliedBatchSha256: char("applied_batch_sha256", { length: 64 }),
+    appliedVersionId: text("applied_version_id").references((): AnyPgColumn => projectVersions.id, {
+      onDelete: "set null",
+    }),
+    undoneAt: ts("undone_at"),
+    undoneBy: text("undone_by").references((): AnyPgColumn => user.id, {
+      onDelete: "set null",
+    }),
     errorCode: text("error_code"),
     createdAt: ts("created_at").notNull().defaultNow(),
     completedAt: ts("completed_at"),
@@ -716,6 +743,21 @@ export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
     references: [projects.id],
   }),
   steps: many(agentSteps),
+  // M5 apply/undo edges (two edges to project_versions → relationName each).
+  baseVersion: one(projectVersions, {
+    relationName: "base",
+    fields: [agentRuns.baseVersionId],
+    references: [projectVersions.id],
+  }),
+  appliedVersion: one(projectVersions, {
+    relationName: "applied",
+    fields: [agentRuns.appliedVersionId],
+    references: [projectVersions.id],
+  }),
+  undoneByUser: one(user, {
+    fields: [agentRuns.undoneBy],
+    references: [user.id],
+  }),
 }));
 
 export const agentStepsRelations = relations(agentSteps, ({ one }) => ({
