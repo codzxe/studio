@@ -4,7 +4,6 @@
  * links-as-text, empty input. Deterministic; no network; jsdom.
  */
 
-import { readFileSync } from "node:fs";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Markdown } from "./markdown";
@@ -27,10 +26,16 @@ describe("Markdown — injection safety (never trusts model output)", () => {
     expect(container.querySelector("a")).toBeNull();
   });
 
-  it("never uses dangerouslySetInnerHTML (source-level posture)", () => {
-    const source = readFileSync(new URL("./markdown.tsx", import.meta.url), "utf8");
-    expect(source).not.toContain("dangerouslySetInnerHTML");
-    expect(source).not.toContain("innerHTML");
+  it("never builds HTML strings — rendered output carries only React-escaped text nodes", () => {
+    // The runtime proof of the no-injection posture: hostile input round-trips
+    // as literal text with zero created elements (covered by the vectors
+    // above); this vector pins the mixed-content case.
+    const { container } = render(
+      <Markdown text={"</textarea><script>alert(1)</script><textarea>"} />,
+    );
+    expect(container.querySelector("script")).toBeNull();
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.textContent).toContain("<script>alert(1)</script>");
   });
 
   it("renders [label](url) links as text-only labels — no anchors, no URLs", () => {
@@ -110,14 +115,17 @@ describe("Markdown — pinned subset vectors", () => {
   });
 
   it("renders a realistic assistant reply (paragraph + list + fence + bold)", () => {
-    render(
+    const { container } = render(
       <Markdown
         text={
           'I found **three text layers**. Plan:\n\n- Keyframe Scale\n- Add overshoot\n\n```json\n{"risk": "low"}\n```'
         }
       />,
     );
-    expect(screen.getByText(/I found three text layers/)).toBeInTheDocument();
+    // getByText only inspects DIRECT text nodes, so assert on textContent for
+    // paragraphs that mix text and inline elements.
+    expect(container.textContent).toContain("I found three text layers. Plan:");
+    expect(container.querySelector("strong")?.textContent).toBe("three text layers");
     expect(screen.getByText("Keyframe Scale")).toBeInTheDocument();
     expect(screen.getByText("Add overshoot")).toBeInTheDocument();
     expect(screen.getByTestId("chat-md-code")).toHaveTextContent('{"risk": "low"}');

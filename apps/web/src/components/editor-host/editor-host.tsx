@@ -62,14 +62,16 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
     const iframe = session.iframeRef.current;
     if (iframe === null) return;
     let disposed = false;
+    // eslint-disable-next-line no-console -- SCRATCH DEBUG
+    console.log("[dbg] chat attach starting");
     attachEditorBridge(iframe).then(
       (bridge) => {
         if (disposed) bridge.dispose();
         else setChatBridge(bridge);
       },
-      () => {
-        // Chat stays dormant when the handshake fails; the M3 session's own
-        // bridge/ banners own the editor-open failure UX.
+      (error) => {
+        // eslint-disable-next-line no-console -- SCRATCH DEBUG
+        console.log("[dbg] chat attach FAILED", error);
       },
     );
     return () => {

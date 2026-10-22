@@ -35,7 +35,7 @@ import type { ContextBlock } from "@/lib/chat/context";
 import { formatTokenEstimate } from "@/lib/chat/tokens";
 import type { ContextSelection, PinnedContextItem, PinnedContextKind } from "@studio/contracts";
 import { Badge, Button, Popover, PopoverAnchor, PopoverContent } from "@studio/ui";
-import { Check, X } from "lucide-react";
+import { X } from "lucide-react";
 import { type ReactElement, useMemo, useState } from "react";
 
 /**
@@ -114,7 +114,6 @@ export function ContextPopover({
         <span aria-hidden="true" className="pointer-events-none absolute top-12 right-3 h-0 w-0" />
       </PopoverAnchor>
       <PopoverContent
-        role="dialog"
         aria-label="Chat context"
         data-testid="context-popover"
         align="end"
@@ -166,23 +165,14 @@ export function ContextPopover({
               data-testid={`context-row-${block.kind}`}
               className="flex items-center gap-2 py-1"
             >
-              <button
-                type="button"
-                role="checkbox"
-                aria-checked={!pending.has(block.kind)}
+              <input
+                type="checkbox"
+                checked={!pending.has(block.kind)}
+                onChange={() => toggle(block)}
                 aria-label={block.label}
                 data-testid={`context-toggle-${block.kind}`}
-                onClick={() => toggle(block)}
-                className={`grid h-4 w-4 shrink-0 place-items-center rounded-xs border transition-colors duration-120 ease-out ${
-                  !pending.has(block.kind)
-                    ? "border-signal bg-signal"
-                    : "border-strong bg-input hover:border-signal"
-                }`}
-              >
-                {!pending.has(block.kind) ? (
-                  <Check size={11} strokeWidth={3} aria-hidden="true" className="text-signal-ink" />
-                ) : null}
-              </button>
+                className="h-4 w-4 shrink-0 rounded-xs accent-signal"
+              />
               <span
                 className="min-w-0 flex-1 truncate text-body-s text-primary"
                 title={block.label}

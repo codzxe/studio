@@ -240,29 +240,27 @@ afterEach(() => {
 describe("ChatProvider — models", () => {
   it("loads the plan's models and defaults the active model to the first entry", async () => {
     const harness = makeHarness();
-    const api = harness.api();
-    await waitFor(() => {
-      expect(api.models).not.toBeNull();
+        await waitFor(() => {
+      expect(harness.api().models).not.toBeNull();
     });
-    expect(api.models).toEqual([FAST_MODEL]);
-    expect(api.activeModelId).toBe("studio-fast");
+    expect(harness.api().models).toEqual([FAST_MODEL]);
+    expect(harness.api().activeModelId).toBe("studio-fast");
     expect(harness.modelsListCalls()).toBe(1);
 
     // An explicit pick (the header picker) overrides the default.
     act(() => {
-      api.setActiveModelId("studio-fast");
+      harness.api().setActiveModelId("studio-fast");
     });
-    expect(api.activeModelId).toBe("studio-fast");
+    expect(harness.api().activeModelId).toBe("studio-fast");
   });
 
   it("retries the models fetch once, then reports the failure as an empty list (picker hidden)", async () => {
     const harness = makeHarness({ models: "fail" });
-    const api = harness.api();
-    await waitFor(() => {
-      expect(api.models).toEqual([]);
+        await waitFor(() => {
+      expect(harness.api().models).toEqual([]);
     });
     expect(harness.modelsListCalls()).toBe(2); // exactly one retry
-    expect(api.activeModelId).toBeNull(); // nothing to default to
+    expect(harness.api().activeModelId).toBeNull(); // nothing to default to
   });
 });
 
@@ -273,17 +271,19 @@ describe("ChatProvider — models", () => {
 describe("ChatProvider — lazy thread + send queue", () => {
   it("creates the thread on the FIRST send, queues the message until the id resolves, then streams once", async () => {
     const harness = makeHarness({ threadMode: "manual" });
-    const api = harness.api();
-    await waitFor(() => {
-      expect(api.models).not.toBeNull();
+        await waitFor(() => {
+      expect(harness.api().models).not.toBeNull();
     });
 
     act(() => {
-      api.send({ message: "  Explain this comp  " });
+      harness.api().send({ message: "  Explain this comp  " });
     });
 
-    // Queued: one create started, nothing streamed yet.
-    expect(harness.createThreadCalls()).toBe(1);
+    // Queued: one create started, nothing streamed yet (manual mode keeps the
+    // thread id pending until resolveCreateThread).
+    await waitFor(() => {
+      expect(harness.createThreadCalls()).toBe(1);
+    });
     expect(harness.streamCalls).toHaveLength(0);
 
     await act(async () => {
@@ -296,34 +296,35 @@ describe("ChatProvider — lazy thread + send queue", () => {
     const call = harness.streamCalls[0];
     expect(call?.threadId).toBe("thr_1");
     expect(call?.body.message).toBe("Explain this comp"); // trimmed
-    expect(call?.body.context).toEqual(api.flags); // the §5.1 effective flags
+    expect(call?.body.context).toEqual(harness.api().flags); // the §5.1 effective flags
     expect(call?.body.model).toBe("studio-fast"); // defaulted from models
     expect(typeof call?.body.idempotencyKey).toBe("string");
 
     // The user message rendered immediately (§3.4 send UX).
     await waitFor(() => {
-      expect(api.snapshot.messages).toHaveLength(1);
+      expect(harness.api().snapshot.messages).toHaveLength(1);
     });
-    expect(api.snapshot.messages[0]?.role).toBe("user");
-    expect(api.snapshot.messages[0]?.text).toBe("Explain this comp");
-    expect(api.threadId).toBe("thr_1");
-    expect(api.threadTitle).toBe("Agent");
+    expect(harness.api().snapshot.messages[0]?.role).toBe("user");
+    expect(harness.api().snapshot.messages[0]?.text).toBe("Explain this comp");
+    expect(harness.api().threadId).toBe("thr_1");
+    expect(harness.api().threadTitle).toBe("Agent");
   });
 
   it("flushes queued sends in order: the first message streams, the second lands in the steer queue (§3.4)", async () => {
     const harness = makeHarness({ threadMode: "manual" });
-    const api = harness.api();
-    await waitFor(() => {
-      expect(api.models).not.toBeNull();
+        await waitFor(() => {
+      expect(harness.api().models).not.toBeNull();
     });
 
     act(() => {
-      api.send({ message: "first" });
+      harness.api().send({ message: "first" });
     });
     act(() => {
-      api.send({ message: "second" });
+      harness.api().send({ message: "second" });
     });
-    expect(harness.createThreadCalls()).toBe(1); // ONE create for both
+    await waitFor(() => {
+      expect(harness.createThreadCalls()).toBe(1); // ONE create for both
+    });
 
     await act(async () => {
       harness.resolveCreateThread();
@@ -335,37 +336,36 @@ describe("ChatProvider — lazy thread + send queue", () => {
     expect(harness.streamCalls[0]?.body.message).toBe("first");
     // Both user messages rendered; the second waits for the run to settle.
     await waitFor(() => {
-      expect(api.snapshot.messages).toHaveLength(2);
+      expect(harness.api().snapshot.messages).toHaveLength(2);
     });
-    expect(api.snapshot.messages.map((message) => message.text)).toEqual(["first", "second"]);
+    expect(harness.api().snapshot.messages.map((message) => message.text)).toEqual(["first", "second"]);
   });
 
   it("reuses the thread for later sends (no second create); newThread() forces a fresh one", async () => {
     const harness = makeHarness();
-    const api = harness.api();
-    await waitFor(() => {
-      expect(api.models).not.toBeNull();
+        await waitFor(() => {
+      expect(harness.api().models).not.toBeNull();
     });
 
     act(() => {
-      api.send({ message: "hello" });
+      harness.api().send({ message: "hello" });
     });
     await waitFor(() => {
       expect(harness.streamCalls).toHaveLength(1);
     });
     expect(harness.createThreadCalls()).toBe(1);
-    expect(api.threadId).toBe("thr_1");
+    expect(harness.api().threadId).toBe("thr_1");
 
     // newChat (⌘⇧L): the thread id is dropped, the transcript resets.
     act(() => {
-      api.newThread();
+      harness.api().newThread();
     });
-    expect(api.threadId).toBeNull();
-    expect(api.controller).toBeNull();
-    expect(api.snapshot.messages).toHaveLength(0);
+    expect(harness.api().threadId).toBeNull();
+    expect(harness.api().controller).toBeNull();
+    expect(harness.api().snapshot.messages).toHaveLength(0);
 
     act(() => {
-      api.send({ message: "fresh thread please" });
+      harness.api().send({ message: "fresh thread please" });
     });
     await waitFor(() => {
       expect(harness.streamCalls).toHaveLength(2);
@@ -377,24 +377,23 @@ describe("ChatProvider — lazy thread + send queue", () => {
 
   it("surfaces a typed thread error when creation fails, drops the queue, and retries on the next send", async () => {
     const harness = makeHarness({ threadMode: "reject-once" });
-    const api = harness.api();
-    await waitFor(() => {
-      expect(api.models).not.toBeNull();
+        await waitFor(() => {
+      expect(harness.api().models).not.toBeNull();
     });
 
     act(() => {
-      api.send({ message: "doomed" });
+      harness.api().send({ message: "doomed" });
     });
     await waitFor(() => {
-      expect(api.threadError).not.toBeNull();
+      expect(harness.api().threadError).not.toBeNull();
     });
-    expect(api.threadError?.code).toBe("THREAD_CREATE_FAILED");
-    expect(api.threadError?.retryable).toBe(true);
+    expect(harness.api().threadError?.code).toBe("THREAD_CREATE_FAILED");
+    expect(harness.api().threadError?.retryable).toBe(true);
     expect(harness.streamCalls).toHaveLength(0);
 
     // The failed queue is dropped — the next send starts over cleanly.
     act(() => {
-      api.send({ message: "try again" });
+      harness.api().send({ message: "try again" });
     });
     await waitFor(() => {
       expect(harness.streamCalls).toHaveLength(1);
@@ -402,7 +401,7 @@ describe("ChatProvider — lazy thread + send queue", () => {
     expect(harness.createThreadCalls()).toBe(2);
     expect(harness.streamCalls[0]?.body.message).toBe("try again");
     await waitFor(() => {
-      expect(api.threadError).toBeNull();
+      expect(harness.api().threadError).toBeNull();
     });
   });
 });
@@ -414,12 +413,11 @@ describe("ChatProvider — lazy thread + send queue", () => {
 describe("ChatProvider — tool executor wiring", () => {
   it("diffs running tool cards, executes client tools with the right call, posts the result, and never re-runs replays; plan_edit dispatches but never posts", async () => {
     const harness = makeHarness();
-    const api = harness.api();
-    await waitFor(() => {
-      expect(api.models).not.toBeNull();
+        await waitFor(() => {
+      expect(harness.api().models).not.toBeNull();
     });
     act(() => {
-      api.send({ message: "what is in this project?" });
+      harness.api().send({ message: "what is in this project?" });
     });
     await waitFor(() => {
       expect(harness.streamCalls).toHaveLength(1);
@@ -431,7 +429,7 @@ describe("ChatProvider — tool executor wiring", () => {
       handlers?.onEvent({ type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" });
     });
     await waitFor(() => {
-      expect(api.snapshot.phase).toBe("streaming");
+      expect(harness.api().snapshot.phase).toBe("streaming");
     });
 
     act(() => {
@@ -508,76 +506,74 @@ describe("ChatProvider — tool executor wiring", () => {
 describe("ChatProvider — context orchestration", () => {
   it("collects the snapshot when the panel opens and re-collects on flag toggles", async () => {
     const harness = makeHarness();
-    const api = harness.api();
-    expect(api.context).toBeNull(); // nothing collected while hidden
-    expect(api.panelVisible).toBe(false);
+        expect(harness.api().context).toBeNull(); // nothing collected while hidden
+    expect(harness.api().panelVisible).toBe(false);
 
     act(() => {
-      api.setPanelVisible(true);
+      harness.api().setPanelVisible(true);
     });
     await waitFor(() => {
-      expect(api.context).not.toBeNull();
+      expect(harness.api().context).not.toBeNull();
     });
-    const initialKinds = (api.context?.blocks ?? []).map((block) => block.kind);
+    const initialKinds = (harness.api().context?.blocks ?? []).map((block) => block.kind);
     expect(initialKinds).toContain("projectSummary");
     expect(initialKinds).toContain("activeComp");
     expect(initialKinds).not.toContain("recentCommands"); // default-off (§5.1)
 
     // User opts a block in (§5.3 popover toggle) → the snapshot re-collects.
     act(() => {
-      api.setFlag("recentCommands", true);
+      harness.api().setFlag("recentCommands", true);
     });
     await waitFor(() => {
       expect(
-        (api.context?.blocks ?? []).some((block) => block.kind === "recentCommands"),
+        (harness.api().context?.blocks ?? []).some((block) => block.kind === "recentCommands"),
       ).toBe(true);
     });
     expect(harness.bridgeCalls.queries).toContain("edit.history.list");
 
     // ...and back off (removed auto-context STAYS removed, §3.2).
     act(() => {
-      api.setFlag("recentCommands", false);
+      harness.api().setFlag("recentCommands", false);
     });
     await waitFor(() => {
       expect(
-        (api.context?.blocks ?? []).some((block) => block.kind === "recentCommands"),
+        (harness.api().context?.blocks ?? []).some((block) => block.kind === "recentCommands"),
       ).toBe(false);
     });
 
     // "Remove all" clears every currently-on block via overrides.
     act(() => {
-      api.clearOptionalBlocks();
+      harness.api().clearOptionalBlocks();
     });
     await waitFor(() => {
-      expect(api.context?.blocks).toHaveLength(0);
+      expect(harness.api().context?.blocks).toHaveLength(0);
     });
-    expect(api.flags.projectSummary).toBe(false);
+    expect(harness.api().flags.projectSummary).toBe(false);
   });
 
   it("carries pinned chips into the snapshot and the wire body", async () => {
     const harness = makeHarness();
-    const api = harness.api();
-    act(() => {
-      api.setPanelVisible(true);
+        act(() => {
+      harness.api().setPanelVisible(true);
     });
     await waitFor(() => {
-      expect(api.context).not.toBeNull();
+      expect(harness.api().context).not.toBeNull();
     });
 
     const chip = { kind: "frame" as const, label: "Frame at 00:03" };
     act(() => {
-      api.addPinned(chip);
+      harness.api().addPinned(chip);
     });
     await waitFor(() => {
-      expect(api.pinned).toEqual([chip]);
+      expect(harness.api().pinned).toEqual([chip]);
     });
     await waitFor(() => {
-      expect(api.context?.pinned).toEqual([chip]);
+      expect(harness.api().context?.pinned).toEqual([chip]);
     });
-    expect(api.context?.totalTokenEstimate).toBeGreaterThan(0); // pinned chips count
+    expect(harness.api().context?.totalTokenEstimate).toBeGreaterThan(0); // pinned chips count
 
     act(() => {
-      api.send({ message: "use my pinned frame" });
+      harness.api().send({ message: "use my pinned frame" });
     });
     await waitFor(() => {
       expect(harness.streamCalls).toHaveLength(1);
@@ -586,23 +582,22 @@ describe("ChatProvider — context orchestration", () => {
 
     // Removing the chip clears it from the next snapshot.
     act(() => {
-      api.removePinned(chip);
+      harness.api().removePinned(chip);
     });
     await waitFor(() => {
-      expect(api.pinned).toHaveLength(0);
+      expect(harness.api().pinned).toHaveLength(0);
     });
   });
 
   it("polls ui.inspect at 1 Hz only while the panel is visible (§11)", async () => {
     const harness = makeHarness();
-    const api = harness.api();
-    await act(async () => {
+        await act(async () => {
       vi.useFakeTimers();
     });
 
     const beforeVisible = harness.bridgeCalls.inspect;
     act(() => {
-      api.setPanelVisible(true);
+      harness.api().setPanelVisible(true);
     });
     // The on-open collect runs one inspect; then the 1 Hz ticks take over.
     await act(async () => {
@@ -614,7 +609,7 @@ describe("ChatProvider — context orchestration", () => {
 
     // Hidden: the interval is torn down; no further inspects.
     act(() => {
-      api.setPanelVisible(false);
+      harness.api().setPanelVisible(false);
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3000);
@@ -630,9 +625,8 @@ describe("ChatProvider — context orchestration", () => {
 describe("ChatProvider — quick actions + facades", () => {
   it("sends on the studio:chat-quick-action window CustomEvent through the same send path", async () => {
     const harness = makeHarness();
-    const api = harness.api();
-    await waitFor(() => {
-      expect(api.models).not.toBeNull();
+        await waitFor(() => {
+      expect(harness.api().models).not.toBeNull();
     });
 
     act(() => {
@@ -657,24 +651,23 @@ describe("ChatProvider — quick actions + facades", () => {
 
   it("stop() routes through the live controller to the stream handle's fused cancel (§8.3)", async () => {
     const harness = makeHarness();
-    const api = harness.api();
-    await waitFor(() => {
-      expect(api.models).not.toBeNull();
+        await waitFor(() => {
+      expect(harness.api().models).not.toBeNull();
     });
     act(() => {
-      api.send({ message: "stop me" });
+      harness.api().send({ message: "stop me" });
     });
     await waitFor(() => {
       expect(harness.streamCalls).toHaveLength(1);
     });
 
     act(() => {
-      api.stop();
+      harness.api().stop();
     });
     await waitFor(() => {
       expect(harness.streamCalls[0]?.cancel).toHaveBeenCalled();
     });
-    expect(api.snapshot.phase).toBe("cancelled");
+    expect(harness.api().snapshot.phase).toBe("cancelled");
   });
 
   it("useChatContextApi works inside the provider and throws outside it", async () => {
@@ -722,14 +715,13 @@ describe("ChatProvider — quick actions + facades", () => {
 describe("ChatProvider — executor deps", () => {
   it("recreates the executor with the live flags when the user toggles a block", async () => {
     const harness = makeHarness();
-    const api = harness.api();
-    await waitFor(() => {
+        await waitFor(() => {
       expect(executorRecorder.deps).toHaveLength(1); // created once per mount
     });
     expect(executorRecorder.deps[0]?.flags.recentCommands).toBe(false);
 
     act(() => {
-      api.setFlag("recentCommands", true);
+      harness.api().setFlag("recentCommands", true);
     });
     await waitFor(() => {
       expect(executorRecorder.deps.length).toBeGreaterThanOrEqual(2);

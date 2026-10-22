@@ -51,7 +51,7 @@ export function ChatMessageView({ message, isStreaming }: ChatMessageViewProps):
           <span aria-hidden="true" className="mr-1">
             ✦
           </span>
-          Agent
+          {" Agent"}
         </p>
       )}
       {isUser ? (

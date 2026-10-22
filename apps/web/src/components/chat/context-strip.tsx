@@ -15,7 +15,7 @@
  *   `Context N` summary (N = blocks + pinned); with no measurement yet it
  *   stays expanded (the observer fires on mount in real browsers).
  * - Renders `null` when there are no blocks AND no pinned items.
- * - `totalTokenEstimate` is surfaced through the group's accessible name
+ * - `totalTokenEstimate` is surfaced through the list's accessible name
  *   (the popover shows per-block estimates; §5.3).
  *
  * `block.data` is untrusted project state (context.ts contract): this
@@ -33,7 +33,7 @@ import {
   TooltipTrigger,
 } from "@studio/ui";
 import { Check, Plus, X } from "lucide-react";
-import { type ReactElement, useEffect, useRef, useState } from "react";
+import { type ReactElement, type RefObject, useEffect, useRef, useState } from "react";
 
 /**
  * Pinned chip glyphs (§5.2). Mirrored in context-popover.tsx — M4-H owns
@@ -72,8 +72,8 @@ export interface ContextStripProps {
  * real container (panel width, not viewport). Unknown width (no measurement
  * yet, or no ResizeObserver) keeps the expanded chips.
  */
-function useStripWidth(): { ref: React.RefObject<HTMLDivElement | null>; width: number | null } {
-  const ref = useRef<HTMLDivElement | null>(null);
+function useStripWidth(): { ref: RefObject<HTMLUListElement | null>; width: number | null } {
+  const ref = useRef<HTMLUListElement | null>(null);
   const [width, setWidth] = useState<number | null>(null);
   useEffect(() => {
     const element = ref.current;
@@ -107,57 +107,63 @@ export function ContextStrip({
   if (narrow) {
     // Collapsed form: a single summary chip keeping the picker reachable.
     return (
-      <div
+      <ul
         ref={ref}
         data-testid="context-strip"
-        role="group"
         aria-label={ariaLabel}
         className="flex h-8 w-full items-center px-2"
       >
-        <button
-          type="button"
-          data-testid="context-strip-summary"
-          onClick={onAddContext}
-          title={totalTitle}
-          className="inline-flex h-6 shrink-0 items-center rounded-sm border border-subtle bg-input px-2 text-body-s text-secondary transition-colors duration-120 ease-out hover:border-strong hover:text-primary"
-        >
-          Context {count}
-        </button>
-      </div>
+        <li className="shrink-0">
+          <button
+            type="button"
+            data-testid="context-strip-summary"
+            onClick={onAddContext}
+            title={totalTitle}
+            className="inline-flex h-6 shrink-0 items-center rounded-sm border border-subtle bg-input px-2 text-body-s text-secondary transition-colors duration-120 ease-out hover:border-strong hover:text-primary"
+          >
+            Context {count}
+          </button>
+        </li>
+      </ul>
     );
   }
 
   return (
-    <div
+    <ul
       ref={ref}
       data-testid="context-strip"
-      role="group"
       aria-label={ariaLabel}
       className="flex h-8 w-full items-center gap-1 overflow-x-auto px-2 scrollbar-thin"
     >
       <TooltipProvider delayDuration={TOOLTIP_DELAY_MS}>
         {blocks.map((block) => (
-          <BlockChip key={block.kind} block={block} onRemove={() => onRemoveBlock(block.kind)} />
+          <li key={block.kind} className="shrink-0">
+            <BlockChip block={block} onRemove={() => onRemoveBlock(block.kind)} />
+          </li>
         ))}
         {pinned.map((item, index) => (
-          <PinnedChip key={`${item.kind}-${index}`} item={item} index={index} />
+          <li key={`${item.kind}-${index}`} className="shrink-0">
+            <PinnedChip item={item} index={index} />
+          </li>
         ))}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              data-testid="context-strip-add"
-              aria-label="Add context"
-              onClick={onAddContext}
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-dashed border-subtle text-muted transition-colors duration-120 ease-out hover:border-strong hover:text-primary"
-            >
-              <Plus size={12} strokeWidth={2} aria-hidden="true" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Add context to this message</TooltipContent>
-        </Tooltip>
+        <li className="shrink-0">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                data-testid="context-strip-add"
+                aria-label="Add context"
+                onClick={onAddContext}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-dashed border-subtle text-muted transition-colors duration-120 ease-out hover:border-strong hover:text-primary"
+              >
+                <Plus size={12} strokeWidth={2} aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Add context to this message</TooltipContent>
+          </Tooltip>
+        </li>
       </TooltipProvider>
-    </div>
+    </ul>
   );
 }
 
@@ -166,7 +172,7 @@ function BlockChip({ block, onRemove }: { block: ContextBlock; onRemove: () => v
   return (
     <span
       data-testid={`context-chip-${block.kind}`}
-      className="inline-flex h-6 shrink-0 items-center gap-1 rounded-sm border border-subtle bg-elevated pl-1.5 text-body-s text-secondary"
+      className="inline-flex h-6 items-center gap-1 rounded-sm border border-subtle bg-elevated pl-1.5 text-body-s text-secondary"
     >
       <Check size={12} strokeWidth={2.5} aria-hidden="true" className="shrink-0 text-muted" />
       <span className="whitespace-nowrap">{block.label}</span>
@@ -189,7 +195,7 @@ function PinnedChip({ item, index }: { item: PinnedContextItem; index: number })
     <span
       data-testid={`context-pinned-${index}`}
       title="Pinned context — remove it from the context popover"
-      className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-sm border border-signal/30 bg-signal/10 px-1.5 text-body-s text-signal"
+      className="inline-flex h-6 items-center gap-1.5 rounded-sm border border-signal/30 bg-signal/10 px-1.5 text-body-s text-signal"
     >
       <span aria-hidden="true" className="text-caption leading-none">
         {PINNED_GLYPHS[item.kind]}

@@ -4,9 +4,9 @@
  * Deterministic; no network; jsdom.
  */
 
+import type { ChatUiMessage, ToolCardState } from "@/lib/chat/types";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { ChatUiMessage, ToolCardState } from "@/lib/chat/types";
 import { ChatMessageView } from "./message";
 
 const user = (text: string): ChatUiMessage => ({

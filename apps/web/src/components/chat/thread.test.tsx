@@ -5,9 +5,9 @@
  * anchoring. Deterministic; no network; jsdom.
  */
 
+import type { ChatUiMessage, RunPhase } from "@/lib/chat/types";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ChatUiMessage, RunPhase } from "@/lib/chat/types";
 import { CHAT_QUICK_ACTION_EVENT, ChatThread, type ChatThreadProps } from "./thread";
 
 const onRetry = vi.fn();
@@ -75,7 +75,9 @@ describe("ChatThread — messages", () => {
       <ChatThread
         {...baseProps({
           messages: [
-            assistant("a1", "run-1", "Done", { credits: { reserved: 12, committed: 7, balance: 42 } }),
+            assistant("a1", "run-1", "Done", {
+              credits: { reserved: 12, committed: 7, balance: 42 },
+            }),
           ],
         })}
       />,
@@ -157,7 +159,11 @@ describe("ChatThread — system banners", () => {
           messages,
           phase: "failed",
           activeRunId: "run-1",
-          error: { code: "RUN_PAUSED", message: "Run paused. Check your connection.", retryable: true },
+          error: {
+            code: "RUN_PAUSED",
+            message: "Run paused. Check your connection.",
+            retryable: true,
+          },
         })}
       />,
     );
@@ -175,7 +181,11 @@ describe("ChatThread — system banners", () => {
           messages,
           phase: "failed",
           activeRunId: "run-1",
-          error: { code: "RUN_MODEL_UNAVAILABLE", message: "The model is unavailable.", retryable: true },
+          error: {
+            code: "RUN_MODEL_UNAVAILABLE",
+            message: "The model is unavailable.",
+            retryable: true,
+          },
         })}
       />,
     );
@@ -193,7 +203,11 @@ describe("ChatThread — system banners", () => {
           messages,
           phase: "failed",
           activeRunId: "run-1",
-          error: { code: "RUN_STEP_LIMIT", message: "This run hit its step limit.", retryable: false },
+          error: {
+            code: "RUN_STEP_LIMIT",
+            message: "This run hit its step limit.",
+            retryable: false,
+          },
         })}
       />,
     );
@@ -294,7 +308,12 @@ describe("ChatThread — scroll anchoring (§3.3: only while already at the bott
     rerender(
       <ChatThread
         {...baseProps({
-          messages: [user("u1", "one"), assistant("a1", "run-1"), user("u3", "three"), user("u4", "four")],
+          messages: [
+            user("u1", "one"),
+            assistant("a1", "run-1"),
+            user("u3", "three"),
+            user("u4", "four"),
+          ],
           phase: "streaming",
           activeRunId: "run-1",
         })}
@@ -308,7 +327,12 @@ describe("ChatThread — scroll anchoring (§3.3: only while already at the bott
     rerender(
       <ChatThread
         {...baseProps({
-          messages: [user("u1", "one"), assistant("a1", "run-1", "longer answer"), user("u3", "three"), user("u4", "four")],
+          messages: [
+            user("u1", "one"),
+            assistant("a1", "run-1", "longer answer"),
+            user("u3", "three"),
+            user("u4", "four"),
+          ],
           phase: "streaming",
           activeRunId: "run-1",
         })}

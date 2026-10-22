@@ -66,19 +66,24 @@ export function ChatThread({
   const virtualize = messages.length > VIRTUALIZE_THRESHOLD;
   const hiddenCount = virtualize ? messages.length - WINDOW_SIZE : 0;
   const windowed = virtualize ? messages.slice(hiddenCount) : messages;
-  const lastMessage = messages.at(-1);
-  const lastTextLength = lastMessage?.text.length ?? 0;
   const liveStream = phase === "streaming" || phase === "reconnecting";
+  // Cheap content fingerprint: any append, streamed delta or tool-card arrival
+  // moves it (the steered queue can leave the streaming message mid-list, so
+  // "last message" alone is not enough).
+  const contentSignature = messages.reduce(
+    (sum, message) => sum + message.text.length + message.toolCards.length,
+    0,
+  );
 
   // Bottom-anchoring: only while the user is already at the bottom — an
   // append/stream delta must never yank a scrolled-up reader back down.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: contentSignature/messages.length are deliberate change triggers for a DOM side effect (stream deltas mutate text, not the array identity)
   useEffect(() => {
     const el = scrollRef.current;
     if (el != null && atBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-    // biome-ignore lint/correctness/useExhaustiveDependencies: messages.length/lastTextLength/phase are deliberate triggers for the DOM side effect (stream deltas change the text, not the array)
-  }, [messages.length, lastTextLength, phase]);
+  }, [messages.length, contentSignature, phase]);
 
   const onScroll = () => {
     const el = scrollRef.current;

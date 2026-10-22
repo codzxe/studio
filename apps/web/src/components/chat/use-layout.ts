@@ -20,9 +20,9 @@
 
 import { useSyncExternalStore } from "react";
 import {
-  DEFAULT_LAYOUT,
   type ChatLayout,
   type ChatMode,
+  DEFAULT_LAYOUT,
   clampLayout,
   loadLayout,
   saveLayout,
@@ -72,9 +72,7 @@ function windowViewport(): ChatViewport {
  * on the server are inert — React only reads `getServerSnapshot` there
  * (see `useChatLayout`).
  */
-export function createChatLayoutStore(
-  options: CreateChatLayoutStoreOptions = {},
-): ChatLayoutStore {
+export function createChatLayoutStore(options: CreateChatLayoutStoreOptions = {}): ChatLayoutStore {
   const viewport = options.viewport ?? windowViewport;
   const listeners = new Set<() => void>();
   let current = clampLayout(options.initial ?? loadLayout() ?? DEFAULT_LAYOUT, viewport());

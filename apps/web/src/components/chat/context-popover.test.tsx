@@ -156,15 +156,15 @@ describe("ContextPopover — toggles and callbacks", () => {
   it("toggles a block off then back on with the right callback args", () => {
     const handlers = renderPopover();
     const toggle = screen.getByTestId("context-toggle-activeComp");
-    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(toggle).toBeChecked();
 
     fireEvent.click(toggle);
     expect(handlers.onToggleBlock).toHaveBeenCalledTimes(1);
-    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(toggle).not.toBeChecked();
 
     fireEvent.click(toggle);
     expect(handlers.onToggleBlock).toHaveBeenCalledTimes(2);
-    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(toggle).toBeChecked();
 
     expect(handlers.onToggleBlock.mock.calls[0]).toEqual(["activeComp", false]);
     expect(handlers.onToggleBlock.mock.calls[1]).toEqual(["activeComp", true]);
@@ -175,10 +175,7 @@ describe("ContextPopover — toggles and callbacks", () => {
     fireEvent.click(screen.getByTestId("context-remove-all"));
     expect(handlers.onRemoveAll).toHaveBeenCalledTimes(1);
     for (const block of BLOCKS) {
-      expect(screen.getByTestId(`context-toggle-${block.kind}`)).toHaveAttribute(
-        "aria-checked",
-        "false",
-      );
+      expect(screen.getByTestId(`context-toggle-${block.kind}`)).not.toBeChecked();
     }
   });
 
