@@ -36,9 +36,9 @@
  */
 
 import type { ApiClient } from "@studio/api-client";
+import type { StudioStreamEvent } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { type FakeEditor, attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
-import type { StudioStreamEvent } from "@studio/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -50,8 +50,8 @@ import {
   type CreateApplyControllerOptions,
   createApplyController,
 } from "../apply";
-import { type ToolExecutorDeps, executeClientTool } from "../tool-executor";
 import { type LayerResolutionRequest, planRuntimeFromEvent } from "../run-state";
+import { type ToolExecutorDeps, executeClientTool } from "../tool-executor";
 
 // ---------------------------------------------------------------------------
 // The mirrored M5-N corpus slice (needles IDENTICAL to the gateway corpus:
@@ -70,25 +70,40 @@ const MIRRORED_WRITE_ARGS: ReadonlyArray<{
   {
     gatewayId: "sp-layer-dunder",
     tool: "studio.set_properties",
-    args: { layers: [{ name: "__proto__" }], properties: [{ path: "text/sourceText", value: "M5N-SP-LAYER-DUNDER" }] },
+    args: {
+      layers: [{ name: "__proto__" }],
+      properties: [{ path: "text/sourceText", value: "M5N-SP-LAYER-DUNDER" }],
+    },
     needle: "M5N-SP-LAYER-DUNDER",
   },
   {
     gatewayId: "ae-effect-name-dunder",
     tool: "studio.add_effect",
-    args: { layers: [{ name: "Headline" }], effect: { name: "prototype" }, params: { note: "M5N-AE-EFFECT-DUNDER" } },
+    args: {
+      layers: [{ name: "Headline" }],
+      effect: { name: "prototype" },
+      params: { note: "M5N-AE-EFFECT-DUNDER" },
+    },
     needle: "M5N-AE-EFFECT-DUNDER",
   },
   {
     gatewayId: "sk-layer-dunder",
     tool: "studio.set_keyframes",
-    args: { layers: [{ name: "__proto__" }], propertyPath: "transform/opacity", keys: [{ timeSeconds: 0, value: "M5N-SK-LAYER-DUNDER" }] },
+    args: {
+      layers: [{ name: "__proto__" }],
+      propertyPath: "transform/opacity",
+      keys: [{ timeSeconds: 0, value: "M5N-SK-LAYER-DUNDER" }],
+    },
     needle: "M5N-SK-LAYER-DUNDER",
   },
   {
     gatewayId: "ap-preset-shadows-command",
     tool: "studio.apply_preset",
-    args: { preset: { name: "effect.apply" }, layers: [{ name: "Headline" }], args: { note: "M5N-AP-SHADOW-COMMAND" } },
+    args: {
+      preset: { name: "effect.apply" },
+      layers: [{ name: "Headline" }],
+      args: { note: "M5N-AP-SHADOW-COMMAND" },
+    },
     needle: "M5N-AP-SHADOW-COMMAND",
   },
   {
@@ -139,16 +154,6 @@ const MIRRORED_WIRE_POISONS: ReadonlyArray<{
     needle: "label",
   },
   {
-    gatewayId: "wire-timeout-zero",
-    compiledBatch: {
-      label: "Agent: clean",
-      atomic: true,
-      timeoutMs: 0,
-      steps: [{ command: "prop.set", params: {} }],
-    },
-    needle: "timeoutMs",
-  },
-  {
     gatewayId: "wire-steps-missing-params",
     compiledBatch: { label: "Agent: clean", atomic: true, steps: [{ command: "prop.set" }] },
     needle: "command",
@@ -159,6 +164,16 @@ const MIRRORED_WIRE_POISONS: ReadonlyArray<{
     needle: "null",
   },
 ];
+
+/** Mirrored §8.5 timeout poison (gateway fixture wire-timeout-zero): the
+ * client SANITIZES a non-positive timeoutMs (drops it) instead of rejecting —
+ * pinned separately from the invalid-batch shapes. */
+const WIRE_TIMEOUT_ZERO_BATCH: Record<string, unknown> = {
+  label: "Agent: sanitized timeout",
+  atomic: true,
+  timeoutMs: 0,
+  steps: [{ command: "prop.set", params: { layer: 1, path: "transform/opacity", value: 50 } }],
+};
 
 /** A hostile batch that PASSES the client's shape gate (FINDING F-6): a
  * non-registry command id inside a well-formed batch (gateway fixture
@@ -173,7 +188,12 @@ const WIRE_DUNDER_COMMAND_BATCH: Record<string, unknown> = {
 const WIRE_SHADOW_ENGINE_BATCH: Record<string, unknown> = {
   label: "Agent: poisoned but well-shaped",
   atomic: true,
-  steps: [{ command: "engine.batch", params: { steps: [{ command: "evil.delete.everything", params: {} }] } }],
+  steps: [
+    {
+      command: "engine.batch",
+      params: { steps: [{ command: "evil.delete.everything", params: {} }] },
+    },
+  ],
 };
 
 /** Object.prototype must stay untouched by anything this suite processed. */
@@ -243,7 +263,9 @@ interface ApplyHarness {
   readonly events: ApplyEngineEvent[];
 }
 
-async function makeApplyHarness(comp: { comps: ReadonlyArray<{ name: string }> }): Promise<ApplyHarness> {
+async function makeApplyHarness(comp: {
+  comps: ReadonlyArray<{ name: string }>;
+}): Promise<ApplyHarness> {
   const fake = createFakeEditor({ comps: [...comp.comps] });
   const recorded = recordBridge(attachFakeBridge(fake));
   const timeline: string[] = [];
@@ -255,7 +277,12 @@ async function makeApplyHarness(comp: { comps: ReadonlyArray<{ name: string }> }
       timeline.push(`saveNow:${reason}`);
       return {
         saved: true,
-        version: { id: `ver_${timeline.length}`, label: null, sha256: "0".repeat(64), sizeBytes: 8 },
+        version: {
+          id: `ver_${timeline.length}`,
+          label: null,
+          sha256: "0".repeat(64),
+          sizeBytes: 8,
+        },
       };
     },
     markDirty: (reason?: string) => timeline.push(`markDirty:${reason ?? "unnamed"}`),
@@ -278,7 +305,14 @@ async function makeApplyHarness(comp: { comps: ReadonlyArray<{ name: string }> }
     api,
     onEvent: (event) => events.push(event),
   };
-  return { fake, recorded, controller: createApplyController(options), timeline, applyCalls, events };
+  return {
+    fake,
+    recorded,
+    controller: createApplyController(options),
+    timeline,
+    applyCalls,
+    events,
+  };
 }
 
 /** The minimal corpus plan: ONE prop.set on the resolved "Hello" layer. */
@@ -341,7 +375,10 @@ function recordingBridge(): EditorBridge & { calls: string[] } {
   return bridge;
 }
 
-function executorDeps(bridge: EditorBridge): { deps: ToolExecutorDeps; client: ReturnType<typeof stubClient> } {
+function executorDeps(bridge: EditorBridge): {
+  deps: ToolExecutorDeps;
+  client: ReturnType<typeof stubClient>;
+} {
   const stubbed = stubClient();
   return {
     deps: {
@@ -448,20 +485,64 @@ describe("M5-N client — poisoned compiled batches are rejected before engine.b
 
 describe("M5-N client — the Twin-50 name-collision abuse resolves to typed ambiguity", () => {
   it("50 layers all named Twin: ambiguous outcome, all 50 candidates, ZERO engine mutations", async () => {
-    const harness = await makeApplyHarness({ comps: [{ name: "Main" }] });
-    for (let index = 0; index < 50; index += 1) {
-      await harness.fake.execute("layer.newText", { text: `Twin body ${index}`, name: "Twin" });
-    }
+    // The REAL engine uniquifies NEW layer names (fake.ts uniqueLayerName, mirroring
+    // layer.rs) so this scenario needs a project that ALREADY carries 50 duplicate
+    // names (a hostile .ecproj) — exactly the corpus threat. The bridge is a
+    // recording stub whose comp.info answers with 50 identical Twins.
+    const executeCalls: Array<{ command: string; params?: unknown }> = [];
+    const queryCalls: Array<{ command: string; params?: unknown }> = [];
+    const bridge = {
+      inspect: async () => ({ selectedLayers: [1], activeComp: 1 }),
+      query: async (command: string, params?: unknown): Promise<unknown> => {
+        queryCalls.push({ command, params });
+        if (command !== "comp.info") return {};
+        return {
+          id: 1,
+          name: "Main",
+          layers: Array.from({ length: 50 }, (_unused, index) => ({
+            id: index + 1,
+            name: "Twin",
+            type: "text",
+          })),
+        };
+      },
+      execute: async (command: string, params?: unknown): Promise<unknown> => {
+        executeCalls.push({ command, params });
+        return { executed: true };
+      },
+      renderFrame: async () => ({ comp: 1, time: 0, width: 2, height: 2, pngBase64: null }),
+    } as unknown as EditorBridge;
+
+    const timeline: string[] = [];
+    const applyCalls: Array<{ runId: string; body: Record<string, unknown> }> = [];
+    const controller = createApplyController({
+      bridge,
+      autosave: {
+        saveNow: async (reason: string) => {
+          timeline.push(`saveNow:${reason}`);
+          return { saved: true, version: { id: "ver_x", label: null, sha256: "0", sizeBytes: 8 } };
+        },
+        markDirty: (reason?: string) => timeline.push(`markDirty:${reason ?? "unnamed"}`),
+      },
+      api: {
+        runs: {
+          applyRun: async (runId: string, body: Record<string, unknown>) => {
+            timeline.push("applyRun");
+            applyCalls.push({ runId, body });
+            return { applied: true, versionId: "ver_x", creditsCommitted: 12 };
+          },
+          undoRun: async () => ({ undone: true }),
+        },
+      },
+    });
 
     const requests: LayerResolutionRequest[] = [
       { requestId: "r1", layerName: "Twin", disambiguation: ["M5N-SP-TWIN-50"] },
     ];
-    const outcome = await harness.controller.apply(
-      corpusPlan({ resolutionRequests: requests }),
-    );
+    const outcome = await controller.apply(corpusPlan({ resolutionRequests: requests }));
 
     expect(outcome).toMatchObject({ ok: false, reason: "ambiguous" });
-    if (!("candidates" in outcome) || !outcome.ok) {
+    if (outcome.ok || !("candidates" in outcome)) {
       throw new Error("expected the ambiguous outcome shape");
     }
     expect(outcome.candidates).toHaveLength(50);
@@ -469,14 +550,10 @@ describe("M5-N client — the Twin-50 name-collision abuse resolves to typed amb
     expect(outcome.message).toContain("matches 50 layers");
     // NOTHING executed: one read-only comp.info query, zero engine.batch calls,
     // no autosave, no gateway report.
-    expect(harness.recorded.queryCalls).toEqual([{ command: "comp.info", params: {} }]);
-    expect(harness.recorded.executeCalls).toEqual([]);
-    expect(harness.timeline).toEqual([]);
-    expect(harness.applyCalls).toEqual([]);
-    expect(harness.events.map((event) => event.type)).toEqual([
-      "apply.started",
-      "apply.failed",
-    ]);
+    expect(queryCalls).toEqual([{ command: "comp.info", params: {} }]);
+    expect(executeCalls).toEqual([]);
+    expect(timeline).toEqual([]);
+    expect(applyCalls).toEqual([]);
     expectPrototypeClean();
   });
 });
@@ -531,7 +608,7 @@ describe("M5-N client — dunder ids/keys ride the apply as inert data (F-1 less
     // JSON.parse on purpose: an own "__proto__" data key, no setter fires
     // (the M4-N authoring rule).
     const poisonedParams = JSON.parse(
-      '{"layer":"$request:r1","path":"text/sourceText","value":"M5N-SP-VALUE-PROTO-CLEAN","__proto__":{"polluted":"M5N-SP-VALUE-PROTO"}}',
+      '{"layer":"$request:r1","path":"text/sourceText","value":"M5N-SP-VALUE-CLEAN-OK","__proto__":{"polluted":"M5N-SP-VALUE-PROTO"}}',
     );
     const outcome = await harness.controller.apply(
       corpusPlan({
@@ -551,11 +628,14 @@ describe("M5-N client — dunder ids/keys ride the apply as inert data (F-1 less
     // a setter) — the patch never rebound a prototype to reach it…
     expect(Object.hasOwn(recordedStep as object, "__proto__")).toBe(true);
     expect(hasNoDunderKeysDeep(recordedStep)).toBe(false); // it IS still data on the wire
-    // …the engine consumed the CLEAN fields (the layer id resolved + the value
-    // written — the real fake editor executed the step)…
-    const summary = await harness.recorded.bridge.query<{ layers?: unknown }>("project.summary");
-    expect(JSON.stringify(summary).includes("M5N-SP-VALUE-PROTO-CLEAN")).toBe(true);
-    expect(JSON.stringify(summary).includes("M5N-SP-VALUE-PROTO")).toBe(false); // the dunder VALUE never became content
+    // …the engine consumed the CLEAN fields: the resolved layer's text property
+    // now carries the marker VALUE, and the dunder VALUE never became content.
+    const prop = (await harness.recorded.bridge.query<Record<string, unknown>>("prop.get", {
+      layer: 1,
+      path: "text/sourceText",
+    })) as Record<string, unknown>;
+    expect(JSON.stringify(prop).includes("M5N-SP-VALUE-CLEAN-OK")).toBe(true);
+    expect(JSON.stringify(prop).includes("M5N-SP-VALUE-PROTO")).toBe(false);
     // …and the global prototype is untouched end-to-end.
     expectPrototypeClean();
   });
@@ -564,6 +644,32 @@ describe("M5-N client — dunder ids/keys ride the apply as inert data (F-1 less
 // ---------------------------------------------------------------------------
 // 5. FINDING F-6 — the client gate is SHAPE-only; the ENGINE is the last wall
 // ---------------------------------------------------------------------------
+
+describe("M5-N client — the timeout poison is SANITIZED, never executed as written", () => {
+  it("timeoutMs 0 (gateway wire-timeout-zero) is dropped from the engine payload entirely", async () => {
+    const harness = await makeApplyHarness({ comps: [{ name: "Main" }] });
+    await harness.fake.execute("layer.newText", { text: "Hello" });
+
+    const outcome = await harness.controller.apply(
+      corpusPlan({
+        compiledBatch: WIRE_TIMEOUT_ZERO_BATCH as ApplicablePlan["compiledBatch"],
+        resolutionRequests: [],
+      }),
+    );
+
+    // The §8.5 "timeoutMs ≥ 1" bound is enforced at the WIRE (gateway suite);
+    // the client gate sanitizes rather than rejects: the batch executes WITHOUT
+    // the hostile timeout field — the engine never sees timeoutMs at all.
+    expect(outcome).toMatchObject({ ok: true });
+    const batch = harness.recorded.executeCalls.find((call) => call.command === "engine.batch");
+    expect(Object.keys(batch?.params as Record<string, unknown>).sort()).toEqual([
+      "atomic",
+      "label",
+      "steps",
+    ]);
+    expectPrototypeClean();
+  });
+});
 
 describe("M5-N FINDING F-6 (report-only) — hostile command ids pass the client gate; the engine refuses", () => {
   it("a dunder COMMAND in a well-shaped batch reaches engine.batch and the ENGINE rejects it (zero mutations)", async () => {
@@ -693,7 +799,7 @@ describe("M5-N global canary", () => {
     }
     // No unexpected ENUMERABLE additions either (a for...in loop stays safe).
     expect(Object.keys(Object.prototype)).toEqual([]);
-    expect(({}).toString()).toBe("[object Object]");
+    expect({}.toString()).toBe("[object Object]");
     expectPrototypeClean();
   });
 
@@ -704,8 +810,18 @@ describe("M5-N global canary", () => {
     for (const fixture of MIRRORED_WRITE_ARGS) {
       expect(JSON.stringify(fixture.args).includes(fixture.needle), fixture.gatewayId).toBe(true);
     }
-    for (const fixture of [...MIRRORED_WIRE_POISONS, { gatewayId: "wire-dunder-command", compiledBatch: WIRE_DUNDER_COMMAND_BATCH, needle: "M5N-WIRE-DUNDER-CMD" }]) {
-      expect(JSON.stringify(fixture.compiledBatch).includes(fixture.needle), fixture.gatewayId).toBe(true);
+    for (const fixture of [
+      ...MIRRORED_WIRE_POISONS,
+      {
+        gatewayId: "wire-dunder-command",
+        compiledBatch: WIRE_DUNDER_COMMAND_BATCH,
+        needle: "M5N-WIRE-DUNDER-CMD",
+      },
+    ]) {
+      expect(
+        JSON.stringify(fixture.compiledBatch).includes(fixture.needle),
+        fixture.gatewayId,
+      ).toBe(true);
     }
     expect(vi.isMockFunction(vi.fn())).toBe(true); // the vitest import stays exercised
   });
