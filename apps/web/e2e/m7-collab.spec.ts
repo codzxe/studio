@@ -468,15 +468,19 @@ test.describe("M7 comments — anchored threads over the real editor", () => {
     await expect(replyRow).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
     await expect(replyRow).toHaveAttribute("data-depth", "2");
 
-    // RESOLVE — the root resolve flips the whole thread out of "Open".
+    // RESOLVE — under "All" the resolved badge renders; the thread-level
+    // filter semantics then take the whole thread out of "Open" (D-15: a
+    // filter never SPLITS a thread — the replies follow their root).
+    await page.getByTestId("comments-filter-all").click();
+    await expect(thread).toBeVisible();
     await thread.locator('[data-testid^="comment-resolve-"]').first().click();
     await expect(thread.locator('[data-testid^="comment-resolved-"]')).toContainText("Resolved", {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
-    await expect(thread).toHaveCount(0, { timeout: RUN_SETTLE_TIMEOUT_MS });
 
-    // FILTERS — "Resolved" and "All" bring the thread back (D-15: a filter
-    // never splits a thread).
+    // FILTERS — "Open" drops the resolved thread; "Resolved" brings it back.
+    await page.getByTestId("comments-filter-open").click();
+    await expect(thread).toHaveCount(0, { timeout: RUN_SETTLE_TIMEOUT_MS });
     await page.getByTestId("comments-filter-resolved").click();
     await expect(thread).toBeVisible();
     await expect(thread.locator('[data-testid^="comment-resolved-"]')).toContainText("Resolved");
@@ -543,9 +547,7 @@ test.describe("M7 presence + lease — who is viewing, who is editing", () => {
     await expect(strip).toHaveAttribute("data-viewer-count", "3");
     await expect(strip).toHaveAttribute("aria-label", "3 people are viewing");
     await expect(strip.locator('[data-testid="presence-viewer"]')).toHaveCount(3);
-    await expect(
-      strip.locator('[data-testid="presence-viewer"][data-self="true"]'),
-    ).toHaveCount(1);
+    await expect(strip.locator('[data-testid="presence-viewer"][data-self="true"]')).toHaveCount(1);
 
     // The REAL lease-state (nothing scripted here): the M3 session acquired
     // the seeded project's lease on open, so the banner's mount poll reads
@@ -716,13 +718,8 @@ test.describe("M7 history — version timeline, restore, activity", () => {
     // DOM so re-runs against a long-lived CI DB stay honest).
     const currentRow = page.locator('[data-testid="version-row"][data-current="true"]');
     await expect(currentRow).toBeVisible();
-    const currentNumberText = await currentRow
-      .getByTestId("version-number")
-      .textContent();
-    const expectedNewVersion = Number.parseInt(
-      (currentNumberText ?? "v").replace("v", ""),
-      10,
-    );
+    const currentNumberText = await currentRow.getByTestId("version-number").textContent();
+    const expectedNewVersion = Number.parseInt((currentNumberText ?? "v").replace("v", ""), 10);
     expect(Number.isFinite(expectedNewVersion)).toBe(true);
 
     // §9.3 restore: the dialog demands the version's EXACT typed label —
