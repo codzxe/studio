@@ -268,9 +268,10 @@ function stableStringify(value: unknown, depth = 0): string {
         return `[${value.map((item) => stableStringify(item, depth + 1)).join(",")}]`;
       }
       if (typeof value !== "object") return '"<unserializable>"';
-      const body = Object.keys(value)
+      const record = value as Record<string, unknown>;
+      const body = Object.keys(record)
         .sort()
-        .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key], depth + 1)}`)
+        .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key], depth + 1)}`)
         .join(",");
       return `{${body}}`;
     }

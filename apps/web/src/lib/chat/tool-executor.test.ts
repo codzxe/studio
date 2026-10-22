@@ -1,10 +1,13 @@
 /**
- * tool-executor tests (M4-SEAMS.md seam 6) — deterministic, no network:
- * a fake editor via `@studio/editor-bridge/fake` + a stubbed ApiClient that
- * records every `runs.postEvent` attempt. Covers the 4 client tools' happy
- * paths, the posted RUN_EVENT_REQUEST shape, validation/forbidden/server-tool
- * gates, per-item degradation, flags filtering, the toolCallId guard, post
- * retries and the whole-call timeout guard.
+ * tool-executor tests (M4-SEAMS.md seam 6 + M5 write-tool proposals) —
+ * deterministic, no network: a fake editor via `@studio/editor-bridge/fake` +
+ * a stubbed ApiClient that records every `runs.postEvent` attempt. Covers the
+ * 4 client tools' happy paths, the posted RUN_EVENT_REQUEST shape,
+ * validation/forbidden/server-tool gates, per-item degradation, flags
+ * filtering, the toolCallId guard, post retries, the whole-call timeout guard
+ * — and the M5 slice: the 8 write tools PROPOSE (never execute; the only
+ * bridge traffic is read-only live-state validation) and the RAW engine
+ * surface as a tool name stays TOOL_FORBIDDEN (law #6 backstop).
  */
 
 import { type ApiClient, ApiError } from "@studio/api-client";

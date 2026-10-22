@@ -107,10 +107,25 @@ const REGISTRY: CommandSchema = {
 
 // The M5-A write-tool surface (mirrors packages/contracts/src/tools.ts §8.4,
 // so tests survive M5-A's mid-flight edits — deps are injected, never shared).
+// Typed as Record<ToolId, WriteToolDef> (required keys) so noUncheckedIndexedAccess
+// cannot smuggle `undefined` into fixture reads.
+const WRITE_TOOL_IDS = [
+  "create_composition",
+  "create_text",
+  "set_properties",
+  "set_keyframes",
+  "add_effect",
+  "apply_preset",
+  "undo_run",
+  "save_version",
+] as const;
+
+type FixtureToolId = (typeof WRITE_TOOL_IDS)[number];
+
 const HEX_COLOR = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
 const EASING = z.enum(["linear", "ease-in", "ease-out", "ease-in-out"]);
 
-const WRITE_TOOLS: CompileDeps["writeTools"] = {
+const WRITE_TOOLS: Record<FixtureToolId, WriteToolDef> = {
   create_composition: {
     args: z.object({
       name: z.string().min(1).max(120),
@@ -534,8 +549,9 @@ describe("allowlist + proposed-batch validation", () => {
   });
 
   it("a registry without the translated command fatals with the compiled step", () => {
-    const trimmed: CommandSchema = { ...REGISTRY };
-    delete trimmed["layer.newText"];
+    const trimmed: CommandSchema = Object.fromEntries(
+      Object.entries(REGISTRY).filter(([id]) => id !== "layer.newText"),
+    );
     const issues = expectFatal(
       compile(
         plan([step("create_text", { text: "Hi" }, [{ command: "layer.newText", params: { text: "Hi" } }])]),
@@ -791,7 +807,8 @@ describe("hostile args (injection corpus patterns)", () => {
 
   it("cyclic structures yield a typed fatal, never a throw", () => {
     const cyclic: Record<string, unknown> = { updates: [{ layer: "Headline", path: "x", value: null }] };
-    (cyclic.updates as Array<Record<string, unknown>>)[0].value = cyclic;
+    const firstUpdate = (cyclic.updates as Array<Record<string, unknown>>)[0];
+    if (firstUpdate !== undefined) firstUpdate.value = cyclic;
     const result = compile(plan([step("set_properties", cyclic)]));
     expect(result.ok).toBe(false);
   });
