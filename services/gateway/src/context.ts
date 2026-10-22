@@ -5,9 +5,9 @@
 // in-memory storage driver and the MockRunner. Production wires the real
 // components in src/index.ts.
 
-import type { Context } from "hono";
 import type { StudioEnv } from "@studio/config";
 import type { Repos, Role } from "@studio/db";
+import type { Context } from "hono";
 import type { AuthContext, GatewayAuth } from "./auth.js";
 import type { IdempotencyStore } from "./idempotency.js";
 import type { Logger } from "./logger.js";
@@ -76,7 +76,9 @@ export interface StripeSeam {
     payload: Buffer,
     signature: string | null,
   ): { ok: true; event: StripeEventLike } | { ok: false; reason: string };
-  createCustomer(params: { email: string; metadata: Record<string, string> }): Promise<{ id: string }>;
+  createCustomer(params: { email: string; metadata: Record<string, string> }): Promise<{
+    id: string;
+  }>;
   /** Idempotency bookkeeping for webhook event ids (true when already handled). */
   seenEvent(id: string): boolean;
 }
@@ -109,7 +111,12 @@ export interface WorkspaceContext {
   /** Caller's role in this workspace (owner|admin|editor|viewer). */
   readonly role: Role;
   /** Current members (from the org plugin's full view). */
-  readonly members: readonly { userId: string; role: string; userName: string | null; userEmail: string | null }[];
+  readonly members: readonly {
+    userId: string;
+    role: string;
+    userName: string | null;
+    userEmail: string | null;
+  }[];
   /** Organization summary (name/slug/metadata). */
   readonly organization: import("./auth.js").WorkspaceSummary;
 }

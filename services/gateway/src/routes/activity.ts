@@ -4,13 +4,13 @@
 
 import { Hono } from "hono";
 
-import { PAGINATION_QUERY_SCHEMA, type ActivityEntry } from "@studio/contracts";
+import { type ActivityEntry, PAGINATION_QUERY_SCHEMA } from "@studio/contracts";
 
-import { page, pathParam } from "../http.js";
-import { GatewayError } from "../errors.js";
-import { requireAuth, requireWorkspace } from "../middleware.js";
-import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import type { AuditLogEntry } from "@studio/db";
+import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
+import { GatewayError } from "../errors.js";
+import { page, pathParam } from "../http.js";
+import { requireAuth, requireWorkspace } from "../middleware.js";
 
 export function activityRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -27,28 +27,32 @@ export function activityRoutes(deps: GatewayDeps): Hono<AppBindings> {
     createdAt: entry.createdAt.toISOString(),
   });
 
-  app.get("/v1/projects/:id/activity", requireWorkspace("viewer"), async (c: AppContext): Promise<Response> => {
-    const parsed = PAGINATION_QUERY_SCHEMA.safeParse({
-      cursor: c.req.query("cursor"),
-      limit: c.req.query("limit"),
-    });
-    if (!parsed.success) {
-      throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
-        status: 400,
-        hint: "Check the pagination parameters.",
-        requestId: c.get("requestId"),
+  app.get(
+    "/v1/projects/:id/activity",
+    requireWorkspace("viewer"),
+    async (c: AppContext): Promise<Response> => {
+      const parsed = PAGINATION_QUERY_SCHEMA.safeParse({
+        cursor: c.req.query("cursor"),
+        limit: c.req.query("limit"),
       });
-    }
-    const workspaceId = c.get("workspace").id;
-    // The project must exist in this workspace (repo: cross-tenant → 404).
-    await deps.repos.projects.get(workspaceId, pathParam(c, "id"));
-    const result = await deps.repos.audit.list(workspaceId, {
-      targetId: pathParam(c, "id"),
-      cursor: parsed.data.cursor ?? null,
-      limit: parsed.data.limit,
-    });
-    return page(c, result.items.map(toDto), result.nextCursor);
-  });
+      if (!parsed.success) {
+        throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
+          status: 400,
+          hint: "Check the pagination parameters.",
+          requestId: c.get("requestId"),
+        });
+      }
+      const workspaceId = c.get("workspace").id;
+      // The project must exist in this workspace (repo: cross-tenant → 404).
+      await deps.repos.projects.get(workspaceId, pathParam(c, "id"));
+      const result = await deps.repos.audit.list(workspaceId, {
+        targetId: pathParam(c, "id"),
+        cursor: parsed.data.cursor ?? null,
+        limit: parsed.data.limit,
+      });
+      return page(c, result.items.map(toDto), result.nextCursor);
+    },
+  );
 
   return app;
 }

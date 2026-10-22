@@ -6,20 +6,20 @@
 import { Hono } from "hono";
 
 import {
-  CREATE_ASSET_SCHEMA,
-  PAGINATION_QUERY_SCHEMA,
   type Asset as AssetDto,
+  CREATE_ASSET_SCHEMA,
   type CreateAssetResponse,
+  PAGINATION_QUERY_SCHEMA,
 } from "@studio/contracts";
 
-import { ok, page, pathParam } from "../http.js";
+import { type Asset, createId } from "@studio/db";
+import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
+import { ok, page, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
 import { assetKey, sanitizeName } from "../storage.js";
 import { audit } from "./projects.js";
-import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
-import { createId, type Asset } from "@studio/db";
 
 export function assetsRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -119,11 +119,17 @@ export function assetsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     return ok(c, body, 201);
   });
 
-  app.get("/v1/assets/:id/url", requireWorkspace("viewer"), async (c: AppContext): Promise<Response> => {
-    const asset = await deps.repos.assets.get(c.get("workspace").id, pathParam(c, "id"));
-    const signed = await deps.storage.getSignedUrl(asset.objectKey, SIGNED_URL_TTL_SECONDS, { method: "GET" });
-    return ok(c, { url: signed.url, expiresAt: signed.expiresAt.toISOString() });
-  });
+  app.get(
+    "/v1/assets/:id/url",
+    requireWorkspace("viewer"),
+    async (c: AppContext): Promise<Response> => {
+      const asset = await deps.repos.assets.get(c.get("workspace").id, pathParam(c, "id"));
+      const signed = await deps.storage.getSignedUrl(asset.objectKey, SIGNED_URL_TTL_SECONDS, {
+        method: "GET",
+      });
+      return ok(c, { url: signed.url, expiresAt: signed.expiresAt.toISOString() });
+    },
+  );
 
   return app;
 }

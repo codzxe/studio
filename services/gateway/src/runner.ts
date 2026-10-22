@@ -24,17 +24,17 @@ import { randomUUID } from "node:crypto";
 import type { StudioEnv } from "@studio/config";
 
 import {
-  EDIT_PLAN_SCHEMA,
-  estimateCredits,
   type ContextSelection,
+  EDIT_PLAN_SCHEMA,
   type EditPlan,
   type PinnedContextItem,
   type StudioStreamEvent,
+  estimateCredits,
 } from "@studio/contracts";
 import { computeReserveAmount } from "@studio/db";
 
 import { createLiteLLMRunner } from "./litellm/runner.js";
-import { nullLogger, type Logger } from "./logger.js";
+import { type Logger, nullLogger } from "./logger.js";
 
 /** All 12 §7.4 payloads minus the runId/seq the log assigns. */
 export type RunStreamPayload = {
@@ -91,7 +91,12 @@ export interface AgentRunStream {
 
 export type AgentRunOutcome =
   | { readonly kind: "completed"; readonly committedCredits: number }
-  | { readonly kind: "failed"; readonly code: string; readonly message: string; readonly retryable: boolean }
+  | {
+      readonly kind: "failed";
+      readonly code: string;
+      readonly message: string;
+      readonly retryable: boolean;
+    }
   | { readonly kind: "cancelled" };
 
 export interface AgentRunner {
@@ -124,7 +129,11 @@ export class RunLog {
     if (this.terminal !== null) return this.terminal;
     if (this.nextSeq === 0 && payload.type !== "run.started") {
       // Envelope rule: nothing precedes run.started.
-      const started: StudioStreamEvent = { ...payload, runId: this.runId, seq: 0 } as StudioStreamEvent;
+      const started: StudioStreamEvent = {
+        ...payload,
+        runId: this.runId,
+        seq: 0,
+      } as StudioStreamEvent;
       this.push(started);
       return started;
     }
@@ -163,7 +172,7 @@ export class RunLog {
   }
 
   get lastSeq(): number {
-    return this.events.length === 0 ? -1 : this.events.at(-1)?.seq ?? -1;
+    return this.events.length === 0 ? -1 : (this.events.at(-1)?.seq ?? -1);
   }
 
   get isTerminal(): boolean {
@@ -283,10 +292,7 @@ export function estimateRunCredits(input: {
 }): number {
   const enabledBlocks = Object.values(input.context).filter((enabled) => enabled === true).length;
   const rawSteps =
-    1 +
-    Math.floor(input.message.length / 500) +
-    input.pinned.length +
-    (enabledBlocks > 6 ? 1 : 0);
+    1 + Math.floor(input.message.length / 500) + input.pinned.length + (enabledBlocks > 6 ? 1 : 0);
   const steps = Math.max(1, Math.min(20, rawSteps));
   return estimateCredits({ risk: "low", steps: Array.from({ length: steps }) });
 }
@@ -322,7 +328,9 @@ export function mockEditPlan(): EditPlan {
         args: { layerId: "layer-headline", name: "Subtitle" },
         batch: {
           label: "Rename layer",
-          steps: [{ command: "set_properties", params: { layerId: "layer-headline", name: "Subtitle" } }],
+          steps: [
+            { command: "set_properties", params: { layerId: "layer-headline", name: "Subtitle" } },
+          ],
         },
       },
     ],
@@ -337,11 +345,17 @@ export function createMockRunner(): AgentRunner {
       await stream.yieldToStream();
       if (stream.signal.aborted) return { kind: "cancelled" };
 
-      stream.emit({ type: "message.delta", delta: "I'll rename that layer for you — it's a one-property change." });
+      stream.emit({
+        type: "message.delta",
+        delta: "I'll rename that layer for you — it's a one-property change.",
+      });
       await stream.yieldToStream();
       if (stream.signal.aborted) return { kind: "cancelled" };
 
-      stream.emit({ type: "message.delta", delta: " Planning a single atomic batch so undo stays one step." });
+      stream.emit({
+        type: "message.delta",
+        delta: " Planning a single atomic batch so undo stays one step.",
+      });
       await stream.yieldToStream();
       if (stream.signal.aborted) return { kind: "cancelled" };
 

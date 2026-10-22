@@ -6,38 +6,48 @@
 
 import { Hono } from "hono";
 
-import { QUEUE_RENDER_SCHEMA, type RenderJob } from "@studio/contracts";
 import { StudioError } from "@studio/config";
+import { QUEUE_RENDER_SCHEMA, type RenderJob } from "@studio/contracts";
 
+import type { Render } from "@studio/db";
+import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { ok, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
 import { renderKey } from "../storage.js";
 import { audit } from "./projects.js";
-import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
-import type { Render } from "@studio/db";
 
 /** Worker seam (§5): a later wave binds this to Valkey/BullMQ. */
 export interface RenderWorker {
   enqueue(render: { id: string; projectId: string }): Promise<void>;
 }
 
-export function createNoopRenderWorker(logger: { warn(msg: string, fields?: Record<string, unknown>): void }): RenderWorker {
+export function createNoopRenderWorker(logger: {
+  warn(msg: string, fields?: Record<string, unknown>): void;
+}): RenderWorker {
   return {
     async enqueue(render) {
-      logger.warn("render_worker_noop", { renderId: render.id, hint: "No render worker is wired in W2-b; the job stays queued." });
+      logger.warn("render_worker_noop", {
+        renderId: render.id,
+        hint: "No render worker is wired in W2-b; the job stays queued.",
+      });
     },
   };
 }
 
-export function rendersRoutes(deps: GatewayDeps, worker: RenderWorker = createNoopRenderWorker(deps.logger)): Hono<AppBindings> {
+export function rendersRoutes(
+  deps: GatewayDeps,
+  worker: RenderWorker = createNoopRenderWorker(deps.logger),
+): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
   app.use("/v1/renders/*", requireAuth());
 
   const toJob = async (render: Render): Promise<RenderJob> => {
     let resultUrl: string | null = null;
     if (render.status === "completed" && render.objectKey !== null) {
-      const signed = await deps.storage.getSignedUrl(render.objectKey, SIGNED_URL_TTL_SECONDS, { method: "GET" });
+      const signed = await deps.storage.getSignedUrl(render.objectKey, SIGNED_URL_TTL_SECONDS, {
+        method: "GET",
+      });
       resultUrl = signed.url;
     }
     return {
@@ -81,10 +91,14 @@ export function rendersRoutes(deps: GatewayDeps, worker: RenderWorker = createNo
     return ok(c, job, 201);
   });
 
-  app.get("/v1/renders/:id", requireWorkspace("viewer"), async (c: AppContext): Promise<Response> => {
-    const render = await deps.repos.renders.get(c.get("workspace").id, pathParam(c, "id"));
-    return ok(c, await toJob(render));
-  });
+  app.get(
+    "/v1/renders/:id",
+    requireWorkspace("viewer"),
+    async (c: AppContext): Promise<Response> => {
+      const render = await deps.repos.renders.get(c.get("workspace").id, pathParam(c, "id"));
+      return ok(c, await toJob(render));
+    },
+  );
 
   return app;
 }

@@ -57,7 +57,9 @@ describe("request ids (§7.3)", () => {
   });
 
   it("echoes a caller-provided x-request-id (≤128 chars)", async () => {
-    const response = await app.request("/health", { headers: { "x-request-id": "req_caller_123" } });
+    const response = await app.request("/health", {
+      headers: { "x-request-id": "req_caller_123" },
+    });
     expect(response.headers.get("x-request-id")).toBe("req_caller_123");
   });
 

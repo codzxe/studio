@@ -6,9 +6,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CHAT_REQUEST_SCHEMA, type ChatRequest } from "@studio/contracts";
 
-import { resolveChatModel } from "../src/routes/chat.js";
-import { createRunnerForEnv, type AgentRun } from "../src/runner.js";
 import { isGatewayError } from "../src/errors.js";
+import { resolveChatModel } from "../src/routes/chat.js";
+import {
+  type AgentRun,
+  type AgentRunStream,
+  type RunStreamPayload,
+  type ToolWaitResult,
+  createRunnerForEnv,
+} from "../src/runner.js";
 import { testEnv } from "./helpers.js";
 
 const baseRequest = {
@@ -40,8 +46,11 @@ describe("CHAT_REQUEST_SCHEMA.model", () => {
   });
 
   it("ChatRequest keeps the optional ModelId in its inferred type", () => {
-    const request: ChatRequest = CHAT_REQUEST_SCHEMA.parse({ ...baseRequest, model: "studio-fast" });
-    expect(request.model === undefined || typeof request.model).toBe(true);
+    const request: ChatRequest = CHAT_REQUEST_SCHEMA.parse({
+      ...baseRequest,
+      model: "studio-fast",
+    });
+    expect(request.model).toBe("studio-fast");
   });
 });
 
@@ -60,12 +69,12 @@ describe("resolveChatModel", () => {
   });
 
   it("accepts a requested model the plan allows", () => {
-    expect(
-      resolveChatModel({ requested: "studio-fast", plan: "trial", requestId: "req_1" }),
-    ).toBe("studio-fast");
-    expect(
-      resolveChatModel({ requested: "studio-smart", plan: "pro", requestId: "req_1" }),
-    ).toBe("studio-smart");
+    expect(resolveChatModel({ requested: "studio-fast", plan: "trial", requestId: "req_1" })).toBe(
+      "studio-fast",
+    );
+    expect(resolveChatModel({ requested: "studio-smart", plan: "pro", requestId: "req_1" })).toBe(
+      "studio-smart",
+    );
     expect(
       resolveChatModel({ requested: "studio-vision", plan: "studio", requestId: "req_1" }),
     ).toBe("studio-vision");
@@ -136,27 +145,27 @@ function makeRun(): AgentRun {
   };
 }
 
-function makeStream(): { events: unknown[]; signal: AbortSignal } {
+function makeStream(): { events: RunStreamPayload[]; signal: AbortSignal } {
   const controller = new AbortController();
-  const events: unknown[] = [];
+  const events: RunStreamPayload[] = [];
   return {
     events,
     signal: controller.signal,
   };
 }
 
-// A minimal AgentRunStream faked from the makeStream parts.
-function fakeStream(state: ReturnType<typeof makeStream>) {
+// A minimal typed AgentRunStream fake.
+function fakeStream(state: ReturnType<typeof makeStream>): AgentRunStream {
   return {
-    emit: (payload: unknown) => {
+    emit: (payload: RunStreamPayload) => {
       state.events.push(payload);
-      return payload;
+      return { ...payload, runId: "run_sel", seq: state.events.length - 1 };
     },
     yieldToStream: async () => {
       await new Promise((resolve) => setImmediate(resolve));
     },
     expectToolCall: () => {},
-    waitForToolResult: async () => ({ ok: true as const, result: {} }),
+    waitForToolResult: async (): Promise<ToolWaitResult> => ({ ok: true, result: {} }),
     signal: state.signal,
   };
 }
@@ -172,7 +181,7 @@ describe("createRunnerForEnv (D-16)", () => {
     const state = makeStream();
     const outcome = await runner.start(makeRun(), fakeStream(state));
     expect(outcome).toEqual({ kind: "completed", committedCredits: expect.any(Number) });
-    const types = state.events.map((event) => (event as { type: string }).type);
+    const types = state.events.map((event) => event.type);
     expect(types).toEqual([
       "run.started",
       "message.delta",
@@ -199,10 +208,7 @@ describe("createRunnerForEnv (D-16)", () => {
     const outcome = await runner.start(makeRun(), fakeStream(state));
 
     expect(outcome).toEqual({ kind: "completed", committedCredits: 1 });
-    expect(state.events.map((event) => (event as { type: string }).type)).toEqual([
-      "run.started",
-      "message.delta",
-    ]);
+    expect(state.events.map((event) => event.type)).toEqual(["run.started", "message.delta"]);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0] as unknown as [
       string,

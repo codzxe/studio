@@ -6,11 +6,11 @@
 
 import { Hono } from "hono";
 
-import type { Membership, MeResponse } from "@studio/contracts";
+import type { MeResponse, Membership } from "@studio/contracts";
 
-import { requireAuth } from "../middleware.js";
-import { ok } from "../http.js";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
+import { ok } from "../http.js";
+import { requireAuth } from "../middleware.js";
 
 export function meRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -28,7 +28,10 @@ export function meRoutes(deps: GatewayDeps): Hono<AppBindings> {
       const role = full?.members.find((member) => member.userId === user.id)?.role ?? "viewer";
       memberships.push({
         workspaceId: org.id,
-        role: role === "owner" || role === "admin" || role === "editor" || role === "viewer" ? role : "viewer",
+        role:
+          role === "owner" || role === "admin" || role === "editor" || role === "viewer"
+            ? role
+            : "viewer",
         workspace: { id: org.id, name: org.name, slug: org.slug },
       });
       if (activeWorkspaceId === null) activeWorkspaceId = org.id;

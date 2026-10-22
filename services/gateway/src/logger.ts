@@ -5,7 +5,7 @@
 // identifiers. If a secret env value ever reaches a field it is redacted
 // against @studio/config's SECRET_ENV_VARS list.
 
-import { SECRET_ENV_VARS, type LogLevel, type StudioEnv } from "@studio/config";
+import { type LogLevel, SECRET_ENV_VARS, type StudioEnv } from "@studio/config";
 
 export type LogFields = Record<string, string | number | boolean | null | undefined>;
 
@@ -19,11 +19,18 @@ export interface Logger {
   child(base: LogFields): Logger;
 }
 
-export function createLogger(env: Pick<StudioEnv, "app">, secretValues: readonly string[] = []): Logger {
+export function createLogger(
+  env: Pick<StudioEnv, "app">,
+  secretValues: readonly string[] = [],
+): Logger {
   const threshold = LEVELS.indexOf(env.app.logLevel === "error" ? "error" : env.app.logLevel);
   // Real secret values from this process's env, for redaction of accidental leaks.
   const redactions =
-    secretValues.length > 0 ? secretValues : SECRET_ENV_VARS.map((name) => process.env[name]).filter((v): v is string => typeof v === "string" && v.length >= 8);
+    secretValues.length > 0
+      ? secretValues
+      : SECRET_ENV_VARS.map((name) => process.env[name]).filter(
+          (v): v is string => typeof v === "string" && v.length >= 8,
+        );
 
   const write = (level: LogLevel, msg: string, fields: LogFields): void => {
     if (LEVELS.indexOf(level) < threshold) return;

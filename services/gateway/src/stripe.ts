@@ -25,7 +25,8 @@ export function createStripeSeam(env: StudioEnv): StripeSeam | null {
         success_url: params.successUrl,
         cancel_url: params.cancelUrl,
         metadata: params.metadata,
-        subscription_data: params.mode === "subscription" ? { metadata: params.metadata } : undefined,
+        subscription_data:
+          params.mode === "subscription" ? { metadata: params.metadata } : undefined,
         payment_intent_data: params.mode === "payment" ? { metadata: params.metadata } : undefined,
       });
       return { id: session.id, url: session.url ?? "" };

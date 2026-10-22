@@ -29,23 +29,23 @@ import { z } from "zod";
 
 import {
   EDIT_PLAN_SCHEMA,
-  MODEL_CATALOG,
-  TOOL_LIST,
   type EditPlan,
+  MODEL_CATALOG,
   type ModelId,
+  TOOL_LIST,
   type ToolDefinition,
 } from "@studio/contracts";
 
-import { nullLogger, type Logger } from "../logger.js";
-import type { AgentRun, AgentRunOutcome, AgentRunner, AgentRunStream } from "../runner.js";
+import { type Logger, nullLogger } from "../logger.js";
+import type { AgentRun, AgentRunOutcome, AgentRunStream, AgentRunner } from "../runner.js";
 import {
-  ModelUnavailableError,
-  streamChatCompletion,
   type AggregatedToolCall,
   type ChatCompletionRequest,
   type ModelStreamEvent,
+  ModelUnavailableError,
   type OpenAIChatMessage,
   type OpenAIToolSpec,
+  streamChatCompletion,
 } from "./openai.js";
 import { buildMessages, fingerprintMessages, planInstruction } from "./prompt.js";
 
@@ -117,8 +117,7 @@ function validateToolCall(call: AggregatedToolCall): ValidatedToolCall {
   if (tool === undefined) {
     return {
       ok: false,
-      message:
-        `Unknown tool "${call.name}". Available tools: ${RUNNER_READ_TOOLS.map((t) => t.id).join(", ")}.`,
+      message: `Unknown tool "${call.name}". Available tools: ${RUNNER_READ_TOOLS.map((t) => t.id).join(", ")}.`,
     };
   }
   let parsedArgs: unknown;
@@ -361,7 +360,11 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
           return cancelled();
         }
         if (error instanceof ModelUnavailableError) {
-          return failed("RUN_MODEL_UNAVAILABLE", "The model service is unavailable right now.", true);
+          return failed(
+            "RUN_MODEL_UNAVAILABLE",
+            "The model service is unavailable right now.",
+            true,
+          );
         }
         logger.error("litellm_runner_error", {
           runId: run.runId,

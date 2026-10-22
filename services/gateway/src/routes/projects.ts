@@ -6,19 +6,19 @@ import { Hono } from "hono";
 
 import {
   CREATE_PROJECT_SCHEMA,
-  PATCH_PROJECT_SCHEMA,
-  PAGINATION_QUERY_SCHEMA,
   type ManifestAsset,
+  PAGINATION_QUERY_SCHEMA,
+  PATCH_PROJECT_SCHEMA,
   type Project as ProjectDto,
   type ProjectManifest,
 } from "@studio/contracts";
 
-import { ok, page, pathParam } from "../http.js";
+import type { Project } from "@studio/db";
+import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
+import { ok, page, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
-import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
-import type { Project } from "@studio/db";
 
 export function projectsRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -76,83 +76,101 @@ export function projectsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     return ok(c, toDto(project), 201);
   });
 
-  app.get("/v1/projects/:id/manifest", requireWorkspace("viewer"), async (c: AppContext): Promise<Response> => {
-    const workspaceId = c.get("workspace").id;
-    const manifest = await deps.repos.projects.manifest(workspaceId, pathParam(c, "id"));
+  app.get(
+    "/v1/projects/:id/manifest",
+    requireWorkspace("viewer"),
+    async (c: AppContext): Promise<Response> => {
+      const workspaceId = c.get("workspace").id;
+      const manifest = await deps.repos.projects.manifest(workspaceId, pathParam(c, "id"));
 
-    const currentVersion = manifest.currentVersion;
-    let versionBlock: ProjectManifest["currentVersion"] = null;
-    if (currentVersion !== null) {
-      const signed = await deps.storage.getSignedUrl(
-        currentVersion.objectKey,
-        SIGNED_URL_TTL_SECONDS,
-        { method: "GET" },
-      );
-      versionBlock = {
-        id: currentVersion.id,
-        version: currentVersion.version,
-        sha256: currentVersion.sha256,
-        label: currentVersion.label,
-        sizeBytes: currentVersion.sizeBytes,
-        createdAt: currentVersion.createdAt.toISOString(),
-        url: signed.url,
-      };
-    }
-
-    const assets: ManifestAsset[] = await Promise.all(
-      manifest.assets.map(async (asset): Promise<ManifestAsset> => {
-        const signed = await deps.storage.getSignedUrl(asset.objectKey, SIGNED_URL_TTL_SECONDS, { method: "GET" });
-        return {
-          id: asset.id,
-          name: asset.name,
-          mime: asset.mime,
-          sizeBytes: asset.sizeBytes,
-          width: asset.width,
-          height: asset.height,
-          durationTicks: asset.durationTicks,
+      const currentVersion = manifest.currentVersion;
+      let versionBlock: ProjectManifest["currentVersion"] = null;
+      if (currentVersion !== null) {
+        const signed = await deps.storage.getSignedUrl(
+          currentVersion.objectKey,
+          SIGNED_URL_TTL_SECONDS,
+          { method: "GET" },
+        );
+        versionBlock = {
+          id: currentVersion.id,
+          version: currentVersion.version,
+          sha256: currentVersion.sha256,
+          label: currentVersion.label,
+          sizeBytes: currentVersion.sizeBytes,
+          createdAt: currentVersion.createdAt.toISOString(),
           url: signed.url,
         };
-      }),
-    );
+      }
 
-    const body: ProjectManifest = {
-      projectId: manifest.project.id,
-      currentVersion: versionBlock,
-      assets,
-      updatedAt: manifest.project.updatedAt.toISOString(),
-    };
-    return ok(c, body);
-  });
+      const assets: ManifestAsset[] = await Promise.all(
+        manifest.assets.map(async (asset): Promise<ManifestAsset> => {
+          const signed = await deps.storage.getSignedUrl(asset.objectKey, SIGNED_URL_TTL_SECONDS, {
+            method: "GET",
+          });
+          return {
+            id: asset.id,
+            name: asset.name,
+            mime: asset.mime,
+            sizeBytes: asset.sizeBytes,
+            width: asset.width,
+            height: asset.height,
+            durationTicks: asset.durationTicks,
+            url: signed.url,
+          };
+        }),
+      );
 
-  app.get("/v1/projects/:id", requireWorkspace("viewer"), async (c: AppContext): Promise<Response> => {
-    const project = await deps.repos.projects.get(c.get("workspace").id, pathParam(c, "id"));
-    return ok(c, toDto(project));
-  });
+      const body: ProjectManifest = {
+        projectId: manifest.project.id,
+        currentVersion: versionBlock,
+        assets,
+        updatedAt: manifest.project.updatedAt.toISOString(),
+      };
+      return ok(c, body);
+    },
+  );
 
-  app.patch("/v1/projects/:id", requireWorkspace("editor"), async (c: AppContext): Promise<Response> => {
-    const workspace = c.get("workspace");
-    const parsed = PATCH_PROJECT_SCHEMA.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) {
-      throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
-        status: 400,
-        hint: "Provide at least one of name or description.",
-        requestId: c.get("requestId"),
+  app.get(
+    "/v1/projects/:id",
+    requireWorkspace("viewer"),
+    async (c: AppContext): Promise<Response> => {
+      const project = await deps.repos.projects.get(c.get("workspace").id, pathParam(c, "id"));
+      return ok(c, toDto(project));
+    },
+  );
+
+  app.patch(
+    "/v1/projects/:id",
+    requireWorkspace("editor"),
+    async (c: AppContext): Promise<Response> => {
+      const workspace = c.get("workspace");
+      const parsed = PATCH_PROJECT_SCHEMA.safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) {
+        throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
+          status: 400,
+          hint: "Provide at least one of name or description.",
+          requestId: c.get("requestId"),
+        });
+      }
+      const project = await deps.repos.projects.patch(workspace.id, pathParam(c, "id"), {
+        name: parsed.data.name,
+        description: parsed.data.description,
       });
-    }
-    const project = await deps.repos.projects.patch(workspace.id, pathParam(c, "id"), {
-      name: parsed.data.name,
-      description: parsed.data.description,
-    });
-    await audit(deps, c, workspace.id, "project.updated", project.id);
-    return ok(c, toDto(project));
-  });
+      await audit(deps, c, workspace.id, "project.updated", project.id);
+      return ok(c, toDto(project));
+    },
+  );
 
-  app.delete("/v1/projects/:id", requireWorkspace("editor"), async (c: AppContext): Promise<Response> => {
-    const workspace = c.get("workspace");
-    const project = await deps.repos.projects.softDelete(workspace.id, pathParam(c, "id"));
-    await audit(deps, c, workspace.id, "project.deleted", project.id);
-    return ok(c, { id: project.id, deletedAt: project.deletedAt?.toISOString() ?? null });
-  });
+  app.delete(
+    "/v1/projects/:id",
+    requireWorkspace("editor"),
+    async (c: AppContext): Promise<Response> => {
+      const workspace = c.get("workspace");
+      const project = await deps.repos.projects.softDelete(workspace.id, pathParam(c, "id"));
+      await audit(deps, c, workspace.id, "project.deleted", project.id);
+      return ok(c, { id: project.id, deletedAt: project.deletedAt?.toISOString() ?? null });
+    },
+  );
 
   return app;
 }

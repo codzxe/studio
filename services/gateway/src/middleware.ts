@@ -11,13 +11,13 @@ import { randomUUID } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 
 import { StudioError } from "@studio/config";
-import { atLeast, can, type Role } from "@studio/db";
+import { type Role, atLeast, can } from "@studio/db";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { AppBindings, WorkspaceContext } from "./context.js";
 import { GatewayError } from "./errors.js";
-import { routeClassFor } from "./route-class.js";
-import type { RouteClass } from "./rate-limit.js";
 import { fingerprintPayload } from "./idempotency.js";
+import type { RouteClass } from "./rate-limit.js";
+import { routeClassFor } from "./route-class.js";
 
 function asStatus(status: number): ContentfulStatusCode {
   return (status >= 200 && status < 600 ? status : 200) as ContentfulStatusCode;
@@ -27,7 +27,10 @@ function asStatus(status: number): ContentfulStatusCode {
 export function requestIdMiddleware(): MiddlewareHandler<AppBindings> {
   return async (c, next) => {
     const incoming = c.req.header("x-request-id");
-    const id = incoming !== undefined && incoming.length > 0 && incoming.length <= 128 ? incoming : `req_${randomUUID().replaceAll("-", "")}`;
+    const id =
+      incoming !== undefined && incoming.length > 0 && incoming.length <= 128
+        ? incoming
+        : `req_${randomUUID().replaceAll("-", "")}`;
     c.set("requestId", id);
     await next();
     c.header("x-request-id", id);
@@ -108,7 +111,11 @@ export function clientIp(c: Parameters<MiddlewareHandler<AppBindings>>[0]): stri
   return c.req.header("x-real-ip") ?? "unknown";
 }
 
-const IDEMPOTENCY_EXCLUDED_PATHS = [/^\/v1\/auth(\/|$)/, /^\/v1\/threads\/[^/]+\/chat$/, /^\/v1\/webhooks\//];
+const IDEMPOTENCY_EXCLUDED_PATHS = [
+  /^\/v1\/auth(\/|$)/,
+  /^\/v1\/threads\/[^/]+\/chat$/,
+  /^\/v1\/webhooks\//,
+];
 
 /**
  * 5. Idempotency for POST /v1 mutations (§7.2): Idempotency-Key (or
@@ -150,11 +157,15 @@ export function idempotencyMiddleware(): MiddlewareHandler<AppBindings> {
     const stored = deps.idempotency.lookup(key);
     if (stored !== null) {
       if (stored.payloadHash !== payloadHash) {
-        throw new GatewayError("VALIDATION_FAILED", "This Idempotency-Key was used with a different payload.", {
-          status: 400,
-          hint: "Generate a fresh key for a new request.",
-          requestId,
-        });
+        throw new GatewayError(
+          "VALIDATION_FAILED",
+          "This Idempotency-Key was used with a different payload.",
+          {
+            status: 400,
+            hint: "Generate a fresh key for a new request.",
+            requestId,
+          },
+        );
       }
       if (!stored.complete) {
         // Concurrent duplicate: wait for the in-flight handler, then replay.
@@ -205,7 +216,13 @@ export function idempotencyMiddleware(): MiddlewareHandler<AppBindings> {
       // the client still receives the original bytes.
       const snapshot = c.res.clone();
       const body = await snapshot.text();
-      deps.idempotency.complete(key, payloadHash, c.res.status, safeJsonParse(body), contentTypeOf(c.res.headers));
+      deps.idempotency.complete(
+        key,
+        payloadHash,
+        c.res.status,
+        safeJsonParse(body),
+        contentTypeOf(c.res.headers),
+      );
     } catch (error) {
       deps.idempotency.release(key);
       throw error;
@@ -307,11 +324,16 @@ function roleForUser(
 }
 
 function isRoleOrNull(value: string): Role | null {
-  return value === "owner" || value === "admin" || value === "editor" || value === "viewer" ? value : null;
+  return value === "owner" || value === "admin" || value === "editor" || value === "viewer"
+    ? value
+    : null;
 }
 
 /** Capability helper for routes that gate on §3.3 capabilities, not raw roles. */
-export function assertCapability(capability: Parameters<typeof can>[1], c: Parameters<MiddlewareHandler<AppBindings>>[0]): void {
+export function assertCapability(
+  capability: Parameters<typeof can>[1],
+  c: Parameters<MiddlewareHandler<AppBindings>>[0],
+): void {
   const workspace = c.get("workspace");
   if (!can(workspace.role, capability)) {
     throw new StudioError("FORBIDDEN", { requestId: c.get("requestId") });

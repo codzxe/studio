@@ -17,10 +17,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
-import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
 import { dirname, join, resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
+import type { Readable as NodeReadable } from "node:stream";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -29,7 +30,6 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl as s3GetSignedUrl } from "@aws-sdk/s3-request-presigner";
-import type { Readable as NodeReadable } from "node:stream";
 import type { StudioEnv } from "@studio/config";
 
 export interface ObjectMeta {
@@ -52,7 +52,11 @@ export interface SignedUrl {
 
 export interface StorageDriver {
   /** Write an object from a Buffer or a byte stream (no double buffering). */
-  put(key: string, body: Buffer | ReadableStream<Uint8Array>, meta?: { contentType?: string }): Promise<void>;
+  put(
+    key: string,
+    body: Buffer | ReadableStream<Uint8Array>,
+    meta?: { contentType?: string },
+  ): Promise<void>;
   /** Object metadata or null when absent. */
   head(key: string): Promise<ObjectMeta | null>;
   /** Short-lived signed URL (5–15 min, §9.2). */
@@ -90,7 +94,12 @@ export function assetKey(workspaceId: string, assetId: string, sanitized: string
   return `workspaces/${workspaceId}/assets/${assetId}/${sanitizeName(sanitized)}`;
 }
 
-export function renderKey(workspaceId: string, projectId: string, renderId: string, ext: string): string {
+export function renderKey(
+  workspaceId: string,
+  projectId: string,
+  renderId: string,
+  ext: string,
+): string {
   return `workspaces/${workspaceId}/projects/${projectId}/renders/${renderId}/output.${ext}`;
 }
 
@@ -123,7 +132,11 @@ interface LocalToken {
 export class LocalTokenRegistry {
   private readonly tokens = new Map<string, LocalToken>();
 
-  issue(key: string, method: "GET" | "PUT", ttlSeconds: number): { token: string; expiresAt: number } {
+  issue(
+    key: string,
+    method: "GET" | "PUT",
+    ttlSeconds: number,
+  ): { token: string; expiresAt: number } {
     const token = randomBytes(32).toString("base64url");
     const expiresAt = Date.now() + ttlSeconds * 1000;
     this.tokens.set(token, { key, method, expiresAt });
@@ -183,7 +196,11 @@ export class LocalFSDriver implements StorageDriver {
     }
   }
 
-  async getSignedUrl(key: string, ttlSeconds: number, options?: SignedUrlOptions): Promise<SignedUrl> {
+  async getSignedUrl(
+    key: string,
+    ttlSeconds: number,
+    options?: SignedUrlOptions,
+  ): Promise<SignedUrl> {
     assertSafeKey(key);
     const method = options?.method ?? "GET";
     const { token, expiresAt } = this.registry.issue(key, method, ttlSeconds);
@@ -248,8 +265,14 @@ export class S3Driver implements StorageDriver {
     return { Bucket: this.bucket, Key: key };
   }
 
-  async put(key: string, body: Buffer | ReadableStream<Uint8Array>, meta?: { contentType?: string }): Promise<void> {
-    const nodeBody: Buffer | NodeReadable = Buffer.isBuffer(body) ? body : Readable.fromWeb(body as never);
+  async put(
+    key: string,
+    body: Buffer | ReadableStream<Uint8Array>,
+    meta?: { contentType?: string },
+  ): Promise<void> {
+    const nodeBody: Buffer | NodeReadable = Buffer.isBuffer(body)
+      ? body
+      : Readable.fromWeb(body as never);
     await this.client.send(
       new PutObjectCommand({
         ...this.object(key),
@@ -271,13 +294,18 @@ export class S3Driver implements StorageDriver {
     }
   }
 
-  async getSignedUrl(key: string, ttlSeconds: number, options?: SignedUrlOptions): Promise<SignedUrl> {
+  async getSignedUrl(
+    key: string,
+    ttlSeconds: number,
+    options?: SignedUrlOptions,
+  ): Promise<SignedUrl> {
     const method = options?.method ?? "GET";
     assertSafeKey(key);
     if (method === "PUT") {
       const headers: Record<string, string> = {};
       if (options?.contentType !== undefined) headers["Content-Type"] = options.contentType;
-      if (options?.contentLength !== undefined) headers["Content-Length"] = String(options.contentLength);
+      if (options?.contentLength !== undefined)
+        headers["Content-Length"] = String(options.contentLength);
       const command = new PutObjectCommand({
         Bucket: this.bucket,
         Key: key,
@@ -345,7 +373,10 @@ export function createStorage(env: StudioEnv, fsRoot?: string): StorageChoice {
     // group outside local) — a defensive stop, not a user-facing path.
     throw new Error("S3 storage environment is incomplete");
   }
-  return { driver: new S3Driver({ storage: { endpoint, region, accessKeyId, secretAccessKey, bucket } }), local: null };
+  return {
+    driver: new S3Driver({ storage: { endpoint, region, accessKeyId, secretAccessKey, bucket } }),
+    local: null,
+  };
 }
 
 /** SHA-256 helper shared by the upload routes (single-pass hashing). */

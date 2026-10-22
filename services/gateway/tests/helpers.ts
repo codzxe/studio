@@ -11,26 +11,23 @@
 //   DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio MOCK_MODEL=true \
 //     pnpm --filter @studio/gateway test
 
+import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { execSync } from "node:child_process";
 import { join } from "node:path";
 
-import { serve, type ServerType } from "@hono/node-server";
-import { parseEnv, type StudioEnv } from "@studio/config";
-import { createAuth, createDb, createRepos, type Repos } from "@studio/db";
+import { type ServerType, serve } from "@hono/node-server";
+import { type StudioEnv, parseEnv } from "@studio/config";
+import { type Repos, createAuth, createDb, createRepos } from "@studio/db";
 import type { Page } from "@studio/db";
 
 import { buildApp } from "../src/app.js";
-import { adaptBetterAuth, type GatewayAuth } from "../src/auth.js";
-import {
-  createInMemoryChatReplayStore,
-  type GatewayDeps,
-} from "../src/context.js";
+import { type GatewayAuth, adaptBetterAuth } from "../src/auth.js";
+import { type GatewayDeps, createInMemoryChatReplayStore } from "../src/context.js";
 import { createInMemoryIdempotencyStore } from "../src/idempotency.js";
 import { nullLogger } from "../src/logger.js";
 import { createInMemoryRateLimiter } from "../src/rate-limit.js";
-import { RunRegistry, createMockRunner, type AgentRunner } from "../src/runner.js";
+import { type AgentRunner, RunRegistry, createMockRunner } from "../src/runner.js";
 import { LocalFSDriver } from "../src/storage.js";
 
 // ---------------------------------------------------------------------------
@@ -304,7 +301,10 @@ export class FakeGatewayAuth implements GatewayAuth {
   async getSession(headers: Headers) {
     const user = this.sessionFrom(headers);
     if (user === null) return null;
-    return { user: { id: user.id, name: user.name, email: user.email }, session: { id: `sess_${user.id}`, userId: user.id, activeOrganizationId: null } };
+    return {
+      user: { id: user.id, name: user.name, email: user.email },
+      session: { id: `sess_${user.id}`, userId: user.id, activeOrganizationId: null },
+    };
   }
 
   async listOrganizations(headers: Headers) {
@@ -312,7 +312,13 @@ export class FakeGatewayAuth implements GatewayAuth {
     if (user === null) return [];
     return [...this.orgs.values()]
       .filter((org) => org.members.has(user.id))
-      .map((org) => ({ id: org.id, name: org.name, slug: org.slug, createdAt: org.createdAt, metadata: null }));
+      .map((org) => ({
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+        createdAt: org.createdAt,
+        metadata: null,
+      }));
   }
 
   async getFullWorkspace(headers: Headers, candidate: string) {
@@ -324,11 +330,18 @@ export class FakeGatewayAuth implements GatewayAuth {
       null;
     if (org === null || !org.members.has(user.id)) return null;
     return {
-      organization: { id: org.id, name: org.name, slug: org.slug, createdAt: org.createdAt, metadata: null },
+      organization: {
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+        createdAt: org.createdAt,
+        metadata: null,
+      },
       members: [...org.members.entries()].map(([userId, role]) => ({
         userId,
         role,
-        userName: this.users.get(`fake-session-token-${userId.replace("fake_user_", "")}`)?.name ?? userId,
+        userName:
+          this.users.get(`fake-session-token-${userId.replace("fake_user_", "")}`)?.name ?? userId,
         userEmail: null,
       })),
     };
@@ -349,14 +362,30 @@ export class FakeGatewayAuth implements GatewayAuth {
     return { id: org.id, name: org.name, slug: org.slug, createdAt: org.createdAt, metadata: null };
   }
 
-  async updateWorkspace(headers: Headers, body: { organizationId: string; data: { name?: string; slug?: string } }) {
+  async updateWorkspace(
+    headers: Headers,
+    body: { organizationId: string; data: { name?: string; slug?: string } },
+  ) {
     const org = this.orgs.get(body.organizationId);
     if (org === undefined) throw new Error("org missing");
-    return { id: org.id, name: body.data.name ?? org.name, slug: body.data.slug ?? org.slug, createdAt: org.createdAt, metadata: null };
+    return {
+      id: org.id,
+      name: body.data.name ?? org.name,
+      slug: body.data.slug ?? org.slug,
+      createdAt: org.createdAt,
+      metadata: null,
+    };
   }
 
-  async inviteMember(_headers: Headers, body: { organizationId: string; email: string; role: string }) {
-    this.inviteLogMut.push({ organizationId: body.organizationId, email: body.email, role: body.role });
+  async inviteMember(
+    _headers: Headers,
+    body: { organizationId: string; email: string; role: string },
+  ) {
+    this.inviteLogMut.push({
+      organizationId: body.organizationId,
+      email: body.email,
+      role: body.role,
+    });
     return {
       id: `fake_invite_${this.inviteLogMut.length}`,
       organizationId: body.organizationId,
@@ -368,12 +397,18 @@ export class FakeGatewayAuth implements GatewayAuth {
   }
 
   async acceptInvitation(_headers: Headers, invitationId: string) {
-    const entry = this.inviteLogMut[Number.parseInt(invitationId.replace("fake_invite_", ""), 10) - 1];
-    return { inviteId: invitationId, organizationId: entry?.organizationId ?? "", role: entry?.role ?? "viewer" };
+    const entry =
+      this.inviteLogMut[Number.parseInt(invitationId.replace("fake_invite_", ""), 10) - 1];
+    return {
+      inviteId: invitationId,
+      organizationId: entry?.organizationId ?? "",
+      role: entry?.role ?? "viewer",
+    };
   }
 
   async checkSlug(_headers: Headers, slug: string) {
-    const taken = this.slugTaken.has(slug) || [...this.orgs.values()].some((org) => org.slug === slug);
+    const taken =
+      this.slugTaken.has(slug) || [...this.orgs.values()].some((org) => org.slug === slug);
     return { available: !taken };
   }
 }
@@ -431,7 +466,9 @@ export function fakeRepos(auth: FakeGatewayAuth): { repos: Repos; calls: RepoCal
       },
       list(workspaceId: string, _options?: unknown) {
         record("projects.list");
-        const items = [...projects.values()].filter((p) => p.workspaceId === workspaceId && p.deletedAt === null);
+        const items = [...projects.values()].filter(
+          (p) => p.workspaceId === workspaceId && p.deletedAt === null,
+        );
         return { items, nextCursor: null } satisfies Page<unknown> as never;
       },
       get(_workspaceId: string, projectId: string) {
@@ -456,7 +493,11 @@ export function fakeRepos(auth: FakeGatewayAuth): { repos: Repos; calls: RepoCal
     leases: {
       acquire() {
         record("leases.acquire");
-        return { acquired: true, holderId: "fake_user_1", expiresAt: new Date(Date.now() + 300_000) };
+        return {
+          acquired: true,
+          holderId: "fake_user_1",
+          expiresAt: new Date(Date.now() + 300_000),
+        };
       },
       release() {
         record("leases.release");
@@ -498,7 +539,16 @@ export function fakeRepos(auth: FakeGatewayAuth): { repos: Repos; calls: RepoCal
     audit: {
       async append() {
         record("audit.append");
-        return { id: "aud_fake", workspaceId: "fake", actorId: null, action: "", targetType: "", targetId: null, metadata: null, createdAt: new Date() };
+        return {
+          id: "aud_fake",
+          workspaceId: "fake",
+          actorId: null,
+          action: "",
+          targetType: "",
+          targetId: null,
+          metadata: null,
+          createdAt: new Date(),
+        };
       },
     },
   } as unknown as Repos;

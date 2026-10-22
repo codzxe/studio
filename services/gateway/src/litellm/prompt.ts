@@ -61,10 +61,9 @@ function contextFlagsNote(context: ContextSelection): string {
   const enabled = Object.entries(context)
     .filter(([, enabled]) => enabled === true)
     .map(([key]) => key);
-  const note =
-    "Context blocks the user enabled for this message: " +
-    (enabled.length > 0 ? enabled.join(", ") : "none") +
-    ". The studio.get_context tool returns only these blocks; a missing block was removed by the user.";
+  const note = `Context blocks the user enabled for this message: ${
+    enabled.length > 0 ? enabled.join(", ") : "none"
+  }. The studio.get_context tool returns only these blocks; a missing block was removed by the user.`;
   return note;
 }
 
@@ -85,8 +84,7 @@ export function buildMessages(run: AgentRun): OpenAIChatMessage[] {
     messages.push({ role: turn.role, content: turn.content });
   }
   const notes = [contextFlagsNote(run.context), pinnedNote(run)].filter((line) => line !== "");
-  const userContent =
-    notes.length > 0 ? `${run.message}\n\n[${notes.join(" ")}]` : run.message;
+  const userContent = notes.length > 0 ? `${run.message}\n\n[${notes.join(" ")}]` : run.message;
   messages.push({ role: "user", content: userContent });
   return messages;
 }
@@ -113,7 +111,7 @@ export function planInstruction(goal: string): string {
     '  "steps": array of 1 to 20 objects { "title": string, "tool": string, "args": any, "batch": { "label": string, "steps": array of 1 to 100 objects { "command": string, "params": object } } }',
     "}",
     "",
-    "Rules: use only the curated Studio tools in steps[].tool (for example studio.create_text, studio.set_properties, studio.set_keyframes, studio.add_effect); prefer a targeted edit over regenerating a whole composition; use intent \"clarify\" with exactly one question in the summary only when the target is genuinely ambiguous; estimate honestly.",
+    'Rules: use only the curated Studio tools in steps[].tool (for example studio.create_text, studio.set_properties, studio.set_keyframes, studio.add_effect); prefer a targeted edit over regenerating a whole composition; use intent "clarify" with exactly one question in the summary only when the target is genuinely ambiguous; estimate honestly.',
     "",
     `Goal: ${goal}`,
   ].join("\n");
@@ -139,7 +137,9 @@ export function fingerprintMessages(messages: readonly OpenAIChatMessage[]): Pro
   const serialized = JSON.stringify(messages);
   return {
     chars: serialized === undefined ? 0 : serialized.length,
-    sha256: createHash("sha256").update(serialized ?? "[]").digest("hex"),
+    sha256: createHash("sha256")
+      .update(serialized ?? "[]")
+      .digest("hex"),
     messageCount: messages.length,
   };
 }

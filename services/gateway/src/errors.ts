@@ -9,7 +9,7 @@
 // add-only strings on the wire.
 
 import { StudioError, type StudioErrorCode } from "@studio/config";
-import { DbError, isDbError } from "@studio/db";
+import { type DbError, isDbError } from "@studio/db";
 
 /** §7.3 Err envelope (structurally identical to @studio/contracts Err). */
 export interface ErrEnvelope {
@@ -102,7 +102,13 @@ export class GatewayError extends Error {
   }
 
   toEnvelope(): ErrEnvelope {
-    const body: { code: string; message: string; retryable: boolean; requestId: string; hint?: string } = {
+    const body: {
+      code: string;
+      message: string;
+      retryable: boolean;
+      requestId: string;
+      hint?: string;
+    } = {
       code: this.code,
       message: this.message,
       retryable: this.retryable,
@@ -165,7 +171,9 @@ export function isConnectionFailure(error: unknown): boolean {
   const message = (error as { message?: unknown }).message;
   return (
     typeof message === "string" &&
-    (message.includes("ECONNREFUSED") || message.includes("connection terminated") || message.includes("Connection refused"))
+    (message.includes("ECONNREFUSED") ||
+      message.includes("connection terminated") ||
+      message.includes("Connection refused"))
   );
 }
 
@@ -173,24 +181,37 @@ export function isConnectionFailure(error: unknown): boolean {
  * Map ANY thrown value to a safe §7.3 Err envelope + HTTP status.
  * Original failures are preserved server-side via `cause` only.
  */
-export function toErrorEnvelope(error: unknown, requestId: string): {
+export function toErrorEnvelope(
+  error: unknown,
+  requestId: string,
+): {
   status: number;
   envelope: ErrEnvelope;
 } {
   if (error instanceof StudioError) {
     const envelope = error.toEnvelope();
     const status = httpStatusFor(error.code);
-    return { status, envelope: requestId === error.requestId ? envelope : withRequestId(envelope, requestId) };
+    return {
+      status,
+      envelope: requestId === error.requestId ? envelope : withRequestId(envelope, requestId),
+    };
   }
   if (isGatewayError(error)) {
-    const envelope = error.requestId === requestId ? error.toEnvelope() : withRequestId(error.toEnvelope(), requestId);
+    const envelope =
+      error.requestId === requestId
+        ? error.toEnvelope()
+        : withRequestId(error.toEnvelope(), requestId);
     return { status: error.status, envelope };
   }
   if (isDbError(error)) {
     return { status: dbStatus(error), envelope: dbEnvelope(error, requestId) };
   }
   // Zod validation failures at a boundary (defensive — routes use zValidator).
-  if (typeof error === "object" && error !== null && Array.isArray((error as { issues?: unknown }).issues)) {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    Array.isArray((error as { issues?: unknown }).issues)
+  ) {
     return {
       status: 400,
       envelope: catalogEnvelope("VALIDATION_FAILED", requestId),
@@ -267,7 +288,13 @@ function dbEnvelope(error: DbError, requestId: string): ErrEnvelope {
       }
   }
 
-  const body: { code: string; message: string; retryable: boolean; requestId: string; hint?: string } = {
+  const body: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    requestId: string;
+    hint?: string;
+  } = {
     code,
     message,
     retryable,
@@ -278,6 +305,9 @@ function dbEnvelope(error: DbError, requestId: string): ErrEnvelope {
 }
 
 /** Thrown by handlers to short-circuit with a catalog error. */
-export function fail(code: StudioErrorCode, options?: { message?: string; hint?: string; retryable?: boolean }): never {
+export function fail(
+  code: StudioErrorCode,
+  options?: { message?: string; hint?: string; retryable?: boolean },
+): never {
   throw new StudioError(code, options);
 }

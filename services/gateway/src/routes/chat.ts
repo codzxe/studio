@@ -23,31 +23,31 @@ import { Hono } from "hono";
 
 import {
   CHAT_REQUEST_SCHEMA,
-  defaultModelForPlan,
-  modelAllowedForPlan,
   type ModelId,
   type PlanId,
   type StudioStreamEvent,
+  defaultModelForPlan,
+  modelAllowedForPlan,
 } from "@studio/contracts";
 
 import { StudioError } from "@studio/config";
 import type { AgentMessage } from "@studio/db";
 
+import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
 import { pathParam } from "../http.js";
 import { TOOL_RESULT_TIMEOUT_MS } from "../litellm/runner.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { resolvePlan } from "../plan.js";
 import {
-  estimateRunCredits,
-  reserveAmountFor,
   type AgentRun,
   type AgentRunHistoryTurn,
   type AgentRunOutcome,
   type AgentRunStream,
   type RunLog,
+  estimateRunCredits,
+  reserveAmountFor,
 } from "../runner.js";
-import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 
 /** Safety ceiling for one streaming run; afterwards the run is cancelled. */
 const CHAT_TIMEOUT_MS = 120_000;
@@ -80,289 +80,301 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
   app.use("/v1/threads/*", requireAuth());
 
-  app.post("/v1/threads/:id/chat", requireWorkspace("editor"), async (c: AppContext): Promise<Response> => {
-    const requestId = c.get("requestId");
-    const workspace = c.get("workspace");
-    const threadId = pathParam(c, "id");
+  app.post(
+    "/v1/threads/:id/chat",
+    requireWorkspace("editor"),
+    async (c: AppContext): Promise<Response> => {
+      const requestId = c.get("requestId");
+      const workspace = c.get("workspace");
+      const threadId = pathParam(c, "id");
 
-    const parsed = CHAT_REQUEST_SCHEMA.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) {
-      throw new StudioError("VALIDATION_FAILED", { requestId });
-    }
-    const request = parsed.data;
+      const parsed = CHAT_REQUEST_SCHEMA.safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) {
+        throw new StudioError("VALIDATION_FAILED", { requestId });
+      }
+      const request = parsed.data;
 
-    // Thread must live in this workspace (repo: cross-tenant reads as 404).
-    const thread = await deps.repos.threads.get(workspace.id, threadId);
-    const project = await deps.repos.projects.get(workspace.id, thread.projectId);
+      // Thread must live in this workspace (repo: cross-tenant reads as 404).
+      const thread = await deps.repos.threads.get(workspace.id, threadId);
+      const project = await deps.repos.projects.get(workspace.id, thread.projectId);
 
-    // §8.8: never start a run on a zero balance.
-    const balance = await deps.repos.ledger.balance(workspace.id);
-    if (balance < 1) {
-      throw new StudioError("INSUFFICIENT_CREDITS", { requestId });
-    }
+      // §8.8: never start a run on a zero balance.
+      const balance = await deps.repos.ledger.balance(workspace.id);
+      if (balance < 1) {
+        throw new StudioError("INSUFFICIENT_CREDITS", { requestId });
+      }
 
-    // Duplicate POST (network retry): replay the same run's log.
-    const replayKey = `${workspace.id}:${threadId}:${request.idempotencyKey}`;
-    const existing = deps.chatReplay.lookup(replayKey);
-    if (existing !== null) {
-      return sseResponse(c, existing.log, c.req.header("last-event-id"));
-    }
+      // Duplicate POST (network retry): replay the same run's log.
+      const replayKey = `${workspace.id}:${threadId}:${request.idempotencyKey}`;
+      const existing = deps.chatReplay.lookup(replayKey);
+      if (existing !== null) {
+        return sseResponse(c, existing.log, c.req.header("last-event-id"));
+      }
 
-    // Model selection with plan entitlements (§8.2/§10.1): resolvePlan is the
-    // M6 swap point; MODEL_NOT_ENTITLED never starts a run.
-    const plan = await resolvePlan(workspace.id);
-    const model = resolveChatModel({ requested: request.model, plan, requestId });
+      // Model selection with plan entitlements (§8.2/§10.1): resolvePlan is the
+      // M6 swap point; MODEL_NOT_ENTITLED never starts a run.
+      const plan = await resolvePlan(workspace.id);
+      const model = resolveChatModel({ requested: request.model, plan, requestId });
 
-    // §8.3 "last 6 turns" — loaded BEFORE this run's user turn is persisted,
-    // so history never contains the message the model is answering.
-    const history = await loadHistory(deps, workspace.id, threadId);
+      // §8.3 "last 6 turns" — loaded BEFORE this run's user turn is persisted,
+      // so history never contains the message the model is answering.
+      const history = await loadHistory(deps, workspace.id, threadId);
 
-    // Persist the user turn before the run exists (§9.1 agent_messages).
-    await deps.repos.threads.addMessage(workspace.id, {
-      threadId,
-      role: "user",
-      contentJson: { message: request.message, context: request.context, pinned: request.pinned },
-    });
-
-    const run = await deps.repos.runs.create(workspace.id, {
-      threadId,
-      projectId: project.id,
-      model,
-      baseVersionId: project.currentVersionId,
-      reservedCredits: 0,
-    });
-
-    const estimated = estimateRunCredits({
-      message: request.message,
-      context: request.context,
-      pinned: request.pinned,
-    });
-    const reserveAmount = reserveAmountFor(estimated);
-
-    const runId = run.id;
-    try {
-      await deps.repos.ledger.reserve(workspace.id, {
-        runId,
-        amount: reserveAmount,
-        idempotencyKey: `chat:${runId}:reserve`,
+      // Persist the user turn before the run exists (§9.1 agent_messages).
+      await deps.repos.threads.addMessage(workspace.id, {
+        threadId,
+        role: "user",
+        contentJson: { message: request.message, context: request.context, pinned: request.pinned },
       });
-    } catch (error) {
-      // Reserve refused (e.g. balance dipped): the run never streams.
-      await deps.repos.runs
-        .update(workspace.id, runId, { status: "failed", errorCode: "INSUFFICIENT_CREDITS" })
-        .catch(() => undefined);
-      throw error;
-    }
 
-    await deps.repos.runs.update(workspace.id, runId, {
-      status: "running",
-      reservedCredits: reserveAmount,
-    });
+      const run = await deps.repos.runs.create(workspace.id, {
+        threadId,
+        projectId: project.id,
+        model,
+        baseVersionId: project.currentVersionId,
+        reservedCredits: 0,
+      });
 
-    const { log, signal } = deps.runs.register(runId);
-    deps.chatReplay.store(replayKey, { runId, log });
+      const estimated = estimateRunCredits({
+        message: request.message,
+        context: request.context,
+        pinned: request.pinned,
+      });
+      const reserveAmount = reserveAmountFor(estimated);
 
-    const agentRun: AgentRun = {
-      runId,
-      threadId,
-      projectId: project.id,
-      workspaceId: workspace.id,
-      model,
-      baseVersionId: project.currentVersionId,
-      message: request.message,
-      context: request.context,
-      pinned: request.pinned,
-      reservedCredits: reserveAmount,
-      history,
-    };
-
-    // Stream finalization: settle/refund, terminal event, run row, steps.
-    let finalized = false;
-    const finalize = async (outcome: AgentRunOutcome): Promise<void> => {
-      if (finalized) return;
-      finalized = true;
+      const runId = run.id;
       try {
-        if (outcome.kind === "completed") {
-          const settled = await deps.repos.ledger.settle(workspace.id, {
-            runId,
-            actualCost: outcome.committedCredits,
-            idempotencyKey: `chat:${runId}:settle`,
-          });
-          const newBalance = await deps.repos.ledger.balance(workspace.id);
-          const committed = settled.commit !== null ? -settled.commit.amount : 0;
-          log.emit({
-            type: "credits",
-            reserved: reserveAmount,
-            committed,
-            balance: newBalance,
-          });
-          log.emit({ type: "run.completed" });
-          await deps.repos.runs.update(workspace.id, runId, {
-            status: "completed",
-            committedCredits: committed,
-            planJson: log.currentPlan ?? undefined,
-          });
-          const text = log
-            .all()
-            .filter((event): event is Extract<StudioStreamEvent, { type: "message.delta" }> => event.type === "message.delta")
-            .map((event) => event.delta)
-            .join("");
-          if (text.length > 0) {
-            await deps.repos.threads
-              .addMessage(workspace.id, { threadId, role: "assistant", contentJson: { text }, runId })
-              .catch(() => undefined);
-          }
-        } else if (outcome.kind === "failed") {
-          await deps.repos.ledger.refundAll(workspace.id, {
-            runId,
-            idempotencyKey: `chat:${runId}:refund`,
-          });
-          log.emit({
-            type: "run.failed",
-            code: outcome.code,
-            message: outcome.message,
-            retryable: outcome.retryable,
-          });
-          await deps.repos.runs.update(workspace.id, runId, {
-            status: "failed",
-            errorCode: outcome.code,
-            planJson: log.currentPlan ?? undefined,
-          });
-        } else {
-          await deps.repos.ledger.refundAll(workspace.id, {
-            runId,
-            idempotencyKey: `chat:${runId}:refund`,
-          });
-          if (!log.isTerminal) log.emit({ type: "run.cancelled" });
-          await deps.repos.runs.update(workspace.id, runId, {
-            status: "cancelled",
-            errorCode: "RUN_CANCELLED",
-            planJson: log.currentPlan ?? undefined,
-          });
-        }
-        await recordSteps(workspace.id, log, runId);
-      } catch (error) {
-        deps.logger.error("chat_finalize_failed", {
-          requestId,
+        await deps.repos.ledger.reserve(workspace.id, {
           runId,
-          detail: error instanceof Error ? error.message : "unknown",
+          amount: reserveAmount,
+          idempotencyKey: `chat:${runId}:reserve`,
         });
-      } finally {
-        closeStream();
-        abortListener.disconnect();
+      } catch (error) {
+        // Reserve refused (e.g. balance dipped): the run never streams.
+        await deps.repos.runs
+          .update(workspace.id, runId, { status: "failed", errorCode: "INSUFFICIENT_CREDITS" })
+          .catch(() => undefined);
+        throw error;
       }
-    };
 
-    // --- SSE transport -----------------------------------------------------
-    const encoder = new TextEncoder();
-    let lastSent = parseSeq(c.req.header("last-event-id"));
-    let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
-    let closed = false;
+      await deps.repos.runs.update(workspace.id, runId, {
+        status: "running",
+        reservedCredits: reserveAmount,
+      });
 
-    const unsubscribe = log.subscribe((event) => {
-      if (controllerRef === null || closed) return;
-      if (event.seq > lastSent) {
-        lastSent = event.seq;
+      const { log, signal } = deps.runs.register(runId);
+      deps.chatReplay.store(replayKey, { runId, log });
+
+      const agentRun: AgentRun = {
+        runId,
+        threadId,
+        projectId: project.id,
+        workspaceId: workspace.id,
+        model,
+        baseVersionId: project.currentVersionId,
+        message: request.message,
+        context: request.context,
+        pinned: request.pinned,
+        reservedCredits: reserveAmount,
+        history,
+      };
+
+      // Stream finalization: settle/refund, terminal event, run row, steps.
+      let finalized = false;
+      const finalize = async (outcome: AgentRunOutcome): Promise<void> => {
+        if (finalized) return;
+        finalized = true;
         try {
-          controllerRef.enqueue(encoder.encode(sseFrame(event)));
-        } catch {
-          // stream already torn down
+          if (outcome.kind === "completed") {
+            const settled = await deps.repos.ledger.settle(workspace.id, {
+              runId,
+              actualCost: outcome.committedCredits,
+              idempotencyKey: `chat:${runId}:settle`,
+            });
+            const newBalance = await deps.repos.ledger.balance(workspace.id);
+            const committed = settled.commit !== null ? -settled.commit.amount : 0;
+            log.emit({
+              type: "credits",
+              reserved: reserveAmount,
+              committed,
+              balance: newBalance,
+            });
+            log.emit({ type: "run.completed" });
+            await deps.repos.runs.update(workspace.id, runId, {
+              status: "completed",
+              committedCredits: committed,
+              planJson: log.currentPlan ?? undefined,
+            });
+            const text = log
+              .all()
+              .filter(
+                (event): event is Extract<StudioStreamEvent, { type: "message.delta" }> =>
+                  event.type === "message.delta",
+              )
+              .map((event) => event.delta)
+              .join("");
+            if (text.length > 0) {
+              await deps.repos.threads
+                .addMessage(workspace.id, {
+                  threadId,
+                  role: "assistant",
+                  contentJson: { text },
+                  runId,
+                })
+                .catch(() => undefined);
+            }
+          } else if (outcome.kind === "failed") {
+            await deps.repos.ledger.refundAll(workspace.id, {
+              runId,
+              idempotencyKey: `chat:${runId}:refund`,
+            });
+            log.emit({
+              type: "run.failed",
+              code: outcome.code,
+              message: outcome.message,
+              retryable: outcome.retryable,
+            });
+            await deps.repos.runs.update(workspace.id, runId, {
+              status: "failed",
+              errorCode: outcome.code,
+              planJson: log.currentPlan ?? undefined,
+            });
+          } else {
+            await deps.repos.ledger.refundAll(workspace.id, {
+              runId,
+              idempotencyKey: `chat:${runId}:refund`,
+            });
+            if (!log.isTerminal) log.emit({ type: "run.cancelled" });
+            await deps.repos.runs.update(workspace.id, runId, {
+              status: "cancelled",
+              errorCode: "RUN_CANCELLED",
+              planJson: log.currentPlan ?? undefined,
+            });
+          }
+          await recordSteps(workspace.id, log, runId);
+        } catch (error) {
+          deps.logger.error("chat_finalize_failed", {
+            requestId,
+            runId,
+            detail: error instanceof Error ? error.message : "unknown",
+          });
+        } finally {
+          closeStream();
+          abortListener.disconnect();
         }
+      };
+
+      // --- SSE transport -----------------------------------------------------
+      const encoder = new TextEncoder();
+      let lastSent = parseSeq(c.req.header("last-event-id"));
+      let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+      let closed = false;
+
+      const unsubscribe = log.subscribe((event) => {
+        if (controllerRef === null || closed) return;
+        if (event.seq > lastSent) {
+          lastSent = event.seq;
+          try {
+            controllerRef.enqueue(encoder.encode(sseFrame(event)));
+          } catch {
+            // stream already torn down
+          }
+        }
+      });
+
+      const streamApi: AgentRunStream = {
+        emit: (payload) => log.emit(payload),
+        yieldToStream: () => new Promise<void>((resolveYield) => setImmediate(resolveYield)),
+        expectToolCall: (toolCallId, tool) => log.expectToolCall(toolCallId, tool),
+        // Seam 2: the runner waits for the client's POST /v1/runs/:id/events;
+        // timeout → EDITOR_DISCONNECTED inside the LiteLLM runner.
+        waitForToolResult: (toolCallId) => log.waitToolResult(toolCallId, TOOL_RESULT_TIMEOUT_MS),
+        signal,
+      };
+
+      const cancelRun = (): void => {
+        if (!finalized && !log.isTerminal) {
+          deps.runs.cancel(runId);
+          deps.runner.cancel(runId);
+        }
+      };
+
+      const abortListener = {
+        connect: (): void => {
+          c.req.raw.signal.addEventListener("abort", onAbort);
+        },
+        disconnect: (): void => {
+          c.req.raw.signal.removeEventListener("abort", onAbort);
+        },
+      };
+      function onAbort(): void {
+        cancelRun();
       }
-    });
+      abortListener.connect();
 
-    const streamApi: AgentRunStream = {
-      emit: (payload) => log.emit(payload),
-      yieldToStream: () => new Promise<void>((resolveYield) => setImmediate(resolveYield)),
-      expectToolCall: (toolCallId, tool) => log.expectToolCall(toolCallId, tool),
-      // Seam 2: the runner waits for the client's POST /v1/runs/:id/events;
-      // timeout → EDITOR_DISCONNECTED inside the LiteLLM runner.
-      waitForToolResult: (toolCallId) => log.waitToolResult(toolCallId, TOOL_RESULT_TIMEOUT_MS),
-      signal,
-    };
-
-    const cancelRun = (): void => {
-      if (!finalized && !log.isTerminal) {
-        deps.runs.cancel(runId);
-        deps.runner.cancel(runId);
-      }
-    };
-
-    const abortListener = {
-      connect: (): void => {
-        c.req.raw.signal.addEventListener("abort", onAbort);
-      },
-      disconnect: (): void => {
-        c.req.raw.signal.removeEventListener("abort", onAbort);
-      },
-    };
-    function onAbort(): void {
-      cancelRun();
-    }
-    abortListener.connect();
-
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controllerRef = controller;
-        // Replay anything the client missed before the subscription window.
-        for (const event of log.replayAfter(parseSeq(c.req.header("last-event-id")))) {
-          if (event.seq > lastSent) {
-            lastSent = event.seq;
-            try {
-              controller.enqueue(encoder.encode(sseFrame(event)));
-            } catch {
-              // stream already torn down
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controllerRef = controller;
+          // Replay anything the client missed before the subscription window.
+          for (const event of log.replayAfter(parseSeq(c.req.header("last-event-id")))) {
+            if (event.seq > lastSent) {
+              lastSent = event.seq;
+              try {
+                controller.enqueue(encoder.encode(sseFrame(event)));
+              } catch {
+                // stream already torn down
+              }
             }
           }
+          // Fire the run; the outcome finalizes the ledger + stream.
+          void (async () => {
+            let outcome: AgentRunOutcome;
+            try {
+              const timeout = new Promise<AgentRunOutcome>((resolveTimeout) => {
+                const timer = setTimeout(() => {
+                  resolveTimeout({ kind: "cancelled" });
+                  deps.runs.cancel(runId);
+                }, CHAT_TIMEOUT_MS);
+                timer.unref?.();
+              });
+              outcome = await Promise.race([deps.runner.start(agentRun, streamApi), timeout]);
+            } catch (error) {
+              outcome = {
+                kind: "failed",
+                code: "INTERNAL",
+                message: "Something went wrong on our side.",
+                retryable: true,
+              };
+              deps.logger.error("chat_runner_threw", {
+                requestId,
+                runId,
+                detail: error instanceof Error ? `${error.name}: ${error.message}` : "unknown",
+              });
+            }
+            await finalize(outcome);
+          })();
+        },
+        cancel() {
+          // Client disconnected: stop the model + release the reserve (§8.9).
+          cancelRun();
+        },
+      });
+
+      function closeStream(): void {
+        closed = true;
+        try {
+          controllerRef?.close();
+        } catch {
+          // already closed
         }
-        // Fire the run; the outcome finalizes the ledger + stream.
-        void (async () => {
-          let outcome: AgentRunOutcome;
-          try {
-            const timeout = new Promise<AgentRunOutcome>((resolveTimeout) => {
-              const timer = setTimeout(() => {
-                resolveTimeout({ kind: "cancelled" });
-                deps.runs.cancel(runId);
-              }, CHAT_TIMEOUT_MS);
-              timer.unref?.();
-            });
-            outcome = await Promise.race([deps.runner.start(agentRun, streamApi), timeout]);
-          } catch (error) {
-            outcome = {
-              kind: "failed",
-              code: "INTERNAL",
-              message: "Something went wrong on our side.",
-              retryable: true,
-            };
-            deps.logger.error("chat_runner_threw", {
-              requestId,
-              runId,
-              detail: error instanceof Error ? `${error.name}: ${error.message}` : "unknown",
-            });
-          }
-          await finalize(outcome);
-        })();
-      },
-      cancel() {
-        // Client disconnected: stop the model + release the reserve (§8.9).
-        cancelRun();
-      },
-    });
-
-    function closeStream(): void {
-      closed = true;
-      try {
-        controllerRef?.close();
-      } catch {
-        // already closed
+        unsubscribe();
       }
-      unsubscribe();
-    }
 
-    // Runs cancel via POST too (see runs.ts) — the abort listener handles
-    // socket disconnects; both funnel into the same finalize.
-    return sseResponseFromStream(stream);
-  });
+      // Runs cancel via POST too (see runs.ts) — the abort listener handles
+      // socket disconnects; both funnel into the same finalize.
+      return sseResponseFromStream(stream);
+    },
+  );
 
   /**
    * §8.3 "last 6 turns": newest-first repo page → oldest-first turns. Only
@@ -466,7 +478,11 @@ function sseResponse(c: AppContext, log: RunLog, lastEventId: string | undefined
             // already closed
           }
         }
-        if (event.type === "run.completed" || event.type === "run.failed" || event.type === "run.cancelled") {
+        if (
+          event.type === "run.completed" ||
+          event.type === "run.failed" ||
+          event.type === "run.cancelled"
+        ) {
           setImmediate(() => {
             try {
               controller.close();

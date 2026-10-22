@@ -7,11 +7,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   CookieJar,
   HAS_DATABASE,
+  type RunningTestServer,
   api,
   bootServer,
   unique,
   uniqueEmail,
-  type RunningTestServer,
 } from "./helpers.js";
 
 const d = describe.skipIf(!HAS_DATABASE);
@@ -37,7 +37,10 @@ async function signUp(): Promise<CookieJar> {
   return jar;
 }
 
-async function createWorkspace(jar: CookieJar, name: string): Promise<{ id: string; slug: string }> {
+async function createWorkspace(
+  jar: CookieJar,
+  name: string,
+): Promise<{ id: string; slug: string }> {
   const response = await api(server.base, "/v1/workspaces", {
     method: "POST",
     jar,
@@ -97,7 +100,11 @@ d("GET /v1/me (§7.2)", () => {
     const body = (await response.json()) as {
       data: {
         user: { id: string; email: string };
-        memberships: { workspaceId: string; role: string; workspace: { id: string; name: string; slug: string } }[];
+        memberships: {
+          workspaceId: string;
+          role: string;
+          workspace: { id: string; name: string; slug: string };
+        }[];
         plan: { plan: string; creditsBalance: number };
       };
     };
@@ -124,7 +131,9 @@ d("Workspaces (§7.2)", () => {
     const ws = await createWorkspace(jar, unique("Get WS"));
     const response = await api(server.base, `/v1/workspaces/${ws.id}`, { jar });
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { data: { id: string; role: string; members: { role: string }[] } };
+    const body = (await response.json()) as {
+      data: { id: string; role: string; members: { role: string }[] };
+    };
     expect(body.data.id).toBe(ws.id);
     expect(body.data.role).toBe("owner");
     expect(body.data.members.length).toBeGreaterThan(0);
@@ -208,7 +217,14 @@ d("Invite → accept → role matrix (§7.1, §3.3)", () => {
     });
     expect(inviteResponse.status).toBe(201);
     const invite = (await inviteResponse.json()) as {
-      data: { id: string; workspaceId: string; email: string; role: string; status: string; expiresAt: string | null };
+      data: {
+        id: string;
+        workspaceId: string;
+        email: string;
+        role: string;
+        status: string;
+        expiresAt: string | null;
+      };
     };
     expect(invite.data.role).toBe("viewer");
     expect(invite.data.status).toBe("pending");
@@ -230,7 +246,9 @@ d("Invite → accept → role matrix (§7.1, §3.3)", () => {
       headers: { "idempotency-key": unique("accept") },
     });
     expect(acceptResponse.status).toBe(200);
-    const accepted = (await acceptResponse.json()) as { data: { inviteId: string; workspaceId: string; role: string } };
+    const accepted = (await acceptResponse.json()) as {
+      data: { inviteId: string; workspaceId: string; role: string };
+    };
     expect(accepted.data.workspaceId).toBe(ws.id);
     expect(accepted.data.role).toBe("viewer");
 
@@ -249,13 +267,17 @@ d("Invite → accept → role matrix (§7.1, §3.3)", () => {
       body: { name: "Should Not Create" },
     });
     expect(createResponse.status).toBe(403);
-    const body = (await createResponse.json()) as { error: { code: string; message: string; retryable: boolean } };
+    const body = (await createResponse.json()) as {
+      error: { code: string; message: string; retryable: boolean };
+    };
     expect(body.error.code).toBe("FORBIDDEN");
     expect(body.error.retryable).toBe(false);
 
     // and the workspace membership now shows the viewer role
     const meResponse = await api(server.base, "/v1/me", { jar: jarViewer });
-    const me = (await meResponse.json()) as { data: { memberships: { workspaceId: string; role: string }[] } };
+    const me = (await meResponse.json()) as {
+      data: { memberships: { workspaceId: string; role: string }[] };
+    };
     const membership = me.data.memberships.find((m) => m.workspaceId === ws.id);
     expect(membership?.role).toBe("viewer");
   });

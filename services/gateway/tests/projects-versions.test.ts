@@ -10,11 +10,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   CookieJar,
   HAS_DATABASE,
+  type RunningTestServer,
   api,
   bootServer,
   unique,
   uniqueEmail,
-  type RunningTestServer,
 } from "./helpers.js";
 
 const d = describe.skipIf(!HAS_DATABASE);
@@ -86,7 +86,10 @@ async function uploadRaw(
   fixture: { bytes: Buffer; sha256: string },
   options: { baseVersionId?: string | null; label?: string } = {},
 ): Promise<Response> {
-  const query = new URLSearchParams({ sha256: fixture.sha256, sizeBytes: String(fixture.bytes.byteLength) });
+  const query = new URLSearchParams({
+    sha256: fixture.sha256,
+    sizeBytes: String(fixture.bytes.byteLength),
+  });
   // A null base means "first snapshot" — omit the parameter entirely.
   if (typeof options.baseVersionId === "string") query.set("baseVersionId", options.baseVersionId);
   if (options.label !== undefined) query.set("label", options.label);
@@ -154,7 +157,10 @@ d("version lifecycle (§9.3)", () => {
   });
 
   it("uploads version 1 (raw bytes, base omitted) → version 1, parent null", async () => {
-    const response = await uploadRaw(ws, projectId, v1, { baseVersionId: null, label: "first save" });
+    const response = await uploadRaw(ws, projectId, v1, {
+      baseVersionId: null,
+      label: "first save",
+    });
     expect(response.status).toBe(201);
     const body = (await response.json()) as { data: VersionDto };
     expect(body.data.version).toBe(1);
