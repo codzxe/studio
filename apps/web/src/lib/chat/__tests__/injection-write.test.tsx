@@ -48,9 +48,10 @@ import {
   type ApplyEngineEvent,
   type ApplyOutcome,
   type CreateApplyControllerOptions,
+  type LayerResolutionRequest,
   createApplyController,
 } from "../apply";
-import { type LayerResolutionRequest, planRuntimeFromEvent } from "../run-state";
+import { planRuntimeFromEvent } from "../run-state";
 import { type ToolExecutorDeps, executeClientTool } from "../tool-executor";
 
 // ---------------------------------------------------------------------------
