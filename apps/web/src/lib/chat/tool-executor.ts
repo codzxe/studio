@@ -233,42 +233,41 @@ async function runGetContext(args: { include?: readonly string[] }, deps: ToolEx
   }
 
   if (wants("activeComp")) {
-    result.activeComp = flagOrRemoved(deps.flags.activeComp, () =>
-      activeCompId === null ? null : quiet(() => deps.bridge.query("comp.info", { comp: activeCompId })),
-    );
+    result.activeComp = flagOrRemoved(deps.flags.activeComp, async () => {
+      if (activeCompId === null) return null;
+      return quiet(() => deps.bridge.query("comp.info", { comp: activeCompId }));
+    });
   }
 
   if (wants("selection")) {
-    result.selection = flagOrRemoved(deps.flags.selection, () =>
-      selected.length === 0 || activeCompId === null
-        ? { layerIds: selected, tree: null }
-        : quiet(async () => {
-            const first = selected[0];
-            if (first === undefined) return { layerIds: selected, tree: null };
-            return {
-              layerIds: selected,
-              tree: await deps.bridge.query("layer.tree", { comp: activeCompId, layer: first, depth: 2 }),
-            };
-          }),
-    );
+    result.selection = flagOrRemoved(deps.flags.selection, async () => {
+      const first = selected[0];
+      if (selected.length === 0 || activeCompId === null || first === undefined) {
+        return { layerIds: selected, tree: null };
+      }
+      const tree = await quiet(() =>
+        deps.bridge.query("layer.tree", { comp: activeCompId, layer: first, depth: 2 }),
+      );
+      return { layerIds: selected, tree };
+    });
   }
 
   if (wants("playhead")) {
-    result.playhead = flagOrRemoved(deps.flags.playhead, () =>
+    result.playhead = flagOrRemoved(deps.flags.playhead, async () =>
       inspect === null ? null : { timeSeconds: inspect.time, playing: inspect.playing },
     );
   }
 
   if (wants("focusedPanel")) {
-    result.focusedPanel = flagOrRemoved(deps.flags.focusedPanel, () => inspect?.focusedPanel ?? null);
+    result.focusedPanel = flagOrRemoved(deps.flags.focusedPanel, async () => inspect?.focusedPanel ?? null);
   }
 
   if (wants("selectedProperties")) {
-    result.selectedProperties = flagOrRemoved(deps.flags.selectedProperties, () =>
-      selected.length === 0 || activeCompId === null
-        ? null
-        : quiet(() => readSelectedProperties(deps.bridge, selected[0] as number)),
-    );
+    result.selectedProperties = flagOrRemoved(deps.flags.selectedProperties, async () => {
+      const first = selected[0];
+      if (selected.length === 0 || activeCompId === null || first === undefined) return null;
+      return quiet(() => readSelectedProperties(deps.bridge, first));
+    });
   }
 
   if (wants("recentCommands")) {
@@ -285,10 +284,7 @@ async function runGetContext(args: { include?: readonly string[] }, deps: ToolEx
 }
 
 /** Enabled blocks get data (null on bridge failure); user-removed blocks get the marker. */
-async function flagOrRemoved(
-  enabled: boolean,
-  build: () => Promise<unknown> | unknown,
-): Promise<string | unknown> {
+async function flagOrRemoved(enabled: boolean, build: () => Promise<unknown>): Promise<unknown> {
   if (!enabled) return REMOVED_BY_USER;
   return await build();
 }

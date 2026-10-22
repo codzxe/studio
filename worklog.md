@@ -351,3 +351,15 @@ Stage Summary:
   - Block labels wave-2 renders: "Project summary", "Comp: <name>", "Selection: <names>", "Selected properties", "Playhead <mm:ss.d>", "Panel: <focused>", "Frame preview" (data-free placeholder — executor renders), "Recent commands", "Comments" (placeholder — gateway-fed, M4-J wires). Unavailable blocks get the " (unavailable)" suffix.
   - Query params M4-C2 must reuse (verified query.rs + fake.ts): project.summary {}; comp.info {comp?}; layer.tree {layer?, comp?, depth?, time?} (single-layer result; default layer = first selected); prop.get {layer?, path} (path required); edit.history.list {}. Playhead time from inspect is RAW seconds.
 - Blockers: none. Notes for others: currentFrame chip data stays undefined by contract (renderPreview renders on demand); pinned chips are estimated with estimateTokens(item) — per-pinned-item estimates are NOT precomputed in the snapshot (call estimateTokens on the chip item in the UI).
+---
+Task ID: M4-C (addendum)
+Agent: M4-C (web context collector — Seam 5)
+Task: Post-commit gate-status note for the integrator (sweep contamination, not my scope).
+
+Work Log:
+- My commit ccb9412 (git-sync add -A per protocol) swept OTHER wave-1 agents' in-flight files into it: M4-C2's apps/web/src/lib/chat/{tool-executor.ts, tool-executor.test.ts} and M4-A's services/gateway/src/{litellm/*, routes/chat.ts, index.ts} changes.
+- At HEAD right after that commit: web typecheck has 3 errors in tool-executor.test.ts (TS2554: their tests call a 3-arg signature while their tool-executor.ts impl takes 2) and the web suite has 4 failing tests, ALL inside tool-executor.test.ts (140 tests total, 136 pass). This is M4-C2's mid-flight state — I do not own those paths (law #12) and did not touch them.
+- My own scope is verifiably green at HEAD: `vitest run src/lib/chat/context.test.ts src/lib/chat/tokens.test.ts` → 27/27 (98ms tests, deterministic, no network); biome scoped to my 4 files clean. Before their test file landed, the FULL web suite with my files was 124/124 + typecheck 0 errors.
+
+Stage Summary:
+- Integrator action: reconcile M4-C2's tool-executor.{ts,test.ts} (arg-count mismatch + 4 red tests) and M4-A's gateway changes before wave-1 close; my Seam-5 deliverable is final, green, committed, and needs no follow-up from me.

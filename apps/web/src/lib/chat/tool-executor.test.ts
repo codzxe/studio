@@ -307,7 +307,7 @@ describe("executeClientTool happy paths", () => {
       toolCall("studio.render_preview", { compId: "Main", timeSeconds: 1.5, maxWidth: 800 }),
       world.deps,
     );
-    await executeClientTool(toolCall("studio.render_preview", {}), world.deps, "call_test_2");
+    await executeClientTool(toolCall("studio.render_preview", {}, "call_test_2"), world.deps);
 
     expect(world.calls.renderFrames[0]).toEqual({ comp: "Main", time: 1.5, max_side: 800 });
     expect(world.calls.renderFrames[1]).toEqual({ max_side: 1200 });
@@ -410,7 +410,7 @@ describe("executeClientTool degradation", () => {
 
     const world2 = await makeWorld();
     await executeClientTool(
-      toolCall("studio.get_context", { include: ["selection", "playhead"] }),
+      toolCall("studio.get_context", { include: ["selection", "playhead"] }, "call_test_2"),
       world2.deps,
     );
     const limited = resultOf(world2.events[0] as PostedEvent);
@@ -439,10 +439,16 @@ describe("executeClientTool degradation", () => {
       ...world.deps.bridge,
       query: <T>(command: string, params?: unknown) =>
         new Promise<T>((resolve) => {
-          release = () => resolve(world.deps.bridge.query<T>(command, params) as T);
+          release = () => {
+            void world.deps.bridge.query<T>(command, params).then(resolve);
+          };
         }),
     };
-    const settled = executeClientTool(toolCall("studio.get_context", {}), { ...world.deps, bridge: slow, guardTimeoutMs: 10 });
+    const settled = executeClientTool(toolCall("studio.get_context", {}), {
+      ...world.deps,
+      bridge: slow,
+      guardTimeoutMs: 10,
+    });
     await settled;
     expect(resultOf(world.events[0] as PostedEvent).error).toBe("TOOL_TIMEOUT");
 
