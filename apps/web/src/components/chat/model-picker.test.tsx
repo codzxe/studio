@@ -10,8 +10,8 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  type ModelsListEntry,
   ModelPicker,
+  type ModelsListEntry,
   modelDisplayName,
   modelTierLabel,
 } from "./model-picker";
@@ -111,9 +111,7 @@ describe("ModelPicker — popover", () => {
 
   it("marks the active model's row with the --signal ring only", async () => {
     const user = userEvent.setup();
-    render(
-      <ModelPicker models={TWO_MODELS} activeModelId="studio-smart" onPick={vi.fn()} />,
-    );
+    render(<ModelPicker models={TWO_MODELS} activeModelId="studio-smart" onPick={vi.fn()} />);
     await user.click(screen.getByTestId("chat-model-button"));
     const active = screen.getByTestId("chat-model-option-studio-smart");
     const idle = screen.getByTestId("chat-model-option-studio-fast");

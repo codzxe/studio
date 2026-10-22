@@ -17,12 +17,12 @@
  *   `ChatUiState` is surfaced through `useSyncExternalStore` so the render-prop
  *   re-renders on every §7.4 fold.
  * - **Tool executor wiring**: the controller has no event emitter BY DESIGN —
- *   the provider subscribes to its store and DIFFS the active messages'
- *   `toolCards` for `status === "running"` entries it has not executed yet
- *   (M4-B's pinned observation pattern), then hands each to the executor from
+ *   the provider subscribes to its store and DIFFS the messages' `toolCards`
+ *   for `status === "running"` entries it has not executed yet (M4-B's pinned
+ *   observation pattern), then hands each to the executor from
  *   `createToolExecutor` (wave-1, seam 6). Server-side tools (`studio.plan_edit`)
- *   are skipped INSIDE the executor; a provider-level id set keeps replays and
- *   flags-change executor swaps single-shot.
+ *   are skipped INSIDE the executor; a provider-level id set keeps SSE replays
+ *   and flags-change executor swaps single-shot.
  * - **Context orchestration**: effective flags = `autoFlags(latest inspect)`
  *   overlaid with the user's explicit popover overrides (removed auto-context
  *   STAYS removed, ECUX §3.2). A 1 Hz `bridge.inspect()` poll (§11) runs only
@@ -31,9 +31,9 @@
  * - **Models**: `client.models.list()` on mount (one retry, then `[]` per the
  *   wave-2 header contract: `null` = loading, `[]` = entitlement failure → the
  *   picker hides). The active model defaults to the first allowed model.
- * - **Quick actions**: the ONE window listener for M4-G/M4-F's
+ * - **Quick actions**: the ONE window listener for M4-F/M4-G's
  *   `studio:chat-quick-action` CustomEvent lives HERE (not in the slot) so a
- *   single event can never double-dispatch and works in every layout mode.
+ *   single event can never double-dispatch and it works in every layout mode.
  *
  * Boundary law (apps/web): `@studio/contracts` is `import type` ONLY; the only
  * runtime tool validation runs inside `@studio/api-client/chat-tools` via the
@@ -43,6 +43,7 @@
 import {
   createContext,
   type ReactNode,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -55,13 +56,9 @@ import type { ContextSelection, ModelId, PinnedContextItem } from "@studio/contr
 import type { EditorBridge, UiInspect } from "@studio/editor-bridge";
 import type { ChatShortcutBus } from "@/components/editor-host/chat-shortcut-bus";
 import { type ChatController, createChatController } from "./chat-controller";
-import {
-  type ContextSnapshot,
-  autoFlags,
-  collectContextSnapshot,
-} from "./context";
-import { createToolExecutor } from "./tool-executor";
+import { DEFAULT_FLAGS, type ContextSnapshot, autoFlags, collectContextSnapshot } from "./context";
 import { createInitialChatUiState } from "./run-state";
+import { createToolExecutor } from "./tool-executor";
 import type { ChatSendInput, ChatUiError, ChatUiState } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -76,19 +73,22 @@ export type ChatContextFlagKey = keyof ContextSelection;
 
 /** Everything the panel slot (and any chat descendant) consumes. */
 export interface ChatContextApi {
-  /** Null until the lazily-created thread exists (first send); the facade methods below never need it directly. */
+  /**
+   * Null until the lazily-created thread exists (first send); the facade
+   * methods below never need the controller directly.
+   */
   readonly controller: ChatController | null;
-  /** Live thread UI state (initial state while no controller exists). */
+  /** Live thread UI state (the initial idle state while no controller exists). */
   readonly snapshot: ChatUiState;
   /** `null` = still loading; `[]` = the entitlement fetch failed (picker hidden); else the plan's models. */
   readonly models: readonly ChatModelSummary[] | null;
   /** The id the next send uses; defaults to the first allowed model once models load. */
   readonly activeModelId: ModelId | null;
-  /** The lazy thread's id; null before the first send (or after `newThread`). */
+  /** The lazy thread's id; null before the first send (and after `newThread`). */
   readonly threadId: string | null;
   /** Header title: the thread's title, or "Agent" (ECUX §3.1). */
   readonly threadTitle: string;
-  /** Thread-creation failures (the queue is dropped); cleared by the next send/newThread. */
+  /** Thread-creation failures (the unsent queue is dropped); cleared by the next send/newThread. */
   readonly threadError: ChatUiError | null;
   /** Effective context flags (auto + user overrides, §5.1/§5.3). */
   readonly flags: ContextSelection;
@@ -115,7 +115,7 @@ export interface ChatContextApi {
   newThread(): void;
   /** Pick the active model for the next send. */
   setActiveModelId(id: ModelId): void;
-  /** Toggle one context block; a user toggle stays until they change it again (§3.2). */
+  /** Toggle one context block; a user toggle sticks until they change it again (§3.2). */
   setFlag(kind: ChatContextFlagKey, on: boolean): void;
   /** Context popover "Remove all" — every currently-on block goes off. */
   clearOptionalBlocks(): void;
@@ -181,6 +181,7 @@ export function ChatProvider({
   const [threadError, setThreadError] = useState<ChatUiError | null>(null);
   const [controller, setController] = useState<ChatController | null>(null);
   const pendingRef = useRef<ChatSendInput[]>([]);
+  const controllerRef = useRef<ChatController | null>(null);
   const threadIdRef = useRef<string | null>(null);
   const threadCreateRef = useRef<Promise<string> | null>(null);
   /** Bumped by newThread(): a create resolving for a dropped thread is ignored. */
@@ -188,27 +189,34 @@ export function ChatProvider({
 
   // -- models ----------------------------------------------------------------
   const [models, setModels] = useState<readonly ChatModelSummary[] | null>(null);
-  const [activeModelId, setActiveModelIdState] = useState<ModelId | null>(null);
+  const [activeModelId, setActiveModelId] = useState<ModelId | null>(null);
 
-  // -- context (§5) ----------------------------------------------------------
+  // -- context (§5) -----------------------------------------------------------
   const [inspect, setInspect] = useState<UiInspect | null>(null);
   const [overrides, setOverrides] = useState<Partial<Record<ChatContextFlagKey, boolean>>>({});
-  const flags = useMemo<ContextSelection>(
-    () => ({ ...autoFlags(inspect), ...overrides }),
-    [inspect, overrides],
-  );
+  /** Effective flags — identity only changes when a VALUE changes (the 1 Hz poll recomputes, not re-renders). */
+  const [flags, setFlags] = useState<ContextSelection>(DEFAULT_FLAGS);
+  useEffect(() => {
+    const merged: ContextSelection = { ...autoFlags(inspect), ...overrides };
+    const changed = (Object.keys(merged) as ChatContextFlagKey[]).some(
+      (key) => merged[key] !== flags[key],
+    );
+    if (changed) setFlags(merged);
+  }, [inspect, overrides, flags]);
+
   const [pinned, setPinned] = useState<PinnedContextItem[]>([]);
   const [contextSnapshot, setContextSnapshot] = useState<ContextSnapshot | null>(null);
   const [panelVisible, setPanelVisibleState] = useState(false);
+  /** Guards stale async collects: only the latest seq's result lands. */
   const collectSeqRef = useRef(0);
 
-  // -- engine snapshot (re-renders the render-prop on every fold) ------------
+  // -- engine snapshot (re-renders the render-prop on every fold) --------------
   const snapshot = useSyncExternalStore(
     controller === null ? neverSubscribe : controller.subscribe,
     controller === null ? idleSnapshot : controller.getSnapshot,
   );
 
-  // -- tool executor (recreated once per flags change; idempotent by id) ------
+  // -- tool executor (recreated once per flags change; idempotent by id) -------
   const executedToolIdsRef = useRef<Set<string>>(new Set());
   const executor = useMemo(
     () => createToolExecutor({ bridge, client, workspaceId, flags }),
@@ -223,7 +231,7 @@ export function ChatProvider({
     const adopt = (response: ModelsResponse): void => {
       if (cancelled) return;
       setModels(response.models);
-      setActiveModelIdState((current) => current ?? response.models[0]?.id ?? null);
+      setActiveModelId((current) => current ?? response.models[0]?.id ?? null);
     };
     void (async (): Promise<void> => {
       try {
@@ -242,36 +250,31 @@ export function ChatProvider({
   }, [client]);
 
   // -------------------------------------------------------------------------
-  // Lazy thread + controller (one per thread; queue flush on creation)
+  // Lazy thread + controller (one per thread; the queue flushes on creation)
   // -------------------------------------------------------------------------
-  const ensureThread = useMemo(
-    () =>
-      (): Promise<string> => {
-        if (threadIdRef.current !== null) return Promise.resolve(threadIdRef.current);
-        if (threadCreateRef.current !== null) return threadCreateRef.current;
-        const generation = threadGenerationRef.current;
-        const created = client.threads
-          .create(projectId)
-          .then((thread): string => {
-            threadCreateRef.current = null;
-            if (generation === threadGenerationRef.current) {
-              threadIdRef.current = thread.id;
-              setThreadId(thread.id);
-              setThreadTitle(thread.title ?? THREAD_TITLE_FALLBACK);
-            }
-            return thread.id;
-          })
-          .catch((error: unknown) => {
-            threadCreateRef.current = null;
-            throw error;
-          });
-        threadCreateRef.current = created;
-        return created;
-      },
-    [client, projectId],
-  );
+  const ensureThread = useCallback((): Promise<string> => {
+    if (threadIdRef.current !== null) return Promise.resolve(threadIdRef.current);
+    if (threadCreateRef.current !== null) return threadCreateRef.current;
+    const generation = threadGenerationRef.current;
+    const created = client.threads
+      .create(projectId)
+      .then((thread): string => {
+        threadCreateRef.current = null;
+        if (generation === threadGenerationRef.current) {
+          threadIdRef.current = thread.id;
+          setThreadId(thread.id);
+          setThreadTitle(thread.title ?? THREAD_TITLE_FALLBACK);
+        }
+        return thread.id;
+      })
+      .catch((error: unknown) => {
+        threadCreateRef.current = null;
+        throw error;
+      });
+    threadCreateRef.current = created;
+    return created;
+  }, [client, projectId]);
 
-  const controllerRef = useRef<ChatController | null>(null);
   useEffect(() => {
     if (threadId === null) return;
     const created = createChatController({ client, workspaceId, projectId, threadId });
@@ -289,87 +292,70 @@ export function ChatProvider({
     };
   }, [threadId, client, workspaceId, projectId]);
 
-  const refreshContext = useMemo(
-    () =>
-      (): void => {
-        const seq = ++collectSeqRef.current;
-        void collectContextSnapshot(bridge, { flags, pinned }).then((collected) => {
-          if (seq !== collectSeqRef.current) return; // a newer collect superseded this one
-          setContextSnapshot(collected);
-        });
-      },
-    [bridge, flags, pinned],
-  );
+  const refreshContext = useCallback((): void => {
+    const seq = ++collectSeqRef.current;
+    void collectContextSnapshot(bridge, { flags, pinned }).then((collected) => {
+      if (seq !== collectSeqRef.current) return; // a newer collect superseded this one
+      setContextSnapshot(collected);
+    });
+  }, [bridge, flags, pinned]);
 
-  const send = useMemo(
-    () =>
-      (input: { message: string; model?: ModelId }): void => {
-        const message = input.model === undefined ? input.message : input.message;
-        const trimmed = message.trim();
-        if (trimmed === "") return;
-        const model: ModelId | undefined = input.model ?? activeModelId ?? undefined;
-        setThreadError(null);
-        void (async (): Promise<void> => {
-          // Fresh context right before the wire send (§5: the strip/estimates
-          // re-render; the flags themselves ride the request body).
-          const collected = await collectContextSnapshot(bridge, { flags, pinned });
-          if (collectSeqRef.current < Number.MAX_SAFE_INTEGER) {
-            collectSeqRef.current += 1;
-            setContextSnapshot(collected);
-          }
-          const wire: ChatSendInput = {
-            message: trimmed,
-            context: flags,
-            pinned,
-            ...(model === undefined ? {} : { model }),
-          };
-          const current = controllerRef.current;
-          if (current !== null) {
-            current.send(wire);
-            return;
-          }
-          pendingRef.current.push(wire);
-          void ensureThread().catch((error: unknown) => {
-            // The queue is dead without a thread: surface + drop it.
-            pendingRef.current = [];
-            setThreadError(toThreadError(error));
-          });
-        })();
-      },
+  const send = useCallback(
+    (input: { message: string; model?: ModelId }): void => {
+      const message = input.message.trim();
+      if (message === "") return;
+      const model: ModelId | undefined = input.model ?? activeModelId ?? undefined;
+      setThreadError(null);
+      void (async (): Promise<void> => {
+        // Fresh context right before the wire send (§5): the strip/estimates
+        // re-render with what is actually being sent; the flags ride the body.
+        const collected = await collectContextSnapshot(bridge, { flags, pinned });
+        collectSeqRef.current += 1; // supersede any in-flight on-demand collect
+        setContextSnapshot(collected);
+        const wire: ChatSendInput = {
+          message,
+          context: flags,
+          pinned,
+          ...(model === undefined ? {} : { model }),
+        };
+        const current = controllerRef.current;
+        if (current !== null) {
+          current.send(wire);
+          return;
+        }
+        pendingRef.current.push(wire);
+        void ensureThread().catch((error: unknown) => {
+          // The queue is dead without a thread: surface + drop it.
+          pendingRef.current = [];
+          setThreadError(toThreadError(error));
+        });
+      })();
+    },
     [activeModelId, bridge, ensureThread, flags, pinned],
   );
 
-  const stop = useMemo(
-    () => (): void => {
-      controllerRef.current?.stop();
-    },
-    [],
-  );
+  const stop = useCallback((): void => {
+    controllerRef.current?.stop();
+  }, []);
 
-  const retry = useMemo(
-    () => (): void => {
-      controllerRef.current?.retry();
-    },
-    [],
-  );
+  const retry = useCallback((): void => {
+    controllerRef.current?.retry();
+  }, []);
 
-  const newThread = useMemo(
-    () => (): void => {
-      threadGenerationRef.current += 1;
-      threadCreateRef.current = null;
-      threadIdRef.current = null;
-      pendingRef.current = [];
-      executedToolIdsRef.current.clear();
-      setThreadError(null);
-      setThreadTitle(THREAD_TITLE_FALLBACK);
-      setThreadId(null); // disposes the current controller via the effect cleanup
-    },
-    [],
-  );
+  const newThread = useCallback((): void => {
+    threadGenerationRef.current += 1;
+    threadCreateRef.current = null;
+    threadIdRef.current = null;
+    pendingRef.current = [];
+    executedToolIdsRef.current.clear();
+    setThreadError(null);
+    setThreadTitle(THREAD_TITLE_FALLBACK);
+    setThreadId(null); // disposes the current controller via the effect cleanup
+  }, []);
 
   // -------------------------------------------------------------------------
   // Window quick-action CustomEvent (M4-F thread chips + M4-G composer chips):
-  // ONE listener, owned here — a chip click reuses the same send path.
+  // ONE listener, owned here — every chip reuses the same send path.
   // -------------------------------------------------------------------------
   useEffect(() => {
     const handler = (event: Event): void => {
@@ -413,15 +399,42 @@ export function ChatProvider({
         if (card.status !== "running") continue;
         if (executedToolIdsRef.current.has(card.toolCallId)) continue;
         executedToolIdsRef.current.add(card.toolCallId);
-        void executor({
-          runId,
-          toolCallId: card.toolCallId,
-          name: card.name,
-          args: card.args,
-        });
+        void executor({ runId, toolCallId: card.toolCallId, name: card.name, args: card.args });
       }
     }
   }, [snapshot, executor]);
+
+  const setFlag = useCallback((kind: ChatContextFlagKey, on: boolean): void => {
+    setOverrides((current) => ({ ...current, [kind]: on }));
+  }, []);
+
+  const clearOptionalBlocks = useCallback((): void => {
+    setOverrides((current) => {
+      const next: Partial<Record<ChatContextFlagKey, boolean>> = { ...current };
+      for (const key of Object.keys(flags) as ChatContextFlagKey[]) {
+        if (flags[key]) next[key] = false;
+      }
+      return next;
+    });
+  }, [flags]);
+
+  const addPinned = useCallback((item: PinnedContextItem): void => {
+    setPinned((current) =>
+      current.some((existing) => existing.kind === item.kind && existing.id === item.id)
+        ? current
+        : [...current, item],
+    );
+  }, []);
+
+  const removePinned = useCallback((item: PinnedContextItem): void => {
+    setPinned((current) =>
+      current.filter((existing) => !(existing.kind === item.kind && existing.id === item.id)),
+    );
+  }, []);
+
+  const setPanelVisible = useCallback((visible: boolean): void => {
+    setPanelVisibleState(visible);
+  }, []);
 
   const api: ChatContextApi = {
     controller,
@@ -440,36 +453,12 @@ export function ChatProvider({
     stop,
     retry,
     newThread,
-    setActiveModelId: setActiveModelIdState,
-    setFlag: (kind, on) => {
-      setOverrides((current) => ({ ...current, [kind]: on }));
-    },
-    clearOptionalBlocks: () => {
-      setOverrides((current) => {
-        const next: Partial<Record<ChatContextFlagKey, boolean>> = { ...current };
-        for (const key of Object.keys(flags) as ChatContextFlagKey[]) {
-          if (flags[key]) next[key] = false;
-        }
-        return next;
-      });
-    },
-    addPinned: (item) => {
-      setPinned((current) =>
-        current.some(
-          (existing) => existing.kind === item.kind && existing.id === item.id,
-        )
-          ? current
-          : [...current, item],
-      );
-    },
-    removePinned: (item) => {
-      setPinned((current) =>
-        current.filter((existing) => !(existing.kind === item.kind && existing.id === item.id)),
-      );
-    },
-    setPanelVisible: (visible) => {
-      setPanelVisibleState(visible);
-    },
+    setActiveModelId,
+    setFlag,
+    clearOptionalBlocks,
+    addPinned,
+    removePinned,
+    setPanelVisible,
     refreshContext,
   };
 

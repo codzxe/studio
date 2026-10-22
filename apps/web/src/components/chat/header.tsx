@@ -20,8 +20,6 @@
  * action buttons, @studio/ui Button/Menu/Tooltip/StatusDot primitives.
  */
 
-import { Maximize2, MoreHorizontal, PanelRight, X } from "lucide-react";
-import type { ReactElement, ReactNode } from "react";
 import type { RunPhase } from "@/lib/chat/types";
 import {
   Button,
@@ -31,13 +29,15 @@ import {
   MenuItemShortcut,
   MenuTrigger,
   StatusDot,
+  type StatusTone,
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
   cn,
-  type StatusTone,
 } from "@studio/ui";
+import { Maximize2, MoreHorizontal, PanelRight, X } from "lucide-react";
+import type { ReactElement, ReactNode } from "react";
 import { ModelPicker } from "./model-picker";
 import type { ModelsListEntry } from "./model-picker";
 
@@ -189,10 +189,7 @@ export function ChatHeader(props: ChatHeaderProps): ReactElement {
             New chat
             <MenuItemShortcut>⌘⇧L</MenuItemShortcut>
           </MenuItem>
-          <MenuItem
-            data-testid="chat-menu-reset-position"
-            onSelect={() => props.onResetPosition()}
-          >
+          <MenuItem data-testid="chat-menu-reset-position" onSelect={() => props.onResetPosition()}>
             Reset position
           </MenuItem>
           <MenuItem data-testid="chat-menu-shortcuts" onSelect={() => props.onShortcuts()}>
