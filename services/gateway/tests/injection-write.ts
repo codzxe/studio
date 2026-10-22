@@ -1076,7 +1076,7 @@ export const WRITE_PLAN_INJECTIONS: readonly HostileWritePlanFixture[] = [
     planJson: JSON.stringify(
       writePlan([
         compositionStep(),
-        writeStep("save_version", { label: `${"x".repeat(103)}M5N-SAVE-121-TAIL` }, {
+        writeStep("save_version", { label: `${"x".repeat(104)}M5N-SAVE-121-TAIL` }, {
           label: "Agent: save",
           steps: [{ command: "comp.new", params: {} }],
         }),
@@ -1306,7 +1306,7 @@ export const BATCH_WIRE_POISONS: readonly HostileBatchWireFixture[] = [
     threat: "A 281-char batch label against the §8.5 280 cap (the wire edition).",
     batchJson: JSON.stringify({
       ...CLEAN_BATCH,
-      label: `M5N-WIRE-281-HEAD${"x".repeat(245)}M5N-WIRE-281-TAIL`,
+      label: `M5N-WIRE-281-HEAD${"x".repeat(247)}M5N-WIRE-281-TAIL`,
     }),
     needle: "M5N-WIRE-281-TAIL",
     expectation: "reject",
