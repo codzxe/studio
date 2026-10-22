@@ -490,14 +490,7 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       // command; prop.set path "name" is the model's only approximation.
       compile: "blocked",
       fatalCode: "empty_batch",
-      commands: [
-        "prop.set",
-        "prop.set",
-        "prop.set",
-        "prop.set",
-        "prop.set",
-        "prop.set",
-      ],
+      commands: ["prop.set", "prop.set", "prop.set", "prop.set", "prop.set", "prop.set"],
       batchStepRange: [6, 6],
       risk: "low",
       estimatedCredits: 1.5,
@@ -511,7 +504,7 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
     id: "gp-06-create-text-typography",
     scenario: "create-text-typography",
     prompt:
-      "Add a title that says \"Studio Launch\" — Inter, 96 points, warm white #F5F1E8, " +
+      'Add a title that says "Studio Launch" — Inter, 96 points, warm white #F5F1E8, ' +
       "centered in the comp.",
     userContext: {
       activeComp: "Main",
@@ -522,7 +515,7 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
     },
     scriptedModelPlan: {
       intent: "create",
-      summary: "Add a centered \"Studio Launch\" title layer (Inter, 96 pt, #F5F1E8)",
+      summary: 'Add a centered "Studio Launch" title layer (Inter, 96 pt, #F5F1E8)',
       risk: "low",
       requiresApproval: false,
       affectedLayers: [{ name: "Launch Title", change: "New text layer with typography set" }],
@@ -563,7 +556,7 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
   {
     id: "gp-07-create-comp",
     scenario: "create-composition",
-    prompt: "Create a 1080p comp called \"Outro Stinger\", 5 seconds long at 30 fps.",
+    prompt: 'Create a 1080p comp called "Outro Stinger", 5 seconds long at 30 fps.',
     userContext: {
       activeComp: "Main",
       selection: null,
@@ -573,7 +566,7 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
     },
     scriptedModelPlan: {
       intent: "create",
-      summary: "Create composition \"Outro Stinger\" (1920×1080, 30 fps, 5 s)",
+      summary: 'Create composition "Outro Stinger" (1920×1080, 30 fps, 5 s)',
       risk: "medium",
       requiresApproval: false,
       affectedLayers: [],
@@ -691,8 +684,8 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
     id: "gp-10-save-labeled-version",
     scenario: "save-version",
     prompt:
-      "Add a small \"DRAFT\" watermark tag in the top-right corner and save the result as a " +
-      "version named \"Draft stamp\".",
+      'Add a small "DRAFT" watermark tag in the top-right corner and save the result as a ' +
+      'version named "Draft stamp".',
     userContext: {
       activeComp: "Main",
       selection: null,
@@ -705,7 +698,7 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
     // fatal, so realistic plans pair the label with a real edit.
     scriptedModelPlan: {
       intent: "create",
-      summary: "Add a DRAFT watermark tag and save a version labeled \"Draft stamp\"",
+      summary: 'Add a DRAFT watermark tag and save a version labeled "Draft stamp"',
       risk: "low",
       requiresApproval: false,
       affectedLayers: [{ name: "DRAFT Watermark", change: "New watermark text layer" }],
@@ -724,9 +717,14 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
           },
           { text: "DRAFT", name: "DRAFT Watermark" },
         ),
-        step("Save a labeled version", "studio.save_version", { label: "Draft stamp" }, {
-          label: "Draft stamp",
-        }),
+        step(
+          "Save a labeled version",
+          "studio.save_version",
+          { label: "Draft stamp" },
+          {
+            label: "Draft stamp",
+          },
+        ),
       ],
     },
     expected: {
@@ -750,7 +748,7 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
     scenario: "compound-agent-edit",
     prompt:
       "Build a lower third for the speaker — title text sliding in from the left over 0.6 s — " +
-      "then save it as version \"Lower third v1\".",
+      'then save it as version "Lower third v1".',
     userContext: {
       activeComp: "Main",
       selection: null,
@@ -762,7 +760,7 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
     // land as ONE atomic batch (law #6).
     scriptedModelPlan: {
       intent: "create",
-      summary: "Build the speaker lower third and save version \"Lower third v1\"",
+      summary: 'Build the speaker lower third and save version "Lower third v1"',
       risk: "low",
       requiresApproval: false,
       affectedLayers: [
@@ -796,9 +794,14 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
           },
           { layerName: "Speaker Lower Third", property: "transform/position", keyframeCount: 2 },
         ),
-        step("Save the version", "studio.save_version", { label: "Lower third v1" }, {
-          label: "Lower third v1",
-        }),
+        step(
+          "Save the version",
+          "studio.save_version",
+          { label: "Lower third v1" },
+          {
+            label: "Lower third v1",
+          },
+        ),
       ],
     },
     expected: {
