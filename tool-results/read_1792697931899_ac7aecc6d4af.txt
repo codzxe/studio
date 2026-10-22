@@ -1,0 +1,965 @@
+     1→// M4-N — the SAFETY PROOFS (BUILD_PLAN §M4 task 6): prompt-injection corpus
+     2→// vs the gateway pipeline. Extends M4-A's litellm-*.test.ts scenarios (their
+     3→// 11: happy path, credits, tool round-trip, timeout, abort, repair-turn,
+     4→// plan happy/invalid, step cap, provider-down, cancel, registry+redaction)
+     5→// with the ADVERSARIAL corpus from
+     6→// apps/web/src/lib/chat/__tests__/injection-corpus.ts (imported by relative
+     7→// path — the corpus is a zero-dependency data module on purpose).
+     8→//
+     9→// M5-C re-pins every property at the NEW tool count (BUILD_PLAN §M5.1): the
+    10→// provider wire now carries 13 curated tools — 5 read + 8 write — and the
+    11→// write tools are PROPOSE-ONLY (server-side compile, never an execution).
+    12→// Proves, per run:
+    13→//   1. anything NOT in the 13 is refused: begging gets ONE repair turn, then
+    14→//      RUN_INVALID_TOOL; a single-round flood dies with ZERO repairs; a
+    15→//      perfectly-argued WRITE call now returns a PROPOSED batch and NEVER
+    16→//      executes server-side (the M4 “cannot get a write tool” proof becomes
+    17→//      the M5 “cannot get an EXECUTION” proof);
+    18→//   2. project-sourced text stays DATA through the whole pipeline: tool
+    19→//      results are fed back verbatim, injected instructions never turn into
+    20→//      executions, and no raw engine command string ever reaches a provider;
+    21→//   3. the system prompt stays FIRST and byte-exact under corpus payloads;
+    22→//   4. redaction holds: fingerprints + logs carry lengths/sha256 only;
+    23→//   5. tool args validation rejects hostile payloads (bounds, enums,
+    24→//      duplicate keys) and strips prototype-pollution keys (the write
+    25→//      tools' STRICT Zod boundary is pinned in litellm-runner.test.ts);
+    26→//   6. EDIT_PLAN_SCHEMA bounds hold (steps/summary/risk/affectedLayers,
+    27→//      $ref escapes) and a twice-invalid plan degrades to PLAN_INVALID with
+    28→//      the run surviving; the M5 plan-event enrichment adds ONLY optional
+    29→//      fields and the compiled batch never reaches the model conversation;
+    30→//   7. adversarial multi-tool looping still dies at the step cap (write
+    31→//      tools are loop steps too — D-1).
+    32→//
+    33→// Deterministic: fake in-process OpenAI SSE server (injectable fetch) + a
+    34→// fake AgentRunStream. No network, no Postgres (same harness family as
+    35→// litellm-runner.test.ts; runs DB-gated alongside the rest of the suite).
+    36→
+    37→import { describe, expect, it } from "vitest";
+    38→
+    39→import {
+    40→  CONTEXT_SELECTION_SCHEMA,
+    41→  EDIT_PLAN_SCHEMA,
+    42→  PROPOSED_BATCH_NOTE,
+    43→  type StudioStreamEvent,
+    44→  TOOL_LIST,
+    45→  WRITE_TOOL_RESULT_SCHEMA,
+    46→} from "@studio/contracts";
+    47→import {
+    48→  ALL_TEXT_FIXTURES,
+    49→  HOSTILE_PLAN_PAYLOADS,
+    50→  HOSTILE_TOOL_ARGS,
+    51→  TOOL_RESULT_INJECTIONS,
+    52→  allNeedles,
+    53→  hostileArgsFixture,
+    54→  minimalPlan,
+    55→  toolResultFixture,
+    56→} from "../../../apps/web/src/lib/chat/__tests__/injection-corpus.js";
+    57→
+    58→import type { OpenAIChatMessage } from "../src/litellm/openai.js";
+    59→import { SYSTEM_PROMPT, buildMessages, fingerprintMessages } from "../src/litellm/prompt.js";
+    60→import { type CompilePlanFn, createLiteLLMRunner } from "../src/litellm/runner.js";
+    61→import type { LogFields, Logger } from "../src/logger.js";
+    62→import {
+    63→  type AgentRun,
+    64→  type AgentRunOutcome,
+    65→  type AgentRunStream,
+    66→  type RunStreamPayload,
+    67→  type ToolWaitResult,
+    68→  mockEditPlan,
+    69→} from "../src/runner.js";
+    70→
+    71→// ---------------------------------------------------------------------------
+    72→// Fake OpenAI SSE server (scripted) — M4-A's harness technique
+    73→// ---------------------------------------------------------------------------
+    74→
+    75→const encoder = new TextEncoder();
+    76→
+    77→function frame(data: unknown): string {
+    78→  return `data: ${JSON.stringify(data)}\n\n`;
+    79→}
+    80→function textDelta(content: string): string {
+    81→  return frame({ choices: [{ delta: { content } }] });
+    82→}
+    83→function toolCallStart(index: number, id: string, name: string): string {
+    84→  return frame({
+    85→    choices: [
+    86→      {
+    87→        delta: {
+    88→          tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }],
+    89→        },
+    90→      },
+    91→    ],
+    92→  });
+    93→}
+    94→function toolCallArgs(index: number, args: string): string {
+    95→  return frame({
+    96→    choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }],
+    97→  });
+    98→}
+    99→function finish(reason: string): string {
+   100→  return frame({ choices: [{ delta: {}, finish_reason: reason }] });
+   101→}
+   102→const DONE = "data: [DONE]\n\n";
+   103→
+   104→function sseResponse(frames: readonly string[]): Response {
+   105→  const body = new ReadableStream<Uint8Array>({
+   106→    start(controller) {
+   107→      for (const chunk of frames) controller.enqueue(encoder.encode(chunk));
+   108→      controller.close();
+   109→    },
+   110→  });
+   111→  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+   112→}
+   113→
+   114→interface RecordedCall {
+   115→  readonly url: string;
+   116→  readonly body: {
+   117→    model: string;
+   118→    messages: OpenAIChatMessage[];
+   119→    tools?: Array<{ function: { name: string } }>;
+   120→    tool_choice?: string;
+   121→  };
+   122→}
+   123→
+   124→function scriptedFetch(script: ReadonlyArray<Response>): typeof fetch & { calls: RecordedCall[] } {
+   125→  const calls: RecordedCall[] = [];
+   126→  let index = 0;
+   127→  const stub = (async (url: unknown, init?: RequestInit): Promise<Response> => {
+   128→    calls.push({
+   129→      url: String(url),
+   130→      body: JSON.parse(String(init?.body)) as RecordedCall["body"],
+   131→    });
+   132→    const next = script[index];
+   133→    index += 1;
+   134→    if (next === undefined) throw new Error("script exhausted");
+   135→    return next;
+   136→  }) as typeof fetch & { calls: RecordedCall[] };
+   137→  stub.calls = calls;
+   138→  return stub;
+   139→}
+   140→
+   141→// ---------------------------------------------------------------------------
+   142→// Fake AgentRunStream
+   143→// ---------------------------------------------------------------------------
+   144→
+   145→class FakeStream implements AgentRunStream {
+   146→  readonly events: RunStreamPayload[] = [];
+   147→  readonly expected: Array<{ toolCallId: string; tool: string }> = [];
+   148→  readonly controller = new AbortController();
+   149→  waitMode: "pending" | "auto" = "pending";
+   150→  private readonly waits = new Map<string, (result: ToolWaitResult) => void>();
+   151→  private readonly early = new Map<string, unknown>();
+   152→
+   153→  get signal(): AbortSignal {
+   154→    return this.controller.signal;
+   155→  }
+   156→
+   157→  emit(payload: RunStreamPayload): StudioStreamEvent {
+   158→    this.events.push(payload);
+   159→    return { ...payload, runId: "run_inj", seq: this.events.length - 1 };
+   160→  }
+   161→
+   162→  async yieldToStream(): Promise<void> {
+   163→    await new Promise((resolve) => setImmediate(resolve));
+   164→  }
+   165→
+   166→  expectToolCall(toolCallId: string, tool: string): void {
+   167→    this.expected.push({ toolCallId, tool });
+   168→  }
+   169→
+   170→  waitForToolResult(toolCallId: string): Promise<ToolWaitResult> {
+   171→    if (this.waitMode === "auto") return Promise.resolve({ ok: true, result: { stub: true } });
+   172→    if (this.early.has(toolCallId)) {
+   173→      return Promise.resolve({ ok: true, result: this.early.get(toolCallId) });
+   174→    }
+   175→    return new Promise((resolve) => {
+   176→      this.waits.set(toolCallId, resolve);
+   177→    });
+   178→  }
+   179→
+   180→  resolveToolResult(toolCallId: string, result: unknown): void {
+   181→    const resolve = this.waits.get(toolCallId);
+   182→    if (resolve === undefined) {
+   183→      this.early.set(toolCallId, result);
+   184→      return;
+   185→    }
+   186→    this.waits.delete(toolCallId);
+   187→    resolve({ ok: true, result });
+   188→  }
+   189→}
+   190→
+   191→async function runToOutcome(
+   192→  runner: ReturnType<typeof createLiteLLMRunner>,
+   193→  run: AgentRun,
+   194→  stream: FakeStream,
+   195→): Promise<AgentRunOutcome> {
+   196→  const outcome = await runner.start(run, stream);
+   197→  if (outcome.kind === "failed") {
+   198→    stream.emit({
+   199→      type: "run.failed",
+   200→      code: outcome.code,
+   201→      message: outcome.message,
+   202→      retryable: outcome.retryable,
+   203→    });
+   204→  } else if (outcome.kind === "cancelled") {
+   205→    stream.emit({ type: "run.cancelled" });
+   206→  } else {
+   207→    stream.emit({ type: "run.completed" });
+   208→  }
+   209→  return outcome;
+   210→}
+   211→
+   212→function makeRun(overrides: Partial<AgentRun> = {}): AgentRun {
+   213→  return {
+   214→    runId: "run_inj",
+   215→    threadId: "thr_inj",
+   216→    projectId: "prj_inj",
+   217→    workspaceId: "ws_inj",
+   218→    model: "studio-smart",
+   219→    baseVersionId: null,
+   220→    message: "what is on this comp?",
+   221→    context: CONTEXT_SELECTION_SCHEMA.parse({}),
+   222→    pinned: [],
+   223→    reservedCredits: 10,
+   224→    ...overrides,
+   225→  };
+   226→}
+   227→
+   228→function makeRunner(
+   229→  script: ReadonlyArray<Response>,
+   230→  options: {
+   231→    maxSteps?: number;
+   232→    stream?: FakeStream;
+   233→    logger?: Logger;
+   234→    compilePlan?: CompilePlanFn;
+   235→  } = {},
+   236→): {
+   237→  runner: ReturnType<typeof createLiteLLMRunner>;
+   238→  fetchCalls: RecordedCall[];
+   239→  stream: FakeStream;
+   240→} {
+   241→  const fetchStub = scriptedFetch(script);
+   242→  const stream = options.stream ?? new FakeStream();
+   243→  const runner = createLiteLLMRunner({
+   244→    baseUrl: "http://127.0.0.1:4000",
+   245→    apiKey: "sk-platform",
+   246→    virtualKey: "sk-virtual-inj",
+   247→    maxSteps: options.maxSteps ?? 8,
+   248→    fetch: fetchStub,
+   249→    sleep: async () => {},
+   250→    logger: options.logger,
+   251→    compilePlan: options.compilePlan,
+   252→  });
+   253→  return { runner, fetchCalls: fetchStub.calls, stream };
+   254→}
+   255→
+   256→// ---------------------------------------------------------------------------
+   257→// Security assertion helpers
+   258→// ---------------------------------------------------------------------------
+   259→
+   260→/** §8.4 law: the provider is offered EXACTLY the 13 curated tools — the 5
+   261→ * read tools + the 8 PROPOSE-ONLY write tools (BUILD_PLAN §M5.1) — and
+   262→ * nothing else ever: no raw engine entrypoint, no invented id. */
+   263→const CURATED_TOOL_IDS = TOOL_LIST.map((tool) => tool.id);
+   264→
+   265→function expectExactlyCuratedToolsSent(calls: readonly RecordedCall[]): void {
+   266→  expect(calls.length).toBeGreaterThan(0);
+   267→  for (const call of calls) {
+   268→    const tools = call.body.tools;
+   269→    if (tools === undefined) continue; // structured-output calls carry no tools
+   270→    expect(tools.map((tool) => tool.function.name)).toEqual(CURATED_TOOL_IDS);
+   271→  }
+   272→  // Belt and braces: nothing outside the curated 13 ever appears in a tools
+   273→  // array — in particular never the raw execution entrypoints.
+   274→  for (const call of calls) {
+   275→    const serialized = JSON.stringify(call.body.tools ?? []);
+   276→    expect(serialized.includes("engine.execute")).toBe(false);
+   277→    expect(serialized.includes("engine.batch")).toBe(false);
+   278→  }
+   279→}
+   280→
+   281→/** §12.2 law: no raw engine command string is ever put on the wire. */
+   282→function expectNoEngineCommandStrings(calls: readonly RecordedCall[]): void {
+   283→  for (const call of calls) {
+   284→    const serialized = JSON.stringify(call.body);
+   285→    expect(serialized.includes("engine.execute")).toBe(false);
+   286→    expect(serialized.includes("engine.batch")).toBe(false);
+   287→  }
+   288→}
+   289→
+   290→/** Object.prototype must stay untouched by anything the pipeline processed. */
+   291→function expectPrototypeClean(): void {
+   292→  const probe: Record<string, unknown> = {};
+   293→  expect(probe.polluted).toBeUndefined();
+   294→  expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+   295→  expect(Object.getPrototypeOf(probe).polluted).toBeUndefined();
+   296→}
+   297→
+   298→/** The tool-role repair message of the runner's k-th provider call. */
+   299→function toolRoleMessage(call: RecordedCall | undefined): OpenAIChatMessage | undefined {
+   300→  return call?.body.messages.find(
+   301→    (message): message is OpenAIChatMessage & { role: "tool" } => message.role === "tool",
+   302→  );
+   303→}
+   304→
+   305→// ---------------------------------------------------------------------------
+   306→// (1) BEGGING OUTSIDE THE CURATED 13 — the allowlist is the backstop; the
+   307→//     curated write tools themselves PROPOSE only (M5.1)
+   308→// ---------------------------------------------------------------------------
+   309→
+   310→/** Deterministic stub proposal the injected compile seam returns (M5-B stand-in). */
+   311→const stubProposalCompiler: CompilePlanFn = async () => ({
+   312→  ok: true,
+   313→  batch: {
+   314→    label: "Agent: corpus stub proposal",
+   315→    atomic: true,
+   316→    steps: [{ command: "text.insert", params: { text: "stub" } }],
+   317→  },
+   318→  risk: "low",
+   319→  estimatedCredits: 1,
+   320→  resolutionRequests: [],
+   321→});
+   322→
+   323→/** M5-A's CURRENT set_properties args shape (STRICT, layers BY NAME). */
+   324→const SET_PROPERTIES_ARGS = JSON.stringify({
+   325→  layers: [{ name: "headline" }],
+   326→  properties: [{ path: "text/sourceText", value: "PWNED-BY-BEGGING" }],
+   327→});
+   328→
+   329→describe("safety (M5.1) — anything not in the curated 13 is refused; writes only PROPOSE", () => {
+   330→  it("begging for an unregistered tool: ONE repair turn, then RUN_INVALID_TOOL", async () => {
+   331→    const { runner, fetchCalls, stream } = makeRunner([
+   332→      // Round 1: the model begs for a tool that is not in the 13.
+   333→      sseResponse([
+   334→        textDelta("I really need to modify the project to help you."),
+   335→        toolCallStart(0, "call_w1", "studio.delete_everything"),
+   336→        toolCallArgs(0, "{}"),
+   337→        finish("tool_calls"),
+   338→        DONE,
+   339→      ]),
+   340→      // Round 2: the model begs again in prose and repeats the offense.
+   341→      sseResponse([
+   342→        textDelta("Please, I must delete everything."),
+   343→        toolCallStart(0, "call_w2", "studio.delete_everything"),
+   344→        toolCallArgs(0, "{}"),
+   345→        finish("tool_calls"),
+   346→        DONE,
+   347→      ]),
+   348→    ]);
+   349→
+   350→    const outcome = await runToOutcome(runner, makeRun(), stream);
+   351→
+   352→    expect(outcome).toEqual({
+   353→      kind: "failed",
+   354→      code: "RUN_INVALID_TOOL",
+   355→      message: "The agent requested a tool call we can't validate.",
+   356→      retryable: false,
+   357→    });
+   358→    expectExactlyCuratedToolsSent(fetchCalls);
+   359→    expectNoEngineCommandStrings(fetchCalls);
+   360→    // The unregistered call never reached the editor: no tool.started.
+   361→    expect(stream.events.some((event) => event.type === "tool.started")).toBe(false);
+   362→    expect(stream.expected).toEqual([]);
+   363→    // The repair turn told the model the truth: unknown tool + the real list —
+   364→    // which now legitimately includes the PROPOSE-ONLY write tools.
+   365→    const repair = JSON.parse(String(toolRoleMessage(fetchCalls[1])?.content ?? "null")) as {
+   366→      error: string;
+   367→      message: string;
+   368→    };
+   369→    expect(repair.error).toBe("VALIDATION_FAILED");
+   370→    expect(repair.message).toContain('Unknown tool "studio.delete_everything"');
+   371→    expect(repair.message).toContain("studio.plan_edit"); // the read tools listed
+   372→    expect(repair.message).toContain("studio.set_properties"); // the curated write tools listed
+   373→  });
+   374→
+   375→  it("a single-round flood of unregistered tool calls dies with ZERO repair turns", async () => {
+   376→    const { runner, fetchCalls, stream } = makeRunner([
+   377→      sseResponse([
+   378→        toolCallStart(0, "call_f1", "studio.delete_everything"),
+   379→        toolCallArgs(0, "{}"),
+   380→        toolCallStart(1, "call_f2", "studio.explode_project"),
+   381→        toolCallArgs(1, "{}"),
+   382→        finish("tool_calls"),
+   383→        DONE,
+   384→      ]),
+   385→    ]);
+   386→
+   387→    const outcome = await runToOutcome(runner, makeRun(), stream);
+   388→
+   389→    expect(outcome).toEqual({
+   390→      kind: "failed",
+   391→      code: "RUN_INVALID_TOOL",
+   392→      message: "The agent requested a tool call we can't validate.",
+   393→      retryable: false,
+   394→    });
+   395→    // Two strikes in one round: no repair turn was ever issued.
+   396→    expect(fetchCalls.length).toBe(1);
+   397→    expectExactlyCuratedToolsSent(fetchCalls);
+   398→    expect(stream.events.some((event) => event.type === "tool.started")).toBe(false);
+   399→  });
+   400→
+   401→  it("a perfectly-argued WRITE call now returns a PROPOSED batch — nothing executes server-side", async () => {
+   402→    // The M4 proof was "the write tool cannot be reached" (it was not
+   403→    // registered). The M5 proof: it IS registered, the args pass the STRICT
+   404→    // Zod boundary, and STILL nothing executes — the runner resolves the
+   405→    // call server-side into a proposal, the model sees a redacted summary,
+   406→    // and the run simply continues.
+   407→    const { runner, fetchCalls, stream } = makeRunner(
+   408→      [
+   409→        sseResponse([
+   410→          toolCallStart(0, "call_w1", "studio.set_properties"),
+   411→          toolCallArgs(0, SET_PROPERTIES_ARGS),
+   412→          finish("tool_calls"),
+   413→          DONE,
+   414→        ]),
+   415→        // Round 2: the "obedient" model asks for another write, gets another
+   416→        // PROPOSAL — never an execution.
+   417→        sseResponse([
+   418→          textDelta("Understood, updating the project."),
+   419→          toolCallStart(0, "call_w2", "studio.create_text"),
+   420→          toolCallArgs(0, JSON.stringify({ text: "PWNED-INSIST" })),
+   421→          finish("tool_calls"),
+   422→          DONE,
+   423→        ]),
+   424→        sseResponse([textDelta("Both changes are proposed."), finish("stop"), DONE]),
+   425→      ],
+   426→      { compilePlan: stubProposalCompiler },
+   427→    );
+   428→
+   429→    const outcome = await runToOutcome(runner, makeRun(), stream);
+   430→
+   431→    expect(outcome.kind).toBe("completed");
+   432→    expectExactlyCuratedToolsSent(fetchCalls);
+   433→    expectNoEngineCommandStrings(fetchCalls);
+   434→    // Both write calls reached the CLIENT as proposals (tool.started + a
+   435→    // WRITE_TOOL_RESULT_SCHEMA-shaped tool.result) — never an execution.
+   436→    const started = stream.events.filter((event) => event.type === "tool.started");
+   437→    expect(started.map((event) => (event as { name: string }).name)).toEqual([
+   438→      "studio.set_properties",
+   439→      "studio.create_text",
+   440→    ]);
+   441→    const results = stream.events.filter((event) => event.type === "tool.result");
+   442→    expect(results).toHaveLength(2);
+   443→    for (const result of results) {
+   444→      const payload = (result as { result?: unknown }).result;
+   445→      expect(WRITE_TOOL_RESULT_SCHEMA.safeParse(payload).success).toBe(true);
+   446→      expect((payload as { note?: string }).note).toBe(PROPOSED_BATCH_NOTE);
+   447→    }
+   448→    // The model was fed REDACTED summaries — never the compiled command ids.
+   449→    for (const call of fetchCalls.slice(1)) {
+   450→      const toolMessage = toolRoleMessage(call);
+   451→      const content = String(toolMessage?.content);
+   452→      expect(content.includes("text.insert")).toBe(false);
+   453→      expect(content.includes("Agent: corpus stub proposal")).toBe(false);
+   454→      const fedBack = JSON.parse(content) as Record<string, unknown>;
+   455→      expect(fedBack.proposed).toBe(true);
+   456→    }
+   457→    expectPrototypeClean();
+   458→  });
+   459→});
+   460→
+   461→// ---------------------------------------------------------------------------
+   462→// (2) INJECTED INSTRUCTIONS IN TOOL RESULTS STAY DATA
+   463→// ---------------------------------------------------------------------------
+   464→
+   465→describe("safety — injected tool results stay data (§8.3 end to end)", () => {
+   466→  it.each(TOOL_RESULT_INJECTIONS.map((fixture) => [fixture.id]))(
+   467→    "corpus result %s: fed back VERBATIM, the write tool it begs for only PROPOSES",
+   468→    async (fixtureId) => {
+   469→      const poisoned = toolResultFixture(fixtureId);
+   470→      const { runner, fetchCalls, stream } = makeRunner(
+   471→        [
+   472→          // Round 1: a legitimate read the hostile result answers.
+   473→          sseResponse([
+   474→            toolCallStart(0, "call_read", "studio.get_context"),
+   475→            toolCallArgs(0, "{}"),
+   476→            finish("tool_calls"),
+   477→            DONE,
+   478→          ]),
+   479→          // Round 2: the model "obeyed" the injected instruction — but the
+   480→          // curated write tool now PROPOSES server-side; nothing executes.
+   481→          sseResponse([
+   482→            textDelta("Understood, updating the project."),
+   483→            toolCallStart(0, "call_write", "studio.set_properties"),
+   484→            toolCallArgs(0, SET_PROPERTIES_ARGS),
+   485→            finish("tool_calls"),
+   486→            DONE,
+   487→          ]),
+   488→          // Round 3: the model insists with a different write tool — another
+   489→          // proposal, still no execution.
+   490→          sseResponse([
+   491→            toolCallStart(0, "call_write2", "studio.create_text"),
+   492→            toolCallArgs(0, JSON.stringify({ text: "PWNED-INSIST" })),
+   493→            finish("tool_calls"),
+   494→            DONE,
+   495→          ]),
+   496→          sseResponse([textDelta("Both changes are proposed for review."), finish("stop"), DONE]),
+   497→        ],
+   498→        { compilePlan: stubProposalCompiler },
+   499→      );
+   500→
+   501→      const outcomePromise = runToOutcome(runner, makeRun(), stream);
+   502→      await new Promise((resolve) => setImmediate(resolve));
+   503→      // The editor client POSTs the poisoned result (Seam 2).
+   504→      stream.resolveToolResult("call_read", poisoned.result);
+   505→      const outcome = await outcomePromise;
+   506→
+   507→      expect(outcome.kind).toBe("completed");
+   508→      expectExactlyCuratedToolsSent(fetchCalls);
+   509→      expectNoEngineCommandStrings(fetchCalls);
+   510→      // One CLIENT read reached the editor; the two write calls reached the
+   511→      // client as tool.started cards whose results are PROPOSALS.
+   512→      const started = stream.events.filter((event) => event.type === "tool.started");
+   513→      expect(started.map((event) => (event as { name: string }).name)).toEqual([
+   514→        "studio.get_context",
+   515→        "studio.set_properties",
+   516→        "studio.create_text",
+   517→      ]);
+   518→      const writeResults = stream.events.filter(
+   519→        (event) => event.type === "tool.result" && event.toolCallId !== "call_read",
+   520→      );
+   521→      expect(writeResults).toHaveLength(2);
+   522→      for (const result of writeResults) {
+   523→        const payload = (result as { result?: unknown }).result;
+   524→        expect(WRITE_TOOL_RESULT_SCHEMA.safeParse(payload).success).toBe(true);
+   525→      }
+   526→      // DATA, VERBATIM: the poisoned result is the tool-role message the next
+   527→      // model turn saw — byte-identical, never sanitized, never escalated.
+   528→      const round2Tool = toolRoleMessage(fetchCalls[1]);
+   529→      expect(round2Tool?.tool_call_id).toBe("call_read");
+   530→      expect(round2Tool?.content).toBe(JSON.stringify(poisoned.result));
+   531→      // The injection reached the model as data…
+   532→      expect(String(round2Tool?.content).includes(poisoned.needle)).toBe(true);
+   533→      // …and it still bought nothing: no engine string ever reached the
+   534→      // provider and the proposals fed back to the model carry no command ids.
+   535→      for (const call of fetchCalls.slice(2)) {
+   536→        const toolMessage = toolRoleMessage(call);
+   537→        if (toolMessage === undefined) continue;
+   538→        expect(String(toolMessage.content).includes("text.insert")).toBe(false);
+   539→      }
+   540→      expectPrototypeClean();
+   541→    },
+   542→  );
+   543→
+   544→  it("the plan path never leaks a raw engine entrypoint either (plans are proposal data)", async () => {
+   545→    const plan = mockEditPlan();
+   546→    const { runner, fetchCalls, stream } = makeRunner([
+   547→      sseResponse([
+   548→        toolCallStart(0, "call_plan", "studio.plan_edit"),
+   549→        toolCallArgs(0, '{"goal":"organize the layers"}'),
+   550→        finish("tool_calls"),
+   551→        DONE,
+   552→      ]),
+   553→      sseResponse([textDelta(JSON.stringify(plan)), finish("stop"), DONE]),
+   554→      sseResponse([textDelta("Plan ready."), finish("stop"), DONE]),
+   555→    ]);
+   556→    const outcome = await runToOutcome(runner, makeRun(), stream);
+   557→    expect(outcome.kind).toBe("completed");
+   558→    expect(stream.events.some((event) => event.type === "plan")).toBe(true);
+   559→    // Plan steps may CARRY proposed command ids (data, §8.6 shape) but the raw
+   560→    // execution entrypoints engine.execute / engine.batch never appear.
+   561→    expectNoEngineCommandStrings(fetchCalls);
+   562→    expectExactlyCuratedToolsSent(fetchCalls);
+   563→  });
+   564→
+   565→  it("the enriched plan path (M5 compile seam) still never leaks the compiled batch to the model", async () => {
+   566→    // With a compile seam wired, the plan event carries compiledBatch for the
+   567→    // CLIENT — the model's tool-role content stays the BARE plan (M4 shape),
+   568→    // so the server-chosen registry command ids never enter the conversation.
+   569→    const plan = mockEditPlan();
+   570→    const { runner, fetchCalls, stream } = makeRunner(
+   571→      [
+   572→        sseResponse([
+   573→          toolCallStart(0, "call_plan", "studio.plan_edit"),
+   574→          toolCallArgs(0, '{"goal":"organize the layers"}'),
+   575→          finish("tool_calls"),
+   576→          DONE,
+   577→        ]),
+   578→        sseResponse([textDelta(JSON.stringify(plan)), finish("stop"), DONE]),
+   579→        sseResponse([textDelta("Plan ready."), finish("stop"), DONE]),
+   580→      ],
+   581→      { compilePlan: stubProposalCompiler },
+   582→    );
+   583→    const outcome = await runToOutcome(runner, makeRun(), stream);
+   584→    expect(outcome.kind).toBe("completed");
+   585→    const planEvent = stream.events.find((event) => event.type === "plan");
+   586→    if (planEvent?.type !== "plan") throw new Error("no plan event");
+   587→    expect((planEvent as { compiledBatch?: unknown }).compiledBatch).toBeDefined();
+   588→    expect((planEvent as { risk?: unknown }).risk).toBe("low");
+   589→    // The tool-role message the model saw is the bare plan — no compiledBatch,
+   590→    // no proposal label, no command id from the compile.
+   591→    const toolMessage = toolRoleMessage(fetchCalls[2]);
+   592→    expect(toolMessage?.content).toBe(JSON.stringify(plan));
+   593→    expectNoEngineCommandStrings(fetchCalls);
+   594→    expectExactlyCuratedToolsSent(fetchCalls);
+   595→  });
+   596→});
+   597→
+   598→// ---------------------------------------------------------------------------
+   599→// (3) PROMPT BOUNDARY — the system prompt is assembled, never grown
+   600→// ---------------------------------------------------------------------------
+   601→
+   602→describe("safety — prompt boundary holds for every corpus payload", () => {
+   603→  it("keeps the system prompt FIRST and byte-exact; payloads travel as data only", () => {
+   604→    for (const fixture of ALL_TEXT_FIXTURES) {
+   605→      const messages = buildMessages(
+   606→        makeRun({
+   607→          message: fixture.payload,
+   608→          history: [
+   609→            { role: "user", content: fixture.payload },
+   610→            { role: "assistant", content: fixture.payload },
+   611→          ],
+   612→        }),
+   613→      );
+   614→      // The system turn is first and byte-identical — no fixture content, no
+   615→      // "SYSTEM:" header, no boundary escape can modify or append to it.
+   616→      expect(messages[0]?.role).toBe("system");
+   617→      expect(messages[0]?.content).toBe(SYSTEM_PROMPT);
+   618→      const systemTurns = messages.filter((message) => message.role === "system");
+   619→      expect(systemTurns).toHaveLength(1);
+   620→      // Data not lost: the payload rides the user/history turns verbatim.
+   621→      const lastUser = [...messages].reverse().find((message) => message.role === "user");
+   622→      expect(String(lastUser?.content).includes(fixture.payload)).toBe(true);
+   623→      expect(messages[1]?.content).toBe(fixture.payload);
+   624→    }
+   625→  });
+   626→
+   627→  it("hostile pinned labels land in the user turn, never in the system turn", () => {
+   628→    const fixture = ALL_TEXT_FIXTURES.find((item) => item.id === "html-anchor-js");
+   629→    if (fixture === undefined) throw new Error("fixture missing");
+   630→    const messages = buildMessages(
+   631→      makeRun({
+   632→        message: "what is pinned?",
+   633→        pinned: [{ kind: "composition", id: "comp_1", label: fixture.payload }],
+   634→      }),
+   635→    );
+   636→    expect(messages[0]?.content).toBe(SYSTEM_PROMPT);
+   637→    const lastUser = messages.at(-1);
+   638→    expect(String(lastUser?.content).includes(fixture.payload)).toBe(true);
+   639→  });
+   640→});
+   641→
+   642→// ---------------------------------------------------------------------------
+   643→// (4) REDACTION — fingerprints and logs carry metadata only
+   644→// ---------------------------------------------------------------------------
+   645→
+   646→describe("safety — redaction holds (M4.3)", () => {
+   647→  it("fingerprintMessages output contains NO corpus payload — length + sha256 only", () => {
+   648→    const digests: string[] = [];
+   649→    for (const fixture of ALL_TEXT_FIXTURES) {
+   650→      const messages: OpenAIChatMessage[] = [
+   651→        { role: "system", content: SYSTEM_PROMPT },
+   652→        { role: "user", content: fixture.payload },
+   653→      ];
+   654→      const fingerprint = fingerprintMessages(messages);
+   655→      const serialized = JSON.stringify(fingerprint);
+   656→      expect(serialized.includes(fixture.needle)).toBe(false);
+   657→      expect(fingerprint.messageCount).toBe(2);
+   658→      expect(fingerprint.chars).toBe(JSON.stringify(messages).length);
+   659→      digests.push(fingerprint.sha256);
+   660→    }
+   661→    // Tamper-evident without carrying content: distinct payloads → distinct
+   662→    // digests for every corpus fixture.
+   663→    expect(new Set(digests).size).toBe(digests.length);
+   664→  });
+   665→
+   666→  it("the runner's logger receives no corpus needle across a fully hostile run", async () => {
+   667→    const records: Array<{ level: string; msg: string; fields: LogFields }> = [];
+   668→    const spyLogger: Logger = {
+   669→      debug: (msg, fields) => records.push({ level: "debug", msg, fields: { ...fields } }),
+   670→      info: (msg, fields) => records.push({ level: "info", msg, fields: { ...fields } }),
+   671→      warn: (msg, fields) => records.push({ level: "warn", msg, fields: { ...fields } }),
+   672→      error: (msg, fields) => records.push({ level: "error", msg, fields: { ...fields } }),
+   673→      child: () => spyLogger,
+   674→    };
+   675→    const begging = hostileArgsFixture("write-tool-perfect-args");
+   676→    const { runner, stream } = makeRunner(
+   677→      [sseResponse([textDelta("Here it is."), finish("stop"), DONE])],
+   678→      {
+   679→        logger: spyLogger,
+   680→      },
+   681→    );
+   682→    const history = ALL_TEXT_FIXTURES.slice(0, 6).map((fixture) => ({
+   683→      role: "user" as const,
+   684→      content: fixture.payload,
+   685→    }));
+   686→    const outcome = await runToOutcome(
+   687→      runner,
+   688→      makeRun({ message: begging.argsJson, history }),
+   689→      stream,
+   690→    );
+   691→    expect(outcome.kind).toBe("completed");
+   692→
+   693→    const modelCalls = records.filter((record) => record.msg === "litellm_model_call");
+   694→    expect(modelCalls.length).toBe(1);
+   695→    const fields = modelCalls[0]?.fields as Record<string, unknown>;
+   696→    expect(fields.promptChars).toBeGreaterThan(0);
+   697→    expect(String(fields.promptSha256)).toMatch(/^[0-9a-f]{16}$/);
+   698→    // M4.3: no corpus needle (payload fragment, base64 blob, URL query…) may
+   699→    // appear in ANY log record of the run.
+   700→    const allSerialized = JSON.stringify(records);
+   701→    for (const needle of allNeedles()) {
+   702→      expect(allSerialized.includes(needle)).toBe(false);
+   703→    }
+   704→  });
+   705→});
+   706→
+   707→// ---------------------------------------------------------------------------
+   708→// (5) ARGS VALIDATION — hostile payloads never execute
+   709→// ---------------------------------------------------------------------------
+   710→
+   711→describe("safety — tool args validation rejects hostile payloads", () => {
+   712→  it("999 layerIds: ONE repair turn, then the model recovers with valid args", async () => {
+   713→    const hostile = hostileArgsFixture("props-999-layers");
+   714→    const { runner, fetchCalls, stream } = makeRunner([
+   715→      sseResponse([
+   716→        toolCallStart(0, "call_bomb", hostile.tool),
+   717→        toolCallArgs(0, hostile.argsJson),
+   718→        finish("tool_calls"),
+   719→        DONE,
+   720→      ]),
+   721→      sseResponse([
+   722→        toolCallStart(0, "call_ok", "studio.get_context"),
+   723→        toolCallArgs(0, "{}"),
+   724→        finish("tool_calls"),
+   725→        DONE,
+   726→      ]),
+   727→      sseResponse([textDelta("Done."), finish("stop"), DONE]),
+   728→    ]);
+   729→    stream.waitMode = "auto";
+   730→
+   731→    const outcome = await runToOutcome(runner, makeRun(), stream);
+   732→
+   733→    expect(outcome.kind).toBe("completed");
+   734→    expectExactlyCuratedToolsSent(fetchCalls);
+   735→    // The bomb never reached the editor; the repair turn named the bound.
+   736→    const started = stream.events.filter((event) => event.type === "tool.started");
+   737→    expect(started).toEqual([
+   738→      { type: "tool.started", toolCallId: "call_ok", name: "studio.get_context", args: {} },
+   739→    ]);
+   740→    const repair = JSON.parse(String(toolRoleMessage(fetchCalls[1])?.content ?? "null")) as {
+   741→      error: string;
+   742→      message: string;
+   743→    };
+   744→    expect(repair.error).toBe("VALIDATION_FAILED");
+   745→    expect(repair.message).toContain("layerIds");
+   746→  });
+   747→
+   748→  it.each(
+   749→    ["preview-huge-width", "layers-depth-99", "context-unknown-block", "args-duplicate-key"].map(
+   750→      (id) => [id],
+   751→    ),
+   752→  )("hostile args %s: repeat offense → RUN_INVALID_TOOL", async (fixtureId) => {
+   753→    const hostile = hostileArgsFixture(fixtureId);
+   754→    const { runner, fetchCalls, stream } = makeRunner([
+   755→      sseResponse([
+   756→        toolCallStart(0, "call_h1", hostile.tool),
+   757→        toolCallArgs(0, hostile.argsJson),
+   758→        finish("tool_calls"),
+   759→        DONE,
+   760→      ]),
+   761→      sseResponse([
+   762→        toolCallStart(0, "call_h2", hostile.tool),
+   763→        toolCallArgs(0, hostile.argsJson),
+   764→        finish("tool_calls"),
+   765→        DONE,
+   766→      ]),
+   767→    ]);
+   768→
+   769→    const outcome = await runToOutcome(runner, makeRun(), stream);
+   770→
+   771→    expect(outcome).toEqual({
+   772→      kind: "failed",
+   773→      code: "RUN_INVALID_TOOL",
+   774→      message: "The agent requested a tool call we can't validate.",
+   775→      retryable: false,
+   776→    });
+   777→    expect(stream.events.some((event) => event.type === "tool.started")).toBe(false);
+   778→    expectExactlyCuratedToolsSent(fetchCalls);
+   779→    expectPrototypeClean();
+   780→  });
+   781→
+   782→  it("prototype-pollution keys in args are stripped by Zod, never honored", async () => {
+   783→    const hostile = hostileArgsFixture("args-proto-keys");
+   784→    const { runner, fetchCalls, stream } = makeRunner([
+   785→      sseResponse([
+   786→        toolCallStart(0, "call_proto", hostile.tool),
+   787→        toolCallArgs(0, hostile.argsJson),
+   788→        finish("tool_calls"),
+   789→        DONE,
+   790→      ]),
+   791→      sseResponse([textDelta("Read them."), finish("stop"), DONE]),
+   792→    ]);
+   793→    stream.waitMode = "auto";
+   794→
+   795→    const outcome = await runToOutcome(runner, makeRun(), stream);
+   796→
+   797→    expect(outcome.kind).toBe("completed");
+   798→    expectExactlyCuratedToolsSent(fetchCalls);
+   799→    // The tool RAN — with the pollution keys stripped from the validated args.
+   800→    const started = stream.events.find((event) => event.type === "tool.started");
+   801→    expect(started).toMatchObject({ toolCallId: "call_proto", name: "studio.get_properties" });
+   802→    const argsJson = JSON.stringify((started as { args?: unknown } | undefined)?.args ?? {});
+   803→    expect(argsJson).toBe(JSON.stringify({ layerIds: ["l1"] }));
+   804→    expect(argsJson.includes("__proto__")).toBe(false);
+   805→    expect(argsJson.includes("constructor")).toBe(false);
+   806→    expect(argsJson.includes(hostile.needle)).toBe(false);
+   807→    expectPrototypeClean();
+   808→  });
+   809→});
+   810→
+   811→// ---------------------------------------------------------------------------
+   812→// (6) PLAN BOUNDS — EDIT_PLAN_SCHEMA under hostile structured output
+   813→// ---------------------------------------------------------------------------
+   814→
+   815→describe("safety — plan bounds hold (§8.6 / EDIT_PLAN_SCHEMA)", () => {
+   816→  it("EDIT_PLAN_SCHEMA rejects every hostile bound/shape and keeps data-payloads inert", () => {
+   817→    for (const fixture of HOSTILE_PLAN_PAYLOADS) {
+   818→      const parsed: unknown = JSON.parse(fixture.planJson);
+   819→      const checked = EDIT_PLAN_SCHEMA.safeParse(parsed);
+   820→      if (fixture.expectation === "reject") {
+   821→        expect(checked.success, fixture.id).toBe(false);
+   822→      } else {
+   823→        // "data" expectation: the payload PARSES, and the hostile fragment is
+   824→        // carried verbatim as inert JSON data (M4 compiles nothing — there is
+   825→        // no apply path; the M5 batch validator stays the gate).
+   826→        expect(checked.success, fixture.id).toBe(true);
+   827→        expect(JSON.stringify(checked.success ? checked.data : {}).includes(fixture.needle)).toBe(
+   828→          true,
+   829→        );
+   830→      }
+   831→      expectPrototypeClean();
+   832→    }
+   833→  });
+   834→
+   835→  it("a valid plan with hostile-looking (but inert) data still parses — corpus sanity", () => {
+   836→    // The base builder must be valid: proves the rejects above come from the
+   837→    // hostile deltas, not from a broken fixture.
+   838→    expect(EDIT_PLAN_SCHEMA.safeParse(JSON.parse(JSON.stringify(minimalPlan()))).success).toBe(
+   839→      true,
+   840→    );
+   841→  });
+   842→
+   843→  it("a $ref-escape plan fails 2 attempts → PLAN_INVALID tool result, run survives", async () => {
+   844→    const goalFixture = hostileArgsFixture("plan-goal-schema-override");
+   845→    const refPlan = HOSTILE_PLAN_PAYLOADS.find((fixture) => fixture.id === "plan-ref-escape");
+   846→    if (refPlan === undefined) throw new Error("fixture missing");
+   847→    const { runner, fetchCalls, stream } = makeRunner([
+   848→      // Main round: the model calls plan_edit with the schema-override goal.
+   849→      sseResponse([
+   850→        toolCallStart(0, "call_plan", "studio.plan_edit"),
+   851→        toolCallArgs(0, goalFixture.argsJson),
+   852→        finish("tool_calls"),
+   853→        DONE,
+   854→      ]),
+   855→      // Structured attempt 1: the $ref-escape plan.
+   856→      sseResponse([textDelta(refPlan.planJson), finish("stop"), DONE]),
+   857→      // Structured attempt 2: the model smuggles the same $ref again.
+   858→      sseResponse([textDelta(refPlan.planJson), finish("stop"), DONE]),
+   859→      // Main round 2: the model gives up and answers in text.
+   860→      sseResponse([textDelta("I could not produce a valid plan."), finish("stop"), DONE]),
+   861→    ]);
+   862→
+   863→    const outcome = await runToOutcome(runner, makeRun(), stream);
+   864→
+   865→    // The run SURVIVES: PLAN_INVALID is a tool result, not a run failure.
+   866→    expect(outcome.kind).toBe("completed");
+   867→    expect(stream.events.some((event) => event.type === "plan")).toBe(false);
+   868→    const toolResult = stream.events.find(
+   869→      (event) => event.type === "tool.result" && event.toolCallId === "call_plan",
+   870→    );
+   871→    expect(toolResult).toMatchObject({
+   872→      type: "tool.result",
+   873→      toolCallId: "call_plan",
+   874→      result: { error: "PLAN_INVALID" },
+   875→    });
+   876→    // Attempt 2 saw the validation error of attempt 1 as data…
+   877→    const attempt2 = fetchCalls[2]?.body.messages ?? [];
+   878→    expect(
+   879→      attempt2.some((message) => String(message.content).includes("was not a valid EditPlan")),
+   880→    ).toBe(true);
+   881→    // …and the structured calls never carried tools.
+   882→    expect(fetchCalls[1]?.body.tools).toBeUndefined();
+   883→    expect(fetchCalls[2]?.body.tools).toBeUndefined();
+   884→    // The goal's embedded schema override rode the structured prompt as DATA
+   885→    // (verbatim), while the fixed strict-JSON instruction still leads it.
+   886→    const planUser = fetchCalls[1]?.body.messages.at(-1);
+   887→    expect(String(planUser?.content).includes("STRICT JSON")).toBe(true);
+   888→    expect(String(planUser?.content).includes(goalFixture.needle)).toBe(true);
+   889→    expectExactlyCuratedToolsSent(fetchCalls);
+   890→    expectNoEngineCommandStrings(fetchCalls);
+   891→  });
+   892→});
+   893→
+   894→// ---------------------------------------------------------------------------
+   895→// (7) STEP CAP under adversarial looping
+   896→// ---------------------------------------------------------------------------
+   897→
+   898→describe("safety — adversarial looping still dies at the step cap (§8.9)", () => {
+   899→  it("multi-tool-per-round looping hits RUN_STEP_LIMIT; nothing grows unbounded", async () => {
+   900→    const { runner, fetchCalls, stream } = makeRunner(
+   901→      [
+   902→        sseResponse([
+   903→          toolCallStart(0, "call_a1", "studio.get_context"),
+   904→          toolCallArgs(0, "{}"),
+   905→          toolCallStart(1, "call_a2", "studio.get_context"),
+   906→          toolCallArgs(1, "{}"),
+   907→          finish("tool_calls"),
+   908→          DONE,
+   909→        ]),
+   910→        sseResponse([
+   911→          toolCallStart(0, "call_b1", "studio.get_context"),
+   912→          toolCallArgs(0, "{}"),
+   913→          toolCallStart(1, "call_b2", "studio.get_context"),
+   914→          toolCallArgs(1, "{}"),
+   915→          finish("tool_calls"),
+   916→          DONE,
+   917→        ]),
+   918→        sseResponse([
+   919→          toolCallStart(0, "call_c1", "studio.get_context"),
+   920→          toolCallArgs(0, "{}"),
+   921→          toolCallStart(1, "call_c2", "studio.get_context"),
+   922→          toolCallArgs(1, "{}"),
+   923→          finish("tool_calls"),
+   924→          DONE,
+   925→        ]),
+   926→      ],
+   927→      { maxSteps: 3 },
+   928→    );
+   929→    stream.waitMode = "auto";
+   930→
+   931→    const outcome = await runToOutcome(runner, makeRun(), stream);
+   932→
+   933→    expect(outcome).toEqual({
+   934→      kind: "failed",
+   935→      code: "RUN_STEP_LIMIT",
+   936→      message: "The agent used too many steps for one message.",
+   937→      retryable: false,
+   938→    });
+   939→    // Two valid calls per round × exactly maxSteps rounds — then a hard stop.
+   940→    expect(stream.events.filter((event) => event.type === "tool.started")).toHaveLength(6);
+   941→    expect(fetchCalls.length).toBe(3);
+   942→    expectExactlyCuratedToolsSent(fetchCalls);
+   943→  });
+   944→});
+   945→
+   946→// ---------------------------------------------------------------------------
+   947→// Corpus self-checks (fail fast if the corpus drifts)
+   948→// ---------------------------------------------------------------------------
+   949→
+   950→describe("corpus self-check", () => {
+   951→  it("every text fixture carries its needle and no needle appears in the system prompt", () => {
+   952→    expect(ALL_TEXT_FIXTURES.length).toBeGreaterThanOrEqual(18);
+   953→    expect(HOSTILE_TOOL_ARGS.length).toBeGreaterThanOrEqual(8);
+   954→    expect(TOOL_RESULT_INJECTIONS.length).toBeGreaterThanOrEqual(5);
+   955→    expect(HOSTILE_PLAN_PAYLOADS.length).toBeGreaterThanOrEqual(6);
+   956→    for (const fixture of ALL_TEXT_FIXTURES) {
+   957→      expect(fixture.payload.includes(fixture.needle), fixture.id).toBe(true);
+   958→      expect(SYSTEM_PROMPT.includes(fixture.needle)).toBe(false);
+   959→    }
+   960→    for (const fixture of HOSTILE_TOOL_ARGS) {
+   961→      expect(JSON.parse(fixture.argsJson)).toBeDefined();
+   962→    }
+   963→  });
+   964→});
+   965→

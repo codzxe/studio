@@ -149,16 +149,25 @@ test.describe("M4 chat — read-only agent", () => {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
 
-    // The mock's EditPlan renders as the M4-informational card (never applied).
+    // The mock's EditPlan renders as the M5 plan card (M5-G rewrite): a
+    // status machine whose read-only mount (message.tsx passes no callbacks)
+    // shows the "proposed" state with no action controls. The M4
+    // "Apply arrives with M5" note is GONE (apply is real now), and the
+    // steps disclosure is a BUTTON (plan-steps-toggle) — so the no-button
+    // pin targets the ACTION row, not the whole card.
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible();
+    await expect(plan).toHaveAttribute("data-status", "proposed");
     await expect(plan).toHaveAttribute("data-applied", "false");
     await expect(plan).toContainText("Rename the selected layer");
-    await expect(plan).toContainText("Apply arrives with M5 — this plan is a preview.");
+    await expect(page.getByTestId("plan-note")).toHaveCount(0);
 
-    // Read-only proof (M4.6): the plan card has no buttons, and no Apply
-    // button exists anywhere in the page.
-    await expect(plan.getByRole("button")).toHaveCount(0);
+    // Read-only proof (M4.6, restated for M5): the card's one button is the
+    // steps disclosure; the ACTION row holds ZERO buttons and no Apply
+    // button exists anywhere in the page (apply/undo arrive with the M5
+    // thread wiring — see e2e/m5-agent-edits.spec.ts for the journey spec).
+    await expect(plan.getByTestId("plan-steps-toggle")).toBeVisible();
+    await expect(plan.getByTestId("plan-actions").getByRole("button")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /apply/i })).toHaveCount(0);
 
     // Expanding the tool card shows the mock's context payload — the comp the

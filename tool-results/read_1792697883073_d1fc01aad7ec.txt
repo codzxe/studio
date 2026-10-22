@@ -1,0 +1,763 @@
+     1→/**
+     2→ * Client-side apply/undo engine — BUILD_PLAN §M5.4/§M5.5, DECISIONS.md D-6,
+     3→ * docs/phases/M5-SEAMS.md (`ApplyController`, pinned).
+     4→ *
+     5→ * ONE user gesture = ONE atomic `engine.batch` = ONE undo step = ONE version
+     6→ * (AGENTS.md hard rule 6). The whole flow NEVER throws — every outcome is a
+     7→ * typed union the plan card (M5-G) renders:
+     8→ *
+     9→ *  `apply(plan)`:
+    10→ *    1. resolve each `resolutionRequests` entry against the LIVE layer list
+    11→ *       (the executor's list_layers path: `comp.info {}` → `layers`) — a name
+    12→ *       matching exactly one layer binds it; ambiguous or unknown names fail
+    13→ *       BEFORE any engine mutation;
+    14→ *    2. patch the `compiledBatch` placeholders with the resolved layer ids
+    15→ *       (deterministic deep clone; null-prototype request map — the M4-N F-1
+    16→ *       lesson: model-adjacent keys never touch `Object.prototype`);
+    17→ *    3. `bridge.execute("engine.batch", batch)` — ONE call. Verified wire:
+    18→ *       the bridge passes the params object through `effectcraft.execute` →
+    19→ *       `engine.execute` → `batch.rs`, which reads `{steps, label?, atomic?}`
+    20→ *       (extra keys such as `timeoutMs` ride inert upstream — `timeoutMs` is
+    21→ *       §8.5 bound metadata the compiled batch carries, not an engine param);
+    22→ *    4. on success `await autosave.saveNow("agent-apply")` (D-6) — this
+    23→ *       uploads a NEW immutable version; the outcome's `version.id` is the
+    24→ *       applied versionId;
+    25→ *    5. `api.runs.applyRun(runId, {batchSha256, versionId, idempotencyKey})` —
+    26→ *       sha256 over the exact patched batch payload (WebCrypto via the
+    27→ *       editor-session sha256Hex, with its vector-tested sync fallback for
+    28→ *       hosts without `crypto.subtle` — never a new dependency), idempotency
+    29→ *       key generated ONCE per user gesture. Gateway errors map: 409 →
+    30→ *       conflict (explains, never re-applies), 402 → insufficient credits,
+    31→ *       else typed failure.
+    32→ *
+    33→ *  `undo(runId)`: `bridge.execute("edit.undo")` (the whole run folded into ONE
+    34→ *   undo step by `batch.rs`) THEN `api.runs.undoRun(runId, {idempotencyKey})`.
+    35→ *   If `edit.undo` fails ("nothing to undo" — the upstream `can_undo` guard,
+    36→ *   edit.rs:12) the gateway is NOT told — a typed `{ok:false}` comes back and
+    37→ *   the version rows are never touched (§9.3). The post-undo state is left to
+    38→ *   the D-6 cadence + the before-close save (undo is not a D-6 moment).
+    39→ *
+    40→ *  `reapply(plan)`: only when the client's CURRENT version id equals the plan's
+    41→ *   `baseVersionId` (the session port reads it); anything else is
+    42→ *   `{ok:false, reason:"base-version-changed"}` — BP §M5.5 "otherwise explain".
+    43→ *   NOTE for the integrator: after undo the session's current version is the
+    44→ *   APPLIED version's successor chain, so re-apply-after-undo needs the host
+    45→ *   page to restore the session's version pointer to the plan's base (a
+    46→ *   session-level concern — see the worklog M5-F record).
+    47→ *
+    48→ * Cross-agent pins (wave 1, reconciled by the integrator):
+    49→ *  - placeholder token: a whole-string `"$request:<requestId>"` in the compiled
+    50→ *    batch params, replaced with the resolved engine layer id (number);
+    51→ *  - `api.runs.applyRun/undoRun` — @studio/api-client names (M5-E adds them);
+    52→ *  - the plan event carries `compiledBatch` + `resolutionRequests` +
+    53→ *    `baseVersionId` (M5-C adds them to the wire; the SSE reader strips
+    54→ *    unknown keys until that lands, so the client treats them as optional).
+    55→ */
+    56→
+    57→import type { SaveOutcome } from "@/lib/editor-session";
+    58→import { sha256Hex } from "@/lib/editor-session";
+    59→import type { AgentBatch, BatchStep } from "@studio/contracts";
+    60→import type { EditorBridge } from "@studio/editor-bridge";
+    61→import { isBridgeError, messageOf } from "@studio/editor-bridge";
+    62→
+    63→// ---------------------------------------------------------------------------
+    64→// Pinned types (M5-SEAMS `ApplyController` + the runtime ports this engine needs)
+    65→// ---------------------------------------------------------------------------
+    66→
+    67→/**
+    68→ * One layer the plan-compiler could not bind: args reference layers BY NAME;
+    69→ * the CLIENT resolves ids via the bridge (never ids into the model context,
+    70→ * PRODUCT_ARCHITECTURE §8.7). Shape pinned in M5-SEAMS (M5-B emits them).
+    71→ */
+    72→export interface LayerResolutionRequest {
+    73→  readonly requestId: string;
+    74→  readonly layerName: string;
+    75→  /** Hints the model gave for telling same-named layers apart (display-only). */
+    76→  readonly disambiguation: readonly string[];
+    77→}
+    78→
+    79→/** Everything `apply` needs from a plan the client already rendered. */
+    80→export interface ApplicablePlan {
+    81→  /** The run that produced the plan (also the undo target). */
+    82→  readonly runId: string;
+    83→  /** The version the plan was compiled against — the reapply gate (§M5.5). */
+    84→  readonly baseVersionId?: string;
+    85→  /** The server-compiled `engine.batch` payload (allowlisted, §8.5-validated). */
+    86→  readonly compiledBatch: AgentBatch;
+    87→  /** Layer names to resolve + bind before execution (may be absent/empty). */
+    88→  readonly resolutionRequests?: readonly LayerResolutionRequest[];
+    89→}
+    90→
+    91→/** Whole-string placeholder the plan-compiler leaves for a resolution request. */
+    92→export const RESOLVE_TOKEN_PREFIX = "$request:";
+    93→
+    94→/** One bound request: the request id → the engine layer id it resolved to. */
+    95→export interface ResolvedLayer {
+    96→  readonly requestId: string;
+    97→  readonly layerId: number;
+    98→  readonly layerName: string;
+    99→}
+   100→
+   101→export type ApplyOutcome =
+   102→  | { readonly ok: true; readonly versionId: string; readonly creditsCommitted?: number }
+   103→  | {
+   104→      /** A layer name matched more than one layer — nothing executed. */
+   105→      readonly ok: false;
+   106→      readonly reason: "ambiguous";
+   107→      readonly candidates: readonly string[];
+   108→      readonly message: string;
+   109→    }
+   110→  | {
+   111→      /** A layer name matched nothing — nothing executed. */
+   112→      readonly ok: false;
+   113→      readonly reason: "not-found";
+   114→      readonly layerName: string;
+   115→      readonly message: string;
+   116→    }
+   117→  | {
+   118→      /** A `$request:` placeholder could not be resolved/bound — nothing executed. */
+   119→      readonly ok: false;
+   120→      readonly reason: "resolution-failed";
+   121→      readonly message: string;
+   122→    }
+   123→  | {
+   124→      /** The compiled batch was malformed — nothing executed. */
+   125→      readonly ok: false;
+   126→      readonly reason: "invalid-batch";
+   127→      readonly message: string;
+   128→    }
+   129→  | {
+   130→      /** `engine.batch` rejected (atomic rollback upstream) — no save, no applyRun. */
+   131→      readonly ok: false;
+   132→      readonly reason: "engine-failed";
+   133→      readonly message: string;
+   134→    }
+   135→  | {
+   136→      /** The editor is not answering. */
+   137→      readonly ok: false;
+   138→      readonly reason: "editor-disconnected";
+   139→      readonly message: string;
+   140→    }
+   141→  | {
+   142→      /** The D-6 save failed to upload a version — the gateway was not told. */
+   143→      readonly ok: false;
+   144→      readonly reason: "save-failed";
+   145→      readonly message: string;
+   146→    }
+   147→  | {
+   148→      /** The D-6 save hit PROJECT_VERSION_CONFLICT (autosave parked) — reload to recover. */
+   149→      readonly ok: false;
+   150→      readonly reason: "save-conflict";
+   151→      readonly message: string;
+   152→    }
+   153→  | {
+   154→      /** Gateway 409 VERSION_CONFLICT — the run/version state moved; explains, never re-applies. */
+   155→      readonly ok: false;
+   156→      readonly reason: "conflict";
+   157→      readonly message: string;
+   158→    }
+   159→  | {
+   160→      /** Gateway 402 INSUFFICIENT_CREDITS — the batch + version landed; credits did not commit. */
+   161→      readonly ok: false;
+   162→      readonly reason: "insufficient-credits";
+   163→      readonly message: string;
+   164→    }
+   165→  | {
+   166→      /** Reapply gate: the client's current version is not the plan's base version. */
+   167→      readonly ok: false;
+   168→      readonly reason: "base-version-changed";
+   169→      readonly message: string;
+   170→    }
+   171→  | {
+   172→      /** Anything else (typed failure; `code` carries the §7.3 wire code when known). */
+   173→      readonly ok: false;
+   174→      readonly reason: "failed";
+   175→      readonly message: string;
+   176→      readonly code?: string;
+   177→    };
+   178→
+   179→export type UndoOutcome =
+   180→  | { readonly ok: true; readonly undone: true }
+   181→  | { readonly ok: false; readonly reason: "nothing-to-undo"; readonly message: string }
+   182→  | { readonly ok: false; readonly reason: "engine-failed"; readonly message: string }
+   183→  | { readonly ok: false; readonly reason: "editor-disconnected"; readonly message: string }
+   184→  | {
+   185→      /** Gateway 409 — the run is not in an applied state (already undone?). */
+   186→      readonly ok: false;
+   187→      readonly reason: "conflict";
+   188→      readonly message: string;
+   189→    }
+   190→  | {
+   191→      readonly ok: false;
+   192→      readonly reason: "failed";
+   193→      readonly message: string;
+   194→      readonly code?: string;
+   195→    };
+   196→
+   197→/** `apply`/`undo` milestones for the host page (banners, telemetry) — never throws. */
+   198→export type ApplyEngineEvent =
+   199→  | { readonly type: "apply.started"; readonly runId: string }
+   200→  | {
+   201→      readonly type: "apply.resolved";
+   202→      readonly runId: string;
+   203→      readonly resolved: readonly ResolvedLayer[];
+   204→    }
+   205→  | {
+   206→      readonly type: "apply.completed";
+   207→      readonly runId: string;
+   208→      readonly versionId: string;
+   209→      readonly creditsCommitted?: number;
+   210→    }
+   211→  | { readonly type: "apply.failed"; readonly runId: string; readonly outcome: ApplyOutcome }
+   212→  | { readonly type: "undo.started"; readonly runId: string }
+   213→  | { readonly type: "undo.completed"; readonly runId: string }
+   214→  | { readonly type: "undo.failed"; readonly runId: string; readonly outcome: UndoOutcome };
+   215→
+   216→// ---------------------------------------------------------------------------
+   217→// Runtime ports (the EditorSessionClient/ChatControllerClient pattern — the
+   218→// real autosave controller, api-client (after M5-E) and host page satisfy them
+   219→// structurally; tests drive scripted fakes)
+   220→// ---------------------------------------------------------------------------
+   221→
+   222→/** The slice of the M3-B autosave controller apply consumes (D-6). */
+   223→export interface ApplyAutosavePort {
+   224→  /** D-6 moments: `saveNow("agent-apply")` uploads the applied version. */
+   225→  saveNow(reason: string): Promise<SaveOutcome>;
+   226→  /** Belt-and-braces proactive dirty flag before the save (the M3-B lesson). */
+   227→  markDirty?(reason?: string): void;
+   228→}
+   229→
+   230→/**
+   231→ * The slice of the editor session apply needs: the version id the session
+   232→ * currently sits on (the reapply gate, §M5.5). Implemented by the host page
+   233→ * over `manifest.currentVersion` + the autosave `onSaved` hook.
+   234→ */
+   235→export interface ApplySessionPort {
+   236→  currentVersionId(): string | null;
+   237→}
+   238→
+   239→/** POST /v1/runs/:id/apply response (M5-SEAMS; M5-E owns the route). */
+   240→export interface ApplyRunResponse {
+   241→  readonly applied: true;
+   242→  readonly versionId: string;
+   243→  /** Plan credits committed by this apply (§8.8; 0 for replayed keys). */
+   244→  readonly creditsCommitted: number;
+   245→}
+   246→
+   247→/** POST /v1/runs/:id/undo response. */
+   248→export interface UndoRunResponse {
+   249→  readonly undone: true;
+   250→}
+   251→
+   252→/** The name→id resolutions posted with the apply (contracts RESOLVED_LAYER_SCHEMA). */
+   253→export interface PostedResolvedLayer {
+   254→  readonly requestId: string;
+   255→  readonly layerId: number;
+   256→}
+   257→
+   258→/**
+   259→ * The apply surface of `@studio/api-client`'s `ApiClient` (M5-E landed
+   260→ * `runs.applyRun`/`runs.undoRun` — names pinned by the task + M5-SEAMS).
+   261→ */
+   262→export interface ApplyApiClient {
+   263→  readonly runs: {
+   264→    /** POST /v1/runs/:id/apply — body per contracts APPLY_REQUEST_SCHEMA. */
+   265→    applyRun(
+   266→      runId: string,
+   267→      body: {
+   268→        readonly batchSha256: string;
+   269→        readonly versionId: string;
+   270→        readonly idempotencyKey: string;
+   271→        readonly resolvedLayers?: readonly PostedResolvedLayer[];
+   272→      },
+   273→      options?: { readonly idempotencyKey?: string },
+   274→    ): Promise<ApplyRunResponse>;
+   275→    /** POST /v1/runs/:id/undo — body per contracts UNDO_REQUEST_SCHEMA. */
+   276→    undoRun(
+   277→      runId: string,
+   278→      body: { readonly idempotencyKey: string },
+   279→      options?: { readonly idempotencyKey?: string },
+   280→    ): Promise<UndoRunResponse>;
+   281→  };
+   282→}
+   283→
+   284→export interface CreateApplyControllerOptions {
+   285→  /** The live editor bridge (ONE `engine.batch` per apply; `edit.undo` per undo). */
+   286→  readonly bridge: EditorBridge;
+   287→  /** The M3-B autosave controller (D-6: the apply moment is `saveNow("agent-apply")`). */
+   288→  readonly autosave: ApplyAutosavePort;
+   289→  /** The apply API surface (M5-E's api-client names). */
+   290→  readonly api: ApplyApiClient;
+   291→  /**
+   292→   * The version source for the reapply gate. When absent, `reapply` always
+   293→   * explains `base-version-changed` (conservative: an unverifiable gate never
+   294→   * re-executes anything).
+   295→   */
+   296→  readonly session?: ApplySessionPort;
+   297→  /** Milestone notifications for the host page — never throws, never retried. */
+   298→  readonly onEvent?: (event: ApplyEngineEvent) => void;
+   299→}
+   300→
+   301→/** The pinned M5-SEAMS interface (apply/undo/reapply; redo stays engine-side). */
+   302→export interface ApplyController {
+   303→  apply(plan: ApplicablePlan): Promise<ApplyOutcome>;
+   304→  undo(runId: string): Promise<UndoOutcome>;
+   305→  reapply(plan: ApplicablePlan): Promise<ApplyOutcome>;
+   306→}
+   307→
+   308→// ---------------------------------------------------------------------------
+   309→// Internals
+   310→// ---------------------------------------------------------------------------
+   311→
+   312→/** Bridge error codes that mean "the editor is not answering". */
+   313→const DISCONNECT_CODES: ReadonlySet<string> = new Set([
+   314→  "EDITOR_DISCONNECTED",
+   315→  "EDITOR_NOT_READY",
+   316→  "EDITOR_LOAD_FAILED",
+   317→  "EDITOR_TIMEOUT",
+   318→]);
+   319→
+   320→/** The D-6 save reason for every agent apply (DECISIONS.md D-6, autosave.ts). */
+   321→const AGENT_APPLY_SAVE_REASON = "agent-apply";
+   322→
+   323→/** Upstream `enabled`-guard why-string for an empty undo stack (edit.rs:12). */
+   324→const NOTHING_TO_UNDO_RE = /nothing to undo/i;
+   325→
+   326→/** Bridge/editor failure → typed outcome; disconnect codes are named as such. */
+   327→function bridgeOutcome(error: unknown): {
+   328→  reason: "engine-failed" | "editor-disconnected";
+   329→  message: string;
+   330→} {
+   331→  const message = messageOf(error);
+   332→  if (isBridgeError(error) && DISCONNECT_CODES.has(error.code)) {
+   333→    return { reason: "editor-disconnected", message };
+   334→  }
+   335→  return { reason: "engine-failed", message };
+   336→}
+   337→
+   338→/** The typed fields of an api-client throw (ApiError-shaped), without zod. */
+   339→function apiFailure(error: unknown): {
+   340→  status: number | null;
+   341→  code: string | undefined;
+   342→  message: string;
+   343→} {
+   344→  if (typeof error === "object" && error !== null && "status" in error) {
+   345→    const record = error as { status?: unknown; code?: unknown; message?: unknown };
+   346→    const status = typeof record.status === "number" ? record.status : null;
+   347→    const code = typeof record.code === "string" && record.code !== "" ? record.code : undefined;
+   348→    const message =
+   349→      typeof record.message === "string" && record.message !== "" ? record.message : "";
+   350→    return { status, code, message };
+   351→  }
+   352→  return { status: null, code: undefined, message: "" };
+   353→}
+   354→
+   355→// ---------------------------------------------------------------------------
+   356→// Layer resolution (the executor's list_layers path — read-only)
+   357→// ---------------------------------------------------------------------------
+   358→
+   359→interface CompLayerEntry {
+   360→  readonly id: number;
+   361→  readonly name: string;
+   362→}
+   363→
+   364→/** `comp.info {}` → the active composition's layer list (query.rs; read-only). */
+   365→async function listLayers(bridge: EditorBridge): Promise<readonly CompLayerEntry[]> {
+   366→  const info = await bridge.query<{ layers?: unknown }>("comp.info", {});
+   367→  const raw = info?.layers;
+   368→  if (!Array.isArray(raw)) return [];
+   369→  const out: CompLayerEntry[] = [];
+   370→  for (const entry of raw) {
+   371→    if (typeof entry !== "object" || entry === null) continue;
+   372→    const record = entry as Record<string, unknown>;
+   373→    if (typeof record.id !== "number" || typeof record.name !== "string") continue;
+   374→    out.push({ id: record.id, name: record.name });
+   375→  }
+   376→  return out;
+   377→}
+   378→
+   379→/**
+   380→ * Resolves every request against the live layer list. Read-only: the only
+   381→ * bridge traffic is ONE `comp.info` query however many requests there are.
+   382→ * Ambiguous/unknown names fail BEFORE anything executes.
+   383→ */
+   384→async function resolveRequests(
+   385→  requests: readonly LayerResolutionRequest[],
+   386→  bridge: EditorBridge,
+   387→): Promise<
+   388→  { ok: true; resolved: readonly ResolvedLayer[] } | { ok: false; outcome: ApplyOutcome }
+   389→> {
+   390→  let layers: readonly CompLayerEntry[];
+   391→  try {
+   392→    layers = await listLayers(bridge);
+   393→  } catch (error) {
+   394→    const failure = bridgeOutcome(error);
+   395→    const outcome: ApplyOutcome =
+   396→      failure.reason === "editor-disconnected"
+   397→        ? { ok: false, reason: "editor-disconnected", message: failure.message }
+   398→        : {
+   399→            ok: false,
+   400→            reason: "resolution-failed",
+   401→            message: "The layers could not be listed to resolve this plan. Try again in a moment.",
+   402→          };
+   403→    return { ok: false, outcome };
+   404→  }
+   405→
+   406→  const resolved: ResolvedLayer[] = [];
+   407→  for (const request of requests) {
+   408→    // Exact-name matches only — a fuzzy match could bind the WRONG layer.
+   409→    const matches = layers.filter((layer) => layer.name === request.layerName);
+   410→    const first = matches[0];
+   411→    if (matches.length === 1 && first !== undefined) {
+   412→      resolved.push({ requestId: request.requestId, layerId: first.id, layerName: first.name });
+   413→      continue;
+   414→    }
+   415→    if (matches.length > 1) {
+   416→      return {
+   417→        ok: false,
+   418→        outcome: {
+   419→          ok: false,
+   420→          reason: "ambiguous",
+   421→          candidates: matches.map((layer) => `${layer.name} (layer ${layer.id})`),
+   422→          message: `Layer "${request.layerName}" matches ${matches.length} layers. Say which one you mean.`,
+   423→        },
+   424→      };
+   425→    }
+   426→    return {
+   427→      ok: false,
+   428→      outcome: {
+   429→        ok: false,
+   430→        reason: "not-found",
+   431→        layerName: request.layerName,
+   432→        message: `No layer named "${request.layerName}" is in the composition.`,
+   433→      },
+   434→    };
+   435→  }
+   436→  return { ok: true, resolved };
+   437→}
+   438→
+   439→// ---------------------------------------------------------------------------
+   440→// Placeholder patch (deterministic deep clone; F-1-safe accumulators)
+   441→// ---------------------------------------------------------------------------
+   442→
+   443→/**
+   444→ * Replaces every whole-string `"$request:<requestId>"` placeholder in the batch
+   445→ * params with the resolved layer id. Deterministic: only exact matches swap
+   446→ * and the clone preserves object key order, so the sha256 is stable.
+   447→ *
+   448→ * The cloned objects are NULL-PROTOTYPE (M4-N F-1): plan params are
+   449→ * model-adjacent — a parsed `{"__proto__": …}` key must ride as OWN data, not
+   450→ * rebind the clone's prototype.
+   451→ */
+   452→function patchPlaceholders(
+   453→  value: unknown,
+   454→  resolvedById: Readonly<Record<string, number>>,
+   455→): { patched: unknown; unresolved: string[] } {
+   456→  const unresolved: string[] = [];
+   457→  const walk = (node: unknown): unknown => {
+   458→    if (typeof node === "string") {
+   459→      if (!node.startsWith(RESOLVE_TOKEN_PREFIX)) return node;
+   460→      const requestId = node.slice(RESOLVE_TOKEN_PREFIX.length);
+   461→      const layerId = resolvedById[requestId];
+   462→      if (layerId === undefined) {
+   463→        unresolved.push(node);
+   464→        return node;
+   465→      }
+   466→      return layerId;
+   467→    }
+   468→    if (Array.isArray(node)) return node.map(walk);
+   469→    if (typeof node === "object" && node !== null) {
+   470→      const out: Record<string, unknown> = Object.create(null);
+   471→      for (const [key, child] of Object.entries(node)) out[key] = walk(child);
+   472→      return out;
+   473→    }
+   474→    return node;
+   475→  };
+   476→  return { patched: walk(value), unresolved };
+   477→}
+   478→
+   479→/** Narrow hand-rolled validation of the compiled batch (no zod in apps/web). */
+   480→function validCompiledBatch(batch: unknown): AgentBatch | null {
+   481→  if (typeof batch !== "object" || batch === null) return null;
+   482→  const record = batch as Record<string, unknown>;
+   483→  if (typeof record.label !== "string" || record.label.length === 0) return null;
+   484→  if (!Array.isArray(record.steps) || record.steps.length === 0) return null;
+   485→  const steps: BatchStep[] = [];
+   486→  for (const step of record.steps) {
+   487→    if (typeof step !== "object" || step === null) return null;
+   488→    const stepRecord = step as Record<string, unknown>;
+   489→    if (typeof stepRecord.command !== "string" || stepRecord.command.length === 0) return null;
+   490→    if (typeof stepRecord.params !== "object" || stepRecord.params === null) return null;
+   491→    steps.push({
+   492→      command: stepRecord.command,
+   493→      params: stepRecord.params as Record<string, unknown>,
+   494→    });
+   495→  }
+   496→  const timeoutMs =
+   497→    typeof record.timeoutMs === "number" &&
+   498→    Number.isInteger(record.timeoutMs) &&
+   499→    record.timeoutMs > 0
+   500→      ? record.timeoutMs
+   501→      : undefined;
+   502→  // Agent batches are ALWAYS atomic (§8.5) — forced regardless of the wire.
+   503→  return timeoutMs === undefined
+   504→    ? { label: record.label, atomic: true, steps }
+   505→    : { label: record.label, atomic: true, steps, timeoutMs };
+   506→}
+   507→
+   508→// ---------------------------------------------------------------------------
+   509→// sha256 of the exact engine payload
+   510→// ---------------------------------------------------------------------------
+   511→
+   512→/** The exact params object handed to `bridge.execute("engine.batch", …)`. */
+   513→export function engineBatchPayload(batch: AgentBatch): {
+   514→  label: string;
+   515→  atomic: true;
+   516→  steps: readonly BatchStep[];
+   517→  timeoutMs?: number;
+   518→} {
+   519→  return batch.timeoutMs === undefined
+   520→    ? { label: batch.label, atomic: true, steps: batch.steps }
+   521→    : { label: batch.label, atomic: true, steps: batch.steps, timeoutMs: batch.timeoutMs };
+   522→}
+   523→
+   524→/**
+   525→ * sha256 over the serialized engine payload — the exact shape the editor
+   526→ * receives (JSON key order is deterministic: the payload object is built with
+   527→ * a fixed key order and the patched params preserve theirs).
+   528→ */
+   529→export async function batchSha256Hex(payload: unknown): Promise<string> {
+   530→  const serialized = JSON.stringify(payload) ?? "null";
+   531→  return sha256Hex(new TextEncoder().encode(serialized));
+   532→}
+   533→
+   534→// ---------------------------------------------------------------------------
+   535→// The controller
+   536→// ---------------------------------------------------------------------------
+   537→
+   538→export function createApplyController(options: CreateApplyControllerOptions): ApplyController {
+   539→  const { bridge, autosave, api } = options;
+   540→
+   541→  const notify = (event: ApplyEngineEvent): void => {
+   542→    const callback = options.onEvent;
+   543→    if (callback === undefined) return;
+   544→    try {
+   545→      callback(event);
+   546→    } catch {
+   547→      /* a host callback must never break the apply engine */
+   548→    }
+   549→  };
+   550→
+   551→  const failApply = (runId: string, outcome: ApplyOutcome): ApplyOutcome => {
+   552→    notify({ type: "apply.failed", runId, outcome });
+   553→    return outcome;
+   554→  };
+   555→
+   556→  /** The shared execute-then-save-then-report path (apply + reapply). */
+   557→  const runApply = async (plan: ApplicablePlan): Promise<ApplyOutcome> => {
+   558→    // One gesture = one idempotency key (law #4), whatever happens below.
+   559→    const idempotencyKey = crypto.randomUUID();
+   560→    notify({ type: "apply.started", runId: plan.runId });
+   561→
+   562→    const compiled = validCompiledBatch(plan.compiledBatch);
+   563→    if (compiled === null) {
+   564→      return failApply(plan.runId, {
+   565→        ok: false,
+   566→        reason: "invalid-batch",
+   567→        message: "The plan's compiled batch is malformed. Ask the agent to plan again.",
+   568→      });
+   569→    }
+   570→
+   571→    // 1. Resolve layer names against the live list — read-only; on any
+   572→    //    ambiguity NOTHING executes (no engine.batch, no save, no applyRun).
+   573→    let resolvedById: Readonly<Record<string, number>> = {};
+   574→    let resolvedForWire: readonly PostedResolvedLayer[] = [];
+   575→    const requests = plan.resolutionRequests ?? [];
+   576→    if (requests.length > 0) {
+   577→      const resolution = await resolveRequests(requests, bridge);
+   578→      if (!resolution.ok) return failApply(plan.runId, resolution.outcome);
+   579→      notify({ type: "apply.resolved", runId: plan.runId, resolved: resolution.resolved });
+   580→      // Null-prototype accumulator (M4-N F-1): request ids are model-adjacent
+   581→      // strings — on a plain `{}` a `__proto__` id would hit the accessor.
+   582→      const map = Object.create(null) as Record<string, number>;
+   583→      for (const entry of resolution.resolved) map[entry.requestId] = entry.layerId;
+   584→      resolvedById = map;
+   585→      // §8.7/M5-E: the name→id bindings ride the applyRun body (auditable
+   586→      // server-side even though the batch already ran client-side).
+   587→      resolvedForWire = resolution.resolved.map((entry) => ({
+   588→        requestId: entry.requestId,
+   589→        layerId: entry.layerId,
+   590→      }));
+   591→    }
+   592→
+   593→    // 2. Patch the placeholders with the resolved ids (deterministic clone).
+   594→    //    An unbound `$request:` token must never reach the engine as a string.
+   595→    const patchedSteps: BatchStep[] = [];
+   596→    const unresolved: string[] = [];
+   597→    for (const step of compiled.steps) {
+   598→      const patch = patchPlaceholders(step.params, resolvedById);
+   599→      unresolved.push(...patch.unresolved);
+   600→      patchedSteps.push({
+   601→        command: step.command,
+   602→        params: patch.patched as Record<string, unknown>,
+   603→      });
+   604→    }
+   605→    if (unresolved.length > 0) {
+   606→      return failApply(plan.runId, {
+   607→        ok: false,
+   608→        reason: "resolution-failed",
+   609→        message: `The plan still references unresolved layers (${unresolved.join(", ")}). Ask the agent to name the layer explicitly.`,
+   610→      });
+   611→    }
+   612→
+   613→    const payload = engineBatchPayload({ ...compiled, steps: patchedSteps });
+   614→    const batchSha256 = await batchSha256Hex(payload);
+   615→
+   616→    // 3. ONE engine.batch — law #6 (ONE call, atomic, one undo step).
+   617→    try {
+   618→      await bridge.execute("engine.batch", payload);
+   619→    } catch (error) {
+   620→      const failure = bridgeOutcome(error);
+   621→      return failApply(plan.runId, {
+   622→        ok: false,
+   623→        reason: failure.reason,
+   624→        message: failure.message,
+   625→      });
+   626→    }
+   627→
+   628→    // 4. D-6: upload the applied state as a NEW version (awaited BEFORE the
+   629→    //    applyRun report so the gateway always sees a version that exists).
+   630→    autosave.markDirty?.(AGENT_APPLY_SAVE_REASON);
+   631→    const saved: SaveOutcome = await autosave.saveNow(AGENT_APPLY_SAVE_REASON);
+   632→    if (saved.saved !== true || saved.version === undefined) {
+   633→      return failApply(
+   634→        plan.runId,
+   635→        saved.conflict === true
+   636→          ? {
+   637→              ok: false,
+   638→              reason: "save-conflict",
+   639→              message:
+   640→                "The project changed elsewhere while the agent was working. Reload the latest version to continue — the edit is in the editor only.",
+   641→            }
+   642→          : {
+   643→              ok: false,
+   644→              reason: "save-failed",
+   645→              message:
+   646→                "The edit was applied but could not be saved as a version. It is in the editor only.",
+   647→            },
+   648→      );
+   649→    }
+   650→    const versionId = saved.version.id;
+   651→
+   652→    // 5. Report to the gateway (ledger commit + run.applied, idempotent).
+   653→    try {
+   654→      const response = await api.runs.applyRun(plan.runId, {
+   655→        batchSha256,
+   656→        versionId,
+   657→        idempotencyKey,
+   658→        ...(resolvedForWire.length > 0 ? { resolvedLayers: resolvedForWire } : {}),
+   659→      });
+   660→      const outcome: ApplyOutcome = {
+   661→        ok: true,
+   662→        versionId: typeof response.versionId === "string" ? response.versionId : versionId,
+   663→        creditsCommitted: response.creditsCommitted,
+   664→      };
+   665→      notify({
+   666→        type: "apply.completed",
+   667→        runId: plan.runId,
+   668→        versionId: outcome.versionId,
+   669→        creditsCommitted: outcome.creditsCommitted,
+   670→      });
+   671→      return outcome;
+   672→    } catch (error) {
+   673→      const failure = apiFailure(error);
+   674→      if (failure.status === 409) {
+   675→        return failApply(plan.runId, {
+   676→          ok: false,
+   677→          reason: "conflict",
+   678→          message:
+   679→            "This plan was already applied or the run changed on the server. Nothing was re-executed.",
+   680→        });
+   681→      }
+   682→      if (failure.status === 402) {
+   683→        return failApply(plan.runId, {
+   684→          ok: false,
+   685→          reason: "insufficient-credits",
+   686→          message:
+   687→            "The edit and its version are saved, but there were not enough credits to commit this run.",
+   688→        });
+   689→      }
+   690→      return failApply(plan.runId, {
+   691→        ok: false,
+   692→        reason: "failed",
+   693→        message:
+   694→          failure.message !== ""
+   695→            ? failure.message
+   696→            : "The edit and its version are saved, but reporting it to the server failed.",
+   697→        code: failure.code,
+   698→      });
+   699→    }
+   700→  };
+   701→
+   702→  return {
+   703→    apply: (plan: ApplicablePlan): Promise<ApplyOutcome> => runApply(plan),
+   704→
+   705→    async undo(runId: string): Promise<UndoOutcome> {
+   706→      notify({ type: "undo.started", runId });
+   707→      // ONE edit.undo reverts the WHOLE run (batch.rs folds the steps).
+   708→      try {
+   709→        await bridge.execute("edit.undo");
+   710→      } catch (error) {
+   711→        const failure = bridgeOutcome(error);
+   712→        const outcome: UndoOutcome = NOTHING_TO_UNDO_RE.test(failure.message)
+   713→          ? { ok: false, reason: "nothing-to-undo", message: "There is nothing to undo." }
+   714→          : { ok: false, reason: failure.reason, message: failure.message };
+   715→        // The gateway is NOT told — undoRun would 409 on an unapplied run and
+   716→        // the version rows must stay untouched (§9.3).
+   717→        notify({ type: "undo.failed", runId, outcome });
+   718→        return outcome;
+   719→      }
+   720→      try {
+   721→        await api.runs.undoRun(runId, { idempotencyKey: crypto.randomUUID() });
+   722→        notify({ type: "undo.completed", runId });
+   723→        return { ok: true, undone: true };
+   724→      } catch (error) {
+   725→        const failure = apiFailure(error);
+   726→        const outcome: UndoOutcome =
+   727→          failure.status === 409
+   728→            ? {
+   729→                ok: false,
+   730→                reason: "conflict",
+   731→                message:
+   732→                  "The server says this run was not applied, so there is nothing to undo there.",
+   733→              }
+   734→            : {
+   735→                ok: false,
+   736→                reason: "failed",
+   737→                message:
+   738→                  failure.message !== ""
+   739→                    ? failure.message
+   740→                    : "The undo happened in the editor but could not be reported.",
+   741→                code: failure.code,
+   742→              };
+   743→        notify({ type: "undo.failed", runId, outcome });
+   744→        return outcome;
+   745→      }
+   746→    },
+   747→
+   748→    async reapply(plan: ApplicablePlan): Promise<ApplyOutcome> {
+   749→      // §M5.5: only while the session still sits on the plan's base version.
+   750→      const current = options.session?.currentVersionId() ?? null;
+   751→      if (plan.baseVersionId === undefined || current === null || current !== plan.baseVersionId) {
+   752→        return failApply(plan.runId, {
+   753→          ok: false,
+   754→          reason: "base-version-changed",
+   755→          message:
+   756→            "The project changed since this plan was made, so re-applying it is not safe. Ask the agent to plan again.",
+   757→        });
+   758→      }
+   759→      return await runApply(plan);
+   760→    },
+   761→  };
+   762→}
+   763→
