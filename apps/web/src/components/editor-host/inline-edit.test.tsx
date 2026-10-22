@@ -57,7 +57,7 @@ describe("InlineEditBar — open/close + focus management", () => {
     const view = mountBar();
     fireEvent.change(input(), { target: { value: "make this warmer" } });
     // Focus wanders (e.g. the user clicked the editor)…
-    (screen.getByTestId("chat-inline-edit-send") as HTMLElement).blur();
+    (screen.getByTestId("chat-inline-edit-send") as HTMLElement).focus();
     expect(input()).not.toHaveFocus();
     // A repeated shortcut only re-focuses; the draft survives.
     view.rerender(
@@ -126,7 +126,7 @@ describe("InlineEditBar — submit seam", () => {
       "You're out of credits.",
     );
     expect(screen.getByTestId("chat-inline-edit-send")).toBeDisabled();
-    fireEvent.keyDown(input(), { key: "Enter" }); // disabled inputs emit no keydown, so assert the seam:
+    fireEvent.keyDown(input(), { key: "Enter" }); // locked → the seam never fires
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
@@ -147,27 +147,30 @@ describe("InlineEditBar — keyboard a11y (§9)", () => {
         />
       </div>,
     );
-    const escape = new KeyboardEvent("keydown", {
+    const escapeEvent = new KeyboardEvent("keydown", {
       key: "Escape",
       bubbles: true,
       cancelable: true,
     });
-    input().dispatchEvent(escape);
+    input().dispatchEvent(escapeEvent);
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(escape.defaultPrevented).toBe(true);
+    expect(escapeEvent.defaultPrevented).toBe(true);
     expect(parentSpy).not.toHaveBeenCalled(); // stopPropagation held at the bar
   });
 
-  it("traps Tab inside the bar: input → send → input, Shift+Tab wraps back", () => {
+  it("traps Tab: the last focusable wraps to the first, Shift+Tab wraps back", () => {
     mountBar();
+    // A non-empty draft enables the Send button → two focusables to trap.
+    fireEvent.change(input(), { target: { value: "go" } });
     const el = input();
     const send = screen.getByTestId("chat-inline-edit-send") as HTMLElement;
 
-    fireEvent.keyDown(el, { key: "Tab" });
-    expect(send).toHaveFocus();
+    // From the LAST focusable, Tab wraps to the first (the bar intercepts it).
+    send.focus();
     fireEvent.keyDown(send, { key: "Tab" });
     expect(el).toHaveFocus();
-    fireEvent.keyDown(el, { key: "Shift+Tab" });
+    // From the FIRST focusable, Shift+Tab wraps back to the last.
+    fireEvent.keyDown(el, { key: "Tab", shiftKey: true });
     expect(send).toHaveFocus();
   });
 });

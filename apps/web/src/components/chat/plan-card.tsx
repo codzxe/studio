@@ -235,7 +235,8 @@ export function PlanCard({
 
   // The proposed action row renders only when the thread wired at least one
   // action — a callback-less mount (M4 message.tsx) stays read-only.
-  const showProposedRow = status === "proposed" && (onApply !== undefined || onCancel !== undefined);
+  const showProposedRow =
+    status === "proposed" && (onApply !== undefined || onCancel !== undefined);
 
   return (
     <section
@@ -365,6 +366,10 @@ export function PlanCard({
           {preview}
         </div>
       ) : null}
+      {/* No role="status" live regions here: the thread scroller IS the
+          aria-live region (thread.tsx §9.2), so nested live regions would
+          double-announce every transition (and biome's <output> suggestion
+          would duplicate the Spinner's own <output>). */}
       <div
         data-testid="plan-actions"
         className="mt-3 flex flex-wrap items-center gap-2 border-t border-subtle pt-2"
@@ -407,7 +412,6 @@ export function PlanCard({
         {status === "applying" ? (
           <p
             data-testid="plan-applying"
-            role="status"
             className="flex items-center gap-2 text-body-s text-secondary"
           >
             <Spinner size={16} label="Applying the edit" />
@@ -418,7 +422,6 @@ export function PlanCard({
           <>
             <p
               data-testid="plan-applied"
-              role="status"
               className="flex items-center gap-2 text-body-s text-success"
             >
               <span aria-hidden="true" className="font-bold">
@@ -440,7 +443,6 @@ export function PlanCard({
           <>
             <p
               data-testid="plan-undone"
-              role="status"
               className="flex items-center gap-2 text-body-s text-secondary"
             >
               <span aria-hidden="true" className="text-muted">
@@ -471,7 +473,6 @@ export function PlanCard({
           <>
             <p
               data-testid="plan-failed"
-              role="status"
               className="flex items-center gap-2 text-body-s text-danger"
             >
               <span aria-hidden="true" className="font-bold">
@@ -499,7 +500,6 @@ export function PlanCard({
           <>
             <p
               data-testid="plan-conflict"
-              role="status"
               className="flex w-full items-start gap-2 text-body-s text-warning"
             >
               <TriangleAlert
@@ -529,19 +529,11 @@ export function PlanCard({
         ) : null}
         {status === "ambiguous-resolution" ? (
           <>
-            <p
-              data-testid="plan-ambiguous"
-              role="status"
-              className="w-full text-body-s text-secondary"
-            >
+            <p data-testid="plan-ambiguous" className="w-full text-body-s text-secondary">
               This plan needs a decision — a layer name matches more than one layer.
             </p>
             {(resolutionRequests ?? []).map((request) => (
-              <div
-                key={request.requestId}
-                data-testid="plan-resolution"
-                className="w-full min-w-0"
-              >
+              <div key={request.requestId} data-testid="plan-resolution" className="w-full min-w-0">
                 <p dir="auto" className="text-caption text-primary">
                   “{request.layerName}” matches:
                 </p>
@@ -573,7 +565,7 @@ export function PlanCard({
           </>
         ) : null}
         {status === "cancelled" ? (
-          <p data-testid="plan-cancelled" role="status" className="w-full text-body-s text-muted">
+          <p data-testid="plan-cancelled" className="w-full text-body-s text-muted">
             Plan cancelled — nothing was applied. The chat stays ready.
           </p>
         ) : null}
@@ -594,7 +586,9 @@ export function PlanCard({
           description={
             <>
               <span dir="auto">{plan.summary}</span>
-              {" — this plan is marked high risk. Apply only if you mean it. Undo reverts the whole batch in one step."}
+              {
+                " — this plan is marked high risk. Apply only if you mean it. Undo reverts the whole batch in one step."
+              }
             </>
           }
           confirmLabel="Apply"

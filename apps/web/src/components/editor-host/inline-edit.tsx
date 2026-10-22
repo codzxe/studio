@@ -22,8 +22,8 @@
 
 import { Button, Input, Kbd } from "@studio/ui";
 import {
-  type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
+  type KeyboardEvent as ReactKeyboardEvent,
   useEffect,
   useRef,
   useState,
@@ -60,7 +60,8 @@ export interface InlineEditBarProps {
 }
 
 /** The dialog's focusable elements in DOM order (input, then send). */
-const FOCUSABLE_SELECTOR = 'input:not([disabled]), button:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE_SELECTOR =
+  'input:not([disabled]), button:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 const CAPTION_FALLBACK = "the active composition";
 const PLACEHOLDER = "Describe the edit…";
@@ -79,6 +80,7 @@ export function InlineEditBar({
 
   // Focus management: focus the input on open and on every re-trigger
   // (focusSeq) — a repeated Cmd/Ctrl+K re-focuses, it never clears the draft.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: focusSeq is a deliberate re-focus trigger (the effect body only reads `open`)
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open, focusSeq]);
@@ -132,6 +134,7 @@ export function InlineEditBar({
   return (
     <div
       ref={rootRef}
+      // biome-ignore lint/a11y/useSemanticElements: the §4.2 command bar is a NON-MODAL popover — native <dialog> implies showModal/top-layer focus semantics the additive editor overlay must not take (law #7)
       role="dialog"
       aria-label="Inline edit"
       data-testid="chat-inline-edit"
@@ -139,7 +142,10 @@ export function InlineEditBar({
       className="flex w-full flex-col gap-2 rounded-sm border border-strong bg-elevated px-3 py-2"
     >
       <div className="flex w-full items-center justify-between gap-2">
-        <p data-testid="chat-inline-edit-scope" className="min-w-0 truncate text-caption text-secondary">
+        <p
+          data-testid="chat-inline-edit-scope"
+          className="min-w-0 truncate text-caption text-secondary"
+        >
           <span aria-hidden="true" className="mr-1 text-muted">
             ✎
           </span>

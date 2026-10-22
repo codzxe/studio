@@ -12,11 +12,11 @@
  * layer wires callbacks (read-only mounts stay read-only).
  */
 
+import { textFixture } from "@/lib/chat/__tests__/injection-corpus";
 import type { EditPlan } from "@studio/contracts";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { textFixture } from "@/lib/chat/__tests__/injection-corpus";
 import { PLAN_CARD_STATUSES, PlanCard } from "./plan-card";
 
 function plan(overrides: Partial<EditPlan> = {}): EditPlan {
@@ -290,7 +290,13 @@ describe("PlanCard — states matrix (M5)", () => {
     const onApply = vi.fn();
     const onUndo = vi.fn();
     render(
-      <PlanCard plan={plan()} applied={false} status="applying" onApply={onApply} onUndo={onUndo} />,
+      <PlanCard
+        plan={plan()}
+        applied={false}
+        status="applying"
+        onApply={onApply}
+        onUndo={onUndo}
+      />,
     );
     const applying = screen.getByTestId("plan-applying");
     expect(applying).toHaveTextContent("Applying…");
@@ -303,13 +309,7 @@ describe("PlanCard — states matrix (M5)", () => {
     const user = userEvent.setup();
     const onUndo = vi.fn();
     render(
-      <PlanCard
-        plan={plan()}
-        applied={false}
-        status="applied"
-        versionLabel="12"
-        onUndo={onUndo}
-      />,
+      <PlanCard plan={plan()} applied={false} status="applied" versionLabel="12" onUndo={onUndo} />,
     );
     expect(screen.getByTestId("plan-applied")).toHaveTextContent(
       "Applied — Version 12 · one undo step.",
@@ -326,9 +326,7 @@ describe("PlanCard — states matrix (M5)", () => {
   it("undone: Re-apply is enabled and fires onReapply", async () => {
     const user = userEvent.setup();
     const onReapply = vi.fn();
-    render(
-      <PlanCard plan={plan()} applied={false} status="undone" onReapply={onReapply} />,
-    );
+    render(<PlanCard plan={plan()} applied={false} status="undone" onReapply={onReapply} />);
     expect(screen.getByTestId("plan-undone")).toHaveTextContent(/version stays in history/i);
     const reapply = screen.getByTestId("plan-reapply");
     expect(reapply).toBeEnabled();
@@ -374,12 +372,7 @@ describe("PlanCard — states matrix (M5)", () => {
 
   it("conflict (409): explains re-apply is blocked because the project moved on — no actions", () => {
     render(
-      <PlanCard
-        plan={plan()}
-        applied={false}
-        status="conflict"
-        statusDetail="VERSION_CONFLICT"
-      />,
+      <PlanCard plan={plan()} applied={false} status="conflict" statusDetail="VERSION_CONFLICT" />,
     );
     expect(screen.getByTestId("plan-conflict")).toHaveTextContent(/project moved on/i);
     expect(screen.getByTestId("plan-conflict")).toHaveTextContent(/apply was rejected/i);
@@ -586,9 +579,7 @@ describe("PlanCard — tokens-only style law (no raw hex, law #8)", () => {
   ];
 
   it.each(cases)("renders %s without any inline style attribute or hex class", (_name, props) => {
-    const overrides: Partial<EditPlan> = _name.includes("high-risk")
-      ? { risk: "high" }
-      : {};
+    const overrides: Partial<EditPlan> = _name.includes("high-risk") ? { risk: "high" } : {};
     const { container } = render(
       <PlanCard plan={plan(overrides)} applied={false} note="note" {...props} />,
     );

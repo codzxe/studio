@@ -52,29 +52,29 @@
  *   is handled ONCE, inside the provider — not duplicated here.
  */
 
+import { ChatComposer } from "@/components/chat/composer";
+import { ContextPopover } from "@/components/chat/context-popover";
+import { ContextStrip } from "@/components/chat/context-strip";
 import { ClarifyCard, EditErrorCard } from "@/components/chat/edit-cards";
+import { ChatFooter } from "@/components/chat/footer";
+import { ChatHeader, modelDisplayName } from "@/components/chat/header";
+import { nextLayoutAction } from "@/components/chat/layout";
+import { ChatCollapsedPill, ChatPanel } from "@/components/chat/panel";
 import {
   CHAT_SEED_COMPOSER_EVENT,
   QuickActions,
   buildQuickActions,
   selectionNamesOf,
 } from "@/components/chat/quick-actions";
-import { ChatComposer } from "@/components/chat/composer";
-import { ContextPopover } from "@/components/chat/context-popover";
-import { ContextStrip } from "@/components/chat/context-strip";
-import { ChatFooter } from "@/components/chat/footer";
-import { ChatHeader, modelDisplayName } from "@/components/chat/header";
-import { nextLayoutAction } from "@/components/chat/layout";
-import { type ChatLayoutStore, useChatLayout } from "@/components/chat/use-layout";
-import { ChatCollapsedPill, ChatPanel } from "@/components/chat/panel";
 import { CHAT_QUICK_ACTION_EVENT, ChatThread } from "@/components/chat/thread";
-import type { EditPlan } from "@studio/contracts";
-import { Badge, Button } from "@studio/ui";
-import { X } from "lucide-react";
+import { type ChatLayoutStore, useChatLayout } from "@/components/chat/use-layout";
 import type { ChatContextApi } from "@/lib/chat/provider";
 import { LIVE_RUN_PHASES } from "@/lib/chat/run-state";
 import { formatTokenEstimate } from "@/lib/chat/tokens";
 import type { ToolCardState } from "@/lib/chat/types";
+import type { EditPlan } from "@studio/contracts";
+import { Badge, Button } from "@studio/ui";
+import { X } from "lucide-react";
 import {
   type CSSProperties,
   type ReactElement,
@@ -85,7 +85,7 @@ import {
   useState,
 } from "react";
 import type { ChatShortcutEvent } from "./chat-shortcut-bus";
-import { type InlineEditSubmit, InlineEditBar } from "./inline-edit";
+import { InlineEditBar, type InlineEditSubmit } from "./inline-edit";
 
 // Re-exported for the editor host + tests: the submit seam type of the bar.
 export type { InlineEditSubmit } from "./inline-edit";

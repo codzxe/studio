@@ -31,10 +31,11 @@ function setup(overrides: Partial<Parameters<typeof ChatConfirmDialog>[0]> = {})
 }
 
 describe("ChatConfirmDialog", () => {
-  it("renders an accessible modal: role=dialog, accessible name, aria-modal", () => {
+  it("renders an accessible modal: role=dialog named by its title (Radix wires the label)", () => {
     setup();
+    // getByRole with `name` proves the DialogTitle is the accessible name.
     const dialog = screen.getByRole("dialog", { name: "Apply this high-risk plan?" });
-    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(dialog).toHaveAttribute("aria-labelledby");
     expect(screen.getByTestId("chat-confirm-description")).toHaveTextContent(
       "This plan is marked high risk. Apply only if you mean it.",
     );

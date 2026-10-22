@@ -43,7 +43,13 @@
  */
 
 import type { EditPlan } from "@studio/contracts";
-import { type AgentBatchInput, type EditorBridge, messageOf } from "@studio/editor-bridge";
+import {
+  type AgentBatchInput,
+  type EditorBridge,
+  type RenderFrameResult,
+  type UiInspect,
+  messageOf,
+} from "@studio/editor-bridge";
 
 // ---------------------------------------------------------------------------
 // Constants (D-7 + the engine clock)
@@ -127,6 +133,11 @@ function previewFailure(
   return new PreviewCaptureError({ code, message: humanMessage(error), restored });
 }
 
+/** Any unknown error degrades to a before-failure (defensive: captures throw typed failures). */
+function unknownFailure(error: unknown): PlanPreviewFailure {
+  return { code: "PREVIEW_BEFORE_FAILED", message: humanMessage(error), restored: true };
+}
+
 // ---------------------------------------------------------------------------
 // Frames
 // ---------------------------------------------------------------------------
@@ -174,7 +185,7 @@ async function resolveSeconds(
     }
     return ticksToSeconds(ticks);
   }
-  let inspect;
+  let inspect: UiInspect;
   try {
     inspect = await bridge.inspect();
   } catch (error) {
@@ -189,7 +200,7 @@ async function renderFrameAt(
   seconds: number,
   code: PlanPreviewFailureCode,
 ): Promise<PlanPreviewFrame> {
-  let frame;
+  let frame: RenderFrameResult;
   try {
     frame = await bridge.renderFrame({ time: seconds, max_side: PREVIEW_MAX_SIDE });
   } catch (error) {
@@ -280,13 +291,12 @@ export async function captureAfterPreview(
   }
 
   if (rendered !== null) return rendered;
-  throw new PreviewCaptureError(
-    renderFailure ?? {
-      code: "PREVIEW_RENDER_FAILED",
-      message: "The after-frame could not be rendered.",
-      restored: true,
-    },
-  );
+  const fallback: PlanPreviewFailure = {
+    code: "PREVIEW_RENDER_FAILED",
+    message: "The after-frame could not be rendered.",
+    restored: true,
+  };
+  throw new PreviewCaptureError(renderFailure ?? fallback);
 }
 
 // ---------------------------------------------------------------------------
@@ -505,7 +515,7 @@ export function createPlanPreviewController(
       const ticks = firstAffectedTimeTicks(opts.plan);
       if (ticks !== null) return { ticks, source: "plan" };
     }
-    let inspect;
+    let inspect: UiInspect;
     try {
       inspect = await bridge.inspect();
     } catch (error) {
@@ -536,10 +546,7 @@ export function createPlanPreviewController(
       commit({ status: "ready", pair, failure: null });
       return { status: "ready", pair };
     } catch (error) {
-      const failure =
-        error instanceof PreviewCaptureError
-          ? error.failure
-          : { code: "PREVIEW_BEFORE_FAILED", message: humanMessage(error), restored: true };
+      const failure = error instanceof PreviewCaptureError ? error.failure : unknownFailure(error);
       // An unrestored probe must be surfaced even when stale (invariant 4):
       // the editor may be left showing this plan applied.
       if (gen !== generation && failure.restored) return STALE;
@@ -558,10 +565,7 @@ export function createPlanPreviewController(
         listeners.delete(listener);
       };
     },
-    capture(
-      batch: AgentBatchInput,
-      opts?: PlanPreviewCaptureOptions,
-    ): Promise<PlanPreviewCapture> {
+    capture(batch: AgentBatchInput, opts?: PlanPreviewCaptureOptions): Promise<PlanPreviewCapture> {
       if (disposed) {
         return Promise.resolve({ status: "failed", failure: DISPOSED_FAILURE });
       }

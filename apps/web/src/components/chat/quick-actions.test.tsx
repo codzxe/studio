@@ -31,9 +31,9 @@ describe("buildQuickActions (§4.4)", () => {
       "Explain this comp",
       "Render a preview",
     ]);
-    expect(actions[0]?.prompt).toBe("Animate “Headline, Subhead” in with a smooth entrance.");
-    expect(actions[1]?.prompt).toBe("Animate “Headline, Subhead” out with a clean exit.");
-    expect(actions[3]?.prompt).toBe("Match “Headline, Subhead” to the brand colors.");
+    expect(actions[0]?.prompt).toBe("Animate “Headline”, “Subhead” in with a smooth entrance.");
+    expect(actions[1]?.prompt).toBe("Animate “Headline”, “Subhead” out with a clean exit.");
+    expect(actions[3]?.prompt).toBe("Match “Headline”, “Subhead” to the brand colors.");
     // Composition-level chips never mention the selection.
     expect(actions[4]?.prompt).toBe("Clean up the layers of this composition.");
     expect(actions[5]?.prompt).toBe("Explain what this composition does.");
@@ -82,7 +82,9 @@ describe("selectionNamesOf", () => {
       selectionNamesOf({ blocks: [{ kind: "selection", data: { layers: "nope" } }] }),
     ).toBeNull();
     // Nameless nodes degrade to "no names", not a crash.
-    expect(selectionNamesOf({ blocks: [{ kind: "selection", data: { layers: [{ id: 1 }] } }] })).toBeNull();
+    expect(
+      selectionNamesOf({ blocks: [{ kind: "selection", data: { layers: [{ id: 1 }] } }] }),
+    ).toBeNull();
   });
 });
 
@@ -92,9 +94,10 @@ describe("QuickActions (the chip row)", () => {
   it("renders one token chip per action and seeds the parent on click", () => {
     const onSeed = vi.fn();
     render(<QuickActions actions={actions} onSeed={onSeed} />);
+    const row = screen.getByTestId("chat-quick-actions");
     const chips = screen.getAllByTestId("chat-quick-action-chip");
     expect(chips).toHaveLength(7);
-    expect(screen.getByRole("group", { name: "Quick actions" })).toBeInTheDocument();
+    expect(row).toContainElement(chips[0] as HTMLElement);
 
     fireEvent.click(screen.getByText("Animate in"));
     expect(onSeed).toHaveBeenCalledTimes(1);

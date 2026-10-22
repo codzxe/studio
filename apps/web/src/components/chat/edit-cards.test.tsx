@@ -63,9 +63,9 @@ describe("humanizeEditError", () => {
   });
 
   it("shows a short human message for unknown codes", () => {
-    expect(humanizeEditError({ code: "SOMETHING_ELSE", message: "Which layer should I change?" })).toBe(
-      "Which layer should I change?",
-    );
+    expect(
+      humanizeEditError({ code: "SOMETHING_ELSE", message: "Which layer should I change?" }),
+    ).toBe("Which layer should I change?");
   });
 
   it("degrades machine-shaped payloads to the generic line (law #1)", () => {
@@ -82,7 +82,9 @@ describe("humanizeEditError", () => {
   });
 
   it("degrades over-long or empty messages to the generic line", () => {
-    expect(humanizeEditError({ code: "X", message: "x".repeat(500) })).toBe(EDIT_ERROR_GENERIC_COPY);
+    expect(humanizeEditError({ code: "X", message: "x".repeat(500) })).toBe(
+      EDIT_ERROR_GENERIC_COPY,
+    );
     expect(humanizeEditError({ code: "X", message: "   " })).toBe(EDIT_ERROR_GENERIC_COPY);
     expect(humanizeEditError({ code: "X" })).toBe(EDIT_ERROR_GENERIC_COPY);
   });
@@ -97,11 +99,7 @@ describe("EditErrorCard", () => {
     const onRetry = vi.fn();
     const onDismiss = vi.fn();
     render(
-      <EditErrorCard
-        failure={{ code: "RATE_LIMITED" }}
-        onRetry={onRetry}
-        onDismiss={onDismiss}
-      />,
+      <EditErrorCard failure={{ code: "RATE_LIMITED" }} onRetry={onRetry} onDismiss={onDismiss} />,
     );
     expect(screen.getByTestId("edit-error-card")).toHaveAttribute("role", "alert");
     expect(screen.getByTestId("edit-error-copy")).toHaveTextContent(
@@ -125,7 +123,10 @@ describe("EditErrorCard", () => {
       'at plan (/home/z/studio/services/gateway/src/plan-compiler.rs:9:13) {"batch":{"steps":[{"command":"layer.delete"}]}}';
     const hostileCode = '</section><script>alert("x")</script>';
     render(
-      <EditErrorCard failure={{ code: hostileCode, message: hostileMessage }} onRetry={() => undefined} />,
+      <EditErrorCard
+        failure={{ code: hostileCode, message: hostileMessage }}
+        onRetry={() => undefined}
+      />,
     );
     const dom = document.body.textContent ?? "";
     expect(dom).not.toContain("/home/z");
@@ -175,7 +176,11 @@ describe("ClarifyCard", () => {
   it("renders the composer hint when the plan carries no candidates, and dismisses on demand", () => {
     const onDismiss = vi.fn();
     render(
-      <ClarifyCard plan={clarifyPlan("Should I continue?", [])} onAnswer={() => undefined} onDismiss={onDismiss} />,
+      <ClarifyCard
+        plan={clarifyPlan("Should I continue?", [])}
+        onAnswer={() => undefined}
+        onDismiss={onDismiss}
+      />,
     );
     expect(screen.queryByTestId("edit-clarify-answer")).not.toBeInTheDocument();
     expect(screen.getByTestId("edit-clarify-hint")).toHaveTextContent(
@@ -187,7 +192,10 @@ describe("ClarifyCard", () => {
 
   it("renders nothing for a non-clarify plan (the mounter's guard is doubled here)", () => {
     const { container } = render(
-      <ClarifyCard plan={clarifyPlan("Edit all the layers", ["A"], "edit")} onAnswer={() => undefined} />,
+      <ClarifyCard
+        plan={clarifyPlan("Edit all the layers", ["A"], "edit")}
+        onAnswer={() => undefined}
+      />,
     );
     expect(container.firstChild).toBeNull();
   });
@@ -196,10 +204,7 @@ describe("ClarifyCard", () => {
     const hostileSummary = '<img src=x onerror="alert(1)"> — which layer?';
     const hostileName = "<b>Bold</b>";
     render(
-      <ClarifyCard
-        plan={clarifyPlan(hostileSummary, [hostileName])}
-        onAnswer={() => undefined}
-      />,
+      <ClarifyCard plan={clarifyPlan(hostileSummary, [hostileName])} onAnswer={() => undefined} />,
     );
     // The question and the chip label appear as literal TEXT.
     expect(screen.getByTestId("edit-clarify-question")).toHaveTextContent(hostileSummary);

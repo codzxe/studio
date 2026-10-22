@@ -7,8 +7,12 @@ import { describe, expect, it } from "vitest";
 import {
   CONTEXT_SELECTION_SCHEMA,
   EDIT_PLAN_SCHEMA,
+  PROPOSED_BATCH_NOTE,
   type StudioStreamEvent,
+  STUDIO_STREAM_EVENT_SCHEMA,
   TOOL_LIST,
+  WRITE_TOOL_IDS,
+  WRITE_TOOL_RESULT_SCHEMA,
 } from "@studio/contracts";
 
 import {
@@ -19,7 +23,10 @@ import {
   planInstruction,
 } from "../src/litellm/prompt.js";
 import {
+  type CompilePlanFn,
   RUNNER_READ_TOOLS,
+  RUNNER_TOOLS,
+  RUNNER_WRITE_TOOLS,
   TOOL_RESULT_TIMEOUT_MS,
   committedCreditsFor,
   createLiteLLMRunner,
@@ -219,6 +226,7 @@ function makeRunner(
     maxSteps?: number;
     stream?: FakeStream;
     logger?: Logger;
+    compilePlan?: CompilePlanFn;
   } = {},
 ): {
   runner: ReturnType<typeof createLiteLLMRunner>;
@@ -235,6 +243,7 @@ function makeRunner(
     fetch: fetchStub,
     sleep: async () => {},
     logger: options.logger,
+    compilePlan: options.compilePlan,
   });
   return { runner, fetchStub, stream };
 }
@@ -561,6 +570,321 @@ describe("LiteLLM runner — studio.plan_edit (server-side)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// (5b) M5.1 write tools — PROPOSE-ONLY server-side resolution + M5 plan
+//      event enrichment, both through the injectable M5-B compile seam
+// ---------------------------------------------------------------------------
+
+/** A deterministic compiled batch the stub compiler returns (§8.5 shape). */
+const STUB_BATCH = {
+  label: "Agent: Stub proposal",
+  atomic: true as const,
+  steps: [
+    { command: "text.insert", params: { text: "Hello" } },
+    { command: "prop.set", params: { path: "transform/position" } },
+  ],
+};
+
+const STUB_RESOLUTION_REQUESTS = [
+  { requestId: "req_1", layerName: "Headline", disambiguation: ["Headline", "Headline copy"] },
+];
+
+const stubCompilePlan: CompilePlanFn = async () => ({
+  ok: true,
+  batch: STUB_BATCH,
+  risk: "medium",
+  estimatedCredits: 2.5,
+  resolutionRequests: STUB_RESOLUTION_REQUESTS,
+});
+
+const SET_PROPERTIES_ARGS = JSON.stringify({
+  layers: [{ name: "headline" }],
+  properties: [{ path: "text/sourceText", value: "Hello there" }],
+});
+
+describe("LiteLLM runner — write tools (M5.1: propose-only, never execute)", () => {
+  it("a perfectly-argued write call returns a PROPOSED batch server-side; the model never sees command ids", async () => {
+    const { runner, fetchStub, stream } = makeRunner(
+      [
+        sseResponse([
+          toolCallStart(0, "call_write", "studio.set_properties"),
+          toolCallArgs(0, SET_PROPERTIES_ARGS),
+          finish("tool_calls"),
+          usageFrame(100, 40),
+          DONE,
+        ]),
+        sseResponse([textDelta("Proposed."), finish("stop"), usageFrame(50, 10), DONE]),
+      ],
+      { compilePlan: stubCompilePlan },
+    );
+    // waitMode stays "pending": a write tool must NEVER wait for a client
+    // POST (server-side resolution) — the run completing proves it never did.
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    // tool.started with the validated args (the client card).
+    expect(stream.events).toEqual(
+      expect.arrayContaining([
+        {
+          type: "tool.started",
+          toolCallId: "call_write",
+          name: "studio.set_properties",
+          args: {
+            layers: [{ name: "headline" }],
+            properties: [{ path: "text/sourceText", value: "Hello there" }],
+          },
+        },
+      ]),
+    );
+    // The result envelope is EXACTLY the pinned WRITE_TOOL_RESULT_SCHEMA:
+    // proposed batch + note, nothing else (no risk/credits/requests extras).
+    const result = stream.events.find(
+      (event) => event.type === "tool.result" && event.toolCallId === "call_write",
+    );
+    expect(result).toMatchObject({
+      type: "tool.result",
+      toolCallId: "call_write",
+      result: {
+        proposedBatch: { label: "Agent: Stub proposal", steps: STUB_BATCH.steps },
+        note: PROPOSED_BATCH_NOTE,
+      },
+    });
+    expect(
+      WRITE_TOOL_RESULT_SCHEMA.safeParse(
+        (result as { result?: unknown } | undefined)?.result,
+      ).success,
+    ).toBe(true);
+    // LAW #5: the model's tool-role content is the REDACTED envelope — human
+    // summary + step count + note; the compiled registry command ids NEVER
+    // enter the model conversation.
+    const secondMessages = fetchStub.calls[1]?.body.messages ?? [];
+    const toolMessage = secondMessages.find((message) => message.role === "tool");
+    const fedBack = JSON.parse(String(toolMessage?.content)) as Record<string, unknown>;
+    expect(fedBack).toMatchObject({
+      proposed: true,
+      summary: "Set 1 property on 1 layer",
+      stepCount: 2,
+    });
+    expect(String(toolMessage?.content).includes("text.insert")).toBe(false);
+    expect(String(toolMessage?.content).includes("prop.set")).toBe(false);
+    expect(String(toolMessage?.content).includes("Agent: Stub proposal")).toBe(false);
+    // No raw engine entrypoint ever reached the provider.
+    for (const call of fetchStub.calls) {
+      const serialized = JSON.stringify(call.body);
+      expect(serialized.includes("engine.execute")).toBe(false);
+      expect(serialized.includes("engine.batch")).toBe(false);
+    }
+  });
+
+  it("hostile write args get the standard repair turn — the boundary is the tool's Zod schema", async () => {
+    // The M4-N corpus shape ({updates: [...]}); M5-A's STRICT schema rejects
+    // the unknown key before anything is proposed.
+    const { runner, fetchStub, stream } = makeRunner([
+      sseResponse([
+        toolCallStart(0, "call_bad", "studio.set_properties"),
+        toolCallArgs(0, JSON.stringify({ updates: [{ layer: "l", path: "p", value: 1 }] })),
+        finish("tool_calls"),
+        DONE,
+      ]),
+      sseResponse([textDelta("Recovering."), finish("stop"), DONE]),
+    ]);
+
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    expect(stream.events.some((event) => event.type === "tool.started")).toBe(false);
+    expect(stream.events.some((event) => event.type === "tool.result")).toBe(false);
+    const repair = JSON.parse(
+      String(
+        fetchStub.calls[1]?.body.messages.find((message) => message.role === "tool")?.content,
+      ),
+    ) as { error: string; message: string };
+    expect(repair.error).toBe("VALIDATION_FAILED");
+    expect(repair.message).toContain("studio.set_properties");
+  });
+
+  it("a compile rejection answers PROPOSAL_INVALID and the run survives (mirrors PLAN_INVALID)", async () => {
+    const rejectingCompiler: CompilePlanFn = async () => ({
+      ok: false,
+      issues: [{ message: 'unknown layer "ghost layer"' }, { message: "second issue" }],
+    });
+    const { runner, fetchStub, stream } = makeRunner(
+      [
+        sseResponse([
+          toolCallStart(0, "call_text", "studio.create_text"),
+          toolCallArgs(0, JSON.stringify({ text: "Hello" })),
+          finish("tool_calls"),
+          DONE,
+        ]),
+        sseResponse([textDelta("Let me re-check the layer name."), finish("stop"), DONE]),
+      ],
+      { compilePlan: rejectingCompiler },
+    );
+
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    expect(stream.events).toEqual(
+      expect.arrayContaining([
+        {
+          type: "tool.result",
+          toolCallId: "call_text",
+          result: {
+            error: "PROPOSAL_INVALID",
+            message: 'unknown layer "ghost layer" (+1 more issues)',
+          },
+        },
+      ]),
+    );
+    const toolMessage = fetchStub.calls[1]?.body.messages.find(
+      (message) => message.role === "tool",
+    );
+    expect(JSON.parse(String(toolMessage?.content))).toMatchObject({
+      error: "PROPOSAL_INVALID",
+    });
+  });
+
+  it("the default compiler (M5-B + live contract deps) degrades to PROPOSAL_INVALID while registries are stubs", async () => {
+    // No injected compilePlan: the real ../plan-compiler.ts default runs with
+    // the live (still-stubbed) contract surfaces — whatever the mid-flight
+    // registry state, the write tool can only PROPOSE or refuse, never execute.
+    const { runner, stream } = makeRunner([
+      sseResponse([
+        toolCallStart(0, "call_save", "studio.save_version"),
+        toolCallArgs(0, JSON.stringify({ label: "checkpoint" })),
+        finish("tool_calls"),
+        DONE,
+      ]),
+      sseResponse([textDelta("Cannot propose that right now."), finish("stop"), DONE]),
+    ]);
+
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    const result = stream.events.find(
+      (event) => event.type === "tool.result" && event.toolCallId === "call_save",
+    );
+    expect(result).toMatchObject({
+      type: "tool.result",
+      toolCallId: "call_save",
+      result: { error: "PROPOSAL_INVALID" },
+    });
+  });
+
+  it("write-tool looping hits RUN_STEP_LIMIT at exactly maxSteps (D-1: writes are loop steps)", async () => {
+    const textRound = (id: string): Response =>
+      sseResponse([
+        toolCallStart(0, id, "studio.create_text"),
+        toolCallArgs(0, JSON.stringify({ text: "Hello" })),
+        finish("tool_calls"),
+        DONE,
+      ]);
+    const { runner, fetchStub, stream } = makeRunner([textRound("w1"), textRound("w2"), textRound("w3")], {
+      maxSteps: 2,
+      compilePlan: stubCompilePlan,
+    });
+
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome).toEqual({
+      kind: "failed",
+      code: "RUN_STEP_LIMIT",
+      message: "The agent used too many steps for one message.",
+      retryable: false,
+    });
+    expect(fetchStub.calls.length).toBe(2);
+    expect(stream.events.filter((event) => event.type === "tool.started")).toHaveLength(2);
+    // Both write rounds PROPOSED before the cap killed the run.
+    const proposals = stream.events.filter(
+      (event) => event.type === "tool.result" && event.result !== undefined,
+    );
+    expect(proposals.length).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (5c) M5 plan-event enrichment — compiledBatch + resolutionRequests + risk
+// ---------------------------------------------------------------------------
+
+describe("LiteLLM runner — plan event carries the server-side compile (M5.2)", () => {
+  it("attaches compiledBatch/resolutionRequests/risk/estimatedCredits; the model still sees only the bare plan", async () => {
+    const plan = mockEditPlan();
+    const planJson = JSON.stringify(plan);
+    const { runner, fetchStub, stream } = makeRunner(
+      [
+        sseResponse([
+          toolCallStart(0, "call_plan", "studio.plan_edit"),
+          toolCallArgs(0, '{"goal":"rename the headline"}'),
+          finish("tool_calls"),
+          DONE,
+        ]),
+        sseResponse([textDelta(planJson), finish("stop"), DONE]),
+        sseResponse([textDelta("Plan ready."), finish("stop"), usageFrame(300, 60), DONE]),
+      ],
+      { compilePlan: stubCompilePlan },
+    );
+
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    const planEvent = stream.events.find((event) => event.type === "plan");
+    if (planEvent?.type !== "plan") throw new Error("no plan event");
+    // Backwards-compatible enrichment: the event still parses against the
+    // §7.4 schema union and carries the compiler's server-side output.
+    expect(STUDIO_STREAM_EVENT_SCHEMA.safeParse({ ...planEvent, runId: "run_test", seq: 2 }).success).toBe(
+      true,
+    );
+    expect(planEvent.compiledBatch).toEqual(STUB_BATCH);
+    expect(planEvent.resolutionRequests).toEqual(STUB_RESOLUTION_REQUESTS);
+    expect(planEvent.risk).toBe("medium");
+    expect(planEvent.estimatedCredits).toBe(2.5);
+    // The plan itself is untouched.
+    expect(planEvent.plan.summary).toBe(plan.summary);
+    // M4 behavior preserved: the tool.result + model-facing content stay the
+    // BARE plan — the compiled registry command ids never reach the model.
+    const toolResult = stream.events.find(
+      (event) => event.type === "tool.result" && event.toolCallId === "call_plan",
+    );
+    expect((toolResult as { result?: unknown }).result).toEqual(plan);
+    const thirdMessages = fetchStub.calls[2]?.body.messages ?? [];
+    const toolMessage = thirdMessages.find((message) => message.role === "tool");
+    expect(JSON.parse(String(toolMessage?.content))).toEqual(plan);
+    expect(String(toolMessage?.content).includes("Agent: Stub proposal")).toBe(false);
+  });
+
+  it("a compile failure emits the plan UN-enriched (display data stands; Apply gates downstream)", async () => {
+    const rejectingCompiler: CompilePlanFn = async () => ({
+      ok: false,
+      issues: [{ message: "unknown command" }],
+    });
+    const plan = mockEditPlan();
+    const { runner, stream } = makeRunner(
+      [
+        sseResponse([
+          toolCallStart(0, "call_plan", "studio.plan_edit"),
+          toolCallArgs(0, '{"goal":"rename the headline"}'),
+          finish("tool_calls"),
+          DONE,
+        ]),
+        sseResponse([textDelta(JSON.stringify(plan)), finish("stop"), DONE]),
+        sseResponse([textDelta("Plan ready."), finish("stop"), DONE]),
+      ],
+      { compilePlan: rejectingCompiler },
+    );
+
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    const planEvent = stream.events.find((event) => event.type === "plan");
+    if (planEvent?.type !== "plan") throw new Error("no plan event");
+    expect(planEvent.compiledBatch).toBeUndefined();
+    expect(planEvent.resolutionRequests).toBeUndefined();
+    expect(planEvent.risk).toBeUndefined();
+    expect(planEvent.estimatedCredits).toBeUndefined();
+    expect(planEvent.plan.summary).toBe(plan.summary);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // (7) Step cap → RUN_STEP_LIMIT · (8) provider down → RUN_MODEL_UNAVAILABLE
 // ---------------------------------------------------------------------------
 
@@ -647,25 +971,29 @@ describe("LiteLLM runner — cancellation", () => {
 // (10) NO write tool registered · (11) prompt redaction in logs
 // ---------------------------------------------------------------------------
 
-describe("LiteLLM runner — tool registry + redaction (M4.6 / M4.3)", () => {
-  it("registers ONLY the 5 read tools — never a write tool", async () => {
+describe("LiteLLM runner — tool registry + redaction (M4.6 → M5.1 / M4.3)", () => {
+  it("registers exactly the 13 curated tools on the provider wire — 5 read + 8 write (ids from WRITE_TOOL_IDS)", async () => {
     const { runner, fetchStub, stream } = makeRunner([
       sseResponse([textDelta("hi"), finish("stop"), DONE]),
     ]);
     await runToOutcome(runner, makeRun(), stream);
 
     const tools = fetchStub.calls[0]?.body.tools ?? [];
-    const expectedIds = TOOL_LIST.filter((tool) => tool.kind === "read").map((tool) => tool.id);
-    expect(tools.map((tool) => tool.function.name)).toEqual(expectedIds);
-    expect(expectedIds).toEqual([
-      "studio.get_context",
-      "studio.list_layers",
-      "studio.get_properties",
-      "studio.plan_edit",
-      "studio.render_preview",
-    ]);
+    expect(tools.map((tool) => tool.function.name)).toEqual(RUNNER_TOOLS.map((tool) => tool.id));
     expect(RUNNER_READ_TOOLS.length).toBe(5);
     expect(RUNNER_READ_TOOLS.every((tool) => tool.kind === "read")).toBe(true);
+    // The write slice is exactly contracts WRITE_TOOL_IDS under its wire ids.
+    expect(RUNNER_WRITE_TOOLS.map((tool) => tool.id).sort()).toEqual(
+      [...WRITE_TOOL_IDS].map((id) => `studio.${id}`).sort(),
+    );
+    expect(RUNNER_TOOLS).toHaveLength(13);
+    // 5 read + 8 write = 13, and nothing else (no invented id, no raw entrypoint).
+    expect(new Set(RUNNER_TOOLS.map((tool) => tool.id)).size).toBe(13);
+    for (const call of fetchStub.calls) {
+      const serialized = JSON.stringify(call.body);
+      expect(serialized.includes("engine.execute")).toBe(false);
+      expect(serialized.includes("engine.batch")).toBe(false);
+    }
   });
 
   it("logs only prompt lengths + sha256 prefixes — never prompt bodies", async () => {

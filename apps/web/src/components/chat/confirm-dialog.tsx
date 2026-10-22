@@ -7,12 +7,13 @@
  * "high-risk actions always require confirmation").
  *
  * Accessibility (§7.5 + §9.2): role="dialog" with an accessible name (the
- * required title), aria-modal, a FOCUS TRAP and Escape-to-cancel. The trap,
- * Escape handling, focus restoration and aria wiring come from the
- * `@studio/ui` Dialog primitives (Radix) — this component only composes them
- * with the chat's action pair (quiet Cancel + explicit Confirm), so the
- * product never grows a second hand-rolled modal. Design tokens only (law #8);
- * `danger` renders the destructive confirm on --danger.
+ * required title, wired as aria-labelledby by Radix), a FOCUS TRAP and
+ * Escape-to-cancel. The trap, Escape handling, focus restoration, scroll lock
+ * and aria wiring come from the `@studio/ui` Dialog primitives (Radix) — this
+ * component only composes them with the chat's action pair (quiet Cancel +
+ * explicit Confirm), so the product never grows a second hand-rolled modal.
+ * Design tokens only (law #8); `danger` renders the destructive confirm on
+ * --danger.
  *
  * Escape = cancel: closing by Escape, the ✕, outside click or the Cancel
  * button all funnel through `onOpenChange(false)`; ONLY the Confirm button

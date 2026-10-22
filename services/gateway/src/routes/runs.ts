@@ -6,10 +6,25 @@
 // (the runner registered it in the run log). On a successful apply with a
 // sha256 the gateway creates the version through the repo (which owns the
 // PROJECT_VERSION_CONFLICT check) and commits the credits.
+//
+// agent_steps SINGLE-WRITER (M4 tail #2, fixed by M5-C): the chat route's
+// finalize (recordSteps in routes/chat.ts) is the ONLY writer of run step
+// rows — every tool.started/tool.result in the run log becomes exactly one
+// row, keyed by the wire `seq`. THIS sink stores the client's tool-result
+// payload in the run log (the SSE/replay record + the runner's tool-result
+// wait) but inserts NO step row; server-resolved tools (studio.plan_edit,
+// the 8 M5 write tools) are additionally NOT client-reportable — the runner
+// emits their tool.result itself, so a client POST for them would put a
+// second, conflicting result on the wire for the same call.
 
 import { Hono } from "hono";
 
-import { CANCEL_RUN_SCHEMA, RUN_EVENT_REQUEST_SCHEMA, type RunRecord } from "@studio/contracts";
+import {
+  CANCEL_RUN_SCHEMA,
+  RUN_EVENT_REQUEST_SCHEMA,
+  type RunRecord,
+  getTool,
+} from "@studio/contracts";
 
 import { type AgentRun, isTerminalRunStatus } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
@@ -172,13 +187,27 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
             requestId,
           });
         }
-        await deps.repos.runs.addStep(workspace.id, {
-          runId,
-          seq: nextSeq,
-          tool,
-          resultJson: event.result,
-          status: "success",
-        });
+        // M5: server-resolved tools (studio.plan_edit + the 8 write tools)
+        // complete INSIDE the runner — the client never reports their
+        // results. Accepting a POST here would emit a second tool.result for
+        // an already-completed call (the M4 client executor's defensive
+        // TOOL_FORBIDDEN refusal used to do exactly that).
+        const definition = getTool(tool);
+        if (tool === "studio.plan_edit" || definition?.kind === "write") {
+          throw new GatewayError(
+            "VALIDATION_FAILED",
+            "This tool call is resolved server-side.",
+            {
+              status: 400,
+              hint: "The editor reports results for its own read tools only.",
+              requestId,
+            },
+          );
+        }
+        // M4 tail #2 single-writer fix: the payload is stored in the run log
+        // (SSE + replay + the runner's tool-result wait); the agent_steps row
+        // is written ONCE by the chat route's finalize, keyed by this event's
+        // seq. No addStep here.
         log.emit({ type: "tool.result", toolCallId: event.toolCallId, result: event.result });
         return ok(c, { runId, recorded: true });
       }

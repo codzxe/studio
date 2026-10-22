@@ -316,15 +316,15 @@ const AGENT_APPLY_SAVE_REASON = "agent-apply";
 const NOTHING_TO_UNDO_RE = /nothing to undo/i;
 
 /** Bridge/editor failure → typed outcome; disconnect codes are named as such. */
-function bridgeOutcome(
-  error: unknown,
-  onCall: "engine-failed" | "editor-failed",
-): { reason: "engine-failed" | "editor-failed" | "editor-disconnected"; message: string } {
+function bridgeOutcome(error: unknown): {
+  reason: "engine-failed" | "editor-disconnected";
+  message: string;
+} {
   const message = messageOf(error);
   if (isBridgeError(error) && DISCONNECT_CODES.has(error.code)) {
     return { reason: "editor-disconnected", message };
   }
-  return { reason: onCall, message };
+  return { reason: "engine-failed", message };
 }
 
 /** The typed fields of an api-client throw (ApiError-shaped), without zod. */
@@ -376,7 +376,7 @@ async function resolveRequests(
   try {
     layers = await listLayers(bridge);
   } catch (error) {
-    const failure = bridgeOutcome(error, "engine-failed");
+    const failure = bridgeOutcome(error);
     const outcome: ApplyOutcome =
       failure.reason === "editor-disconnected"
         ? { ok: false, reason: "editor-disconnected", message: failure.message }
@@ -429,6 +429,10 @@ async function resolveRequests(
  * Replaces every whole-string `"$request:<requestId>"` placeholder in the batch
  * params with the resolved layer id. Deterministic: only exact matches swap
  * and the clone preserves object key order, so the sha256 is stable.
+ *
+ * The cloned objects are NULL-PROTOTYPE (M4-N F-1): plan params are
+ * model-adjacent — a parsed `{"__proto__": …}` key must ride as OWN data, not
+ * rebind the clone's prototype.
  */
 function patchPlaceholders(
   value: unknown,
@@ -448,7 +452,7 @@ function patchPlaceholders(
     }
     if (Array.isArray(node)) return node.map(walk);
     if (typeof node === "object" && node !== null) {
-      const out: Record<string, unknown> = {};
+      const out: Record<string, unknown> = Object.create(null);
       for (const [key, child] of Object.entries(node)) out[key] = walk(child);
       return out;
     }
@@ -469,7 +473,7 @@ function validCompiledBatch(batch: unknown): AgentBatch | null {
     const stepRecord = step as Record<string, unknown>;
     if (typeof stepRecord.command !== "string" || stepRecord.command.length === 0) return null;
     if (typeof stepRecord.params !== "object" || stepRecord.params === null) return null;
-    steps.push({ command: stepRecord.command, params: stepRecord.params });
+    steps.push({ command: stepRecord.command, params: stepRecord.params as Record<string, unknown> });
   }
   const timeoutMs =
     typeof record.timeoutMs === "number" &&
@@ -568,7 +572,7 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
     for (const step of compiled.steps) {
       const patch = patchPlaceholders(step.params, resolvedById);
       unresolved.push(...patch.unresolved);
-      patchedSteps.push({ command: step.command, params: patch.patched });
+      patchedSteps.push({ command: step.command, params: patch.patched as Record<string, unknown> });
     }
     if (unresolved.length > 0) {
       return failApply(plan.runId, {
@@ -585,7 +589,7 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
     try {
       await bridge.execute("engine.batch", payload);
     } catch (error) {
-      const failure = bridgeOutcome(error, "engine-failed");
+      const failure = bridgeOutcome(error);
       return failApply(plan.runId, {
         ok: false,
         reason: failure.reason,
@@ -671,14 +675,10 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
       try {
         await bridge.execute("edit.undo");
       } catch (error) {
-        const failure = bridgeOutcome(error, "engine-failed");
+        const failure = bridgeOutcome(error);
         const outcome: UndoOutcome = NOTHING_TO_UNDO_RE.test(failure.message)
           ? { ok: false, reason: "nothing-to-undo", message: "There is nothing to undo." }
-          : {
-              ok: false,
-              reason: failure.reason === "editor-disconnected" ? "editor-disconnected" : "engine-failed",
-              message: failure.message,
-            };
+          : { ok: false, reason: failure.reason, message: failure.message };
         // The gateway is NOT told — undoRun would 409 on an unapplied run and
         // the version rows must stay untouched (§9.3).
         notify({ type: "undo.failed", runId, outcome });

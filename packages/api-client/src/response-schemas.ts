@@ -15,6 +15,7 @@
 import {
   type AcceptedInvite,
   type ActivityEntry,
+  type ApplyResponse,
   type Asset,
   type CheckoutResponse,
   type Comment,
@@ -47,6 +48,7 @@ import {
   type SignedUrlResponse,
   type Thread,
   type ThreadMessage,
+  type UndoResponse,
   WORKSPACE_SLUG_SCHEMA,
   type Workspace,
 } from "@studio/contracts";
@@ -336,6 +338,20 @@ export const RUN_RECORD_SCHEMA = z.object({
   createdAt: isoSchema,
   completedAt: isoSchema.nullable(),
 }) satisfies z.ZodType<RunRecord>;
+
+// ---------------------------------------------------------------------------
+// Runs — apply / undo (§8.7, M5 seam)
+// ---------------------------------------------------------------------------
+
+export const APPLY_RESPONSE_SCHEMA = z.object({
+  applied: z.literal(true),
+  versionId: idSchema,
+  creditsCommitted: z.number().nonnegative(),
+}) satisfies z.ZodType<ApplyResponse>;
+
+export const UNDO_RESPONSE_SCHEMA = z.object({
+  undone: z.literal(true),
+}) satisfies z.ZodType<UndoResponse>;
 
 // ---------------------------------------------------------------------------
 // Models — GET /v1/models (§8.2/§10.1 entitlement read)
