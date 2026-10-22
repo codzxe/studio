@@ -11,19 +11,18 @@
  * end-to-end).
  */
 
+import {
+  type ChatShortcutBus,
+  createChatShortcutBus,
+} from "@/components/editor-host/chat-shortcut-bus";
+import type { ClientToolCall, ToolExecutorDeps } from "@/lib/chat/tool-executor";
 import type { ApiClient } from "@studio/api-client";
 import type { ChatRequest, ContextSelection, Thread } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
-import {
-  type FakeEditor,
-  attachFakeBridge,
-  createFakeEditor,
-} from "@studio/editor-bridge/fake";
+import { type FakeEditor, attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type ChatShortcutBus, createChatShortcutBus } from "@/components/editor-host/chat-shortcut-bus";
-import type { ClientToolCall } from "@/lib/chat/tool-executor";
 import { type ChatContextApi, ChatProvider } from "./provider";
 
 // ---------------------------------------------------------------------------
@@ -40,7 +39,7 @@ vi.mock("@/lib/chat/tool-executor", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/chat/tool-executor")>();
   return {
     ...actual,
-    createToolExecutor: (deps: { flags: ContextSelection }) => {
+    createToolExecutor: (deps: ToolExecutorDeps) => {
       executorRecorder.deps.push(deps);
       const execute = actual.createToolExecutor(deps);
       return (call: ClientToolCall): Promise<void> => {
@@ -240,7 +239,7 @@ afterEach(() => {
 describe("ChatProvider — models", () => {
   it("loads the plan's models and defaults the active model to the first entry", async () => {
     const harness = makeHarness();
-        await waitFor(() => {
+    await waitFor(() => {
       expect(harness.api().models).not.toBeNull();
     });
     expect(harness.api().models).toEqual([FAST_MODEL]);
@@ -256,7 +255,7 @@ describe("ChatProvider — models", () => {
 
   it("retries the models fetch once, then reports the failure as an empty list (picker hidden)", async () => {
     const harness = makeHarness({ models: "fail" });
-        await waitFor(() => {
+    await waitFor(() => {
       expect(harness.api().models).toEqual([]);
     });
     expect(harness.modelsListCalls()).toBe(2); // exactly one retry
@@ -271,7 +270,7 @@ describe("ChatProvider — models", () => {
 describe("ChatProvider — lazy thread + send queue", () => {
   it("creates the thread on the FIRST send, queues the message until the id resolves, then streams once", async () => {
     const harness = makeHarness({ threadMode: "manual" });
-        await waitFor(() => {
+    await waitFor(() => {
       expect(harness.api().models).not.toBeNull();
     });
 
@@ -312,7 +311,7 @@ describe("ChatProvider — lazy thread + send queue", () => {
 
   it("flushes queued sends in order: the first message streams, the second lands in the steer queue (§3.4)", async () => {
     const harness = makeHarness({ threadMode: "manual" });
-        await waitFor(() => {
+    await waitFor(() => {
       expect(harness.api().models).not.toBeNull();
     });
 
@@ -338,12 +337,15 @@ describe("ChatProvider — lazy thread + send queue", () => {
     await waitFor(() => {
       expect(harness.api().snapshot.messages).toHaveLength(2);
     });
-    expect(harness.api().snapshot.messages.map((message) => message.text)).toEqual(["first", "second"]);
+    expect(harness.api().snapshot.messages.map((message) => message.text)).toEqual([
+      "first",
+      "second",
+    ]);
   });
 
   it("reuses the thread for later sends (no second create); newThread() forces a fresh one", async () => {
     const harness = makeHarness();
-        await waitFor(() => {
+    await waitFor(() => {
       expect(harness.api().models).not.toBeNull();
     });
 
@@ -377,7 +379,7 @@ describe("ChatProvider — lazy thread + send queue", () => {
 
   it("surfaces a typed thread error when creation fails, drops the queue, and retries on the next send", async () => {
     const harness = makeHarness({ threadMode: "reject-once" });
-        await waitFor(() => {
+    await waitFor(() => {
       expect(harness.api().models).not.toBeNull();
     });
 
@@ -413,7 +415,7 @@ describe("ChatProvider — lazy thread + send queue", () => {
 describe("ChatProvider — tool executor wiring", () => {
   it("diffs running tool cards, executes client tools with the right call, posts the result, and never re-runs replays; plan_edit dispatches but never posts", async () => {
     const harness = makeHarness();
-        await waitFor(() => {
+    await waitFor(() => {
       expect(harness.api().models).not.toBeNull();
     });
     act(() => {
@@ -426,14 +428,14 @@ describe("ChatProvider — tool executor wiring", () => {
     const handlers = harness.streamCalls[0]?.handlers;
     expect(handlers?.onEvent).toBeDefined();
     act(() => {
-      handlers?.onEvent({ type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" });
+      handlers?.onEvent?.({ type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" });
     });
     await waitFor(() => {
       expect(harness.api().snapshot.phase).toBe("streaming");
     });
 
     act(() => {
-      handlers?.onEvent({
+      handlers?.onEvent?.({
         type: "tool.started",
         runId: "run_1",
         seq: 2,
@@ -467,7 +469,7 @@ describe("ChatProvider — tool executor wiring", () => {
     // executor (pinned observation pattern), which SKIPS it — nothing extra
     // is posted (the runner owns plan_edit's result server-side).
     act(() => {
-      handlers?.onEvent({
+      handlers?.onEvent?.({
         type: "tool.started",
         runId: "run_1",
         seq: 3,
@@ -483,7 +485,7 @@ describe("ChatProvider — tool executor wiring", () => {
 
     // Replaying the same tool.started (Last-Event-ID reconnect) never re-runs.
     act(() => {
-      handlers?.onEvent({
+      handlers?.onEvent?.({
         type: "tool.started",
         runId: "run_1",
         seq: 2,
@@ -493,9 +495,7 @@ describe("ChatProvider — tool executor wiring", () => {
       });
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(executorRecorder.calls.filter((call) => call.toolCallId === "call_ctx")).toHaveLength(
-      1,
-    );
+    expect(executorRecorder.calls.filter((call) => call.toolCallId === "call_ctx")).toHaveLength(1);
   });
 });
 
@@ -506,7 +506,7 @@ describe("ChatProvider — tool executor wiring", () => {
 describe("ChatProvider — context orchestration", () => {
   it("collects the snapshot when the panel opens and re-collects on flag toggles", async () => {
     const harness = makeHarness();
-        expect(harness.api().context).toBeNull(); // nothing collected while hidden
+    expect(harness.api().context).toBeNull(); // nothing collected while hidden
     expect(harness.api().panelVisible).toBe(false);
 
     act(() => {
@@ -553,7 +553,7 @@ describe("ChatProvider — context orchestration", () => {
 
   it("carries pinned chips into the snapshot and the wire body", async () => {
     const harness = makeHarness();
-        act(() => {
+    act(() => {
       harness.api().setPanelVisible(true);
     });
     await waitFor(() => {
@@ -591,7 +591,7 @@ describe("ChatProvider — context orchestration", () => {
 
   it("polls ui.inspect at 1 Hz only while the panel is visible (§11)", async () => {
     const harness = makeHarness();
-        await act(async () => {
+    await act(async () => {
       vi.useFakeTimers();
     });
 
@@ -625,7 +625,7 @@ describe("ChatProvider — context orchestration", () => {
 describe("ChatProvider — quick actions + facades", () => {
   it("sends on the studio:chat-quick-action window CustomEvent through the same send path", async () => {
     const harness = makeHarness();
-        await waitFor(() => {
+    await waitFor(() => {
       expect(harness.api().models).not.toBeNull();
     });
 
@@ -651,7 +651,7 @@ describe("ChatProvider — quick actions + facades", () => {
 
   it("stop() routes through the live controller to the stream handle's fused cancel (§8.3)", async () => {
     const harness = makeHarness();
-        await waitFor(() => {
+    await waitFor(() => {
       expect(harness.api().models).not.toBeNull();
     });
     act(() => {
@@ -715,7 +715,7 @@ describe("ChatProvider — quick actions + facades", () => {
 describe("ChatProvider — executor deps", () => {
   it("recreates the executor with the live flags when the user toggles a block", async () => {
     const harness = makeHarness();
-        await waitFor(() => {
+    await waitFor(() => {
       expect(executorRecorder.deps).toHaveLength(1); // created once per mount
     });
     expect(executorRecorder.deps[0]?.flags.recentCommands).toBe(false);

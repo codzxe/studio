@@ -40,9 +40,13 @@
  * executor. No network besides the api-client calls pinned above.
  */
 
+import type { ChatShortcutBus } from "@/components/editor-host/chat-shortcut-bus";
+import type { ApiClient, ModelsResponse } from "@studio/api-client";
+import type { ContextSelection, ModelId, PinnedContextItem } from "@studio/contracts";
+import type { EditorBridge, UiInspect } from "@studio/editor-bridge";
 import {
-  createContext,
   type ReactNode,
+  createContext,
   useCallback,
   useContext,
   useEffect,
@@ -51,12 +55,8 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ApiClient, ModelsResponse } from "@studio/api-client";
-import type { ContextSelection, ModelId, PinnedContextItem } from "@studio/contracts";
-import type { EditorBridge, UiInspect } from "@studio/editor-bridge";
-import type { ChatShortcutBus } from "@/components/editor-host/chat-shortcut-bus";
 import { type ChatController, createChatController } from "./chat-controller";
-import { DEFAULT_FLAGS, type ContextSnapshot, autoFlags, collectContextSnapshot } from "./context";
+import { type ContextSnapshot, DEFAULT_FLAGS, autoFlags, collectContextSnapshot } from "./context";
 import { createInitialChatUiState } from "./run-state";
 import { createToolExecutor } from "./tool-executor";
 import type { ChatSendInput, ChatUiError, ChatUiState } from "./types";
@@ -259,8 +259,6 @@ export function ChatProvider({
     const created = client.threads
       .create(projectId)
       .then((thread): string => {
-        // eslint-disable-next-line no-console -- dbg
-        console.log("[dbg] threads.create resolved", thread.id);
         threadCreateRef.current = null;
         if (generation === threadGenerationRef.current) {
           threadIdRef.current = thread.id;
@@ -279,8 +277,6 @@ export function ChatProvider({
 
   useEffect(() => {
     if (threadId === null) return;
-    // eslint-disable-next-line no-console -- dbg
-    console.log("[dbg] controller effect", threadId);
     const created = createChatController({ client, workspaceId, projectId, threadId });
     controllerRef.current = created;
     setController(created);
@@ -314,8 +310,6 @@ export function ChatProvider({
         // Fresh context right before the wire send (§5): the strip/estimates
         // re-render with what is actually being sent; the flags ride the body.
         const collected = await collectContextSnapshot(bridge, { flags, pinned });
-        // eslint-disable-next-line no-console -- dbg
-        console.log("[dbg] send collect done");
         collectSeqRef.current += 1; // supersede any in-flight on-demand collect
         setContextSnapshot(collected);
         const wire: ChatSendInput = {
@@ -387,11 +381,13 @@ export function ChatProvider({
     return () => clearInterval(timer);
   }, [panelVisible, bridge]);
 
-  // Collect on demand: when the panel opens, and on every flags/pinned change.
+  // Collect on demand: when the panel opens, and on every flags/pinned change
+  // (refreshContext already closes over flags/pinned — its identity changes
+  // with them, so the effect re-runs without listing them twice).
   useEffect(() => {
     if (!panelVisible) return;
     refreshContext();
-  }, [panelVisible, flags, pinned, refreshContext]);
+  }, [panelVisible, refreshContext]);
 
   // -------------------------------------------------------------------------
   // Tool-executor wiring: diff the snapshot's running tool cards (M4-B's pinned
