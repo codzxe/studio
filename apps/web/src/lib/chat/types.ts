@@ -1,0 +1,161 @@
+/**
+ * Chat engine UI-state types — Seam 4 of docs/phases/M4-SEAMS.md
+ * (EDITOR_CHAT_UX §8.1 M4 slice + §8.4; PRODUCT_ARCHITECTURE.md §7.4).
+ *
+ * This module models the whole THREAD (a message list where each assistant
+ * message is bound to the run that produced it), not a single run — the
+ * wave-2 UI agents (M4-E…M4-J) render `ChatUiState` straight out of the
+ * controller's store. The M4 slice of the §8.1 state machine:
+ * `awaiting_approval`/`applying`/`applied`/`undoing`/`undone` are M5 and are
+ * deliberately NOT modeled here.
+ *
+ * Boundary law (see lib/editor-session/types.ts, AGENTS.md hard rule):
+ * - `@studio/contracts` is imported `import type` ONLY. The §7.4 event types
+ *   plus `EditPlan`/`ContextSelection`/`PinnedContextItem`/`ModelId` arrive
+ *   as types; NO contracts Zod schema ever runs in web at runtime.
+ * - `@studio/api-client` is the runtime wire-validation layer. Its
+ *   `chat.stream` (sse.ts) parses + validates the SSE wire, dedupes server
+ *   `seq` replays and owns the §8.4 reconnect loop (same idempotency key +
+ *   `Last-Event-ID`, backoff 1s/2s/4s/8s→30s, 3 attempts then pause). This
+ *   engine CONSUMES its typed output; it never re-validates events here.
+ */
+
+import type { ChatStreamHandlers, ChatStreamReconnectConfig } from "@studio/api-client";
+import type {
+  ChatRequest,
+  ContextSelection,
+  EditPlan,
+  ModelId,
+  PinnedContextItem,
+} from "@studio/contracts";
+
+// ---------------------------------------------------------------------------
+// Run phases (M4 slice of EDITOR_CHAT_UX §8.1) + per-run UI state
+// ---------------------------------------------------------------------------
+
+/**
+ * Whole-thread phase. `sending` = a chat POST is in flight but no
+ * `run.started` has arrived yet; `reconnecting` = the §8.4 banner state while
+ * the api-client backs off; `done`/`failed`/`cancelled` are terminal.
+ */
+export type RunPhase =
+  | "idle"
+  | "sending"
+  | "streaming"
+  | "reconnecting"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+/**
+ * One live tool-call card (§6.1): cards appear as soon as the call starts.
+ * `tool.started` → `running` (with args); `tool.result` → `done` (result) or
+ * `failed` when the result is the Seam 6 failure shape
+ * `{ error: string; message?: string }`; `tool.delta` appends `deltaText`.
+ */
+export interface ToolCardState {
+  readonly toolCallId: string;
+  readonly name: string;
+  readonly args?: unknown;
+  readonly status: "queued" | "running" | "done" | "failed";
+  readonly result?: unknown;
+  /** Accumulated `tool.delta` text (rare in M4 — read-only tools answer at once). */
+  readonly deltaText?: string;
+}
+
+/** One rendered thread message (§3.3). */
+export interface ChatUiMessage {
+  readonly id: string;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  /** Assistant messages are bound to the run that produced them. */
+  readonly runId?: string;
+  readonly toolCards: readonly ToolCardState[];
+  /** Latest `plan` event for the run — informational card in M4 (apply is M5). */
+  readonly plan?: EditPlan;
+  /** Latest `credits` snapshot for the run (§7.4). */
+  readonly credits?: {
+    readonly reserved: number;
+    readonly committed: number;
+    readonly balance: number;
+  };
+}
+
+/** Error surface for `ChatUiState.error` (§7.3 envelope codes + §8.4 RUN_PAUSED). */
+export interface ChatUiError {
+  readonly code: string;
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
+/**
+ * Whole-thread snapshot. One immutable object per change — `getSnapshot` must
+ * be referentially stable between changes for `useSyncExternalStore`.
+ */
+export interface ChatUiState {
+  readonly messages: readonly ChatUiMessage[];
+  readonly phase: RunPhase;
+  /** The run currently streaming; the most recent run while terminal. */
+  readonly activeRunId: string | null;
+  readonly error?: ChatUiError;
+  /** Highest §7.4 seq folded for the ACTIVE run; replays at/below it are no-ops. */
+  readonly lastSeq: number;
+}
+
+// ---------------------------------------------------------------------------
+// Runtime ports (the EditorSessionClient pattern from lib/editor-session)
+// ---------------------------------------------------------------------------
+
+/**
+ * The slice of `@studio/api-client`'s `ChatStreamController` this engine
+ * consumes. The real controller structurally satisfies it; tests drive a
+ * scripted fake with the same shape.
+ */
+export interface ChatStreamHandle {
+  /** Reconnect attempts exhausted — `reconnect()` resumes (§8.4). */
+  readonly paused: boolean;
+  /**
+   * §8.3 stop, ONE fused mechanism: POST `/v1/runs/:id/cancel` (through the
+   * api-client's authenticated transport, i.e. what `client.runs.cancel`
+   * would send) AND abort the SSE reader. Best-effort: cancel POST failures
+   * never rethrow (they land on the handle's `cancelError`).
+   */
+  cancel(reason?: string): Promise<void>;
+  /** Abort the reader without cancelling server-side (the dispose path). */
+  abort(): void;
+  /** Manual retry after a pause; resets the backoff schedule. */
+  reconnect(): Promise<void>;
+}
+
+/**
+ * Narrow runtime port of `@studio/api-client`'s `ApiClient` the chat engine
+ * consumes (chat stream only — stop/retry never call the API outside the
+ * stream's own fused mechanisms). The real `ApiClient` satisfies this
+ * structurally — guarded by a type test in chat-controller.test.ts — so
+ * M4-J passes its `createApiClient()` instance unchanged.
+ */
+export interface ChatControllerClient {
+  readonly chat: {
+    /**
+     * POST `/v1/threads/:id/chat` — returns the live stream handle
+     * synchronously; client-side validation failures throw synchronously
+     * (`ApiError` VALIDATION_FAILED, status 0).
+     */
+    stream(
+      threadId: string,
+      body: ChatRequest,
+      handlers?: ChatStreamHandlers & {
+        signal?: AbortSignal;
+        reconnect?: ChatStreamReconnectConfig;
+      },
+    ): ChatStreamHandle;
+  };
+}
+
+/** One send: §7.2 message + context selection + pinned chips + optional model. */
+export interface ChatSendInput {
+  readonly message: string;
+  readonly context: ContextSelection;
+  readonly pinned: PinnedContextItem[];
+  readonly model?: ModelId;
+}

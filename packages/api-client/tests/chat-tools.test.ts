@@ -132,7 +132,11 @@ describe("chat-tools validateToolArgs — client tools (valid)", () => {
       value: { maxWidth: 1200 },
     });
     expect(
-      validateToolArgs("studio.render_preview", { compId: "Main", timeSeconds: 1.5, maxWidth: 800 }),
+      validateToolArgs("studio.render_preview", {
+        compId: "Main",
+        timeSeconds: 1.5,
+        maxWidth: 800,
+      }),
     ).toEqual({ ok: true, value: { compId: "Main", timeSeconds: 1.5, maxWidth: 800 } });
     expect(validateToolArgs("studio.render_preview", { maxWidth: 1200 }).ok).toBe(true);
   });
@@ -176,12 +180,14 @@ describe("chat-tools validateToolArgs — invalid args (zod-style first issue)",
   it("studio.get_properties: rejects empty and >12 layerIds", () => {
     expect(validateToolArgs("studio.get_properties", { layerIds: [] }).ok).toBe(false);
     expect(
-      validateToolArgs("studio.get_properties", { layerIds: Array.from({ length: 13 }, (_, i) => String(i)) }).ok,
+      validateToolArgs("studio.get_properties", {
+        layerIds: Array.from({ length: 13 }, (_, i) => String(i)),
+      }).ok,
     ).toBe(false);
     expect(validateToolArgs("studio.get_properties", {}).ok).toBe(false);
-    expect(validateToolArgs("studio.get_properties", { layerIds: ["1"], paths: ["a", ""] }).ok).toBe(
-      false,
-    );
+    expect(
+      validateToolArgs("studio.get_properties", { layerIds: ["1"], paths: ["a", ""] }).ok,
+    ).toBe(false);
   });
 
   it("studio.render_preview: rejects maxWidth out of range and negative times", () => {
