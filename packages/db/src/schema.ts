@@ -37,7 +37,11 @@ import { createId } from "./ids.js";
  *   object store dedupes the blob itself (§9.2 content-addressed). The composite
  *   index exists for fast "is this content already stored" lookups.
  * - `credit_ledger` is append-only by convention; balance is SUM(amount) under a
- *   per-workspace advisory lock (see src/repos/ledger.ts).
+ *   per-workspace advisory lock (see src/repos/ledger.ts). `amount` and
+ *   `balance_after` are int64 (bigint, JS-number mode): D-12 keeps the units as
+ *   integer µc, and a Studio monthly grant (10_000_000_000 µc) overflows int32
+ *   (max 2_147_483_647) — migration 0003 widened both columns; JS numbers stay
+ *   exact up to 2^53, far above any µc balance (M6-A HIGH finding).
  * - `renders`, `comments` and `agent_*` scope through `project_id` per §9.1; the
  *   repos join projects to enforce tenancy.
  * - `projects.current_version_id` and `project_versions.parent_version_id` are
@@ -508,8 +512,8 @@ export const creditLedger = pgTable(
       .notNull()
       .references((): AnyPgColumn => organization.id, { onDelete: "cascade" }),
     kind: text("kind").$type<LedgerKind>().notNull(),
-    amount: integer("amount").notNull(), // signed
-    balanceAfter: integer("balance_after").notNull(),
+    amount: bigint("amount", { mode: "number" }).notNull(), // signed µc — int64 (M6-E; int32 overflowed at Studio scale)
+    balanceAfter: bigint("balance_after", { mode: "number" }).notNull(), // running SUM — int64 (widened with amount, migration 0003)
     runId: text("run_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     metadata: jsonb("metadata"),
