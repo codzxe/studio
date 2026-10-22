@@ -105,7 +105,7 @@ describe("zod validation at the boundary (§7.2)", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        cookie: `w3gw=fake-session-token-1`,
+        cookie: "w3gw=fake-session-token-1",
         "x-workspace-id": org.id,
         "idempotency-key": unique("idem"),
       },
@@ -133,10 +133,11 @@ describe("rate limiting (§7.1: per ip × route-class token buckets)", () => {
       expect(response.status).toBe(200);
     }
     expect(sawLimited).toBe(true);
-    const body = (await limitedResponse!.json()) as { error: Record<string, unknown> };
+    const limited = limitedResponse as Response;
+    const body = (await limited.json()) as { error: Record<string, unknown> };
     expect(body.error.code).toBe("RATE_LIMITED");
     expect(body.error.retryable).toBe(true);
-    const retryAfter = Number.parseInt(limitedResponse!.headers.get("retry-after") ?? "", 10);
+    const retryAfter = Number.parseInt(limited.headers.get("retry-after") ?? "", 10);
     expect(Number.isInteger(retryAfter)).toBe(true);
     expect(retryAfter).toBeGreaterThanOrEqual(1);
   });
@@ -155,7 +156,7 @@ describe("rate limiting (§7.1: per ip × route-class token buckets)", () => {
 describe("idempotency for POST /v1 mutations (§7.2)", () => {
   const signUpCookie = (): { cookie: string; workspaceId: string } => {
     const { org } = auth.signUp("owner");
-    return { cookie: `w3gw=fake-session-token-1`, workspaceId: org.id };
+    return { cookie: "w3gw=fake-session-token-1", workspaceId: org.id };
   };
 
   it("requires an Idempotency-Key (8-128 chars) before touching auth or handlers", async () => {
@@ -254,7 +255,7 @@ describe("Ok envelope shape (§7.3)", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        cookie: `w3gw=fake-session-token-1`,
+        cookie: "w3gw=fake-session-token-1",
         "x-workspace-id": org.id,
         "idempotency-key": unique("idem"),
       },

@@ -293,3 +293,72 @@ async function executeClientTool(call: { runId: string; toolCallId: string;
 4. Commit: `scripts/git-sync.sh "M4-<ID>: summary"`. Worklog append (template
    in AGENTS.md). Report: deliverables, deviations, handoff facts.
 5. No dev servers. DB needs `DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio`.
+
+---
+
+## Wave-1 as-built addendum (BINDING for waves 2–3; verified by integrator 2026-10-23)
+
+Corrections to the seams above, discovered while building:
+
+1. **Step-cap env is `CHAT_MAX_STEPS`** (`env.agent.chatMaxSteps`), not
+   MAX_MODEL_STEPS. Same for D-16's stale `MODEL_BASE_URL_*` parenthetical —
+   the real runner config is `env.litellm.{baseUrl,apiKey,virtualKey}`.
+2. **Gateway route mounts live in `services/gateway/src/app.ts` (`buildApp`)**,
+   NOT `src/index.ts` (which only wires env/runner/startup).
+3. **`layer.tree` is PER-LAYER** (`{ layer?, comp?, depth?, time? }`; `layer`
+   defaults to the FIRST selected layer — a bare `{comp, depth}` silently
+   drops all but one selected layer). Verified against
+   `editor/crates/engine/src/commands/query.rs` + fake. Consequences:
+   - `studio.list_layers` = `comp.info {comp}` (authoritative layer list) +
+     per-layer `layer.tree {comp, layer, depth}` (concurrency 4, `tree: null`
+     on per-item failure).
+   - `comp.info` params: `{ comp? }` (id or name, default active).
+   - `prop.get` params: `{ layer?, path }` (`path` required).
+   - `edit.history.list` params: `{}`; result `{states, current, branches}`.
+   - `ui.inspect.time` is raw comp seconds → `timecodeLabel` formats mm:ss.d.
+4. **`studio.plan_edit` is fully server-side** (runner emits BOTH tool.started
+   and tool.result for it; the client executor MUST skip it — it does, by
+   name). Client tools: exactly get_context / list_layers / get_properties /
+   render_preview. The ChatController must never post tool.result itself.
+5. **api-client `chat.stream`/`streamChat` already owns the §8.4 reconnect
+   loop**: same idempotencyKey re-POST + `Last-Event-ID` cursor, backoff
+   1/2/4/8→30s, auto-pause after 3 attempts (`onPause`), manual
+   `reconnect()`, fused `cancel()` = POST /runs/:id/cancel + reader abort.
+   ChatController maps callbacks → state; it does not re-implement retry.
+6. **Tool-event body** (POST /v1/runs/:id/events, strictObject):
+   `{ type: "tool.result", toolCallId, result }` — result may be data or
+   `{ error: <CODE>, message }`; idempotencyKey `toolresult:<runId>:<toolCallId>`.
+7. **Model entitlements wire**: `GET /v1/models` → `Ok({plan, models:[{id,
+   tier, use, creditsPer1kInput, creditsPer1kOutput}]})` (no allowedPlans
+   leaks); `client.models.list()`. Off-plan chat POST → `MODEL_NOT_ENTITLED`
+   (403 envelope). Trial ⇒ exactly [studio-fast] (model picker shows one
+   option; the picker must render gracefully for single-model plans).
+8. **Credits event**: `{reserved, committed, balance}` with committed
+   ledger-capped at the reserve; committed credits from real LiteLLM usage
+   (`stream_options.include_usage`), chars/4 estimate when absent.
+9. **Run-failure SSE codes are free-form** (catalog entries only matter for
+   HTTP envelopes): `RUN_STEP_LIMIT` (retryable false) is the step-cap code.
+10. **web chat engine surface (wave-2 consumes, verbatim from M4-B's
+    worklog)**: `createChatController({client: ChatControllerClient,
+    workspaceId, projectId, threadId, onError?})` →
+    `{ runId, getSnapshot, subscribe, send(input: ChatSendInput), stop(),
+    retry(), dispose }`; mount with `useSyncExternalStore(subscribe,
+    getSnapshot)`; tool-executor observation = diff `toolCards` with status
+    "running" on the active-run message (M4-J wires this to
+    `createToolExecutor`); steer-queue renders user messages immediately.
+    `RUN_PAUSED_ERROR = {code:"RUN_PAUSED", message:"Run paused. Check your
+    connection.", retryable:true}` for the reconnect-park banner.
+11. **Context surface (M4-C)**: `collectContextSnapshot(bridge, {flags,
+    pinned?})` → `{flags, blocks[], pinned, totalTokenEstimate}`; block kinds
+    are ContextSelection keys with labels "Project summary", "Comp: <name>",
+    "Selection: <names>", "Selected properties", "Playhead mm:ss.d",
+    "Panel: <focused>", "Frame preview", "Recent commands", "Comments";
+    `DEFAULT_FLAGS` + `autoFlags(inspect)` (selection-aware);
+    `estimateTokens(v)`, `formatTokenEstimate(n)`, `timecodeLabel(seconds)`,
+    `commentsBlockPlaceholder()`.
+12. **Grep note**: `docs/AGENTS.md` says tests must be deterministic; the
+    gateway suite runs WITH `DATABASE_URL` (14s wall). All wave-1 gates are
+    green: contracts 105/105, api-client 117/117, gateway 91/91, web 178/178,
+    typecheck 0 everywhere, biome clean (gateway's pre-existing W2/W3 lint
+    debt cleared by the integrator in the wave-1 commit — behavior-identical
+    fixes, suite re-verified).

@@ -66,7 +66,7 @@ export function creditsRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
     const body: CreditsSummary = {
       balance,
-      includedCredits: PLAN_MONTHLY_CREDITS["trial"] ?? 0,
+      includedCredits: PLAN_MONTHLY_CREDITS.trial ?? 0,
       purchasedCredits: 0,
       reserved,
       plan: "trial",
