@@ -1,4 +1,4 @@
-//! EffectCraft in the browser.
+//! Studio in the browser.
 //!
 //! The same engine and egui UI as the desktop app, compiled to `wasm32-unknown-unknown` and run
 //! by eframe's web runner (WebGPU, WebGL2 fallback). What the desktop shell gets from the OS, this

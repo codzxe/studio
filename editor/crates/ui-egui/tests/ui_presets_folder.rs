@@ -10,7 +10,7 @@ use serde_json::json;
 fn expected_folder() -> String {
     let path = std::env::var("EC_PRESETS_DIR").unwrap_or_else(|_| {
         let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap();
-        std::path::Path::new(&home).join("Documents/EffectCraft/Presets").to_str().unwrap().to_string()
+        std::path::Path::new(&home).join("Documents/Studio/Presets").to_str().unwrap().to_string()
     });
     if path.is_empty() { path } else { std::path::absolute(path).unwrap().to_str().unwrap().to_string() }
 }

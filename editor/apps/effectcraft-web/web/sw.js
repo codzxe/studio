@@ -1,4 +1,4 @@
-// EffectCraft service worker: the app works offline once loaded, and installs as an app.
+// Studio service worker: the app works offline once loaded, and installs as an app.
 //
 // `cargo xtask web` fills in the build's file list and version. Every file is precached into a
 // cache named after the version, served cache-first (responses keep the server's headers, so

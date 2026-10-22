@@ -1,6 +1,6 @@
 //! Edit ▸ Keyboard Shortcuts: After Effects' visual shortcut editor.
 //!
-//! Top: the preset menu (EffectCraft Default = After Effects' defaults, read-only; custom presets
+//! Top: the preset menu (Studio Default = After Effects' defaults, read-only; custom presets
 //! can be duplicated, renamed, deleted, imported and exported) and the search field. Middle: an
 //! on-screen keyboard for the toggled (or held) modifiers, keys coloured by what they run in
 //! that combination: purple for application-wide commands, green for panel-specific ones, both

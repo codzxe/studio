@@ -78,7 +78,7 @@ pub(crate) fn open_or_import(app: &mut EffectcraftApp, paths: Vec<String>) {
     }
 }
 
-/// The eframe app: the shared EffectCraft UI plus the browser host's per-frame duties.
+/// The eframe app: the shared Studio UI plus the browser host's per-frame duties.
 pub struct WebApp {
     pub app: EffectcraftApp,
     /// Keep the session snapshot (off with `?empty`).
