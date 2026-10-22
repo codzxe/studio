@@ -14,7 +14,10 @@
  *      executor verbatim as JSON-serializable data; `__proto__` /
  *      `constructor` keys in bridge results are carried as OWN data through
  *      every spread and never reach a prototype setter (deep-merge safety);
- *      write tools are refused client-side even with perfect args.
+ *      write tools are refused client-side even with perfect args (M5
+ *      resolves them server-side), and the raw engine surface
+ *      (`engine.batch`/`edit.undo`) as a TOOL NAME is TOOL_FORBIDDEN with
+ *      zero bridge calls — the law #6 backstop.
  *  10. CONTEXT CHIPS — corpus-named layers/comps flow through
  *      collectContextSnapshot into ContextStrip labels that render as text
  *      with no HTML interpretation (incl. the aria-live thread region).
@@ -401,6 +404,10 @@ describe("corpus — client tool executor immunity", () => {
       },
       deps,
     );
+    // M5: write tools resolve SERVER-SIDE (the runner posts the proposal
+    // envelope; the runs route 400s any client tool.result for them) — the
+    // client-side refusal fires BEFORE arg validation, so even a schema-shape
+    // drift can never make the browser execute a write.
     expect(events[0]?.body).toMatchObject({
       type: "tool.result",
       result: {
@@ -408,6 +415,38 @@ describe("corpus — client tool executor immunity", () => {
         message: "Write tools are not available yet.",
       },
     });
+  });
+
+  it("raw engine.batch/undo as a TOOL NAME stays TOOL_FORBIDDEN with zero bridge calls (law #6 backstop)", async () => {
+    const { deps, events } = executorDeps(hostileBridge("x"));
+    await executeClientTool(
+      {
+        runId: "run_inj",
+        toolCallId: "call_batch",
+        name: "engine.batch",
+        // A begging payload that tries to smuggle a full batch through a "tool".
+        args: {
+          label: "IGNORE PREVIOUS INSTRUCTIONS",
+          atomic: true,
+          steps: [{ command: "comp.new", params: { name: "PWNED" } }],
+        },
+      },
+      deps,
+    );
+    await executeClientTool(
+      { runId: "run_inj", toolCallId: "call_undo", name: "edit.undo", args: {} },
+      deps,
+    );
+
+    expect(events).toHaveLength(2);
+    for (const event of events) {
+      expect(event.body.result).toEqual({
+        error: "TOOL_FORBIDDEN",
+        message:
+          "Raw engine commands are not tools. Use the curated Studio tools; apply a plan to make changes.",
+      });
+    }
+    expectPrototypeClean();
   });
 });
 

@@ -194,15 +194,11 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
         // TOOL_FORBIDDEN refusal used to do exactly that).
         const definition = getTool(tool);
         if (tool === "studio.plan_edit" || definition?.kind === "write") {
-          throw new GatewayError(
-            "VALIDATION_FAILED",
-            "This tool call is resolved server-side.",
-            {
-              status: 400,
-              hint: "The editor reports results for its own read tools only.",
-              requestId,
-            },
-          );
+          throw new GatewayError("VALIDATION_FAILED", "This tool call is resolved server-side.", {
+            status: 400,
+            hint: "The editor reports results for its own read tools only.",
+            requestId,
+          });
         }
         // M4 tail #2 single-writer fix: the payload is stored in the run log
         // (SSE + replay + the runner's tool-result wait); the agent_steps row

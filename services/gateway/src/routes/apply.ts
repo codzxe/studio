@@ -51,7 +51,7 @@ const applySettleKey = (runId: string): string => `apply:${runId}:settle`;
  */
 const APPLYABLE_RUN_STATUSES = ["awaiting_approval", "completed"] as const;
 
-export function applyRoutes(_deps: GatewayDeps): Hono<AppBindings> {
+export function applyRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
   app.use("/v1/runs/*", requireAuth());
 
@@ -59,7 +59,6 @@ export function applyRoutes(_deps: GatewayDeps): Hono<AppBindings> {
     "/v1/runs/:id/apply",
     requireWorkspace("editor"),
     async (c: AppContext): Promise<Response> => {
-      const deps = _deps;
       const requestId = c.get("requestId");
       const workspace = c.get("workspace");
       const runId = pathParam(c, "id");
@@ -104,15 +103,11 @@ export function applyRoutes(_deps: GatewayDeps): Hono<AppBindings> {
 
       if (planState.status !== "proposed") {
         // Already applied (different batch/version) or already undone.
-        throw new GatewayError(
-          "RUN_ALREADY_APPLIED",
-          "This run's plan was already applied.",
-          {
-            status: 409,
-            hint: "Undo it first, or start a new run to apply again.",
-            requestId,
-          },
-        );
+        throw new GatewayError("RUN_ALREADY_APPLIED", "This run's plan was already applied.", {
+          status: 409,
+          hint: "Undo it first, or start a new run to apply again.",
+          requestId,
+        });
       }
 
       if (!applyable(run.status)) {
@@ -225,7 +220,6 @@ export function applyRoutes(_deps: GatewayDeps): Hono<AppBindings> {
     "/v1/runs/:id/undo",
     requireWorkspace("editor"),
     async (c: AppContext): Promise<Response> => {
-      const deps = _deps;
       const requestId = c.get("requestId");
       const workspace = c.get("workspace");
       const runId = pathParam(c, "id");

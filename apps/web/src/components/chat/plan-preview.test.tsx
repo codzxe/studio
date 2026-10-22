@@ -21,6 +21,7 @@ import { BridgeError } from "@studio/editor-bridge";
 import { attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { PlanCard } from "./plan-card";
 import { PlanPreview } from "./plan-preview";
 
 // ---------------------------------------------------------------------------
@@ -123,13 +124,13 @@ describe("PlanPreview — loading → before/after frames", () => {
     // Effects flush inside act(): the pre-effect paint may show "idle" —
     // both idle and loading render the spinner; frames arrive async.
     expect(["idle", "loading"]).toContain(
-      screen.getByTestId("plan-preview").getAttribute("data-status"),
+      screen.getByTestId("plan-preview-panel").getAttribute("data-status"),
     );
     expect(screen.getByTestId("plan-preview-loading")).toBeInTheDocument();
 
     await frames();
 
-    expect(screen.getByTestId("plan-preview")).toHaveAttribute("data-status", "ready");
+    expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "ready");
     expect(screen.getByTestId("plan-preview-caption")).toHaveTextContent("Preview · 00:00.5");
     expect(screen.getByTestId("plan-preview-time")).toHaveTextContent("00:00.5");
     expect(screen.getByTestId("plan-preview-source")).toHaveTextContent("chosen time");
@@ -150,7 +151,7 @@ describe("PlanPreview — loading → before/after frames", () => {
     await frames();
     expect(screen.getByTestId("plan-preview-caption")).toHaveTextContent("Preview · 00:01.5");
     expect(screen.getByTestId("plan-preview-source")).toHaveTextContent("playhead");
-    expect(screen.getByTestId("plan-preview")).toHaveAttribute("data-status", "ready");
+    expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "ready");
   });
 
   it("prefers the plan's FIRST AFFECTED TIME over the playhead (ECUX §6.2)", async () => {
@@ -175,7 +176,7 @@ describe("PlanPreview — loading → before/after frames", () => {
       <PlanPreview bridge={counter.wrapped} batch={batch("A")} timeTicks={secondsToTicks(1)} />,
     );
     await waitFor(() => {
-      expect(screen.getByTestId("plan-preview")).toHaveAttribute("data-status", "ready");
+      expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "ready");
     });
     expect(counter.count()).toBe(2); // same content — no pointless re-probe
 
@@ -205,7 +206,7 @@ describe("PlanPreview — failure states", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("plan-preview")).toHaveAttribute("data-status", "failed");
+      expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "failed");
     });
     expect(onPreviewFailed).toHaveBeenCalledTimes(1);
     const failure = onPreviewFailed.mock.calls[0]?.[0] as { code: string; restored: boolean };
@@ -237,7 +238,7 @@ describe("PlanPreview — failure states", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("plan-preview")).toHaveAttribute("data-status", "failed");
+      expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "failed");
     });
     const failure = onPreviewFailed.mock.calls[0]?.[0] as { code: string; restored: boolean };
     expect(failure.code).toBe("PREVIEW_UNDO_FAILED");
@@ -253,16 +254,16 @@ describe("PlanPreview — failure states", () => {
     render(<PlanPreview bridge={bridge} batch={batch()} timeTicks={secondsToTicks(1)} />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("plan-preview")).toHaveAttribute("data-status", "failed");
+      expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "failed");
     });
     fireEvent.click(screen.getByTestId("plan-preview-retry"));
     await frames();
-    expect(screen.getByTestId("plan-preview")).toHaveAttribute("data-status", "ready");
+    expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "ready");
   });
 
   it("renders an honest failure panel when neither a controller nor a bridge is wired", () => {
     render(<PlanPreview batch={batch()} />);
-    expect(screen.getByTestId("plan-preview")).toHaveAttribute("data-status", "failed");
+    expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "failed");
     expect(screen.getByTestId("plan-preview-failure-message")).toHaveTextContent(
       "No editor connection for previews.",
     );
@@ -293,6 +294,24 @@ describe("PlanPreview — controller injection", () => {
     expect(screen.getByTestId("plan-preview-source")).toHaveTextContent("chosen time");
     controller.dispose();
   });
+
+  it("slots into M5-G's PlanCard `preview` ReactNode seam (exactly one wrapper, one panel)", async () => {
+    const bridge = makeBridge();
+    const plan = planWith({ timeSeconds: 0.45 });
+    render(
+      <PlanCard
+        plan={plan}
+        preview={<PlanPreview bridge={bridge} batch={batch()} plan={plan} />}
+      />,
+    );
+    // The card's own slot wrapper and my panel coexist — no testid collisions.
+    expect(screen.getAllByTestId("plan-preview")).toHaveLength(1); // M5-G's wrapper
+    await frames();
+    expect(screen.getAllByTestId("plan-preview-panel")).toHaveLength(1); // my panel
+    expect(screen.getByTestId("plan-card")).toContainElement(
+      screen.getByTestId("plan-preview-frames"),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -321,7 +340,7 @@ describe("PlanPreview — hostile data renders as data", () => {
     render(<PlanPreview bridge={bridge} batch={batch()} timeTicks={secondsToTicks(1)} />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("plan-preview")).toHaveAttribute("data-status", "failed");
+      expect(screen.getByTestId("plan-preview-panel")).toHaveAttribute("data-status", "failed");
     });
     const message = screen.getByTestId("plan-preview-failure-message");
     expect(message).toHaveTextContent(hostile);

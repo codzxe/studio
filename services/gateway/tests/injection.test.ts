@@ -227,7 +227,12 @@ function makeRun(overrides: Partial<AgentRun> = {}): AgentRun {
 
 function makeRunner(
   script: ReadonlyArray<Response>,
-  options: { maxSteps?: number; stream?: FakeStream; logger?: Logger; compilePlan?: CompilePlanFn } = {},
+  options: {
+    maxSteps?: number;
+    stream?: FakeStream;
+    logger?: Logger;
+    compilePlan?: CompilePlanFn;
+  } = {},
 ): {
   runner: ReturnType<typeof createLiteLLMRunner>;
   fetchCalls: RecordedCall[];

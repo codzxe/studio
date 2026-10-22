@@ -215,7 +215,7 @@ export function PlanPreview({
 
   if (effectiveController === null) {
     return (
-      <div data-testid="plan-preview" data-status="failed">
+      <div data-testid="plan-preview-panel" data-status="failed">
         <FailurePanel
           failure={{
             code: "PREVIEW_BEFORE_FAILED",
@@ -231,7 +231,7 @@ export function PlanPreview({
   const loading = state.status === "idle" || state.status === "loading";
   return (
     <div
-      data-testid="plan-preview"
+      data-testid="plan-preview-panel"
       data-status={state.status}
       className="flex flex-col gap-2 rounded-xs border border-subtle p-2"
     >

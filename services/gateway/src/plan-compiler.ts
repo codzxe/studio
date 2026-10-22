@@ -53,21 +53,21 @@
 
 import {
   AGENT_COMMAND_REGISTRY,
-  EDIT_PLAN_SCHEMA,
-  type EditPlan,
-  estimateCredits,
   type AgentBatch,
   type BatchStep,
-  checkBatchCommands,
   type CommandSchema,
+  EDIT_PLAN_SCHEMA,
+  type EditPlan,
   MAX_BATCH_BYTES,
   MAX_BATCH_LABEL_LENGTH,
   MAX_BATCH_STEPS,
   MAX_PLAN_AFFECTED_LAYERS,
-  type PlanRisk,
   PLAN_RISK_ORDER,
-  validateBatchRefs,
+  type PlanRisk,
   WRITE_TOOL_ARGS_SCHEMAS,
+  checkBatchCommands,
+  estimateCredits,
+  validateBatchRefs,
 } from "@studio/contracts";
 import type { ZodTypeAny } from "zod";
 
@@ -345,11 +345,19 @@ class Compiler {
     target.push(issue);
   }
 
-  fatal(code: PlanIssueCode, message: string, extra?: Omit<PlanIssue, "severity" | "code" | "message">): void {
+  fatal(
+    code: PlanIssueCode,
+    message: string,
+    extra?: Omit<PlanIssue, "severity" | "code" | "message">,
+  ): void {
     this.pushIssue({ severity: "fatal", code, message: clip(message), ...extra });
   }
 
-  warn(code: PlanIssueCode, message: string, extra?: Omit<PlanIssue, "severity" | "code" | "message">): void {
+  warn(
+    code: PlanIssueCode,
+    message: string,
+    extra?: Omit<PlanIssue, "severity" | "code" | "message">,
+  ): void {
     this.pushIssue({ severity: "warn", code, message: clip(message), ...extra });
   }
 
@@ -440,7 +448,10 @@ class Compiler {
           if (layer === undefined) {
             // Without a layer the engine falls back to the EDITOR SELECTION —
             // a wrong-target hazard; never compile that (skip + warn).
-            unusable("updates", "entry has no layer; it would target the editor selection (skipped)");
+            unusable(
+              "updates",
+              "entry has no layer; it would target the editor selection (skipped)",
+            );
             continue;
           }
           const params: Record<string, unknown> = { layer };
@@ -482,8 +493,7 @@ class Compiler {
           if (easing !== undefined && easing !== "linear") {
             this.warn(
               "uncompilable_arg",
-              `easing \`${clip(easing, 24)}\` is editor-side keyframe interpolation; the ` +
-                "keyframe compiles with the engine default (set it via the timeline after apply)",
+              `easing \`${clip(easing, 24)}\` is editor-side keyframe interpolation; the keyframe compiles with the engine default (set it via the timeline after apply)`,
               { step: planStep, tool, param: "easing" },
             );
           }
@@ -511,8 +521,7 @@ class Compiler {
             for (const key of Object.keys(effectParams).sort()) {
               this.warn(
                 "uncompilable_arg",
-                `effect parameter \`${clip(key, 40)}\` cannot be compiled server-side (the ` +
-                  "effect instance index is editor state); set it via set_properties after apply",
+                `effect parameter \`${clip(key, 40)}\` cannot be compiled server-side (the effect instance index is editor state); set it via set_properties after apply`,
                 { step: planStep, tool, param: key },
               );
             }
@@ -571,10 +580,14 @@ class Compiler {
         const rawLabel = argsObj.label;
         const label = typeof rawLabel === "string" ? rawLabel : undefined;
         if (this.saveVersion !== undefined && this.saveVersionStep !== undefined) {
-          this.warn("duplicate_save_version", "an earlier save_version step was superseded (the last labels the version)", {
-            step: this.saveVersionStep,
-            tool,
-          });
+          this.warn(
+            "duplicate_save_version",
+            "an earlier save_version step was superseded (the last labels the version)",
+            {
+              step: this.saveVersionStep,
+              tool,
+            },
+          );
         }
         this.saveVersion = label !== undefined ? { label } : {};
         this.saveVersionStep = planStep;
@@ -583,7 +596,10 @@ class Compiler {
 
       default: {
         // Exhaustiveness guard — lookupWriteTool already rejected unknown ids.
-        this.fatal("unknown_tool", `tool \`${clip(tool, 64)}\` is not a write tool`, { step: planStep, tool });
+        this.fatal("unknown_tool", `tool \`${clip(tool, 64)}\` is not a write tool`, {
+          step: planStep,
+          tool,
+        });
         break;
       }
     }
@@ -603,34 +619,46 @@ class Compiler {
     // the prototype chain (SEAMS: "never invent a command id").
     for (const [index, step] of proposed.entries()) {
       if (!registryHas(this.depsRegistry, step.command)) {
-        this.warn("unknown_command", `proposed command \`${clip(step.command, 64)}\` is not in the agent registry`, {
-          step: planStep,
-          tool,
-          command: step.command,
-          batchStep: index + 1,
-        });
+        this.warn(
+          "unknown_command",
+          `proposed command \`${clip(step.command, 64)}\` is not in the agent registry`,
+          {
+            step: planStep,
+            tool,
+            command: step.command,
+            batchStep: index + 1,
+          },
+        );
       }
     }
     // Required params for the KNOWN proposed commands (reuse the contracts
     // helper; unknown-command duplicates were handled above).
     for (const issue of checkBatchCommands({ steps: [...proposed] }, this.depsRegistry)) {
       if (issue.reason !== "missing_required_param") continue;
-      this.warn("missing_required_param", `proposed \`${issue.command}\` is missing required param \`${issue.param}\``, {
-        step: planStep,
-        tool,
-        command: issue.command,
-        batchStep: issue.step,
-        param: issue.param,
-      });
+      this.warn(
+        "missing_required_param",
+        `proposed \`${issue.command}\` is missing required param \`${issue.param}\``,
+        {
+          step: planStep,
+          tool,
+          command: issue.command,
+          batchStep: issue.step,
+          param: issue.param,
+        },
+      );
     }
     // Backwards-only $N.key refs (§8.5) within the proposed batch's own
     // 1-based numbering.
     for (const issue of validateBatchRefs(proposed)) {
-      this.warn("unresolvable_ref", `proposed batch has $-reference \`${issue.ref.raw}\` (${issue.reason})`, {
-        step: planStep,
-        tool,
-        batchStep: issue.step,
-      });
+      this.warn(
+        "unresolvable_ref",
+        `proposed batch has $-reference \`${issue.ref.raw}\` (${issue.reason})`,
+        {
+          step: planStep,
+          tool,
+          batchStep: issue.step,
+        },
+      );
     }
     // Disagreement: the compiled translation wins — warn, never merge.
     const agrees =
@@ -641,10 +669,14 @@ class Compiler {
           stableStringify(step.params) === stableStringify(translated[index]?.params),
       );
     if (!agrees) {
-      this.warn("batch_mismatch", "the model's proposed batch disagrees with the compiled translation; the translation stands", {
-        step: planStep,
-        tool,
-      });
+      this.warn(
+        "batch_mismatch",
+        "the model's proposed batch disagrees with the compiled translation; the translation stands",
+        {
+          step: planStep,
+          tool,
+        },
+      );
     }
   }
 
@@ -687,7 +719,12 @@ function lookupWriteTool(deps: CompileDeps, tool: string): NormalizedTool | unde
   for (const candidate of [bare, `${STUDIO_TOOL_PREFIX}${bare}`, tool]) {
     if (!Object.prototype.hasOwnProperty.call(deps.writeTools, candidate)) continue;
     const entry = deps.writeTools[candidate];
-    if (entry !== null && typeof entry === "object" && "safeParse" in entry && typeof entry.safeParse === "function") {
+    if (
+      entry !== null &&
+      typeof entry === "object" &&
+      "safeParse" in entry &&
+      typeof entry.safeParse === "function"
+    ) {
       return { bareId: bare, argsSchema: entry as ZodTypeAny };
     }
     if (isPlainObject(entry)) {
@@ -711,7 +748,11 @@ function lookupWriteTool(deps: CompileDeps, tool: string): NormalizedTool | unde
 }
 
 /** Write `value` at a `layer`/`layers[i]`-style path inside a params object. */
-function applyParamPath(params: Record<string, unknown>, path: string, value: string | number): void {
+function applyParamPath(
+  params: Record<string, unknown>,
+  path: string,
+  value: string | number,
+): void {
   const match = /^([A-Za-z0-9_]+)(?:\[(\d+)\])?$/.exec(path);
   if (match === null) return;
   const key = match[1];
@@ -748,7 +789,10 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
     return { ok: false, issues: compiler.fatals };
   }
   if (serializedPlan.length > MAX_PLAN_BYTES) {
-    compiler.fatal("plan_too_large", `the plan is too large to compile (${serializedPlan.length} bytes)`);
+    compiler.fatal(
+      "plan_too_large",
+      `the plan is too large to compile (${serializedPlan.length} bytes)`,
+    );
     return { ok: false, issues: compiler.fatals };
   }
 
@@ -757,7 +801,10 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
   const parsed = EDIT_PLAN_SCHEMA.safeParse(plan);
   if (!parsed.success) {
     const messages = parsed.error.issues.slice(0, 5).map((issue) => issue.message);
-    compiler.fatal("plan_schema", `the plan failed its schema: ${messages.join("; ") || "invalid shape"}`);
+    compiler.fatal(
+      "plan_schema",
+      `the plan failed its schema: ${messages.join("; ") || "invalid shape"}`,
+    );
     return { ok: false, issues: compiler.fatals };
   }
   const editPlan = parsed.data;
@@ -772,10 +819,14 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
     }
     const tool = lookupWriteTool(deps, planStep.tool);
     if (tool === undefined) {
-      compiler.fatal("unknown_tool", `tool \`${clip(planStep.tool, 64)}\` is not one of the 8 write tools`, {
-        step: position,
-        tool: planStep.tool,
-      });
+      compiler.fatal(
+        "unknown_tool",
+        `tool \`${clip(planStep.tool, 64)}\` is not one of the 8 write tools`,
+        {
+          step: position,
+          tool: planStep.tool,
+        },
+      );
       continue;
     }
 
@@ -796,10 +847,14 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
         argsMessage = "args could not be validated";
       }
       if (!argsOk) {
-        compiler.fatal("invalid_args", `args for \`${tool.bareId}\` failed validation: ${argsMessage}`, {
-          step: position,
-          tool: tool.bareId,
-        });
+        compiler.fatal(
+          "invalid_args",
+          `args for \`${tool.bareId}\` failed validation: ${argsMessage}`,
+          {
+            step: position,
+            tool: tool.bareId,
+          },
+        );
         continue;
       }
     }
@@ -815,33 +870,51 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
   // -- 3. bounds + registry gate on the COMPILED batch (violations are fatal).
   const steps: BatchStep[] = [...compiler.steps()];
   if (steps.length === 0) {
-    compiler.fatal("empty_batch", "the plan compiles to an empty command batch (only annotation steps)");
+    compiler.fatal(
+      "empty_batch",
+      "the plan compiles to an empty command batch (only annotation steps)",
+    );
     return { ok: false, issues: compiler.fatals };
   }
   if (steps.length > MAX_BATCH_STEPS) {
-    compiler.fatal("too_many_commands", `the compiled batch has ${steps.length} commands (max ${MAX_BATCH_STEPS})`);
+    compiler.fatal(
+      "too_many_commands",
+      `the compiled batch has ${steps.length} commands (max ${MAX_BATCH_STEPS})`,
+    );
     return { ok: false, issues: compiler.fatals };
   }
   for (const issue of checkBatchCommands({ steps }, deps.registry)) {
     if (issue.reason === "unknown_command") {
-      compiler.fatal("unknown_command", `compiled command \`${issue.command}\` is not in the agent registry`, {
-        batchStep: issue.step,
-        command: issue.command,
-      });
+      compiler.fatal(
+        "unknown_command",
+        `compiled command \`${issue.command}\` is not in the agent registry`,
+        {
+          batchStep: issue.step,
+          command: issue.command,
+        },
+      );
     } else {
-      compiler.fatal("missing_required_param", `\`${issue.command}\` is missing required param \`${issue.param}\``, {
-        batchStep: issue.step,
-        command: issue.command,
-        param: issue.param,
-      });
+      compiler.fatal(
+        "missing_required_param",
+        `\`${issue.command}\` is missing required param \`${issue.param}\``,
+        {
+          batchStep: issue.step,
+          command: issue.command,
+          param: issue.param,
+        },
+      );
     }
   }
   // The compiled batch is name-based by construction — refs are validated as
   // defense-in-depth anyway (§8.5 backwards-only $N.key).
   for (const issue of validateBatchRefs(steps)) {
-    compiler.fatal("unresolvable_ref", `compiled batch has $-reference \`${issue.ref.raw}\` (${issue.reason})`, {
-      batchStep: issue.step,
-    });
+    compiler.fatal(
+      "unresolvable_ref",
+      `compiled batch has $-reference \`${issue.ref.raw}\` (${issue.reason})`,
+      {
+        batchStep: issue.step,
+      },
+    );
   }
   if (compiler.fatals.length > 0) {
     return { ok: false, issues: compiler.fatals };
@@ -874,9 +947,13 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
   for (const site of compiler.layerSites()) {
     if (declaredNames.includes(site.layerName) || warnedUndeclared.has(site.layerName)) continue;
     warnedUndeclared.add(site.layerName);
-    compiler.warn("undeclared_layer", `layer \`${clip(site.layerName, 64)}\` is used by a step but not declared in the plan`, {
-      step: site.planStep,
-    });
+    compiler.warn(
+      "undeclared_layer",
+      `layer \`${clip(site.layerName, 64)}\` is used by a step but not declared in the plan`,
+      {
+        step: site.planStep,
+      },
+    );
   }
 
   const resolved = new Map<string, string | number>();
@@ -886,7 +963,10 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
         const id = deps.layerResolver(name);
         if (id !== undefined) resolved.set(name, id);
       } catch {
-        compiler.warn("resolver_error", "the layer resolver failed; the layer name stays in the batch");
+        compiler.warn(
+          "resolver_error",
+          "the layer resolver failed; the layer name stays in the batch",
+        );
       }
     }
   }
@@ -909,7 +989,12 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
       // Substitute the authoritative id (resolver-provided, never fabricated).
       const step = steps[site.globalStep];
       if (step !== undefined) applyParamPath(step.params, site.param, resolvedId);
-      placeholders.push({ step: site.globalStep + 1, param: site.param, layerName: site.layerName, resolvedId });
+      placeholders.push({
+        step: site.globalStep + 1,
+        param: site.param,
+        layerName: site.layerName,
+        resolvedId,
+      });
       continue;
     }
     placeholders.push({
@@ -964,7 +1049,10 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
  * layer-name resolution requests, recomputed risk + credits, and typed issues.
  * Accepts a bare EditPlan or a SEAMS CompilePlanInput. NEVER throws (law #1).
  */
-export function compilePlan(planOrInput: EditPlan | CompilePlanInput, deps: CompileDeps): CompilePlanResult {
+export function compilePlan(
+  planOrInput: EditPlan | CompilePlanInput,
+  deps: CompileDeps,
+): CompilePlanResult {
   try {
     const plan = isCompileInput(planOrInput) ? planOrInput.plan : planOrInput;
     return compilePlanInner(plan, deps);
@@ -972,7 +1060,9 @@ export function compilePlan(planOrInput: EditPlan | CompilePlanInput, deps: Comp
     // Absolute backstop: no stack traces, no details (law #1).
     return {
       ok: false,
-      issues: [{ severity: "fatal", code: "internal", message: "plan compilation failed unexpectedly" }],
+      issues: [
+        { severity: "fatal", code: "internal", message: "plan compilation failed unexpectedly" },
+      ],
     };
   }
 }

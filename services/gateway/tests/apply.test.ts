@@ -177,8 +177,7 @@ async function seedRun(ws: Workspace, projectId: string, options: SeedRunOptions
     model: "studio-fast",
     baseVersionId: options.baseVersionId,
     reservedCredits: 0,
-    planJson:
-      options.withPlan === false ? undefined : agentPlan(options.planCredits ?? 2),
+    planJson: options.withPlan === false ? undefined : agentPlan(options.planCredits ?? 2),
   });
   const reserve = options.reserve ?? 10;
   if (reserve > 0) {
@@ -219,7 +218,9 @@ interface ApplyBody {
 }
 
 function batchSha(): string {
-  return createHash("sha256").update(`batch-${unique("sha")}`).digest("hex");
+  return createHash("sha256")
+    .update(`batch-${unique("sha")}`)
+    .digest("hex");
 }
 
 async function applyCall(ws: Workspace, runId: string, body: ApplyBody, key?: string) {
@@ -269,7 +270,11 @@ d("apply → undo lifecycle (§8.7, §8.8/D-20)", () => {
   });
 
   it("applies: 200 Ok, plan credits committed, D-20 releases the FULL hold", async () => {
-    const response = await applyCall(ws, runId, { batchSha256: sha, versionId: appliedVersionId, idempotencyKey: key });
+    const response = await applyCall(ws, runId, {
+      batchSha256: sha,
+      versionId: appliedVersionId,
+      idempotencyKey: key,
+    });
     const body = await envelope(response);
     expect(response.status).toBe(200);
     expect(body.ok).toEqual({
@@ -284,10 +289,14 @@ d("apply → undo lifecycle (§8.7, §8.8/D-20)", () => {
     expect(state.baseVersionId).toBe(baseVersionId);
 
     // §8.8 ledger (D-20): reserve −10, commit −2, refund +10 ⇒ run nets −2.
+    // (list() orders by createdAt desc with id tie-breaks — sort by kind to
+    // make the set-comparison deterministic.)
     const entries = await runLedger(ws.id, runId);
-    expect(entries.map((entry) => [entry.kind, entry.amount])).toEqual([
-      ["refund", 10],
+    expect(
+      [...entries].sort((a, b) => a.kind.localeCompare(b.kind)).map((e) => [e.kind, e.amount]),
+    ).toEqual([
       ["commit", -2],
+      ["refund", 10],
       ["reserve", -10],
     ]);
     expect(entries.filter((entry) => entry.kind === "commit")).toHaveLength(1);

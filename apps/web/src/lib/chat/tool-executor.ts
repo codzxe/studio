@@ -1,29 +1,31 @@
 /**
  * apps/web — the CLIENT-side agent tool executor (M4-SEAMS.md seam 6,
- * PRODUCT_ARCHITECTURE.md §7.4/§8.4; M5 write-tool proposals per §8.4 rules 1–5
- * + docs/phases/M5-SEAMS.md).
+ * PRODUCT_ARCHITECTURE.md §7.4/§8.4; M5 posture per the landed wave-1 seams:
+ * contracts write-tools.ts + the gateway runner/runs route).
  *
  * When the gateway's runner emits a §7.4 `tool.started` event for one of the
  * curated tools, M4-J's wiring hands the call to this executor, which:
  *
  *   1. refuses the RAW engine surface as a tool (`engine.batch`,
  *      `engine.execute`, `edit.undo`, `edit.redo`) with TOOL_FORBIDDEN and
- *      ZERO bridge calls — executing a batch outside the ApplyController
- *      (M5-F) would break law #6 (ONE batch = ONE undo = ONE version),
- *   2. ignores server-side tools (`studio.plan_edit` is the runner's own
+ *      ZERO bridge calls — executing a batch or an undo here would bypass
+ *      the ApplyController (apply.ts) and break law #6 (ONE batch = ONE undo
+ *      = ONE version),
+ *   2. refuses write tools client-side with the M4 refusal (TOOL_FORBIDDEN,
+ *      zero bridge calls). M5 resolves the 8 write tools SERVER-SIDE (the
+ *      runner compiles the proposal + posts the WRITE_TOOL_RESULT_SCHEMA
+ *      envelope itself) and the runs route REJECTS any client tool.result for
+ *      them with a 400 — so this post is the M4-compat defense that the
+ *      landed gateway absorbs; it must never execute anything,
+ *   3. ignores server-side tools (`studio.plan_edit` is the runner's own
  *      structured-output call — posting for a toolCallId it did not register
  *      would 400: the runs route only accepts expected ids),
- *   3. validates args at RUNTIME through `@studio/api-client/chat-tools` —
+ *   4. validates args at RUNTIME through `@studio/api-client/chat-tools` —
  *      the one place web may touch contracts' Zod schemas indirectly
  *      (docs/AGENTS.md hard rule 5),
- *   4. executes the 4 editor-read tools against the live bridge (per-item
+ *   5. executes the 4 editor-read tools against the live bridge (per-item
  *      bridge failures degrade to per-item nulls / NOT_FOUND entries — never
  *      abort),
- *   5. PROPOSES for the 8 write tools (M5, §8.4 rule 1): each gathers just
- *      enough live state to validate (e.g. `set_properties` reads current
- *      values to warn on no-ops) and returns a proposal envelope — a batch
- *      the MODEL may echo into its plan; NOTHING is executed. Executing an
- *      agent batch is the ApplyController's job alone (apply.ts),
  *   6. POSTs `{ type: "tool.result", toolCallId, result }` to
  *      `/v1/runs/:id/events` (RUN_EVENT_REQUEST_SCHEMA — exact shape) with 2
  *      retries on transient failures, then gives up silently: the runner's
@@ -42,22 +44,12 @@
  *   - `prop.get` `{layer?, path|prop, time?}` — layer id/name/`#n`, no comp.
  *   - `renderFrame` `{comp?, time?, max_side?, …}` — `max_side` caps the LONG
  *     side; the result normalizes `png` → `pngBase64`.
- *
- * Proposal-batch command facts (grep-verified in `editor/crates/engine/src`;
- * the plan-compiler (M5-B) stays authoritative — these steps are data for the
- * model, never executed here):
- *   - `comp.new {name,width,height,frameRate,duration}` (comp.rs `new_comp`)
- *   - `layer.newText {comp?,text,name?,position?,<text attrs>}` (layer.rs)
- *   - `prop.set {layer,path,value}` (prop.rs)
- *   - `prop.addKey {layer,path,time,value}` (path_nulls.rs:271)
- *   - `effect.apply {layers:[…],effect}` (path_nulls.rs:265)
- *   - `anim.applyBuiltinPreset {preset,layers?}` (anim_presets.rs:199)
  */
 
 import type { ApiClient } from "@studio/api-client";
 import { isApiError } from "@studio/api-client";
 import { isClientTool, isWriteTool, validateToolArgs } from "@studio/api-client/chat-tools";
-import type { BatchStep, ContextBlockKey, ContextSelection } from "@studio/contracts";
+import type { ContextBlockKey, ContextSelection } from "@studio/contracts";
 import { type EditorBridge, isBridgeError, messageOf } from "@studio/editor-bridge";
 
 // ---------------------------------------------------------------------------
@@ -127,64 +119,6 @@ const RAW_ENGINE_FORBIDDEN_MESSAGE =
   "Raw engine commands are not tools. Use the curated Studio tools; apply a plan to make changes.";
 
 /**
- * The M5 write-tool proposal envelope (§8.4 rule 1: every write tool returns a
- * PROPOSED batch, never an execution). Coded against contracts'
- * WRITE_TOOL_RESULT_SCHEMA (M5-A owns the file; not landed at wave-1 start) —
- * the integrator reconciles the two shapes; every field here is JSON data the
- * model may copy into its plan (the plan-compiler re-validates server-side).
- */
-export interface WriteToolProposal {
-  /** Always true: NOTHING was executed (the marker the model checks first). */
-  readonly proposed: true;
-  /** The `studio.*` tool id this proposal answers. */
-  readonly tool: string;
-  /** Curated, model-readable description of the proposed change. */
-  readonly summary: string;
-  /** Advisory findings from live state (e.g. a set_properties no-op). */
-  readonly warnings?: readonly string[];
-  /** The proposed `engine.batch` payload for content tools (§8.4 rule 1). */
-  readonly batch?: { readonly label: string; readonly steps: readonly BatchStep[] };
-  /** Run-level proposals that are NOT agent batches (undo_run/save_version). */
-  readonly action?: "undo_run" | "save_version";
-  /** Echo of the args' runId (undo_run only). */
-  readonly runId?: string;
-  /** Echo of the args' label (save_version only). */
-  readonly label?: string;
-}
-
-/** Batch labels are capped (`MAX_BATCH_LABEL_LENGTH`); proposals stay under it. */
-const PROPOSAL_LABEL_MAX = 280;
-
-function proposalLabel(summary: string): string {
-  const label = `Agent: ${summary}`;
-  return label.length <= PROPOSAL_LABEL_MAX ? label : `${label.slice(0, PROPOSAL_LABEL_MAX - 1)}…`;
-}
-
-/**
- * Dunder keys are never legitimate identifiers (M4-N F-1 + contracts'
- * DUNDER_ID_SCHEMA): identifier-ish write args are rejected BEFORE any
- * bridge call or proposal step is built — model-chosen strings stay data.
- */
-function isDunderId(value: string): boolean {
-  return value === "__proto__" || value === "prototype" || value === "constructor";
-}
-
-/** Structural JSON-ish equality (no key-order, no prototype lookups). */
-function jsonEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== typeof b || a === null || b === null || typeof a !== "object") return false;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((item, index) => jsonEqual(item, b[index]));
-  }
-  const recordA = a as Record<string, unknown>;
-  const recordB = b as Record<string, unknown>;
-  const keys = Object.keys(recordA);
-  if (keys.length !== Object.keys(recordB).length) return false;
-  return keys.every((key) => Object.hasOwn(recordB, key) && jsonEqual(recordA[key], recordB[key]));
-}
-
-/**
  * Runs one client tool call end-to-end and reports the outcome as a posted
  * §7.4 tool result. NEVER throws; NEVER posts twice for one call.
  */
@@ -206,19 +140,27 @@ export async function executeClientTool(
       await post({ error: "TOOL_FORBIDDEN", message: RAW_ENGINE_FORBIDDEN_MESSAGE });
       return;
     }
-    // 2. Server-side tools (studio.plan_edit) are the runner's job. The runs
+    // 2. Write tools never execute here — the M4 refusal (zero bridge calls).
+    //    M5 resolves them SERVER-SIDE (the runner posts the proposal envelope)
+    //    and the landed runs route 400s any client tool.result for them, so
+    //    this post is defense the gateway absorbs; it never mutates anything.
+    if (isWriteTool(call.name)) {
+      await post({ error: "TOOL_FORBIDDEN", message: "Write tools are not available yet." });
+      return;
+    }
+    // 3. Server-side tools (studio.plan_edit) are the runner's job. The runs
     //    route 400s on a toolCallId it did not register (expected-ids rule), so
     //    posting here would only add noise — return without posting.
-    if (!isClientTool(call.name) && !isWriteTool(call.name)) return;
+    if (!isClientTool(call.name)) return;
 
-    // 3. Runtime arg validation; the model gets one repair turn server-side.
+    // 4. Runtime arg validation; the model gets one repair turn server-side.
     const parsed = validateToolArgs(call.name, call.args);
     if (!parsed.ok) {
       await post({ error: "RUN_INVALID_TOOL", message: parsed.error });
       return;
     }
 
-    // 4.+5. Execute (read) or propose (write) under the whole-call guard, then post.
+    // 5. Execute the read under the whole-call guard, then post.
     await runGuarded(call, parsed.value, deps, post);
   } catch {
     // Defensive: an internal bug still reports an honest error result.
@@ -255,7 +197,7 @@ async function runGuarded(
 ): Promise<void> {
   const guardMs = deps.guardTimeoutMs ?? DEFAULT_GUARD_MS;
   if (guardMs <= 0) {
-    await post(await runTool(call.name, args, deps));
+    await post(await runReadTool(call.name, args, deps));
     return;
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -264,7 +206,7 @@ async function runGuarded(
   });
   try {
     // Normalized so a late loss of the race can never reject unhandled.
-    const work = runTool(call.name, args, deps).then(
+    const work = runReadTool(call.name, args, deps).then(
       (result) => ({ result }) as const,
       (error: unknown) => ({ error }) as const,
     );
@@ -280,12 +222,6 @@ async function runGuarded(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
-}
-
-/** Dispatches a validated tool call (read → execute; write → propose). */
-async function runTool(name: string, args: unknown, deps: ToolExecutorDeps): Promise<unknown> {
-  if (isWriteTool(name)) return runWriteTool(name, args, deps);
-  return runReadTool(name, args, deps);
 }
 
 /** Dispatches a validated editor-read call; the returned value is the tool result. */
@@ -313,296 +249,6 @@ async function runReadTool(name: string, args: unknown, deps: ToolExecutorDeps):
   } catch (error) {
     return toolError(error);
   }
-}
-
-// ---------------------------------------------------------------------------
-// The 8 write tools — PROPOSE only (§8.4 rule 1; M5). NOTHING executes: the
-// only bridge traffic is read queries for live-state validation, and every
-// model-chosen string rides the envelope as DATA (values, never keys).
-// ---------------------------------------------------------------------------
-
-/** The failure shape the §7.4 wire maps to a failed card + repair turn. */
-function invalidTool(message: string): { error: string; message: string } {
-  return { error: "RUN_INVALID_TOOL", message };
-}
-
-/**
- * Dunder check for identifier-ish args (layer/path/propertyPath/targets and
- * set_properties updates): rejected BEFORE any bridge call or proposal step
- * — the F-1 lesson at the write boundary (contracts' DUNDER_ID_SCHEMA twin).
- */
-function rejectDunderIds(ids: readonly string[], what: string): { error: string; message: string } | null {
-  if (ids.some(isDunderId)) {
-    return invalidTool(`${what}: dunder keys are not valid identifiers`);
-  }
-  return null;
-}
-
-async function runWriteTool(name: string, args: unknown, deps: ToolExecutorDeps): Promise<unknown> {
-  try {
-    switch (name) {
-      case "studio.create_composition":
-        return proposeCreateComposition(args as {
-          name: string;
-          width: number;
-          height: number;
-          frameRate: number;
-          durationSeconds: number;
-        });
-      case "studio.create_text":
-        return proposeCreateText(args as {
-          compId?: string;
-          text: string;
-          name?: string;
-          fontSize?: number;
-          fontFamily?: string;
-          color?: string;
-          position?: [number, number];
-        });
-      case "studio.set_properties":
-        return await proposeSetProperties(
-          args as {
-            updates: ReadonlyArray<{ layer: string; path: string; value: unknown }>;
-          },
-          deps,
-        );
-      case "studio.add_effect":
-        return proposeAddEffect(args as { layer: string; effect: string; params?: unknown });
-      case "studio.set_keyframes":
-        return proposeSetKeyframes(
-          args as {
-            layer: string;
-            propertyPath: string;
-            keyframes: ReadonlyArray<{ time: number; value: unknown; easing?: string }>;
-          },
-        );
-      case "studio.apply_preset":
-        return proposeApplyPreset(args as { preset: string; targets: readonly string[] });
-      case "studio.undo_run":
-        return proposeUndoRun(args as { runId?: string });
-      case "studio.save_version":
-        return proposeSaveVersion(args as { label?: string });
-      default:
-        // Unreachable (isWriteTool filtered first) — stay honest anyway.
-        return { error: "TOOL_FAILED", message: `Not a write tool: ${name}` };
-    }
-  } catch (error) {
-    return toolError(error);
-  }
-}
-
-/** studio.create_composition → `comp.new` (one step; defaults come from Zod). */
-function proposeCreateComposition(args: {
-  name: string;
-  width: number;
-  height: number;
-  frameRate: number;
-  durationSeconds: number;
-}): WriteToolProposal {
-  const summary = `create composition "${args.name}" (${args.width}×${args.height} @ ${args.frameRate}fps, ${args.durationSeconds}s)`;
-  return {
-    proposed: true,
-    tool: "studio.create_composition",
-    summary,
-    batch: {
-      label: proposalLabel(summary),
-      steps: [
-        {
-          command: "comp.new",
-          params: {
-            name: args.name,
-            width: args.width,
-            height: args.height,
-            frameRate: args.frameRate,
-            duration: args.durationSeconds,
-          },
-        },
-      ],
-    },
-  };
-}
-
-/** studio.create_text → `layer.newText` (curated attrs ride the params as data). */
-function proposeCreateText(args: {
-  compId?: string;
-  text: string;
-  name?: string;
-  fontSize?: number;
-  fontFamily?: string;
-  color?: string;
-  position?: [number, number];
-}): WriteToolProposal {
-  const summary = `add a text layer${args.name === undefined ? "" : ` "${args.name}"`} with "${args.text}"${
-    args.compId === undefined ? "" : ` in composition ${args.compId}`
-  }`;
-  const params: Record<string, unknown> = { text: args.text };
-  if (args.compId !== undefined) params.comp = args.compId;
-  if (args.name !== undefined) params.name = args.name;
-  if (args.position !== undefined) params.position = args.position;
-  if (args.fontSize !== undefined) params.fontSize = args.fontSize;
-  if (args.fontFamily !== undefined) params.fontFamily = args.fontFamily;
-  if (args.color !== undefined) params.color = args.color;
-  return {
-    proposed: true,
-    tool: "studio.create_text",
-    summary,
-    batch: {
-      label: proposalLabel(summary),
-      steps: [{ command: "layer.newText", params }],
-    },
-  };
-}
-
-/**
- * studio.set_properties → one `prop.set` per update. Gathers live state first
- * (prop.get per update — read-only) to warn when an update would be a no-op:
- * the model learns the current value instead of proposing a redundant change.
- */
-async function proposeSetProperties(
-  args: { updates: ReadonlyArray<{ layer: string; path: string; value: unknown }> },
-  deps: ToolExecutorDeps,
-): Promise<WriteToolProposal | { error: string; message: string }> {
-  const dunder = rejectDunderIds(
-    [...args.updates.map((update) => update.layer), ...args.updates.map((update) => update.path)],
-    "updates",
-  );
-  if (dunder !== null) return dunder;
-
-  const current = await mapLimit(args.updates, 4, async (update) =>
-    quiet(() => deps.bridge.query<{ value?: unknown }>("prop.get", { layer: update.layer, path: update.path })),
-  );
-  const warnings: string[] = [];
-  args.updates.forEach((update, index) => {
-    const now = current[index];
-    if (now !== null && now !== undefined && jsonEqual(update.value, now.value)) {
-      warnings.push(
-        `layer "${update.layer}" property "${update.path}" is already ${JSON.stringify(update.value)} — this update would change nothing`,
-      );
-    }
-  });
-
-  const summary = `set ${args.updates.length} propert${args.updates.length === 1 ? "y" : "ies"} on ${args.updates.length === 1 ? `layer "${args.updates[0]?.layer}"` : `${args.updates.length} layers`}`;
-  return {
-    proposed: true,
-    tool: "studio.set_properties",
-    summary,
-    ...(warnings.length > 0 ? { warnings } : {}),
-    batch: {
-      label: proposalLabel(summary),
-      steps: args.updates.map((update) => ({
-        command: "prop.set",
-        params: { layer: update.layer, path: update.path, value: update.value },
-      })),
-    },
-  };
-}
-
-/** studio.add_effect → `effect.apply` (the registry effect id rides as data). */
-function proposeAddEffect(args: {
-  layer: string;
-  effect: string;
-  params?: unknown;
-}): WriteToolProposal | { error: string; message: string } {
-  const dunder = rejectDunderIds([args.layer], "layer");
-  if (dunder !== null) return dunder;
-  const summary = `add effect "${args.effect}" to layer "${args.layer}"`;
-  const effectParams: Record<string, unknown> =
-    typeof args.params === "object" && args.params !== null && !Array.isArray(args.params)
-      ? (args.params as Record<string, unknown>)
-      : {};
-  return {
-    proposed: true,
-    tool: "studio.add_effect",
-    summary,
-    batch: {
-      label: proposalLabel(summary),
-      steps: [
-        {
-          command: "effect.apply",
-          params: { layers: [args.layer], effect: args.effect, ...effectParams },
-        },
-      ],
-    },
-  };
-}
-
-/** studio.set_keyframes → one `prop.addKey` per keyframe (easing stays in the summary). */
-function proposeSetKeyframes(args: {
-  layer: string;
-  propertyPath: string;
-  keyframes: ReadonlyArray<{ time: number; value: unknown; easing?: string }>;
-}): WriteToolProposal | { error: string; message: string } {
-  const dunder = rejectDunderIds([args.layer, args.propertyPath], "layer/propertyPath");
-  if (dunder !== null) return dunder;
-  const easings = [
-    ...new Set(args.keyframes.map((keyframe) => keyframe.easing).filter((easing): easing is string => easing !== undefined)),
-  ];
-  const summary = `set ${args.keyframes.length} keyframe${args.keyframes.length === 1 ? "" : "s"} on layer "${args.layer}" property "${args.propertyPath}"${
-    easings.length > 0 ? ` (${easings.join("/")} easing)` : ""
-  }`;
-  return {
-    proposed: true,
-    tool: "studio.set_keyframes",
-    summary,
-    batch: {
-      label: proposalLabel(summary),
-      steps: args.keyframes.map((keyframe) => ({
-        command: "prop.addKey",
-        params: { layer: args.layer, path: args.propertyPath, time: keyframe.time, value: keyframe.value },
-      })),
-    },
-  };
-}
-
-/** studio.apply_preset → `anim.applyBuiltinPreset` per target layer. */
-function proposeApplyPreset(args: {
-  preset: string;
-  targets: readonly string[];
-}): WriteToolProposal | { error: string; message: string } {
-  const dunder = rejectDunderIds(args.targets, "targets");
-  if (dunder !== null) return dunder;
-  const summary = `apply preset "${args.preset}" to ${args.targets.length} layer${args.targets.length === 1 ? "" : "s"}`;
-  return {
-    proposed: true,
-    tool: "studio.apply_preset",
-    summary,
-    batch: {
-      label: proposalLabel(summary),
-      steps: args.targets.map((target) => ({
-        command: "anim.applyBuiltinPreset",
-        params: { layers: [target], preset: args.preset },
-      })),
-    },
-  };
-}
-
-/**
- * studio.undo_run — a RUN-level proposal, not an agent batch: undoing is the
- * ApplyController's `edit.undo` (one step for the whole run) and the run's
- * version remains in project history (§9.3). No batch steps are proposed.
- */
-function proposeUndoRun(args: { runId?: string }): WriteToolProposal {
-  return {
-    proposed: true,
-    tool: "studio.undo_run",
-    summary: `revert the ${args.runId === undefined ? "most recent applied" : "applied"} agent run as a single undo step — its version stays in project history`,
-    action: "undo_run",
-    ...(args.runId !== undefined ? { runId: args.runId } : {}),
-  };
-}
-
-/**
- * studio.save_version — a RUN-level proposal, not an agent batch: a snapshot
- * is a cloud-side immutable version (§9.2), never an engine command.
- */
-function proposeSaveVersion(args: { label?: string }): WriteToolProposal {
-  return {
-    proposed: true,
-    tool: "studio.save_version",
-    summary: `save an immutable snapshot of the project${args.label === undefined ? "" : ` labeled "${args.label}"`} — no project content changes`,
-    action: "save_version",
-    ...(args.label !== undefined ? { label: args.label } : {}),
-  };
 }
 
 /** Bridge/editor failure → the §7.4 failure result the model sees (seam 6). */

@@ -19,11 +19,11 @@ import { type FakeEditor, attachFakeBridge, createFakeEditor } from "@studio/edi
 import { describe, expect, it } from "vitest";
 
 import {
+  type ApplicablePlan,
   type ApplyApiClient,
+  type ApplyAutosavePort,
   type ApplyEngineEvent,
   type ApplyOutcome,
-  type ApplicablePlan,
-  type ApplyAutosavePort,
   type CreateApplyControllerOptions,
   type UndoOutcome,
   batchSha256Hex,
@@ -86,8 +86,7 @@ interface Harness {
   autosave: ApplyAutosavePort;
 }
 
-const FAKE_SHA =
-  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const FAKE_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
   const fake = createFakeEditor({
@@ -157,7 +156,7 @@ async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
     autosave,
     api,
     ...(options.currentVersionId !== undefined
-      ? { session: { currentVersionId: () => options.currentVersionId } }
+      ? { session: { currentVersionId: () => options.currentVersionId ?? null } }
       : {}),
     onEvent: (event) => {
       events.push(event);
@@ -216,7 +215,9 @@ describe("createApplyController.apply", () => {
     // ONE engine.batch (law #6), carrying the RESOLVED layer id (number, no token).
     const batches = harness.recorded.executeCalls.filter((call) => call.command === "engine.batch");
     expect(batches).toHaveLength(1);
-    const batch = batches[0] as { params: { steps: Array<{ params: Record<string, unknown> }> } };
+    const batch = batches[0] as {
+      params: { steps: Array<{ params: Record<string, unknown> }>; atomic: boolean; label: string };
+    };
     expect(batch.params.steps[0]?.params).toEqual({
       layer: 1,
       path: "transform/opacity",
@@ -227,11 +228,7 @@ describe("createApplyController.apply", () => {
     expect(batch.params.atomic).toBe(true);
 
     // D-6: the version upload is AWAITED BEFORE the gateway report.
-    expect(harness.timeline).toEqual([
-      "markDirty:agent-apply",
-      "saveNow:agent-apply",
-      "applyRun",
-    ]);
+    expect(harness.timeline).toEqual(["markDirty:agent-apply", "saveNow:agent-apply", "applyRun"]);
     expect(harness.autosaveReasons).toEqual(["agent-apply"]);
 
     // applyRun body: the exact APPLY_REQUEST_SCHEMA fields, one gesture = one key.
@@ -239,14 +236,23 @@ describe("createApplyController.apply", () => {
     const call = harness.applyCalls[0];
     if (call === undefined) throw new Error("no applyRun call");
     expect(call.runId).toBe("run_1");
-    expect(Object.keys(call.body).sort()).toEqual(["batchSha256", "idempotencyKey", "versionId"]);
+    expect(Object.keys(call.body).sort()).toEqual([
+      "batchSha256",
+      "idempotencyKey",
+      "resolvedLayers",
+      "versionId",
+    ]);
     expect(call.body.versionId).toBe("ver_applied_1");
     expect((call.body.idempotencyKey as string).length).toBeGreaterThanOrEqual(8);
+    // §8.7/M5-E: the name→id bindings ride the body (auditable server-side).
+    expect(call.body.resolvedLayers).toEqual([{ requestId: "r1", layerId: 1 }]);
 
     // The engine really changed + the whole batch is ONE undo step (law #6).
     expect(harness.fake.state.dirty).toBe(true);
     expect(harness.fake.state.history.undo.at(-1)?.label).toBe("Agent: dim the headline");
-    const summary = await harness.recorded.bridge.query<{ selectedLayers?: number[] }>("project.summary");
+    const summary = await harness.recorded.bridge.query<{ selectedLayers?: number[] }>(
+      "project.summary",
+    );
     expect(summary?.selectedLayers).toEqual([1]);
 
     // Milestones for the host page, in order.
@@ -261,20 +267,17 @@ describe("createApplyController.apply", () => {
     const payload = engineBatchPayload({
       label: "Agent: dim the headline",
       atomic: true,
-      steps: [
-        { command: "prop.set", params: { layer: 1, path: "transform/opacity", value: 50 } },
-      ],
+      steps: [{ command: "prop.set", params: { layer: 1, path: "transform/opacity", value: 50 } }],
     });
     const digest = await batchSha256Hex(payload);
-    expect(digest).toBe(
-      createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
-    );
+    expect(digest).toBe(createHash("sha256").update(JSON.stringify(payload)).digest("hex"));
     // And the digest the controller sent matches the payload it executed.
     const harness = await makeHarness();
     await harness.controller.apply(helloPlan());
-    const batch = harness.recorded.executeCalls.find((call) => call.command === "engine.batch")
-      ?.params;
-    const sent = (harness.applyCalls[0]?.body.batchSha256) as string;
+    const batch = harness.recorded.executeCalls.find(
+      (call) => call.command === "engine.batch",
+    )?.params;
+    const sent = harness.applyCalls[0]?.body.batchSha256 as string;
     expect(sent).toBe(await batchSha256Hex(batch));
     expect(sent).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -295,8 +298,10 @@ describe("createApplyController.apply", () => {
     const batch = harness.recorded.executeCalls.find((call) => call.command === "engine.batch")
       ?.params as { timeoutMs?: number };
     expect(batch?.timeoutMs).toBe(5_000);
-    const sent = (harness.applyCalls[0]?.body.batchSha256) as string;
-    expect(sent).toBe(
+    // No resolution requests → no resolvedLayers key on the wire body.
+    const body = harness.applyCalls[0]?.body as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["batchSha256", "idempotencyKey", "versionId"]);
+    expect(body.batchSha256).toBe(
       createHash("sha256")
         .update(JSON.stringify({ ...batch, atomic: true }))
         .digest("hex"),
@@ -312,7 +317,7 @@ describe("createApplyController.apply — layer resolution", () => {
   it("ambiguous names → {ok:false, reason:'ambiguous', candidates} with ZERO engine mutations", async () => {
     const bridge = {
       // Two layers with the same name — the executor's list_layers path shape.
-      query: async <T,>(command: string): Promise<T> =>
+      query: async <T>(command: string): Promise<T> =>
         command === "comp.info"
           ? ({
               id: 1,
@@ -329,7 +334,7 @@ describe("createApplyController.apply — layer resolution", () => {
       autosave: { saveNow: async () => ({ saved: true, version: undefined }) },
       api: {
         runs: {
-          applyRun: async () => ({ applied: true, versionId: "ver_x" }),
+          applyRun: async () => ({ applied: true, versionId: "ver_x", creditsCommitted: 0 }),
           undoRun: async () => ({ undone: true }),
         },
       },
@@ -342,7 +347,9 @@ describe("createApplyController.apply — layer resolution", () => {
     );
 
     expect(outcome).toMatchObject({ ok: false, reason: "ambiguous" });
-    if (outcome.ok) throw new Error("expected a failure");
+    if (outcome.ok || outcome.reason !== "ambiguous") {
+      throw new Error("expected an ambiguous-resolution failure");
+    }
     expect(outcome.candidates).toHaveLength(2);
     expect(outcome.candidates[0]).toBe("Twin (layer 1)");
     expect(outcome.message).toContain("2 layers");
@@ -369,7 +376,12 @@ describe("createApplyController.apply — layer resolution", () => {
         compiledBatch: {
           label: "Agent: mystery layer",
           atomic: true,
-          steps: [{ command: "prop.set", params: { layer: "$request:ghost", path: "transform/opacity", value: 1 } }],
+          steps: [
+            {
+              command: "prop.set",
+              params: { layer: "$request:ghost", path: "transform/opacity", value: 1 },
+            },
+          ],
         },
         resolutionRequests: [{ requestId: "r1", layerName: "Hello", disambiguation: [] }],
       }),
@@ -382,7 +394,13 @@ describe("createApplyController.apply — layer resolution", () => {
   it("a malformed compiled batch → invalid-batch, nothing executes", async () => {
     const harness = await makeHarness();
     const outcome = await harness.controller.apply(
-      helloPlan({ compiledBatch: { label: "", atomic: true, steps: [] } as unknown as ApplicablePlan["compiledBatch"] }),
+      helloPlan({
+        compiledBatch: {
+          label: "",
+          atomic: true,
+          steps: [],
+        } as unknown as ApplicablePlan["compiledBatch"],
+      }),
     );
     expect(outcome).toMatchObject({ ok: false, reason: "invalid-batch" });
     expect(harness.recorded.executeCalls).toHaveLength(0);
@@ -395,7 +413,9 @@ describe("createApplyController.apply — layer resolution", () => {
 
 describe("createApplyController.apply — failure mapping", () => {
   it("engine.batch rejects → engine-failed, NO save, NO applyRun", async () => {
-    const harness = await makeHarness({ failBatchWith: "step 1 (prop.set): nope; the batch was rolled back" });
+    const harness = await makeHarness({
+      failBatchWith: "step 1 (prop.set): nope; the batch was rolled back",
+    });
     const before = await harness.recorded.bridge.query<{ layers?: unknown[] }>("project.summary");
     const outcome = await harness.controller.apply(helloPlan());
 
@@ -504,7 +524,7 @@ describe("createApplyController.undo", () => {
       autosave: { saveNow: async () => ({ saved: false }) },
       api: {
         runs: {
-          applyRun: async () => ({ applied: true, versionId: "ver_x" }),
+          applyRun: async () => ({ applied: true, versionId: "ver_x", creditsCommitted: 0 }),
           undoRun: async (runId, body) => {
             undoCalls.push({ runId, body: body as Record<string, unknown> });
             return { undone: true };
@@ -543,9 +563,7 @@ describe("createApplyController.undo", () => {
 describe("createApplyController.reapply", () => {
   it("BLOCKED on version drift: base-version-changed, zero engine calls", async () => {
     const harness = await makeHarness({ currentVersionId: "ver_newer" });
-    const outcome = await harness.controller.reapply(
-      helloPlan({ baseVersionId: "ver_base" }),
-    );
+    const outcome = await harness.controller.reapply(helloPlan({ baseVersionId: "ver_base" }));
     expect(outcome).toMatchObject({ ok: false, reason: "base-version-changed" });
     expect(harness.recorded.executeCalls).toHaveLength(0);
     expect(harness.recorded.queryCalls).toHaveLength(0);
@@ -555,9 +573,7 @@ describe("createApplyController.reapply", () => {
 
   it("allowed while the session sits on the plan's base version", async () => {
     const harness = await makeHarness({ currentVersionId: "ver_base" });
-    const outcome = await harness.controller.reapply(
-      helloPlan({ baseVersionId: "ver_base" }),
-    );
+    const outcome = await harness.controller.reapply(helloPlan({ baseVersionId: "ver_base" }));
     expect(outcome).toMatchObject({ ok: true, versionId: "ver_applied_1" });
     expect(harness.applyCalls).toHaveLength(1);
   });
@@ -571,9 +587,7 @@ describe("createApplyController.reapply", () => {
 
   it("no session port → the gate always explains base-version-changed", async () => {
     const harness = await makeHarness();
-    const outcome = await harness.controller.reapply(
-      helloPlan({ baseVersionId: "ver_base" }),
-    );
+    const outcome = await harness.controller.reapply(helloPlan({ baseVersionId: "ver_base" }));
     expect(outcome).toMatchObject({ ok: false, reason: "base-version-changed" });
   });
 });
@@ -604,6 +618,7 @@ describe("createApplyController — dunder/name-injection safety", () => {
       ?.params as { steps: Array<{ params: Record<string, unknown> }> };
     const params = batch.steps[0]?.params;
     expect(Object.hasOwn(params as object, "__proto__")).toBe(true);
+    // biome-ignore lint/complexity/useLiteralKeys: dot access would invoke the __proto__ SETTER (F-1).
     expect((params as Record<string, unknown>)["__proto__"]).toEqual({ polluted: "PWNED" });
     expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
 
@@ -619,7 +634,12 @@ describe("createApplyController — dunder/name-injection safety", () => {
         compiledBatch: {
           label: "Agent: dunder request",
           atomic: true,
-          steps: [{ command: "prop.set", params: { layer: "$request:r1", path: "transform/opacity", value: 1 } }],
+          steps: [
+            {
+              command: "prop.set",
+              params: { layer: "$request:r1", path: "transform/opacity", value: 1 },
+            },
+          ],
         },
         resolutionRequests: [{ requestId: "__proto__", layerName: "Hello", disambiguation: [] }],
       }),
