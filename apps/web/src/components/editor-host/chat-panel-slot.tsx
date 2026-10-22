@@ -5,28 +5,42 @@
  * "Integration"; EDITOR_CHAT_UX §2/§3/§9; DECISIONS.md D-5/D-18).
  *
  * The slot is the ONE place the pinned wave-2 components meet the provider:
- * it owns the chat LAYOUT (M4-E's `useChatLayout` — the provider
- * deliberately does not import peer-dir modules), maps the M3 shortcut bus
- * onto layout/controller actions, and renders the collapsed pill or the
- * composed `ChatPanel` (header / context strip / thread / composer / footer)
- * plus the context popover overlay and transient M5 notice chips.
+ * it owns the chat LAYOUT (M4-E's `useChatLayout` — the provider deliberately
+ * imports no peer-dir module), maps the M3 shortcut bus onto
+ * layout/controller actions through M4-E's `nextLayoutAction`, and renders
+ * the collapsed pill or the composed `ChatPanel`
+ * (header / context strip / thread / composer / footer) plus the context
+ * popover overlay and transient M5 notice chips.
  *
  * Wiring pins:
- * - `toggleChat` cycles collapsed→floating→sidebar (D-5) — implemented locally
- *   as `cyclePanelMode`; M4-E's optional `nextLayoutAction` helper is not part
- *   of the seams contract, so the slot keeps the cycle deterministic itself.
+ * - `toggleChat`/`agent` go through `nextLayoutAction` (M4-E's deterministic
+ *   bus→layout mapping); everything else is a slot-owned effect:
+ *   `inlineEdit`/`undoAgentRun` surface the M5 notice chip (D-5), `newChat`
+ *   resets the thread via `api.newThread()`, `stop` hits the §8.3 fused
+ *   cancel, `send` focuses the composer.
  * - `agent`/`send` focus the composer via the `studio:chat-focus-composer`
  *   window CustomEvent (M4-G listens; this container focus is the fallback).
- * - `inlineEdit`/`undoAgentRun` never dispatch — they surface the M5 notice
- *   chip (D-5: inline edit and undo ARE M5).
- * - `escape` closes the popover FIRST, then collapses the panel (ECUX §9).
- * - Sidebar mode never restyles the editor (D-18): the slot reports the dock
+ * - `escape` closes the context popover FIRST, then collapses the panel
+ *   (ECUX §9; the panel's own in-tree Esc does the same for panel keypresses).
+ * - Sidebar mode never restyles the editor (D-18): the slot reports dock
  *   state/width up via `onSidebarDock` and the HOST resizes the viewport
  *   wrapper — the iframe only ever sees a window resize.
  * - The `studio:chat-quick-action` window CustomEvent (thread/composer chips)
  *   is handled ONCE, inside the provider — not duplicated here.
  */
 
+import { ChatComposer } from "@/components/chat/composer";
+import { ContextPopover } from "@/components/chat/context-popover";
+import { ContextStrip } from "@/components/chat/context-strip";
+import { ChatFooter } from "@/components/chat/footer";
+import { ChatHeader, modelDisplayName } from "@/components/chat/header";
+import { nextLayoutAction } from "@/components/chat/layout";
+import { ChatCollapsedPill, ChatPanel } from "@/components/chat/panel";
+import { ChatThread } from "@/components/chat/thread";
+import { type ChatMode, useChatLayout } from "@/components/chat/use-layout";
+import type { ChatContextApi } from "@/lib/chat/provider";
+import { LIVE_RUN_PHASES } from "@/lib/chat/run-state";
+import { formatTokenEstimate } from "@/lib/chat/tokens";
 import {
   type CSSProperties,
   type ReactElement,
@@ -36,17 +50,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChatCollapsedPill, ChatPanel } from "@/components/chat/panel";
-import { ChatComposer } from "@/components/chat/composer";
-import { ChatHeader, modelDisplayName } from "@/components/chat/header";
-import { ChatFooter } from "@/components/chat/footer";
-import { ContextPopover } from "@/components/chat/context-popover";
-import { ContextStrip } from "@/components/chat/context-strip";
-import { ChatThread } from "@/components/chat/thread";
-import { type ChatMode, useChatLayout } from "@/components/chat/use-layout";
-import type { ChatContextApi } from "@/lib/chat/provider";
-import { LIVE_RUN_PHASES } from "@/lib/chat/run-state";
-import { formatTokenEstimate } from "@/lib/chat/tokens";
 import type { ChatShortcutEvent } from "./chat-shortcut-bus";
 
 export interface ChatPanelSlotProps {
@@ -59,16 +62,10 @@ export interface ChatPanelSlotProps {
   readonly onSidebarDock: (docked: boolean, widthPx: number) => void;
 }
 
-/** D-5: Cmd/Ctrl+L cycles collapsed → floating → sidebar (→ collapsed). */
-function cyclePanelMode(mode: ChatMode): ChatMode {
-  if (mode === "collapsed") return "floating";
-  if (mode === "floating") return "sidebar";
-  return "collapsed";
-}
-
 /**
  * §4.4 quick-action chips for an empty thread (pinned M4 subset): shortcuts
- * to prompts, not hidden automation — each rides the normal send path.
+ * to prompts, not hidden automation — each rides the normal send path (the
+ * thread dispatches `studio:chat-quick-action`, the provider owns the send).
  */
 const EMPTY_QUICK_ACTIONS = [
   { label: "Explain this comp", prompt: "Explain what this composition does." },
@@ -112,11 +109,18 @@ export function ChatPanelSlot({ api, onSidebarDock }: ChatPanelSlotProps): React
   // -- shortcut bus (M3.6/D-5) → layout + controller actions -----------------
   useEffect(() => {
     const handler = (event: ChatShortcutEvent): void => {
+      // Layout-affecting shortcuts ride M4-E's deterministic mapping.
+      const action = nextLayoutAction(layout, event.shortcut);
+      if (action.type === "setMode") setMode(action.mode);
+
       switch (event.shortcut) {
         case "toggleChat":
-          setMode(cyclePanelMode(layout.mode));
-          break;
+          break; // fully handled by nextLayoutAction above
         case "agent":
+          // Cmd/Ctrl+I must reach a composer: expand when collapsed (the
+          // action above), then hand focus to the composer either way.
+          focusComposer();
+          break;
         case "send":
           focusComposer();
           break;
@@ -143,7 +147,7 @@ export function ChatPanelSlot({ api, onSidebarDock }: ChatPanelSlotProps): React
       }
     };
     return api.shortcutBus.subscribe(handler);
-  }, [api, layout.mode, popoverOpen, setMode, focusComposer, showNotice]);
+  }, [api, layout, popoverOpen, setMode, focusComposer, showNotice]);
 
   // Visibility gates the provider's 1 Hz inspect poll + context collects (§11).
   useEffect(() => {
@@ -163,7 +167,7 @@ export function ChatPanelSlot({ api, onSidebarDock }: ChatPanelSlotProps): React
   const composerDisabled = useMemo(() => {
     if (snapshot.error?.code === "INSUFFICIENT_CREDITS") {
       // §3.4: the composer disables with a clear message; the peer's Upgrade
-      // affordance stays clickable (never a silent dead input).
+      // affordance stays reachable (never a silent dead input).
       return { reason: "credits" as const, message: snapshot.error.message };
     }
     if (snapshot.error?.code === "MODEL_NOT_ENTITLED") {
@@ -192,7 +196,10 @@ export function ChatPanelSlot({ api, onSidebarDock }: ChatPanelSlotProps): React
       onModelPick={api.setActiveModelId}
       contextCount={(api.context?.blocks.length ?? 0) + api.pinned.length}
       onContextClick={() => setPopoverOpen((open) => !open)}
-      onCycleMode={() => setMode(cyclePanelMode(layout.mode))}
+      onCycleMode={() => {
+        const action = nextLayoutAction(layout, "toggleChat");
+        if (action.type === "setMode") setMode(action.mode);
+      }}
       onToggleDock={() => setMode(layout.mode === "sidebar" ? "floating" : "sidebar")}
       onClose={() => setMode("collapsed")}
       onNewChat={api.newThread}
@@ -205,6 +212,7 @@ export function ChatPanelSlot({ api, onSidebarDock }: ChatPanelSlotProps): React
     <ContextStrip
       blocks={api.context?.blocks ?? []}
       totalTokenEstimate={api.context?.totalTokenEstimate ?? 0}
+      pinned={api.pinned}
       onRemoveBlock={(kind) => api.setFlag(kind, false)}
       onAddContext={() => setPopoverOpen(true)}
     />
@@ -217,6 +225,7 @@ export function ChatPanelSlot({ api, onSidebarDock }: ChatPanelSlotProps): React
       activeRunId={snapshot.activeRunId}
       onRetry={api.retry}
       emptyQuickActions={EMPTY_QUICK_ACTIONS}
+      error={snapshot.error}
     />
   );
 
@@ -238,30 +247,29 @@ export function ChatPanelSlot({ api, onSidebarDock }: ChatPanelSlotProps): React
     />
   );
 
-  // The popover overlays the panel, under the header (§5.3); sidebar anchors
-  // to the right edge, floating to the panel's own geometry.
-  const popoverStyle: CSSProperties =
+  // The popover anchors itself inside its mounting box (peer contract: an
+  // anchor span at top-right, just under the header) — so the overlay box
+  // mirrors the panel's geometry exactly: floating uses the panel's own
+  // x/y/w/h, sidebar the docked right rail.
+  const panelBoxStyle: CSSProperties =
     layout.mode === "sidebar"
-      ? { position: "absolute", top: 48, right: 0, width: layout.w, maxWidth: "90vw", zIndex: 20 }
+      ? { position: "absolute", top: 0, right: 0, width: layout.w, height: "100%", zIndex: 20 }
       : {
           position: "absolute",
-          top: layout.y + 48,
+          top: layout.y,
           left: layout.x,
           width: layout.w,
-          maxWidth: "90vw",
+          height: layout.h,
           zIndex: 20,
         };
 
-  // The notice chip rides just above the composer in the panel's own area.
-  const noticeStyle: CSSProperties =
-    layout.mode === "sidebar"
-      ? { position: "absolute", right: 12, bottom: 120, maxWidth: 280 }
-      : {
-          position: "absolute",
-          left: Math.max(8, layout.x),
-          top: Math.max(8, layout.y + layout.h - 72),
-          width: Math.min(layout.w, 280),
-        };
+  const removePinnedAtIndex = useCallback(
+    (index: number): void => {
+      const item = api.pinned[index];
+      if (item !== undefined) api.removePinned(item);
+    },
+    [api],
+  );
 
   const noticeText = notice ?? api.threadError?.message ?? null;
 
@@ -287,32 +295,60 @@ export function ChatPanelSlot({ api, onSidebarDock }: ChatPanelSlotProps): React
             thread={thread}
             composer={composer}
             footer={footer}
-            onCycleMode={() => setMode(cyclePanelMode(layout.mode))}
+            onCycleMode={() => {
+              const action = nextLayoutAction(layout, "toggleChat");
+              if (action.type === "setMode") setMode(action.mode);
+            }}
             onClose={() => setMode("collapsed")}
           />
         </div>
       )}
 
       {popoverOpen && !collapsed ? (
-        <div className="pointer-events-auto" data-testid="chat-context-popover" style={popoverStyle}>
+        <div
+          className="pointer-events-auto"
+          data-testid="chat-context-popover"
+          style={panelBoxStyle}
+        >
           <ContextPopover
             blocks={api.context?.blocks ?? []}
             totalTokenEstimate={api.context?.totalTokenEstimate ?? 0}
+            pinned={api.pinned}
             onToggleBlock={(kind, on) => api.setFlag(kind, on)}
             onRemoveAll={api.clearOptionalBlocks}
+            onRemovePinned={removePinnedAtIndex}
             onDone={() => setPopoverOpen(false)}
           />
         </div>
       ) : null}
 
       {noticeText !== null ? (
-        <output
-          data-testid="chat-notice"
-          style={noticeStyle}
-          className="pointer-events-none absolute rounded-sm border border-border bg-panel px-3 py-2 text-body text-primary shadow-pop"
-        >
-          {noticeText}
-        </output>
+        collapsed ? (
+          <output
+            data-testid="chat-notice"
+            style={{ position: "absolute", right: 72, top: "50%" }}
+            className="pointer-events-none absolute rounded-sm border border-border bg-panel px-3 py-2 text-body text-primary shadow-pop"
+          >
+            {noticeText}
+          </output>
+        ) : (
+          // Inside the panel's own box so the chip lands above the composer.
+          <div className="pointer-events-none" style={panelBoxStyle} data-testid="chat-notice-box">
+            <output
+              data-testid="chat-notice"
+              style={{
+                position: "absolute",
+                bottom: 88,
+                left: "50%",
+                transform: "translateX(-50%)",
+                maxWidth: "100%",
+              }}
+              className="pointer-events-none absolute rounded-sm border border-border bg-panel px-3 py-2 text-body text-primary shadow-pop"
+            >
+              {noticeText}
+            </output>
+          </div>
+        )
       ) : null}
     </div>
   );

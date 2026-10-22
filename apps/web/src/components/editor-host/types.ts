@@ -1,5 +1,5 @@
-import type { ApiClient } from "@studio/api-client";
 import type { EditorSessionClient, ManifestAssetInfo, VersionRef } from "@/lib/editor-session";
+import type { ApiClient } from "@studio/api-client";
 
 /**
  * Shared types for the editor host (M3.5/M3.6/M3.7) — the pinned seam between

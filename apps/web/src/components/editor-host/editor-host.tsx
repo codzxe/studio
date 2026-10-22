@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { ChatProvider } from "@/lib/chat/provider";
 import { Brand } from "@studio/config";
 import { type EditorBridge, attachEditorBridge } from "@studio/editor-bridge";
+import { useCallback, useEffect, useState } from "react";
 import {
   BootFailureBanner,
   BootOverlay,
@@ -15,12 +16,11 @@ import {
   SavedChip,
 } from "./banners";
 import { ChatPanelSlot } from "./chat-panel-slot";
-import { editorChatShortcutBus, type ChatShortcutBus } from "./chat-shortcut-bus";
+import { type ChatShortcutBus, editorChatShortcutBus } from "./chat-shortcut-bus";
 import { ProjectBar } from "./project-bar";
+import { createApiSession } from "./session-client";
 import type { EditorHostPayload, EditorSessionFactory } from "./types";
 import { useEditorSession } from "./use-editor-session";
-import { createApiSession } from "./session-client";
-import { ChatProvider } from "@/lib/chat/provider";
 
 /**
  * `EditorHost` — the editor page body (M3.5/M3.6/M3.7, BUILD_PLAN §M3 tasks
@@ -69,9 +69,13 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
   // ---------------------------------------------------------------------------
   const chatClient = sessionHandle.api;
   const [chatBridge, setChatBridge] = useState<EditorBridge | null>(null);
+  // `session` (the hook's api object) is a fresh literal per render — NEVER a
+  // dependency here (an unstable dep would dispose/re-attach the chat bridge
+  // on every host re-render). The stable pieces are pinned instead.
+  const chatIframeRef = session.iframeRef;
   useEffect(() => {
     if (state.phase !== "open" || chatClient === undefined) return;
-    const iframe = session.iframeRef.current;
+    const iframe = chatIframeRef.current;
     if (iframe === null) return;
     let disposed = false;
     attachEditorBridge(iframe).then(
@@ -91,7 +95,7 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
         return null;
       });
     };
-  }, [state.phase, session, chatClient]);
+  }, [state.phase, chatClient, chatIframeRef]);
 
   // D-18: sidebar mode "changes only the iframe width" — the viewport wrapper
   // resizes (never restyles) the editor; the iframe keeps its own classes.
