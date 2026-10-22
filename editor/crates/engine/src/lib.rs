@@ -1,4 +1,4 @@
-//! The EffectCraft engine façade.
+//! The Studio engine façade.
 //!
 //! Every user-visible action is a command with a stable id (`layer.newSolid`, `prop.set`,
 //! `keys.easyEase`…) and JSON parameters, dispatched through [`Session::execute`]. The egui UI,

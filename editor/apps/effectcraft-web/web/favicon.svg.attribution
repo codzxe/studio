@@ -1,8 +1,7 @@
 asset:        favicon.svg
-title:        EffectCraft web app icon (favicon)
-author:       EffectCraft contributors (drawing by the project owner in ArtCraft)
-source:       original work
+title:        Studio web app icon (favicon)
+author:       studio project (original work)
+source:       original work for the studio product; the upstream EffectCraft icon is not used
 license:      MIT OR Apache-2.0
-license-file: assets/app-icon/LICENSE.txt
-added:        2026-10-02 by EffectCraft contributors (Claude agent, app icon)
-notes:        Copy of assets/app-icon/effectcraft-small.svg (the lighter vector trace of the app icon). Replaces the earlier code-drawn split-square mark.
+added:        2026-10-22 by the studio project (original work, keyframe-diamond mark)
+notes:        Keyframe-diamond mark, vector; same composition as docs/brand/studio-mark.png.

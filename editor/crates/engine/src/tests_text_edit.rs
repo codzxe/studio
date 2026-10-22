@@ -292,7 +292,7 @@ fn pinned_variable_font(family: &str) -> Vec<u8> {
 /// the font menu's rows carry the flag the filter uses.
 #[test]
 fn fonts_filter_variable_families() {
-    const FAMILY: &str = "EffectCraft Variable Filter Test";
+    const FAMILY: &str = "Studio Variable Filter Test";
     assert_eq!(effectcraft_text::fonts::add_font_data(pinned_variable_font(FAMILY)).len(), 1);
     let mut s = Session::default();
     let all = s.execute("text.fonts", json!({})).unwrap();
@@ -360,7 +360,7 @@ fn instanced_variable_font(family: &str, instances: &[(&str, f32)]) -> Vec<u8> {
 /// do) is laid out at the instance's axis values; an axis set on the text still wins.
 #[test]
 fn variable_font_named_instances_are_styles() {
-    const FAMILY: &str = "EffectCraft Named Instance Test";
+    const FAMILY: &str = "Studio Named Instance Test";
     assert_eq!(effectcraft_text::fonts::add_font_data(instanced_variable_font(FAMILY, &[("Light", 300.0), ("Regular", 400.0), ("Black", 900.0)])).len(), 1);
     let (mut s, t) = session("Hi");
     let fonts = s.execute("text.fonts", json!({"query": FAMILY})).unwrap();

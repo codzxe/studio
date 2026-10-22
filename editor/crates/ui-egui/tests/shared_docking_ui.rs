@@ -1,4 +1,4 @@
-//! Existing EffectCraft workspaces use shared transactions without changing their saved schema.
+//! Existing Studio workspaces use shared transactions without changing their saved schema.
 use craft_ui::docking::{Action, Placement, Zone};
 use effectcraft_engine::Session;
 use effectcraft_ui_egui::{

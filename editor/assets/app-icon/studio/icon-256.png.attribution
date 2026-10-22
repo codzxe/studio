@@ -1,0 +1,7 @@
+asset:        assets/app-icon/studio/icon-256.png
+title:        Studio app icon, 256 px
+author:       studio project (original work)
+source:       original work for the studio product; the upstream EffectCraft mark is not used
+license:      MIT OR Apache-2.0
+added:        2026-10-22 by the studio project (original work, keyframe-diamond mark)
+notes:        Signal-orange keyframe diamond on the editor's dark tile (#1b1c1f bg, #ff6a3d accent).

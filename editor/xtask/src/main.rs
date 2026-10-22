@@ -303,7 +303,7 @@ fn web(args: &[String]) -> Result<(), String> {
     }
     // PWA icons: the app icon (assets/app-icon, attributed there).
     for n in [256, 512] {
-        let src = format!("assets/app-icon/hicolor/{n}x{n}/apps/ai.storyteller.effectcraft.png");
+        let src = format!("assets/app-icon/studio/icon-{n}.png");
         std::fs::copy(&src, dist.join(format!("icon-{n}.png"))).map_err(|e| format!("{src}: {e}"))?;
     }
     service_worker(&dist)?;

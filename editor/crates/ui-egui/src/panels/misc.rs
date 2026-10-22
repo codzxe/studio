@@ -365,7 +365,7 @@ pub fn audio(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
 pub fn history(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let p = ui.painter().with_clip_rect(rect);
-    // The branching history (EffectCraft's History panel): every state, branches indented under
+    // The branching history (Studio's History panel): every state, branches indented under
     // the state they grew from; click any state to go there (`edit.history.goto`).
     let nodes = app.session.history_tree();
     let row_h = 22.0;

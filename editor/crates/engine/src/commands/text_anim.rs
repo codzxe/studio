@@ -1,5 +1,5 @@
 //! Text animation: Animation ▸ Animate Text / Add Text Selector, the Timeline's "Animate:" and
-//! "Add:" pop-ups, Enable Per-character 3D, and EffectCraft's own text animator presets.
+//! "Add:" pop-ups, Enable Per-character 3D, and Studio's own text animator presets.
 
 use effectcraft_keyframe::{Keyframe, Value as KV};
 use effectcraft_project::build::{self, Ids};

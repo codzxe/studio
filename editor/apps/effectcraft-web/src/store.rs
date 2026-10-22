@@ -12,7 +12,7 @@
 //! | Key | What |
 //! |---|---|
 //! | `config/<name>` | settings (`prefs.json`), shortcut presets, the recovery sentinel, the session snapshot |
-//! | `files<path>` | the virtual file table: imported media, saved projects, auto-saves (`/EffectCraft Auto-Save/…`) |
+//! | `files<path>` | the virtual file table: imported media, saved projects, auto-saves (`/Studio Auto-Save/…`) |
 //!
 //! Render outputs go into the file table unpersisted (they download instead).
 //!
@@ -246,7 +246,7 @@ pub enum FileKind {
     Project,
     /// Imported footage and everything else.
     Media,
-    /// Auto-saves (`/EffectCraft Auto-Save/…`, or `… auto-save N.ecproj`).
+    /// Auto-saves (`/Studio Auto-Save/…`, or `… auto-save N.ecproj`).
     AutoSave,
 }
 
@@ -275,7 +275,7 @@ impl FileKind {
 }
 
 /// Settings and friends ([`ConfigStore`]) in the store; auto-saves ([`FileOps`]) in its file
-/// table, under `/` (untitled projects auto-save to `/EffectCraft Auto-Save/`).
+/// table, under `/` (untitled projects auto-save to `/Studio Auto-Save/`).
 pub struct WebConfig {
     store: Arc<Store>,
     files: WebFiles,
@@ -385,7 +385,7 @@ mod tests {
         s.put_file("/a.ecproj", Arc::from(&b"proj"[..]), true);
         s.put_file("/clip.mp4", Arc::from(&b"0123456789"[..]), true);
         s.put_file("/still.png", Arc::from(&b"px"[..]), true);
-        s.put_file("/EffectCraft Auto-Save/a auto-save 1.ecproj", Arc::from(&b"auto"[..]), true);
+        s.put_file("/Studio Auto-Save/a auto-save 1.ecproj", Arc::from(&b"auto"[..]), true);
         s.put_file("/render.gif", Arc::from(&b"out"[..]), false);
         let u = s.usage();
         assert_eq!(u["projects"], serde_json::json!({"count": 1, "bytes": 4}));
@@ -493,10 +493,10 @@ mod tests {
         c.write("session.lock", "{}").unwrap();
         assert!(s.files().is_empty());
         let fs = c.files();
-        fs.write(Path::new("/EffectCraft Auto-Save/P auto-save 1.ecproj"), b"{}").unwrap();
-        fs.write(Path::new("/EffectCraft Auto-Save/P auto-save 2.ecproj"), b"{}").unwrap();
+        fs.write(Path::new("/Studio Auto-Save/P auto-save 1.ecproj"), b"{}").unwrap();
+        fs.write(Path::new("/Studio Auto-Save/P auto-save 2.ecproj"), b"{}").unwrap();
         fs.write(Path::new("/other.ecproj"), b"{}").unwrap();
-        let mut names: Vec<String> = fs.list(Path::new("/EffectCraft Auto-Save")).into_iter().map(|e| e.0).collect();
+        let mut names: Vec<String> = fs.list(Path::new("/Studio Auto-Save")).into_iter().map(|e| e.0).collect();
         names.sort();
         assert_eq!(names, ["P auto-save 1.ecproj", "P auto-save 2.ecproj"]);
         assert!(fs.is_file(Path::new("/other.ecproj")));
@@ -510,8 +510,8 @@ mod tests {
             [
                 "config/prefs.json",
                 "config/session.lock",
-                "files/EffectCraft Auto-Save/P auto-save 1.ecproj",
-                "files/EffectCraft Auto-Save/P auto-save 2.ecproj",
+                "files/Studio Auto-Save/P auto-save 1.ecproj",
+                "files/Studio Auto-Save/P auto-save 2.ecproj",
                 "files/other.ecproj"
             ]
         );
@@ -531,7 +531,7 @@ mod tests {
         a.execute("comp.new", json!({"name": "C"})).unwrap();
         // Untitled: the auto-save lands in the store's file table.
         let p = a.autosave_now().unwrap();
-        assert_eq!(Path::new(&p), Path::new("/EffectCraft Auto-Save/Untitled Project auto-save 1.ecproj"));
+        assert_eq!(Path::new(&p), Path::new("/Studio Auto-Save/Untitled Project auto-save 1.ecproj"));
         assert!(s.file(&path_str(Path::new(&p))).is_some());
         // The tab closes without a clean exit: the next visit offers the auto-save.
         let mut b = Session { config: Some(Arc::new(WebConfig::new(s.clone()))), ..Default::default() };
