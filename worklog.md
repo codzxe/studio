@@ -703,3 +703,18 @@ Stage Summary:
 - M4 IS LANDED: the read-only agent chat works end-to-end — LiteLLM runner (OpenAI-compatible, redacted, allowlisted, usage-metered) behind the existing SSE/credits machinery; 4 client-side read tools executing against the live editor bridge + server-side plan_edit; the full chat UI (panel modes, entitlement-driven picker, context popover with token estimates, markdown-safe thread with tool/plan cards, composer with steer/stop) mounted over the real editor without touching it; prompt-injection-proofed with a reusable corpus; the money bug that predated M4 is fixed and triple-pinned.
 - Owed to CI (same class as M3): Playwright chat spec run + first-token p75 + screenshot baselines (recipe: apps/web/e2e/README.md).
 - Next milestone: M5 (agent edits: plan compiler, preview, apply via ONE atomic engine.batch, undo, version) — consumes the plan events + the commented saveNow("agent-apply") call site from M3/M4.
+
+---
+Task ID: W5-hygiene
+Agent: main-orchestrator
+Task: User asked why both `effectcraft-upstream/` and `editor/` exist; audit revealed a phantom gitlink.
+
+Work Log:
+- Answered the question: `editor/` (1135 tracked files) is the vendored product source (pin 9db7f3b2 + patch 0001, D-17, self-contained); `effectcraft-upstream/` is the documented local reference clone (editor/UPSTREAM.md "Local reference clone") with its own .git + origin=storytold/effectcraft, used as the pristine diff base for patch 0001 and for future re-pins.
+- Found the defect: studio index carried `effectcraft-upstream` as a gitlink (mode 160000 → 0afc18e) with NO .gitmodules — a fresh clone of codzxe/studio gets an empty, unresolvable dir; the pointer is dead off-box.
+- Fix applied: `git rm --cached effectcraft-upstream` + `/effectcraft-upstream/` appended to .gitignore with rationale comment. The clone stays on disk fully functional for patch/pin work; nothing deleted.
+- Committed + pushed via scripts/git-sync.sh.
+
+Stage Summary:
+- Repo is now truly self-contained per D-17: `editor/` is the only tracked EffectCraft source; the reference clone is local-only tooling, invisible to clones.
+- No code paths touched; no gates required beyond a clean `git status` after sync (verified).
