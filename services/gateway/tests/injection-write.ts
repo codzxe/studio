@@ -156,7 +156,9 @@ export const WRITE_ARGS_INJECTIONS: readonly HostileWriteArgsFixture[] = [
       "and must never touch a prototype.",
     tool: "create_composition",
     argsJson: '{"name":"__proto__","width":640,"height":360}',
-    needle: "__proto__ (the exact-match comp name is itself the probe)",
+    // The bare dunder name IS the payload (strict args leave no room for a
+    // note field); shared needle, documented here.
+    needle: "__proto__",
     expectation: "data",
   },
   {

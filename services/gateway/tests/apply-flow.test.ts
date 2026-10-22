@@ -657,7 +657,9 @@ function shaOfCompiledBatch(batch: { label: string; steps: unknown[] }): string 
 }
 
 function anySha(): string {
-  return createHash("sha256").update(`batch-${unique("sha")}`).digest("hex");
+  return createHash("sha256")
+    .update(`batch-${unique("sha")}`)
+    .digest("hex");
 }
 
 // ---------------------------------------------------------------------------

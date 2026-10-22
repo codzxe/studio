@@ -55,8 +55,8 @@ import {
   CHAT_MESSAGE_SCHEMA,
   CONTEXT_SELECTION_SCHEMA,
   EDIT_PLAN_SCHEMA,
-  META_COMMAND_IDS,
   type EditPlan,
+  META_COMMAND_IDS,
   PINNED_CONTEXT_ITEM_SCHEMA,
   PLAN_RISK_SCHEMA,
   STUDIO_STREAM_EVENT_SCHEMA,
@@ -70,6 +70,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { compilePlan, defaultCompileDeps } from "../src/plan-compiler.js";
 import { createRunnerForEnv } from "../src/runner.js";
 import {
+  GOLDEN_PROMPT_FIXTURES,
+  type GoldenPromptFixture,
+  REQUIRED_SCENARIOS,
+} from "./golden-plans.js";
+import {
   CookieJar,
   HAS_DATABASE,
   type RunningTestServer,
@@ -80,11 +85,6 @@ import {
   unique,
   uniqueEmail,
 } from "./helpers.js";
-import {
-  type GoldenPromptFixture,
-  GOLDEN_PROMPT_FIXTURES,
-  REQUIRED_SCENARIOS,
-} from "./golden-plans.js";
 
 // ---------------------------------------------------------------------------
 // Fake OpenAI-compatible SSE server — the chat-loop harness technique (M4-K);
@@ -219,12 +219,7 @@ function planEditRound(toolCallId: string, goal: string): ScriptEntry {
   ];
 }
 function structuredPlanRound(plan: EditPlan): ScriptEntry {
-  return () => [
-    textDelta(JSON.stringify(plan)),
-    finishReason("stop"),
-    usageChunk(140, 60),
-    DONE,
-  ];
+  return () => [textDelta(JSON.stringify(plan)), finishReason("stop"), usageChunk(140, 60), DONE];
 }
 function finalAnswerRound(text: string): ScriptEntry {
   return () => [textDelta(text), usageChunk(60, 15), finishReason("stop"), DONE];
@@ -314,9 +309,7 @@ function warnCodes(result: CompileOk): string[] {
  * (The model's own ADVISORY pseudo commands are the bare tool ids, which are
  * deliberately NOT registry ids — self-checked below.)
  */
-function expectNoCompiledCommandsLeak(
-  calls: ReadonlyArray<{ body: ChatCompletionBody }>,
-): void {
+function expectNoCompiledCommandsLeak(calls: ReadonlyArray<{ body: ChatCompletionBody }>): void {
   for (const call of calls) {
     const serialized = JSON.stringify(call.body);
     expect(serialized.includes("engine.execute")).toBe(false);
@@ -391,15 +384,18 @@ describe("golden prompts — fixture validity self-checks", () => {
     }
   });
 
-  it.each(GOLDEN_PROMPT_FIXTURES)("($id) expected commands are curated agent registry ids", (fx) => {
-    const allowlist = new Set(AGENT_COMMAND_IDS);
-    for (const id of fx.expected.commands) {
-      expect(allowlist.has(id)).toBe(true);
-    }
-    for (const id of META_COMMAND_IDS) {
-      expect(allowlist.has(id)).toBe(false);
-    }
-  });
+  it.each(GOLDEN_PROMPT_FIXTURES)(
+    "($id) expected commands are curated agent registry ids",
+    (fx) => {
+      const allowlist = new Set(AGENT_COMMAND_IDS);
+      for (const id of fx.expected.commands) {
+        expect(allowlist.has(id)).toBe(true);
+      }
+      for (const id of META_COMMAND_IDS) {
+        expect(allowlist.has(id)).toBe(false);
+      }
+    },
+  );
 
   it.each(GOLDEN_PROMPT_FIXTURES)(
     "($id) expected credits match estimateCredits for the RECOMPUTED risk (never the model's)",
@@ -554,39 +550,149 @@ const WIRE_FIXTURE_IDS = [
 const fake = new FakeOpenAIServer();
 let server: RunningTestServer;
 
-d("golden prompts — the wire proof (real chat loop, scripted model, plan event on the SSE wire)", () => {
-  beforeAll(async () => {
-    await fake.start();
-    const envSource = {
-      MOCK_MODEL: "false",
-      LITELLM_BASE_URL: fake.url,
-      LITELLM_API_KEY: "sk-test-golden",
-      CHAT_MAX_STEPS: "6",
-    };
-    const env = testEnv(envSource);
-    server = await bootServer({ env: envSource, runner: createRunnerForEnv(env) });
-  }, 30_000);
+d(
+  "golden prompts — the wire proof (real chat loop, scripted model, plan event on the SSE wire)",
+  () => {
+    beforeAll(async () => {
+      await fake.start();
+      const envSource = {
+        MOCK_MODEL: "false",
+        LITELLM_BASE_URL: fake.url,
+        LITELLM_API_KEY: "sk-test-golden",
+        CHAT_MAX_STEPS: "6",
+      };
+      const env = testEnv(envSource);
+      server = await bootServer({ env: envSource, runner: createRunnerForEnv(env) });
+    }, 30_000);
 
-  afterAll(async () => {
-    await server?.close();
-    await fake.stop();
-  });
+    afterAll(async () => {
+      await server?.close();
+      await fake.stop();
+    });
 
-  afterEach(() => {
-    fake.reset();
-  });
+    afterEach(() => {
+      fake.reset();
+    });
 
-  it.each(WIRE_FIXTURE_IDS.map((id) => fixtureById(id)))(
-    "($id) prompt → plan_edit → compiled plan event matches the golden",
-    async (fx) => {
-      const ctx = await newFixture("golden");
-      const toolCallId = `call_golden_${fx.id.replace(/-/g, "_")}`;
+    it.each(WIRE_FIXTURE_IDS.map((id) => fixtureById(id)))(
+      "($id) prompt → plan_edit → compiled plan event matches the golden",
+      async (fx) => {
+        const ctx = await newFixture("golden");
+        const toolCallId = `call_golden_${fx.id.replace(/-/g, "_")}`;
 
-      // The scripted model: plan_edit(goal) → structured EditPlan → answer.
+        // The scripted model: plan_edit(goal) → structured EditPlan → answer.
+        fake.enqueue(
+          planEditRound(toolCallId, fx.prompt),
+          structuredPlanRound(parsePlan(fx)),
+          finalAnswerRound("Here's the plan — review it and apply when ready."),
+        );
+
+        const response = await fetch(`${server.base}/v1/threads/${ctx.threadId}/chat`, {
+          method: "POST",
+          headers: {
+            origin: TEST_APP_ORIGIN,
+            "content-type": "application/json",
+            accept: "text/event-stream",
+            cookie: ctx.jar.header,
+            "x-workspace-id": ctx.workspaceId,
+          },
+          body: JSON.stringify({
+            message: fx.prompt,
+            context: fx.userContext.context,
+            idempotencyKey: unique("golden-chat"),
+            pinned: fx.userContext.pinned,
+          }),
+          redirect: "manual",
+        });
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+        const events = await readAllEvents(response);
+
+        // §7.4 stream shape: run.started first, one terminal last, contiguous seq,
+        // one run. (The byte-exact frame contract is chat-loop scenario 8.)
+        expect(events[0]?.type).toBe("run.started");
+        const last = events.at(-1);
+        expect(last?.type).toBe("run.completed");
+        const seqs = events.map((event) => event.seq);
+        expect(seqs).toEqual(seqs.map((_seq, index) => index));
+        expect(new Set(events.map((event) => event.runId)).size).toBe(1);
+
+        // Exactly one plan event, carrying the model's plan VERBATIM.
+        const planEvents = events.filter((event): event is PlanEvent => event.type === "plan");
+        expect(planEvents).toHaveLength(1);
+        const planEvent = planEvents[0];
+        if (planEvent === undefined) throw new Error("no plan event on the wire");
+        expect(planEvent.plan).toEqual(parsePlan(fx));
+
+        // The M5 enrichment: the compiled batch matches the golden.
+        expect(planEvent.compiledBatch).toBeDefined();
+        const batch = planEvent.compiledBatch;
+        if (batch === undefined) throw new Error("plan event was not enriched");
+        expect(commandIds(batch)).toEqual([...fx.expected.commands]);
+        expect(batch.steps.length).toBeGreaterThanOrEqual(fx.expected.batchStepRange[0]);
+        expect(batch.steps.length).toBeLessThanOrEqual(fx.expected.batchStepRange[1]);
+        expect(batch.atomic).toBe(true);
+        expect(batch.label).toBe(`Agent: ${fx.scriptedModelPlan.summary}`);
+
+        // Risk + credits are SERVER-RECOMPUTED — the model's numbers never win.
+        expect(planEvent.risk).toBe(fx.expected.risk);
+        expect(planEvent.estimatedCredits).toBe(fx.expected.estimatedCredits);
+
+        // Layer-name resolution requests (§8.7): names only, request ids stable.
+        expect((planEvent.resolutionRequests ?? []).map((request) => request.layerName)).toEqual([
+          ...fx.expected.resolutionRequests,
+        ]);
+
+        // The tool.result for plan_edit is the BARE plan (M4 shape) — the
+        // compiled registry command ids ride the plan event for the CLIENT only.
+        const toolResult = events.find(
+          (event) => event.type === "tool.result" && event.toolCallId === toolCallId,
+        );
+        expect(toolResult).toBeDefined();
+        if (toolResult?.type !== "tool.result") throw new Error("no plan tool.result on the wire");
+        expect(toolResult.result).toEqual(parsePlan(fx));
+
+        // The model conversation: 3 provider calls — the plan_edit round (13
+        // curated tools), the structured-output round (NO tools, plan
+        // instruction + goal), the final answer round.
+        expect(fake.calls).toHaveLength(3);
+        const [round1, round2, round3] = fake.calls;
+        expect(round1?.body.tools?.length).toBe(TOOL_LIST.length);
+        expect(TOOL_LIST).toHaveLength(13);
+        expect(round2?.body.tools).toBeUndefined();
+        expect(round3?.body.tools?.length).toBe(13);
+        expect(round1?.authorization).toBe("Bearer sk-test-golden");
+
+        // The structured prompt asked for THIS goal (§8.6 strict-JSON prompt).
+        const planInstruction = round2?.body.messages.at(-1);
+        expect(planInstruction?.role).toBe("user");
+        expect(String(planInstruction?.content)).toContain("Produce an EditPlan");
+        expect(String(planInstruction?.content)).toContain(fx.prompt);
+
+        // Law #5: no compiled registry command id ever entered the conversation.
+        expectNoCompiledCommandsLeak(fake.calls);
+
+        // §8.8: a completed run commits 1..reserved credits.
+        const credits = events.find(
+          (event): event is Extract<StudioStreamEvent, { type: "credits" }> =>
+            event.type === "credits",
+        );
+        expect(credits).toBeDefined();
+        if (credits === undefined) throw new Error("no credits event");
+        expect(credits.committed).toBeGreaterThanOrEqual(1);
+        expect(credits.committed).toBeLessThanOrEqual(credits.reserved);
+      },
+      20_000,
+    );
+
+    it("the wire pins G-3 exactly: gp-11 shows 3 plan steps but a 1-command compiled batch", async () => {
+      const fx = fixtureById("gp-11-lower-third-compound");
+      const ctx = await newFixture("golden-g3");
       fake.enqueue(
-        planEditRound(toolCallId, fx.prompt),
+        planEditRound("call_golden_g3", fx.prompt),
         structuredPlanRound(parsePlan(fx)),
-        finalAnswerRound("Here's the plan — review it and apply when ready."),
+        finalAnswerRound("Plan ready."),
       );
 
       const response = await fetch(`${server.base}/v1/threads/${ctx.threadId}/chat`, {
@@ -601,138 +707,31 @@ d("golden prompts — the wire proof (real chat loop, scripted model, plan event
         body: JSON.stringify({
           message: fx.prompt,
           context: fx.userContext.context,
-          idempotencyKey: unique("golden-chat"),
+          idempotencyKey: unique("golden-g3"),
           pinned: fx.userContext.pinned,
         }),
         redirect: "manual",
       });
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toContain("text/event-stream");
-
       const events = await readAllEvents(response);
-
-      // §7.4 stream shape: run.started first, one terminal last, contiguous seq,
-      // one run. (The byte-exact frame contract is chat-loop scenario 8.)
-      expect(events[0]?.type).toBe("run.started");
-      const last = events.at(-1);
-      expect(last?.type).toBe("run.completed");
-      const seqs = events.map((event) => event.seq);
-      expect(seqs).toEqual(seqs.map((_seq, index) => index));
-      expect(new Set(events.map((event) => event.runId)).size).toBe(1);
-
-      // Exactly one plan event, carrying the model's plan VERBATIM.
-      const planEvents = events.filter((event): event is PlanEvent => event.type === "plan");
-      expect(planEvents).toHaveLength(1);
-      const planEvent = planEvents[0];
+      const planEvent = events.find((event): event is PlanEvent => event.type === "plan");
       if (planEvent === undefined) throw new Error("no plan event on the wire");
-      expect(planEvent.plan).toEqual(parsePlan(fx));
 
-      // The M5 enrichment: the compiled batch matches the golden.
-      expect(planEvent.compiledBatch).toBeDefined();
-      const batch = planEvent.compiledBatch;
-      if (batch === undefined) throw new Error("plan event was not enriched");
-      expect(commandIds(batch)).toEqual([...fx.expected.commands]);
-      expect(batch.steps.length).toBeGreaterThanOrEqual(fx.expected.batchStepRange[0]);
-      expect(batch.steps.length).toBeLessThanOrEqual(fx.expected.batchStepRange[1]);
-      expect(batch.atomic).toBe(true);
-      expect(batch.label).toBe(`Agent: ${fx.scriptedModelPlan.summary}`);
-
-      // Risk + credits are SERVER-RECOMPUTED — the model's numbers never win.
-      expect(planEvent.risk).toBe(fx.expected.risk);
-      expect(planEvent.estimatedCredits).toBe(fx.expected.estimatedCredits);
-
-      // Layer-name resolution requests (§8.7): names only, request ids stable.
-      expect(
-        (planEvent.resolutionRequests ?? []).map((request) => request.layerName),
-      ).toEqual([...fx.expected.resolutionRequests]);
-
-      // The tool.result for plan_edit is the BARE plan (M4 shape) — the
-      // compiled registry command ids ride the plan event for the CLIENT only.
-      const toolResult = events.find(
-        (event) => event.type === "tool.result" && event.toolCallId === toolCallId,
-      );
-      expect(toolResult).toBeDefined();
-      if (toolResult?.type !== "tool.result") throw new Error("no plan tool.result on the wire");
-      expect(toolResult.result).toEqual(parsePlan(fx));
-
-      // The model conversation: 3 provider calls — the plan_edit round (13
-      // curated tools), the structured-output round (NO tools, plan
-      // instruction + goal), the final answer round.
-      expect(fake.calls).toHaveLength(3);
-      const [round1, round2, round3] = fake.calls;
-      expect(round1?.body.tools?.length).toBe(TOOL_LIST.length);
-      expect(TOOL_LIST).toHaveLength(13);
-      expect(round2?.body.tools).toBeUndefined();
-      expect(round3?.body.tools?.length).toBe(13);
-      expect(round1?.authorization).toBe("Bearer sk-test-golden");
-
-      // The structured prompt asked for THIS goal (§8.6 strict-JSON prompt).
-      const planInstruction = round2?.body.messages.at(-1);
-      expect(planInstruction?.role).toBe("user");
-      expect(String(planInstruction?.content)).toContain("Produce an EditPlan");
-      expect(String(planInstruction?.content)).toContain(fx.prompt);
-
-      // Law #5: no compiled registry command id ever entered the conversation.
-      expectNoCompiledCommandsLeak(fake.calls);
-
-      // §8.8: a completed run commits 1..reserved credits.
-      const credits = events.find(
-        (event): event is Extract<StudioStreamEvent, { type: "credits" }> =>
-          event.type === "credits",
-      );
-      expect(credits).toBeDefined();
-      if (credits === undefined) throw new Error("no credits event");
-      expect(credits.committed).toBeGreaterThanOrEqual(1);
-      expect(credits.committed).toBeLessThanOrEqual(credits.reserved);
-    },
-    20_000,
-  );
-
-  it("the wire pins G-3 exactly: gp-11 shows 3 plan steps but a 1-command compiled batch", async () => {
-    const fx = fixtureById("gp-11-lower-third-compound");
-    const ctx = await newFixture("golden-g3");
-    fake.enqueue(
-      planEditRound("call_golden_g3", fx.prompt),
-      structuredPlanRound(parsePlan(fx)),
-      finalAnswerRound("Plan ready."),
-    );
-
-    const response = await fetch(`${server.base}/v1/threads/${ctx.threadId}/chat`, {
-      method: "POST",
-      headers: {
-        origin: TEST_APP_ORIGIN,
-        "content-type": "application/json",
-        accept: "text/event-stream",
-        cookie: ctx.jar.header,
-        "x-workspace-id": ctx.workspaceId,
-      },
-      body: JSON.stringify({
-        message: fx.prompt,
-        context: fx.userContext.context,
-        idempotencyKey: unique("golden-g3"),
-        pinned: fx.userContext.pinned,
-      }),
-      redirect: "manual",
+      // What the PLAN CARD shows: the model's 3 steps (create + animate + save).
+      expect(planEvent.plan.steps).toHaveLength(3);
+      // What the APPLIED BATCH would perform: 1 command — the slide-in
+      // animation translated to ZERO commands with warn severity only (G-3).
+      expect(planEvent.plan.steps.map((step) => step.title)).toEqual([
+        "Create the lower-third text",
+        "Slide in from the left",
+        "Save the version",
+      ]);
+      const g3Batch = planEvent.compiledBatch;
+      if (g3Batch === undefined) throw new Error("gp-11 plan event was not enriched");
+      expect(g3Batch.steps).toHaveLength(1);
+      expect(commandIds(g3Batch)).toEqual(["layer.newText"]);
     });
-    const events = await readAllEvents(response);
-    const planEvent = events.find((event): event is PlanEvent => event.type === "plan");
-    if (planEvent === undefined) throw new Error("no plan event on the wire");
-
-    // What the PLAN CARD shows: the model's 3 steps (create + animate + save).
-    expect(planEvent.plan.steps).toHaveLength(3);
-    // What the APPLIED BATCH would perform: 1 command — the slide-in
-    // animation translated to ZERO commands with warn severity only (G-3).
-    expect(planEvent.plan.steps.map((step) => step.title)).toEqual([
-      "Create the lower-third text",
-      "Slide in from the left",
-      "Save the version",
-    ]);
-    const g3Batch = planEvent.compiledBatch;
-    if (g3Batch === undefined) throw new Error("gp-11 plan event was not enriched");
-    expect(g3Batch.steps).toHaveLength(1);
-    expect(commandIds(g3Batch)).toEqual(["layer.newText"]);
-  });
-});
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Wire fixtures: fresh workspace + credits + project + version + thread
@@ -766,7 +765,10 @@ async function newFixture(prefix: string): Promise<WireFixture> {
   expect(wsResponse.status).toBe(201);
   const ws = (await wsResponse.json()) as { data: { id: string } };
 
-  await server.deps.repos.ledger.grant(ws.data.id, { amount: 100, idempotencyKey: unique("grant") });
+  await server.deps.repos.ledger.grant(ws.data.id, {
+    amount: 100,
+    idempotencyKey: unique("grant"),
+  });
 
   const projectResponse = await api(server.base, "/v1/projects", {
     method: "POST",
