@@ -11,14 +11,19 @@
 //   4. layer-name resolution requests are deduped (≤50) with the plan's own
 //      `change` disambiguation, placeholders point at every name occurrence,
 //      resolvers substitute authoritative ids and throwing resolvers degrade;
-//   5. risk + credits are RECOMPUTED (model lies ignored) from the compiled
-//      commands + tool catalog floors;
+//   5. risk + credits are RECOMPUTED server-side: the command floors + tool
+//      catalog floors RAISE risk, and the model's declared risk is a FLOOR
+//      it can never be lowered below (G-4 — the card never understates);
 //   6. hostile args never crash: dunder keys, 999-length arrays, deep
 //      nesting, cyclic structures, non-object args — typed results only;
 //   7. determinism: same input twice ⇒ deep-equal; arg key order irrelevant.
 //
-// Deterministic: pure in-memory fixtures (deps injected — the M5-A/M5-J
-// stubs are empty today), no network, no Postgres.
+// M5-S FLIP: fixtures speak the LANDED M5-A write-tool vocabulary
+// (packages/contracts/src/write-tools.ts — layers:[{name}], properties,
+// keys/timeSeconds, effect:{name}, preset:{name|builtinId}, 1:1 create_text
+// typography, path "name" → layer.rename per G-7, D-21 preset fallback,
+// G-3 zero-command step fatal). Deterministic: pure in-memory fixtures
+// (deps injected), no network, no Postgres.
 
 import {
   AGENT_BATCH_SCHEMA,
