@@ -12,6 +12,8 @@ export type BridgeErrorCode =
   | "EDITOR_CALL_FAILED"
   /** `window.effectcraft` missing / not yet started, or a "not ready" rejection persisted after retry. */
   | "EDITOR_NOT_READY"
+  /** The editor's wasm failed to boot: the host page set `effectcraftLoad.error` (dist `index.html`). Not retryable by the bridge — reload the iframe. */
+  | "EDITOR_LOAD_FAILED"
   /** The iframe's window is gone (navigated away, removed, or the bridge was disposed). */
   | "EDITOR_DISCONNECTED";
 
@@ -19,6 +21,7 @@ const CODES: readonly BridgeErrorCode[] = [
   "EDITOR_TIMEOUT",
   "EDITOR_CALL_FAILED",
   "EDITOR_NOT_READY",
+  "EDITOR_LOAD_FAILED",
   "EDITOR_DISCONNECTED",
 ];
 

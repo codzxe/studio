@@ -184,3 +184,59 @@ Stage Summary:
 - Fork: codzxe/effectcraft studio@0afc18e = pin 9db7f3b2 + de-brand patch 0001; patch protocol documented in editor/patches/README.md.
 - Editor chrome is de-branded: no EffectCraft/ArtCraft marks, names, links or icons in any user-visible surface; original Studio keyframe mark everywhere; upstream attribution fully preserved (sidecars, ATTRIBUTION.md, licences page).
 - Owed/next: cargo test/clippy/xtask wasm on a real CI box; browser E2E of /editor/ (M3); re-tuned dist (cg1+wasm-opt) for the 58 MB/10-12 MB target; M3 host page wiring (iframe + attachEditorBridge to the live window.effectcraft) is the next build wave.
+---
+Task ID: W5-prep
+Agent: main-orchestrator
+Task: Single-repo policy per user directive ("why you forked it — download it and put in our repo"): deprecate the codzxe/effectcraft fork, make editor/ vendored source canonical; prep M3 fleet (deps wiring + protocol).
+
+Work Log:
+- Verified with git/API: editor/ IS fully vendored in codzxe/studio — 1135 tracked files vs 1132 upstream (0 missing; +3 = our patch metadata), no embedded .git, HEAD == origin/main (7fd7f6b), dist committed at apps/web/public/editor/ (73 MB).
+- Fork codzxe/effectcraft exists (fork=True) but token scopes are repo,workflow only — NO delete_repo, so the fork cannot be deleted via API; flagged for MANUAL deletion (repo Settings -> Danger Zone) and deprecated in docs instead.
+- Amended DECISIONS.md D-17: single-repo policy — editor/ vendored source is canonical, patches made in-tree, diff artifacts in editor/patches/ for provenance only, fork deprecated.
+- Updated editor/patches/README.md (workflow now in-tree, artifact diffed against pin 9db7f3b2), editor/UPSTREAM.md Product patches section, docs/phases/M0.md fork section (historical facts kept, protocol superseded).
+- Wired @studio/api-client + @studio/editor-bridge into apps/web/package.json (workspace:*, pnpm install linked, lockfile updated); web typecheck baseline green.
+- Documented GATEWAY_INTERNAL_URL (RSC gateway base, default http://127.0.0.1:8787, cookie-forwarding) in apps/web/README.md Env section — .env.example is a generated file, not hand-edited.
+- Recon for M3: COOP/COEP + trailing-slash + dev-proxy already in next.config.ts; proxy.ts guards /w/:path*; (app)/w is a stub page (no hub yet); apps/web has ZERO @studio/contracts imports (greenfield); gateway does NOT import api-client/editor-bridge; editor-bridge + api-client + contracts use NodeNext .js-suffixed internal imports (Turbopack can't resolve; ui is clean extensionless) — editor-bridge and api-client get converted to extensionless by the M3 fleet (consumers: web only; contracts stays NodeNext because the gateway tsc-builds dist from it).
+- Pinned the M3-B/M3-A seam: loadProjectSession + createAutosaveController + EditorSessionClient in apps/web/src/lib/editor-session (full interface text passed in both briefs).
+- Committed + pushed via scripts/git-sync.sh "W5-prep: ..." (verified git-sync: OK).
+
+Stage Summary:
+- Fork deprecated everywhere; codzxe/studio is self-contained (source + dist + patch artifacts + provenance). Manual fork deletion owed by user (token lacks scope).
+- M3 dispatch plan: wave 1 = M3-B (session engine, apps/web/src/lib/editor-session) ∥ M3-C (bridge hardening + extensionless conversion, packages/editor-bridge); wave 2 = M3-A (editor host page + api-client wiring, apps/web) after both land; integrator (me) reconciles + verifies + commits.
+---
+Task ID: M3-C
+Agent: editor-bridge hardening (M3 wave 1)
+Task: packages/editor-bridge — Turbopack conversion (extensionless imports) + verification/hardening against the REAL dist surface (M3.2/§M3 exit criteria) + tests.
+
+Work Log:
+- Read worklog tail, AGENTS.md, DECISIONS.md D-17, BUILD_PLAN §M3 tasks 2+8; then cross-checked the bridge against the shipped dist READ-ONLY: apps/web/public/editor/index.html (host page: window.effectcraft/Load defined sync, boot order wasmMs→readyMs, error=String(e) on failure), snippets/.../js/host.js (wasm-bindgen storage/audio/worker glue — not the API surface), editor/apps/effectcraft-web/src/api.rs (request/addFile/readFile/info/saveToBrowser semantics + exact rejection strings), crates/ui-egui/src/control.rs (render.frame/screenshot shapes, RETRY marker is trimmed before replies), crates/engine/src/commands/{query.rs,file.rs} (project.summary dirty flag, file.saveAs {path,bytes}), crates/engine/src/lib.rs EditorState (editor.state serde shape), tests/smoke.mjs (readiness waiting pattern), Cargo.toml (workspace version 0.13.0).
+- Task 1 Turbopack conversion: sed-converted every internal relative import in packages/editor-bridge/src/** (attachFake.ts, bridge.ts, errors.ts, index.ts, types.ts, fake.ts) and tests/** (bridge.test.ts, fake.test.ts) from "./x.js" to extensionless "./x" (matches the already-Bundler tsconfig; 7 files, no .mjs present). Repo-wide sanity: NO other package imports @studio/editor-bridge via .js-suffixed deep paths — only tsconfig path aliases (tsconfig.base.json, apps/web, services/gateway) + the apps/web package.json dep; api-client keeps its own NodeNext imports (not mine).
+- Verification verdicts (6 checks):
+  1. Readiness AGREE — bridge polls effectcraftLoad.readyMs/error exactly like the dist's smoke.mjs (but robust to readyMs=0 via !==undefined); EffectcraftLoad/EffectcraftLoadInfoSchema match dist property names. FIXED: load failure now rejects with NEW code EDITOR_LOAD_FAILED (was conflated with EDITOR_NOT_READY) and the message is de-branded to "editor failed to start: <error>".
+  2. Version AGREE — dist info().version = "0.13.0" (workspace CARGO_PKG_VERSION); version() passes through; the startsWith guard accepts "0.13"/"0.13.0" (regression-tested against a dist-shaped mount, no false positive).
+  3. Error normalization AGREE — "request dropped"→EDITOR_DISCONNECTED, one retry on transient startup rejections, plain strings→BridgeError. FIXED (docs): the dist's startup string is now "Studio is not running yet" (de-branded api.rs) — regex already matched; header comment + tests updated to the real string; softened the unverified "60 s upstream timeout" claim (that's the desktop control-protocol doc; the web dist leaves requests pending until reply/drop, so the bridge's own 15 s client timeout is the guard).
+  4. Load-failure seam ADDED (M3.7) — see public API below: sync editorLoadState(iframe) + EDITOR_LOAD_FAILED rejection + bus "error" emission (visible pre-attach via opts.onEvent, and from bridge.ready() after an editor reload into a failed boot).
+  5. Surface completeness AGREE — addAsset/addFile/saveToBrowser/readFile all exist in the dist and schemas match api.rs/file.rs reality ({path,bytes}; addFile basenames via files.rs path_for; dist addFile fetches URL strings in-page). NOTE for M3-A/M3-B: the dirty flag lives in project.summary ("dirty": s.is_dirty(), query.rs:61) — editor.state (serialized EditorState: active_comp/open_comps/times ticks/selected_layers…) has NO dirty field; autosave (M3.4) must poll project.summary. Tested end-to-end through a dist-shaped mount.
+  6. fake.ts AGREE/no change — no schema changed; fake already implements editor.state snake_case serde shape + dist info() keys (crossOriginIsolated/webgpu/serviceWorker/load) + 17-command registry; its default version stays "0.13.0-fake" (dist-shaped tests pin the real version explicitly).
+- Task 3 tests: NEW tests/dist.test.ts (12 tests) — mounts window.effectcraft + window.effectcraftLoad EXACTLY per the dist's index.html (15-method object literal, execute→request("engine.execute"), info() with dist key set + load alias, boot sequence helper), covering: editorLoadState loading→ready / failed transitions; attach vs dist global (version 0.13.0, no guard false-positive, dist info() shape); EDITOR_LOAD_FAILED rejection + pre-attach bus error; ready() after reload-into-failure; 0.13.x guard accept + real mismatch emit; "Studio is not running yet" retry-once; "request dropped"→EDITOR_DISCONNECTED; project.summary dirty flag + saveToBrowser/readFile round-trip; addAsset virtual-path landing. Updated 3 existing bridge tests (load-failure code, dist startup string).
+- Gates: pnpm --filter @studio/editor-bridge typecheck GREEN; test 70/70 GREEN (58 existing + 12 new, 3 files, ~2.3 s, deterministic, no network); biome check GREEN (2 format autofixes).
+- Committed + pushed via scripts/git-sync.sh "M3-C: ..." — sweep also carried W5-prep's previously-uncommitted worklog entry + M3-B's untracked apps/web/src/lib/editor-session probe files (probe.test.ts, vitest.local.config.ts — self-contained passing probes, benign; noted for integrator).
+
+Public API ADDED (M3-A codes against this, verbatim from packages/editor-bridge/src/bridge.ts, exported at package root):
+  export type EditorLoadStatus = "loading" | "ready" | "failed";
+  export interface EditorLoadState {
+    readonly status: EditorLoadStatus;
+    readonly error?: string;   // present when status === "failed" (the dist's String(e))
+    readonly wasmMs?: number;
+    readonly readyMs?: number;
+  }
+  export function editorLoadState(iframe: HTMLIFrameElement): EditorLoadState;
+  // BridgeErrorCode gained: "EDITOR_LOAD_FAILED" (attach/ready() reject with it when
+  // effectcraftLoad.error is set; retryable: false — reload the iframe; the same
+  // failure is emitted on the bus as an "error" event, incl. pre-attach via opts.onEvent).
+Unchanged public surface: attachEditorBridge, forwardShortcut, sameOrigin, all EditorBridge methods/schemas.
+
+Stage Summary:
+- Deliverable: packages/editor-bridge is Turbopack-safe (extensionless internal imports) and verified against the REAL shipped dist surface; load-failure seam added for M3.7; 70/70 tests + typecheck + lint green.
+- Key handoff facts for M3-A: poll editorLoadState(iframe) for the loading UI; attach once status==="ready"; branch on err.code==="EDITOR_LOAD_FAILED" (or status==="failed") for the retry screen; dirty flag = query("project.summary").dirty; dist startup rejection string is "Studio is not running yet" (bridge retries once).
+- Leftovers/blockers: none in-package. Noted (not mine): docs/phases/gap/packages.md:641 still lists the old 4-code set (reader snapshot, descriptive only); apps/web still has zero @studio/editor-bridge imports (M3-A's job); api-client/contracts still NodeNext .js imports (other owners).
