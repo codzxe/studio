@@ -227,20 +227,20 @@ async function runGetContext(args: { include?: readonly string[] }, deps: ToolEx
   // Key order matches the §8.3 context table.
 
   if (wants("projectSummary")) {
-    result.projectSummary = flagOrRemoved(deps.flags.projectSummary, () =>
+    result.projectSummary = await flagOrRemoved(deps.flags.projectSummary, () =>
       quiet(() => deps.bridge.query("project.summary")),
     );
   }
 
   if (wants("activeComp")) {
-    result.activeComp = flagOrRemoved(deps.flags.activeComp, async () => {
+    result.activeComp = await flagOrRemoved(deps.flags.activeComp, async () => {
       if (activeCompId === null) return null;
       return quiet(() => deps.bridge.query("comp.info", { comp: activeCompId }));
     });
   }
 
   if (wants("selection")) {
-    result.selection = flagOrRemoved(deps.flags.selection, async () => {
+    result.selection = await flagOrRemoved(deps.flags.selection, async () => {
       const first = selected[0];
       if (selected.length === 0 || activeCompId === null || first === undefined) {
         return { layerIds: selected, tree: null };
@@ -253,17 +253,17 @@ async function runGetContext(args: { include?: readonly string[] }, deps: ToolEx
   }
 
   if (wants("playhead")) {
-    result.playhead = flagOrRemoved(deps.flags.playhead, async () =>
+    result.playhead = await flagOrRemoved(deps.flags.playhead, async () =>
       inspect === null ? null : { timeSeconds: inspect.time, playing: inspect.playing },
     );
   }
 
   if (wants("focusedPanel")) {
-    result.focusedPanel = flagOrRemoved(deps.flags.focusedPanel, async () => inspect?.focusedPanel ?? null);
+    result.focusedPanel = await flagOrRemoved(deps.flags.focusedPanel, async () => inspect?.focusedPanel ?? null);
   }
 
   if (wants("selectedProperties")) {
-    result.selectedProperties = flagOrRemoved(deps.flags.selectedProperties, async () => {
+    result.selectedProperties = await flagOrRemoved(deps.flags.selectedProperties, async () => {
       const first = selected[0];
       if (selected.length === 0 || activeCompId === null || first === undefined) return null;
       return quiet(() => readSelectedProperties(deps.bridge, first));
@@ -271,7 +271,7 @@ async function runGetContext(args: { include?: readonly string[] }, deps: ToolEx
   }
 
   if (wants("recentCommands")) {
-    result.recentCommands = flagOrRemoved(deps.flags.recentCommands, () =>
+    result.recentCommands = await flagOrRemoved(deps.flags.recentCommands, () =>
       quiet(async () => {
         const history = await deps.bridge.query<{ states?: unknown; current?: unknown }>("edit.history.list");
         if (history === null || typeof history !== "object" || !Array.isArray(history.states)) return null;
