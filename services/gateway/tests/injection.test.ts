@@ -30,8 +30,8 @@ import { describe, expect, it } from "vitest";
 import {
   CONTEXT_SELECTION_SCHEMA,
   EDIT_PLAN_SCHEMA,
-  TOOL_LIST,
   type StudioStreamEvent,
+  TOOL_LIST,
 } from "@studio/contracts";
 import {
   ALL_TEXT_FIXTURES,
@@ -44,10 +44,10 @@ import {
   toolResultFixture,
 } from "../../../apps/web/src/lib/chat/__tests__/injection-corpus.js";
 
-import type { LogFields, Logger } from "../src/logger.js";
 import type { OpenAIChatMessage } from "../src/litellm/openai.js";
 import { SYSTEM_PROMPT, buildMessages, fingerprintMessages } from "../src/litellm/prompt.js";
 import { createLiteLLMRunner } from "../src/litellm/runner.js";
+import type { LogFields, Logger } from "../src/logger.js";
 import {
   type AgentRun,
   type AgentRunOutcome,
@@ -217,7 +217,11 @@ function makeRun(overrides: Partial<AgentRun> = {}): AgentRun {
 function makeRunner(
   script: ReadonlyArray<Response>,
   options: { maxSteps?: number; stream?: FakeStream; logger?: Logger } = {},
-): { runner: ReturnType<typeof createLiteLLMRunner>; fetchCalls: RecordedCall[]; stream: FakeStream } {
+): {
+  runner: ReturnType<typeof createLiteLLMRunner>;
+  fetchCalls: RecordedCall[];
+  stream: FakeStream;
+} {
   const fetchStub = scriptedFetch(script);
   const stream = options.stream ?? new FakeStream();
   const runner = createLiteLLMRunner({
@@ -274,9 +278,7 @@ function expectPrototypeClean(): void {
 }
 
 /** The tool-role repair message of the runner's k-th provider call. */
-function toolRoleMessage(
-  call: RecordedCall | undefined,
-): OpenAIChatMessage | undefined {
+function toolRoleMessage(call: RecordedCall | undefined): OpenAIChatMessage | undefined {
   return call?.body.messages.find(
     (message): message is OpenAIChatMessage & { role: "tool" } => message.role === "tool",
   );
@@ -528,9 +530,12 @@ describe("safety — redaction holds (M4.3)", () => {
       child: () => spyLogger,
     };
     const begging = hostileArgsFixture("write-tool-perfect-args");
-    const { runner, stream } = makeRunner([sseResponse([textDelta("Here it is."), finish("stop"), DONE])], {
-      logger: spyLogger,
-    });
+    const { runner, stream } = makeRunner(
+      [sseResponse([textDelta("Here it is."), finish("stop"), DONE])],
+      {
+        logger: spyLogger,
+      },
+    );
     const history = ALL_TEXT_FIXTURES.slice(0, 6).map((fixture) => ({
       role: "user" as const,
       content: fixture.payload,
@@ -687,14 +692,14 @@ describe("safety — plan bounds hold (§8.6 / EDIT_PLAN_SCHEMA)", () => {
   it("a valid plan with hostile-looking (but inert) data still parses — corpus sanity", () => {
     // The base builder must be valid: proves the rejects above come from the
     // hostile deltas, not from a broken fixture.
-    expect(EDIT_PLAN_SCHEMA.safeParse(JSON.parse(JSON.stringify(minimalPlan()))).success).toBe(true);
+    expect(EDIT_PLAN_SCHEMA.safeParse(JSON.parse(JSON.stringify(minimalPlan()))).success).toBe(
+      true,
+    );
   });
 
   it("a $ref-escape plan fails 2 attempts → PLAN_INVALID tool result, run survives", async () => {
     const goalFixture = hostileArgsFixture("plan-goal-schema-override");
-    const refPlan = HOSTILE_PLAN_PAYLOADS.find(
-      (fixture) => fixture.id === "plan-ref-escape",
-    );
+    const refPlan = HOSTILE_PLAN_PAYLOADS.find((fixture) => fixture.id === "plan-ref-escape");
     if (refPlan === undefined) throw new Error("fixture missing");
     const { runner, fetchCalls, stream } = makeRunner([
       // Main round: the model calls plan_edit with the schema-override goal.
