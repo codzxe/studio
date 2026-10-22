@@ -98,6 +98,13 @@ export interface TestClockView {
   readonly status: string;
 }
 
+/** Structural stripe.TestClock subset (SDK wire names). */
+export interface StripeSdkTestClockLike {
+  readonly id: string;
+  readonly frozen_time: number;
+  readonly status: string;
+}
+
 /**
  * Structural stripe.Subscription subset the seam reads. Field names mirror
  * the SDK wire (snake_case); expandable unions are kept wide so the real SDK
@@ -175,8 +182,8 @@ export interface StripeSdkLike {
         frozen_time: number;
         customer?: string;
         name?: string;
-      }): Promise<TestClockView>;
-      advance(id: string, params: { frozen_time: number }): Promise<TestClockView>;
+      }): Promise<StripeSdkTestClockLike>;
+      advance(id: string, params: { frozen_time: number }): Promise<StripeSdkTestClockLike>;
     };
   };
   readonly webhooks: {
