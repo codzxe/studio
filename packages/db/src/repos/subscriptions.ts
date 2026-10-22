@@ -76,10 +76,7 @@ export interface SubscriptionsRepo {
   /** The workspace's live subscription row, or null when none exists yet. */
   getByOrganization(workspaceId: WorkspaceId): Promise<Subscription | null>;
   /** Insert-or-update the workspace's (single) subscription state. */
-  upsertState(
-    workspaceId: WorkspaceId,
-    input: SubscriptionUpsertInput,
-  ): Promise<Subscription>;
+  upsertState(workspaceId: WorkspaceId, input: SubscriptionUpsertInput): Promise<Subscription>;
   /**
    * Guarded status transition — the webhook path's "never double-apply"
    * guarantee. Current status must be one of `from`, else typed CONFLICT.
@@ -97,7 +94,9 @@ export interface SubscriptionsRepo {
   ): Promise<StripeCustomer>;
   /**
    * One-trial-per-card abuse rule (BP M6 task 5): which workspace already
-   * registered this card fingerprint? null = unused. NOT tenant-scoped.
+   * registered this card fingerprint? null = unused. NOT tenant-scoped —
+   * returns ONE workspace holding the fingerprint (any match answers the
+   * abuse check; several workspaces may legitimately share a card).
    */
   cardFingerprintUsed(fingerprint: string): Promise<{ organizationId: string } | null>;
 }
@@ -162,7 +161,9 @@ export function createSubscriptionsRepo(db: StudioDb): SubscriptionsRepo {
         ...(input.stripeSubscriptionId !== undefined
           ? { stripeSubscriptionId: input.stripeSubscriptionId }
           : {}),
-        ...(input.currentPeriodEnd !== undefined ? { currentPeriodEnd: input.currentPeriodEnd } : {}),
+        ...(input.currentPeriodEnd !== undefined
+          ? { currentPeriodEnd: input.currentPeriodEnd }
+          : {}),
         ...(input.trialEnd !== undefined ? { trialEnd: input.trialEnd } : {}),
         ...(input.cancelAtPeriodEnd !== undefined
           ? { cancelAtPeriodEnd: input.cancelAtPeriodEnd }
@@ -208,7 +209,9 @@ export function createSubscriptionsRepo(db: StudioDb): SubscriptionsRepo {
         status: to,
         updatedAt: new Date(),
         ...(input.planId !== undefined ? { planId: input.planId } : {}),
-        ...(input.currentPeriodEnd !== undefined ? { currentPeriodEnd: input.currentPeriodEnd } : {}),
+        ...(input.currentPeriodEnd !== undefined
+          ? { currentPeriodEnd: input.currentPeriodEnd }
+          : {}),
         ...(input.trialEnd !== undefined ? { trialEnd: input.trialEnd } : {}),
         ...(input.cancelAtPeriodEnd !== undefined
           ? { cancelAtPeriodEnd: input.cancelAtPeriodEnd }
@@ -222,12 +225,7 @@ export function createSubscriptionsRepo(db: StudioDb): SubscriptionsRepo {
       const [updated] = await db
         .update(subscriptions)
         .set(set)
-        .where(
-          and(
-            eq(subscriptions.id, before.id),
-            inArray(subscriptions.status, [...input.from]),
-          ),
-        )
+        .where(and(eq(subscriptions.id, before.id), inArray(subscriptions.status, [...input.from])))
         .returning();
       if (updated) return updated;
 
