@@ -70,9 +70,11 @@ async function newWorkspace(prefix: string): Promise<Workspace> {
   return { jar, id: ws.data.id };
 }
 
-async function grantCredits(workspaceId: string, amount: number): Promise<void> {
+async function grantCredits(workspaceId: string, credits: number): Promise<void> {
+  // D-12 (M6-K µc unification): the ledger stores integer MICROcredits —
+  // grants convert at this boundary.
   await server.deps.repos.ledger.grant(workspaceId, {
-    amount,
+    amount: credits * 1_000_000,
     idempotencyKey: unique("grant"),
   });
 }
@@ -181,9 +183,11 @@ async function seedRun(ws: Workspace, projectId: string, options: SeedRunOptions
   });
   const reserve = options.reserve ?? 10;
   if (reserve > 0) {
+    // D-12: the ledger hold is µc (reserve credits × 1_000_000); the run ROW
+    // keeps whole credits (the D-12 row ruling).
     await server.deps.repos.ledger.reserve(ws.id, {
       runId: run.id,
-      amount: reserve,
+      amount: reserve * 1_000_000,
       idempotencyKey: unique("rsv"),
     });
     await server.deps.repos.runs.update(ws.id, run.id, { reservedCredits: reserve });
@@ -288,20 +292,20 @@ d("apply → undo lifecycle (§8.7, §8.8/D-20)", () => {
     expect(state.appliedVersionId).toBe(appliedVersionId);
     expect(state.baseVersionId).toBe(baseVersionId);
 
-    // §8.8 ledger (D-20): reserve −10, commit −2, refund +10 ⇒ run nets −2.
-    // (list() orders by createdAt desc with id tie-breaks — sort by kind to
-    // make the set-comparison deterministic.)
+    // §8.8 ledger (µc, D-12 — M6-K): reserve −10M, commit −2M, refund +10M
+    // ⇒ run nets −2 credits. (list() orders by createdAt desc with id
+    // tie-breaks — sort by kind to make the set-comparison deterministic.)
     const entries = await runLedger(ws.id, runId);
     expect(
       [...entries].sort((a, b) => a.kind.localeCompare(b.kind)).map((e) => [e.kind, e.amount]),
     ).toEqual([
-      ["commit", -2],
-      ["refund", 10],
-      ["reserve", -10],
+      ["commit", -2 * 1_000_000],
+      ["refund", 10 * 1_000_000],
+      ["reserve", -10 * 1_000_000],
     ]);
     expect(entries.filter((entry) => entry.kind === "commit")).toHaveLength(1);
-    // Workspace balance: 100 granted − 2 committed.
-    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(98);
+    // Workspace balance (µc): 100 credits granted − 2 credits committed.
+    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(98 * 1_000_000);
   });
 
   it("replays an identical request: same response, single commit", async () => {

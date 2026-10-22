@@ -1,0 +1,953 @@
+     1→/**
+     2→ * Client-side apply/undo engine — BUILD_PLAN §M5.4/§M5.5, DECISIONS.md D-6,
+     3→ * docs/phases/M5-SEAMS.md (`ApplyController`, pinned).
+     4→ *
+     5→ * ONE user gesture = ONE atomic `engine.batch` = ONE undo step = ONE version
+     6→ * (AGENTS.md hard rule 6). The whole flow NEVER throws — every outcome is a
+     7→ * typed union the plan card (M5-G) renders:
+     8→ *
+     9→ *  `apply(plan)`:
+    10→ *    1. validate the `compiledBatch` shape AND allowlist every step id
+    11→ *       against the curated agent registry (F-6: `isAgentCommand` via the
+    12→ *       api-client runtime-contracts seam) — a non-member id is a typed
+    13→ *       `invalid-batch` BEFORE any engine traffic (the engine's registry +
+    14→ *       NOT_IN_BATCH rejections stay the defense-in-depth backstop);
+    15→ *    2. resolve each `resolutionRequests` entry against the LIVE layer list
+    16→ *       (the executor's list_layers path: `comp.info {}` → `layers`) — a name
+    17→ *       matching exactly one layer binds it; ambiguous or unknown names fail
+    18→ *       BEFORE any engine mutation;
+    19→ *    3. patch the `compiledBatch` placeholders with the resolved layer ids
+    20→ *       (deterministic deep clone; null-prototype request map — the M4-N F-1
+    21→ *       lesson: model-adjacent keys never touch `Object.prototype`);
+    22→ *    4. `bridge.execute("engine.batch", batch)` — ONE call. Verified wire:
+    23→ *       the bridge passes the params object through `effectcraft.execute` →
+    24→ *       `engine.execute` → `batch.rs`, which reads `{steps, label?, atomic?}`
+    25→ *       (extra keys such as `timeoutMs` ride inert upstream — `timeoutMs` is
+    26→ *       §8.5 bound metadata the compiled batch carries, not an engine param);
+    27→ *    5. on success `await autosave.saveNow("agent-apply")` (D-6) — this
+    28→ *       uploads a NEW immutable version; the outcome's `version.id` is the
+    29→ *       applied versionId;
+    30→ *    6. `api.runs.applyRun(runId, {batchSha256, versionId, idempotencyKey})` —
+    31→ *       sha256 over the exact patched batch payload (WebCrypto via the
+    32→ *       editor-session sha256Hex, with its vector-tested sync fallback for
+    33→ *       hosts without `crypto.subtle` — never a new dependency). Gateway
+    34→ *       errors map: 409 → conflict (explains, never re-applies), 402 →
+    35→ *       insufficient credits, else typed failure.
+    36→ *
+    37→ *  Retention (law #4; F-L1/F-L2/F-L4 — the `toolresult:<runId>:<callId>`
+    38→ *  retention in tool-executor.ts is the precedent): once a run's batch has
+    39→ *  EXECUTED, the controller retains per run —
+    40→ *   * the gesture's idempotency key + the report pieces (batchSha256,
+    41→ *     resolvedLayers), so a RETRY of the same gesture reuses the key
+    42→ *     (a fresh gesture after a failure that never executed — or after a
+    43→ *     terminal outcome — mints a fresh key), and
+    44→ *   * the applied batch's label ("Agent: <summary>", from the compiledBatch),
+    45→ *     which `undo` compares against the engine's `{undone: label}` answer.
+    46→ *
+    47→ *  `retrySave(runId)` (F-L1): the re-save-only recovery for a run whose batch
+    48→ *   executed but whose version upload / gateway report did not land — steps
+    49→ *   5+6 ONLY; `engine.batch` is NEVER re-executed. The plan card's save-failed
+    50→ *   state wires "Retry save" to this; a typed `failed` answers when no
+    51→ *   applied-batch context is retained.
+    52→ *
+    53→ *  `undo(runId, hint?)`: `bridge.execute("edit.undo")` (the whole run folded
+    54→ *   into ONE undo step by `batch.rs`). The engine answers `{undone: label}`
+    55→ *   (edit.rs undo), which is compared against the run's batch label — the
+    56→ *   retained label, or `hint.batchLabel` when the thread layer passes the
+    57→ *   planRuntime's compiledBatch label for a controller that never saw the
+    58→ *   apply. An UNKNOWN or MISMATCHED pop is a typed
+    59→ *   `{ok:false, reason:"undo-stack-mismatch"}` and the gateway is NOT told
+    60→ *   (F-L4: the row never claims an undo that didn't happen; the popped
+    61→ *   batch sits on the redo stack and the outcome says so). Only a verified
+    62→ *   pop reaches `api.runs.undoRun(runId, {idempotencyKey})`. If `edit.undo`
+    63→ *   fails ("nothing to undo" — the upstream `can_undo` guard, edit.rs:12)
+    64→ *   the gateway is NOT told either (§9.3). The post-undo state is left to
+    65→ *   the D-6 cadence + the before-close save (undo is not a D-6 moment).
+    66→ *
+    67→ *  `reapply(plan)`: only when the client's CURRENT version id equals the plan's
+    68→ *   `baseVersionId` (the session port reads it); anything else is
+    69→ *   `{ok:false, reason:"base-version-changed"}` — BP §M5.5 "otherwise explain".
+    70→ *   NOTE for the integrator: after undo the session's current version is the
+    71→ *   APPLIED version's successor chain, so re-apply-after-undo needs the host
+    72→ *   page to restore the session's version pointer to the plan's base (a
+    73→ *   session-level concern — see the worklog M5-F record).
+    74→ *
+    75→ * Cross-agent pins (wave 1, reconciled by the integrator):
+    76→ *  - placeholder token: a whole-string `"$request:<requestId>"` in the compiled
+    77→ *    batch params, replaced with the resolved engine layer id (number);
+    78→ *  - `api.runs.applyRun/undoRun` — @studio/api-client names (M5-E adds them);
+    79→ *  - the plan event carries `compiledBatch` + `resolutionRequests` +
+    80→ *    `baseVersionId` (M5-C adds them to the wire; the SSE reader strips
+    81→ *    unknown keys until that lands, so the client treats them as optional).
+    82→ */
+    83→
+    84→import type { SaveOutcome } from "@/lib/editor-session";
+    85→import { sha256Hex } from "@/lib/editor-session";
+    86→import { isAgentCommand } from "@studio/api-client/chat-tools";
+    87→import type { AgentBatch, BatchStep } from "@studio/contracts";
+    88→import type { EditorBridge } from "@studio/editor-bridge";
+    89→import { isBridgeError, messageOf } from "@studio/editor-bridge";
+    90→
+    91→// ---------------------------------------------------------------------------
+    92→// Pinned types (M5-SEAMS `ApplyController` + the runtime ports this engine needs)
+    93→// ---------------------------------------------------------------------------
+    94→
+    95→/**
+    96→ * One layer the plan-compiler could not bind: args reference layers BY NAME;
+    97→ * the CLIENT resolves ids via the bridge (never ids into the model context,
+    98→ * PRODUCT_ARCHITECTURE §8.7). Shape pinned in M5-SEAMS (M5-B emits them).
+    99→ */
+   100→export interface LayerResolutionRequest {
+   101→  readonly requestId: string;
+   102→  readonly layerName: string;
+   103→  /** Hints the model gave for telling same-named layers apart (display-only). */
+   104→  readonly disambiguation: readonly string[];
+   105→}
+   106→
+   107→/** Everything `apply` needs from a plan the client already rendered. */
+   108→export interface ApplicablePlan {
+   109→  /** The run that produced the plan (also the undo target). */
+   110→  readonly runId: string;
+   111→  /** The version the plan was compiled against — the reapply gate (§M5.5). */
+   112→  readonly baseVersionId?: string;
+   113→  /** The server-compiled `engine.batch` payload (allowlisted, §8.5-validated). */
+   114→  readonly compiledBatch: AgentBatch;
+   115→  /** Layer names to resolve + bind before execution (may be absent/empty). */
+   116→  readonly resolutionRequests?: readonly LayerResolutionRequest[];
+   117→}
+   118→
+   119→/** Whole-string placeholder the plan-compiler leaves for a resolution request. */
+   120→export const RESOLVE_TOKEN_PREFIX = "$request:";
+   121→
+   122→/** One bound request: the request id → the engine layer id it resolved to. */
+   123→export interface ResolvedLayer {
+   124→  readonly requestId: string;
+   125→  readonly layerId: number;
+   126→  readonly layerName: string;
+   127→}
+   128→
+   129→export type ApplyOutcome =
+   130→  | { readonly ok: true; readonly versionId: string; readonly creditsCommitted?: number }
+   131→  | {
+   132→      /** A layer name matched more than one layer — nothing executed. */
+   133→      readonly ok: false;
+   134→      readonly reason: "ambiguous";
+   135→      readonly candidates: readonly string[];
+   136→      readonly message: string;
+   137→    }
+   138→  | {
+   139→      /** A layer name matched nothing — nothing executed. */
+   140→      readonly ok: false;
+   141→      readonly reason: "not-found";
+   142→      readonly layerName: string;
+   143→      readonly message: string;
+   144→    }
+   145→  | {
+   146→      /** A `$request:` placeholder could not be resolved/bound — nothing executed. */
+   147→      readonly ok: false;
+   148→      readonly reason: "resolution-failed";
+   149→      readonly message: string;
+   150→    }
+   151→  | {
+   152→      /** The compiled batch was malformed — nothing executed. */
+   153→      readonly ok: false;
+   154→      readonly reason: "invalid-batch";
+   155→      readonly message: string;
+   156→    }
+   157→  | {
+   158→      /** `engine.batch` rejected (atomic rollback upstream) — no save, no applyRun. */
+   159→      readonly ok: false;
+   160→      readonly reason: "engine-failed";
+   161→      readonly message: string;
+   162→    }
+   163→  | {
+   164→      /** The editor is not answering. */
+   165→      readonly ok: false;
+   166→      readonly reason: "editor-disconnected";
+   167→      readonly message: string;
+   168→    }
+   169→  | {
+   170→      /** The D-6 save failed to upload a version — the gateway was not told.
+   171→       * F-L1: the batch DID execute; `batchApplied` says so and the retained
+   172→       * context backs a `retrySave` that never re-executes the batch. */
+   173→      readonly ok: false;
+   174→      readonly reason: "save-failed";
+   175→      readonly batchApplied?: true;
+   176→      readonly message: string;
+   177→    }
+   178→  | {
+   179→      /** The D-6 save hit PROJECT_VERSION_CONFLICT (autosave parked) — reload
+   180→       * to recover. F-L1: the batch DID execute; a parked conflict is
+   181→       * terminal for the session, so the recovery is the reload, not a retry. */
+   182→      readonly ok: false;
+   183→      readonly reason: "save-conflict";
+   184→      readonly batchApplied?: true;
+   185→      readonly message: string;
+   186→    }
+   187→  | {
+   188→      /** Gateway 409 VERSION_CONFLICT — the run/version state moved; explains, never re-applies. */
+   189→      readonly ok: false;
+   190→      readonly reason: "conflict";
+   191→      readonly message: string;
+   192→    }
+   193→  | {
+   194→      /** Gateway 402 INSUFFICIENT_CREDITS — the batch + version landed; credits did not commit. */
+   195→      readonly ok: false;
+   196→      readonly reason: "insufficient-credits";
+   197→      readonly message: string;
+   198→    }
+   199→  | {
+   200→      /** Reapply gate: the client's current version is not the plan's base version. */
+   201→      readonly ok: false;
+   202→      readonly reason: "base-version-changed";
+   203→      readonly message: string;
+   204→    }
+   205→  | {
+   206→      /** Anything else (typed failure; `code` carries the §7.3 wire code when known). */
+   207→      readonly ok: false;
+   208→      readonly reason: "failed";
+   209→      readonly message: string;
+   210→      readonly code?: string;
+   211→    };
+   212→
+   213→export type UndoOutcome =
+   214→  | { readonly ok: true; readonly undone: true }
+   215→  | { readonly ok: false; readonly reason: "nothing-to-undo"; readonly message: string }
+   216→  | { readonly ok: false; readonly reason: "engine-failed"; readonly message: string }
+   217→  | { readonly ok: false; readonly reason: "editor-disconnected"; readonly message: string }
+   218→  | {
+   219→      /** F-L4 — the engine popped a batch that is not this run's (or one that
+   220→       * could not be verified): the pop is surfaced honestly (the popped edit
+   221→       * sits on the redo stack) and the gateway was NOT told — the row never
+   222→       * claims an undo that didn't happen. */
+   223→      readonly ok: false;
+   224→      readonly reason: "undo-stack-mismatch";
+   225→      readonly message: string;
+   226→    }
+   227→  | {
+   228→      /** Gateway 409 — the run is not in an applied state (already undone?). */
+   229→      readonly ok: false;
+   230→      readonly reason: "conflict";
+   231→      readonly message: string;
+   232→    }
+   233→  | {
+   234→      readonly ok: false;
+   235→      readonly reason: "failed";
+   236→      readonly message: string;
+   237→      readonly code?: string;
+   238→    };
+   239→
+   240→/**
+   241→ * Optional `undo` hint (F-L4): the thread layer passes the plan's compiled-batch
+   242→ * label when the controller has no retained record (e.g. a fresh controller
+   243→ * over a session whose engine history still holds the applied batch).
+   244→ */
+   245→export interface UndoHint {
+   246→  readonly batchLabel?: string;
+   247→}
+   248→
+   249→/** `apply`/`undo` milestones for the host page (banners, telemetry) — never throws. */
+   250→export type ApplyEngineEvent =
+   251→  | { readonly type: "apply.started"; readonly runId: string }
+   252→  | {
+   253→      readonly type: "apply.resolved";
+   254→      readonly runId: string;
+   255→      readonly resolved: readonly ResolvedLayer[];
+   256→    }
+   257→  | {
+   258→      readonly type: "apply.completed";
+   259→      readonly runId: string;
+   260→      readonly versionId: string;
+   261→      readonly creditsCommitted?: number;
+   262→    }
+   263→  | { readonly type: "apply.failed"; readonly runId: string; readonly outcome: ApplyOutcome }
+   264→  | { readonly type: "undo.started"; readonly runId: string }
+   265→  | { readonly type: "undo.completed"; readonly runId: string }
+   266→  | { readonly type: "undo.failed"; readonly runId: string; readonly outcome: UndoOutcome };
+   267→
+   268→// ---------------------------------------------------------------------------
+   269→// Runtime ports (the EditorSessionClient/ChatControllerClient pattern — the
+   270→// real autosave controller, api-client (after M5-E) and host page satisfy them
+   271→// structurally; tests drive scripted fakes)
+   272→// ---------------------------------------------------------------------------
+   273→
+   274→/** The slice of the M3-B autosave controller apply consumes (D-6). */
+   275→export interface ApplyAutosavePort {
+   276→  /** D-6 moments: `saveNow("agent-apply")` uploads the applied version. */
+   277→  saveNow(reason: string): Promise<SaveOutcome>;
+   278→  /** Belt-and-braces proactive dirty flag before the save (the M3-B lesson). */
+   279→  markDirty?(reason?: string): void;
+   280→}
+   281→
+   282→/**
+   283→ * The slice of the editor session apply needs: the version id the session
+   284→ * currently sits on (the reapply gate, §M5.5). Implemented by the host page
+   285→ * over `manifest.currentVersion` + the autosave `onSaved` hook.
+   286→ */
+   287→export interface ApplySessionPort {
+   288→  currentVersionId(): string | null;
+   289→}
+   290→
+   291→/** POST /v1/runs/:id/apply response (M5-SEAMS; M5-E owns the route). */
+   292→export interface ApplyRunResponse {
+   293→  readonly applied: true;
+   294→  readonly versionId: string;
+   295→  /** Plan credits committed by this apply (§8.8; 0 for replayed keys). */
+   296→  readonly creditsCommitted: number;
+   297→}
+   298→
+   299→/** POST /v1/runs/:id/undo response. */
+   300→export interface UndoRunResponse {
+   301→  readonly undone: true;
+   302→}
+   303→
+   304→/** The name→id resolutions posted with the apply (contracts RESOLVED_LAYER_SCHEMA). */
+   305→export interface PostedResolvedLayer {
+   306→  readonly requestId: string;
+   307→  readonly layerId: number;
+   308→}
+   309→
+   310→/**
+   311→ * The apply surface of `@studio/api-client`'s `ApiClient` (M5-E landed
+   312→ * `runs.applyRun`/`runs.undoRun` — names pinned by the task + M5-SEAMS).
+   313→ */
+   314→export interface ApplyApiClient {
+   315→  readonly runs: {
+   316→    /** POST /v1/runs/:id/apply — body per contracts APPLY_REQUEST_SCHEMA. */
+   317→    applyRun(
+   318→      runId: string,
+   319→      body: {
+   320→        readonly batchSha256: string;
+   321→        readonly versionId: string;
+   322→        readonly idempotencyKey: string;
+   323→        readonly resolvedLayers?: readonly PostedResolvedLayer[];
+   324→      },
+   325→      options?: { readonly idempotencyKey?: string },
+   326→    ): Promise<ApplyRunResponse>;
+   327→    /** POST /v1/runs/:id/undo — body per contracts UNDO_REQUEST_SCHEMA. */
+   328→    undoRun(
+   329→      runId: string,
+   330→      body: { readonly idempotencyKey: string },
+   331→      options?: { readonly idempotencyKey?: string },
+   332→    ): Promise<UndoRunResponse>;
+   333→  };
+   334→}
+   335→
+   336→export interface CreateApplyControllerOptions {
+   337→  /** The live editor bridge (ONE `engine.batch` per apply; `edit.undo` per undo). */
+   338→  readonly bridge: EditorBridge;
+   339→  /** The M3-B autosave controller (D-6: the apply moment is `saveNow("agent-apply")`). */
+   340→  readonly autosave: ApplyAutosavePort;
+   341→  /** The apply API surface (M5-E's api-client names). */
+   342→  readonly api: ApplyApiClient;
+   343→  /**
+   344→   * The version source for the reapply gate. When absent, `reapply` always
+   345→   * explains `base-version-changed` (conservative: an unverifiable gate never
+   346→   * re-executes anything).
+   347→   */
+   348→  readonly session?: ApplySessionPort;
+   349→  /** Milestone notifications for the host page — never throws, never retried. */
+   350→  readonly onEvent?: (event: ApplyEngineEvent) => void;
+   351→}
+   352→
+   353→/** The pinned M5-SEAMS interface (apply/undo/reapply; redo stays engine-side). */
+   354→export interface ApplyController {
+   355→  apply(plan: ApplicablePlan): Promise<ApplyOutcome>;
+   356→  /** F-L4: the optional `hint` carries the plan's compiled-batch label when
+   357→   * the caller holds it (the thread layer's planRuntime) — see UndoHint. */
+   358→  undo(runId: string, hint?: UndoHint): Promise<UndoOutcome>;
+   359→  reapply(plan: ApplicablePlan): Promise<ApplyOutcome>;
+   360→  /**
+   361→   * F-L1 — the re-save-only recovery: re-runs the D-6 save + the gateway
+   362→   * report for a run whose batch EXECUTED but whose version/report did not
+   363→   * land. NEVER re-executes `engine.batch`. A typed `failed` answers when
+   364→   * nothing is retained (the plan card's save-failed state wires this).
+   365→   */
+   366→  retrySave(runId: string): Promise<ApplyOutcome>;
+   367→}
+   368→
+   369→// ---------------------------------------------------------------------------
+   370→// Internals
+   371→// ---------------------------------------------------------------------------
+   372→
+   373→/** Bridge error codes that mean "the editor is not answering". */
+   374→const DISCONNECT_CODES: ReadonlySet<string> = new Set([
+   375→  "EDITOR_DISCONNECTED",
+   376→  "EDITOR_NOT_READY",
+   377→  "EDITOR_LOAD_FAILED",
+   378→  "EDITOR_TIMEOUT",
+   379→]);
+   380→
+   381→/** The D-6 save reason for every agent apply (DECISIONS.md D-6, autosave.ts). */
+   382→const AGENT_APPLY_SAVE_REASON = "agent-apply";
+   383→
+   384→/** Upstream `enabled`-guard why-string for an empty undo stack (edit.rs:12). */
+   385→const NOTHING_TO_UNDO_RE = /nothing to undo/i;
+   386→
+   387→/** Bridge/editor failure → typed outcome; disconnect codes are named as such. */
+   388→function bridgeOutcome(error: unknown): {
+   389→  reason: "engine-failed" | "editor-disconnected";
+   390→  message: string;
+   391→} {
+   392→  const message = messageOf(error);
+   393→  if (isBridgeError(error) && DISCONNECT_CODES.has(error.code)) {
+   394→    return { reason: "editor-disconnected", message };
+   395→  }
+   396→  return { reason: "engine-failed", message };
+   397→}
+   398→
+   399→/** The typed fields of an api-client throw (ApiError-shaped), without zod. */
+   400→function apiFailure(error: unknown): {
+   401→  status: number | null;
+   402→  code: string | undefined;
+   403→  message: string;
+   404→} {
+   405→  if (typeof error === "object" && error !== null && "status" in error) {
+   406→    const record = error as { status?: unknown; code?: unknown; message?: unknown };
+   407→    const status = typeof record.status === "number" ? record.status : null;
+   408→    const code = typeof record.code === "string" && record.code !== "" ? record.code : undefined;
+   409→    const message =
+   410→      typeof record.message === "string" && record.message !== "" ? record.message : "";
+   411→    return { status, code, message };
+   412→  }
+   413→  return { status: null, code: undefined, message: "" };
+   414→}
+   415→
+   416→// ---------------------------------------------------------------------------
+   417→// Layer resolution (the executor's list_layers path — read-only)
+   418→// ---------------------------------------------------------------------------
+   419→
+   420→interface CompLayerEntry {
+   421→  readonly id: number;
+   422→  readonly name: string;
+   423→}
+   424→
+   425→/** `comp.info {}` → the active composition's layer list (query.rs; read-only). */
+   426→async function listLayers(bridge: EditorBridge): Promise<readonly CompLayerEntry[]> {
+   427→  const info = await bridge.query<{ layers?: unknown }>("comp.info", {});
+   428→  const raw = info?.layers;
+   429→  if (!Array.isArray(raw)) return [];
+   430→  const out: CompLayerEntry[] = [];
+   431→  for (const entry of raw) {
+   432→    if (typeof entry !== "object" || entry === null) continue;
+   433→    const record = entry as Record<string, unknown>;
+   434→    if (typeof record.id !== "number" || typeof record.name !== "string") continue;
+   435→    out.push({ id: record.id, name: record.name });
+   436→  }
+   437→  return out;
+   438→}
+   439→
+   440→/**
+   441→ * Resolves every request against the live layer list. Read-only: the only
+   442→ * bridge traffic is ONE `comp.info` query however many requests there are.
+   443→ * Ambiguous/unknown names fail BEFORE anything executes.
+   444→ */
+   445→async function resolveRequests(
+   446→  requests: readonly LayerResolutionRequest[],
+   447→  bridge: EditorBridge,
+   448→): Promise<
+   449→  { ok: true; resolved: readonly ResolvedLayer[] } | { ok: false; outcome: ApplyOutcome }
+   450→> {
+   451→  let layers: readonly CompLayerEntry[];
+   452→  try {
+   453→    layers = await listLayers(bridge);
+   454→  } catch (error) {
+   455→    const failure = bridgeOutcome(error);
+   456→    const outcome: ApplyOutcome =
+   457→      failure.reason === "editor-disconnected"
+   458→        ? { ok: false, reason: "editor-disconnected", message: failure.message }
+   459→        : {
+   460→            ok: false,
+   461→            reason: "resolution-failed",
+   462→            message: "The layers could not be listed to resolve this plan. Try again in a moment.",
+   463→          };
+   464→    return { ok: false, outcome };
+   465→  }
+   466→
+   467→  const resolved: ResolvedLayer[] = [];
+   468→  for (const request of requests) {
+   469→    // Exact-name matches only — a fuzzy match could bind the WRONG layer.
+   470→    const matches = layers.filter((layer) => layer.name === request.layerName);
+   471→    const first = matches[0];
+   472→    if (matches.length === 1 && first !== undefined) {
+   473→      resolved.push({ requestId: request.requestId, layerId: first.id, layerName: first.name });
+   474→      continue;
+   475→    }
+   476→    if (matches.length > 1) {
+   477→      return {
+   478→        ok: false,
+   479→        outcome: {
+   480→          ok: false,
+   481→          reason: "ambiguous",
+   482→          candidates: matches.map((layer) => `${layer.name} (layer ${layer.id})`),
+   483→          message: `Layer "${request.layerName}" matches ${matches.length} layers. Say which one you mean.`,
+   484→        },
+   485→      };
+   486→    }
+   487→    return {
+   488→      ok: false,
+   489→      outcome: {
+   490→        ok: false,
+   491→        reason: "not-found",
+   492→        layerName: request.layerName,
+   493→        message: `No layer named "${request.layerName}" is in the composition.`,
+   494→      },
+   495→    };
+   496→  }
+   497→  return { ok: true, resolved };
+   498→}
+   499→
+   500→// ---------------------------------------------------------------------------
+   501→// Placeholder patch (deterministic deep clone; F-1-safe accumulators)
+   502→// ---------------------------------------------------------------------------
+   503→
+   504→/**
+   505→ * Replaces every whole-string `"$request:<requestId>"` placeholder in the batch
+   506→ * params with the resolved layer id. Deterministic: only exact matches swap
+   507→ * and the clone preserves object key order, so the sha256 is stable.
+   508→ *
+   509→ * The cloned objects are NULL-PROTOTYPE (M4-N F-1): plan params are
+   510→ * model-adjacent — a parsed `{"__proto__": …}` key must ride as OWN data, not
+   511→ * rebind the clone's prototype.
+   512→ */
+   513→function patchPlaceholders(
+   514→  value: unknown,
+   515→  resolvedById: Readonly<Record<string, number>>,
+   516→): { patched: unknown; unresolved: string[] } {
+   517→  const unresolved: string[] = [];
+   518→  const walk = (node: unknown): unknown => {
+   519→    if (typeof node === "string") {
+   520→      if (!node.startsWith(RESOLVE_TOKEN_PREFIX)) return node;
+   521→      const requestId = node.slice(RESOLVE_TOKEN_PREFIX.length);
+   522→      const layerId = resolvedById[requestId];
+   523→      if (layerId === undefined) {
+   524→        unresolved.push(node);
+   525→        return node;
+   526→      }
+   527→      return layerId;
+   528→    }
+   529→    if (Array.isArray(node)) return node.map(walk);
+   530→    if (typeof node === "object" && node !== null) {
+   531→      const out: Record<string, unknown> = Object.create(null);
+   532→      for (const [key, child] of Object.entries(node)) out[key] = walk(child);
+   533→      return out;
+   534→    }
+   535→    return node;
+   536→  };
+   537→  return { patched: walk(value), unresolved };
+   538→}
+   539→
+   540→/** Narrow hand-rolled validation of the compiled batch (no zod in apps/web). */
+   541→function validCompiledBatch(batch: unknown): AgentBatch | null {
+   542→  if (typeof batch !== "object" || batch === null) return null;
+   543→  const record = batch as Record<string, unknown>;
+   544→  if (typeof record.label !== "string" || record.label.length === 0) return null;
+   545→  if (!Array.isArray(record.steps) || record.steps.length === 0) return null;
+   546→  const steps: BatchStep[] = [];
+   547→  for (const step of record.steps) {
+   548→    if (typeof step !== "object" || step === null) return null;
+   549→    const stepRecord = step as Record<string, unknown>;
+   550→    if (typeof stepRecord.command !== "string" || stepRecord.command.length === 0) return null;
+   551→    if (typeof stepRecord.params !== "object" || stepRecord.params === null) return null;
+   552→    steps.push({
+   553→      command: stepRecord.command,
+   554→      params: stepRecord.params as Record<string, unknown>,
+   555→    });
+   556→  }
+   557→  const timeoutMs =
+   558→    typeof record.timeoutMs === "number" &&
+   559→    Number.isInteger(record.timeoutMs) &&
+   560→    record.timeoutMs > 0
+   561→      ? record.timeoutMs
+   562→      : undefined;
+   563→  // Agent batches are ALWAYS atomic (§8.5) — forced regardless of the wire.
+   564→  return timeoutMs === undefined
+   565→    ? { label: record.label, atomic: true, steps }
+   566→    : { label: record.label, atomic: true, steps, timeoutMs };
+   567→}
+   568→
+   569→// ---------------------------------------------------------------------------
+   570→// sha256 of the exact engine payload
+   571→// ---------------------------------------------------------------------------
+   572→
+   573→/** The exact params object handed to `bridge.execute("engine.batch", …)`. */
+   574→export function engineBatchPayload(batch: AgentBatch): {
+   575→  label: string;
+   576→  atomic: true;
+   577→  steps: readonly BatchStep[];
+   578→  timeoutMs?: number;
+   579→} {
+   580→  return batch.timeoutMs === undefined
+   581→    ? { label: batch.label, atomic: true, steps: batch.steps }
+   582→    : { label: batch.label, atomic: true, steps: batch.steps, timeoutMs: batch.timeoutMs };
+   583→}
+   584→
+   585→/**
+   586→ * sha256 over the serialized engine payload — the exact shape the editor
+   587→ * receives (JSON key order is deterministic: the payload object is built with
+   588→ * a fixed key order and the patched params preserve theirs).
+   589→ */
+   590→export async function batchSha256Hex(payload: unknown): Promise<string> {
+   591→  const serialized = JSON.stringify(payload) ?? "null";
+   592→  return sha256Hex(new TextEncoder().encode(serialized));
+   593→}
+   594→
+   595→// ---------------------------------------------------------------------------
+   596→// The controller
+   597→// ---------------------------------------------------------------------------
+   598→
+   599→/**
+   600→ * What the controller retains per run ONCE ITS BATCH EXECUTED (F-L1/F-L2;
+   601→ * the `toolresult:<runId>:<callId>` retention in tool-executor.ts is the
+   602→ * precedent): the apply gesture's idempotency key — a RETRY of the same
+   603→ * gesture reuses it; a fresh gesture after a failure that never executed, or
+   604→ * after a terminal outcome (applied / 409 / 402), mints a fresh key — plus
+   605→ * the pieces the save + report steps need. Cleared on every terminal outcome;
+   606→ * retained while a save or report is still owed.
+   607→ */
+   608→interface RunApplyRecord {
+   609→  readonly idempotencyKey: string;
+   610→  readonly batchSha256: string;
+   611→  readonly resolvedForWire: readonly PostedResolvedLayer[];
+   612→}
+   613→
+   614→export function createApplyController(options: CreateApplyControllerOptions): ApplyController {
+   615→  const { bridge, autosave, api } = options;
+   616→
+   617→  /** Retained per-run apply-gesture records (F-L1/F-L2). */
+   618→  const runRecords = new Map<string, RunApplyRecord>();
+   619→  /** Retained per-run applied-batch labels (F-L4) — they OUTLIVE a successful
+   620→   * apply (undo needs them) and are spent by a VERIFIED pop. */
+   621→  const appliedLabels = new Map<string, string>();
+   622→
+   623→  const notify = (event: ApplyEngineEvent): void => {
+   624→    const callback = options.onEvent;
+   625→    if (callback === undefined) return;
+   626→    try {
+   627→      callback(event);
+   628→    } catch {
+   629→      /* a host callback must never break the apply engine */
+   630→    }
+   631→  };
+   632→
+   633→  const failApply = (runId: string, outcome: ApplyOutcome): ApplyOutcome => {
+   634→    notify({ type: "apply.failed", runId, outcome });
+   635→    return outcome;
+   636→  };
+   637→
+   638→  /**
+   639→   * Steps 5+6 of the apply flow — shared by apply/reapply AND the F-L1
+   640→   * re-save-only retry (which starts here, never touching the engine):
+   641→   * upload the applied state as a NEW version (awaited BEFORE the applyRun
+   642→   * report so the gateway always sees a version that exists), then report.
+   643→   */
+   644→  const saveAndReport = async (runId: string, record: RunApplyRecord): Promise<ApplyOutcome> => {
+   645→    const saved: SaveOutcome = await autosave.saveNow(AGENT_APPLY_SAVE_REASON);
+   646→    if (saved.saved !== true || saved.version === undefined) {
+   647→      // No version ⇒ the gateway is never told "applied". The divergence
+   648→      // (engine applied, version not) is surfaced honestly via
+   649→      // `batchApplied` + the copy, and the record STAYS so the card's
+   650→      // Retry save (retrySave) re-runs ONLY these steps (F-L1).
+   651→      return failApply(
+   652→        runId,
+   653→        saved.conflict === true
+   654→          ? {
+   655→              ok: false,
+   656→              reason: "save-conflict",
+   657→              batchApplied: true,
+   658→              message:
+   659→                "The project changed elsewhere while the agent was working. Reload the latest version to continue — the edit is in the editor only.",
+   660→            }
+   661→          : {
+   662→              ok: false,
+   663→              reason: "save-failed",
+   664→              batchApplied: true,
+   665→              message:
+   666→                "The edit was applied but could not be saved as a version. It is in the editor only.",
+   667→            },
+   668→      );
+   669→    }
+   670→    const versionId = saved.version.id;
+   671→
+   672→    try {
+   673→      const response = await api.runs.applyRun(runId, {
+   674→        batchSha256: record.batchSha256,
+   675→        versionId,
+   676→        idempotencyKey: record.idempotencyKey,
+   677→        ...(record.resolvedForWire.length > 0 ? { resolvedLayers: record.resolvedForWire } : {}),
+   678→      });
+   679→      // Terminal success: the gesture reported — release the retained key.
+   680→      runRecords.delete(runId);
+   681→      const outcome: ApplyOutcome = {
+   682→        ok: true,
+   683→        versionId: typeof response.versionId === "string" ? response.versionId : versionId,
+   684→        creditsCommitted: response.creditsCommitted,
+   685→      };
+   686→      notify({
+   687→        type: "apply.completed",
+   688→        runId,
+   689→        versionId: outcome.versionId,
+   690→        creditsCommitted: outcome.creditsCommitted,
+   691→      });
+   692→      return outcome;
+   693→    } catch (error) {
+   694→      const failure = apiFailure(error);
+   695→      if (failure.status === 409 || failure.status === 402) {
+   696→        // Terminal server answers: release the retained key (a retry after
+   697→        // these is a NEW gesture — a retained key would make the idempotency
+   698→        // middleware replay the cached 409/402 answer forever).
+   699→        runRecords.delete(runId);
+   700→      }
+   701→      if (failure.status === 409) {
+   702→        return failApply(runId, {
+   703→          ok: false,
+   704→          reason: "conflict",
+   705→          message:
+   706→            "This plan was already applied or the run changed on the server. Nothing was re-executed.",
+   707→        });
+   708→      }
+   709→      if (failure.status === 402) {
+   710→        return failApply(runId, {
+   711→          ok: false,
+   712→          reason: "insufficient-credits",
+   713→          message:
+   714→            "The edit and its version are saved, but there were not enough credits to commit this run.",
+   715→        });
+   716→      }
+   717→      // Network/other failures keep the record: a retry of THIS gesture
+   718→      // reuses the key (F-L2) and the gateway's {batchSha256, versionId}
+   719→      // replay branch dedupes server-side.
+   720→      return failApply(runId, {
+   721→        ok: false,
+   722→        reason: "failed",
+   723→        message:
+   724→          failure.message !== ""
+   725→            ? failure.message
+   726→            : "The edit and its version are saved, but reporting it to the server failed.",
+   727→        code: failure.code,
+   728→      });
+   729→    }
+   730→  };
+   731→
+   732→  /** The shared execute-then-save-then-report path (apply + reapply). */
+   733→  const runApply = async (plan: ApplicablePlan): Promise<ApplyOutcome> => {
+   734→    notify({ type: "apply.started", runId: plan.runId });
+   735→
+   736→    const compiled = validCompiledBatch(plan.compiledBatch);
+   737→    if (compiled === null) {
+   738→      return failApply(plan.runId, {
+   739→        ok: false,
+   740→        reason: "invalid-batch",
+   741→        message: "The plan's compiled batch is malformed. Ask the agent to plan again.",
+   742→      });
+   743→    }
+   744→    // F-6 — the client allowlist gate: every step id must be a curated agent
+   745→    // command BEFORE anything reaches the engine (bounds/shape checks alone
+   746→    // let hostile ids through to the engine's own registry, the finding).
+   747→    if (compiled.steps.some((step) => !isAgentCommand(step.command))) {
+   748→      return failApply(plan.runId, {
+   749→        ok: false,
+   750→        reason: "invalid-batch",
+   751→        message:
+   752→          "The plan's compiled batch contains a command the agent may not run. Ask the agent to plan again.",
+   753→      });
+   754→    }
+   755→
+   756→    // One gesture = one idempotency key (law #4). F-L2: a retained record
+   757→    // means this is a RETRY of a gesture whose batch already executed — reuse
+   758→    // its key (the toolresult:<runId>:<callId> precedent). Fresh gestures
+   759→    // after pre-execution failures / terminal outcomes mint fresh keys.
+   760→    const retained = runRecords.get(plan.runId);
+   761→    const idempotencyKey = retained?.idempotencyKey ?? crypto.randomUUID();
+   762→
+   763→    // 1. Resolve layer names against the live list — read-only; on any
+   764→    //    ambiguity NOTHING executes (no engine.batch, no save, no applyRun).
+   765→    let resolvedById: Readonly<Record<string, number>> = {};
+   766→    let resolvedForWire: readonly PostedResolvedLayer[] = [];
+   767→    const requests = plan.resolutionRequests ?? [];
+   768→    if (requests.length > 0) {
+   769→      const resolution = await resolveRequests(requests, bridge);
+   770→      if (!resolution.ok) return failApply(plan.runId, resolution.outcome);
+   771→      notify({ type: "apply.resolved", runId: plan.runId, resolved: resolution.resolved });
+   772→      // Null-prototype accumulator (M4-N F-1): request ids are model-adjacent
+   773→      // strings — on a plain `{}` a `__proto__` id would hit the accessor.
+   774→      const map = Object.create(null) as Record<string, number>;
+   775→      for (const entry of resolution.resolved) map[entry.requestId] = entry.layerId;
+   776→      resolvedById = map;
+   777→      // §8.7/M5-E: the name→id bindings ride the applyRun body (auditable
+   778→      // server-side even though the batch already ran client-side).
+   779→      resolvedForWire = resolution.resolved.map((entry) => ({
+   780→        requestId: entry.requestId,
+   781→        layerId: entry.layerId,
+   782→      }));
+   783→    }
+   784→
+   785→    // 2. Patch the placeholders with the resolved ids (deterministic clone).
+   786→    //    An unbound `$request:` token must never reach the engine as a string.
+   787→    const patchedSteps: BatchStep[] = [];
+   788→    const unresolved: string[] = [];
+   789→    for (const step of compiled.steps) {
+   790→      const patch = patchPlaceholders(step.params, resolvedById);
+   791→      unresolved.push(...patch.unresolved);
+   792→      patchedSteps.push({
+   793→        command: step.command,
+   794→        params: patch.patched as Record<string, unknown>,
+   795→      });
+   796→    }
+   797→    if (unresolved.length > 0) {
+   798→      return failApply(plan.runId, {
+   799→        ok: false,
+   800→        reason: "resolution-failed",
+   801→        message: `The plan still references unresolved layers (${unresolved.join(", ")}). Ask the agent to name the layer explicitly.`,
+   802→      });
+   803→    }
+   804→
+   805→    const payload = engineBatchPayload({ ...compiled, steps: patchedSteps });
+   806→    const batchSha256 = await batchSha256Hex(payload);
+   807→
+   808→    // 3. ONE engine.batch — law #6 (ONE call, atomic, one undo step).
+   809→    try {
+   810→      await bridge.execute("engine.batch", payload);
+   811→    } catch (error) {
+   812→      const failure = bridgeOutcome(error);
+   813→      return failApply(plan.runId, {
+   814→        ok: false,
+   815→        reason: failure.reason,
+   816→        message: failure.message,
+   817→      });
+   818→    }
+   819→
+   820→    // The batch executed: retain the gesture key + report pieces for retries
+   821→    // (F-L1/F-L2) and the batch label for the undo verification (F-L4).
+   822→    const record: RunApplyRecord = { idempotencyKey, batchSha256, resolvedForWire };
+   823→    runRecords.set(plan.runId, record);
+   824→    appliedLabels.set(plan.runId, compiled.label);
+   825→
+   826→    // 4. D-6: upload the applied state as a NEW version, then report (the
+   827→    // shared steps 5+6 — also the whole of the F-L1 re-save-only retry).
+   828→    autosave.markDirty?.(AGENT_APPLY_SAVE_REASON);
+   829→    return await saveAndReport(plan.runId, record);
+   830→  };
+   831→
+   832→  return {
+   833→    apply: (plan: ApplicablePlan): Promise<ApplyOutcome> => runApply(plan),
+   834→
+   835→    /**
+   836→     * F-L1 — the RE-SAVE-ONLY recovery: the engine step is not in question
+   837→     * (the batch already executed), so `engine.batch` is NEVER re-run; only
+   838→     * the D-6 version upload + the gateway report retry, with the retained
+   839→     * gesture key and the original batchSha256/resolvedLayers.
+   840→     */
+   841→    retrySave: async (runId: string): Promise<ApplyOutcome> => {
+   842→      const record = runRecords.get(runId);
+   843→      if (record === undefined) {
+   844→        // Nothing executed-and-unsaved through THIS controller: an honest
+   845→        // typed refusal — never a silent re-execute of anything.
+   846→        return failApply(runId, {
+   847→          ok: false,
+   848→          reason: "failed",
+   849→          message:
+   850→            "This plan has no applied edit to re-save in this session. If the edit is still in the editor, save a version from the editor menu.",
+   851→        });
+   852→      }
+   853→      return await saveAndReport(runId, record);
+   854→    },
+   855→
+   856→    async undo(runId: string, hint?: UndoHint): Promise<UndoOutcome> {
+   857→      notify({ type: "undo.started", runId });
+   858→      // The run's applied-batch label (F-L4): the retained label wins; the
+   859→      // optional hint (the thread layer passes the planRuntime's
+   860→      // compiledBatch label) covers a controller that never saw the apply.
+   861→      const expectedLabel = appliedLabels.get(runId) ?? hint?.batchLabel;
+   862→      // ONE edit.undo reverts the WHOLE run (batch.rs folds the steps); the
+   863→      // engine answers {undone: label} (edit.rs undo).
+   864→      let popped: { undone?: unknown } | undefined;
+   865→      try {
+   866→        popped = await bridge.execute<{ undone?: unknown }>("edit.undo");
+   867→      } catch (error) {
+   868→        const failure = bridgeOutcome(error);
+   869→        const outcome: UndoOutcome = NOTHING_TO_UNDO_RE.test(failure.message)
+   870→          ? { ok: false, reason: "nothing-to-undo", message: "There is nothing to undo." }
+   871→          : { ok: false, reason: failure.reason, message: failure.message };
+   872→        // The gateway is NOT told — undoRun would 409 on an unapplied run and
+   873→        // the version rows must stay untouched (§9.3).
+   874→        notify({ type: "undo.failed", runId, outcome });
+   875→        return outcome;
+   876→      }
+   877→      const poppedLabel =
+   878→        popped !== undefined && typeof popped.undone === "string" ? popped.undone : undefined;
+   879→      // F-L4 — the stack-blind undo guard: verify the engine popped THE
+   880→      // RUN'S batch before telling the gateway. An unknown or mismatched pop
+   881→      // is surfaced honestly (the popped edit sits on the redo stack) and
+   882→      // the gateway row is never told an undo that didn't happen.
+   883→      if (poppedLabel === undefined || poppedLabel !== expectedLabel) {
+   884→        // The popped batch belongs to a different gesture: its run's retained
+   885→        // label + record (if any) are now stale — the applied state left the
+   886→        // stack through this run's undo.
+   887→        if (poppedLabel !== undefined) {
+   888→          for (const [id, label] of appliedLabels) {
+   889→            if (label === poppedLabel) {
+   890→              appliedLabels.delete(id);
+   891→              runRecords.delete(id);
+   892→            }
+   893→          }
+   894→        }
+   895→        const outcome: UndoOutcome = {
+   896→          ok: false,
+   897→          reason: "undo-stack-mismatch",
+   898→          message:
+   899→            poppedLabel === undefined
+   900→              ? "The editor undid an unnamed edit, so this run's undo could not be verified. The server was not told — redo restores it."
+   901→              : expectedLabel === undefined
+   902→                ? "This plan's edit could not be matched in this session's undo stack, so its undo was not reported. The server was not told — redo restores the edit the editor undid."
+   903→                : "A different edit was on top of the undo stack, so this run was not marked undone. Undo that edit first, or redo to restore it.",
+   904→        };
+   905→        notify({ type: "undo.failed", runId, outcome });
+   906→        return outcome;
+   907→      }
+   908→      // Verified: THE RUN'S batch popped — the retained label is spent.
+   909→      appliedLabels.delete(runId);
+   910→      try {
+   911→        await api.runs.undoRun(runId, { idempotencyKey: crypto.randomUUID() });
+   912→        notify({ type: "undo.completed", runId });
+   913→        return { ok: true, undone: true };
+   914→      } catch (error) {
+   915→        const failure = apiFailure(error);
+   916→        const outcome: UndoOutcome =
+   917→          failure.status === 409
+   918→            ? {
+   919→                ok: false,
+   920→                reason: "conflict",
+   921→                message:
+   922→                  "The server says this run was not applied, so there is nothing to undo there.",
+   923→              }
+   924→            : {
+   925→                ok: false,
+   926→                reason: "failed",
+   927→                message:
+   928→                  failure.message !== ""
+   929→                    ? failure.message
+   930→                    : "The undo happened in the editor but could not be reported.",
+   931→                code: failure.code,
+   932→              };
+   933→        notify({ type: "undo.failed", runId, outcome });
+   934→        return outcome;
+   935→      }
+   936→    },
+   937→
+   938→    async reapply(plan: ApplicablePlan): Promise<ApplyOutcome> {
+   939→      // §M5.5: only while the session still sits on the plan's base version.
+   940→      const current = options.session?.currentVersionId() ?? null;
+   941→      if (plan.baseVersionId === undefined || current === null || current !== plan.baseVersionId) {
+   942→        return failApply(plan.runId, {
+   943→          ok: false,
+   944→          reason: "base-version-changed",
+   945→          message:
+   946→            "The project changed since this plan was made, so re-applying it is not safe. Ask the agent to plan again.",
+   947→        });
+   948→      }
+   949→      return await runApply(plan);
+   950→    },
+   951→  };
+   952→}
+   953→

@@ -683,7 +683,9 @@ d("lease UX: read-only enforcement (PATCH/upload/restore/apply/undo/assets)", ()
     const held = await acquire(team.owner, projectId, "session-ro-holder-01");
     expect(held.acquired).toBe(true);
 
-    await grantCredits(team.ws.id, 100);
+    // D-12 (M6-K µc unification): the chat route reserves integer
+    // MICROcredits — grant 100 credits (100 × 1_000_000 µc).
+    await grantCredits(team.ws.id, 100 * 1_000_000);
     const base = await uploadVersion(team.owner, projectId);
     expect(base.status).toBe(201);
     baseVersionId = base.versionId as string;

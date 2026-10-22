@@ -19,7 +19,10 @@
 //   6. commits the plan credits through ledger.settle — the D-20-correct
 //      sequence: planSettlement caps the commit at the outstanding hold and
 //      releases the FULL hold (reserve −N, commit −M, refund +N ⇒ the run
-//      nets −M). Keyed `apply:{runId}:settle`, so replays never double-charge.
+//      nets −M). The plan estimate converts to integer MICROcredits at this
+//      boundary (D-12, credits-display.ts — F-J1 fix); the wire response's
+//      creditsCommitted stays whole credits (display units). Keyed
+//      `apply:{runId}:settle`, so replays never double-charge.
 //   7. records the apply on the run row (M5-D recordApplied) and audits it.
 //
 // Undo (§8.7/§M5.5): requires an applied run; records the undo (version rows
@@ -35,6 +38,7 @@ import { APPLY_REQUEST_SCHEMA, EDIT_PLAN_SCHEMA, UNDO_REQUEST_SCHEMA } from "@st
 import { StudioError } from "@studio/config";
 
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
+import { creditsToLedgerMicrocredits, microcreditsToWholeCredits } from "../credits-display.js";
 import { GatewayError } from "../errors.js";
 import { ok, pathParam } from "../http.js";
 import { requireLeaseForMutation } from "../lease-guard.js";
@@ -97,16 +101,18 @@ export function applyRoutes(deps: GatewayDeps): Hono<AppBindings> {
       ) {
         // The stored settle replays the original commit entry regardless of
         // this cost (same key ⇒ replayed); 0 keeps the call valid even if the
-        // plan row was replaced after the apply.
+        // plan row was replaced after the apply. D-12: actualCost converts to
+        // µc at the ledger boundary; the response stays whole credits.
         const replayed = await deps.repos.ledger.settle(workspace.id, {
           runId,
-          actualCost: planCreditsOf(run.planJson) ?? 0,
+          actualCost: creditsToLedgerMicrocredits(planCreditsOf(run.planJson) ?? 0),
           idempotencyKey: applySettleKey(runId),
         });
         return ok(c, {
           applied: true,
           versionId: body.versionId,
-          creditsCommitted: replayed.commit !== null ? -replayed.commit.amount : 0,
+          creditsCommitted:
+            replayed.commit !== null ? microcreditsToWholeCredits(-replayed.commit.amount) : 0,
         });
       }
 
@@ -186,7 +192,7 @@ export function applyRoutes(deps: GatewayDeps): Hono<AppBindings> {
       }
 
       // §8.8: never move money on a zero balance — and no state change at
-      // all before this guard passes.
+      // all before this guard passes (the balance is integer µc, D-12).
       const balance = await deps.repos.ledger.balance(workspace.id);
       if (balance < 1) {
         throw new StudioError("INSUFFICIENT_CREDITS", { requestId });
@@ -197,12 +203,15 @@ export function applyRoutes(deps: GatewayDeps): Hono<AppBindings> {
       // commit at the outstanding hold and releases the FULL hold, so the run
       // nets exactly −commit. If the run's hold was already fully settled
       // (stream-finalize path), the commit is 0 — never a double charge.
+      // D-12 (F-J1 fix): the plan's whole credits convert to integer µc at
+      // this ledger boundary; creditsCommitted converts back for the wire.
       const settled = await deps.repos.ledger.settle(workspace.id, {
         runId,
-        actualCost: estimatedCredits,
+        actualCost: creditsToLedgerMicrocredits(estimatedCredits),
         idempotencyKey: applySettleKey(runId),
       });
-      const creditsCommitted = settled.commit !== null ? -settled.commit.amount : 0;
+      const creditsCommitted =
+        settled.commit !== null ? microcreditsToWholeCredits(-settled.commit.amount) : 0;
 
       // M5-D: pin batch digest + version + base on the run row. Money first,
       // row second — a crash between them recovers on retry (settle replays,
@@ -289,9 +298,10 @@ function applyable(status: string): boolean {
 
 /**
  * The plan portion to commit (§8.6 `estimatedCredits` on the run's plan),
- * as a D-12-safe integer ≥ 1 — the ledger stores integer amounts and the
- * §8.8 reserve rule is ceil(estimate × 1.2), min 1. `null` = no valid plan
- * on the row (nothing to apply).
+ * as a D-12-safe integer ≥ 1 in WHOLE CREDITS (the ledger call converts to
+ * µc at the boundary — credits-display.ts) — the §8.8 reserve rule is
+ * ceil(estimate × 1.2), min 1. `null` = no valid plan on the row (nothing
+ * to apply).
  */
 function planCreditsOf(planJson: unknown): number | null {
   const parsed = EDIT_PLAN_SCHEMA.safeParse(planJson);

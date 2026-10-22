@@ -4,7 +4,10 @@
 // Flow (§5.1 trust boundaries — the browser is never trusted for credits):
 //   auth + workspace(editor, runAgent) → thread+project checks →
 //   balance precheck (INSUFFICIENT_CREDITS before anything) → create run →
-//   reserve credits (ceil(estimate × 1.2), min 1) → stream §7.4 events.
+//   reserve credits (ceil(estimate × 1.2), min 1 whole credits; converted to
+//   integer MICROcredits at the ledger boundary, D-12 — credits-display.ts)
+//   → stream §7.4 events. The run ROW keeps whole credits (D-12 row ruling);
+//   the SSE `credits` event carries whole-credit display units.
 //
 // Streaming contract:
 //   * one SSE frame per StudioStreamEvent, `id:` carries the monotonic seq
@@ -35,6 +38,11 @@ import type { AgentMessage, Repos } from "@studio/db";
 
 import { AUTO_APPLY_SETTING_UNAVAILABLE, autoApplyDecision } from "../auto-apply.js";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
+import {
+  creditsToLedgerMicrocredits,
+  microcreditsToDisplayCredits,
+  microcreditsToWholeCredits,
+} from "../credits-display.js";
 import { GatewayError } from "../errors.js";
 import { pathParam } from "../http.js";
 import { TOOL_RESULT_TIMEOUT_MS } from "../litellm/runner.js";
@@ -209,7 +217,9 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
       const thread = await deps.repos.threads.get(workspace.id, threadId);
       const project = await deps.repos.projects.get(workspace.id, thread.projectId);
 
-      // §8.8: never start a run on a zero balance.
+      // §8.8: never start a run on a zero balance (the ledger balance is
+      // integer µc, D-12; the reserve below refuses anything smaller than
+      // the hold — no explicit magnitude compare is needed here).
       const balance = await deps.repos.ledger.balance(workspace.id);
       if (balance < 1) {
         throw new StudioError("INSUFFICIENT_CREDITS", { requestId });
@@ -251,7 +261,11 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
         context: request.context,
         pinned: request.pinned,
       });
+      // Whole credits for the run row + the SSE display; the ledger takes
+      // the D-12 µc conversion at this boundary (F-J1 fix: the ledger row
+      // is reserveAmount × 1_000_000, never a whole-credit magnitude).
       const reserveAmount = reserveAmountFor(estimated);
+      const reserveMicrocredits = creditsToLedgerMicrocredits(reserveAmount);
 
       const runId = run.id;
       /** M5-Q: the version head cached per-run at run start (D-21). */
@@ -259,7 +273,7 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
       try {
         await deps.repos.ledger.reserve(workspace.id, {
           runId,
-          amount: reserveAmount,
+          amount: reserveMicrocredits,
           idempotencyKey: `chat:${runId}:reserve`,
         });
       } catch (error) {
@@ -305,18 +319,21 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
         finalized = true;
         try {
           if (outcome.kind === "completed") {
+            // D-12: the usage commit converts to µc at the ledger boundary;
+            // the run ROW and the credits event below stay whole credits.
             const settled = await deps.repos.ledger.settle(workspace.id, {
               runId,
-              actualCost: outcome.committedCredits,
+              actualCost: creditsToLedgerMicrocredits(outcome.committedCredits),
               idempotencyKey: `chat:${runId}:settle`,
             });
             const newBalance = await deps.repos.ledger.balance(workspace.id);
-            const committed = settled.commit !== null ? -settled.commit.amount : 0;
+            const committed =
+              settled.commit !== null ? microcreditsToWholeCredits(-settled.commit.amount) : 0;
             log.emit({
               type: "credits",
               reserved: reserveAmount,
               committed,
-              balance: newBalance,
+              balance: microcreditsToDisplayCredits(newBalance),
             });
             log.emit({ type: "run.completed" });
             await deps.repos.runs.update(workspace.id, runId, {

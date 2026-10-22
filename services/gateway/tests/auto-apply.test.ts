@@ -890,7 +890,7 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     const meResponse = await api(server.base, "/v1/me", { jar });
     const me = (await meResponse.json()) as { data: { user: { id: string } } };
     await server.deps.repos.ledger.grant(ws.data.id, {
-      amount: 100,
+      amount: 100 * 1_000_000, // 100 credits in µc (D-12) — the chat route reserves µc
       idempotencyKey: unique("grant"),
     });
     const projectResponse = await api(server.base, "/v1/projects", {

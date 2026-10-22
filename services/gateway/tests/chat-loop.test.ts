@@ -11,6 +11,11 @@
 // (repair turn → RUN_INVALID_TOOL), the §7.4 SSE frame contract, cross-tenant
 // 404. All deterministic — no real network beyond the loopback fake server.
 //
+// UNITS (M6-K µc unification, D-12): the ledger rows this file pins are
+// integer MICROcredits — every chat-path hold/commit/refund magnitude is the
+// whole-credit number × 1_000_000 (fixture grants included); the SSE `credits`
+// event and the run ROW stay whole credits (display units).
+//
 // PINNED DECISION (scenario "tool timeout", documented for M4 closeout):
 // TOOL_RESULT_TIMEOUT_MS is a 30_000 ms CONSTANT in src/litellm/runner.ts —
 // not env-injectable, and the chat route wires it directly
@@ -491,9 +496,12 @@ async function newWorkspace(prefix: string): Promise<{ jar: CookieJar; id: strin
   return { jar, id: ws.data.id };
 }
 
-async function grantCredits(workspaceId: string, amount: number): Promise<void> {
+/** 1 credit = 1_000_000 µc (D-12) — the ledger-row multiplier in this file. */
+const MICRO = 1_000_000;
+
+async function grantCredits(workspaceId: string, credits: number): Promise<void> {
   await server.deps.repos.ledger.grant(workspaceId, {
-    amount,
+    amount: credits * MICRO,
     idempotencyKey: unique("grant"),
   });
 }
@@ -739,15 +747,19 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
       reserved: expectedReserve,
       committed: 1,
     });
-    // §8.8 exit criterion: commit ≥ 1 and capped by the reserve.
-    expect(credits.committed).toBeGreaterThanOrEqual(1);
-    expect(credits.committed).toBeLessThanOrEqual(credits.reserved);
     // §8.8 ledger semantics (FIXED 2026-10-23 by the integrator — the
     // original settle refunded `outstanding − commit` while the reserve
     // had already deducted N and the commit deducted M on top, double-
     // charging every completed run by M; planSettlement now releases the
-    // FULL hold): a completed run nets exactly −commit.
+    // FULL hold): a completed run nets exactly −commit. The event's balance
+    // is the DISPLAY conversion of the µc ledger balance (D-12): grant 100
+    // credits − commit 1 credit = 99 credits exactly.
     expect(credits.balance).toBe(100 - 1);
+
+    // §8.8 exit criterion: commit ≥ 1 and capped by the reserve (whole-credit
+    // display units).
+    expect(credits.committed).toBeGreaterThanOrEqual(1);
+    expect(credits.committed).toBeLessThanOrEqual(credits.reserved);
 
     // The runner registers exactly the 13 curated tools on the provider wire
     // (M5.1: the 5 read tools + the 8 PROPOSE-ONLY write tools — nothing else).
@@ -757,8 +769,8 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     expect(toolNames).toEqual(WIRE_TOOL_IDS);
     expect(WIRE_TOOL_IDS).toHaveLength(13);
 
-    // Ledger: reserve −N, commit −1, refund +N (full hold release) — the
-    // §8.8 contract: the run nets −1.
+    // Ledger (µc, D-12): reserve −N×1e6, commit −1×1e6, refund +N×1e6 (full
+    // hold release) — the §8.8 contract: the run nets exactly −1 credit.
     await waitFor(
       "the run row to complete",
       async () => (await getRun(fx, runId)).status === "completed",
@@ -769,12 +781,12 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     for (const entry of runEntries) {
       byKind[entry.kind] = [...(byKind[entry.kind] ?? []), entry.amount];
     }
-    expect(byKind.reserve).toEqual([-expectedReserve]);
-    expect(byKind.commit).toEqual([-1]);
-    expect(byKind.refund).toEqual([expectedReserve]);
-    expect(await balanceOf(fx.workspaceId)).toBe(100 - 1);
+    expect(byKind.reserve).toEqual([-expectedReserve * MICRO]);
+    expect(byKind.commit).toEqual([-1 * MICRO]);
+    expect(byKind.refund).toEqual([expectedReserve * MICRO]);
+    expect(await balanceOf(fx.workspaceId)).toBe((100 - 1) * MICRO);
 
-    // Run row.
+    // Run row (whole credits per the D-12 row ruling).
     const record = await getRun(fx, runId);
     expect(record.status).toBe("completed");
     expect(record.model).toBe("studio-fast");
@@ -855,8 +867,8 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
       (entry) => entry.runId === runId && entry.kind === "reserve",
     );
     expect(reserves.length).toBe(1);
-    // Fixed §8.8 semantics: the completed run nets −1 (see test 1).
-    expect(await balanceOf(fx.workspaceId)).toBe(99);
+    // Fixed §8.8 semantics: the completed run nets −1 credit (see test 1).
+    expect(await balanceOf(fx.workspaceId)).toBe(99 * MICRO);
   });
 
   it("3a. reconnect: a live run resumes after Last-Event-ID; the tool result posted mid-reconnect lands once", async () => {
@@ -943,7 +955,7 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
       "the aborted run to cancel",
       async () => (await getRun(fx, runId)).status === "cancelled",
     );
-    expect(await balanceOf(fx.workspaceId)).toBe(100); // full refund
+    expect(await balanceOf(fx.workspaceId)).toBe(100 * MICRO); // full refund
     const record = await getRun(fx, runId);
     expect(record.errorCode).toBe("RUN_CANCELLED");
 
@@ -1005,7 +1017,7 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     expect(record.completedAt).not.toBeNull();
 
     // Full refund: ledger balance is back to the pre-run grant.
-    expect(await balanceOf(fx.workspaceId)).toBe(100);
+    expect(await balanceOf(fx.workspaceId)).toBe(100 * MICRO);
     const ledger = await server.deps.repos.ledger.list(fx.workspaceId, {});
     const runEntries = ledger.items.filter((entry) => entry.runId === runId);
     expect(runEntries.filter((entry) => entry.kind === "reserve").length).toBe(1);
@@ -1036,7 +1048,7 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
 
     expect(fake.calls.length).toBe(0); // no model call was ever made
     expect((await runsOfThread(fx.workspaceId, fx.threadId)).length).toBe(0);
-    expect(await balanceOf(fx.workspaceId)).toBe(100);
+    expect(await balanceOf(fx.workspaceId)).toBe(100 * MICRO);
     const ledger = await server.deps.repos.ledger.list(fx.workspaceId, {});
     expect(ledger.items.filter((entry) => entry.kind !== "grant").length).toBe(0);
     expect((await listMessages(fx)).length).toBe(0); // the 403 fires before the user turn persists
@@ -1046,7 +1058,7 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     const fx = await newFixture("broke", 5);
     // Drain the balance via the ledger repo (append-only adjust, §8.8).
     await server.deps.repos.ledger.adjust(fx.workspaceId, {
-      amount: -5,
+      amount: -5 * MICRO,
       idempotencyKey: unique("drain"),
     });
     expect(await balanceOf(fx.workspaceId)).toBe(0);
@@ -1110,7 +1122,7 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     const record = await getRun(fx, runId);
     expect(record.errorCode).toBe("RUN_INVALID_TOOL");
     expect(record.committedCredits).toBe(0);
-    expect(await balanceOf(fx.workspaceId)).toBe(100); // full refund
+    expect(await balanceOf(fx.workspaceId)).toBe(100 * MICRO); // full refund
     const rawRun = await server.deps.repos.runs.get(fx.workspaceId, runId);
     expect(rawRun.steps.length).toBe(0); // invalid calls never started a tool
     expect((await listMessages(fx)).length).toBe(1); // the user turn only

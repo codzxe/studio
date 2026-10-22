@@ -31,8 +31,12 @@
  *       sha256 over the exact patched batch payload (WebCrypto via the
  *       editor-session sha256Hex, with its vector-tested sync fallback for
  *       hosts without `crypto.subtle` — never a new dependency). Gateway
- *       errors map: 409 → conflict (explains, never re-applies), 402 →
- *       insufficient credits, else typed failure.
+ *       errors map: 409 → conflict (explains, never re-applies) UNLESS the
+ *       code is LEASE_HELD (M7/D-23 → the typed `lease-held` outcome, the
+ *       server-side read-only guard is authoritative), 402 → insufficient
+ *       credits, else typed failure. A LOCAL LEASE_HELD rejection from the
+ *       M7 read-only gate (lib/editor-session read-only.ts) maps to the same
+ *       `lease-held` outcome before anything reaches the engine.
  *
  *  Retention (law #4; F-L1/F-L2/F-L4 — the `toolresult:<runId>:<callId>`
  *  retention in tool-executor.ts is the precedent): once a run's batch has
@@ -82,7 +86,7 @@
  */
 
 import type { SaveOutcome } from "@/lib/editor-session";
-import { sha256Hex } from "@/lib/editor-session";
+import { isReadOnlyLeaseError, sha256Hex } from "@/lib/editor-session";
 import { isAgentCommand } from "@studio/api-client/chat-tools";
 import type { AgentBatch, BatchStep } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
@@ -191,6 +195,21 @@ export type ApplyOutcome =
       readonly message: string;
     }
   | {
+      /** M7/D-23: another member holds the active edit lease. Either the
+       * LOCAL read-only gate refused the batch before it could reach the
+       * engine (nothing executed — the client gate is UX), or the gateway's
+       * authoritative 409 LEASE_HELD refused the report after the save (the
+       * batch + version DID land; the copy says which holder blocks and what
+       * survived). Chat asking/proposing stays allowed — only apply is
+       * gated. */
+      readonly ok: false;
+      readonly reason: "lease-held";
+      readonly message: string;
+      /** Present when the batch executed + saved and only the REPORT was
+       * refused by the server-side lease guard. */
+      readonly batchApplied?: true;
+    }
+  | {
       /** Gateway 402 INSUFFICIENT_CREDITS — the batch + version landed; credits did not commit. */
       readonly ok: false;
       readonly reason: "insufficient-credits";
@@ -228,6 +247,15 @@ export type UndoOutcome =
       /** Gateway 409 — the run is not in an applied state (already undone?). */
       readonly ok: false;
       readonly reason: "conflict";
+      readonly message: string;
+    }
+  | {
+      /** M7/D-23: another member holds the active edit lease — the local
+       * gate refused `edit.undo` (nothing happened in the engine) or the
+       * gateway's 409 LEASE_HELD refused undoRun (the gateway row was not
+       * touched). */
+      readonly ok: false;
+      readonly reason: "lease-held";
       readonly message: string;
     }
   | {
@@ -699,6 +727,23 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
         runRecords.delete(runId);
       }
       if (failure.status === 409) {
+        // M7/D-23 (additive conflict arm): a 409 carrying the wire's
+        // LEASE_HELD code is the server-side read-only guard refusing the
+        // report — the server is AUTHORITATIVE, so surface it with its own
+        // typed outcome and the gateway's copy (which names the holder).
+        // The batch + version DID land; only the report is owed (the
+        // idempotency middleware replays it once the lease is ours again).
+        if (failure.code === "LEASE_HELD") {
+          return failApply(runId, {
+            ok: false,
+            reason: "lease-held",
+            batchApplied: true,
+            message:
+              failure.message !== ""
+                ? `${failure.message} The edit and its version are saved, but the run could not be recorded — take the edit lease to finish reporting it.`
+                : "Another member is editing this project right now. The edit and its version are saved, but the run could not be recorded — take the edit lease to finish reporting it.",
+          });
+        }
         return failApply(runId, {
           ok: false,
           reason: "conflict",
@@ -809,6 +854,17 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
     try {
       await bridge.execute("engine.batch", payload);
     } catch (error) {
+      // M7/D-23 (additive): the LOCAL read-only gate (lib/editor-session
+      // read-only.ts) rejects the batch with the typed LEASE_HELD outcome
+      // BEFORE it reaches the engine — nothing executed, nothing saved, the
+      // gateway was never told. Honest copy names the holder (never an id).
+      if (isReadOnlyLeaseError(error)) {
+        return failApply(plan.runId, {
+          ok: false,
+          reason: "lease-held",
+          message: `${error.message} The plan was not applied — request edit access, or take the lease when it is free, then apply again.`,
+        });
+      }
       const failure = bridgeOutcome(error);
       return failApply(plan.runId, {
         ok: false,
@@ -865,6 +921,17 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
       try {
         popped = await bridge.execute<{ undone?: unknown }>("edit.undo");
       } catch (error) {
+        // M7/D-23 (additive): the LOCAL read-only gate refused the undo —
+        // the engine was never touched and the gateway is not told.
+        if (isReadOnlyLeaseError(error)) {
+          const outcome: UndoOutcome = {
+            ok: false,
+            reason: "lease-held",
+            message: `${error.message} The undo was not performed — take the edit lease first.`,
+          };
+          notify({ type: "undo.failed", runId, outcome });
+          return outcome;
+        }
         const failure = bridgeOutcome(error);
         const outcome: UndoOutcome = NOTHING_TO_UNDO_RE.test(failure.message)
           ? { ok: false, reason: "nothing-to-undo", message: "There is nothing to undo." }
@@ -913,23 +980,37 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
         return { ok: true, undone: true };
       } catch (error) {
         const failure = apiFailure(error);
-        const outcome: UndoOutcome =
-          failure.status === 409
-            ? {
-                ok: false,
-                reason: "conflict",
-                message:
-                  "The server says this run was not applied, so there is nothing to undo there.",
-              }
-            : {
-                ok: false,
-                reason: "failed",
-                message:
-                  failure.message !== ""
-                    ? failure.message
-                    : "The undo happened in the editor but could not be reported.",
-                code: failure.code,
-              };
+        let outcome: UndoOutcome;
+        if (failure.status === 409 && failure.code === "LEASE_HELD") {
+          // M7/D-23 (additive conflict arm): the server-side lease guard
+          // refused the undo report (someone else holds the lease). The undo
+          // DID happen in the engine; the gateway row was not touched —
+          // honest copy, no re-attempt while blocked.
+          outcome = {
+            ok: false,
+            reason: "lease-held",
+            message:
+              failure.message !== ""
+                ? `${failure.message} The undo happened in the editor, but the server could not record it — take the edit lease to finish reporting it.`
+                : "Another member is editing this project right now. The undo happened in the editor, but the server could not record it — take the edit lease to finish reporting it.",
+          };
+        } else if (failure.status === 409) {
+          outcome = {
+            ok: false,
+            reason: "conflict",
+            message: "The server says this run was not applied, so there is nothing to undo there.",
+          };
+        } else {
+          outcome = {
+            ok: false,
+            reason: "failed",
+            message:
+              failure.message !== ""
+                ? failure.message
+                : "The undo happened in the editor but could not be reported.",
+            code: failure.code,
+          };
+        }
         notify({ type: "undo.failed", runId, outcome });
         return outcome;
       }

@@ -28,8 +28,10 @@ import {
   type CreditsSummary,
   EDIT_PLAN_SCHEMA,
   ID_SCHEMA,
+  INVOICE_STATUS_SCHEMA,
   ISO8601_SCHEMA,
   type Invite,
+  type InvoiceRecord,
   LEASE_QUEUE_ENTRY_SCHEMA,
   LEDGER_KIND_SCHEMA,
   type LeaseQueueEntry,
@@ -520,6 +522,21 @@ export const TRIAL_RESPONSE_SCHEMA = z.object({
   trialEnd: isoSchema,
 }) satisfies z.ZodType<TrialResponse>;
 
+/** One `GET /v1/billing/invoices` row (F-J3 — recorded Stripe invoices). */
+export const INVOICE_SCHEMA = z.object({
+  id: idSchema,
+  stripeInvoiceId: z.string(),
+  // MONEY in Stripe minor units (cents) — never credits (§9.1, D-12).
+  amountCents: z.number().int().nonnegative(),
+  currency: z.string(),
+  status: INVOICE_STATUS_SCHEMA,
+  periodStart: isoSchema.nullable(),
+  periodEnd: isoSchema.nullable(),
+  hostedUrl: z.string().nullable(),
+  pdfUrl: z.string().nullable(),
+  createdAt: isoSchema,
+}) satisfies z.ZodType<InvoiceRecord>;
+
 // ---------------------------------------------------------------------------
 // Renders
 // ---------------------------------------------------------------------------
@@ -617,6 +634,7 @@ export const PAGE_ASSETS_SCHEMA = pageSchema(ASSET_SCHEMA);
 export const PAGE_THREADS_SCHEMA = pageSchema(THREAD_SCHEMA);
 export const PAGE_MESSAGES_SCHEMA = pageSchema(THREAD_MESSAGE_SCHEMA);
 export const PAGE_LEDGER_SCHEMA = pageSchema(LEDGER_ENTRY_SCHEMA);
+export const PAGE_INVOICES_SCHEMA = pageSchema(INVOICE_SCHEMA);
 export const PAGE_COMMENTS_SCHEMA = pageSchema(COMMENT_SCHEMA);
 export const PAGE_ACTIVITY_SCHEMA = pageSchema(ACTIVITY_ENTRY_SCHEMA);
 

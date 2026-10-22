@@ -50,6 +50,19 @@ export type {
   VersionRef,
 } from "./types";
 
+// M7 read-only client enforcement (BUILD_PLAN §M7 task 3, DECISIONS.md D-23).
+export {
+  LEASE_HELD_ERROR_CODE,
+  RAW_ENGINE_MUTATION_IDS,
+  ReadOnlyLeaseError,
+  createReadOnlyGate,
+  isMutatingBridgeExecute,
+  isMutatingBridgeRequestMethod,
+  isReadOnlyLeaseError,
+  wrapReadOnlyBridge,
+} from "./read-only";
+export type { ReadOnlyGate, ReadOnlyGateHandle } from "./read-only";
+
 export {
   createFakeEditorSessionClient,
   defaultFakeProjectBytes,
