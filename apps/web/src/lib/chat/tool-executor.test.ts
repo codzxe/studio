@@ -329,7 +329,7 @@ describe("executeClientTool gating", () => {
   it("invalid args → RUN_INVALID_TOOL posted, no bridge call", async () => {
     const world = await makeWorld();
     await executeClientTool(toolCall("studio.get_properties", { layerIds: [] }), world.deps);
-    await executeClientTool(toolCall("studio.list_layers", { depth: 99 }), world.deps, "call_test_2");
+    await executeClientTool(toolCall("studio.list_layers", { depth: 99 }, "call_test_2"), world.deps);
 
     expect(world.events).toHaveLength(2);
     expect(resultOf(world.events[0] as PostedEvent)).toMatchObject({ error: "RUN_INVALID_TOOL" });
@@ -347,9 +347,8 @@ describe("executeClientTool gating", () => {
       world.deps,
     );
     await executeClientTool(
-      toolCall("studio.create_composition", { name: "X", width: 100, height: 100 }),
+      toolCall("studio.create_composition", { name: "X", width: 100, height: 100 }, "call_test_2"),
       world.deps,
-      "call_test_2",
     );
 
     expect(world.events).toHaveLength(2);
