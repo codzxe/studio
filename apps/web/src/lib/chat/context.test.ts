@@ -254,11 +254,11 @@ describe("collectContextSnapshot", () => {
     let peak = 0;
     const counted: EditorBridge = {
       ...bridge,
-      query: (command: string, params?: unknown) => {
-        if (command !== "prop.get") return bridge.query(command, params);
+      query<T = unknown>(command: string, params?: unknown): Promise<T> {
+        if (command !== "prop.get") return bridge.query<T>(command, params);
         inFlight++;
         peak = Math.max(peak, inFlight);
-        const p = bridge.query(command, params);
+        const p = bridge.query<T>(command, params);
         void p.then(
           () => {
             inFlight--;

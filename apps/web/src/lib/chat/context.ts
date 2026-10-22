@@ -379,7 +379,8 @@ async function mapLimit<T, R>(
     while (true) {
       const i = next++;
       if (i >= items.length) return;
-      results[i] = await fn(items[i], i);
+      const item = items[i];
+      if (item !== undefined) results[i] = await fn(item, i);
     }
   };
   const workers = Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, worker);
