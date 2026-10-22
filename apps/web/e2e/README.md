@@ -18,6 +18,19 @@ models, threads) stays real. Its apply → undo → re-apply journey is
 documents the flip); the two ACTIVE scenarios + the editor-unchanged
 baseline run on every CI pass.
 
+`m7-collab.spec.ts` is the §M7 companion (comments journey, presence +
+lease banner, the `/w/:slug/history` surface, the public `/s/:token` review
+page, and the read-only editor state) over the same boot recipe **plus one
+extra data-plane step — the share-link fixture (§10)**: the share page's
+first read (`GET /v1/share/:token`) happens server-side in the RSC route, so
+no browser-level scripted gateway can serve it. With the fixture rows the
+whole public journey runs against the REAL gateway (password gate included).
+Everything the single-member seed cannot produce is scripted at the browser
+boundary with `page.route` in the spec itself (presence viewers, another
+member's lease-state + request queue, the activity pages); everything else
+is real gateway + Postgres. The spec adds **no screenshot baselines** and
+needs no env or config changes.
+
 It is **not runnable on the build-fleet box**: that box has no browsers and
 no dev servers (docs/AGENTS.md), which is why `@playwright/test` is not a
 devDependency there. `apps/web/tsconfig.json` therefore **excludes** `e2e/`
@@ -373,6 +386,8 @@ result names comp "Main".
   `playwright.config.ts` — the spec/config import `@playwright/test`, which
   is not installed there; excluded files are not type-checked. Everything
   else (`src/`, `tests/`, `next-env.d.ts`, `.next/types/**`) stays included.
+  (Applies unchanged to `m7-collab.spec.ts` — it lives under `e2e/` and is a
+  `.spec.ts`, so it is excluded from typecheck and never matched by vitest.)
 - **vitest**: `apps/web/vitest.config.ts` includes only
   `tests/**/*.test.{ts,tsx}` + `src/**/*.test.{ts,tsx}` — the spec
   (`e2e/chat.spec.ts`) matches neither the directories nor the `*.test.*`
@@ -381,3 +396,76 @@ result names comp "Main".
   `pnpm lint` parses everything — both new TS files are biome-clean.
 - **package.json / lockfile**: untouched here, by design — CI owns the
   `@playwright/test` devDep + lockfile sync (§1a).
+
+---
+
+## 10. Share-link fixture (the `m7-collab.spec.ts` public journey)
+
+`m7-collab.spec.ts` drives the real `/s/:token` page, whose **first read is
+server-side** (the RSC route fetches `GET /v1/share/:token` through the
+gateway seam — `page.route` can never see it). The seed creates **no**
+`share_tokens` rows, so before the first run stage two fixture links for the
+seeded project — one open, one password-protected. The tokens and the
+password are pinned in the spec:
+
+| Token (URL path)                       | Password         | Notes |
+|---|---|---|
+| `e2e-share-open-7f3d92b1c4`           | — (open link)    | never expires, never revoked |
+| `e2e-share-locked-2a6e8d41f9`         | `review-pass-1234` | scrypt gate, verified by the real route |
+
+The rows store ONLY `sha256(raw token)` and the gateway's own
+`scrypt$salt$hash` format — exactly what `POST /v1/projects/:id/share-links`
+would have written; nothing here invents a schema. Idempotent: re-running
+keeps the existing rows (`ON CONFLICT (id) DO NOTHING`), and because the
+password never changes, a re-run's fresh salt is irrelevant — the stored
+(old-salt) hash keeps verifying the same password.
+
+```sh
+# from the repo root, with DATABASE_URL exported (§4)
+cat > packages/db/scripts/share-fixture.ts <<'EOF'
+import { createHash, randomBytes, scryptSync } from "node:crypto";
+import postgres from "postgres";
+
+const sha = (raw: string): string =>
+  createHash("sha256").update(raw).digest("hex");
+
+const salt = randomBytes(16);
+const passwordHash = `scrypt$${salt.toString("hex")}$${scryptSync(
+  "review-pass-1234",
+  salt,
+  64,
+).toString("hex")}`;
+
+const rows = [
+  { id: "shr_e2e_open", raw: "e2e-share-open-7f3d92b1c4", passwordHash: null },
+  { id: "shr_e2e_locked", raw: "e2e-share-locked-2a6e8d41f9", passwordHash },
+];
+
+const sql = postgres(process.env.DATABASE_URL);
+for (const row of rows) {
+  await sql`
+    INSERT INTO share_tokens
+      (id, project_id, token_hash, password_hash, expires_at, revoked_at, created_by, created_at)
+    VALUES
+      (${row.id}, 'prj_demo', ${sha(row.raw)}, ${row.passwordHash}, NULL, NULL,
+       (SELECT id FROM "user" WHERE email = 'demo@studio.test'), now())
+    ON CONFLICT (id) DO NOTHING
+  `;
+}
+await sql.end();
+console.log("[share-fixture] ok (2 rows)");
+EOF
+pnpm --filter @studio/db exec tsx scripts/share-fixture.ts
+rm packages/db/scripts/share-fixture.ts
+```
+
+Notes:
+
+- The temp script lives inside `packages/db/scripts/` ONLY for module
+  resolution (the `postgres` driver resolves from that package's
+  node_modules) and is deleted right after — nothing is committed.
+- `expires_at` is NULL, so the fixture never goes stale; revoke cleanup is
+  unnecessary for CI databases recreated per pipeline (§2 note).
+- The guest-comment and request-access posts in the spec write REAL rows
+  (a `comments` row with `share_token_id`, a `share.request_access` audit
+  row) — expected, harmless, and swept away with a fresh DB.
