@@ -1,0 +1,915 @@
+     1→// M5-M — the GOLDEN PROMPTS corpus (BUILD_PLAN §M5 task 8 + the exit
+     2→// criterion "At least 10 representative prompts apply successfully on the
+     3→// corpus project"; EDITOR_CHAT_UX §4 prompt taxonomy — questions, edits,
+     4→// multi-layer/agent edits, quick actions — and §5 context model).
+     5→//
+     6→// Each fixture is ONE representative user prompt plus everything needed to
+     7→// prove it end-to-end:
+     8→//   * `prompt`           — real user phrasing (ECUX §4.1/§4.3/§4.4 vocabulary)
+     9→//   * `userContext`      — the editor snapshot the context assembly sends
+    10→//                          (§5.1/§5.2: context flags, pinned chips, active
+    11→//                          comp, selection, playhead)
+    12→//   * `scriptedModelPlan`— the EditPlan JSON a well-behaved model returns for
+    13→//                          studio.plan_edit. REALISTIC BY CONSTRUCTION: intent
+    14→//                          per §8.6, plausible self-declared risk + credits
+    15→//                          (the server recomputes both), affectedLayers BY
+    16→//                          NAME (law #5), steps carrying tool + args per the
+    17→//                          CURATED write-tool schemas the model was offered
+    18→//                          on the provider wire (packages/contracts
+    19→//                          write-tools.ts — STRICT Zod, layers BY NAME), and
+    20→//                          the model's own ADVISORY per-step `batch` proposal
+    21→//                          (§8.6 shape; validated, never executed — the
+    22→//                          server-side translation wins, law #5).
+    23→//   * `expected`         — the compiled assertions against the REAL pipeline
+    24→//                          (services/gateway/src/plan-compiler.ts with
+    25→//                          defaultCompileDeps(): the REAL curated command
+    26→//                          registry + the REAL write-tool args schemas):
+    27→//                          which registry command ids appear, batch step
+    28→//                          count range, server-recomputed risk, credits per
+    29→//                          estimateCredits, layer-name resolution requests,
+    30→//                          warn codes, save_version annotation.
+    31→//
+    32→// ---------------------------------------------------------------------------
+    33→// FINDINGS this corpus surfaces (report-only — law #12: nothing outside the
+    34→// two M5-M files was changed; no tool was widened, per the orchestrator's
+    35→// tool-growth rule). The golden-prompts.test.ts suite PINS today's actual
+    36→// behavior, so the orchestrator's fixes flip these fixtures to full goldens
+    37→// without touching fixture data.
+    38→//
+    39→// G-1 (HIGH, seam) — write-tool ARGS-SHAPE DIVERGENCE between the curated
+    40→//   args schemas (M5-A, packages/contracts/src/write-tools.ts) and the
+    41→//   compiler's per-tool translation (M5-B, services/gateway/src/plan-compiler.ts
+    42→//   translate()):
+    43→//     set_properties: schema `{layers:[{name}], properties:[{path,value}]}`  vs
+    44→//                     compiler `{updates:[{layer,path,value}]}`
+    45→//     set_keyframes:  schema `{layers:[{name}], propertyPath, keys:[{timeSeconds,
+    46→//                     value, interpolation?}]}` vs compiler `{layer, propertyPath,
+    47→//                     keyframes:[{time, value, easing?}]}`
+    48→//     add_effect:     schema `{layers:[{name}], effect:{name}, params?}` vs
+    49→//                     compiler `{layer, effect: <string>, params?}`
+    50→//     apply_preset:   schema `{preset:{name}|{builtinId}, layers?, args?}` vs
+    51→//                     compiler `{preset: <string>, targets:[<string>]}`
+    52→//   Consequence (verified against the real pipeline): schema-valid model plans
+    53→//   for these four tools translate to ZERO commands ⇒ the compile answers a
+    54→//   typed `empty_batch` fatal ⇒ the plan event goes out UN-enriched (no
+    55→//   compiledBatch ⇒ Apply is gated) and write-tool proposals answer
+    56→//   PROPOSAL_INVALID. The failure is FAIL-CLOSED (never a partial or wrong
+    57→//   batch for single-tool plans) but it blocks 6 of the 10 required golden
+    58→//   scenarios today. Existing suites never caught this: plan-compiler.test.ts
+    59→//   injects fixture args schemas shaped like the compiler, litellm-runner
+    60→//   tests inject a stub compiler. Fix (one file, src/plan-compiler.ts):
+    61→//   translate() must read the write-tools.ts arg names (layers/properties,
+    62→//   layers/keys, layers+effect.name, preset.name|preset.builtinId+layers) —
+    63→//   including the set_properties cross-product (N layers × M properties).
+    64→//
+    65→// G-2 (MEDIUM, silent drop) — create_text typography: CREATE_TEXT_ARGS_SCHEMA
+    66→//   accepts font/style/size/fill/stroke/strokeWidth/tracking/leading/box, but
+    67→//   translate() reads `fontSize`/`fontFamily`/`color`/`compId` — none of which
+    68→//   the STRICT schema allows. Validated typography params are therefore
+    69→//   SILENTLY DROPPED from the compiled layer.newText (gp-06 pins the exact
+    70→//   reduced params: only text/name/position survive). Also comp targeting
+    71→//   (compId) is unexpressible. Fix belongs in translate() (read size/font/fill
+    72→//   + box/style/stroke* /tracking/leading passthrough per the engine's
+    73→//   layer.newText params).
+    74→//
+    75→// G-3 (HIGH, partial drop) — MIXED plans compile PARTIALLY: plan steps whose
+    76→//   tool args diverge (G-1) translate to zero commands with only WARN
+    77→//   severity, so a multi-step plan mixing an aligned tool and a divergent tool
+    78→//   returns ok:true with a batch that SILENTLY MISSING the divergent steps
+    79→//   (gp-11: "create text + animate + save" compiles to create-text only).
+    80→//   The plan card shows all 3 steps; the applied batch performs 1. This
+    81→//   violates the spirit of "a failed step never leaves a partial edit" —
+    82→//   recommend: zero-command steps in an otherwise-compilable plan should be
+    83→//   FATAL (or the plan should be rejected with a typed issue), not warn.
+    84→//
+    85→// G-4 (LOW, risk floors) — defaultCompileDeps() passes WRITE_TOOL_ARGS_SCHEMAS
+    86→//   (bare Zod objects, no risk metadata), so the write-tool catalog's risk
+    87→//   badges (medium for create_composition/add_effect/apply_preset/undo_run)
+    88→//   never reach the compiled risk — only the command-side rules apply
+    89→//   (delete-ish/render-ish/edit.undo|redo ⇒ medium). gp-07 pins it: the model
+    90→//   says medium, the wire carries low. Fix: defaultCompileDeps should project
+    91→//   WRITE_TOOLS as {args: inputSchema, risk} WriteToolDefs.
+    92→//
+    93→// G-5 (INFO, by design) — save_version is compile-time ANNOTATION ONLY; a
+    94→//   save_version-only plan is a pinned empty_batch fatal (apply needs a
+    95→//   batch), and the studio.save_version write-tool proposal likewise answers
+    96→//   PROPOSAL_INVALID — so the agent cannot produce a labeled snapshot without
+    97→//   also editing something. Every apply creates a version anyway (apply
+    98→//   route requires the uploaded version); save_version only labels it.
+    99→//   Documented as a product seam: "save a version of what I have now" needs
+   100→//   either a client-side action or a ruling.
+   101→//
+   102→// G-6 (MEDIUM, selection targeting) — APPLY_PRESET_ARGS_SCHEMA documents
+   103→//   "Omit layers to use the current selection", but the compiler's
+   104→//   selection-capture policy refuses to compile unnamed targets (gp-08: the
+   105→//   §4.4 quick action "Make it pop" answers empty_batch). The tool description
+   106→//   promises semantics the compiler deliberately refuses — needs an
+   107→//   orchestrator ruling (client resolves selection→names before compile, or a
+   108→//   typed "needs-selection" request rides the plan event).
+   109→//
+   110→// G-7 (MEDIUM, inexpressible edit) — RENAME: the engine has layer.rename (in
+   111→//   AGENT_COMMAND_IDS), but none of the 8 write tools maps to it; a realistic
+   112→//   "rename these layers" prompt (gp-05) can only be approximated by
+   113→//   set_properties with path "name" (→ prop.set, a different engine command
+   114→//   whose support for path "name" is unverified). Recorded per the mission:
+   115→//   do NOT widen the tools; the orchestrator rules on a rename surface.
+   116→//
+   117→// G-8 (INFO, wart) — resolutionRequests are minted from affectedLayers
+   118→//   NAMES too, not just batch layer sites: a plan that only CREATES a layer
+   119→//   (create_text) still emits a disambiguation request for the new layer's
+   120→//   declared name even though no batch step references it (no matching
+   121→//   placeholder — the client resolves an id nothing consumes). Pinned as-is
+   122→//   (gp-06/gp-10/gp-11); the M5-F resolver must tolerate orphan requests.
+   123→//
+   124→// Post-reconciliation goldens are already encoded per fixture in
+   125→// `expected.commands` — once G-1/G-2 land, flip `expected.compile` to
+   126→// "compiled" for the blocked fixtures and the suite becomes the acceptance
+   127→// test for the fix without any other edit.
+   128→//
+   129→// M5-S FLIP STATUS (wave-2 integrator fix landed — translate() now reads the
+   130→// LANDED M5-A shapes; see services/gateway/src/plan-compiler.ts):
+   131→//   G-1 FIXED — layers/properties, layers/keys+timeSeconds, layers+effect.name,
+   132→//     preset.{name|builtinId}+layers all translate (cross-products pinned).
+   133→//   G-2 FIXED — create_text typography reaches layer.newText 1:1 (gp-06).
+   134→//   G-3 FIXED — any zero-command step is a fatal empty_step; gp-11 now
+   135→//     compiles COMPLETE (create + 2 keyframes + save annotation).
+   136→//   G-4 FIXED — risk = max(command/tool floors, the model's DECLARED risk):
+   137→//     the wire never carries a lower badge than the model claimed (gp-07,
+   138→//     gp-03, gp-12 flip to the declared medium).
+   139→//   G-6 FIXED via D-21 — apply_preset with layers omitted targets the plan's
+   140→//     affectedLayers NAMES (never the live editor selection) — gp-08 compiles.
+   141→//   G-7 FIXED — set_properties path "name" → layer.rename (gp-05 pins it).
+   142→//   G-5 REMAINS (by design) — save_version is annotation-only; a
+   143→//     save-version-only plan is still the pinned empty_batch fatal.
+   144→//   G-8 REMAINS (INFO) — create-only plans still mint an orphan resolution
+   145→//     request for the declared new-layer name (gp-06/gp-10/gp-11); the M5-F
+   146→//     resolver must tolerate it.
+   147→// ALL 12 fixtures now carry expected.compile = "compiled".
+   148→// ---------------------------------------------------------------------------
+   149→
+   150→import type { ContextSelection, EditPlan, PinnedContextItem, PlanRisk } from "@studio/contracts";
+   151→
+   152→// ---------------------------------------------------------------------------
+   153→// Fixture types
+   154→// ---------------------------------------------------------------------------
+   155→
+   156→/** The 10 required §M5-task-8 scenarios (+2 breadth scenarios). */
+   157→export type GoldenScenario =
+   158→  | "text-animation" // (a)
+   159→  | "color-change" // (b)
+   160→  | "effect-add" // (c)
+   161→  | "keyframes" // (d)
+   162→  | "multi-layer-edit" // (e)
+   163→  | "create-text-typography" // (f)
+   164→  | "create-composition" // (g)
+   165→  | "apply-preset" // (h)
+   166→  | "undo-run" // (i)
+   167→  | "save-version" // (j)
+   168→  | "compound-agent-edit" // (k) §4.3 multi-step agent mode
+   169→  | "quick-action"; // (l) §4.4 quick action chip
+   170→
+   171→/** §5 context snapshot the client sends with the message (§5.1/§5.2). */
+   172→export interface GoldenUserContext {
+   173→  /** Active composition name (always in context, §5.1). */
+   174→  readonly activeComp: string;
+   175→  /** Selected layer NAMES, or null when nothing is selected. */
+   176→  readonly selection: readonly string[] | null;
+   177→  /** Playhead in seconds (always in context, §5.1). */
+   178→  readonly playheadSeconds: number;
+   179→  /** ContextSelection flags (the chat request's `context`, parsed shape). */
+   180→  readonly context: ContextSelection;
+   181→  /** Pinned context chips (§5.2: @mentions, attached selection/comp/…). */
+   182→  readonly pinned: readonly PinnedContextItem[];
+   183→}
+   184→
+   185→export interface GoldenExpectation {
+   186→  /**
+   187→   * Today's REAL-pipeline outcome. "compiled" ⇒ the assertions below hold on
+   188→   * the compiled result now. "blocked" ⇒ the compile answers a TYPED FATAL
+   189→   * (fail-closed: no batch is produced at all) because of FINDING G-1/G-6 —
+   190→   * `commands` then carries the pinned POST-FIX golden for the fix.
+   191→   */
+   192→  readonly compile: "compiled" | "blocked";
+   193→  /** The exact fatal issue code asserted when `compile` is "blocked". */
+   194→  readonly fatalCode?: "empty_batch";
+   195→  /**
+   196→   * Registry command ids of the compiled batch, in order (the §M5.2 golden).
+   197→   * For blocked fixtures: the post-reconciliation golden per the compiler's
+   198→   * own translation table — every id is in AGENT_COMMAND_IDS (self-checked).
+   199→   */
+   200→  readonly commands: readonly string[];
+   201→  /** Inclusive [min, max] range on the compiled batch step count. */
+   202→  readonly batchStepRange: readonly [number, number];
+   203→  /** Server-RECOMPUTED risk carried on the plan event (never the model's). */
+   204→  readonly risk: PlanRisk;
+   205→  /** estimateCredits({ risk, steps: plan.steps }) — never the model's number. */
+   206→  readonly estimatedCredits: number;
+   207→  /** Layer NAMES needing client-side id resolution, in request order (§8.7). */
+   208→  readonly resolutionRequests: readonly string[];
+   209→  /** Expected WARN issue codes on a compiled result (subset match). */
+   210→  readonly warningCodes: readonly string[];
+   211→  /** Present when the plan carries a save_version annotation. */
+   212→  readonly saveVersionLabel?: string;
+   213→  /** Finding references explaining a non-golden expectation. */
+   214→  readonly findings: readonly string[];
+   215→}
+   216→
+   217→export interface GoldenPromptFixture {
+   218→  readonly id: string;
+   219→  readonly scenario: GoldenScenario;
+   220→  /** Real user phrasing (§4 taxonomy; the goal the model passes to plan_edit). */
+   221→  readonly prompt: string;
+   222→  readonly userContext: GoldenUserContext;
+   223→  /** The EditPlan the scripted model returns (§8.6 shape, args per the
+   224→   * curated write-tool schemas, layer refs BY NAME, advisory batches). */
+   225→  readonly scriptedModelPlan: EditPlan;
+   226→  readonly expected: GoldenExpectation;
+   227→}
+   228→
+   229→// ---------------------------------------------------------------------------
+   230→// Shared context builders (§5.1 defaults; per-fixture deltas on top)
+   231→// ---------------------------------------------------------------------------
+   232→
+   233→function baseContext(overrides: Partial<ContextSelection> = {}): ContextSelection {
+   234→  return {
+   235→    projectSummary: true,
+   236→    activeComp: true,
+   237→    selection: false,
+   238→    playhead: true,
+   239→    focusedPanel: true,
+   240→    selectedProperties: false,
+   241→    currentFrame: false,
+   242→    recentCommands: false,
+   243→    comments: false,
+   244→    ...overrides,
+   245→  };
+   246→}
+   247→
+   248→function selectionContext(): ContextSelection {
+   249→  return baseContext({ selection: true, selectedProperties: true });
+   250→}
+   251→
+   252→/** A §8.6 plan step: curated write tool id + args + the model's ADVISORY
+   253→ * batch proposal (pseudo command ids = the bare tool id, per the M5-C write
+   254→ * tool carrier convention — never a real registry id, so the wire proofs can
+   255→ * assert the compiled registry ids NEVER enter the model conversation). */
+   256→function step(
+   257→  title: string,
+   258→  tool: string,
+   259→  args: unknown,
+   260→  proposedParams: Record<string, unknown>,
+   261→): EditPlan["steps"][number] {
+   262→  return {
+   263→    title,
+   264→    tool,
+   265→    args,
+   266→    batch: {
+   267→      label: title,
+   268→      steps: [{ command: tool.replace(/^studio\./, ""), params: proposedParams }],
+   269→    },
+   270→  };
+   271→}
+   272→
+   273→// ---------------------------------------------------------------------------
+   274→// The corpus — 12 fixtures covering the 10 required scenarios + §4.3 agent
+   275→// multi-step + §4.4 quick action. Layer references are BY NAME everywhere.
+   276→// ---------------------------------------------------------------------------
+   277→
+   278→export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
+   279→  {
+   280→    id: "gp-01-animate-headline-scale",
+   281→    scenario: "text-animation",
+   282→    prompt: "Can you animate the headline scaling up from 80% to 110% across the first second?",
+   283→    userContext: {
+   284→      activeComp: "Main",
+   285→      selection: ["Headline"],
+   286→      playheadSeconds: 0,
+   287→      context: selectionContext(),
+   288→      pinned: [],
+   289→    },
+   290→    // The model returns §M5.1 set_keyframes args — layers BY NAME, time in
+   291→    // seconds (§5.4: "time is expressed in seconds for tool args").
+   292→    scriptedModelPlan: {
+   293→      intent: "animate",
+   294→      summary: "Animate Headline scale from 80% to 110% over 0–1 s",
+   295→      risk: "low",
+   296→      requiresApproval: false,
+   297→      affectedLayers: [{ name: "Headline", change: "Scale keyframes 80% → 110% over 0–1 s" }],
+   298→      estimatedCredits: 1.5,
+   299→      steps: [
+   300→        step(
+   301→          "Scale keyframes on Headline",
+   302→          "studio.set_keyframes",
+   303→          {
+   304→            layers: [{ name: "Headline" }],
+   305→            propertyPath: "transform/scale",
+   306→            keys: [
+   307→              { timeSeconds: 0, value: 80, interpolation: "bezier" },
+   308→              { timeSeconds: 1, value: 110, interpolation: "bezier" },
+   309→            ],
+   310→          },
+   311→          { layerName: "Headline", property: "transform/scale", keyframeCount: 2 },
+   312→        ),
+   313→      ],
+   314→    },
+   315→    expected: {
+   316→      // M5-S FLIP: compiles post-G-1-fix — one prop.addKey per key (1 layer ×
+   317→      // 2 keys, key-major order); the bezier interpolations warn (editor-side
+   318→      // keyframe state, uncompilable_arg).
+   319→      compile: "compiled",
+   320→      commands: ["prop.addKey", "prop.addKey"],
+   321→      batchStepRange: [2, 2],
+   322→      risk: "low",
+   323→      estimatedCredits: 1.5,
+   324→      resolutionRequests: ["Headline"],
+   325→      warningCodes: ["uncompilable_arg", "unknown_command", "batch_mismatch"],
+   326→      findings: [],
+   327→    },
+   328→  },
+   329→
+   330→  {
+   331→    id: "gp-02-recolor-backdrop",
+   332→    scenario: "color-change",
+   333→    prompt: "Change the backdrop rectangle's fill color to brand red, #E02D2D.",
+   334→    userContext: {
+   335→      activeComp: "Main",
+   336→      selection: ["Backdrop"],
+   337→      playheadSeconds: 2.4,
+   338→      context: selectionContext(),
+   339→      pinned: [],
+   340→    },
+   341→    scriptedModelPlan: {
+   342→      intent: "style",
+   343→      summary: "Set the Backdrop layer's fill color to #E02D2D",
+   344→      risk: "low",
+   345→      requiresApproval: false,
+   346→      affectedLayers: [{ name: "Backdrop", change: "Fill color → #E02D2D" }],
+   347→      estimatedCredits: 1.5,
+   348→      steps: [
+   349→        step(
+   350→          "Set fill color",
+   351→          "studio.set_properties",
+   352→          {
+   353→            layers: [{ name: "Backdrop" }],
+   354→            properties: [{ path: "fill/color", value: "#E02D2D" }],
+   355→          },
+   356→          { layerName: "Backdrop", property: "fill/color", value: "#E02D2D" },
+   357→        ),
+   358→      ],
+   359→    },
+   360→    expected: {
+   361→      // M5-S FLIP: compiles post-G-1-fix — the cross-product of 1 layer × 1
+   362→      // property ⇒ one prop.set; the name stays in the batch (§8.7).
+   363→      compile: "compiled",
+   364→      commands: ["prop.set"],
+   365→      batchStepRange: [1, 1],
+   366→      risk: "low",
+   367→      estimatedCredits: 1.5,
+   368→      resolutionRequests: ["Backdrop"],
+   369→      warningCodes: ["unknown_command", "batch_mismatch"],
+   370→      findings: [],
+   371→    },
+   372→  },
+   373→
+   374→  {
+   375→    id: "gp-03-blur-logo",
+   376→    scenario: "effect-add",
+   377→    prompt: "Add a soft Gaussian blur to the Logo layer.",
+   378→    userContext: {
+   379→      activeComp: "Main",
+   380→      selection: ["Logo"],
+   381→      playheadSeconds: 0,
+   382→      context: selectionContext(),
+   383→      pinned: [],
+   384→    },
+   385→    scriptedModelPlan: {
+   386→      intent: "style",
+   387→      summary: "Apply a Gaussian Blur effect to Logo (radius 8)",
+   388→      risk: "medium",
+   389→      requiresApproval: false,
+   390→      affectedLayers: [{ name: "Logo", change: "Add Gaussian Blur (radius 8)" }],
+   391→      estimatedCredits: 2.5,
+   392→      steps: [
+   393→        step(
+   394→          "Blur the logo",
+   395→          "studio.add_effect",
+   396→          {
+   397→            layers: [{ name: "Logo" }],
+   398→            effect: { name: "Gaussian Blur" },
+   399→            params: { radius: 8 },
+   400→          },
+   401→          { layerName: "Logo", effectName: "Gaussian Blur" },
+   402→        ),
+   403→      ],
+   404→    },
+   405→    expected: {
+   406→      // M5-S FLIP: compiles post-G-1-fix — effect.apply {effect:"Gaussian
+   407→      // Blur", layers:["Logo"]}; the effect `params` stay editor-side state
+   408→      // (radius → uncompilable_arg warn). G-4: the model declared medium and
+   409→      // the declared risk is a floor — the wire carries medium (never lower).
+   410→      compile: "compiled",
+   411→      commands: ["effect.apply"],
+   412→      batchStepRange: [1, 1],
+   413→      risk: "medium",
+   414→      estimatedCredits: 1.88,
+   415→      resolutionRequests: ["Logo"],
+   416→      warningCodes: ["uncompilable_arg", "unknown_command", "batch_mismatch"],
+   417→      findings: [],
+   418→    },
+   419→  },
+   420→
+   421→  {
+   422→    id: "gp-04-position-keyframe",
+   423→    scenario: "keyframes",
+   424→    prompt: "Drop a position keyframe on Subtitle at 2 seconds so it sits at frame center.",
+   425→    userContext: {
+   426→      activeComp: "Main",
+   427→      selection: ["Subtitle"],
+   428→      playheadSeconds: 2,
+   429→      context: selectionContext(),
+   430→      pinned: [],
+   431→    },
+   432→    scriptedModelPlan: {
+   433→      intent: "animate",
+   434→      summary: "Add a transform/position keyframe to Subtitle at 2 s",
+   435→      risk: "low",
+   436→      requiresApproval: false,
+   437→      affectedLayers: [{ name: "Subtitle", change: "Position keyframe [960, 540, 0] at 2 s" }],
+   438→      estimatedCredits: 1.5,
+   439→      steps: [
+   440→        step(
+   441→          "Position keyframe at 2 s",
+   442→          "studio.set_keyframes",
+   443→          {
+   444→            layers: [{ name: "Subtitle" }],
+   445→            propertyPath: "transform/position",
+   446→            keys: [{ timeSeconds: 2, value: [960, 540, 0] }],
+   447→          },
+   448→          { layerName: "Subtitle", property: "transform/position", timeSeconds: 2 },
+   449→        ),
+   450→      ],
+   451→    },
+   452→    expected: {
+   453→      // M5-S FLIP: compiles post-G-1-fix — timeSeconds → time; the key lands
+   454→      // as one prop.addKey with the layer NAME in the batch.
+   455→      compile: "compiled",
+   456→      commands: ["prop.addKey"],
+   457→      batchStepRange: [1, 1],
+   458→      risk: "low",
+   459→      estimatedCredits: 1.5,
+   460→      resolutionRequests: ["Subtitle"],
+   461→      warningCodes: ["unknown_command", "batch_mismatch"],
+   462→      findings: [],
+   463→    },
+   464→  },
+   465→
+   466→  {
+   467→    id: "gp-05-multilayer-rename-restyle",
+   468→    scenario: "multi-layer-edit",
+   469→    prompt:
+   470→      "Rename these three layers to their final names — Headline→Title, Sub→Subtitle, " +
+   471→      "Byline→Tagline — and drop their opacity to 40%.",
+   472→    userContext: {
+   473→      activeComp: "Main",
+   474→      selection: ["Headline", "Sub", "Byline"],
+   475→      playheadSeconds: 0,
+   476→      context: selectionContext(),
+   477→      pinned: [{ kind: "selection", label: "Headline, Sub, Byline" }],
+   478→    },
+   479→    // §M5.1 set_properties semantics: N named layers × M property updates.
+   480→    scriptedModelPlan: {
+   481→      intent: "organize",
+   482→      summary: "Rename Headline/Sub/Byline to Title/Subtitle/Tagline and set opacity to 40",
+   483→      risk: "low",
+   484→      requiresApproval: false,
+   485→      affectedLayers: [
+   486→        { name: "Headline", change: "Rename to Title; opacity 40" },
+   487→        { name: "Sub", change: "Rename to Subtitle; opacity 40" },
+   488→        { name: "Byline", change: "Rename to Tagline; opacity 40" },
+   489→      ],
+   490→      estimatedCredits: 3,
+   491→      steps: [
+   492→        step(
+   493→          "Rename and restyle the three layers",
+   494→          "studio.set_properties",
+   495→          {
+   496→            layers: [{ name: "Headline" }, { name: "Sub" }, { name: "Byline" }],
+   497→            properties: [
+   498→              { path: "name", value: "Title" },
+   499→              { path: "transform/opacity", value: 40 },
+   500→            ],
+   501→          },
+   502→          { layerNames: ["Headline", "Sub", "Byline"], updates: 6 },
+   503→        ),
+   504→      ],
+   505→    },
+   506→    expected: {
+   507→      // M5-S FLIP: compiles post-G-1/G-7-fix — the set_properties
+   508→      // cross-product: 3 layers × 2 properties ⇒ the path:"name" renames map
+   509→      // to layer.rename (G-7) and the opacity updates to prop.set, 6 commands
+   510→      // total (property-major order).
+   511→      compile: "compiled",
+   512→      commands: [
+   513→        "layer.rename",
+   514→        "layer.rename",
+   515→        "layer.rename",
+   516→        "prop.set",
+   517→        "prop.set",
+   518→        "prop.set",
+   519→      ],
+   520→      batchStepRange: [6, 6],
+   521→      risk: "low",
+   522→      estimatedCredits: 1.5,
+   523→      resolutionRequests: ["Headline", "Sub", "Byline"],
+   524→      warningCodes: ["unknown_command", "batch_mismatch"],
+   525→      findings: [],
+   526→    },
+   527→  },
+   528→
+   529→  {
+   530→    id: "gp-06-create-text-typography",
+   531→    scenario: "create-text-typography",
+   532→    prompt:
+   533→      'Add a title that says "Studio Launch" — Inter, 96 points, warm white #F5F1E8, ' +
+   534→      "centered in the comp.",
+   535→    userContext: {
+   536→      activeComp: "Main",
+   537→      selection: null,
+   538→      playheadSeconds: 0,
+   539→      context: baseContext(),
+   540→      pinned: [],
+   541→    },
+   542→    scriptedModelPlan: {
+   543→      intent: "create",
+   544→      summary: 'Add a centered "Studio Launch" title layer (Inter, 96 pt, #F5F1E8)',
+   545→      risk: "low",
+   546→      requiresApproval: false,
+   547→      affectedLayers: [{ name: "Launch Title", change: "New text layer with typography set" }],
+   548→      estimatedCredits: 1.5,
+   549→      steps: [
+   550→        step(
+   551→          "Create the launch title",
+   552→          "studio.create_text",
+   553→          {
+   554→            text: "Studio Launch",
+   555→            name: "Launch Title",
+   556→            position: [960, 540],
+   557→            font: "Inter",
+   558→            size: 96,
+   559→            fill: "#F5F1E8",
+   560→          },
+   561→          { text: "Studio Launch", name: "Launch Title" },
+   562→        ),
+   563→      ],
+   564→    },
+   565→    expected: {
+   566→      // M5-S FLIP: G-2 is FIXED — the validated typography (font/size/fill)
+   567→      // now reaches the compiled layer.newText 1:1 (pinned in the deep test).
+   568→      // G-8 REMAINS: the declared new-layer name still mints a resolution
+   569→      // request (lr-1) even though no batch step references it.
+   570→      compile: "compiled",
+   571→      commands: ["layer.newText"],
+   572→      batchStepRange: [1, 1],
+   573→      risk: "low",
+   574→      estimatedCredits: 1.5,
+   575→      resolutionRequests: ["Launch Title"],
+   576→      warningCodes: ["unknown_command", "batch_mismatch"],
+   577→      findings: ["G-8"],
+   578→    },
+   579→  },
+   580→
+   581→  {
+   582→    id: "gp-07-create-comp",
+   583→    scenario: "create-composition",
+   584→    prompt: 'Create a 1080p comp called "Outro Stinger", 5 seconds long at 30 fps.',
+   585→    userContext: {
+   586→      activeComp: "Main",
+   587→      selection: null,
+   588→      playheadSeconds: 12,
+   589→      context: baseContext(),
+   590→      pinned: [],
+   591→    },
+   592→    scriptedModelPlan: {
+   593→      intent: "create",
+   594→      summary: 'Create composition "Outro Stinger" (1920×1080, 30 fps, 5 s)',
+   595→      risk: "medium",
+   596→      requiresApproval: false,
+   597→      affectedLayers: [],
+   598→      estimatedCredits: 2,
+   599→      steps: [
+   600→        step(
+   601→          "Create the outro comp",
+   602→          "studio.create_composition",
+   603→          { name: "Outro Stinger", width: 1920, height: 1080, frameRate: 30, durationSeconds: 5 },
+   604→          { name: "Outro Stinger", width: 1920, height: 1080, fps: 30, durationSeconds: 5 },
+   605→        ),
+   606→      ],
+   607→    },
+   608→    expected: {
+   609→      // M5-S FLIP: G-4 is FIXED — the model declared medium and the declared
+   610→      // risk is a FLOOR: the wire carries medium (the recompute may raise it
+   611→      // but NEVER lower it — the plan card must never understate).
+   612→      // durationSeconds → duration stays the one mapped param name.
+   613→      compile: "compiled",
+   614→      commands: ["comp.new"],
+   615→      batchStepRange: [1, 1],
+   616→      risk: "medium",
+   617→      estimatedCredits: 1.88,
+   618→      resolutionRequests: [],
+   619→      warningCodes: ["unknown_command", "batch_mismatch"],
+   620→      findings: [],
+   621→    },
+   622→  },
+   623→
+   624→  {
+   625→    id: "gp-08-quick-action-pop",
+   626→    scenario: "apply-preset",
+   627→    prompt: "Make it pop.",
+   628→    userContext: {
+   629→      activeComp: "Main",
+   630→      selection: ["Headline"],
+   631→      playheadSeconds: 0,
+   632→      context: selectionContext(),
+   633→      pinned: [],
+   634→    },
+   635→    // §4.4 quick action chip → the model applies the preset to the CURRENT
+   636→    // SELECTION: APPLY_PRESET_ARGS_SCHEMA says "Omit layers to use the current
+   637→    // selection", so a well-behaved model omits them.
+   638→    scriptedModelPlan: {
+   639→      intent: "animate",
+   640→      summary: "Apply the pop-in preset to the current selection (Headline)",
+   641→      risk: "low",
+   642→      requiresApproval: false,
+   643→      affectedLayers: [{ name: "Headline", change: "Pop-in preset" }],
+   644→      estimatedCredits: 1.5,
+   645→      steps: [
+   646→        step(
+   647→          "Pop the selection",
+   648→          "studio.apply_preset",
+   649→          { preset: { builtinId: "pop-in" } },
+   650→          { presetId: "pop-in", useSelection: true },
+   651→        ),
+   652→      ],
+   653→    },
+   654→    expected: {
+   655→      // M5-S FLIP: G-6 is RESOLVED via the D-21 ruling — apply_preset with
+   656→      // layers omitted targets the plan's affectedLayers NAMES (never the
+   657→      // live editor selection, which the compiler refuses to capture): the
+   658→      // "Make it pop" quick action now compiles against Headline.
+   659→      compile: "compiled",
+   660→      commands: ["anim.applyBuiltinPreset"],
+   661→      batchStepRange: [1, 1],
+   662→      risk: "low",
+   663→      estimatedCredits: 1.5,
+   664→      resolutionRequests: ["Headline"],
+   665→      warningCodes: ["unknown_command", "batch_mismatch"],
+   666→      findings: [],
+   667→    },
+   668→  },
+   669→
+   670→  {
+   671→    id: "gp-09-undo-previous-run",
+   672→    scenario: "undo-run",
+   673→    prompt: "Actually, undo that last change you made.",
+   674→    userContext: {
+   675→      activeComp: "Main",
+   676→      selection: null,
+   677→      playheadSeconds: 0,
+   678→      context: baseContext({ recentCommands: true }),
+   679→      pinned: [],
+   680→    },
+   681→    // undo_run takes NO args (law #6: the run applied as ONE atomic batch, so
+   682→    // it undoes as one). The model honestly guesses low risk / 12 credits;
+   683→    // the server recomputes BOTH (edit.undo ⇒ medium risk).
+   684→    scriptedModelPlan: {
+   685→      intent: "organize",
+   686→      summary: "Undo the most recent applied agent run",
+   687→      risk: "low",
+   688→      requiresApproval: false,
+   689→      affectedLayers: [],
+   690→      estimatedCredits: 12,
+   691→      steps: [step("Undo the last agent run", "studio.undo_run", {}, {})],
+   692→    },
+   693→    expected: {
+   694→      // COMPILES today. The recompute proof: model risk low → wire risk
+   695→      // medium (edit.undo is a HISTORY_COMMAND); model credits 12 → wire
+   696→      // credits 1.88 ((1 + 1×0.5) × 1.25, rounded to 2 decimals).
+   697→      compile: "compiled",
+   698→      commands: ["edit.undo"],
+   699→      batchStepRange: [1, 1],
+   700→      risk: "medium",
+   701→      estimatedCredits: 1.88,
+   702→      resolutionRequests: [],
+   703→      warningCodes: ["unknown_command", "batch_mismatch"],
+   704→      findings: [],
+   705→    },
+   706→  },
+   707→
+   708→  {
+   709→    id: "gp-10-save-labeled-version",
+   710→    scenario: "save-version",
+   711→    prompt:
+   712→      'Add a small "DRAFT" watermark tag in the top-right corner and save the result as a ' +
+   713→      'version named "Draft stamp".',
+   714→    userContext: {
+   715→      activeComp: "Main",
+   716→      selection: null,
+   717→      playheadSeconds: 0,
+   718→      context: baseContext(),
+   719→      pinned: [],
+   720→    },
+   721→    // G-5: save_version is an ANNOTATION — the version label rides the apply
+   722→    // of the run's batch; a save_version-only plan is a pinned empty_batch
+   723→    // fatal, so realistic plans pair the label with a real edit.
+   724→    scriptedModelPlan: {
+   725→      intent: "create",
+   726→      summary: 'Add a DRAFT watermark tag and save a version labeled "Draft stamp"',
+   727→      risk: "low",
+   728→      requiresApproval: false,
+   729→      affectedLayers: [{ name: "DRAFT Watermark", change: "New watermark text layer" }],
+   730→      estimatedCredits: 2,
+   731→      steps: [
+   732→        step(
+   733→          "Create the watermark tag",
+   734→          "studio.create_text",
+   735→          {
+   736→            text: "DRAFT",
+   737→            name: "DRAFT Watermark",
+   738→            position: [1800, 100],
+   739→            font: "Inter",
+   740→            size: 24,
+   741→            fill: "#8A8F98",
+   742→          },
+   743→          { text: "DRAFT", name: "DRAFT Watermark" },
+   744→        ),
+   745→        step(
+   746→          "Save a labeled version",
+   747→          "studio.save_version",
+   748→          { label: "Draft stamp" },
+   749→          {
+   750→            label: "Draft stamp",
+   751→          },
+   752→        ),
+   753→      ],
+   754→    },
+   755→    expected: {
+   756→      // COMPILES today: one layer.newText command + the save_version
+   757→      // ANNOTATION (never a batch step — apply needs an executable batch).
+   758→      compile: "compiled",
+   759→      commands: ["layer.newText"],
+   760→      batchStepRange: [1, 1],
+   761→      risk: "low",
+   762→      // estimateCredits counts PLAN steps (2), not compiled commands (1).
+   763→      estimatedCredits: 2,
+   764→      resolutionRequests: ["DRAFT Watermark"],
+   765→      warningCodes: ["unknown_command", "batch_mismatch"],
+   766→      saveVersionLabel: "Draft stamp",
+   767→      findings: ["G-5", "G-8"], // G-2 fixed (typography lands); G-5 annotation-only + G-8 orphan request remain
+   768→    },
+   769→  },
+   770→
+   771→  {
+   772→    id: "gp-11-lower-third-compound",
+   773→    scenario: "compound-agent-edit",
+   774→    prompt:
+   775→      "Build a lower third for the speaker — title text sliding in from the left over 0.6 s — " +
+   776→      'then save it as version "Lower third v1".',
+   777→    userContext: {
+   778→      activeComp: "Main",
+   779→      selection: null,
+   780→      playheadSeconds: 0,
+   781→      context: baseContext(),
+   782→      pinned: [],
+   783→    },
+   784→    // §4.3 agent mode: a multi-step plan (create + animate + save) that must
+   785→    // land as ONE atomic batch (law #6).
+   786→    scriptedModelPlan: {
+   787→      intent: "create",
+   788→      summary: 'Build the speaker lower third and save version "Lower third v1"',
+   789→      risk: "low",
+   790→      requiresApproval: false,
+   791→      affectedLayers: [
+   792→        { name: "Speaker Lower Third", change: "New text layer, slide-in over 0.6 s" },
+   793→      ],
+   794→      estimatedCredits: 2.5,
+   795→      steps: [
+   796→        step(
+   797→          "Create the lower-third text",
+   798→          "studio.create_text",
+   799→          {
+   800→            text: "Ada Lovelace — Chief Engineer",
+   801→            name: "Speaker Lower Third",
+   802→            position: [120, 940],
+   803→            font: "Inter",
+   804→            size: 36,
+   805→            fill: "#F5F7FA",
+   806→          },
+   807→          { text: "Ada Lovelace — Chief Engineer", name: "Speaker Lower Third" },
+   808→        ),
+   809→        step(
+   810→          "Slide in from the left",
+   811→          "studio.set_keyframes",
+   812→          {
+   813→            layers: [{ name: "Speaker Lower Third" }],
+   814→            propertyPath: "transform/position",
+   815→            keys: [
+   816→              { timeSeconds: 0, value: [-400, 940] },
+   817→              { timeSeconds: 0.6, value: [120, 940] },
+   818→            ],
+   819→          },
+   820→          { layerName: "Speaker Lower Third", property: "transform/position", keyframeCount: 2 },
+   821→        ),
+   822→        step(
+   823→          "Save the version",
+   824→          "studio.save_version",
+   825→          { label: "Lower third v1" },
+   826→          {
+   827→            label: "Lower third v1",
+   828→          },
+   829→        ),
+   830→      ],
+   831→    },
+   832→    expected: {
+   833→      // M5-S FLIP: G-3 is FIXED — every step of the compound plan compiles:
+   834→      // the create_text typography lands 1:1, the slide-in keyframes compile
+   835→      // (2 × prop.addKey, key-major), and save_version stays the ANNOTATION.
+   836→      // What the card shows (3 steps) is exactly what the batch performs (3
+   837→      // commands). G-8 REMAINS: the orphan request for the created layer.
+   838→      compile: "compiled",
+   839→      commands: ["layer.newText", "prop.addKey", "prop.addKey"],
+   840→      batchStepRange: [3, 3],
+   841→      risk: "low",
+   842→      // 3 plan steps ⇒ (1 + 3×0.5) × 1 — the annotation step still counts.
+   843→      estimatedCredits: 2.5,
+   844→      resolutionRequests: ["Speaker Lower Third"],
+   845→      warningCodes: ["unknown_command", "batch_mismatch"],
+   846→      saveVersionLabel: "Lower third v1",
+   847→      findings: ["G-8"],
+   848→    },
+   849→  },
+   850→
+   851→  {
+   852→    id: "gp-12-preset-named-layers",
+   853→    scenario: "apply-preset",
+   854→    prompt: "Give the Headline and Sub layers a subtle fade-in.",
+   855→    userContext: {
+   856→      activeComp: "Main",
+   857→      selection: ["Headline", "Sub"],
+   858→      playheadSeconds: 0,
+   859→      context: selectionContext(),
+   860→      pinned: [{ kind: "selection", label: "Headline, Sub" }],
+   861→    },
+   862→    scriptedModelPlan: {
+   863→      intent: "animate",
+   864→      summary: "Apply the Fade In preset to Headline and Sub",
+   865→      risk: "medium",
+   866→      requiresApproval: false,
+   867→      affectedLayers: [
+   868→        { name: "Headline", change: "Fade In preset" },
+   869→        { name: "Sub", change: "Fade In preset" },
+   870→      ],
+   871→      estimatedCredits: 2,
+   872→      steps: [
+   873→        step(
+   874→          "Fade both layers in",
+   875→          "studio.apply_preset",
+   876→          {
+   877→            preset: { name: "Fade In" },
+   878→            layers: [{ name: "Headline" }, { name: "Sub" }],
+   879→          },
+   880→          { presetName: "Fade In", layerNames: ["Headline", "Sub"] },
+   881→        ),
+   882→      ],
+   883→    },
+   884→    expected: {
+   885→      // M5-S FLIP: compiles post-G-1-fix — anim.applyBuiltinPreset
+   886→      // {preset:"Fade In", layers:["Headline","Sub"]}. G-4: the model declared
+   887→      // medium and the declared risk is a floor — the wire carries medium.
+   888→      // apply_preset NEVER compiles to anim.applyPreset (filesystem paths are
+   889→      // law #5 poison; pinned by M5-B).
+   890→      compile: "compiled",
+   891→      commands: ["anim.applyBuiltinPreset"],
+   892→      batchStepRange: [1, 1],
+   893→      risk: "medium",
+   894→      estimatedCredits: 1.88,
+   895→      resolutionRequests: ["Headline", "Sub"],
+   896→      warningCodes: ["unknown_command", "batch_mismatch"],
+   897→      findings: [],
+   898→    },
+   899→  },
+   900→];
+   901→
+   902→/** The 10 required §M5-task-8 scenarios, for the self-check coverage test. */
+   903→export const REQUIRED_SCENARIOS: readonly GoldenScenario[] = [
+   904→  "text-animation",
+   905→  "color-change",
+   906→  "effect-add",
+   907→  "keyframes",
+   908→  "multi-layer-edit",
+   909→  "create-text-typography",
+   910→  "create-composition",
+   911→  "apply-preset",
+   912→  "undo-run",
+   913→  "save-version",
+   914→];
+   915→
