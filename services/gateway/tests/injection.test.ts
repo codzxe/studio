@@ -459,34 +459,39 @@ describe("safety (M5.1) — anything not in the curated 13 is refused; writes on
 
 describe("safety — injected tool results stay data (§8.3 end to end)", () => {
   it.each(TOOL_RESULT_INJECTIONS.map((fixture) => [fixture.id]))(
-    "corpus result %s: fed back VERBATIM, the write tool it begs for is still refused",
+    "corpus result %s: fed back VERBATIM, the write tool it begs for only PROPOSES",
     async (fixtureId) => {
       const poisoned = toolResultFixture(fixtureId);
-      const writeCall = hostileArgsFixture("write-tool-perfect-args");
-      const { runner, fetchCalls, stream } = makeRunner([
-        // Round 1: a legitimate read the hostile result answers.
-        sseResponse([
-          toolCallStart(0, "call_read", "studio.get_context"),
-          toolCallArgs(0, "{}"),
-          finish("tool_calls"),
-          DONE,
-        ]),
-        // Round 2: the model "obeyed" the injected instruction.
-        sseResponse([
-          textDelta("Understood, updating the project."),
-          toolCallStart(0, "call_write", writeCall.tool),
-          toolCallArgs(0, writeCall.argsJson),
-          finish("tool_calls"),
-          DONE,
-        ]),
-        // Round 3: the model insists with a different write tool.
-        sseResponse([
-          toolCallStart(0, "call_write2", "studio.create_text"),
-          toolCallArgs(0, JSON.stringify({ text: "PWNED-INSIST" })),
-          finish("tool_calls"),
-          DONE,
-        ]),
-      ]);
+      const { runner, fetchCalls, stream } = makeRunner(
+        [
+          // Round 1: a legitimate read the hostile result answers.
+          sseResponse([
+            toolCallStart(0, "call_read", "studio.get_context"),
+            toolCallArgs(0, "{}"),
+            finish("tool_calls"),
+            DONE,
+          ]),
+          // Round 2: the model "obeyed" the injected instruction — but the
+          // curated write tool now PROPOSES server-side; nothing executes.
+          sseResponse([
+            textDelta("Understood, updating the project."),
+            toolCallStart(0, "call_write", "studio.set_properties"),
+            toolCallArgs(0, SET_PROPERTIES_ARGS),
+            finish("tool_calls"),
+            DONE,
+          ]),
+          // Round 3: the model insists with a different write tool — another
+          // proposal, still no execution.
+          sseResponse([
+            toolCallStart(0, "call_write2", "studio.create_text"),
+            toolCallArgs(0, JSON.stringify({ text: "PWNED-INSIST" })),
+            finish("tool_calls"),
+            DONE,
+          ]),
+          sseResponse([textDelta("Both changes are proposed for review."), finish("stop"), DONE]),
+        ],
+        { compilePlan: stubProposalCompiler },
+      );
 
       const outcomePromise = runToOutcome(runner, makeRun(), stream);
       await new Promise((resolve) => setImmediate(resolve));
@@ -494,23 +499,25 @@ describe("safety — injected tool results stay data (§8.3 end to end)", () => 
       stream.resolveToolResult("call_read", poisoned.result);
       const outcome = await outcomePromise;
 
-      expect(outcome).toEqual({
-        kind: "failed",
-        code: "RUN_INVALID_TOOL",
-        message: "The agent requested a tool call we can't validate.",
-        retryable: false,
-      });
+      expect(outcome.kind).toBe("completed");
       expectExactlyCuratedToolsSent(fetchCalls);
       expectNoEngineCommandStrings(fetchCalls);
-      // Exactly one read tool reached the editor; no write call ever did.
-      expect(stream.events.filter((event) => event.type === "tool.started")).toEqual([
-        {
-          type: "tool.started",
-          toolCallId: "call_read",
-          name: "studio.get_context",
-          args: {},
-        },
+      // One CLIENT read reached the editor; the two write calls reached the
+      // client as tool.started cards whose results are PROPOSALS.
+      const started = stream.events.filter((event) => event.type === "tool.started");
+      expect(started.map((event) => (event as { name: string }).name)).toEqual([
+        "studio.get_context",
+        "studio.set_properties",
+        "studio.create_text",
       ]);
+      const writeResults = stream.events.filter(
+        (event) => event.type === "tool.result" && event.toolCallId !== "call_read",
+      );
+      expect(writeResults).toHaveLength(2);
+      for (const result of writeResults) {
+        const payload = (result as { result?: unknown }).result;
+        expect(WRITE_TOOL_RESULT_SCHEMA.safeParse(payload).success).toBe(true);
+      }
       // DATA, VERBATIM: the poisoned result is the tool-role message the next
       // model turn saw — byte-identical, never sanitized, never escalated.
       const round2Tool = toolRoleMessage(fetchCalls[1]);
@@ -518,7 +525,13 @@ describe("safety — injected tool results stay data (§8.3 end to end)", () => 
       expect(round2Tool?.content).toBe(JSON.stringify(poisoned.result));
       // The injection reached the model as data…
       expect(String(round2Tool?.content).includes(poisoned.needle)).toBe(true);
-      // …and it still bought nothing: no write tool id was ever offered.
+      // …and it still bought nothing: no engine string ever reached the
+      // provider and the proposals fed back to the model carry no command ids.
+      for (const call of fetchCalls.slice(2)) {
+        const toolMessage = toolRoleMessage(call);
+        if (toolMessage === undefined) continue;
+        expect(String(toolMessage.content).includes("text.insert")).toBe(false);
+      }
       expectPrototypeClean();
     },
   );
@@ -540,6 +553,38 @@ describe("safety — injected tool results stay data (§8.3 end to end)", () => 
     expect(stream.events.some((event) => event.type === "plan")).toBe(true);
     // Plan steps may CARRY proposed command ids (data, §8.6 shape) but the raw
     // execution entrypoints engine.execute / engine.batch never appear.
+    expectNoEngineCommandStrings(fetchCalls);
+    expectExactlyCuratedToolsSent(fetchCalls);
+  });
+
+  it("the enriched plan path (M5 compile seam) still never leaks the compiled batch to the model", async () => {
+    // With a compile seam wired, the plan event carries compiledBatch for the
+    // CLIENT — the model's tool-role content stays the BARE plan (M4 shape),
+    // so the server-chosen registry command ids never enter the conversation.
+    const plan = mockEditPlan();
+    const { runner, fetchCalls, stream } = makeRunner(
+      [
+        sseResponse([
+          toolCallStart(0, "call_plan", "studio.plan_edit"),
+          toolCallArgs(0, '{"goal":"organize the layers"}'),
+          finish("tool_calls"),
+          DONE,
+        ]),
+        sseResponse([textDelta(JSON.stringify(plan)), finish("stop"), DONE]),
+        sseResponse([textDelta("Plan ready."), finish("stop"), DONE]),
+      ],
+      { compilePlan: stubProposalCompiler },
+    );
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+    expect(outcome.kind).toBe("completed");
+    const planEvent = stream.events.find((event) => event.type === "plan");
+    if (planEvent?.type !== "plan") throw new Error("no plan event");
+    expect((planEvent as { compiledBatch?: unknown }).compiledBatch).toBeDefined();
+    expect((planEvent as { risk?: unknown }).risk).toBe("low");
+    // The tool-role message the model saw is the bare plan — no compiledBatch,
+    // no proposal label, no command id from the compile.
+    const toolMessage = toolRoleMessage(fetchCalls[2]);
+    expect(toolMessage?.content).toBe(JSON.stringify(plan));
     expectNoEngineCommandStrings(fetchCalls);
     expectExactlyCuratedToolsSent(fetchCalls);
   });
