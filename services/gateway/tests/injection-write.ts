@@ -205,8 +205,7 @@ export const WRITE_ARGS_INJECTIONS: readonly HostileWriteArgsFixture[] = [
       "dunder names exactly like the M4 read path (F-1 class) — the name becomes " +
       "a key in the plan card, resolution requests and engine lookups.",
     tool: "create_text",
-    argsJson:
-      '{"text":"M5N-CT-DUNDER-TEXT","name":"__proto__"}',
+    argsJson: '{"text":"M5N-CT-DUNDER-TEXT","name":"__proto__"}',
     needle: "M5N-CT-DUNDER-TEXT",
     expectation: "reject",
   },
@@ -527,7 +526,8 @@ export const WRITE_ARGS_INJECTIONS: readonly HostileWriteArgsFixture[] = [
       "__proto__ as a preset display name: preset names resolve against " +
       "engine lists — a dunder name must be rejected, never looked up.",
     tool: "apply_preset",
-    argsJson: '{"preset":{"name":"__proto__"},"layers":[{"name":"L"}],"args":{"note":"M5N-AP-DUNDER"}}',
+    argsJson:
+      '{"preset":{"name":"__proto__"},"layers":[{"name":"L"}],"args":{"note":"M5N-AP-DUNDER"}}',
     needle: "M5N-AP-DUNDER",
     expectation: "reject",
   },
@@ -731,10 +731,14 @@ const POISON_PROPOSED_BATCH: Record<string, unknown> = {
 
 /** A clean, schema-valid create_composition step (compiles to comp.new today). */
 function compositionStep(): Record<string, unknown> {
-  return writeStep("create_composition", { name: "Intro", width: 1920, height: 1080 }, {
-    label: "Agent: benign proposal",
-    steps: [{ command: "comp.new", params: { name: "Intro" } }],
-  });
+  return writeStep(
+    "create_composition",
+    { name: "Intro", width: 1920, height: 1080 },
+    {
+      label: "Agent: benign proposal",
+      steps: [{ command: "comp.new", params: { name: "Intro" } }],
+    },
+  );
 }
 
 export const WRITE_PLAN_INJECTIONS: readonly HostileWritePlanFixture[] = [
@@ -882,10 +886,14 @@ export const WRITE_PLAN_INJECTIONS: readonly HostileWritePlanFixture[] = [
       "reject the whole plan (PLAN_INVALID), never crash.",
     planJson: JSON.stringify(
       writePlan([
-        writeStep("create_composition", { name: "Intro" }, {
-          label: "M5N-STEPS-AS-STRINGS",
-          steps: ["comp.new", "engine.batch", "__proto__"],
-        }),
+        writeStep(
+          "create_composition",
+          { name: "Intro" },
+          {
+            label: "M5N-STEPS-AS-STRINGS",
+            steps: ["comp.new", "engine.batch", "__proto__"],
+          },
+        ),
       ]),
     ),
     poisonNeedles: ["M5N-STEPS-AS-STRINGS"],
@@ -1080,10 +1088,14 @@ export const WRITE_PLAN_INJECTIONS: readonly HostileWritePlanFixture[] = [
     planJson: JSON.stringify(
       writePlan([
         compositionStep(),
-        writeStep("save_version", { label: `${"x".repeat(104)}M5N-SAVE-121-TAIL` }, {
-          label: "Agent: save",
-          steps: [{ command: "comp.new", params: {} }],
-        }),
+        writeStep(
+          "save_version",
+          { label: `${"x".repeat(104)}M5N-SAVE-121-TAIL` },
+          {
+            label: "Agent: save",
+            steps: [{ command: "comp.new", params: {} }],
+          },
+        ),
       ]),
     ),
     poisonNeedles: ["M5N-SAVE-121-TAIL"],
@@ -1102,10 +1114,14 @@ export const WRITE_PLAN_INJECTIONS: readonly HostileWritePlanFixture[] = [
     planJson: JSON.stringify(
       writePlan([
         compositionStep(),
-        writeStep("save_version", { label: "__proto__ M5N-SAVE-DUNDER" }, {
-          label: "Agent: save",
-          steps: [{ command: "comp.new", params: {} }],
-        }),
+        writeStep(
+          "save_version",
+          { label: "__proto__ M5N-SAVE-DUNDER" },
+          {
+            label: "Agent: save",
+            steps: [{ command: "comp.new", params: {} }],
+          },
+        ),
       ]),
     ),
     poisonNeedles: ["M5N-SAVE-DUNDER"],
@@ -1218,10 +1234,14 @@ export const COMPILER_DRIFT_PROBES: readonly CompilerDriftFixture[] = [
 
 /** The mixed-plan F-5 edge: a working tool + a drifted tool in ONE plan. */
 export const DRIFT_MIXED_PLAN: Record<string, unknown> = writePlan([
-  writeStep("create_text", { text: "M5N-DRIFT-MIXED-TEXT", name: "Title" }, {
-    label: "Agent: mixed proposal",
-    steps: [{ command: "layer.newText", params: { text: "M5N-DRIFT-MIXED-TEXT" } }],
-  }),
+  writeStep(
+    "create_text",
+    { text: "M5N-DRIFT-MIXED-TEXT", name: "Title" },
+    {
+      label: "Agent: mixed proposal",
+      steps: [{ command: "layer.newText", params: { text: "M5N-DRIFT-MIXED-TEXT" } }],
+    },
+  ),
   writeStep(
     "set_properties",
     setPropertiesArgs("Headline", "text/sourceText", "M5N-DRIFT-MIXED-PROP"),

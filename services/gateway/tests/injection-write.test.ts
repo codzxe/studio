@@ -50,12 +50,12 @@ import {
 import type { OpenAIChatMessage } from "../src/litellm/openai.js";
 import { createLiteLLMRunner } from "../src/litellm/runner.js";
 import { type PlanIssueCode, compilePlan, defaultCompileDeps } from "../src/plan-compiler.js";
-import {
-  type AgentRun,
-  type AgentRunOutcome,
-  type AgentRunStream,
-  type RunStreamPayload,
-  type ToolWaitResult,
+import type {
+  AgentRun,
+  AgentRunOutcome,
+  AgentRunStream,
+  RunStreamPayload,
+  ToolWaitResult,
 } from "../src/runner.js";
 import {
   BATCH_WIRE_POISONS,
@@ -333,21 +333,22 @@ describe("M5-N safety — write-tool args: every hostile payload is rejected or 
     (fixtureId) => {
       const fixture = writeArgsFixture(fixtureId);
       const schema = WRITE_TOOL_ARGS_SCHEMAS[fixture.tool];
-      let parsed: { success: boolean; data?: unknown };
+      let parsed: { success: boolean; data?: unknown } | undefined;
       expect(() => {
         parsed = schema.safeParse(writeArgsValue(fixture));
       }).not.toThrow();
+      if (parsed === undefined) throw new Error("safeParse did not return");
 
       if (fixture.expectation === "reject") {
-        expect(parsed!.success, fixture.id).toBe(false);
+        expect(parsed.success, fixture.id).toBe(false);
         // A typed failure is still a clean failure.
         expectPrototypeClean();
         return;
       }
       // "data": the payload parses; every dunder fragment stays a VALUE —
       // no dunder key anywhere in the parsed output (F-1 write edition).
-      expect(parsed!.success, fixture.id).toBe(true);
-      expect(hasNoDunderKeys(parsed!.data), fixture.id).toBe(true);
+      expect(parsed.success, fixture.id).toBe(true);
+      expect(hasNoDunderKeys(parsed.data), fixture.id).toBe(true);
       expectPrototypeClean();
     },
   );
@@ -375,66 +376,64 @@ describe("M5-N safety — write-tool args: every hostile payload is rejected or 
 // ---------------------------------------------------------------------------
 
 describe("M5-N safety — the plan compiler under hostile plans (typed issues, clean batches)", () => {
-  it.each(WRITE_PLAN_INJECTIONS.map((fixture) => [fixture.id]))(
-    "%s",
-    (fixtureId) => {
-      const fixture = writePlanFixture(fixtureId);
-      const plan = JSON.parse(fixture.planJson);
-      const schemaOk = EDIT_PLAN_SCHEMA.safeParse(plan).success;
+  it.each(WRITE_PLAN_INJECTIONS.map((fixture) => [fixture.id]))("%s", (fixtureId) => {
+    const fixture = writePlanFixture(fixtureId);
+    const plan = JSON.parse(fixture.planJson);
+    const schemaOk = EDIT_PLAN_SCHEMA.safeParse(plan).success;
 
-      if (fixture.expectation === "plan_invalid") {
-        expect(schemaOk, fixture.id).toBe(false);
-        const result = compileHostile(plan);
-        expect(result.ok, fixture.id).toBe(false);
-        if (!result.ok) {
-          expect(result.issues.length).toBeGreaterThan(0);
-          expect(result.issues.every((issue) => issue.severity === "fatal")).toBe(true);
-          expect(result.issues.map((issue) => issue.code)).toContain("plan_schema");
-        }
-        expectPrototypeClean();
-        return;
-      }
-
-      // Schema-valid from here on.
-      expect(schemaOk, fixture.id).toBe(true);
+    if (fixture.expectation === "plan_invalid") {
+      expect(schemaOk, fixture.id).toBe(false);
       const result = compileHostile(plan);
-
-      if (fixture.expectation === "compile_fatal") {
-        expect(result.ok, fixture.id).toBe(false);
-        if (!result.ok) {
-          expect(result.issues.length).toBeGreaterThan(0);
-          for (const issue of result.issues) {
-            expect(issue.severity === "fatal" || issue.severity === "warn", fixture.id).toBe(true);
-            expect(KNOWN_FATAL_CODES, fixture.id).toContain(issue.code);
-            // Law #1 hygiene: bounded, stack-free messages.
-            expect(issue.message.length).toBeLessThanOrEqual(200);
-            expect(issue.message.includes("\n")).toBe(false);
-            expect(issue.message.includes(" at ")).toBe(false);
-          }
-        }
-        expectPrototypeClean();
-        return;
+      expect(result.ok, fixture.id).toBe(false);
+      if (!result.ok) {
+        expect(result.issues.length).toBeGreaterThan(0);
+        expect(result.issues.every((issue) => issue.severity === "fatal")).toBe(true);
+        expect(result.issues.map((issue) => issue.code)).toContain("plan_schema");
       }
-
-      // compiled_clean: the poison was ADVISORY — the batch comes from args.
-      expect(result.ok, fixture.id).toBe(true);
-      if (!result.ok) throw new Error("unreachable");
-      const serialized = JSON.stringify(result.batch);
-      for (const poison of fixture.poisonNeedles) {
-        expect(serialized.includes(poison), `${fixture.id}: poison "${poison}" leaked into the compiled batch`).toBe(
-          false,
-        );
-      }
-      // Registry-only commands (law #5: the compiler invents no ids).
-      for (const step of result.batch.steps) {
-        expect(AGENT_COMMAND_IDS, `${fixture.id}: command ${step.command}`).toContain(step.command);
-      }
-      // §8.5 envelope + dunder-free params anywhere in the batch (F-1 class).
-      expect(AGENT_BATCH_SCHEMA.safeParse(result.batch).success, fixture.id).toBe(true);
-      expect(hasNoDunderKeys(result.batch), fixture.id).toBe(true);
       expectPrototypeClean();
-    },
-  );
+      return;
+    }
+
+    // Schema-valid from here on.
+    expect(schemaOk, fixture.id).toBe(true);
+    const result = compileHostile(plan);
+
+    if (fixture.expectation === "compile_fatal") {
+      expect(result.ok, fixture.id).toBe(false);
+      if (!result.ok) {
+        expect(result.issues.length).toBeGreaterThan(0);
+        for (const issue of result.issues) {
+          expect(issue.severity === "fatal" || issue.severity === "warn", fixture.id).toBe(true);
+          expect(KNOWN_FATAL_CODES, fixture.id).toContain(issue.code);
+          // Law #1 hygiene: bounded, stack-free messages.
+          expect(issue.message.length).toBeLessThanOrEqual(200);
+          expect(issue.message.includes("\n")).toBe(false);
+          expect(issue.message.includes(" at ")).toBe(false);
+        }
+      }
+      expectPrototypeClean();
+      return;
+    }
+
+    // compiled_clean: the poison was ADVISORY — the batch comes from args.
+    expect(result.ok, fixture.id).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    const serialized = JSON.stringify(result.batch);
+    for (const poison of fixture.poisonNeedles) {
+      expect(
+        serialized.includes(poison),
+        `${fixture.id}: poison "${poison}" leaked into the compiled batch`,
+      ).toBe(false);
+    }
+    // Registry-only commands (law #5: the compiler invents no ids).
+    for (const step of result.batch.steps) {
+      expect(AGENT_COMMAND_IDS, `${fixture.id}: command ${step.command}`).toContain(step.command);
+    }
+    // §8.5 envelope + dunder-free params anywhere in the batch (F-1 class).
+    expect(AGENT_BATCH_SCHEMA.safeParse(result.batch).success, fixture.id).toBe(true);
+    expect(hasNoDunderKeys(result.batch), fixture.id).toBe(true);
+    expectPrototypeClean();
+  });
 
   it("hostile plans across the whole corpus leave the danger invariants intact in ONE sweep", () => {
     // The belt-and-braces pass: every plan fixture compiles without a throw and
@@ -519,19 +518,16 @@ describe("M5-N FINDING F-5 — the compiler reads the OLD draft args shapes (dri
 // ---------------------------------------------------------------------------
 
 describe("M5-N safety — §8.5 batch bounds on the wire (AGENT_BATCH_SCHEMA + PLAN_EVENT_SCHEMA)", () => {
-  it.each(BATCH_WIRE_POISONS.map((fixture) => [fixture.id]))(
-    "%s",
-    (fixtureId) => {
-      const fixture = batchWireFixture(fixtureId);
-      const payload = JSON.parse(fixture.batchJson);
-      let parsed: { success: boolean; data?: unknown };
-      expect(() => {
-        parsed = AGENT_BATCH_SCHEMA.safeParse(payload);
-      }).not.toThrow();
-      expect(parsed!.success, fixture.id).toBe(fixture.expectation === "parse");
-      expectPrototypeClean();
-    },
-  );
+  it.each(BATCH_WIRE_POISONS.map((fixture) => [fixture.id]))("%s", (fixtureId) => {
+    const fixture = batchWireFixture(fixtureId);
+    const payload = JSON.parse(fixture.batchJson);
+    let parsed: { success: boolean; data?: unknown };
+    expect(() => {
+      parsed = AGENT_BATCH_SCHEMA.safeParse(payload);
+    }).not.toThrow();
+    expect(parsed!.success, fixture.id).toBe(fixture.expectation === "parse");
+    expectPrototypeClean();
+  });
 
   it("FINDING F-6 (report-only): the wire gate is BOUNDS-ONLY — a hostile command id rides a plan event", () => {
     // AGENT_BATCH_SCHEMA checks shape/size/refs — NOT command-id membership.
@@ -540,7 +536,9 @@ describe("M5-N safety — §8.5 batch bounds on the wire (AGENT_BATCH_SCHEMA + P
     // are upstream (the compiler's registry gate, proved in section B) and
     // downstream (the engine's own registry/NOT_IN_BATCH rejection, pinned in
     // the web suite). Pin the schema gap so it never silently widens further.
-    const plan = EDIT_PLAN_SCHEMA.parse(writePlan([writeStep("create_composition", { name: "Intro" })]));
+    const plan = EDIT_PLAN_SCHEMA.parse(
+      writePlan([writeStep("create_composition", { name: "Intro" })]),
+    );
     for (const fixtureId of ["wire-dunder-command", "wire-shadow-engine-batch"]) {
       const fixture = batchWireFixture(fixtureId);
       const batch = AGENT_BATCH_SCHEMA.parse(JSON.parse(fixture.batchJson));
@@ -567,7 +565,9 @@ describe("M5-N safety — §8.5 batch bounds on the wire (AGENT_BATCH_SCHEMA + P
   });
 
   it("a clean compiled batch rides a plan event verbatim (the sanity wire)", () => {
-    const plan = EDIT_PLAN_SCHEMA.parse(writePlan([writeStep("create_composition", { name: "Intro" })]));
+    const plan = EDIT_PLAN_SCHEMA.parse(
+      writePlan([writeStep("create_composition", { name: "Intro" })]),
+    );
     const batch = AGENT_BATCH_SCHEMA.parse(JSON.parse(batchWireFixture("wire-clean").batchJson));
     const event = { type: "plan" as const, runId: "run_m5n", seq: 3, plan, compiledBatch: batch };
     const parsed = PLAN_EVENT_SCHEMA.safeParse(event);
@@ -807,9 +807,10 @@ describe("M5-N corpus self-check", () => {
       if (fixture.argsValue !== undefined) continue; // non-JSON poison (NaN)
       const parsed = JSON.parse(fixture.argsJson) as unknown;
       expect(parsed, fixture.id).toBeDefined();
-      expect(fixture.argsJson.includes(fixture.needle), `${fixture.id}: needle missing from argsJson`).toBe(
-        true,
-      );
+      expect(
+        fixture.argsJson.includes(fixture.needle),
+        `${fixture.id}: needle missing from argsJson`,
+      ).toBe(true);
     }
     for (const fixture of WRITE_PLAN_INJECTIONS) {
       expect(JSON.parse(fixture.planJson), fixture.id).toBeDefined();
@@ -817,7 +818,9 @@ describe("M5-N corpus self-check", () => {
     }
     for (const fixture of BATCH_WIRE_POISONS) {
       expect(JSON.parse(fixture.batchJson), fixture.id).toBeDefined();
-      expect(fixture.batchJson.includes(fixture.needle), `${fixture.id}: needle missing`).toBe(true);
+      expect(fixture.batchJson.includes(fixture.needle), `${fixture.id}: needle missing`).toBe(
+        true,
+      );
     }
     for (const fixture of COMPILER_DRIFT_PROBES) {
       expect(JSON.parse(fixture.argsJson), fixture.id).toBeDefined();
