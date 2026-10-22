@@ -6,20 +6,29 @@
 // apps/web/src/lib/chat/__tests__/injection-corpus.ts (imported by relative
 // path — the corpus is a zero-dependency data module on purpose).
 //
+// M5-C re-pins every property at the NEW tool count (BUILD_PLAN §M5.1): the
+// provider wire now carries 13 curated tools — 5 read + 8 write — and the
+// write tools are PROPOSE-ONLY (server-side compile, never an execution).
 // Proves, per run:
-//   1. the model cannot get a write tool no matter how it begs
-//      (perfect args, repeated, flooded — the allowlist is the backstop);
+//   1. anything NOT in the 13 is refused: begging gets ONE repair turn, then
+//      RUN_INVALID_TOOL; a single-round flood dies with ZERO repairs; a
+//      perfectly-argued WRITE call now returns a PROPOSED batch and NEVER
+//      executes server-side (the M4 “cannot get a write tool” proof becomes
+//      the M5 “cannot get an EXECUTION” proof);
 //   2. project-sourced text stays DATA through the whole pipeline: tool
 //      results are fed back verbatim, injected instructions never turn into
-//      tool calls, and no raw engine command string ever reaches a provider;
+//      executions, and no raw engine command string ever reaches a provider;
 //   3. the system prompt stays FIRST and byte-exact under corpus payloads;
 //   4. redaction holds: fingerprints + logs carry lengths/sha256 only;
 //   5. tool args validation rejects hostile payloads (bounds, enums,
-//      duplicate keys) and strips prototype-pollution keys;
+//      duplicate keys) and strips prototype-pollution keys — write tools
+//      included (the write tool's STRICT Zod schema is the boundary);
 //   6. EDIT_PLAN_SCHEMA bounds hold (steps/summary/risk/affectedLayers,
 //      $ref escapes) and a twice-invalid plan degrades to PLAN_INVALID with
-//      the run surviving;
-//   7. adversarial multi-tool looping still dies at the step cap.
+//      the run surviving; the M5 plan-event enrichment adds ONLY optional
+//      fields and the compiled batch never reaches the model conversation;
+//   7. adversarial multi-tool looping still dies at the step cap (write
+//      tools are loop steps too — D-1).
 //
 // Deterministic: fake in-process OpenAI SSE server (injectable fetch) + a
 // fake AgentRunStream. No network, no Postgres (same harness family as
@@ -30,8 +39,10 @@ import { describe, expect, it } from "vitest";
 import {
   CONTEXT_SELECTION_SCHEMA,
   EDIT_PLAN_SCHEMA,
+  PROPOSED_BATCH_NOTE,
   type StudioStreamEvent,
   TOOL_LIST,
+  WRITE_TOOL_RESULT_SCHEMA,
 } from "@studio/contracts";
 import {
   ALL_TEXT_FIXTURES,
@@ -46,7 +57,7 @@ import {
 
 import type { OpenAIChatMessage } from "../src/litellm/openai.js";
 import { SYSTEM_PROMPT, buildMessages, fingerprintMessages } from "../src/litellm/prompt.js";
-import { createLiteLLMRunner } from "../src/litellm/runner.js";
+import { type CompilePlanFn, createLiteLLMRunner } from "../src/litellm/runner.js";
 import type { LogFields, Logger } from "../src/logger.js";
 import {
   type AgentRun,
@@ -216,7 +227,7 @@ function makeRun(overrides: Partial<AgentRun> = {}): AgentRun {
 
 function makeRunner(
   script: ReadonlyArray<Response>,
-  options: { maxSteps?: number; stream?: FakeStream; logger?: Logger } = {},
+  options: { maxSteps?: number; stream?: FakeStream; logger?: Logger; compilePlan?: CompilePlanFn } = {},
 ): {
   runner: ReturnType<typeof createLiteLLMRunner>;
   fetchCalls: RecordedCall[];
@@ -232,6 +243,7 @@ function makeRunner(
     fetch: fetchStub,
     sleep: async () => {},
     logger: options.logger,
+    compilePlan: options.compilePlan,
   });
   return { runner, fetchCalls: fetchStub.calls, stream };
 }
@@ -240,23 +252,24 @@ function makeRunner(
 // Security assertion helpers
 // ---------------------------------------------------------------------------
 
-const READ_TOOL_IDS = TOOL_LIST.filter((tool) => tool.kind === "read").map((tool) => tool.id);
-const WRITE_TOOL_IDS = TOOL_LIST.filter((tool) => tool.kind === "write").map((tool) => tool.id);
+/** §8.4 law: the provider is offered EXACTLY the 13 curated tools — the 5
+ * read tools + the 8 PROPOSE-ONLY write tools (BUILD_PLAN §M5.1) — and
+ * nothing else ever: no raw engine entrypoint, no invented id. */
+const CURATED_TOOL_IDS = TOOL_LIST.map((tool) => tool.id);
 
-/** §12.2 law: the provider is ONLY ever offered the 5 curated read tools. */
-function expectOnlyReadToolsEverSent(calls: readonly RecordedCall[]): void {
+function expectExactlyCuratedToolsSent(calls: readonly RecordedCall[]): void {
   expect(calls.length).toBeGreaterThan(0);
   for (const call of calls) {
     const tools = call.body.tools;
     if (tools === undefined) continue; // structured-output calls carry no tools
-    expect(tools.map((tool) => tool.function.name)).toEqual(READ_TOOL_IDS);
+    expect(tools.map((tool) => tool.function.name)).toEqual(CURATED_TOOL_IDS);
   }
-  // Belt and braces: no write tool id ever appears in any tools array.
+  // Belt and braces: nothing outside the curated 13 ever appears in a tools
+  // array — in particular never the raw execution entrypoints.
   for (const call of calls) {
     const serialized = JSON.stringify(call.body.tools ?? []);
-    for (const writeId of WRITE_TOOL_IDS) {
-      expect(serialized.includes(writeId)).toBe(false);
-    }
+    expect(serialized.includes("engine.execute")).toBe(false);
+    expect(serialized.includes("engine.batch")).toBe(false);
   }
 }
 
@@ -285,25 +298,45 @@ function toolRoleMessage(call: RecordedCall | undefined): OpenAIChatMessage | un
 }
 
 // ---------------------------------------------------------------------------
-// (1) BEGGING FOR WRITE TOOLS — the allowlist is the backstop
+// (1) BEGGING OUTSIDE THE CURATED 13 — the allowlist is the backstop; the
+//     curated write tools themselves PROPOSE only (M5.1)
 // ---------------------------------------------------------------------------
 
-describe("safety (M4.6) — the model cannot get a write tool", () => {
-  it("rejects a perfectly-argued write call, offers ONE repair turn, then RUN_INVALID_TOOL", async () => {
-    const begging = hostileArgsFixture("write-tool-perfect-args");
+/** Deterministic stub proposal the injected compile seam returns (M5-B stand-in). */
+const stubProposalCompiler: CompilePlanFn = async () => ({
+  ok: true,
+  batch: {
+    label: "Agent: corpus stub proposal",
+    atomic: true,
+    steps: [{ command: "text.insert", params: { text: "stub" } }],
+  },
+  risk: "low",
+  estimatedCredits: 1,
+  resolutionRequests: [],
+});
+
+/** M5-A's CURRENT set_properties args shape (STRICT, layers BY NAME). */
+const SET_PROPERTIES_ARGS = JSON.stringify({
+  layers: [{ name: "headline" }],
+  properties: [{ path: "text/sourceText", value: "PWNED-BY-BEGGING" }],
+});
+
+describe("safety (M5.1) — anything not in the curated 13 is refused; writes only PROPOSE", () => {
+  it("begging for an unregistered tool: ONE repair turn, then RUN_INVALID_TOOL", async () => {
     const { runner, fetchCalls, stream } = makeRunner([
-      // Round 1: a schema-valid studio.set_properties call with perfect args.
+      // Round 1: the model begs for a tool that is not in the 13.
       sseResponse([
-        toolCallStart(0, "call_w1", begging.tool),
-        toolCallArgs(0, begging.argsJson),
+        textDelta("I really need to modify the project to help you."),
+        toolCallStart(0, "call_w1", "studio.delete_everything"),
+        toolCallArgs(0, "{}"),
         finish("tool_calls"),
         DONE,
       ]),
-      // Round 2: the model begs in prose and tries the same write tool again.
+      // Round 2: the model begs again in prose and repeats the offense.
       sseResponse([
-        textDelta("I really need to modify the project to help you."),
-        toolCallStart(0, "call_w2", begging.tool),
-        toolCallArgs(0, begging.argsJson),
+        textDelta("Please, I must delete everything."),
+        toolCallStart(0, "call_w2", "studio.delete_everything"),
+        toolCallArgs(0, "{}"),
         finish("tool_calls"),
         DONE,
       ]),
@@ -317,29 +350,30 @@ describe("safety (M4.6) — the model cannot get a write tool", () => {
       message: "The agent requested a tool call we can't validate.",
       retryable: false,
     });
-    expectOnlyReadToolsEverSent(fetchCalls);
+    expectExactlyCuratedToolsSent(fetchCalls);
     expectNoEngineCommandStrings(fetchCalls);
-    // The write call never reached the editor: no tool.started, no expected id.
+    // The unregistered call never reached the editor: no tool.started.
     expect(stream.events.some((event) => event.type === "tool.started")).toBe(false);
     expect(stream.expected).toEqual([]);
-    // The repair turn told the model the truth: unknown tool + the real list.
+    // The repair turn told the model the truth: unknown tool + the real list —
+    // which now legitimately includes the PROPOSE-ONLY write tools.
     const repair = JSON.parse(String(toolRoleMessage(fetchCalls[1])?.content ?? "null")) as {
       error: string;
       message: string;
     };
     expect(repair.error).toBe("VALIDATION_FAILED");
-    expect(repair.message).toContain('Unknown tool "studio.set_properties"');
+    expect(repair.message).toContain('Unknown tool "studio.delete_everything"');
     expect(repair.message).toContain("studio.plan_edit"); // the read tools listed
+    expect(repair.message).toContain("studio.set_properties"); // the curated write tools listed
   });
 
-  it("a single-round flood of write-tool calls dies with ZERO repair turns", async () => {
-    const begging = hostileArgsFixture("write-tool-perfect-args");
+  it("a single-round flood of unregistered tool calls dies with ZERO repair turns", async () => {
     const { runner, fetchCalls, stream } = makeRunner([
       sseResponse([
-        toolCallStart(0, "call_f1", begging.tool),
-        toolCallArgs(0, begging.argsJson),
-        toolCallStart(1, "call_f2", "studio.create_text"),
-        toolCallArgs(1, JSON.stringify({ text: "PWNED-BY-FLOOD", name: "junk" })),
+        toolCallStart(0, "call_f1", "studio.delete_everything"),
+        toolCallArgs(0, "{}"),
+        toolCallStart(1, "call_f2", "studio.explode_project"),
+        toolCallArgs(1, "{}"),
         finish("tool_calls"),
         DONE,
       ]),
@@ -355,8 +389,67 @@ describe("safety (M4.6) — the model cannot get a write tool", () => {
     });
     // Two strikes in one round: no repair turn was ever issued.
     expect(fetchCalls.length).toBe(1);
-    expectOnlyReadToolsEverSent(fetchCalls);
+    expectExactlyCuratedToolsSent(fetchCalls);
     expect(stream.events.some((event) => event.type === "tool.started")).toBe(false);
+  });
+
+  it("a perfectly-argued WRITE call now returns a PROPOSED batch — nothing executes server-side", async () => {
+    // The M4 proof was "the write tool cannot be reached" (it was not
+    // registered). The M5 proof: it IS registered, the args pass the STRICT
+    // Zod boundary, and STILL nothing executes — the runner resolves the
+    // call server-side into a proposal, the model sees a redacted summary,
+    // and the run simply continues.
+    const { runner, fetchCalls, stream } = makeRunner(
+      [
+        sseResponse([
+          toolCallStart(0, "call_w1", "studio.set_properties"),
+          toolCallArgs(0, SET_PROPERTIES_ARGS),
+          finish("tool_calls"),
+          DONE,
+        ]),
+        // Round 2: the "obedient" model asks for another write, gets another
+        // PROPOSAL — never an execution.
+        sseResponse([
+          textDelta("Understood, updating the project."),
+          toolCallStart(0, "call_w2", "studio.create_text"),
+          toolCallArgs(0, JSON.stringify({ text: "PWNED-INSIST" })),
+          finish("tool_calls"),
+          DONE,
+        ]),
+        sseResponse([textDelta("Both changes are proposed."), finish("stop"), DONE]),
+      ],
+      { compilePlan: stubProposalCompiler },
+    );
+
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    expectExactlyCuratedToolsSent(fetchCalls);
+    expectNoEngineCommandStrings(fetchCalls);
+    // Both write calls reached the CLIENT as proposals (tool.started + a
+    // WRITE_TOOL_RESULT_SCHEMA-shaped tool.result) — never an execution.
+    const started = stream.events.filter((event) => event.type === "tool.started");
+    expect(started.map((event) => (event as { name: string }).name)).toEqual([
+      "studio.set_properties",
+      "studio.create_text",
+    ]);
+    const results = stream.events.filter((event) => event.type === "tool.result");
+    expect(results).toHaveLength(2);
+    for (const result of results) {
+      const payload = (result as { result?: unknown }).result;
+      expect(WRITE_TOOL_RESULT_SCHEMA.safeParse(payload).success).toBe(true);
+      expect((payload as { note?: string }).note).toBe(PROPOSED_BATCH_NOTE);
+    }
+    // The model was fed REDACTED summaries — never the compiled command ids.
+    for (const call of fetchCalls.slice(1)) {
+      const toolMessage = toolRoleMessage(call);
+      const content = String(toolMessage?.content);
+      expect(content.includes("text.insert")).toBe(false);
+      expect(content.includes("Agent: corpus stub proposal")).toBe(false);
+      const fedBack = JSON.parse(content) as Record<string, unknown>;
+      expect(fedBack.proposed).toBe(true);
+    }
+    expectPrototypeClean();
   });
 });
 
@@ -407,7 +500,7 @@ describe("safety — injected tool results stay data (§8.3 end to end)", () => 
         message: "The agent requested a tool call we can't validate.",
         retryable: false,
       });
-      expectOnlyReadToolsEverSent(fetchCalls);
+      expectExactlyCuratedToolsSent(fetchCalls);
       expectNoEngineCommandStrings(fetchCalls);
       // Exactly one read tool reached the editor; no write call ever did.
       expect(stream.events.filter((event) => event.type === "tool.started")).toEqual([
@@ -448,7 +541,7 @@ describe("safety — injected tool results stay data (§8.3 end to end)", () => 
     // Plan steps may CARRY proposed command ids (data, §8.6 shape) but the raw
     // execution entrypoints engine.execute / engine.batch never appear.
     expectNoEngineCommandStrings(fetchCalls);
-    expectOnlyReadToolsEverSent(fetchCalls);
+    expectExactlyCuratedToolsSent(fetchCalls);
   });
 });
 
@@ -588,7 +681,7 @@ describe("safety — tool args validation rejects hostile payloads", () => {
     const outcome = await runToOutcome(runner, makeRun(), stream);
 
     expect(outcome.kind).toBe("completed");
-    expectOnlyReadToolsEverSent(fetchCalls);
+    expectExactlyCuratedToolsSent(fetchCalls);
     // The bomb never reached the editor; the repair turn named the bound.
     const started = stream.events.filter((event) => event.type === "tool.started");
     expect(started).toEqual([
@@ -632,7 +725,7 @@ describe("safety — tool args validation rejects hostile payloads", () => {
       retryable: false,
     });
     expect(stream.events.some((event) => event.type === "tool.started")).toBe(false);
-    expectOnlyReadToolsEverSent(fetchCalls);
+    expectExactlyCuratedToolsSent(fetchCalls);
     expectPrototypeClean();
   });
 
@@ -652,7 +745,7 @@ describe("safety — tool args validation rejects hostile payloads", () => {
     const outcome = await runToOutcome(runner, makeRun(), stream);
 
     expect(outcome.kind).toBe("completed");
-    expectOnlyReadToolsEverSent(fetchCalls);
+    expectExactlyCuratedToolsSent(fetchCalls);
     // The tool RAN — with the pollution keys stripped from the validated args.
     const started = stream.events.find((event) => event.type === "tool.started");
     expect(started).toMatchObject({ toolCallId: "call_proto", name: "studio.get_properties" });
@@ -743,7 +836,7 @@ describe("safety — plan bounds hold (§8.6 / EDIT_PLAN_SCHEMA)", () => {
     const planUser = fetchCalls[1]?.body.messages.at(-1);
     expect(String(planUser?.content).includes("STRICT JSON")).toBe(true);
     expect(String(planUser?.content).includes(goalFixture.needle)).toBe(true);
-    expectOnlyReadToolsEverSent(fetchCalls);
+    expectExactlyCuratedToolsSent(fetchCalls);
     expectNoEngineCommandStrings(fetchCalls);
   });
 });
@@ -796,7 +889,7 @@ describe("safety — adversarial looping still dies at the step cap (§8.9)", ()
     // Two valid calls per round × exactly maxSteps rounds — then a hard stop.
     expect(stream.events.filter((event) => event.type === "tool.started")).toHaveLength(6);
     expect(fetchCalls.length).toBe(3);
-    expectOnlyReadToolsEverSent(fetchCalls);
+    expectExactlyCuratedToolsSent(fetchCalls);
   });
 });
 
