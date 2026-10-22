@@ -36,6 +36,7 @@
 
 import type { ChatRequest, StudioStreamEvent } from "@studio/contracts";
 
+import type { ApplyController, ApplyOutcome, ApplicablePlan, UndoOutcome } from "./apply";
 import {
   LIVE_RUN_PHASES,
   RUN_PAUSED_ERROR,
@@ -68,6 +69,13 @@ export interface CreateChatControllerOptions {
    * errors, `run.failed` events and RUN_PAUSED. Not fired for stop().
    */
   readonly onError?: (error: { code: string; message: string }) => void;
+  /**
+   * The M5 apply engine (BUILD_PLAN §M5.4/§M5.5). When present the store
+   * exposes apply/undo/reapply/dismissPlan for the plan card (M5-G's props:
+   * onApply/onCancel/onUndo/onReapply); when absent those gestures fold a
+   * typed APPLY_UNAVAILABLE error onto the card and nothing executes.
+   */
+  readonly apply?: ApplyController;
 }
 
 /** The store contract wave-2 consumes (pinned Seam 4 surface). */
@@ -93,6 +101,18 @@ export interface ChatController {
    * terminal log instead of starting a new run).
    */
   retry(): void;
+  /**
+   * M5 (§6.2 "Apply", BUILD_PLAN §M5.4): ONE user gesture → the ApplyController
+   * runs resolve→patch→ONE `engine.batch`→`saveNow("agent-apply")`→applyRun.
+   * The card's busy state folds from the outcome (never a throw).
+   */
+  apply(plan: ApplicablePlan): void;
+  /** §M5.5 "Undo the whole run": `edit.undo` + `undoRun`, folded from the outcome. */
+  undo(runId: string): void;
+  /** §M5.5 "Re-apply": gated on the plan's base version matching the session. */
+  reapply(plan: ApplicablePlan): void;
+  /** §6.2 "Cancel": the user dismissed the plan card for this run. */
+  dismissPlan(runId: string): void;
   /** Abort in-flight, drop the queue, unsubscribe every listener. */
   dispose(): void;
 }
@@ -105,6 +125,53 @@ function toUiError(error: unknown): ChatUiError {
   }
   return { code: "NETWORK_ERROR", message: "Could not reach the server.", retryable: true };
 }
+
+/** Outcome-reason → §7.3-style code the plan card renders (M5 slice). */
+const APPLY_ERROR_CODES: Readonly<Record<string, string>> = {
+  ambiguous: "LAYER_AMBIGUOUS",
+  "not-found": "LAYER_NOT_FOUND",
+  "resolution-failed": "PLAN_RESOLUTION_FAILED",
+  "invalid-batch": "PLAN_BATCH_INVALID",
+  "engine-failed": "APPLY_ENGINE_FAILED",
+  "editor-disconnected": "EDITOR_DISCONNECTED",
+  "save-failed": "APPLY_SAVE_FAILED",
+  "save-conflict": "APPLY_SAVE_CONFLICT",
+  conflict: "VERSION_CONFLICT",
+  "insufficient-credits": "INSUFFICIENT_CREDITS",
+  "base-version-changed": "BASE_VERSION_CHANGED",
+  failed: "APPLY_FAILED",
+};
+
+/** ApplyOutcome → the card's typed error surface (never a throw). */
+function applyOutcomeError(outcome: Extract<ApplyOutcome, { ok: false }>): ChatUiError {
+  return {
+    code: APPLY_ERROR_CODES[outcome.reason] ?? "APPLY_FAILED",
+    message: outcome.message,
+    retryable: false,
+  };
+}
+
+/** UndoOutcome → the card's typed error surface (never a throw). */
+function undoOutcomeError(outcome: Extract<UndoOutcome, { ok: false }>): ChatUiError {
+  const code =
+    outcome.reason === "nothing-to-undo"
+      ? "NOTHING_TO_UNDO"
+      : outcome.reason === "editor-disconnected"
+        ? "EDITOR_DISCONNECTED"
+        : outcome.reason === "conflict"
+          ? "VERSION_CONFLICT"
+          : outcome.reason === "engine-failed"
+            ? "UNDO_ENGINE_FAILED"
+            : "UNDO_FAILED";
+  return { code, message: outcome.message, retryable: false };
+}
+
+/** No apply engine wired (wave-1 coexistence): the card explains, nothing runs. */
+const APPLY_UNAVAILABLE: ChatUiError = {
+  code: "APPLY_UNAVAILABLE",
+  message: "Applying plans is not available in this session.",
+  retryable: false,
+};
 
 export function createChatController(options: CreateChatControllerOptions): ChatController {
   let snapshot: ChatUiState = createInitialChatUiState();

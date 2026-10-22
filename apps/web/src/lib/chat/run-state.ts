@@ -37,7 +37,7 @@
 
 import type { StudioStreamEvent } from "@studio/contracts";
 
-import type { LayerResolutionRequest } from "./apply";
+import type { ApplicablePlan, LayerResolutionRequest } from "./apply";
 import type {
   ChatUiError,
   ChatUiMessage,
@@ -136,10 +136,7 @@ export function applyClientAction(state: ChatUiState, action: ChatClientAction):
   // (applyPlanAction) — the thread phase keeps its exact M4 semantics so
   // sends/steer/reconnect behave byte-identically.
   if (action.type.startsWith("chat.plan.")) {
-    return applyPlanAction(
-      state,
-      action as ChatClientAction & { type: `chat.plan.${string}` },
-    );
+    return applyPlanAction(state, action as PlanGestureAction);
   }
   switch (action.type) {
     case "chat.submit": {
@@ -342,8 +339,11 @@ function mapMessageOfRun(
   return state.messages.map((message) => (message.runId === runId ? update(message) : message));
 }
 
+/** The `chat.plan.*` subset of {@link ChatClientAction} (the M5 card gestures). */
+export type PlanGestureAction = Extract<ChatClientAction, { type: `chat.plan.${string}` }>;
+
 /** Folds one `chat.plan.*` gesture onto the message's planRuntime (pure). */
-function applyPlanAction(state: ChatUiState, action: ChatClientAction & { type: `chat.plan.${string}` }): ChatUiState {
+function applyPlanAction(state: ChatUiState, action: PlanGestureAction): ChatUiState {
   const runId = action.runId;
   const foldRuntime = (update: (runtime: PlanRuntime) => PlanRuntime): ChatUiState => ({
     ...state,
@@ -390,6 +390,25 @@ function applyPlanAction(state: ChatUiState, action: ChatClientAction & { type: 
     case "chat.plan.dismiss":
       return foldRuntime((runtime) => ({ ...runtime, dismissed: true }));
   }
+}
+
+/**
+ * The apply inputs for the plan card bound to `runId`, straight out of the
+ * folded state (the provider/card passes this to `controller.apply`);
+ * `null` when the message has no M5 runtime (no compiled batch to execute).
+ */
+export function applicablePlanOf(state: ChatUiState, runId: string): ApplicablePlan | null {
+  const message = state.messages.find((entry) => entry.runId === runId);
+  const runtime = message?.planRuntime;
+  if (runtime === undefined) return null;
+  return {
+    runId,
+    ...(runtime.baseVersionId !== undefined ? { baseVersionId: runtime.baseVersionId } : {}),
+    compiledBatch: runtime.compiledBatch,
+    ...(runtime.resolutionRequests !== undefined
+      ? { resolutionRequests: runtime.resolutionRequests }
+      : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

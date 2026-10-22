@@ -1,0 +1,1006 @@
+     1→// @studio/gateway — the SERVER-SIDE PLAN COMPILER (BUILD_PLAN §M5 tasks 1-2,
+     2→// PRODUCT_ARCHITECTURE.md §8.5–§8.7, docs/phases/M5-SEAMS.md pinned seam,
+     3→// DECISIONS.md D-1: model loop ≤ 8 steps, plan ≤ 20 steps, compiled batch ≤
+     4→// 100 commands / 2 MB / 60 s).
+     5→//
+     6→// Mission (laws #5 + #6): the model proposes an EditPlan built from CURATED
+     7→// write-tool args; this module is the only thing that turns a plan into an
+     8→// engine `AgentBatch`. The per-step `batch` fields the model proposes are
+     9→// validated and ADVISORY ONLY — the compiled batch always comes from tool
+    10→// args translated against the curated command registry (deps.registry). One
+    11→// plan ⇒ ONE atomic batch ⇒ ONE undo step ⇒ ONE version (§8.4/§8.5).
+    12→//
+    13→// Tool → command translation table (every id verified against the real
+    14→// EffectCraft source at editor/crates/engine/src/commands/*.rs):
+    15→//
+    16→//   create_composition → comp.new {name, width, height, frameRate,
+    17→//                                  duration: args.durationSeconds}
+    18→//   create_text        → layer.newText {text, name?, position?,
+    19→//                                  size: fontSize?, font: fontFamily?,
+    20→//                                  fill: color?, comp: compId?}
+    21→//   set_properties     → prop.set × update {layer, path, value}
+    22→//   set_keyframes      → prop.addKey × keyframe {layer, path: propertyPath,
+    23→//                                  time, value}
+    24→//   add_effect         → effect.apply {effect, layers: [layer]}
+    25→//   apply_preset       → anim.applyBuiltinPreset {preset, layers: targets}
+    26→//   undo_run           → edit.undo {}
+    27→//   save_version       → NO engine command — a compile-time annotation
+    28→//                        (result.saveVersion) consumed by the apply flow.
+    29→//
+    30→// Ambiguity rulings (documented for the integrator — see the M5-B worklog):
+    31→//   * apply_preset NEVER compiles to `anim.applyPreset`: that command takes a
+    32→//     filesystem `path` (or an inline preset OBJECT), and a model-supplied
+    33→//     path breaks law #5 ("the model never sees filesystem paths"). Path-like
+    34→//     preset strings emit a `warn` and compile as builtin preset names.
+    35→//   * add_effect `params` and set_keyframes `easing` are CLIENT STATE (the
+    36→//     effect instance index and keyframe interpolation live in the editor);
+    37→//     they cannot be compiled server-side without guessing ids. They emit
+    38→//     `warn` issues instead of being silently dropped or fabricated.
+    39→//   * Layer references stay NAME strings in the compiled batch (the engine
+    40→//     accepts id|name|#n); `placeholders` + `resolutionRequests` let the
+    41→//     client (M5-F) substitute resolved ids before Apply. The compiler NEVER
+    42→//     fabricates ids; an injected `layerResolver` may substitute real ones.
+    43→//   * SEAMS names the request field `disambiguation` (the brief said
+    44→//     `candidates` — SEAMS wins per its own precedence rule). It carries the
+    45→//     plan's own `change` strings for that layer name.
+    46→//   * Risk and credits are RECOMPUTED from the compiled commands (never the
+    47→//     model's numbers). "High" is currently unreachable via the curated
+    48→//     tools (they compile to additive/property commands only) — it becomes
+    49→//     reachable when the registry widens past the eight write tools.
+    50→//
+    51→// Purity: idempotent, deterministic, no IO, no clocks (law #1: the result is
+    52→// a typed envelope and compilePlan NEVER throws, even on hostile input).
+    53→
+    54→import {
+    55→  EDIT_PLAN_SCHEMA,
+    56→  estimateCredits,
+    57→  type AgentBatch,
+    58→  type BatchStep,
+    59→  type CommandSchema,
+    60→  MAX_BATCH_BYTES,
+    61→  MAX_BATCH_LABEL_LENGTH,
+    62→  MAX_BATCH_STEPS,
+    63→  MAX_PLAN_AFFECTED_LAYERS,
+    64→  type PlanRisk,
+    65→  PLAN_RISK_ORDER,
+    66→  checkBatchCommands,
+    67→  validateBatchRefs,
+    68→} from "@studio/contracts";
+    69→import type { ZodTypeAny } from "zod";
+    70→
+    71→// ---------------------------------------------------------------------------
+    72→// Pinned seam types (M5-SEAMS.md) + additive fields
+    73→// ---------------------------------------------------------------------------
+    74→
+    75→/** Compile failures never throw; they are typed issues. Fatals abort the
+    76→ * compile (repair turn per §8.9); warns surface on the ok result. */
+    77→export type PlanIssueSeverity = "fatal" | "warn";
+    78→
+    79→export type PlanIssueCode =
+    80→  | "plan_schema" // EditPlan failed its §8.6 schema (defense-in-depth re-check)
+    81→  | "plan_too_large" // serialized plan over the internal pre-flight cap
+    82→  | "internal" // unexpected failure — never leaks details (law #1)
+    83→  | "unknown_tool" // step.tool is not one of the 8 write tools
+    84→  | "invalid_args" // args failed the tool's Zod schema (§8.9 repair turn)
+    85→  | "unusable_args" // typed-but-unusable field under a weak (stub) schema
+    86→  | "empty_step" // the step translated to zero commands
+    87→  | "empty_batch" // the whole plan translated to zero commands
+    88→  | "too_many_commands" // compiled batch over the 100-step cap
+    89→  | "batch_too_large" // compiled batch over the 2 MB cap
+    90→  | "too_many_layer_names" // unique layer names over the 50 cap
+    91→  | "unknown_command" // compiled: fatal / proposed: warn
+    92→  | "missing_required_param" // compiled: fatal / proposed: warn
+    93→  | "unresolvable_ref" // $N.key forward/self/out-of-range (§8.5)
+    94→  | "batch_mismatch" // the model's proposed batch disagrees with the translation
+    95→  | "uncompilable_arg" // client-state arg (effect params, easing, preset paths)
+    96→  | "undo_run_target" // undo_run named a run; the engine reverts the latest batch
+    97→  | "duplicate_save_version" // an earlier save_version step was superseded
+    98→  | "undeclared_layer" // a referenced layer is missing from affectedLayers
+    99→  | "resolver_error"; // an injected layerResolver threw (treated as unresolved)
+   100→
+   101→/** One compile problem: severity, stable code, human-safe message (law #1:
+   102→ * no stack traces, no internal ids, clipped length) and typed pointers. */
+   103→export interface PlanIssue {
+   104→  readonly severity: PlanIssueSeverity;
+   105→  readonly code: PlanIssueCode;
+   106→  readonly message: string;
+   107→  /** 1-based PLAN step the issue belongs to (when applicable). */
+   108→  readonly step?: number;
+   109→  /** 1-based COMPILED batch step (registry/refs issues on the compiled batch). */
+   110→  readonly batchStep?: number;
+   111→  readonly tool?: string;
+   112→  readonly command?: string;
+   113→  readonly param?: string;
+   114→}
+   115→
+   116→/** A layer NAME the plan touches, for the client (M5-F) to resolve to ids via
+   117→ * the bridge (list_layers) before Apply — ids never enter the model context
+   118→ * (§8.7). `disambiguation` carries the plan's own `change` descriptions. */
+   119→export interface LayerResolutionRequest {
+   120→  readonly requestId: string;
+   121→  readonly layerName: string;
+   122→  readonly disambiguation: readonly string[];
+   123→}
+   124→
+   125→/** One NAME occurrence inside the compiled batch the client may rewrite to a
+   126→ * resolved id. `param` is the object path within the step's params. */
+   127→export interface BatchPlaceholder {
+   128→  /** 1-based compiled batch step. */
+   129→  readonly step: number;
+   130→  readonly param: string;
+   131→  readonly layerName: string;
+   132→  /** Matches a LayerResolutionRequest — absent when already substituted. */
+   133→  readonly requestId?: string;
+   134→  /** Set when deps.layerResolver resolved the name server-side. */
+   135→  readonly resolvedId?: string | number;
+   136→}
+   137→
+   138→/** Save-version annotation consumed by the apply flow (no engine command). */
+   139→export interface SaveVersionAnnotation {
+   140→  readonly label?: string;
+   141→}
+   142→
+   143→/** Resolves a layer NAME to a real id (authoritative callers only — the
+   144→ * compiler never fabricates ids). Throwing resolvers are contained. */
+   145→export type LayerResolver = (layerName: string) => string | number | undefined;
+   146→
+   147→/** Tolerant write-tool entry: the M5-A seam may inject bare Zod schemas
+   148→ * (WRITE_TOOL_ARGS_SCHEMAS) or richer defs with risk metadata (WRITE_TOOLS). */
+   149→export interface WriteToolDef {
+   150→  readonly args?: ZodTypeAny;
+   151→  readonly risk?: PlanRisk;
+   152→}
+   153→
+   154→export type WriteToolsDep = Readonly<Record<string, ZodTypeAny | WriteToolDef>>;
+   155→
+   156→/** Injected so compilation can be tested against fixtures while M5-A/M5-J
+   157→ * land (their stubs are intentionally empty/passthrough today). */
+   158→export interface CompileDeps {
+   159→  /** Curated agent command allowlist (M5-J) — id → descriptor. */
+   160→  readonly registry: CommandSchema;
+   161→  /** The 8 write tools (M5-A) — Zod args schemas (± risk metadata). */
+   162→  readonly writeTools: WriteToolsDep;
+   163→  /** Optional authoritative name → id resolver (see LayerResolver). */
+   164→  readonly layerResolver?: LayerResolver;
+   165→}
+   166→
+   167→/** SEAMS input shape ({plan} + future resolution context). compilePlan also
+   168→ * accepts a bare EditPlan for convenience — both are normalized. */
+   169→export interface CompilePlanInput {
+   170→  readonly plan: import("./plan-compiler-types.js").EditPlan;
+   171→}
+   172→
+   173→/** Compile outcome (M5-SEAMS pinned, plus additive fields the brief pins:
+   174→ * placeholders, warnings, saveVersion). */
+   175→export type CompilePlanResult =
+   176→  | {
+   177→      readonly ok: true;
+   178→      readonly batch: AgentBatch;
+   179→      readonly risk: PlanRisk;
+   180→      readonly estimatedCredits: number;
+   181→      readonly resolutionRequests: readonly LayerResolutionRequest[];
+   182→      /** Where layer NAME strings sit in the batch (M5-F rewrite sites). */
+   183→      readonly placeholders: readonly BatchPlaceholder[];
+   184→      /** Non-fatal issues (typed, advisory — the compiled batch stands). */
+   185→      readonly warnings: readonly PlanIssue[];
+   186→      /** Present when the plan contains a save_version step. */
+   187→      readonly saveVersion?: SaveVersionAnnotation;
+   188→    }
+   189→  | {
+   190→      readonly ok: false;
+   191→      /** Fatal issues only (the repair-turn payload, §8.9). */
+   192→      readonly issues: readonly PlanIssue[];
+   193→    };
+   194→
+   195→// ---------------------------------------------------------------------------
+   196→// Internal constants
+   197→// ---------------------------------------------------------------------------
+   198→
+   199→/** Pre-flight serialized-plan cap. Generous multiple of the 2 MB batch cap:
+   200→ * proposed batches are discarded, so a plan may be far bigger than its
+   201→ * compiled batch — but not unboundedly so. */
+   202→const MAX_PLAN_BYTES = 8 * 1024 * 1024;
+   203→
+   204→/** Cap on collected issues so hostile input cannot balloon the result. */
+   205→const MAX_ISSUES = 50;
+   206→
+   207→/** Cap on any issue message (law #1 hygiene). */
+   208→const MAX_MESSAGE_LENGTH = 200;
+   209→
+   210→const STUDIO_TOOL_PREFIX = "studio.";
+   211→const AGENT_LABEL_PREFIX = "Agent: ";
+   212→
+   213→/** delete-ish ids (and effect.remove explicitly) force ≥ medium risk. */
+   214→const DELETE_ISH_COMMAND = /(?:^|\.)(?:delete|remove|purge)/;
+   215→/** render/export-ish ids force ≥ medium risk (none emitted by the 8 tools). */
+   216→const RENDER_ISH_COMMAND = /^(?:render|export)\./;
+   217→/** History commands revert/steal project state — not "low" risk. */
+   218→const HISTORY_COMMANDS: ReadonlySet<string> = new Set(["edit.undo", "edit.redo"]);
+   219→
+   220→/** A preset string that looks like a filesystem path (law #5 hazard). */
+   221→const PRESET_PATH_LIKE = /(?:[\\/]|\.ecpreset$)/;
+   222→
+   223→// ---------------------------------------------------------------------------
+   224→// Small pure helpers
+   225→// ---------------------------------------------------------------------------
+   226→
+   227→function clip(text: string, max = MAX_MESSAGE_LENGTH): string {
+   228→  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+   229→}
+   230→
+   231→function isPlainObject(value: unknown): value is Record<string, unknown> {
+   232→  return typeof value === "object" && value !== null && !Array.isArray(value);
+   233→}
+   234→
+   235→function isFiniteNumber(value: unknown): value is number {
+   236→  return typeof value === "number" && Number.isFinite(value);
+   237→}
+   238→
+   239→function readString(source: Record<string, unknown>, key: string): string | undefined {
+   240→  const value = source[key];
+   241→  return typeof value === "string" && value.length > 0 ? value : undefined;
+   242→}
+   243→
+   244→/** Own-property registry lookup — a "__proto__" command id must NOT resolve
+   245→ * through the prototype chain (M4-N F-1 defense, applied to the registry). */
+   246→function registryHas(registry: CommandSchema, id: string): boolean {
+   247→  return Object.prototype.hasOwnProperty.call(registry, id);
+   248→}
+   249→
+   250→/** Deterministic, depth-capped canonical JSON (sorted object keys) used to
+   251→ * compare the model's proposed batch with the compiled translation. */
+   252→function stableStringify(value: unknown, depth = 0): string {
+   253→  if (depth > 64) return '"<deep>"';
+   254→  if (value === null) return "null";
+   255→  switch (typeof value) {
+   256→    case "string":
+   257→      return JSON.stringify(value);
+   258→    case "number":
+   259→      return Number.isFinite(value) ? String(value) : '"<nan>"';
+   260→    case "boolean":
+   261→      return String(value);
+   262→    case "bigint":
+   263→      return String(value);
+   264→    case "undefined":
+   265→    case "function":
+   266→    case "symbol":
+   267→      return '"<unserializable>"';
+   268→    default: {
+   269→      if (Array.isArray(value)) {
+   270→        return `[${value.map((item) => stableStringify(item, depth + 1)).join(",")}]`;
+   271→      }
+   272→      const keys = Object.keys(value).sort();
+   273→      const body = keys
+   274→        .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key], depth + 1)}`)
+   275→        .join(",");
+   276→      return `{${body}}`;
+   277→    }
+   278→  }
+   279→}
+   280→
+   281→function riskMax(a: PlanRisk, b: PlanRisk): PlanRisk {
+   282→  return PLAN_RISK_ORDER[a] >= PLAN_RISK_ORDER[b] ? a : b;
+   283→}
+   284→
+   285→// ---------------------------------------------------------------------------
+   286→// Risk recompute (brief: from compiled commands — never the model's number)
+   287→// ---------------------------------------------------------------------------
+   288→
+   289→/**
+   290→ * Recomputed plan risk from the COMPILED commands plus an optional tool-catalog
+   291→ * floor. Delete-ish/effect.remove/render/export ⇒ at least medium; nothing of
+   292→ * the sort ⇒ low. Exported for tests and future registry widening.
+   293→ */
+   294→export function recomputePlanRisk(
+   295→  steps: ReadonlyArray<Pick<BatchStep, "command">>,
+   296→  toolFloor: PlanRisk = "low",
+   297→): PlanRisk {
+   298→  let risk: PlanRisk = "low";
+   299→  for (const step of steps) {
+   300→    const id = step.command;
+   301→    if (DELETE_ISH_COMMAND.test(id) || RENDER_ISH_COMMAND.test(id) || HISTORY_COMMANDS.has(id)) {
+   302→      risk = riskMax(risk, "medium");
+   303→    }
+   304→  }
+   305→  return riskMax(risk, toolFloor);
+   306→}
+   307→
+   308→// ---------------------------------------------------------------------------
+   309→// Compilation state
+   310→// ---------------------------------------------------------------------------
+   311→
+   312→interface LocalLayerSite {
+   313→  /** 0-based index within this plan step's own translation. */
+   314→  readonly localStep: number;
+   315→  readonly param: string;
+   316→  readonly layerName: string;
+   317→}
+   318→
+   319→interface StepTranslation {
+   320→  readonly steps: BatchStep[];
+   321→  readonly sites: LocalLayerSite[];
+   322→}
+   323→
+   324→interface NormalizedTool {
+   325→  readonly id: string;
+   326→  readonly argsSchema?: ZodTypeAny;
+   327→  readonly risk?: PlanRisk;
+   328→}
+   329→
+   330→class Compiler {
+   331→  readonly warnings: PlanIssue[] = [];
+   332→  readonly fatals: PlanIssue[] = [];
+   333→  private readonly compiledSteps: BatchStep[] = [];
+   334→  private readonly sites: Array<LocalLayerSite & { planStep: number; globalStep: number }> = [];
+   335→  private readonly createdToolRisks: PlanRisk[] = [];
+   336→  private saveVersion: SaveVersionAnnotation | undefined;
+   337→  private saveVersionStep: number | undefined;
+   338→
+   339→  constructor(private readonly deps: CompileDeps) {}
+   340→
+   341→  private hasIssueBudget(severity: PlanIssueSeverity): boolean {
+   342→    const count = severity === "fatal" ? this.fatals.length : this.warnings.length;
+   343→    return count < MAX_ISSUES;
+   344→  }
+   345→
+   346→  private pushIssue(issue: PlanIssue): void {
+   347→    const target = issue.severity === "fatal" ? this.fatals : this.warnings;
+   348→    if (target.length >= MAX_ISSUES) return; // bounded, deterministic
+   349→    target.push(issue);
+   350→  }
+   351→
+   352→  fatal(code: PlanIssueCode, message: string, extra?: Omit<PlanIssue, "severity" | "code" | "message">): void {
+   353→    this.pushIssue({ severity: "fatal", code, message: clip(message), ...extra });
+   354→  }
+   355→
+   356→  warn(code: PlanIssueCode, message: string, extra?: Omit<PlanIssue, "severity" | "code" | "message">): void {
+   357→    this.pushIssue({ severity: "warn", code, message: clip(message), ...extra });
+   358→  }
+   359→
+   360→  /** Translate one plan step's args; returns its command steps. */
+   361→  translate(planStep: number, tool: string, args: unknown): StepTranslation {
+   362→    const steps: BatchStep[] = [];
+   363→    const sites: LocalLayerSite[] = [];
+   364→    const argsObj = isPlainObject(args) ? args : {};
+   365→    const add = (command: string, params: Record<string, unknown>): void => {
+   366→      steps.push({ command, params });
+   367→    };
+   368→    const addSite = (param: string, layerName: string): void => {
+   369→      sites.push({ localStep: steps.length - 1, param, layerName });
+   370→    };
+   371→    const unusable = (field: string, why: string): void => {
+   372→      this.warn("unusable_args", `field \`${field}\` ${why}`, { step: planStep, tool });
+   373→    };
+   374→    const compilesToNothing = (): void => {
+   375→      this.warn("empty_step", `step compiled to no engine commands`, { step: planStep, tool });
+   376→    };
+   377→
+   378→    switch (tool) {
+   379→      case "create_composition": {
+   380→        const params: Record<string, unknown> = {};
+   381→        const name = readString(argsObj, "name");
+   382→        if (name !== undefined) params.name = name;
+   383→        for (const key of ["width", "height", "frameRate"] as const) {
+   384→          const value = argsObj[key];
+   385→          if (isFiniteNumber(value)) params[key] = value;
+   386→          else if (value !== undefined) unusable(key, "is not a finite number");
+   387→        }
+   388→        const duration = argsObj.durationSeconds;
+   389→        if (isFiniteNumber(duration)) params.duration = duration;
+   390→        else if (duration !== undefined) unusable("durationSeconds", "is not a finite number");
+   391→        if (Object.keys(params).length === 0) {
+   392→          compilesToNothing();
+   393→          break;
+   394→        }
+   395→        add("comp.new", params);
+   396→        break;
+   397→      }
+   398→
+   399→      case "create_text": {
+   400→        const params: Record<string, unknown> = {};
+   401→        const text = readString(argsObj, "text");
+   402→        if (text !== undefined) params.text = text;
+   403→        else if ("text" in argsObj) unusable("text", "is not a non-empty string");
+   404→        const name = readString(argsObj, "name");
+   405→        if (name !== undefined) params.name = name;
+   406→        const compId = readString(argsObj, "compId");
+   407→        if (compId !== undefined) params.comp = compId;
+   408→        const fontSize = argsObj.fontSize;
+   409→        if (isFiniteNumber(fontSize)) params.size = fontSize;
+   410→        else if (fontSize !== undefined) unusable("fontSize", "is not a finite number");
+   411→        const fontFamily = readString(argsObj, "fontFamily");
+   412→        if (fontFamily !== undefined) params.font = fontFamily;
+   413→        const color = readString(argsObj, "color");
+   414→        if (color !== undefined) params.fill = color;
+   415→        const position = argsObj.position;
+   416→        if (Array.isArray(position) && position.length >= 2) {
+   417→          const [x, y] = position;
+   418→          if (isFiniteNumber(x) && isFiniteNumber(y)) {
+   419→            params.position = [x, y];
+   420→          } else {
+   421→            unusable("position", "is not a [x, y] number pair");
+   422→          }
+   423→        } else if (position !== undefined) {
+   424→          unusable("position", "is not a [x, y] number pair");
+   425→        }
+   426→        if (Object.keys(params).length === 0) {
+   427→          compilesToNothing();
+   428→          break;
+   429→        }
+   430→        add("layer.newText", params);
+   431→        break;
+   432→      }
+   433→
+   434→      case "set_properties": {
+   435→        const updates = argsObj.updates;
+   436→        if (!Array.isArray(updates)) {
+   437→          unusable("updates", "is not an array");
+   438→          break;
+   439→        }
+   440→        for (const update of updates) {
+   441→          if (!isPlainObject(update)) {
+   442→            unusable("updates", "contains a non-object entry (skipped)");
+   443→            continue;
+   444→          }
+   445→          const layer = readString(update, "layer");
+   446→          if (layer === undefined) {
+   447→            // Without a layer the engine falls back to the EDITOR SELECTION —
+   448→            // a wrong-target hazard; never compile that (skip + warn).
+   449→            unusable("updates", "entry has no layer; it would target the editor selection (skipped)");
+   450→            continue;
+   451→          }
+   452→          const params: Record<string, unknown> = { layer };
+   453→          const path = readString(update, "path");
+   454→          if (path !== undefined) params.path = path;
+   455→          if ("value" in update) params.value = update.value;
+   456→          add("prop.set", params);
+   457→          addSite("layer", layer);
+   458→        }
+   459→        if (steps.length === 0 && updates.length > 0) compilesToNothing();
+   460→        break;
+   461→      }
+   462→
+   463→      case "set_keyframes": {
+   464→        const layer = readString(argsObj, "layer");
+   465→        const keyframes = argsObj.keyframes;
+   466→        if (layer === undefined) {
+   467→          // Selection-capture hazard, same rationale as set_properties.
+   468→          unusable("layer", "is missing; keyframes would target the editor selection");
+   469→          break;
+   470→        }
+   471→        if (!Array.isArray(keyframes)) {
+   472→          unusable("keyframes", "is not an array");
+   473→          break;
+   474→        }
+   475→        const propertyPath = readString(argsObj, "propertyPath");
+   476→        for (const keyframe of keyframes) {
+   477→          if (!isPlainObject(keyframe)) {
+   478→            unusable("keyframes", "contains a non-object entry (skipped)");
+   479→            continue;
+   480→          }
+   481→          const params: Record<string, unknown> = { layer };
+   482→          if (propertyPath !== undefined) params.path = propertyPath;
+   483→          const time = keyframe.time;
+   484→          if (isFiniteNumber(time)) params.time = time;
+   485→          else if (time !== undefined) unusable("keyframes", "entry time is not a finite number");
+   486→          if ("value" in keyframe) params.value = keyframe.value;
+   487→          const easing = readString(keyframe, "easing");
+   488→          if (easing !== undefined && easing !== "linear") {
+   489→            this.warn(
+   490→              "uncompilable_arg",
+   491→              `easing \`${clip(easing, 24)}\` is editor-side keyframe interpolation; ` +
+   492→                "the keyframe compiles with the engine default (set it via the timeline after apply)",
+   493→              { step: planStep, tool, param: "easing" },
+   494→            );
+   495→          }
+   496→          add("prop.addKey", params);
+   497→          addSite("layer", layer);
+   498→        }
+   499→        if (steps.length === 0 && keyframes.length > 0) compilesToNothing();
+   500→        break;
+   501→      }
+   502→
+   503→      case "add_effect": {
+   504→        const layer = readString(argsObj, "layer");
+   505→        const effect = readString(argsObj, "effect");
+   506→        if (layer === undefined) {
+   507→          unusable("layer", "is missing; the effect would target the editor selection");
+   508→          break;
+   509→        }
+   510→        const params: Record<string, unknown> = { layers: [layer] };
+   511→        if (effect !== undefined) params.effect = effect;
+   512→        add("effect.apply", params);
+   513→        addSite("layers[0]", layer);
+   514→        const effectParams = argsObj.params;
+   515→        if (effectParams !== undefined) {
+   516→          if (isPlainObject(effectParams)) {
+   517→            for (const key of Object.keys(effectParams).sort()) {
+   518→              this.warn(
+   519→                "uncompilable_arg",
+   520→                `effect parameter \`${clip(key, 40)}\` cannot be compiled server-side ` +
+   521→                  "(the effect instance index is editor state); set it via set_properties after apply",
+   522→                { step: planStep, tool, param: key },
+   523→              );
+   524→            }
+   525→          } else {
+   526→            unusable("params", "is not an object");
+   527→          }
+   528→        }
+   529→        break;
+   530→      }
+   531→
+   532→      case "apply_preset": {
+   533→        const targets = argsObj.targets;
+   534→        if (!Array.isArray(targets)) {
+   535→          unusable("targets", "is not an array");
+   536→          break;
+   537→        }
+   538→        const names: string[] = [];
+   539→        for (const target of targets) {
+   540→          if (typeof target === "string" && target.length > 0) names.push(target);
+   541→          else unusable("targets", "contains a non-string entry (skipped)");
+   542→        }
+   543→        if (names.length === 0) {
+   544→          compilesToNothing();
+   545→          break;
+   546→        }
+   547→        const preset = readString(argsObj, "preset");
+   548→        if (preset !== undefined && PRESET_PATH_LIKE.test(preset)) {
+   549→          this.warn(
+   550→            "uncompilable_arg",
+   551→            "preset looks like a filesystem path; paths are never agent-compilable " +
+   552→              "(compiled as a builtin preset name)",
+   553→            { step: planStep, tool, param: "preset" },
+   554→          );
+   555→        }
+   556→        const params: Record<string, unknown> = { layers: names };
+   557→        if (preset !== undefined) params.preset = preset;
+   558→        add("anim.applyBuiltinPreset", params);
+   559→        names.forEach((name, index) => addSite(`layers[${index}]`, name));
+   560→        break;
+   561→      }
+   562→
+   563→      case "undo_run": {
+   564→        add("edit.undo", {});
+   565→        if ("runId" in argsObj) {
+   566→          this.warn(
+   567→            "undo_run_target",
+   568→            "undo_run named a specific run; the engine command reverts the most recently " +
+   569→              "applied batch — the gateway checks run ordering at undo time",
+   570→            { step: planStep, tool },
+   571→          );
+   572→        }
+   573→        break;
+   574→      }
+   575→
+   576→      case "save_version": {
+   577→        const label = readString(argsObj, "label");
+   578→        if (this.saveVersion !== undefined && this.saveVersionStep !== undefined) {
+   579→          this.warn("duplicate_save_version", "an earlier save_version step was superseded (the last labels the version)", {
+   580→            step: this.saveVersionStep,
+   581→            tool,
+   582→          });
+   583→        }
+   584→        this.saveVersion = label !== undefined ? { label } : {};
+   585→        this.saveVersionStep = planStep;
+   586→        break;
+   587→      }
+   588→
+   589→      default: {
+   590→        // Exhaustiveness guard — lookupWriteTool already rejected unknown ids.
+   591→        this.fatal("unknown_tool", `tool \`${clip(tool, 64)}\` is not a write tool`, { step: planStep, tool });
+   592→        break;
+   593→      }
+   594→    }
+   595→
+   596→    return { steps, sites };
+   597→  }
+   598→
+   599→  /** Validate the model's PROPOSED batch for one step (advisory — warn only). */
+   600→  validateProposed(planStep: number, tool: string, proposed: readonly BatchStep[], translated: readonly BatchStep[]): void {
+   601→    const warn = this.warn.bind(this);
+   602→    // Own-property allowlist scan (a "__proto__" id must not resolve through
+   603→    // the prototype chain) — see M5-SEAMS "never invent a command id".
+   604→    for (const [index, step] of proposed.entries()) {
+   605→      if (!registryHas(this.deps.registry, step.command)) {
+   606→        warn("unknown_command", `proposed command \`${clip(step.command, 64)}\` is not in the agent registry`, {
+   607→          step: planStep,
+   608→          tool,
+   609→          command: step.command,
+   610→          batchStep: index + 1,
+   611→        });
+   612→      }
+   613→    }
+   614→    // Required params for the KNOWN proposed commands (reuse the contracts
+   615→    // helper; unknown-command duplicates were handled above).
+   616→    for (const issue of checkBatchCommands({ steps: proposed }, this.deps.registry)) {
+   617→      if (issue.reason !== "missing_required_param") continue;
+   618→      warn("missing_required_param", `proposed \`${issue.command}\` is missing required param \`${issue.param}\``, {
+   619→        step: planStep,
+   620→        tool,
+   621→        command: issue.command,
+   622→        batchStep: issue.step,
+   623→        param: issue.param,
+   624→      });
+   625→    }
+   626→    // Backwards-only $N.key refs (§8.5) within the proposed batch's own
+   627→    // 1-based numbering.
+   628→    for (const issue of validateBatchRefs(proposed)) {
+   629→      warn("unresolvable_ref", `proposed batch has $-reference \`${issue.ref.raw}\` (${issue.reason})`, {
+   630→        step: planStep,
+   631→        tool,
+   632→        batchStep: issue.step,
+   633→      });
+   634→    }
+   635→    // Disagreement: the compiled translation wins (law #5) — warn, never merge.
+   636→    const agrees =
+   637→      proposed.length === translated.length &&
+   638→      proposed.every(
+   639→        (step, index) =>
+   640→          step.command === translated[index]?.command &&
+   641→          stableStringify(step.params) === stableStringify(translated[index]?.params),
+   642→      );
+   643→    if (!agrees) {
+   644→      warn("batch_mismatch", "the model's proposed batch disagrees with the compiled translation; the translation stands", {
+   645→        step: planStep,
+   646→        tool,
+   647→      });
+   648→    }
+   649→  }
+   650→
+   651→  /** Merge one plan step's translation into the single atomic batch. */
+   652→  merge(planStep: number, tool: string, translation: StepTranslation, toolRisk: PlanRisk | undefined): void {
+   653→    const base = this.compiledSteps.length;
+   654→    for (const step of translation.steps) this.compiledSteps.push(step);
+   655→    for (const site of translation.sites) {
+   656→      this.sites.push({ ...site, planStep, globalStep: base + site.localStep });
+   657→    }
+   658→    this.createdToolRisks.push(toolRisk ?? "low");
+   659→  }
+   660→
+   661→  steps(): readonly BatchStep[] {
+   662→    return this.compiledSteps;
+   663→  }
+   664→
+   665→  layerSites(): ReadonlyArray<LocalLayerSite & { planStep: number; globalStep: number }> {
+   666→    return this.sites;
+   667→  }
+   668→
+   669→  toolRiskFloor(): PlanRisk {
+   670→    return this.createdToolRisks.reduce<PlanRisk>((floor, risk) => riskMax(floor, risk), "low");
+   671→  }
+   672→
+   673→  annotation(): SaveVersionAnnotation | undefined {
+   674→    return this.saveVersion;
+   675→  }
+   676→}
+   677→
+   678→// ---------------------------------------------------------------------------
+   679→// Deps lookups
+   680→// ---------------------------------------------------------------------------
+   681→
+   682→/** The M5-A seam may key tools by bare id (`create_text`) or with the
+   683→ * `studio.` prefix — and the plan may use either form too. Deterministic
+   684→ * candidate order, own-property lookup only. */
+   685→function lookupWriteTool(deps: CompileDeps, tool: string): NormalizedTool | undefined {
+   686→  const bare = tool.startsWith(STUDIO_TOOL_PREFIX) ? tool.slice(STUDIO_TOOL_PREFIX.length) : tool;
+   687→  for (const candidate of [bare, `${STUDIO_TOOL_PREFIX}${bare}`, tool]) {
+   688→    if (!Object.prototype.hasOwnProperty.call(deps.writeTools, candidate)) continue;
+   689→    const entry = deps.writeTools[candidate];
+   690→    if (entry !== null && typeof entry === "object" && "safeParse" in entry && typeof entry.safeParse === "function") {
+   691→      return { id: candidate, argsSchema: entry as ZodTypeAny };
+   692→    }
+   693→    if (isPlainObject(entry)) {
+   694→      const def = entry as Record<string, unknown>;
+   695→      const args = def.args;
+   696→      const risk = def.risk;
+   697→      return {
+   698→        id: candidate,
+   699→        argsSchema:
+   700→          args !== null && typeof args === "object" && "safeParse" in args && typeof (args as ZodTypeAny).safeParse === "function"
+   701→            ? (args as ZodTypeAny)
+   702→            : undefined,
+   703→        risk: risk === "low" || risk === "medium" || risk === "high" ? risk : undefined,
+   704→      };
+   705→    }
+   706→  }
+   707→  return undefined;
+   708→}
+   709→
+   710→// ---------------------------------------------------------------------------
+   711→// Main entry (SEAMS: typed, never throws)
+   712→// ---------------------------------------------------------------------------
+   713→
+   714→function isCompileInput(value: unknown): value is CompilePlanInput {
+   715→  return (
+   716→    isPlainObject(value) && "plan" in value && typeof value.plan === "object" && value.plan !== null && !Array.isArray(value.plan)
+   717→  );
+   718→}
+   719→
+   720→function compile(plan: unknown, deps: CompileDeps): CompilePlanResult {
+   721→  const compiler = new Compiler(deps);
+   722→
+   723→  // -- 0. pre-flight: the plan must serialize (cycles/NaN-safe) and be sane.
+   724→  let serializedPlan: string;
+   725→  try {
+   726→    serializedPlan = JSON.stringify(plan) ?? "null";
+   727→  } catch {
+   728→    compiler.fatal("plan_too_large", "the plan is not serializable JSON");
+   729→    return { ok: false, issues: compiler.fatals };
+   730→  }
+   731→  if (serializedPlan.length > MAX_PLAN_BYTES) {
+   732→    compiler.fatal("plan_too_large", `the plan is too large to compile (${serializedPlan.length} bytes)`);
+   733→    return { ok: false, issues: compiler.fatals };
+   734→  }
+   735→
+   736→  // -- 1. defense-in-depth re-validation against the §8.6 schema (the runner
+   737→  // validates first; hostile direct calls stop here). Zod never throws on
+   738→  // data — but a hostile "schema-less" path is still wrapped (law #1).
+   739→  const parsed = EDIT_PLAN_SCHEMA.safeParse(plan);
+   740→  if (!parsed.success) {
+   741→    const messages = parsed.error.issues.slice(0, 5).map((issue) => issue.message);
+   742→    compiler.fatal("plan_schema", `the plan failed its schema: ${messages.join("; ") || "invalid shape"}`);
+   743→    return { ok: false, issues: compiler.fatals };
+   744→  }
+   745→  const editPlan = parsed.data;
+   746→
+   747→  // -- 2. per-step: allowlist the tool, validate args, translate, validate
+   748→  // the proposed batch (warns only — the translation wins, law #5).
+   749→  for (const [index, planStep] of editPlan.steps.entries()) {
+   750→    const position = index + 1;
+   751→    if (typeof planStep.tool !== "string" || planStep.tool.length === 0) {
+   752→      compiler.fatal("unknown_tool", `step ${position} has no tool`, { step: position });
+   753→      continue;
+   754→    }
+   755→    const tool = lookupWriteTool(deps, planStep.tool);
+   756→    if (tool === undefined) {
+   757→      compiler.fatal("unknown_tool", `tool \`${clip(planStep.tool, 64)}\` is not one of the 8 write tools`, {
+   758→        step: position,
+   759→        tool: planStep.tool,
+   760→      });
+   761→      continue;
+   762→    }
+   763→    const bareTool = tool.id.replace(STUDIO_TOOL_PREFIX, "");
+   764→
+   765→    if (tool.argsSchema !== undefined) {
+   766→      let argsCheck: { success: boolean; messages?: string[] };
+   767→      try {
+   768→        const safe = tool.argsSchema.safeParse(planStep.args);
+   769→        argsCheck = safe.success
+   770→          ? { success: true }
+   771→          : { success: false, messages: safe.error.issues.slice(0, 5).map((issue) => issue.message) };
+   772→      } catch {
+   773→        argsCheck = { success: false, messages: ["args could not be validated"] };
+   774→      }
+   775→      if (!argsCheck.success) {
+   776→        compiler.fatal("invalid_args", `args for \`${bareTool}\` failed validation: ${argsCheck.messages?.join("; ")}`, {
+   777→          step: position,
+   778→          tool: bareTool,
+   779→        });
+   780→        continue;
+   781→      }
+   782→    }
+   783→
+   784→    const translation = compiler.translate(position, bareTool, planStep.args);
+   785→    compiler.validateProposed(position, bareTool, planStep.batch.steps, translation.steps);
+   786→    compiler.merge(position, bareTool, translation, tool.risk);
+   787→  }
+   788→
+   789→  // -- 3. bounds + registry gate on the COMPILED batch (violations are fatal).
+   790→  const steps = [...compiler.steps()];
+   791→  if (compiler.fatals.length > 0) {
+   792→    return { ok: false, issues: compiler.fatals };
+   793→  }
+   794→  if (steps.length === 0) {
+   795→    compiler.fatal("empty_batch", "the plan compiles to an empty command batch (only annotation steps)");
+   796→    return { ok: false, issues: compiler.fatals };
+   797→  }
+   798→  if (steps.length > MAX_BATCH_STEPS) {
+   799→    compiler.fatal("too_many_commands", `the compiled batch has ${steps.length} commands (max ${MAX_BATCH_STEPS})`);
+   800→    return { ok: false, issues: compiler.fatals };
+   801→  }
+   802→  for (const issue of checkBatchCommands({ steps }, deps.registry)) {
+   803→    if (issue.reason === "unknown_command") {
+   804→      compiler.fatal("unknown_command", `compiled command \`${issue.command}\` is not in the agent registry`, {
+   805→        batchStep: issue.step,
+   806→        command: issue.command,
+   807→      });
+   808→    } else {
+   809→      compiler.fatal("missing_required_param", `\`${issue.command}\` is missing required param \`${issue.param}\``, {
+   810→        batchStep: issue.step,
+   811→        command: issue.command,
+   812→        param: issue.param,
+   813→      });
+   814→    }
+   815→  }
+   816→  for (const issue of validateBatchRefs(steps)) {
+   817→    compiler.fatal("unresolvable_ref", `compiled batch has $-reference \`${issue.ref.raw}\` (${issue.reason})`, {
+   818→      batchStep: issue.step,
+   819→    });
+   820→  }
+   821→  if (compiler.fatals.length > 0) {
+   822→    return { ok: false, issues: compiler.fatals };
+   823→  }
+   824→
+   825→  const label = `${AGENT_LABEL_PREFIX}${clip(editPlan.summary, MAX_BATCH_LABEL_LENGTH - AGENT_LABEL_PREFIX.length)}`;
+   826→  const batch: AgentBatch = { label, atomic: true, steps };
+   827→
+   828→  const serializedBatch = JSON.stringify(batch);
+   829→  if (serializedBatch !== undefined && serializedBatch.length > MAX_BATCH_BYTES) {
+   830→    compiler.fatal("batch_too_large", `the compiled batch exceeds the ${MAX_BATCH_BYTES}-byte limit (${serializedBatch.length} bytes)`);
+   831→    return { ok: false, issues: compiler.fatals };
+   832→  }
+   833→
+   834→  // -- 4. layer-name resolution requests + placeholders (names stay names in
+   835→  // the batch; the client substitutes ids via the bridge — §8.7).
+   836→  const declaredNames: string[] = [];
+   837→  const disambiguation = new Map<string, string[]>();
+   838→  for (const layer of editPlan.affectedLayers) {
+   839→    if (typeof layer.name !== "string" || layer.name.length === 0) continue;
+   840→    if (!declaredNames.includes(layer.name)) declaredNames.push(layer.name);
+   841→    const notes = disambiguation.get(layer.name) ?? [];
+   842→    if (!notes.includes(layer.change)) notes.push(layer.change);
+   843→    disambiguation.set(layer.name, notes);
+   844→  }
+   845→  const uniqueNames = [...declaredNames];
+   846→  for (const site of compiler.layerSites()) {
+   847→    if (!uniqueNames.includes(site.layerName)) uniqueNames.push(site.layerName);
+   848→  }
+   849→  if (uniqueNames.length > MAX_PLAN_AFFECTED_LAYERS) {
+   850→    compiler.fatal(
+   851→      "too_many_layer_names",
+   852→      `the plan references ${uniqueNames.length} distinct layer names (max ${MAX_PLAN_AFFECTED_LAYERS})`,
+   853→    );
+   854→    return { ok: false, issues: compiler.fatals };
+   855→  }
+   856→
+   857→  const resolved = new Map<string, string | number>();
+   858→  if (deps.layerResolver !== undefined) {
+   859→    for (const name of uniqueNames) {
+   860→      try {
+   861→        const id = deps.layerResolver(name);
+   862→        if (id !== undefined) resolved.set(name, id);
+   863→      } catch {
+   864→        compiler.warn("resolver_error", "the layer resolver failed; the layer name stays in the batch", {
+   865→          tool: "layerResolver",
+   866→        });
+   867→      }
+   868→    }
+   869→  }
+   870→
+   871→  const requests: LayerResolutionRequest[] = [];
+   872→  const requestIdByName = new Map<string, string>();
+   873→  let requestIndex = 0;
+   874→  for (const name of uniqueNames) {
+   875→    if (resolved.has(name)) continue; // substituted server-side — no request
+   876→    requestIndex += 1;
+   877→    const requestId = `lr-${requestIndex}`;
+   878→    requestIdByName.set(name, requestId);
+   879→    requests.push({ requestId, layerName: name, disambiguation: disambiguation.get(name) ?? [] });
+   880→  }
+   881→
+   882→  const placeholders: BatchPlaceholder[] = [];
+   883→  for (const site of compiler.layerSites()) {
+   884→    const resolvedId = resolved.get(site.layerName);
+   885→    if (resolvedId !== undefined) {
+   886→      // Substitute the authoritative id (never fabricated — resolver-provided).
+   887→      const step = steps[site.globalStep];
+   888→      if (step !== undefined) applyParamPath(step.params, site.param, resolvedId);
+   889→      placeholders.push({ step: site.globalStep + 1, param: site.param, layerName: site.layerName, resolvedId });
+   890→      continue;
+   891→    }
+   892→    if (!declaredNames.includes(site.layerName)) {
+   893→      compiler.warn("undeclared_layer", `layer \`${clip(site.layerName, 64)}\` is used by a step but not declared in the plan`, {
+   894→        step: site.planStep,
+   895→      });
+   896→    }
+   897→    placeholders.push({
+   898→      step: site.globalStep + 1,
+   899→      param: site.param,
+   900→      layerName: site.layerName,
+   901→      requestId: requestIdByName.get(site.layerName),
+   902→    });
+   903→  }
+   904→
+   905→  // -- 5. risk + credits recomputed server-side (never the model's numbers).
+   906→  const risk = recomputePlanRisk(steps, compiler.toolRiskFloor());
+   907→  const estimatedCredits = estimateCredits({ risk, steps: editPlan.steps });
+   908→
+   909→  // -- 6. dedupe advisory issues (unknown/param warns can double-report).
+   910→  const seen = new Set<string>();
+   911→  const warnings = compiler.warnings.filter((issue) => {
+   912→    const key = `${issue.code}|${issue.step ?? ""}|${issue.batchStep ?? ""}|${issue.command ?? ""}|${issue.param ?? ""}`;
+   913→    if (seen.has(key)) return false;
+   914→    seen.add(key);
+   915→    return true;
+   916→  });
+   917→
+   918→  const result: CompilePlanResult = {
+   919→    ok: true,
+   920→    batch,
+   921→    risk,
+   922→    estimatedCredits,
+   923→    resolutionRequests: requests,
+   924→    placeholders,
+   925→    warnings,
+   926→  };
+   927→  const annotation = compiler.annotation();
+   928→  if (annotation !== undefined) {
+   929→    return { ...result, saveVersion: annotation };
+   930→  }
+   931→  return result;
+   932→}
+   933→
+   934→/** Write `value` at a `param`/`layers[i]`-style path inside a params object. */
+   935→function applyParamPath(params: Record<string, unknown>, path: string, value: string | number): void {
+   936→  const match = /^([A-Za-z0-9_]+)(?:\[(\d+)\])?$/.exec(path);
+   937→  if (match === null) return;
+   938→  const [, key, indexText] = match;
+   939→  if (key === undefined) return;
+   940→  if (indexText === undefined) {
+   941→    params[key] = value;
+   942→    return;
+   943→  }
+   944→  const list = params[key];
+   945→  if (Array.isArray(list)) {
+   946→    const index = Number.parseInt(indexText, 10);
+   947→    if (index >= 0 && index < list.length) list[index] = value;
+   948→  }
+   949→}
+   950→
+   951→/**
+   952→ * Compile an EditPlan into ONE atomic AgentBatch (§8.5 bounds enforced), with
+   953→ * layer-name resolution requests, recomputed risk + credits, and typed issues.
+   954→ * Accepts a bare EditPlan or a SEAMS CompilePlanInput. NEVER throws (law #1).
+   955→ */
+   956→export function compilePlan(planOrInput: EditPlanLike | CompilePlanInput, deps: CompileDeps): CompilePlanResult {
+   957→  try {
+   958→    const plan = isCompileInput(planOrInput) ? planOrInput.plan : planOrInput;
+   959→    return compile(plan, deps);
+   960→  } catch {
+   961→    // Absolute backstop: no stack traces, no details (law #1).
+   962→    return {
+   963→      ok: false,
+   964→      issues: [{ severity: "fatal", code: "internal", message: "plan compilation failed unexpectedly" }],
+   965→    };
+   966→  }
+   967→}
+   968→
+   969→/**
+   970→ * Live deps from the M5-A/M5-J contract surfaces (read at CALL time so peer
+   971→ * stubs landing mid-wave are picked up). With today's stubs the registry is
+   972→ * empty — every compiled command would fail the allowlist — callers wiring
+   973→ * the real flow should inject a registry fixture until M5-J lands.
+   974→ */
+   975→export function defaultCompileDeps(): CompileDeps {
+   976→  const registry = AGENT_COMMAND_REGISTRY_LIVE();
+   977→  const writeTools = WRITE_TOOL_SCHEMAS_LIVE();
+   978→  return { registry, writeTools };
+   979→}
+   980→
+   981→// Live-binding indirection: importing the peer constants directly at module
+   982→// scope is fine in ESM (bindings are live), but keeping the reads here makes
+   983→// the "call-time" contract explicit and keeps this module importable even if
+   984→// a peer renames mid-wave (the indirection fails loudly at the call site).
+   985→import { AGENT_COMMAND_REGISTRY, WRITE_TOOL_ARGS_SCHEMAS } from "@studio/contracts";
+   986→
+   987→function AGENT_COMMAND_REGISTRY_LIVE(): CommandSchema {
+   988→  return AGENT_COMMAND_REGISTRY;
+   989→}
+   990→
+   991→function WRITE_TOOL_SCHEMAS_LIVE(): WriteToolsDep {
+   992→  return WRITE_TOOL_ARGS_SCHEMAS;
+   993→}
+   994→
+   995→/** Structural EditPlan type for the tolerant entry (runtime validation is
+   996→ * EDIT_PLAN_SCHEMA; the type only shapes the signature). */
+   997→export type EditPlanLike = {
+   998→  intent: string;
+   999→  summary: string;
+  1000→  risk: string;
+  1001→  requiresApproval: boolean;
+  1002→  affectedLayers: ReadonlyArray<{ id?: number; name: string; change: string }>;
+  1003→  estimatedCredits: number;
+  1004→  steps: ReadonlyArray<{ title: string; tool: string; args: unknown; batch: { label: string; steps: unknown[] } }>;
+  1005→};
+  1006→
