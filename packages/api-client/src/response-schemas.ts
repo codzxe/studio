@@ -17,6 +17,9 @@ import {
   type ActivityEntry,
   type ApplyResponse,
   type Asset,
+  BILLING_STATUS_SCHEMA,
+  type BillingEntitlements,
+  type BillingState,
   type CheckoutResponse,
   type Comment,
   type CreateAssetResponse,
@@ -46,8 +49,10 @@ import {
   type RunStepRecord,
   type SignedUrl,
   type SignedUrlResponse,
+  TOP_UP_PACK_ID_SCHEMA,
   type Thread,
   type ThreadMessage,
+  type TrialResponse,
   type UndoResponse,
   WORKSPACE_SLUG_SCHEMA,
   type Workspace,
@@ -398,11 +403,47 @@ export const LEDGER_ENTRY_SCHEMA = z.object({
 export const CHECKOUT_RESPONSE_SCHEMA = z.object({
   sessionId: z.string(),
   url: z.string(),
+  /** Present (true) when the server switched an existing subscription directly. */
+  planChanged: z.boolean().optional(),
 }) satisfies z.ZodType<CheckoutResponse>;
 
 export const PORTAL_RESPONSE_SCHEMA = z.object({
   url: z.string(),
 }) satisfies z.ZodType<PortalResponse>;
+
+const BILLING_ENTITLEMENTS_SCHEMA = z.object({
+  seats: z.number().int().nonnegative(),
+  models: z.array(z.string()),
+  maxProjects: z.number().int().nonnegative(),
+  storageBytes: z.number().int().nonnegative(),
+  renderMinutesPerMonth: z.number().int().nonnegative(),
+  monthlyCreditAllowance: z.number().int().nonnegative(),
+}) satisfies z.ZodType<BillingEntitlements>;
+
+/** `GET /v1/billing/state` — the ONE billing read the UI consumes (§M6.1). */
+export const BILLING_STATE_SCHEMA = z.object({
+  plan: PLAN_ID_SCHEMA,
+  status: BILLING_STATUS_SCHEMA,
+  currentPeriodEnd: isoSchema.nullable(),
+  trialEnd: isoSchema.nullable(),
+  cancelAtPeriodEnd: z.boolean(),
+  graceEnd: isoSchema.nullable(),
+  entitlements: BILLING_ENTITLEMENTS_SCHEMA,
+  // Raw ledger numbers in µc (D-12) — the same units as CREDITS_SUMMARY.balance.
+  credits: z.object({ balance: z.number(), reserved: z.number() }),
+  topUpPacks: z.array(
+    z.object({
+      packId: TOP_UP_PACK_ID_SCHEMA,
+      credits: z.number().int().positive(),
+    }),
+  ),
+}) satisfies z.ZodType<BillingState>;
+
+/** `POST /v1/billing/trial` — the started trial (D-4: state on the Starter row). */
+export const TRIAL_RESPONSE_SCHEMA = z.object({
+  trialStarted: z.literal(true),
+  trialEnd: isoSchema,
+}) satisfies z.ZodType<TrialResponse>;
 
 // ---------------------------------------------------------------------------
 // Renders

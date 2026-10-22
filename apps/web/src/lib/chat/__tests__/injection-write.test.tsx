@@ -21,11 +21,12 @@
  *   4. DUNDER DATA — dunder request ids and dunder param keys ride the apply
  *      as OWN data (null-prototype accumulators); the engine executes the
  *      clean parts; Object.prototype stays untouched (M4-N F-1, write path).
- *   5. FINDING F-6 (report-only) — the client's compiled-batch gate is
- *      SHAPE-only: a hostile command id passes it, and the ENGINE's own
- *      registry/NOT_IN_BATCH rejection (proved against the real fake editor)
- *      is the final defense. Pinned so a future client-side allowlist has a
- *      ready test to flip.
+ *   5. F-6 (FIXED) — the client's compiled-batch gate now checks the CURATED
+ *      ALLOWLIST (`isAgentCommand`, via the api-client runtime-contracts
+ *      seam) on top of shape/bounds: a hostile command id is a typed
+ *      invalid-batch with ZERO bridge calls BEFORE the engine is ever
+ *      touched. The engine's own registry/NOT_IN_BATCH rejections stay
+ *      pinned as defense-in-depth canaries (driven at the engine directly).
  *   6. RUN-STATE — a poisoned plan event's runtime fields fold to NULL (the
  *      M4 display-only card — no apply surface) while a clean batch survives.
  *   7. GLOBAL CANARY — after the whole suite, Object.prototype is untouched.
@@ -643,7 +644,8 @@ describe("M5-N client — dunder ids/keys ride the apply as inert data (F-1 less
 });
 
 // ---------------------------------------------------------------------------
-// 5. FINDING F-6 — the client gate is SHAPE-only; the ENGINE is the last wall
+// 5. FINDING F-6 FIXED — the client allowlist gate refuses hostile ids; the
+//    engine stays the defense-in-depth backstop (pinned directly)
 // ---------------------------------------------------------------------------
 
 describe("M5-N client — the timeout poison is SANITIZED, never executed as written", () => {
@@ -672,8 +674,8 @@ describe("M5-N client — the timeout poison is SANITIZED, never executed as wri
   });
 });
 
-describe("M5-N FINDING F-6 (report-only) — hostile command ids pass the client gate; the engine refuses", () => {
-  it("a dunder COMMAND in a well-shaped batch reaches engine.batch and the ENGINE rejects it (zero mutations)", async () => {
+describe("M5-N F-6 (FIXED) — the CLIENT allowlist gate refuses hostile command ids before the engine", () => {
+  it("a dunder COMMAND in a well-shaped batch → typed invalid-batch with ZERO bridge calls (the client gate, F-6)", async () => {
     const harness = await makeApplyHarness({ comps: [{ name: "Main" }] });
     await harness.fake.execute("layer.newText", { text: "Hello" });
     const dirtyBefore = harness.fake.state.dirty;
@@ -686,21 +688,19 @@ describe("M5-N FINDING F-6 (report-only) — hostile command ids pass the client
       }),
     );
 
-    // The client's validCompiledBatch checks SHAPE only — the hostile command
-    // passed it (FINDING F-6). The outcome is the ENGINE's typed refusal…
-    expect(outcome).toMatchObject({ ok: false, reason: "engine-failed" });
-    if (!("message" in outcome)) throw new Error("unreachable");
-    expect(outcome.message).toContain("unknown command");
-    // …exactly ONE engine.batch reached the bridge…
-    expect(harness.recorded.executeCalls).toHaveLength(1);
-    expect(harness.recorded.executeCalls[0]?.command).toBe("engine.batch");
-    // …NOTHING mutated (no save, no applyRun) and the prototype stayed clean.
-    expect(harness.timeline).toEqual([]);
-    expect(harness.applyCalls).toEqual([]);
+    // The client allowlist gate (isAgentCommand via @studio/api-client/chat-tools)
+    // refuses BEFORE the engine: a typed invalid-batch, zero engine calls.
+    expect(outcome).toMatchObject({ ok: false, reason: "invalid-batch" });
+    if (!("message" in outcome) || outcome.ok) throw new Error("unreachable");
+    expect(outcome.message).toContain("may not run");
+    expect(harness.recorded.executeCalls).toEqual([]); // NOTHING reached the engine
+    expect(harness.timeline).toEqual([]); // no markDirty, no saveNow
+    expect(harness.applyCalls).toEqual([]); // no applyRun
+    expect(harness.fake.state.dirty).toBe(dirtyBefore); // nothing mutated
     expectPrototypeClean();
   });
 
-  it("engine.batch INSIDE a batch (the NOT_IN_BATCH escape) is refused by the engine the same way", async () => {
+  it("engine.batch INSIDE a batch (the NOT_IN_BATCH escape) is refused by the CLIENT gate the same way", async () => {
     const harness = await makeApplyHarness({ comps: [{ name: "Main" }] });
     await harness.fake.execute("layer.newText", { text: "Hello" });
 
@@ -711,11 +711,41 @@ describe("M5-N FINDING F-6 (report-only) — hostile command ids pass the client
       }),
     );
 
-    expect(outcome).toMatchObject({ ok: false, reason: "engine-failed" });
-    if (!("message" in outcome)) throw new Error("unreachable");
-    expect(outcome.message).toContain("can't run inside a batch");
+    expect(outcome).toMatchObject({ ok: false, reason: "invalid-batch" });
+    expect(harness.recorded.executeCalls).toEqual([]);
     expect(harness.timeline).toEqual([]);
     expect(harness.applyCalls).toEqual([]);
+    expectPrototypeClean();
+  });
+
+  it("DEFENSE-IN-DEPTH canaries: driven at the engine DIRECTLY, the registry + NOT_IN_BATCH refusals still fire", async () => {
+    const harness = await makeApplyHarness({ comps: [{ name: "Main" }] });
+    await harness.fake.execute("layer.newText", { text: "Hello" });
+    const before = harness.fake.state;
+
+    // The dunder command still hits the ENGINE's own registry refusal…
+    await expect(
+      harness.fake.execute("engine.batch", {
+        label: "Agent: canary",
+        atomic: true,
+        steps: [{ command: "__proto__", params: { polluted: "M5N-WIRE-DUNDER-CMD" } }],
+      }),
+    ).rejects.toThrow("unknown command");
+    // …and the nested engine.batch still hits the NOT_IN_BATCH rule.
+    await expect(
+      harness.fake.execute("engine.batch", {
+        label: "Agent: canary",
+        atomic: true,
+        steps: [
+          {
+            command: "engine.batch",
+            params: { steps: [{ command: "evil.delete.everything", params: {} }] },
+          },
+        ],
+      }),
+    ).rejects.toThrow("inside a batch");
+    expect(harness.recorded.executeCalls).toEqual([]); // the canaries bypassed the bridge
+    expect(harness.fake.state.project.layers.length).toBe(before.project.layers.length);
     expectPrototypeClean();
   });
 });

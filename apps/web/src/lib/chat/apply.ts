@@ -7,34 +7,61 @@
  * typed union the plan card (M5-G) renders:
  *
  *  `apply(plan)`:
- *    1. resolve each `resolutionRequests` entry against the LIVE layer list
+ *    1. validate the `compiledBatch` shape AND allowlist every step id
+ *       against the curated agent registry (F-6: `isAgentCommand` via the
+ *       api-client runtime-contracts seam) — a non-member id is a typed
+ *       `invalid-batch` BEFORE any engine traffic (the engine's registry +
+ *       NOT_IN_BATCH rejections stay the defense-in-depth backstop);
+ *    2. resolve each `resolutionRequests` entry against the LIVE layer list
  *       (the executor's list_layers path: `comp.info {}` → `layers`) — a name
  *       matching exactly one layer binds it; ambiguous or unknown names fail
  *       BEFORE any engine mutation;
- *    2. patch the `compiledBatch` placeholders with the resolved layer ids
+ *    3. patch the `compiledBatch` placeholders with the resolved layer ids
  *       (deterministic deep clone; null-prototype request map — the M4-N F-1
  *       lesson: model-adjacent keys never touch `Object.prototype`);
- *    3. `bridge.execute("engine.batch", batch)` — ONE call. Verified wire:
+ *    4. `bridge.execute("engine.batch", batch)` — ONE call. Verified wire:
  *       the bridge passes the params object through `effectcraft.execute` →
  *       `engine.execute` → `batch.rs`, which reads `{steps, label?, atomic?}`
  *       (extra keys such as `timeoutMs` ride inert upstream — `timeoutMs` is
  *       §8.5 bound metadata the compiled batch carries, not an engine param);
- *    4. on success `await autosave.saveNow("agent-apply")` (D-6) — this
+ *    5. on success `await autosave.saveNow("agent-apply")` (D-6) — this
  *       uploads a NEW immutable version; the outcome's `version.id` is the
  *       applied versionId;
- *    5. `api.runs.applyRun(runId, {batchSha256, versionId, idempotencyKey})` —
+ *    6. `api.runs.applyRun(runId, {batchSha256, versionId, idempotencyKey})` —
  *       sha256 over the exact patched batch payload (WebCrypto via the
  *       editor-session sha256Hex, with its vector-tested sync fallback for
- *       hosts without `crypto.subtle` — never a new dependency), idempotency
- *       key generated ONCE per user gesture. Gateway errors map: 409 →
- *       conflict (explains, never re-applies), 402 → insufficient credits,
- *       else typed failure.
+ *       hosts without `crypto.subtle` — never a new dependency). Gateway
+ *       errors map: 409 → conflict (explains, never re-applies), 402 →
+ *       insufficient credits, else typed failure.
  *
- *  `undo(runId)`: `bridge.execute("edit.undo")` (the whole run folded into ONE
- *   undo step by `batch.rs`) THEN `api.runs.undoRun(runId, {idempotencyKey})`.
- *   If `edit.undo` fails ("nothing to undo" — the upstream `can_undo` guard,
- *   edit.rs:12) the gateway is NOT told — a typed `{ok:false}` comes back and
- *   the version rows are never touched (§9.3). The post-undo state is left to
+ *  Retention (law #4; F-L1/F-L2/F-L4 — the `toolresult:<runId>:<callId>`
+ *  retention in tool-executor.ts is the precedent): once a run's batch has
+ *  EXECUTED, the controller retains per run —
+ *   * the gesture's idempotency key + the report pieces (batchSha256,
+ *     resolvedLayers), so a RETRY of the same gesture reuses the key
+ *     (a fresh gesture after a failure that never executed — or after a
+ *     terminal outcome — mints a fresh key), and
+ *   * the applied batch's label ("Agent: <summary>", from the compiledBatch),
+ *     which `undo` compares against the engine's `{undone: label}` answer.
+ *
+ *  `retrySave(runId)` (F-L1): the re-save-only recovery for a run whose batch
+ *   executed but whose version upload / gateway report did not land — steps
+ *   5+6 ONLY; `engine.batch` is NEVER re-executed. The plan card's save-failed
+ *   state wires "Retry save" to this; a typed `failed` answers when no
+ *   applied-batch context is retained.
+ *
+ *  `undo(runId, hint?)`: `bridge.execute("edit.undo")` (the whole run folded
+ *   into ONE undo step by `batch.rs`). The engine answers `{undone: label}`
+ *   (edit.rs undo), which is compared against the run's batch label — the
+ *   retained label, or `hint.batchLabel` when the thread layer passes the
+ *   planRuntime's compiledBatch label for a controller that never saw the
+ *   apply. An UNKNOWN or MISMATCHED pop is a typed
+ *   `{ok:false, reason:"undo-stack-mismatch"}` and the gateway is NOT told
+ *   (F-L4: the row never claims an undo that didn't happen; the popped
+ *   batch sits on the redo stack and the outcome says so). Only a verified
+ *   pop reaches `api.runs.undoRun(runId, {idempotencyKey})`. If `edit.undo`
+ *   fails ("nothing to undo" — the upstream `can_undo` guard, edit.rs:12)
+ *   the gateway is NOT told either (§9.3). The post-undo state is left to
  *   the D-6 cadence + the before-close save (undo is not a D-6 moment).
  *
  *  `reapply(plan)`: only when the client's CURRENT version id equals the plan's
@@ -56,6 +83,7 @@
 
 import type { SaveOutcome } from "@/lib/editor-session";
 import { sha256Hex } from "@/lib/editor-session";
+import { isAgentCommand } from "@studio/api-client/chat-tools";
 import type { AgentBatch, BatchStep } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { isBridgeError, messageOf } from "@studio/editor-bridge";
@@ -139,15 +167,21 @@ export type ApplyOutcome =
       readonly message: string;
     }
   | {
-      /** The D-6 save failed to upload a version — the gateway was not told. */
+      /** The D-6 save failed to upload a version — the gateway was not told.
+       * F-L1: the batch DID execute; `batchApplied` says so and the retained
+       * context backs a `retrySave` that never re-executes the batch. */
       readonly ok: false;
       readonly reason: "save-failed";
+      readonly batchApplied?: true;
       readonly message: string;
     }
   | {
-      /** The D-6 save hit PROJECT_VERSION_CONFLICT (autosave parked) — reload to recover. */
+      /** The D-6 save hit PROJECT_VERSION_CONFLICT (autosave parked) — reload
+       * to recover. F-L1: the batch DID execute; a parked conflict is
+       * terminal for the session, so the recovery is the reload, not a retry. */
       readonly ok: false;
       readonly reason: "save-conflict";
+      readonly batchApplied?: true;
       readonly message: string;
     }
   | {
@@ -182,6 +216,15 @@ export type UndoOutcome =
   | { readonly ok: false; readonly reason: "engine-failed"; readonly message: string }
   | { readonly ok: false; readonly reason: "editor-disconnected"; readonly message: string }
   | {
+      /** F-L4 — the engine popped a batch that is not this run's (or one that
+       * could not be verified): the pop is surfaced honestly (the popped edit
+       * sits on the redo stack) and the gateway was NOT told — the row never
+       * claims an undo that didn't happen. */
+      readonly ok: false;
+      readonly reason: "undo-stack-mismatch";
+      readonly message: string;
+    }
+  | {
       /** Gateway 409 — the run is not in an applied state (already undone?). */
       readonly ok: false;
       readonly reason: "conflict";
@@ -193,6 +236,15 @@ export type UndoOutcome =
       readonly message: string;
       readonly code?: string;
     };
+
+/**
+ * Optional `undo` hint (F-L4): the thread layer passes the plan's compiled-batch
+ * label when the controller has no retained record (e.g. a fresh controller
+ * over a session whose engine history still holds the applied batch).
+ */
+export interface UndoHint {
+  readonly batchLabel?: string;
+}
 
 /** `apply`/`undo` milestones for the host page (banners, telemetry) — never throws. */
 export type ApplyEngineEvent =
@@ -301,8 +353,17 @@ export interface CreateApplyControllerOptions {
 /** The pinned M5-SEAMS interface (apply/undo/reapply; redo stays engine-side). */
 export interface ApplyController {
   apply(plan: ApplicablePlan): Promise<ApplyOutcome>;
-  undo(runId: string): Promise<UndoOutcome>;
+  /** F-L4: the optional `hint` carries the plan's compiled-batch label when
+   * the caller holds it (the thread layer's planRuntime) — see UndoHint. */
+  undo(runId: string, hint?: UndoHint): Promise<UndoOutcome>;
   reapply(plan: ApplicablePlan): Promise<ApplyOutcome>;
+  /**
+   * F-L1 — the re-save-only recovery: re-runs the D-6 save + the gateway
+   * report for a run whose batch EXECUTED but whose version/report did not
+   * land. NEVER re-executes `engine.batch`. A typed `failed` answers when
+   * nothing is retained (the plan card's save-failed state wires this).
+   */
+  retrySave(runId: string): Promise<ApplyOutcome>;
 }
 
 // ---------------------------------------------------------------------------
@@ -535,8 +596,29 @@ export async function batchSha256Hex(payload: unknown): Promise<string> {
 // The controller
 // ---------------------------------------------------------------------------
 
+/**
+ * What the controller retains per run ONCE ITS BATCH EXECUTED (F-L1/F-L2;
+ * the `toolresult:<runId>:<callId>` retention in tool-executor.ts is the
+ * precedent): the apply gesture's idempotency key — a RETRY of the same
+ * gesture reuses it; a fresh gesture after a failure that never executed, or
+ * after a terminal outcome (applied / 409 / 402), mints a fresh key — plus
+ * the pieces the save + report steps need. Cleared on every terminal outcome;
+ * retained while a save or report is still owed.
+ */
+interface RunApplyRecord {
+  readonly idempotencyKey: string;
+  readonly batchSha256: string;
+  readonly resolvedForWire: readonly PostedResolvedLayer[];
+}
+
 export function createApplyController(options: CreateApplyControllerOptions): ApplyController {
   const { bridge, autosave, api } = options;
+
+  /** Retained per-run apply-gesture records (F-L1/F-L2). */
+  const runRecords = new Map<string, RunApplyRecord>();
+  /** Retained per-run applied-batch labels (F-L4) — they OUTLIVE a successful
+   * apply (undo needs them) and are spent by a VERIFIED pop. */
+  const appliedLabels = new Map<string, string>();
 
   const notify = (event: ApplyEngineEvent): void => {
     const callback = options.onEvent;
@@ -553,10 +635,102 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
     return outcome;
   };
 
+  /**
+   * Steps 5+6 of the apply flow — shared by apply/reapply AND the F-L1
+   * re-save-only retry (which starts here, never touching the engine):
+   * upload the applied state as a NEW version (awaited BEFORE the applyRun
+   * report so the gateway always sees a version that exists), then report.
+   */
+  const saveAndReport = async (runId: string, record: RunApplyRecord): Promise<ApplyOutcome> => {
+    const saved: SaveOutcome = await autosave.saveNow(AGENT_APPLY_SAVE_REASON);
+    if (saved.saved !== true || saved.version === undefined) {
+      // No version ⇒ the gateway is never told "applied". The divergence
+      // (engine applied, version not) is surfaced honestly via
+      // `batchApplied` + the copy, and the record STAYS so the card's
+      // Retry save (retrySave) re-runs ONLY these steps (F-L1).
+      return failApply(
+        runId,
+        saved.conflict === true
+          ? {
+              ok: false,
+              reason: "save-conflict",
+              batchApplied: true,
+              message:
+                "The project changed elsewhere while the agent was working. Reload the latest version to continue — the edit is in the editor only.",
+            }
+          : {
+              ok: false,
+              reason: "save-failed",
+              batchApplied: true,
+              message:
+                "The edit was applied but could not be saved as a version. It is in the editor only.",
+            },
+      );
+    }
+    const versionId = saved.version.id;
+
+    try {
+      const response = await api.runs.applyRun(runId, {
+        batchSha256: record.batchSha256,
+        versionId,
+        idempotencyKey: record.idempotencyKey,
+        ...(record.resolvedForWire.length > 0 ? { resolvedLayers: record.resolvedForWire } : {}),
+      });
+      // Terminal success: the gesture reported — release the retained key.
+      runRecords.delete(runId);
+      const outcome: ApplyOutcome = {
+        ok: true,
+        versionId: typeof response.versionId === "string" ? response.versionId : versionId,
+        creditsCommitted: response.creditsCommitted,
+      };
+      notify({
+        type: "apply.completed",
+        runId,
+        versionId: outcome.versionId,
+        creditsCommitted: outcome.creditsCommitted,
+      });
+      return outcome;
+    } catch (error) {
+      const failure = apiFailure(error);
+      if (failure.status === 409 || failure.status === 402) {
+        // Terminal server answers: release the retained key (a retry after
+        // these is a NEW gesture — a retained key would make the idempotency
+        // middleware replay the cached 409/402 answer forever).
+        runRecords.delete(runId);
+      }
+      if (failure.status === 409) {
+        return failApply(runId, {
+          ok: false,
+          reason: "conflict",
+          message:
+            "This plan was already applied or the run changed on the server. Nothing was re-executed.",
+        });
+      }
+      if (failure.status === 402) {
+        return failApply(runId, {
+          ok: false,
+          reason: "insufficient-credits",
+          message:
+            "The edit and its version are saved, but there were not enough credits to commit this run.",
+        });
+      }
+      // Network/other failures keep the record: a retry of THIS gesture
+      // reuses the key (F-L2) and the gateway's {batchSha256, versionId}
+      // replay branch dedupes server-side.
+      return failApply(runId, {
+        ok: false,
+        reason: "failed",
+        message:
+          failure.message !== ""
+            ? failure.message
+            : "The edit and its version are saved, but reporting it to the server failed.",
+        code: failure.code,
+      });
+    }
+  };
+
   /** The shared execute-then-save-then-report path (apply + reapply). */
   const runApply = async (plan: ApplicablePlan): Promise<ApplyOutcome> => {
-    // One gesture = one idempotency key (law #4), whatever happens below.
-    const idempotencyKey = crypto.randomUUID();
     notify({ type: "apply.started", runId: plan.runId });
 
     const compiled = validCompiledBatch(plan.compiledBatch);
@@ -567,6 +741,24 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
         message: "The plan's compiled batch is malformed. Ask the agent to plan again.",
       });
     }
+    // F-6 — the client allowlist gate: every step id must be a curated agent
+    // command BEFORE anything reaches the engine (bounds/shape checks alone
+    // let hostile ids through to the engine's own registry, the finding).
+    if (compiled.steps.some((step) => !isAgentCommand(step.command))) {
+      return failApply(plan.runId, {
+        ok: false,
+        reason: "invalid-batch",
+        message:
+          "The plan's compiled batch contains a command the agent may not run. Ask the agent to plan again.",
+      });
+    }
+
+    // One gesture = one idempotency key (law #4). F-L2: a retained record
+    // means this is a RETRY of a gesture whose batch already executed — reuse
+    // its key (the toolresult:<runId>:<callId> precedent). Fresh gestures
+    // after pre-execution failures / terminal outcomes mint fresh keys.
+    const retained = runRecords.get(plan.runId);
+    const idempotencyKey = retained?.idempotencyKey ?? crypto.randomUUID();
 
     // 1. Resolve layer names against the live list — read-only; on any
     //    ambiguity NOTHING executes (no engine.batch, no save, no applyRun).
@@ -625,88 +817,53 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
       });
     }
 
-    // 4. D-6: upload the applied state as a NEW version (awaited BEFORE the
-    //    applyRun report so the gateway always sees a version that exists).
-    autosave.markDirty?.(AGENT_APPLY_SAVE_REASON);
-    const saved: SaveOutcome = await autosave.saveNow(AGENT_APPLY_SAVE_REASON);
-    if (saved.saved !== true || saved.version === undefined) {
-      return failApply(
-        plan.runId,
-        saved.conflict === true
-          ? {
-              ok: false,
-              reason: "save-conflict",
-              message:
-                "The project changed elsewhere while the agent was working. Reload the latest version to continue — the edit is in the editor only.",
-            }
-          : {
-              ok: false,
-              reason: "save-failed",
-              message:
-                "The edit was applied but could not be saved as a version. It is in the editor only.",
-            },
-      );
-    }
-    const versionId = saved.version.id;
+    // The batch executed: retain the gesture key + report pieces for retries
+    // (F-L1/F-L2) and the batch label for the undo verification (F-L4).
+    const record: RunApplyRecord = { idempotencyKey, batchSha256, resolvedForWire };
+    runRecords.set(plan.runId, record);
+    appliedLabels.set(plan.runId, compiled.label);
 
-    // 5. Report to the gateway (ledger commit + run.applied, idempotent).
-    try {
-      const response = await api.runs.applyRun(plan.runId, {
-        batchSha256,
-        versionId,
-        idempotencyKey,
-        ...(resolvedForWire.length > 0 ? { resolvedLayers: resolvedForWire } : {}),
-      });
-      const outcome: ApplyOutcome = {
-        ok: true,
-        versionId: typeof response.versionId === "string" ? response.versionId : versionId,
-        creditsCommitted: response.creditsCommitted,
-      };
-      notify({
-        type: "apply.completed",
-        runId: plan.runId,
-        versionId: outcome.versionId,
-        creditsCommitted: outcome.creditsCommitted,
-      });
-      return outcome;
-    } catch (error) {
-      const failure = apiFailure(error);
-      if (failure.status === 409) {
-        return failApply(plan.runId, {
-          ok: false,
-          reason: "conflict",
-          message:
-            "This plan was already applied or the run changed on the server. Nothing was re-executed.",
-        });
-      }
-      if (failure.status === 402) {
-        return failApply(plan.runId, {
-          ok: false,
-          reason: "insufficient-credits",
-          message:
-            "The edit and its version are saved, but there were not enough credits to commit this run.",
-        });
-      }
-      return failApply(plan.runId, {
-        ok: false,
-        reason: "failed",
-        message:
-          failure.message !== ""
-            ? failure.message
-            : "The edit and its version are saved, but reporting it to the server failed.",
-        code: failure.code,
-      });
-    }
+    // 4. D-6: upload the applied state as a NEW version, then report (the
+    // shared steps 5+6 — also the whole of the F-L1 re-save-only retry).
+    autosave.markDirty?.(AGENT_APPLY_SAVE_REASON);
+    return await saveAndReport(plan.runId, record);
   };
 
   return {
     apply: (plan: ApplicablePlan): Promise<ApplyOutcome> => runApply(plan),
 
-    async undo(runId: string): Promise<UndoOutcome> {
+    /**
+     * F-L1 — the RE-SAVE-ONLY recovery: the engine step is not in question
+     * (the batch already executed), so `engine.batch` is NEVER re-run; only
+     * the D-6 version upload + the gateway report retry, with the retained
+     * gesture key and the original batchSha256/resolvedLayers.
+     */
+    retrySave: async (runId: string): Promise<ApplyOutcome> => {
+      const record = runRecords.get(runId);
+      if (record === undefined) {
+        // Nothing executed-and-unsaved through THIS controller: an honest
+        // typed refusal — never a silent re-execute of anything.
+        return failApply(runId, {
+          ok: false,
+          reason: "failed",
+          message:
+            "This plan has no applied edit to re-save in this session. If the edit is still in the editor, save a version from the editor menu.",
+        });
+      }
+      return await saveAndReport(runId, record);
+    },
+
+    async undo(runId: string, hint?: UndoHint): Promise<UndoOutcome> {
       notify({ type: "undo.started", runId });
-      // ONE edit.undo reverts the WHOLE run (batch.rs folds the steps).
+      // The run's applied-batch label (F-L4): the retained label wins; the
+      // optional hint (the thread layer passes the planRuntime's
+      // compiledBatch label) covers a controller that never saw the apply.
+      const expectedLabel = appliedLabels.get(runId) ?? hint?.batchLabel;
+      // ONE edit.undo reverts the WHOLE run (batch.rs folds the steps); the
+      // engine answers {undone: label} (edit.rs undo).
+      let popped: { undone?: unknown } | undefined;
       try {
-        await bridge.execute("edit.undo");
+        popped = await bridge.execute<{ undone?: unknown }>("edit.undo");
       } catch (error) {
         const failure = bridgeOutcome(error);
         const outcome: UndoOutcome = NOTHING_TO_UNDO_RE.test(failure.message)
@@ -717,6 +874,39 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
         notify({ type: "undo.failed", runId, outcome });
         return outcome;
       }
+      const poppedLabel =
+        popped !== undefined && typeof popped.undone === "string" ? popped.undone : undefined;
+      // F-L4 — the stack-blind undo guard: verify the engine popped THE
+      // RUN'S batch before telling the gateway. An unknown or mismatched pop
+      // is surfaced honestly (the popped edit sits on the redo stack) and
+      // the gateway row is never told an undo that didn't happen.
+      if (poppedLabel === undefined || poppedLabel !== expectedLabel) {
+        // The popped batch belongs to a different gesture: its run's retained
+        // label + record (if any) are now stale — the applied state left the
+        // stack through this run's undo.
+        if (poppedLabel !== undefined) {
+          for (const [id, label] of appliedLabels) {
+            if (label === poppedLabel) {
+              appliedLabels.delete(id);
+              runRecords.delete(id);
+            }
+          }
+        }
+        const outcome: UndoOutcome = {
+          ok: false,
+          reason: "undo-stack-mismatch",
+          message:
+            poppedLabel === undefined
+              ? "The editor undid an unnamed edit, so this run's undo could not be verified. The server was not told — redo restores it."
+              : expectedLabel === undefined
+                ? "This plan's edit could not be matched in this session's undo stack, so its undo was not reported. The server was not told — redo restores the edit the editor undid."
+                : "A different edit was on top of the undo stack, so this run was not marked undone. Undo that edit first, or redo to restore it.",
+        };
+        notify({ type: "undo.failed", runId, outcome });
+        return outcome;
+      }
+      // Verified: THE RUN'S batch popped — the retained label is spent.
+      appliedLabels.delete(runId);
       try {
         await api.runs.undoRun(runId, { idempotencyKey: crypto.randomUUID() });
         notify({ type: "undo.completed", runId });

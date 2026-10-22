@@ -46,7 +46,8 @@ import { LAYOUT_STORAGE_KEY } from "@/components/chat/layout";
 import { ChatPanelSlot } from "@/components/editor-host/chat-panel-slot";
 import { createChatShortcutBus } from "@/components/editor-host/chat-shortcut-bus";
 import { DEFAULT_FLAGS } from "@/lib/chat/context";
-import { type ChatContextApi, ChatProvider } from "@/lib/chat/provider";
+import { type ChatApplyPorts, type ChatContextApi, ChatProvider } from "@/lib/chat/provider";
+import type { SaveOutcome } from "@/lib/editor-session";
 import type { ApiClient } from "@studio/api-client";
 import type { ChatRequest, EditPlan, StudioStreamEvent, Thread } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
@@ -90,6 +91,20 @@ interface PostedEvent {
   readonly idempotencyKey: string | undefined;
 }
 
+/** One POST to /v1/runs/:id/apply (the ApplyController's report). */
+interface PostedApplyRun {
+  readonly runId: string;
+  readonly body: Record<string, unknown>;
+  readonly idempotencyKey: string | undefined;
+}
+
+/** One POST to /v1/runs/:id/undo. */
+interface PostedUndoRun {
+  readonly runId: string;
+  readonly body: Record<string, unknown>;
+  readonly idempotencyKey: string | undefined;
+}
+
 const THREAD_ID = "thr_1";
 
 const FAST_MODEL = {
@@ -105,6 +120,10 @@ const MODELS_OK = { plan: "trial", models: [FAST_MODEL] };
 function makeWire(options: { readonly models?: "ok" | "fail" } = {}) {
   const segments: WireSegment[] = [];
   const postEvents: PostedEvent[] = [];
+  const applyRuns: PostedApplyRun[] = [];
+  const undoRuns: PostedUndoRun[] = [];
+  /** Scripted applyRun rejections (shifted per call; apply.ts's apiFailure shape). */
+  const applyFailures: Array<{ status: number; code: string; message: string }> = [];
 
   const active = (): WireSegment => {
     const segment = segments[segments.length - 1];
@@ -162,6 +181,31 @@ function makeWire(options: { readonly models?: "ok" | "fail" } = {}) {
         postEvents.push({ runId, body, idempotencyKey: options?.idempotencyKey });
         return null;
       },
+      applyRun: async (
+        runId: string,
+        body: Record<string, unknown>,
+        options?: { idempotencyKey?: string },
+      ) => {
+        const failure = applyFailures.shift();
+        if (failure !== undefined) {
+          // ApiError-shaped rejection (apply.ts's apiFailure reads status/code/message).
+          throw failure;
+        }
+        applyRuns.push({ runId, body, idempotencyKey: options?.idempotencyKey });
+        return {
+          applied: true as const,
+          versionId: body.versionId as string,
+          creditsCommitted: 1,
+        };
+      },
+      undoRun: async (
+        runId: string,
+        body: Record<string, unknown>,
+        options?: { idempotencyKey?: string },
+      ) => {
+        undoRuns.push({ runId, body, idempotencyKey: options?.idempotencyKey });
+        return { undone: true as const };
+      },
     },
   } as unknown as ApiClient;
 
@@ -201,7 +245,19 @@ function makeWire(options: { readonly models?: "ok" | "fail" } = {}) {
     });
   };
 
-  return { client, segments, postEvents, active, feed, finishRun, dropOnce, dropToPause };
+  return {
+    client,
+    segments,
+    postEvents,
+    applyRuns,
+    undoRuns,
+    applyFailures,
+    active,
+    feed,
+    finishRun,
+    dropOnce,
+    dropToPause,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,10 +272,26 @@ interface BridgeCalls {
   renderFrames: number;
 }
 
-/** The deterministic project: comp "Main" + a selected text layer "Headline". */
+/**
+ * The deterministic project: comp "Main" + a selected text layer "Headline".
+ */
 async function makeFakeEditorWithSelection(): Promise<FakeEditor> {
   const fake = createFakeEditor({ comps: [{ name: "Main" }] });
   await fake.execute("layer.newText", { text: "Headline" });
+  return fake;
+}
+
+/**
+ * The hostile duplicate-name project (the .ecproj Twin threat): TWO REAL
+ * layers named "Headline" (ids 1 and 2 — `layer.rename` does NOT uniquify,
+ * mirroring upstream), so the name resolution and the picked-id apply both run
+ * against real engine state.
+ */
+async function makeFakeEditorWithTwinNames(): Promise<FakeEditor> {
+  const fake = createFakeEditor({ comps: [{ name: "Main" }] });
+  await fake.execute("layer.newText", { text: "Headline" }); // id 1
+  await fake.execute("layer.newText", { text: "Twin" }); // id 2 (uniquified name)
+  await fake.execute("layer.rename", { layer: 2, name: "Headline" }); // real twins
   return fake;
 }
 
@@ -264,13 +336,24 @@ interface Harness {
 
 // ---------------------------------------------------------------------------
 // Seeded mount: ChatProvider + the REAL composed panel over a fake editor
-// carrying a real comp + selection
+// carrying a real comp + selection. `applyPorts` wires the REAL ApplyController
+// (M5-Q); `twinNames` seeds the hostile duplicate-name project.
 // ---------------------------------------------------------------------------
 
+interface MountOptions {
+  readonly models?: "ok" | "fail";
+  readonly applyPorts?: ChatApplyPorts;
+  /** Seeds the hostile duplicate-name project (the Twin threat). */
+  readonly twinNames?: boolean;
+}
+
 async function mountSeeded(
-  options: { readonly models?: "ok" | "fail" } = {},
+  options: MountOptions = {},
 ): Promise<{ harness: Harness; fake: FakeEditor }> {
-  const fake = await makeFakeEditorWithSelection();
+  const fake =
+    options.twinNames === true
+      ? await makeFakeEditorWithTwinNames()
+      : await makeFakeEditorWithSelection();
   const wire = makeWire({ models: options.models });
   const { bridge, calls } = makeRecordedBridge(fake);
   let api: ChatContextApi | null = null;
@@ -281,6 +364,7 @@ async function mountSeeded(
       workspaceId="ws_test"
       projectId="prj_test"
       shortcutBus={createChatShortcutBus()}
+      {...(options.applyPorts !== undefined ? { applyPorts: options.applyPorts } : {})}
     >
       {(current) => {
         api = current;
@@ -976,5 +1060,544 @@ describe("M4-L web chat integration — steer queue (§3.4)", () => {
     expect(screen.getAllByTestId("chat-message")).toHaveLength(4);
     expect(harness.getApi().snapshot.activeRunId).toBe("run_2");
     expect(screen.getAllByTestId("chat-message")[3]?.dataset.role).toBe("assistant");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M5-Q — the WIRED apply journey (BUILD_PLAN §M5.4/§M5.5; DECISIONS D-21/D-22)
+//
+// The REAL mounted thread end-to-end: ChatProvider (with applyPorts → the REAL
+// createApplyController over the REAL fake bridge + scripted autosave/api
+// ports) → ChatPanelSlot → ChatThread → ChatMessageView → the M5-G PlanCard +
+// M5-H PlanPreview. Fakes remain ONLY the wire + the ports; every gesture
+// flows through the real controller, the real run-state folds and the real
+// apply engine.
+// ---------------------------------------------------------------------------
+
+/** The version head the plan was proposed against (D-21 → the plan event). */
+const BASE_VERSION_ID = "ver_base_1";
+
+/** The D-6 apply save reason pinned by apply.ts. */
+const AGENT_APPLY_REASON = "agent-apply";
+
+/** A §8.6-valid display plan (EDIT_PLAN_SCHEMA shape). */
+function wiredPlan(risk: "low" | "high"): EditPlan {
+  return {
+    intent: "edit",
+    summary:
+      risk === "high" ? "Retitle the headline (destructive variant)" : "Retitle the headline",
+    risk: "low", // the MODEL's lie — the server event overrides it (D-21)
+    requiresApproval: false,
+    affectedLayers: [{ id: 1, name: "Headline", change: "Text → New headline" }],
+    estimatedCredits: 12, // the MODEL's lie — the server value wins on the card
+    steps: [
+      {
+        title: "Set the text to New headline",
+        tool: "studio.set_properties",
+        args: {},
+        batch: {
+          label: "Agent: retitle the headline",
+          steps: [{ command: "prop.set", params: {} }],
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * A compiledBatch-carrying plan event (the M5 wire shape). `layer` is either
+ * the pinned `$request:` placeholder (the compiler's real output — the CLIENT
+ * resolves by name) or the concrete id 1 (probe-friendly plans).
+ */
+function wiredPlanEvent(options: {
+  readonly seq: number;
+  readonly risk?: "low" | "medium" | "high";
+  readonly withResolution?: boolean;
+  readonly autoApply?: { readonly mode: "auto" | "propose"; readonly reason: string };
+}): StudioStreamEvent {
+  const layerParam: string | number = options.withResolution === true ? "$request:req_head" : 1;
+  return {
+    type: "plan",
+    runId: "run_1",
+    seq: options.seq,
+    plan: wiredPlan(options.risk === "high" ? "high" : "low"),
+    compiledBatch: {
+      label: "Agent: retitle the headline",
+      atomic: true,
+      steps: [
+        {
+          command: "prop.set",
+          params: { layer: layerParam, path: "text/sourceText", value: "New headline" },
+        },
+      ],
+    },
+    ...(options.withResolution === true
+      ? {
+          resolutionRequests: [
+            { requestId: "req_head", layerName: "Headline", disambiguation: [] },
+          ],
+        }
+      : {}),
+    risk: options.risk ?? "low",
+    estimatedCredits: 2.25, // server-recomputed — beats the plan's 12 on the card
+    baseVersionId: BASE_VERSION_ID,
+    ...(options.autoApply !== undefined ? { autoApply: options.autoApply } : {}),
+  };
+}
+
+/** The scripted apply-session ports: recorded saveNow reasons, flippable outcome. */
+function makeApplyPorts(config: { readonly currentVersionId?: string | null } = {}) {
+  const saves: string[] = [];
+  let saveCount = 0;
+  let failSaves = 0;
+  const sessionState = { current: config.currentVersionId ?? null };
+  const ports: ChatApplyPorts = {
+    autosave: {
+      saveNow: async (reason: string): Promise<SaveOutcome> => {
+        saves.push(reason);
+        if (failSaves > 0) {
+          failSaves -= 1;
+          return { saved: false };
+        }
+        saveCount += 1;
+        return {
+          saved: true,
+          version: {
+            id: `ver_apply_${saveCount}`,
+            label: null,
+            sha256: "0".repeat(64),
+            sizeBytes: 8,
+          },
+        };
+      },
+      markDirty: (reason?: string) => saves.push(`markDirty:${reason ?? "unnamed"}`),
+    },
+    session: { currentVersionId: () => sessionState.current },
+  };
+  return {
+    ports,
+    saves,
+    sessionState,
+    failNextSave: (): void => {
+      failSaves += 1;
+    },
+  };
+}
+
+/** Sends + streams one full plan run to the settled (phase "done") thread. */
+async function streamSettledPlanRun(harness: Harness, event: StudioStreamEvent): Promise<void> {
+  await waitFor(() => expect(harness.getApi().models).not.toBeNull());
+  act(() => {
+    harness.getApi().send({ message: "retitle the headline" });
+  });
+  await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
+  harness.wire.feed({ type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" }, event);
+  harness.wire.feed({ type: "run.completed", runId: "run_1", seq: 9 });
+  harness.wire.finishRun("run_1");
+}
+
+describe("M5-Q web chat integration — the wired apply journey", () => {
+  it('apply happy path: settled card → Apply → ONE engine.batch → saveNow("agent-apply") → applyRun → applied', async () => {
+    const user = userEvent.setup();
+    const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
+    const { harness } = await mountSeeded({ applyPorts: ports.ports });
+    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+
+    // Mid-stream gate proof (the run just settled): the card is proposed with
+    // the FULL M5 surface — the server's credits VERBATIM (2.25, never the
+    // plan's 12), the server's risk, the Apply/Cancel pair.
+    const card = screen.getByTestId("plan-card");
+    expect(card.dataset.status).toBe("proposed");
+    expect(card.dataset.risk).toBe("low");
+    expect(screen.getByTestId("plan-credits").textContent).toBe("≈ 2.25 credits");
+    const apply = screen.getByTestId("plan-apply");
+    expect(apply).toBeEnabled();
+    expect(screen.getByTestId("plan-cancel")).toBeInTheDocument();
+
+    // The M5-H preview mounted (low risk) — and HONESTLY failed: the probe
+    // batch carries the raw `$request:` token, so the engine refused it before
+    // the user confirmed anything (probe = engine.batch + rollback only).
+    await waitFor(() =>
+      expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
+    );
+
+    // Click Apply → resolve (comp.info) → ONE engine.batch → saveNow → applyRun.
+    await user.click(apply);
+    await waitFor(() => expect(card.dataset.status).toBe("applied"));
+    expect(screen.getByTestId("plan-applied").textContent).toContain(
+      "Applied — Version ver_apply_1 · one undo step.",
+    );
+    expect(screen.getByTestId("plan-undo")).toBeInTheDocument();
+
+    // Engine discipline: the apply gesture executed engine.batch EXACTLY
+    // once (the failed preview probe rode bridge.batch — the §8.5 entry point
+    // preview.ts uses — and rolled back, never touching executes).
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(1);
+    expect(harness.bridgeCalls.batches).toBe(1); // the probe (rejected: raw $request token)
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "edit.undo")).toHaveLength(0);
+    expect(ports.saves).toEqual([
+      "markDirty:agent-apply", // the belt-and-braces dirty flag (D-6)
+      AGENT_APPLY_REASON, // the D-6 apply moment
+    ]);
+
+    // The exact applyRun report (M5-E wire): patched sha, the UPLOADED version
+    // id, a gesture key, and the name→id resolutions — layerId STRINGIFIED
+    // (the provider's cross-seam adapter: apply.ts pins numbers, the wire IDs).
+    expect(harness.wire.applyRuns).toHaveLength(1);
+    const posted = harness.wire.applyRuns[0];
+    expect(posted?.runId).toBe("run_1");
+    expect(typeof posted?.body.idempotencyKey).toBe("string");
+    expect((posted?.body.idempotencyKey as string).length ?? 0).toBeGreaterThanOrEqual(8);
+    expect(posted?.body.versionId).toBe("ver_apply_1");
+    expect(posted?.body.batchSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(posted?.body.resolvedLayers).toEqual([{ requestId: "req_head", layerId: "1" }]);
+    expect(harness.wire.undoRuns).toHaveLength(0);
+  });
+
+  it("cancel: the proposed card's Cancel dismisses it (status cancelled) and nothing ever executes", async () => {
+    const user = userEvent.setup();
+    const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
+    const { harness } = await mountSeeded({ applyPorts: ports.ports });
+    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    // Wait the probe out (nothing user-visible depends on it).
+    await waitFor(() =>
+      expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
+    );
+
+    await user.click(screen.getByTestId("plan-cancel"));
+    const card = screen.getByTestId("plan-card");
+    expect(card.dataset.status).toBe("cancelled");
+    expect(screen.getByTestId("plan-cancelled").textContent).toContain(
+      "Plan cancelled — nothing was applied.",
+    );
+    // Nothing user-driven executed: the probe was REJECTED before any engine
+    // mutation (raw $request token), and the gesture never ran.
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(0);
+    expect(harness.wire.applyRuns).toHaveLength(0);
+    expect(ports.saves).toEqual([]);
+  });
+
+  it("conflict 409: the card renders the conflict copy (re-apply blocked), never re-drives", async () => {
+    const user = userEvent.setup();
+    const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
+    const { harness } = await mountSeeded({ applyPorts: ports.ports });
+    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    await waitFor(() =>
+      expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
+    );
+    harness.wire.applyFailures.push({
+      status: 409,
+      code: "VERSION_CONFLICT",
+      message: "This run's plan was already applied.",
+    });
+
+    await user.click(screen.getByTestId("plan-apply"));
+    const card = screen.getByTestId("plan-card");
+    await waitFor(() => expect(card.dataset.status).toBe("conflict"));
+    expect(screen.getByTestId("plan-conflict").textContent).toContain(
+      "Apply was rejected — the project moved on while this plan was waiting.",
+    );
+    expect(screen.getByTestId("plan-conflict-detail").textContent).toContain(
+      // apply.ts's OWN 409 copy — the client explains, it never echoes the
+      // server's raw message at the card.
+      "This plan was already applied or the run changed on the server. Nothing was re-executed.",
+    );
+    expect(within(screen.getByTestId("plan-actions")).queryAllByRole("button")).toHaveLength(0);
+    // Exactly ONE report POST — no client auto-retry, no re-execution.
+    expect(harness.wire.applyRuns).toHaveLength(0); // the fake REJECTS — nothing recorded
+    expect(harness.wire.applyFailures).toHaveLength(0); // the scripted failure was consumed
+    expect(ports.saves).toEqual(["markDirty:agent-apply", AGENT_APPLY_REASON]);
+  });
+
+  it("ambiguous resolution: candidates render, the pick re-drives the apply bound to the chosen id (ONE batch executes)", async () => {
+    const user = userEvent.setup();
+    const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
+    const { harness, fake } = await mountSeeded({
+      applyPorts: ports.ports,
+      twinNames: true, // the hostile duplicate-name project
+    });
+    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    // The preview probe fails (the raw $request token) — wait it out.
+    await waitFor(() =>
+      expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
+    );
+
+    // Apply → resolution sees TWO "Headline" layers → typed ambiguous,
+    // NOTHING executed (zero engine.batch), the candidates render as picks.
+    await user.click(screen.getByTestId("plan-apply"));
+    const card = screen.getByTestId("plan-card");
+    await waitFor(() => expect(card.dataset.status).toBe("ambiguous-resolution"));
+    expect(screen.getByTestId("plan-ambiguous").textContent).toContain(
+      "a layer name matches more than one layer",
+    );
+    const resolution = screen.getByTestId("plan-resolution");
+    expect(resolution.textContent).toContain("Headline");
+    const candidates = screen.getAllByTestId("plan-candidate");
+    // The engine's comp order is not part of the contract — assert the SET.
+    expect(candidates.map((entry) => entry.textContent).sort()).toEqual([
+      "Headline (layer 1)",
+      "Headline (layer 2)",
+    ]);
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(0);
+    expect(harness.wire.applyRuns).toHaveLength(0);
+
+    // The pick re-drives the apply: the chosen id is PRE-PATCHED into the
+    // batch (it rides the batch, not the wire — no resolvedLayers) and the
+    // engine executed the batch exactly ONCE (the probe never mutated).
+    const pick = candidates.find((entry) => entry.textContent === "Headline (layer 2)");
+    expect(pick).toBeDefined();
+    await user.click(pick as HTMLElement);
+    await waitFor(() => expect(card.dataset.status).toBe("applied"));
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(1);
+    expect(harness.wire.applyRuns).toHaveLength(1);
+    const posted = harness.wire.applyRuns[0];
+    expect(posted?.body.resolvedLayers).toBeUndefined(); // the pick replaced the request
+    expect(posted?.body.versionId).toBe("ver_apply_1");
+    expect(posted?.body.batchSha256).toMatch(/^[0-9a-f]{64}$/);
+    // The engine proves the pick: the CHOSEN twin (id 2) carries the edit; the
+    // other twin (id 1) is untouched.
+    const pickedText = (await fake.execute("prop.get", {
+      layer: 2,
+      path: "text/sourceText",
+    })) as { value: unknown };
+    expect(pickedText.value).toBe("New headline");
+    const otherText = (await fake.execute("prop.get", {
+      layer: 1,
+      path: "text/sourceText",
+    })) as { value: unknown };
+    expect(otherText.value).toBe("Headline");
+  });
+
+  it("undo → undone; re-apply ENABLED while the session still sits on the plan's base version (no drift)", async () => {
+    const user = userEvent.setup();
+    const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
+    const { harness } = await mountSeeded({ applyPorts: ports.ports });
+    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    await waitFor(() =>
+      expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
+    );
+
+    // Apply → applied.
+    await user.click(screen.getByTestId("plan-apply"));
+    const card = screen.getByTestId("plan-card");
+    await waitFor(() => expect(card.dataset.status).toBe("applied"));
+
+    // Undo: ONE edit.undo + undoRun → the card flips undone, Re-apply ENABLED.
+    await user.click(screen.getByTestId("plan-undo"));
+    await waitFor(() => expect(card.dataset.status).toBe("undone"));
+    expect(screen.getByTestId("plan-undone").textContent).toContain(
+      "Undone — the batch reverted; the version stays in history.",
+    );
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "edit.undo")).toHaveLength(1);
+    expect(harness.wire.undoRuns).toHaveLength(1);
+    expect(harness.wire.undoRuns[0]?.runId).toBe("run_1");
+    const reapply = screen.getByTestId("plan-reapply");
+    expect(reapply).toBeEnabled(); // sessionVersionId === baseVersionId (not drifted)
+    expect(screen.queryByTestId("plan-reapply-blocked")).toBeNull();
+
+    // Re-apply re-drives the FULL gesture: a fresh key, the same content sha.
+    await user.click(reapply);
+    await waitFor(() => expect(card.dataset.status).toBe("applied"));
+    expect(harness.wire.applyRuns).toHaveLength(2);
+    expect(harness.wire.applyRuns[1]?.body.versionId).toBe("ver_apply_2");
+    expect(harness.wire.applyRuns[1]?.body.idempotencyKey).not.toBe(
+      harness.wire.applyRuns[0]?.body.idempotencyKey,
+    );
+    expect(harness.wire.applyRuns[1]?.body.batchSha256).toBe(
+      harness.wire.applyRuns[0]?.body.batchSha256,
+    );
+  });
+
+  it("re-apply is BLOCKED with the §M5.5 explanation when the session moved past the plan's base version (drifted)", async () => {
+    const user = userEvent.setup();
+    const ports = makeApplyPorts({ currentVersionId: "ver_drifted_9" });
+    const { harness } = await mountSeeded({ applyPorts: ports.ports });
+    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    await waitFor(() =>
+      expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
+    );
+
+    await user.click(screen.getByTestId("plan-apply"));
+    const card = screen.getByTestId("plan-card");
+    await waitFor(() => expect(card.dataset.status).toBe("applied"));
+    await user.click(screen.getByTestId("plan-undo"));
+    await waitFor(() => expect(card.dataset.status).toBe("undone"));
+
+    const reapply = screen.getByTestId("plan-reapply");
+    expect(reapply).toBeDisabled();
+    expect(screen.getByTestId("plan-reapply-blocked").textContent).toContain(
+      "Re-apply is blocked — the project moved on since this run was undone.",
+    );
+
+    // A hostile click on the disabled control can never fire (toBeDisabled);
+    // nothing re-executed and no report left the client.
+    expect(harness.wire.applyRuns).toHaveLength(1);
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(1);
+  });
+
+  it("high risk: the checkbox gates Apply, the confirm dialog double-gates it (Escape keeps proposed), and NO preview probes the engine", async () => {
+    const user = userEvent.setup();
+    const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
+    const { harness } = await mountSeeded({ applyPorts: ports.ports });
+    await streamSettledPlanRun(
+      harness,
+      wiredPlanEvent({ seq: 2, risk: "high", withResolution: true }),
+    );
+
+    const card = screen.getByTestId("plan-card");
+    expect(card.dataset.risk).toBe("high");
+    expect(screen.getByTestId("plan-requires-confirmation").textContent).toContain(
+      "High risk — requires confirmation",
+    );
+    // The high-risk card NEVER probes: no preview slot (probing executes the
+    // batch + undo — nothing runs before the user confirms).
+    expect(screen.queryByTestId("plan-preview")).toBeNull();
+    expect(screen.queryByTestId("plan-preview-panel")).toBeNull();
+    // D-22: auto-apply NEVER pre-arms a high-risk card (no autoApply on this
+    // event either — the pre-arm test below covers the low-risk arm).
+
+    const checkbox = screen.getByTestId("plan-confirm-checkbox");
+    const apply = screen.getByTestId("plan-apply");
+    expect(apply).toBeDisabled();
+    await user.click(checkbox);
+    expect(apply).toBeEnabled();
+
+    // First gate pass → the confirm dialog; Escape cancels WITHOUT applying.
+    await user.click(apply);
+    const dialog = screen.getByTestId("chat-confirm-dialog");
+    expect(screen.getByTestId("chat-confirm-title").textContent).toContain(
+      "Apply this high-risk plan?",
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByTestId("chat-confirm-dialog")).toBeNull());
+    expect(card.dataset.status).toBe("proposed");
+    expect(harness.bridgeCalls.executes).toEqual([]);
+
+    // Confirmed apply: the dialog's Confirm fires the ONE atomic batch.
+    await user.click(apply);
+    await user.click(screen.getByTestId("chat-confirm-confirm"));
+    await waitFor(() => expect(card.dataset.status).toBe("applied"));
+    const batches = harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch");
+    expect(batches).toHaveLength(1); // no probe for high risk — exactly the apply
+    expect(harness.wire.applyRuns).toHaveLength(1);
+    expect(screen.getByTestId("plan-applied").textContent).toContain("· one undo step.");
+  });
+
+  it("preview (M5-H): a low-risk plan WITHOUT name placeholders mounts the before/after frames (probe → render → undo)", async () => {
+    const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
+    const { harness, fake } = await mountSeeded({ applyPorts: ports.ports });
+    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2 })); // concrete layer id
+
+    // The probe: ONE engine.batch (applied momentarily) + ONE render + ONE
+    // edit.undo restoring the state — nothing stays applied (§8.5 atomicity).
+    await waitFor(() =>
+      expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("ready"),
+    );
+    expect(screen.getByTestId("plan-preview-frames")).toBeInTheDocument();
+    expect(screen.getByTestId("plan-preview-before-img")).toBeInTheDocument();
+    expect(screen.getByTestId("plan-preview-after-img")).toBeInTheDocument();
+    expect(screen.getByTestId("plan-preview-note").textContent).toContain(
+      "The after frame is a temporary preview — nothing is applied until you choose Apply.",
+    );
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(0); // the apply has not run yet
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "edit.undo")).toHaveLength(1);
+    expect(harness.bridgeCalls.batches).toBe(1); // the probe (bridge.batch — §8.5 entry point)
+    expect(harness.bridgeCalls.renderFrames).toBeGreaterThanOrEqual(2); // before + after
+
+    // The probe left the engine state restored: the apply afterwards is the
+    // only mutation, and the engine still holds ONE undoable step afterwards.
+    const text = (await fake.execute("prop.get", {
+      layer: 1,
+      path: "text/sourceText",
+    })) as { value: unknown };
+    expect(text.value).toBe("Headline"); // probe restored
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("plan-apply"));
+    await waitFor(() => expect(screen.getByTestId("plan-card").dataset.status).toBe("applied"));
+    const applied = (await fake.execute("prop.get", {
+      layer: 1,
+      path: "text/sourceText",
+    })) as { value: unknown };
+    expect(applied.value).toBe("New headline");
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(1);
+  });
+
+  it("D-22 pre-arm: an auto verdict pre-arms the LOW-risk card (hint + focused Apply) — Apply is still the user's click", async () => {
+    const user = userEvent.setup();
+    const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
+    const { harness } = await mountSeeded({ applyPorts: ports.ports });
+    await streamSettledPlanRun(
+      harness,
+      wiredPlanEvent({
+        seq: 2,
+        withResolution: true,
+        autoApply: { mode: "auto", reason: "eligible" },
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
+    );
+
+    // Armed: the hint renders and Apply carries the focus emphasis…
+    expect(screen.getByTestId("plan-auto-armed").textContent).toContain(
+      "Auto-apply is on — review the plan, then press Apply.",
+    );
+    const apply = screen.getByTestId("plan-apply");
+    expect(document.activeElement).toBe(apply);
+
+    // …but NOTHING executed from the event alone (D-22): no batch, no save,
+    // no report until the explicit click.
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(0);
+    expect(ports.saves).toEqual([]);
+    expect(harness.wire.applyRuns).toHaveLength(0);
+
+    // The click is still the driver: the armed card applies like any other.
+    await user.click(apply);
+    await waitFor(() => expect(screen.getByTestId("plan-card").dataset.status).toBe("applied"));
+    expect(harness.wire.applyRuns).toHaveLength(1);
+  });
+
+  it('F-L3 save-failed: the card shows the honest "in the editor only" copy and Retry save NEVER re-executes the batch (F-L1)', async () => {
+    const user = userEvent.setup();
+    const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
+    const { harness } = await mountSeeded({ applyPorts: ports.ports });
+    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2 })); // concrete id → clean probe
+    await waitFor(() =>
+      expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("ready"),
+    );
+
+    // Script the FIRST saveNow to fail — the batch executed, the version did
+    // not upload, the gateway was never told (apply.ts's honest ordering).
+    ports.failNextSave();
+    await user.click(screen.getByTestId("plan-apply"));
+    const card = screen.getByTestId("plan-card");
+    await waitFor(() => expect(card.dataset.status).toBe("failed"));
+    // F-L3: the controller's HONEST copy renders verbatim — never the generic
+    // "nothing changed" alone.
+    expect(screen.getByTestId("plan-failed-detail").textContent).toContain(
+      "The edit was applied but could not be saved as a version.",
+    );
+    expect(harness.wire.applyRuns).toHaveLength(0); // no applyRun without a version
+    // The probe (bridge.batch) + the one executed apply — split across the two
+    // bridge entry points, so each count is EXACTLY one here.
+    const executedApplyBatches = harness.bridgeCalls.executes.filter(
+      (cmd) => cmd === "engine.batch",
+    ).length;
+    expect(executedApplyBatches).toBe(1);
+    expect(harness.bridgeCalls.batches).toBe(1);
+
+    // The card's Try-again is wired to the re-save-only seam: engine.batch is
+    // NEVER re-executed (F-L1's doubling hazard is structurally impossible).
+    await user.click(screen.getByTestId("plan-retry"));
+    await waitFor(() => expect(card.dataset.status).toBe("applied"));
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch").length).toBe(
+      executedApplyBatches,
+    ); // UNCHANGED — the batch never re-ran
+    expect(harness.bridgeCalls.batches).toBe(1); // the probe never re-ran either
+    expect(ports.saves.filter((entry) => entry === AGENT_APPLY_REASON).length).toBe(2); // re-saved
+    expect(harness.wire.applyRuns).toHaveLength(1);
+    expect(harness.wire.applyRuns[0]?.body.versionId).toBe("ver_apply_1");
+    // F-L2 retention: the retry reuses the SAME gesture idempotency key.
+    expect(typeof harness.wire.applyRuns[0]?.body.idempotencyKey).toBe("string");
   });
 });

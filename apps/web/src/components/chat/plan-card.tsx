@@ -29,6 +29,13 @@
  *    `reapplyDrifted` disables it and explains why (BP M5.5).
  *  * "failed"     → "nothing changed" copy + the outcome's message; a quiet
  *    Try again re-fires `onApply`.
+ *  * "save-failed"→ F-L1/F-L3 copy for the executed-but-unsaved state: "The
+ *    edit is in the editor, but its version could not be saved." + the
+ *    outcome's message + Retry save (`onRetrySave` → the apply engine's
+ *    re-save-only `retrySave` — engine.batch is never re-executed). For the
+ *    save-CONFLICT arm the thread layer passes the same status WITHOUT
+ *    `onRetrySave` (a parked conflict is terminal — the reload copy rides
+ *    `statusDetail`).
  *  * "conflict"   → 409 VERSION_CONFLICT copy: re-apply is blocked because
  *    the project moved on; no actions.
  *  * "ambiguous-resolution" → the layer-resolution candidates (the plan
@@ -52,6 +59,11 @@
  * Exported surface (docs/phases/M5-SEAMS.md ownership map, M5-G):
  *   PlanCardProps + PlanCard, PlanCardStatus, PLAN_CARD_STATUSES,
  *   PlanResolutionRequest.
+ *
+ * M5-R additive delta (F-L1/F-L3): status "save-failed" + the onRetrySave
+ * callback — the thread layer maps apply outcomes reason "save-failed" (and
+ * "save-conflict", without onRetrySave) to it. New testids: plan-save-failed,
+ * plan-save-failed-detail, plan-retry-save.
  */
 
 import type { EditPlan, PlanRisk } from "@studio/contracts";
@@ -67,6 +79,7 @@ export type PlanCardStatus =
   | "applied"
   | "undone"
   | "failed"
+  | "save-failed"
   | "conflict"
   | "ambiguous-resolution"
   | "cancelled";
@@ -78,6 +91,7 @@ export const PLAN_CARD_STATUSES: readonly PlanCardStatus[] = [
   "applied",
   "undone",
   "failed",
+  "save-failed",
   "conflict",
   "ambiguous-resolution",
   "cancelled",
@@ -146,6 +160,13 @@ export interface PlanCardProps {
   onUndo?: () => void;
   /** Re-apply after undone (or try-again intent wired by the thread layer). */
   onReapply?: () => void;
+  /**
+   * F-L1 — the save-failed state's "Retry save" action: the thread layer
+   * wires it to the apply engine's re-save-only `retrySave(runId)` (the
+   * version upload + gateway report retry; the batch is NEVER re-executed).
+   * Absent for the save-conflict arm (a parked conflict needs the reload).
+   */
+  onRetrySave?: () => void;
   /** The user picked a candidate for an ambiguous layer name. */
   onResolveCandidate?: (requestId: string, candidate: string) => void;
   /** Optional footer note (M4 prop, kept; no default anymore). */
@@ -193,6 +214,7 @@ export function PlanCard({
   onCancel,
   onUndo,
   onReapply,
+  onRetrySave,
   onResolveCandidate,
   note,
 }: PlanCardProps): ReactElement {
@@ -492,6 +514,43 @@ export function PlanCard({
             {onApply !== undefined ? (
               <Button variant="secondary" size="sm" data-testid="plan-retry" onClick={onApply}>
                 Try again
+              </Button>
+            ) : null}
+          </>
+        ) : null}
+        {status === "save-failed" ? (
+          <>
+            <p
+              data-testid="plan-save-failed"
+              className="flex w-full items-start gap-2 text-body-s text-warning"
+            >
+              <TriangleAlert
+                size={16}
+                strokeWidth={1.75}
+                aria-hidden="true"
+                className="mt-0.5 shrink-0"
+              />
+              <span className="min-w-0">
+                The edit is in the editor, but its version could not be saved.
+              </span>
+            </p>
+            {statusDetail !== undefined ? (
+              <p
+                data-testid="plan-save-failed-detail"
+                dir="auto"
+                className="w-full text-caption text-secondary"
+              >
+                {statusDetail}
+              </p>
+            ) : null}
+            {onRetrySave !== undefined ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="plan-retry-save"
+                onClick={onRetrySave}
+              >
+                Retry save
               </Button>
             ) : null}
           </>

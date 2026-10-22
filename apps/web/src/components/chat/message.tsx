@@ -6,21 +6,110 @@
  * assistant messages are plain on the panel background with a sparkle mark —
  * NO avatars. System-style notices (credits) are inline lines, not toasts.
  *
+ * M5-Q — the REAL Apply path through the thread (BUILD_PLAN §M5.4/§M5.5,
+ * D-21/D-22, the M5-G card contract): when the message carries an M5
+ * `planRuntime` (a compiledBatch rode the plan event) AND the thread layer
+ * passed {@link PlanMessageWiring}, this module maps the runtime's lifecycle to
+ * the card's status/callback props and mounts M5-H's PlanPreview in the
+ * card's `preview` slot. Without a runtime — or without wiring — the mount is
+ * BYTE-IDENTICAL to the M4 read-only card (`<PlanCard plan applied={false} />`),
+ * so the M4.6 read-only guarantee holds by structure: no engine, no Apply.
+ *
+ * Wiring rules shipped here (pinned by apps/web/tests/chat-integration.test.tsx):
+ *  * Actions mount only when the plan's run is SETTLED — the message's run is
+ *    not the live active run (`runId !== activeRunId`), or the thread phase is
+ *    `done`. Mid-stream cards render read-only (the gateway's /apply answers
+ *    409 RUN_NOT_ACTIVE while the run is still planning — the gate is honest).
+ *  * status ← planRuntime.outcome: idle→proposed, applying→applying,
+ *    applied/undoing→applied (+versionLabel), undone→undone (+reapplyDrifted),
+ *    undo-failed→applied + a note (the card has no undo-failed status; the
+ *    note carries the honest message and Undo stays retryable),
+ *    apply-failed→by §7.3 code: LAYER_AMBIGUOUS→ambiguous-resolution (the
+ *    outcome's candidates render as pick buttons), VERSION_CONFLICT→conflict,
+ *    BASE_VERSION_CHANGED→undone+drifted (the run is still undone; the §M5.5
+ *    explanation IS the honest view), everything else→failed.
+ *  * F-L3 (M5-L): for save-failed/save-conflict/insufficient-credits/network
+ *    failures the card renders the CONTROLLER's honest statusDetail and gets
+ *    NO Try-again — the card's retry re-executes engine.batch and M5-L F-L1
+ *    proved that DOUBLES non-idempotent plans after a post-execution failure.
+ *    Try again exists only for PRE-execution failures (ambiguous, not-found,
+ *    resolution/invalid-batch, engine rollback, disconnect) where nothing ever
+ *    mutated. (A true "Retry save" affordance needs an apply.ts `retrySave`
+ *    seam — report-only, not this layer's file.)
+ *  * reapplyDrifted (§M5.5/D-21): the session's current version id ≠ the
+ *    plan event's baseVersionId (absent ⇒ conservatively drifted — apply.ts's
+ *    gate fails closed without it).
+ *  * Preview (M5-H): mounted for low/medium-risk plans ONLY — probing
+ *    EXECUTES the batch and undoes it, so a high-risk card must never probe
+ *    (the user has not confirmed anything yet); the component self-guards an
+ *    unsafe batch. Only in the proposed state (after apply/undo a re-probe is
+ *    pointless churn).
+ *  * D-22 pre-arm: `autoApply.mode === "auto"` (never for high risk) renders
+ *    the "Auto-apply is on" hint and focuses the Apply button — Apply is
+ *    STILL the user's explicit click; nothing ever executes from the event.
+ *
  * Exported surface (docs/phases/M4-SEAMS.md "Wave-2 UI contract", binding):
- *   ChatMessageViewProps + ChatMessageView.
+ *   ChatMessageViewProps + ChatMessageView (+ M5-Q: PlanMessageWiring).
  */
 
-import type { ChatUiMessage } from "@/lib/chat/types";
-import type { ReactElement } from "react";
+import type { ChatController } from "@/lib/chat/chat-controller";
+import { applicablePlanFromRuntime } from "@/lib/chat/run-state";
+import type { ChatUiMessage, PlanRuntime, RunPhase } from "@/lib/chat/types";
+import type { EditorBridge } from "@studio/editor-bridge";
+import { type ReactElement, type ReactNode, useEffect, useRef } from "react";
 import { Markdown } from "./markdown";
-import { PlanCard } from "./plan-card";
+import {
+  PlanCard,
+  type PlanCardProps,
+  type PlanCardStatus,
+  type PlanResolutionRequest,
+} from "./plan-card";
+import { PlanPreview } from "./plan-preview";
 import { ToolCard } from "./tool-card";
+
+/**
+ * The M5-Q wiring the thread layer hands each message (built in thread.tsx
+ * from the ChatProvider context). Absent (or `ready: false`) ⇒ the M4
+ * read-only card.
+ */
+export interface PlanMessageWiring {
+  /** True when the session's ApplyController is constructed (ports wired). */
+  readonly ready: boolean;
+  /** The thread controller (null before the lazy thread exists). */
+  readonly controller: ChatController | null;
+  /** The stable bridge — M5-H's PlanPreview creates its throwaway controller from it. */
+  readonly bridge: EditorBridge;
+  /** The session's current version id (the §M5.5 reapply-drift gate); null without a port. */
+  readonly sessionVersionId: string | null;
+  /** The whole-thread phase (the settled gate below). */
+  readonly phase: RunPhase;
+  /** The run currently streaming (the settled gate below). */
+  readonly activeRunId: string | null;
+}
 
 export interface ChatMessageViewProps {
   message: ChatUiMessage;
   /** Caret shows only on the ACTIVE assistant message while its run streams. */
   isStreaming: boolean;
+  /** M5-Q: the plan-card wiring (absent ⇒ the M4 read-only card). */
+  planWiring?: PlanMessageWiring | null;
 }
+
+/**
+ * Failure codes whose retry is SAFE: the engine never mutated anything during
+ * the attempt (apply.ts resolves/binds BEFORE engine.batch, and a rejected
+ * batch rolls back atomically upstream) — a fresh gesture can only succeed or
+ * fail the same way. Every POST-execution failure (save-failed, save-conflict,
+ * insufficient-credits, network, 409) is deliberately absent: M5-L F-L1 pinned
+ * the re-execution doubling hazard for non-idempotent plans.
+ */
+const PRE_EXECUTION_RETRYABLE: ReadonlySet<string> = new Set([
+  "LAYER_NOT_FOUND",
+  "PLAN_RESOLUTION_FAILED",
+  "PLAN_BATCH_INVALID",
+  "APPLY_ENGINE_FAILED",
+  "EDITOR_DISCONNECTED",
+]);
 
 /** The §9 streaming caret: 6×14px signal block, 1s step blink (tokens.css). */
 function StreamingCaret() {
@@ -33,9 +122,236 @@ function StreamingCaret() {
   );
 }
 
-export function ChatMessageView({ message, isStreaming }: ChatMessageViewProps): ReactElement {
+/**
+ * The failing request(s) of an ambiguous outcome → the card's pick surface.
+ * apply.ts resolves requests in order and aborts on the FIRST ambiguous name,
+ * so the failing request is the one whose layerName prefixes EVERY candidate
+ * (its pinned format is `"${layerName} (layer ${id})"`); the candidates
+ * replace the request's display-only disambiguation hints. Defensive fallback:
+ * the plan's own requests (a malformed outcome can never grow new buttons).
+ */
+function deriveAmbiguousRequests(runtime: PlanRuntime): readonly PlanResolutionRequest[] {
+  const candidates = runtime.candidates ?? [];
+  const requests = runtime.resolutionRequests ?? [];
+  if (candidates.length === 0) return requests;
+  const failing = requests.filter((request) =>
+    candidates.every((candidate) => candidate.startsWith(`${request.layerName} (layer `)),
+  );
+  if (failing.length === 0) return requests;
+  return failing.map((request) => ({
+    requestId: request.requestId,
+    layerName: request.layerName,
+    disambiguation: candidates,
+  }));
+}
+
+/**
+ * The full M5-G card contract derived from one message's runtime + the wiring.
+ * Pure: every branch is pinned by the chat-integration M5 scenarios. `null`
+ * when the message carries no plan (the caller renders no card).
+ */
+function derivePlanCardProps(
+  message: ChatUiMessage,
+  wiring: PlanMessageWiring | null | undefined,
+): PlanCardProps | null {
+  const plan = message.plan;
+  const runtime = message.planRuntime;
+  if (plan === undefined) return null;
+  if (runtime === undefined) {
+    // The M4 shape (no compiled batch on the wire): read-only card.
+    return { plan, applied: false };
+  }
+
+  // Server-recomputed card values (D-21/§8.8) — VERBATIM, never client math;
+  // undefined ⇒ the card falls back to the plan's own model-declared values.
+  const base: Pick<PlanCardProps, "plan" | "risk" | "estimatedCredits"> = {
+    plan,
+    ...(runtime.risk !== undefined ? { risk: runtime.risk } : {}),
+    ...(runtime.estimatedCredits !== undefined
+      ? { estimatedCredits: runtime.estimatedCredits }
+      : {}),
+  };
+
+  // The settled gate: the wiring exists AND this plan's run is not live.
+  const controller = wiring?.controller ?? null;
+  const settled =
+    wiring?.ready === true &&
+    controller !== null &&
+    message.runId !== undefined &&
+    (message.runId !== wiring.activeRunId || wiring.phase === "done");
+  const runId = message.runId ?? null;
+
+  if (!settled || runId === null) {
+    return { ...base, applied: false };
+  }
+  // ---- reapply drift (§M5.5/D-21) ------------------------------------------
+  const drifted =
+    runtime.baseVersionId === undefined ||
+    wiring.sessionVersionId === null ||
+    wiring.sessionVersionId !== runtime.baseVersionId;
+
+  // ---- callbacks (all close over the folded runtime, never stale props) ----
+  const gesturePlan = () => applicablePlanFromRuntime(runId, runtime);
+  const onApply = () => {
+    const next = gesturePlan();
+    controller.apply(next);
+  };
+  const onRetrySave = () => controller.retrySave(runId);
+  const onReapply = () => {
+    const next = gesturePlan();
+    controller.reapply(next);
+  };
+  const onUndo = () => controller.undo(runId);
+  const onCancel = () => controller.dismissPlan(runId);
+  const onResolveCandidate = (requestId: string, candidate: string) =>
+    controller.resolveCandidate(runId, requestId, candidate);
+
+  // ---- status (M5-G's machine, from planRuntime.outcome) --------------------
+  let status: PlanCardStatus = "proposed";
+  let statusDetail: string | undefined;
+  let versionLabel: string | undefined;
+  let note: string | undefined;
+  let reapplyDrifted = false;
+  let resolutionRequests: readonly PlanResolutionRequest[] | undefined;
+  let onApplyCallback: (() => void) | undefined;
+  let onReapplyCallback: (() => void) | undefined;
+
+  const error = runtime.error;
+  const errorCode = error?.code;
+
+  if (runtime.dismissed === true) {
+    status = "cancelled";
+  } else {
+    switch (runtime.outcome) {
+      case "idle": {
+        status = "proposed";
+        onApplyCallback = onApply;
+        break;
+      }
+      case "applying": {
+        status = "applying";
+        break;
+      }
+      case "applied":
+      case "undoing": {
+        // `undoing` renders as applied WITHOUT the Undo button — the click is
+        // in flight and a second edit.undo would pop a foreign undo step.
+        status = "applied";
+        versionLabel = runtime.versionId;
+        break;
+      }
+      case "undo-failed": {
+        // The card has no undo-failed status; the applied view is the true
+        // state and the note carries the honest failure (Undo stays retryable).
+        status = "applied";
+        versionLabel = runtime.versionId;
+        note =
+          error !== undefined
+            ? `Undo didn't finish — ${error.message}`
+            : "Undo didn't finish — try again.";
+        break;
+      }
+      case "undone": {
+        status = "undone";
+        reapplyDrifted = drifted;
+        onReapplyCallback = onReapply;
+        break;
+      }
+      case "apply-failed": {
+        if (errorCode === "LAYER_AMBIGUOUS") {
+          status = "ambiguous-resolution";
+          resolutionRequests = deriveAmbiguousRequests(runtime);
+        } else if (errorCode === "VERSION_CONFLICT") {
+          status = "conflict";
+          statusDetail = error?.message;
+        } else if (errorCode === "BASE_VERSION_CHANGED") {
+          // A re-drive hit the §M5.5 gate: the run is still UNDONE and the
+          // blocked explanation is the honest view — not a failed card.
+          status = "undone";
+          reapplyDrifted = true;
+        } else {
+          status = "failed";
+          statusDetail = error?.message;
+          // F-L1/F-L3: Try again ONLY when re-executing is safe. For
+          // POST-execution failures the card's Try-never wires a full
+          // re-apply (M5-L F-L1 pinned the doubling hazard) — save failures
+          // offer the engine's re-save-only `retrySave` instead (the batch is
+          // never re-executed; save-conflict stays actionless: the copy says
+          // reload). PRE-execution failures re-drive the full apply.
+          if (errorCode === "APPLY_SAVE_FAILED" || errorCode === "INSUFFICIENT_CREDITS") {
+            onApplyCallback = onRetrySave;
+          } else if (errorCode !== undefined && PRE_EXECUTION_RETRYABLE.has(errorCode)) {
+            onApplyCallback = onApply;
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  // ---- preview slot (M5-H) + D-22 pre-arm -----------------------------------
+  const resolvedRisk = runtime.risk ?? plan.risk;
+  const proposed = status === "proposed";
+  const highRisk = resolvedRisk === "high";
+  let preview: ReactNode | undefined;
+  if (proposed && !highRisk) {
+    // Low/medium risk only: the probe EXECUTES the batch + edit.undo, so a
+    // high-risk card must never probe (§6.2 — nothing runs before the user
+    // confirms). PlanPreview self-guards when the batch is unsafe.
+    preview = <PlanPreview batch={runtime.compiledBatch} plan={plan} bridge={wiring.bridge} />;
+  }
+  const preArmed = proposed && !highRisk && runtime.autoApply?.mode === "auto";
+
+  return {
+    ...base,
+    status,
+    ...(statusDetail !== undefined ? { statusDetail } : {}),
+    ...(versionLabel !== undefined ? { versionLabel } : {}),
+    ...(note !== undefined ? { note } : {}),
+    reapplyDrifted,
+    ...(resolutionRequests !== undefined ? { resolutionRequests } : {}),
+    preview,
+    ...(onApplyCallback !== undefined ? { onApply: onApplyCallback } : {}),
+    ...(proposed ? { onCancel } : {}),
+    ...(status === "applied" && (runtime.outcome === "applied" || runtime.outcome === "undo-failed")
+      ? { onUndo }
+      : {}),
+    ...(onReapplyCallback !== undefined ? { onReapply: onReapplyCallback } : {}),
+    ...(status === "ambiguous-resolution" ? { onResolveCandidate } : {}),
+  };
+}
+
+export function ChatMessageView({
+  message,
+  isStreaming,
+  planWiring,
+}: ChatMessageViewProps): ReactElement {
   const isUser = message.role === "user";
   const showCaret = isStreaming && !isUser;
+  const plan = message.plan;
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const armedOnceRef = useRef(false);
+
+  const derived = derivePlanCardProps(message, planWiring);
+  const preArmed =
+    derived !== null &&
+    planWiring !== null &&
+    planWiring !== undefined &&
+    planWiring.ready &&
+    derived.status === "proposed" &&
+    (derived.risk ?? plan?.risk) !== "high" &&
+    message.planRuntime?.autoApply?.mode === "auto";
+
+  // D-22 pre-arm: focus emphasis on Apply ONCE per message (never re-steal the
+  // focus on re-renders). Apply remains a click — nothing executes here.
+  useEffect(() => {
+    if (!preArmed || armedOnceRef.current) return;
+    const button = cardRef.current?.querySelector<HTMLElement>('[data-testid="plan-apply"]');
+    if (button === null || button === undefined) return;
+    armedOnceRef.current = true;
+    button.focus();
+  }, [preArmed]);
+
   return (
     <article
       data-testid="chat-message"
@@ -77,7 +393,19 @@ export function ChatMessageView({ message, isStreaming }: ChatMessageViewProps):
           ))}
         </div>
       ) : null}
-      {message.plan ? <PlanCard plan={message.plan} applied={false} /> : null}
+      {plan !== undefined && derived !== null ? (
+        <div ref={cardRef} className="flex w-full min-w-0 flex-col items-start">
+          {preArmed ? (
+            <p
+              data-testid="plan-auto-armed"
+              className="mb-1.5 text-caption font-medium text-signal"
+            >
+              Auto-apply is on — review the plan, then press Apply.
+            </p>
+          ) : null}
+          <PlanCard {...derived} />
+        </div>
+      ) : null}
       {message.credits ? (
         <p data-testid="chat-credits" className="text-caption text-muted">
           {message.credits.committed} credits used · balance {message.credits.balance}

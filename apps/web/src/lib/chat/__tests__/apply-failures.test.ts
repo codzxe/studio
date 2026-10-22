@@ -11,11 +11,11 @@
  * explain-copy contracts below are asserted VERBATIM against apply.ts.
  *
  * What each injection proves (the M5 safety invariant, client-side half):
- *   1 invalid command    → the bridge execute REJECTS → typed engine-failed;
- *     NOTHING posts to the gateway, `saveNow` is never called, the editor
- *     state is untouched (the client never saves/persists a bad state — the
- *     engine's atomic rollback is its own guarantee, asserted here through
- *     the real fake engine).
+ *   1 invalid command    → the CLIENT ALLOWLIST GATE (F-6, fixed) rejects it
+ *     as typed invalid-batch BEFORE any engine traffic — zero bridge calls,
+ *     nothing posts to the gateway, `saveNow` is never called, the editor
+ *     state is untouched. The engine's own registry/NOT_IN_BATCH refusals
+ *     stay pinned as defense-in-depth canaries driven at the engine DIRECTLY.
  *   2 mid-batch failure  → a poisoned step k fails INSIDE engine.batch →
  *     the engine rolls back atomically → same client guarantees; every
  *     surfaced error is a typed, stack-free line (law #1).
@@ -31,17 +31,24 @@
  *     version ARE saved (money moved nowhere); no crash — the controller
  *     keeps processing gestures.
  *   6 saveNow failure    → a successful engine.batch whose version upload
- *     fails → save-failed/save-conflict; NO applyRun (the gateway never
- *     hears "applied" without a persisted version); the divergence (engine
- *     applied, version not) is SURFACED honestly — pinned + judged below.
+ *     fails → save-failed/save-conflict carrying `batchApplied: true` (F-L1);
+ *     NO applyRun (the gateway never hears "applied" without a persisted
+ *     version); the divergence (engine applied, version not) is SURFACED
+ *     honestly — and the RE-SAVE-ONLY recovery (`retrySave`) re-runs
+ *     saveNow+applyRun WITHOUT re-executing engine.batch (the fixed doubling
+ *     hazard; a plain re-apply still re-executes and is pinned as the
+ *     contrast below).
  *   7 post-save network  → applyRun NETWORK_ERROR after saveNow succeeded →
  *     typed failed; exactly ONE POST per gesture (no client auto-retry).
- *     PIN + FINDING: the gesture's idempotencyKey is NOT retained — a retry
- *     gesture posts a FRESH key (the task expected reuse; see the worklog
- *     M5-L record + the header of this test group).
+ *     FIXED (F-L2): the gesture's idempotencyKey is RETAINED — a retry
+ *     gesture REUSES the same key (the toolresult:<runId>:<callId>
+ *     retention precedent, tool-executor.ts).
  *   8 undo failures      → nothing-to-undo / engine failure → NO undoRun
  *     POST; undoRun 409 / network → typed outcomes with the local undo's
- *     divergence surfaced honestly.
+ *     divergence surfaced honestly; the F-L4 stack-blind guard verifies the
+ *     engine's {undone: label} against the run's batch label before the
+ *     gateway is ever told (mismatch/unknown → typed undo-stack-mismatch,
+ *     zero undoRun POSTs).
  *   9 panic sweep        → the M4-N corpus, dunder ids, 100k strings, deep
  *     nesting: the controller never throws (every outcome typed), never
  *     writes Object.prototype, and never sends engine.batch a step whose id
@@ -63,9 +70,15 @@
 import { ApiError, networkError } from "@studio/api-client";
 import { AGENT_COMMAND_IDS } from "@studio/contracts";
 import { BridgeError } from "@studio/editor-bridge";
+import { attachFakeBridge } from "@studio/editor-bridge/fake";
 import { describe, expect, it } from "vitest";
 
-import type { ApplicablePlan, ApplyOutcome, UndoOutcome } from "@/lib/chat/apply";
+import {
+  type ApplicablePlan,
+  type ApplyOutcome,
+  type UndoOutcome,
+  createApplyController,
+} from "@/lib/chat/apply";
 import {
   type FailureHarness,
   type RecordedExecuteCall,
@@ -133,6 +146,7 @@ const FAILURE_REASONS: ReadonlySet<string> = new Set([
   "base-version-changed",
   "failed",
   "nothing-to-undo",
+  "undo-stack-mismatch",
 ]);
 
 /** Law #1: an outcome message is a safe, stack-free, path-free single line. */
@@ -149,11 +163,11 @@ function expectMessageHygienic(message: string, label: string): void {
 const BATCH_LABEL = "Agent: dim the headline";
 
 // ---------------------------------------------------------------------------
-// 1. Invalid command in the compiled batch → the engine REJECTS
+// 1. Invalid command in the compiled batch — the CLIENT allowlist gate (F-6)
 // ---------------------------------------------------------------------------
 
-describe("M5-L · engine rejects the compiled batch", () => {
-  it("unknown command id → engine-failed (the brief's 'engine-rejected'); NOTHING posts/saves; editor untouched", async () => {
+describe("M5-L · non-agent commands in the compiled batch", () => {
+  it("unknown command id → the CLIENT GATE refuses it (F-6 fix): typed invalid-batch, ZERO engine calls, nothing posts/saves; editor untouched", async () => {
     const harness = await makeFailureHarness();
     const before = harness.state();
 
@@ -161,28 +175,41 @@ describe("M5-L · engine rejects the compiled batch", () => {
       stepsPlan("Agent: bad command", [{ command: "layer.explode", params: { bang: true } }]),
     );
 
-    expect(outcome).toMatchObject({ ok: false, reason: "engine-failed" });
+    expect(outcome).toMatchObject({ ok: false, reason: "invalid-batch" });
     if (!outcome.ok) expectMessageHygienic(outcome.message, "unknown command");
-    if (!outcome.ok) expect(outcome.message).toContain("unknown command");
 
-    // The gateway never hears "applied"; autosave never runs; nothing is dirty.
+    // The gate fired BEFORE anything: no engine traffic at all (not even the
+    // attempted engine.batch of the old engine-refusal pin), no autosave, no
+    // gateway POST, nothing dirty.
+    expect(harness.executeCalls).toEqual([]);
+    expect(harness.queryCalls).toEqual([]);
     expect(harness.applyCalls).toHaveLength(0);
     expect(harness.saveReasons).toHaveLength(0);
     expect(harness.markDirtyReasons).toHaveLength(0);
-    expect(harness.timeline).toEqual(["execute:engine.batch"]);
+    expect(harness.timeline).toEqual([]);
 
-    // The engine's atomic rollback left NO partial edit (exit criterion).
+    // The engine's atomic state is byte-identical (exit criterion).
     expect(harness.state()).toEqual(before);
     // The client never re-executes on its own (fresh gesture required).
     await settle();
-    expect(harness.executeCalls).toHaveLength(1);
+    expect(harness.executeCalls).toHaveLength(0);
 
     expect(harness.events.map((event) => event.type)).toEqual(["apply.started", "apply.failed"]);
-    // Not a curated id: the allowlist agrees with the engine.
+    // Not a curated id: the allowlist agrees with the gate.
     expect(AGENT_COMMAND_IDS).not.toContain("layer.explode");
+    // Defense-in-depth canary: the ENGINE still refuses the id when a batch
+    // reaches it directly (the backstop behind the client gate).
+    await expect(
+      harness.fake.execute("engine.batch", {
+        label: "Agent: canary",
+        atomic: true,
+        steps: [{ command: "layer.explode", params: { bang: true } }],
+      }),
+    ).rejects.toThrow("unknown command");
+    expect(harness.state()).toEqual(before);
   });
 
-  it("hostile/dunder command ids (__proto__.pollute, constructor, nested engine.batch) → engine-failed each; never allowlisted", async () => {
+  it("hostile/dunder command ids (__proto__.pollute, constructor, nested engine.batch) → the CLIENT GATE refuses each as invalid-batch; zero engine calls", async () => {
     for (const command of ["__proto__.pollute", "constructor", "engine.batch"]) {
       const harness = await makeFailureHarness();
       const before = harness.state();
@@ -190,11 +217,11 @@ describe("M5-L · engine rejects the compiled batch", () => {
         stepsPlan("Agent: hostile id", [{ command, params: {} }]),
       );
 
-      expect(outcome, `command "${command}"`).toMatchObject({ ok: false, reason: "engine-failed" });
-      // Nested engine.batch is the NOT_IN_BATCH rule ("can't run inside a batch").
-      if (!outcome.ok && command === "engine.batch") {
-        expect(outcome.message).toContain("inside a batch");
-      }
+      expect(outcome, `command "${command}"`).toMatchObject({
+        ok: false,
+        reason: "invalid-batch",
+      });
+      expect(harness.executeCalls).toEqual([]);
       expect(harness.applyCalls).toHaveLength(0);
       expect(harness.saveReasons).toHaveLength(0);
       expect(harness.state()).toEqual(before);
@@ -203,6 +230,15 @@ describe("M5-L · engine rejects the compiled batch", () => {
         // engine.batch is a META id (never batchable, never curated).
         expect(AGENT_COMMAND_IDS).not.toContain(command);
       }
+      // Defense-in-depth canaries, driven at the engine DIRECTLY: the
+      // registry + NOT_IN_BATCH refusals stay the final wall (F-6 posture).
+      await expect(
+        harness.fake.execute("engine.batch", {
+          label: "Agent: canary",
+          atomic: true,
+          steps: [{ command, params: {} }],
+        }),
+      ).rejects.toThrow();
     }
   });
 
@@ -583,24 +619,30 @@ describe("M5-L · zero credits (applyRun 402)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. saveNow failure AFTER a successful engine.batch — THE DIVERGENCE PIN
-//    (FINDING, worklog M5-L): the controller surfaces it honestly ("It is in
-//    the editor only") and never tells the gateway — but a fresh "Try again"
-//    gesture re-executes the batch on the already-applied engine state, so a
-//    non-idempotent plan DOUBLES locally (pinned below).
+// 6. saveNow failure AFTER a successful engine.batch — the F-L1 divergence
+//    + its RE-SAVE-ONLY recovery. The outcome carries `batchApplied: true`
+//    (the executed state — the card's failed copy distinguishes "edit
+//    applied, version save failed — Retry save" from "edit failed"), the
+//    gateway is never told "applied" without a persisted version, and
+//    `retrySave` re-runs ONLY saveNow+applyRun — the doubling hazard is fixed.
 // ---------------------------------------------------------------------------
 
 describe("M5-L · saveNow failure after a successful engine.batch", () => {
-  it("save error → save-failed; NO applyRun (no 'applied' without a persisted version); the engine state IS applied (divergence surfaced, not silent)", async () => {
+  it("save error → save-failed with batchApplied:true; NO applyRun (no 'applied' without a persisted version); the engine state IS applied (divergence surfaced, not silent)", async () => {
     const harness = await makeFailureHarness({ saveMode: "error" });
 
     const outcome = await harness.controller.apply(dimPlan());
 
-    expect(outcome).toMatchObject({ ok: false, reason: "save-failed" });
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: "save-failed",
+      batchApplied: true,
+    });
     if (!outcome.ok) {
       expect(outcome.message).toBe(
         "The edit was applied but could not be saved as a version. It is in the editor only.",
       );
+      expectMessageHygienic(outcome.message, "save error");
     }
 
     // The engine DID apply the batch (the editor content stays live)…
@@ -619,12 +661,16 @@ describe("M5-L · saveNow failure after a successful engine.batch", () => {
     ]);
   });
 
-  it("parked-conflict save → save-conflict with the reload copy; engine applied; no applyRun", async () => {
+  it("parked-conflict save → save-conflict with batchApplied:true and the reload copy; engine applied; no applyRun", async () => {
     const harness = await makeFailureHarness({ saveMode: "conflict" });
 
     const outcome = await harness.controller.apply(dimPlan());
 
-    expect(outcome).toMatchObject({ ok: false, reason: "save-conflict" });
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: "save-conflict",
+      batchApplied: true,
+    });
     if (!outcome.ok) {
       expect(outcome.message).toBe(
         "The project changed elsewhere while the agent was working. Reload the latest version to continue — the edit is in the editor only.",
@@ -634,22 +680,100 @@ describe("M5-L · saveNow failure after a successful engine.batch", () => {
     expect(harness.applyCalls).toHaveLength(0);
   });
 
-  it("RETRY HAZARD (pin + finding): after save-failed, a fresh 'Try again' gesture RE-EXECUTES the batch — a non-idempotent plan (layer.newText) DOUBLES locally", async () => {
+  it("F-L1 FIX: retrySave re-runs saveNow+applyRun ONLY — engine.batch is NOT re-executed, a non-idempotent plan does NOT double, and the SAME gesture key rides the report", async () => {
     const harness = await makeFailureHarness({ saveModes: ["error", "saved"] });
 
     const first = await harness.controller.apply(newTextPlan("Dup"));
-    expect(first).toMatchObject({ ok: false, reason: "save-failed" });
-    expect(harness.state().layers).toHaveLength(2); // seed + first "Dup"
+    expect(first).toMatchObject({ ok: false, reason: "save-failed", batchApplied: true });
+    expect(harness.state().layers).toHaveLength(2); // seed + the first "Dup"
+    const engineCallsAfterGesture = harness.executeCalls.filter(
+      (call) => call.command === "engine.batch",
+    ).length;
+    expect(engineCallsAfterGesture).toBe(1);
 
-    // The plan card's failed state offers "Try again" — a fresh gesture.
+    // The card's save-failed state wires "Retry save" to retrySave — the
+    // RE-SAVE-ONLY recovery (the batch already executed; it is not in question).
+    const retry = await harness.controller.retrySave("run_1");
+    expect(retry).toMatchObject({ ok: true, versionId: "ver_applied_1" });
+
+    // engine.batch ran ONCE for the whole gesture+retry — no re-execution.
+    expect(harness.executeCalls.filter((call) => call.command === "engine.batch")).toHaveLength(1);
+    // The text layer exists exactly ONCE: no local doubling, one undo entry.
+    expect(harness.state().layers).toHaveLength(2);
+    expect(harness.state().layers.filter((layer) => layer.name.startsWith("Dup"))).toHaveLength(1);
+    expect(
+      harness.state().undoLabels.filter((label) => label === "Agent: add a text layer"),
+    ).toHaveLength(1);
+    // The retry's traffic is saveNow + applyRun ONLY (no markDirty re-run).
+    expect(harness.timeline).toEqual([
+      "execute:engine.batch",
+      "markDirty:agent-apply",
+      "saveNow:agent-apply",
+      "saveNow:agent-apply",
+      "applyRun",
+    ]);
+    // ONE report, carrying the ORIGINAL batch sha + the retained gesture key.
+    expect(harness.applyCalls).toHaveLength(1);
+    expect(harness.applyCalls[0]?.body).toMatchObject({
+      versionId: "ver_applied_1",
+      batchSha256: expect.any(String),
+      idempotencyKey: expect.any(String),
+    });
+    expectAllCommandsAllowlisted(harness);
+  });
+
+  it("retrySave reuses the RETAINED gesture key (F-L2 + F-L1): the failed report and its retry post the SAME idempotencyKey", async () => {
+    // The save SUCCEEDED but the applyRun report was lost to the network — the
+    // record (key + sha) stays; retrySave reports it without re-executing.
+    const harness = await makeFailureHarness({
+      applyRunError: networkError(new Error("fetch failed")),
+    });
+    const first = await harness.controller.apply(dimPlan());
+    expect(first).toMatchObject({ ok: false, reason: "failed", code: "NETWORK_ERROR" });
+
+    const retry = await harness.controller.retrySave("run_1");
+    expect(retry).toMatchObject({ ok: true });
+
+    const firstBody = harness.applyCalls[0]?.body;
+    const retryBody = harness.applyCalls[1]?.body;
+    if (firstBody === undefined || retryBody === undefined) throw new Error("missing posts");
+    expect(retryBody.idempotencyKey).toBe(firstBody.idempotencyKey);
+    expect(retryBody.batchSha256).toBe(firstBody.batchSha256);
+    // The batch executed exactly ONCE — retrySave never re-executes it.
+    expect(harness.executeCalls.filter((call) => call.command === "engine.batch")).toHaveLength(1);
+  });
+
+  it("retrySave without a retained context → typed failed; zero engine/save/POST traffic (never a silent re-execute)", async () => {
+    const harness = await makeFailureHarness();
+    const before = harness.state();
+
+    const outcome = await harness.controller.retrySave("run_never_applied");
+
+    expect(outcome).toMatchObject({ ok: false, reason: "failed" });
+    if (!outcome.ok) {
+      expectMessageHygienic(outcome.message, "retrySave unknown run");
+      expect(outcome.message).toContain("no applied edit to re-save");
+    }
+    expect(harness.executeCalls).toEqual([]);
+    expect(harness.saveReasons).toHaveLength(0);
+    expect(harness.applyCalls).toHaveLength(0);
+    expect(harness.state()).toEqual(before);
+  });
+
+  it("CONTRAST (documented): a PLAIN re-apply after save-failed still re-executes the batch — the retry-save seam is the only no-re-execute recovery", async () => {
+    const harness = await makeFailureHarness({ saveModes: ["error", "saved"] });
+
+    const first = await harness.controller.apply(newTextPlan("Dup"));
+    expect(first).toMatchObject({ ok: false, reason: "save-failed", batchApplied: true });
+
+    // A caller that ignores the save-failed state and fires apply() again —
+    // the batch re-executes and the non-idempotent plan DOUBLES locally. The
+    // card must wire Retry save (retrySave), never Try again, for save-failed.
     const second = await harness.controller.apply(newTextPlan("Dup"));
     expect(second).toMatchObject({ ok: true });
-
-    // The engine re-executed the SAME batch: the text layer now exists TWICE.
     expect(harness.executeCalls.filter((call) => call.command === "engine.batch")).toHaveLength(2);
     expect(harness.state().layers).toHaveLength(3);
     expect(harness.state().layers.filter((layer) => layer.name.startsWith("Dup"))).toHaveLength(2);
-    // …and the undo stack holds TWO entries for one logical edit.
     expect(
       harness.state().undoLabels.filter((label) => label === "Agent: add a text layer"),
     ).toHaveLength(2);
@@ -658,12 +782,13 @@ describe("M5-L · saveNow failure after a successful engine.batch", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. applyRun network failure AFTER saveNow succeeded
-//    (FINDING, worklog M5-L): the brief expected the client to REUSE the
-//    gesture's idempotencyKey on the retry — the landed controller has no
-//    retry path and no key retention: each gesture mints a FRESH key and
-//    re-executes the batch. Pinned as-landed below; the worklog records the
-//    gap (the gateway's batchSha256+versionId replay dedupe is the only net).
+// 7. applyRun network failure AFTER saveNow succeeded — F-L2 FIXED: the
+//    gesture's idempotencyKey is RETAINED (Map<runId, key> with terminal
+//    cleanup, the toolresult:<runId>:<callId> retention precedent), so a
+//    retry of the SAME gesture posts the SAME key; the gateway's
+//    {batchSha256, versionId} replay branch dedupes server-side. A plain
+//    apply() retry still re-executes the batch locally (pinned in section 6
+//    as the contrast; the retry-save seam never does).
 // ---------------------------------------------------------------------------
 
 describe("M5-L · applyRun network failure after saveNow", () => {
@@ -689,7 +814,7 @@ describe("M5-L · applyRun network failure after saveNow", () => {
     expect(harness.timeline.at(-1)).toBe("applyRun");
   });
 
-  it("idempotencyKey pin (ACTUAL, as-landed): a retry gesture posts a FRESH key — key reuse does NOT exist", async () => {
+  it("F-L2 FIX: a retry gesture REUSES the retained gesture key — the two posts carry the SAME idempotencyKey", async () => {
     // Models the REAL autosave on identical content (D-6 dedupe): the retry's
     // saveNow returns the SAME version the first gesture uploaded.
     const harness = await makeFailureHarness({
@@ -708,18 +833,41 @@ describe("M5-L · applyRun network failure after saveNow", () => {
     expect(secondBody).toBeDefined();
     if (firstBody === undefined || secondBody === undefined) return;
 
-    // PIN (deviation from the brief's expectation): the key is NOT reused.
-    expect(firstBody.idempotencyKey).not.toBe(secondBody.idempotencyKey);
-    // What DOES make the retry safe for the server (M5-K's replay dedupe):
-    // the batch sha256 is deterministic and — when the autosave dedupes —
-    // the versionId matches, so the {batchSha256, versionId} pair is identical.
+    // FIXED (was the M5-L pin): the retained gesture key is REUSED — the
+    // gateway's idempotency middleware replays the first answer instead of
+    // committing twice, whatever the network lost on the way.
+    expect(secondBody.idempotencyKey).toBe(firstBody.idempotencyKey);
+    // And the {batchSha256, versionId} pair is identical when the autosave
+    // dedupes (M5-K's replay branch keys on it).
     expect(secondBody.batchSha256).toBe(firstBody.batchSha256);
     expect(secondBody.versionId).toBe(firstBody.versionId);
-    // The engine re-executed the batch for the retry gesture (see finding 6).
+    // The plain apply retry re-executed the batch locally (the doubling
+    // contrast — pinned in section 6; the retry-save seam never does).
     expect(harness.executeCalls.filter((call) => call.command === "engine.batch")).toHaveLength(2);
   });
 
-  it("with a NON-deduped save the retry breaks the {batchSha256, versionId} pair the server dedupes on", async () => {
+  it("terminal 409 releases the retained key: the NEXT gesture mints a FRESH one (never replays the cached 409)", async () => {
+    const harness = await makeFailureHarness({
+      applyRunError: new ApiError({
+        code: "RUN_ALREADY_APPLIED",
+        message: "This run's plan was already applied.",
+        status: 409,
+      }),
+    });
+    const first = await harness.controller.apply(dimPlan());
+    expect(first).toMatchObject({ ok: false, reason: "conflict" });
+
+    const second = await harness.controller.apply(dimPlan());
+    expect(second).toMatchObject({ ok: true });
+
+    const firstBody = harness.applyCalls[0]?.body;
+    const secondBody = harness.applyCalls[1]?.body;
+    if (firstBody === undefined || secondBody === undefined) return;
+    // 409 is terminal for the gesture: a NEW apply mints a NEW key.
+    expect(secondBody.idempotencyKey).not.toBe(firstBody.idempotencyKey);
+  });
+
+  it("with a NON-deduped save the retry breaks the {batchSha256, versionId} pair the server dedupes on (the retained key still rides)", async () => {
     const harness = await makeFailureHarness({
       applyRunError: networkError(new Error("fetch failed")),
     });
@@ -733,7 +881,7 @@ describe("M5-L · applyRun network failure after saveNow", () => {
     if (firstBody === undefined || secondBody === undefined) return;
     expect(secondBody.batchSha256).toBe(firstBody.batchSha256); // same compiled batch
     expect(secondBody.versionId).not.toBe(firstBody.versionId); // NEW version → dedupe miss
-    expect(secondBody.idempotencyKey).not.toBe(firstBody.idempotencyKey);
+    expect(secondBody.idempotencyKey).toBe(firstBody.idempotencyKey); // retained gesture key
   });
 });
 
@@ -812,7 +960,7 @@ describe("M5-L · undo failures", () => {
     expect(harness.undoCalls).toHaveLength(1); // nothing replays on its own
   });
 
-  it("FINDING pin: undo is STACK-BLIND — undo(run_1) after run_2 applied reverts run_2's edit while the gateway records run_1 undone", async () => {
+  it("F-L4 FIX (was the stack-blind pin): undo(run_1) with run_2 applied on top → typed undo-stack-mismatch, the gateway is NOT told, and run_1 stays applied locally", async () => {
     const harness = await makeFailureHarness();
     const applied1 = await harness.controller.apply(dimPlan()); // opacity 50
     const applied2 = await harness.controller.apply(
@@ -826,15 +974,89 @@ describe("M5-L · undo failures", () => {
     expect(applied2.ok).toBe(true);
     expect(harness.state().layers[0]?.opacity).toBe(20);
 
-    // The user asks to undo the FIRST run — the engine pops whatever is on
-    // top: run_2's batch. The gateway records run_1 as the undone run.
+    // The user asks to undo the FIRST run. The engine pops whatever is on
+    // top (run_2's batch) and answers {undone: "Agent: second edit"} — the
+    // guard compares that against run_1's batch label and REFUSES to claim
+    // the undo on the gateway (the finding's wrong row is never written).
     const outcome = await harness.controller.undo("run_1");
-    expect(outcome).toEqual({ ok: true, undone: true });
-    expect(harness.undoCalls[0]?.runId).toBe("run_1");
-    // run_2's edit (opacity 20) is GONE; run_1's edit (opacity 50) remains.
+    expect(outcome).toMatchObject({ ok: false, reason: "undo-stack-mismatch" });
+    if (!outcome.ok) expectMessageHygienic(outcome.message, "stack mismatch");
+    expect(harness.undoCalls).toHaveLength(0); // the gateway was NOT told
+    expect(harness.events.at(-1)?.type).toBe("undo.failed");
+    // The pop DID happen (the honest divergence, surfaced in the copy): the
+    // popped batch sits on the redo stack, run_2's edit is reverted locally…
     expect(harness.state().layers[0]?.opacity).toBe(50);
-    expect(harness.state().undoLabels).toContain(BATCH_LABEL); // run_1 still applied locally
-    expect(harness.state().undoLabels).not.toContain("Agent: second edit"); // run_2 reverted
+    expect(harness.state().redoLabels).toContain("Agent: second edit");
+    // …while run_1's batch is STILL the applied state on the undo stack.
+    expect(harness.state().undoLabels).toContain(BATCH_LABEL);
+    expect(harness.state().undoLabels).not.toContain("Agent: second edit");
+
+    // Recovery works: with run_2's batch off the stack, undoing run_1 again
+    // now pops THE RUN'S OWN batch, verifies it and reports it.
+    const recovered = await harness.controller.undo("run_1");
+    expect(recovered).toEqual({ ok: true, undone: true });
+    expect(harness.undoCalls).toHaveLength(1);
+    expect(harness.undoCalls[0]?.runId).toBe("run_1");
+    expect(harness.state().undoLabels).not.toContain(BATCH_LABEL);
+  });
+
+  it("a verified pop spends the retained label: a SECOND undo of the same run never claims the next stack entry", async () => {
+    const harness = await makeFailureHarness();
+    await harness.controller.apply(dimPlan());
+
+    const first = await harness.controller.undo("run_1");
+    expect(first).toEqual({ ok: true, undone: true });
+    expect(harness.undoCalls).toHaveLength(1);
+
+    // The retained label is spent — the next undo cannot verify the next
+    // stack entry (the seeded layer's own edit) against run_1, so it refuses
+    // to claim it instead of silently popping someone else's edit.
+    const second = await harness.controller.undo("run_1");
+    expect(second).toMatchObject({ ok: false, reason: "undo-stack-mismatch" });
+    expect(harness.undoCalls).toHaveLength(1); // still ONE report
+    // The engine DID pop the next entry (the seed edit) — the honest
+    // divergence: it sits on the redo stack, unclaimed on the gateway.
+    expect(harness.state().redoLabels).toContain("New Text Layer");
+    expect(harness.state().redoLabels).toContain(BATCH_LABEL);
+    expect(harness.state().undoLabels).toEqual([]);
+  });
+
+  it("the undo hint (M5-Q seam): a fresh controller with NO retained record verifies against hint.batchLabel", async () => {
+    const harness = await makeFailureHarness();
+    await harness.controller.apply(dimPlan()); // the engine history holds run_1's batch
+
+    // A FRESH controller (e.g. a remount) over the same engine: no retained
+    // label — without the hint its undo cannot verify and refuses.
+    const bridge2 = attachFakeBridge(harness.fake);
+    const undoCalls: Array<{ runId: string; body: Record<string, unknown> }> = [];
+    const fresh = createApplyController({
+      bridge: bridge2,
+      autosave: harness.autosave,
+      api: {
+        runs: {
+          applyRun: harness.api.runs.applyRun,
+          undoRun: async (runId, body) => {
+            undoCalls.push({ runId, body: body as Record<string, unknown> });
+            return { undone: true };
+          },
+        },
+      },
+    });
+
+    const blind = await fresh.undo("run_1");
+    expect(blind).toMatchObject({ ok: false, reason: "undo-stack-mismatch" });
+    expect(undoCalls).toHaveLength(0); // unverifiable ⇒ never claimed
+
+    // Restore the popped batch (edit.redo) so the stack holds it again.
+    await harness.fake.execute("edit.redo");
+    expect(harness.state().undoLabels).toContain(BATCH_LABEL);
+
+    // WITH the hint (the planRuntime's compiledBatch label — the thread
+    // layer passes it), the same fresh controller verifies and reports.
+    const verified = await fresh.undo("run_1", { batchLabel: BATCH_LABEL });
+    expect(verified).toEqual({ ok: true, undone: true });
+    expect(undoCalls).toHaveLength(1);
+    expect(undoCalls[0]?.runId).toBe("run_1");
   });
 });
 

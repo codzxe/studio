@@ -144,6 +144,17 @@
 //   G-8 REMAINS (INFO) — create-only plans still mint an orphan resolution
 //     request for the declared new-layer name (gp-06/gp-10/gp-11); the M5-F
 //     resolver must tolerate it.
+// M5-R FLIP STATUS (F-S1/F-S2, wave-3):
+//   F-S2 FIXED — defaultCompileDeps projects the WRITE_TOOLS catalog
+//     ({args, risk} per tool), so the per-tool risk badges flow to the
+//     recomputed risk on the live wire path. gp-08 flips low→medium (the
+//     apply_preset badge floors the model's declared "low"); gp-03/gp-07/
+//     gp-12 (declared medium) and gp-09 (edit.undo command floor) are
+//     unchanged — a floor never lowers.
+//   F-S1 FIXED — create_text fill/stroke compile BOTH COLOR_SCHEMA forms:
+//     strings ride 1:1, [r,g,b(,a)] channel arrays convert to the engine's
+//     canonical #hex form (never a silent drop, never a raw array — the
+//     engine reads arrays RAW into its internal 0..1 space; see engineColor).
 // ALL 12 fixtures now carry expected.compile = "compiled".
 // ---------------------------------------------------------------------------
 
@@ -656,11 +667,15 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       // layers omitted targets the plan's affectedLayers NAMES (never the
       // live editor selection, which the compiler refuses to capture): the
       // "Make it pop" quick action now compiles against Headline.
+      // M5-R FLIP (F-S2): defaultCompileDeps now projects the WRITE_TOOLS
+      // catalog, so apply_preset's MEDIUM risk badge reaches the recomputed
+      // risk — the model's declared "low" is floored up to "medium" (the
+      // card never understates) and the credits follow the medium multiplier.
       compile: "compiled",
       commands: ["anim.applyBuiltinPreset"],
       batchStepRange: [1, 1],
-      risk: "low",
-      estimatedCredits: 1.5,
+      risk: "medium",
+      estimatedCredits: 1.88,
       resolutionRequests: ["Headline"],
       warningCodes: ["unknown_command", "batch_mismatch"],
       findings: [],

@@ -29,6 +29,7 @@ import type {
   EditPlan,
   ModelId,
   PinnedContextItem,
+  PlanRisk,
 } from "@studio/contracts";
 
 import type { LayerResolutionRequest } from "./apply";
@@ -78,8 +79,38 @@ export interface PlanRuntime {
   readonly compiledBatch: AgentBatch;
   /** Layer names the plan references; resolved client-side at apply (§8.7). */
   readonly resolutionRequests?: readonly LayerResolutionRequest[];
-  /** The version the plan was compiled against — the reapply gate (§M5.5). */
+  /** The version the plan was compiled against — the reapply gate (§M5.5, D-21). */
   readonly baseVersionId?: string;
+  /**
+   * The SERVER-recomputed risk from the plan event (plan-compiler output,
+   * D-21: never the model's self-declared value). The card displays it
+   * verbatim; `undefined` ⇒ the card falls back to `plan.risk`.
+   */
+  readonly risk?: PlanRisk;
+  /**
+   * The SERVER-recomputed deterministic credit estimate (§8.8). Displayed
+   * verbatim — never client credit math; `undefined` ⇒ `plan.estimatedCredits`.
+   */
+  readonly estimatedCredits?: number;
+  /**
+   * The §7.3 server-side auto-apply verdict (D-22): UI GUIDANCE ONLY —
+   * `mode: "auto"` pre-arms the card (hint + focus emphasis on Apply), it
+   * NEVER executes anything; Apply stays the user's explicit click.
+   */
+  readonly autoApply?: { readonly mode: "auto" | "propose"; readonly reason: string };
+  /**
+   * The candidate strings of the last `ambiguous` apply outcome (apply.ts's
+   * pinned `"${layerName} (layer ${id})"` format) — the card's
+   * ambiguous-resolution state renders them as pick buttons.
+   */
+  readonly candidates?: readonly string[];
+  /**
+   * The user's ambiguous-layer picks (M5-Q): requestId → the layer id they
+   * chose. Pre-patched into the batch (`$request:` tokens) by
+   * `applicablePlanOf` so the re-driven apply skips name resolution for the
+   * picked requests (§8.7 — the pick is user authority).
+   */
+  readonly resolutionPicks?: Readonly<Record<string, number>>;
   /** Apply lifecycle of this plan (user gestures fold it, never the stream). */
   readonly outcome:
     | "idle"

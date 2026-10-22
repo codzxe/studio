@@ -112,6 +112,15 @@ export const PLAN_EVENT_SCHEMA = z.object({
   risk: PLAN_RISK_SCHEMA.optional(),
   /** Server-recomputed deterministic credit estimate (§8.8). */
   estimatedCredits: z.number().nonnegative().optional(),
+  /**
+   * The project's version head at propose time (M5-Q; DECISIONS.md D-21 /
+   * BP §M5.5): the version the client must STILL be sitting on for re-apply
+   * after an undo. The gateway stamps the run's recorded base version here
+   * (the same value the /v1/runs/:id/apply lineage gate checks server-side).
+   * Optional + additive: M4/M5.0 events carry none and the client's reapply
+   * gate fails closed (base-version-changed) without it.
+   */
+  baseVersionId: z.string().optional(),
   // M5.6 (§7.3, additive + optional like the four above): the server-side
   // auto-apply verdict — UI GUIDANCE ONLY in v1: the client NEVER executes a
   // plan from the event alone; Apply stays the user's explicit button press.
