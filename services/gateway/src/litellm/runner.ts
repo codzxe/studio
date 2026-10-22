@@ -100,8 +100,8 @@ function openAiToolSpecs(): OpenAIToolSpec[] {
 
 function toolParametersSchema(tool: ToolDefinition): Record<string, unknown> {
   const schema = z.toJSONSchema(tool.args, { io: "input" }) as Record<string, unknown>;
-  delete schema.$schema;
-  return schema;
+  // Strip the $schema marker: providers want the bare parameters object.
+  return Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "$schema"));
 }
 
 // ---------------------------------------------------------------------------
@@ -329,9 +329,9 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
       attemptMessages.push({ role: "assistant", content: round.text });
       attemptMessages.push({
         role: "user",
-        content:
-          `That was not a valid EditPlan: ${validation || "not valid JSON"}. ` +
-          "Respond again with STRICT JSON only — no prose, no markdown fences — matching the EditPlan shape exactly.",
+        content: `That was not a valid EditPlan: ${
+          validation || "not valid JSON"
+        }. Respond again with STRICT JSON only — no prose, no markdown fences — matching the EditPlan shape exactly.`,
       });
     }
     return { plan: null, errorMessage: "The proposed plan failed validation twice." };
