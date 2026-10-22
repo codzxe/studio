@@ -19,6 +19,7 @@ import { editorChatShortcutBus, type ChatShortcutBus } from "./chat-shortcut-bus
 import { ProjectBar } from "./project-bar";
 import type { EditorHostPayload, EditorSessionFactory } from "./types";
 import { useEditorSession } from "./use-editor-session";
+import { createApiSession } from "./session-client";
 import { ChatProvider } from "@/lib/chat/provider";
 
 /**
@@ -43,7 +44,18 @@ export interface EditorHostProps {
 }
 
 export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostProps) {
-  const session = useEditorSession({ payload, sessionFactory, shortcutBus });
+  // M4-J: the host materializes the session ONCE (the hook previously built it
+  // inside its own useState initializer) so the chat overlay can reach the
+  // session's api client. Behavior is unchanged: exactly one session per page
+  // load, the hook drives it, tests inject factories as before.
+  const [sessionHandle] = useState<EditorSessionFactory>(
+    () => sessionFactory?.(payload) ?? createApiSession({ payload }),
+  );
+  const session = useEditorSession({
+    payload,
+    sessionFactory: () => sessionHandle,
+    shortcutBus,
+  });
   const { state } = session;
   const projectName = payload.manifest.project.name;
   const bus = shortcutBus ?? editorChatShortcutBus;
@@ -55,23 +67,21 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
   // it exists only while the editor is open AND the session factory exposed
   // an api-client. Test sessions without `api` mount no chat layer at all.
   // ---------------------------------------------------------------------------
-  const chatClient = session.api;
+  const chatClient = sessionHandle.api;
   const [chatBridge, setChatBridge] = useState<EditorBridge | null>(null);
   useEffect(() => {
     if (state.phase !== "open" || chatClient === undefined) return;
     const iframe = session.iframeRef.current;
     if (iframe === null) return;
     let disposed = false;
-    // eslint-disable-next-line no-console -- SCRATCH DEBUG
-    console.log("[dbg] chat attach starting");
     attachEditorBridge(iframe).then(
       (bridge) => {
         if (disposed) bridge.dispose();
         else setChatBridge(bridge);
       },
-      (error) => {
-        // eslint-disable-next-line no-console -- SCRATCH DEBUG
-        console.log("[dbg] chat attach FAILED", error);
+      () => {
+        // Chat stays dormant when the handshake fails; the M3 session's own
+        // bridge/ banners own the editor-open failure UX.
       },
     );
     return () => {
