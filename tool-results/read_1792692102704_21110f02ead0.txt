@@ -1,0 +1,734 @@
+     1→/**
+     2→ * ChatProvider tests (M4-SEAMS.md Seam 7 "Integration (M4-J)") — the wiring
+     3→ * brain in isolation: NO wave-2 UI component is imported (peer-owned files may
+     4→ * land in any order; this suite stays independent of them).
+     5→ *
+     6→ * Deterministic, no network: a stub `ApiClient` (threads.create / models.list /
+     7→ * chat.stream / runs.postEvent — the M4-C2 stub pattern) + the real fake editor
+     8→ * bridge (`@studio/editor-bridge/fake`, wrapped to record queries) + the REAL
+     9→ * tool executor wrapped by a module mock that records dispatches while keeping
+    10→ * real execution (so the plan_edit skip + postEvent wiring are exercised
+    11→ * end-to-end).
+    12→ */
+    13→
+    14→import {
+    15→  type ChatShortcutBus,
+    16→  createChatShortcutBus,
+    17→} from "@/components/editor-host/chat-shortcut-bus";
+    18→import type { ClientToolCall, ToolExecutorDeps } from "@/lib/chat/tool-executor";
+    19→import type { ApiClient } from "@studio/api-client";
+    20→import type { ChatRequest, ContextSelection, Thread } from "@studio/contracts";
+    21→import type { EditorBridge } from "@studio/editor-bridge";
+    22→import { type FakeEditor, attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
+    23→import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+    24→import type { ReactElement } from "react";
+    25→import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+    26→import { type ChatContextApi, ChatProvider } from "./provider";
+    27→
+    28→// ---------------------------------------------------------------------------
+    29→// Tool-executor seam: wrap the REAL executor (dispatches recorded, execution
+    30→// still happens) so the wiring tests observe the diff → execute hand-off.
+    31→// ---------------------------------------------------------------------------
+    32→
+    33→const executorRecorder = vi.hoisted(() => ({
+    34→  deps: [] as Array<{ flags: ContextSelection }>,
+    35→  calls: [] as ClientToolCall[],
+    36→}));
+    37→
+    38→vi.mock("@/lib/chat/tool-executor", async (importOriginal) => {
+    39→  const actual = await importOriginal<typeof import("@/lib/chat/tool-executor")>();
+    40→  return {
+    41→    ...actual,
+    42→    createToolExecutor: (deps: ToolExecutorDeps) => {
+    43→      executorRecorder.deps.push(deps);
+    44→      const execute = actual.createToolExecutor(deps);
+    45→      return (call: ClientToolCall): Promise<void> => {
+    46→        executorRecorder.calls.push(call);
+    47→        return execute(call);
+    48→      };
+    49→    },
+    50→  };
+    51→});
+    52→
+    53→// ---------------------------------------------------------------------------
+    54→// Harness: stub api-client + recorded fake bridge
+    55→// ---------------------------------------------------------------------------
+    56→
+    57→type ThreadMode = "auto" | "manual" | "reject-once";
+    58→
+    59→interface HarnessOptions {
+    60→  /** "auto" resolves creation on the next microtask; "manual" waits for resolveCreate(); "reject-once" fails the first create. */
+    61→  readonly threadMode?: ThreadMode;
+    62→  /** "fail" makes every models.list attempt reject (entitlement failure → []). */
+    63→  readonly models?: "ok" | "fail";
+    64→}
+    65→
+    66→interface RecordedStreamCall {
+    67→  readonly threadId: string;
+    68→  readonly body: ChatRequest;
+    69→  readonly handlers: {
+    70→    onEvent?: (event: unknown) => void;
+    71→    onError?: (error: unknown) => void;
+    72→    onDone?: (summary: unknown) => void;
+    73→  };
+    74→  readonly cancel: ReturnType<typeof vi.fn>;
+    75→}
+    76→
+    77→interface Harness {
+    78→  readonly api: () => ChatContextApi;
+    79→  readonly createThreadCalls: () => number;
+    80→  readonly resolveCreateThread: () => void;
+    81→  readonly modelsListCalls: () => number;
+    82→  readonly streamCalls: RecordedStreamCall[];
+    83→  readonly postEvents: Array<{ runId: string; body: Record<string, unknown> }>;
+    84→  readonly bridgeCalls: { inspect: number; queries: string[] };
+    85→  readonly bus: ChatShortcutBus;
+    86→}
+    87→
+    88→const THREAD_IDS = ["thr_1", "thr_2"];
+    89→
+    90→function makeThread(id: string): Thread {
+    91→  return {
+    92→    id,
+    93→    projectId: "prj_test",
+    94→    title: null,
+    95→    createdBy: "usr_1",
+    96→    createdAt: "2026-10-22T00:00:00.000Z",
+    97→    updatedAt: "2026-10-22T00:00:00.000Z",
+    98→  };
+    99→}
+   100→
+   101→const FAST_MODEL = {
+   102→  id: "studio-fast",
+   103→  tier: "fast" as const,
+   104→  use: "Cheap planning, classification, quick edits",
+   105→  creditsPer1kInput: 0.01,
+   106→  creditsPer1kOutput: 0.03,
+   107→};
+   108→
+   109→const MODELS_OK = { plan: "trial", models: [FAST_MODEL] };
+   110→
+   111→function makeHarness(options: HarnessOptions = {}): Harness {
+   112→  const threadMode: ThreadMode = options.threadMode ?? "auto";
+   113→  const modelsFail = options.models === "fail";
+   114→
+   115→  let createCalls = 0;
+   116→  let rejectedOnce = false;
+   117→  const manualResolvers: Array<(thread: Thread) => void> = [];
+   118→  const streamCalls: RecordedStreamCall[] = [];
+   119→  const postEvents: Array<{ runId: string; body: Record<string, unknown> }> = [];
+   120→  let modelsCalls = 0;
+   121→
+   122→  const client = {
+   123→    threads: {
+   124→      create: (_projectId: string) => {
+   125→        createCalls += 1;
+   126→        const thread = makeThread(THREAD_IDS[createCalls - 1] ?? "thr_x");
+   127→        if (threadMode === "manual") {
+   128→          return new Promise<Thread>((resolve) => {
+   129→            manualResolvers.push(resolve);
+   130→          });
+   131→        }
+   132→        if (threadMode === "reject-once" && !rejectedOnce) {
+   133→          rejectedOnce = true;
+   134→          return Promise.reject(new Error("threads are unavailable right now"));
+   135→        }
+   136→        return Promise.resolve(thread);
+   137→      },
+   138→    },
+   139→    models: {
+   140→      list: () => {
+   141→        modelsCalls += 1;
+   142→        if (modelsFail) return Promise.reject(new Error("models endpoint down"));
+   143→        return Promise.resolve(MODELS_OK);
+   144→      },
+   145→    },
+   146→    chat: {
+   147→      stream: (threadId: string, body: ChatRequest, handlers: RecordedStreamCall["handlers"]) => {
+   148→        const call: RecordedStreamCall = {
+   149→          threadId,
+   150→          body,
+   151→          handlers,
+   152→          cancel: vi.fn(async () => undefined),
+   153→        };
+   154→        streamCalls.push(call);
+   155→        return {
+   156→          paused: false,
+   157→          cancel: call.cancel,
+   158→          abort: () => undefined,
+   159→          reconnect: vi.fn(async () => undefined),
+   160→        };
+   161→      },
+   162→    },
+   163→    runs: {
+   164→      postEvent: async (runId: string, body: Record<string, unknown>) => {
+   165→        postEvents.push({ runId, body });
+   166→        return null;
+   167→      },
+   168→    },
+   169→  } as unknown as ApiClient;
+   170→
+   171→  // Recorded fake bridge (M4-C2's recordBridge pattern, trimmed to the calls
+   172→  // the provider makes: inspect + query).
+   173→  const fake: FakeEditor = createFakeEditor({ version: "0.13.0" });
+   174→  const bridgeCalls = { inspect: 0, queries: [] as string[] };
+   175→  const inner = attachFakeBridge(fake);
+   176→  const bridge: EditorBridge = {
+   177→    ...inner,
+   178→    inspect: async () => {
+   179→      bridgeCalls.inspect += 1;
+   180→      return inner.inspect();
+   181→    },
+   182→    query: ((command: string, params?: unknown) => {
+   183→      bridgeCalls.queries.push(command);
+   184→      return inner.query(command, params);
+   185→    }) as EditorBridge["query"],
+   186→  };
+   187→
+   188→  const bus: ChatShortcutBus = createChatShortcutBus();
+   189→
+   190→  let captured: ChatContextApi | null = null;
+   191→  render(
+   192→    <ChatProvider
+   193→      client={client}
+   194→      bridge={bridge}
+   195→      workspaceId="ws_test"
+   196→      projectId="prj_test"
+   197→      shortcutBus={bus}
+   198→    >
+   199→      {(api) => {
+   200→        captured = api;
+   201→        return <div data-testid="provider-probe" data-chat-phase={api.snapshot.phase} />;
+   202→      }}
+   203→    </ChatProvider>,
+   204→  );
+   205→
+   206→  return {
+   207→    api: () => {
+   208→      if (captured === null) throw new Error("provider did not render");
+   209→      return captured;
+   210→    },
+   211→    createThreadCalls: () => createCalls,
+   212→    resolveCreateThread: () => {
+   213→      const resolve = manualResolvers.shift();
+   214→      if (resolve === undefined) throw new Error("no pending threads.create to resolve");
+   215→      resolve(makeThread(THREAD_IDS[createCalls - 1] ?? "thr_x"));
+   216→    },
+   217→    modelsListCalls: () => modelsCalls,
+   218→    streamCalls,
+   219→    postEvents,
+   220→    bridgeCalls,
+   221→    bus,
+   222→  };
+   223→}
+   224→
+   225→beforeEach(() => {
+   226→  executorRecorder.deps.length = 0;
+   227→  executorRecorder.calls.length = 0;
+   228→});
+   229→
+   230→afterEach(() => {
+   231→  cleanup();
+   232→  vi.useRealTimers();
+   233→});
+   234→
+   235→// ---------------------------------------------------------------------------
+   236→// Models (entitlement surface — M4-A2's GET /v1/models)
+   237→// ---------------------------------------------------------------------------
+   238→
+   239→describe("ChatProvider — models", () => {
+   240→  it("loads the plan's models and defaults the active model to the first entry", async () => {
+   241→    const harness = makeHarness();
+   242→    await waitFor(() => {
+   243→      expect(harness.api().models).not.toBeNull();
+   244→    });
+   245→    expect(harness.api().models).toEqual([FAST_MODEL]);
+   246→    expect(harness.api().activeModelId).toBe("studio-fast");
+   247→    expect(harness.modelsListCalls()).toBe(1);
+   248→
+   249→    // An explicit pick (the header picker) overrides the default.
+   250→    act(() => {
+   251→      harness.api().setActiveModelId("studio-fast");
+   252→    });
+   253→    expect(harness.api().activeModelId).toBe("studio-fast");
+   254→  });
+   255→
+   256→  it("retries the models fetch once, then reports the failure as an empty list (picker hidden)", async () => {
+   257→    const harness = makeHarness({ models: "fail" });
+   258→    await waitFor(() => {
+   259→      expect(harness.api().models).toEqual([]);
+   260→    });
+   261→    expect(harness.modelsListCalls()).toBe(2); // exactly one retry
+   262→    expect(harness.api().activeModelId).toBeNull(); // nothing to default to
+   263→  });
+   264→});
+   265→
+   266→// ---------------------------------------------------------------------------
+   267→// Thread lifecycle (lazy create + promise queue)
+   268→// ---------------------------------------------------------------------------
+   269→
+   270→describe("ChatProvider — lazy thread + send queue", () => {
+   271→  it("creates the thread on the FIRST send, queues the message until the id resolves, then streams once", async () => {
+   272→    const harness = makeHarness({ threadMode: "manual" });
+   273→    await waitFor(() => {
+   274→      expect(harness.api().models).not.toBeNull();
+   275→    });
+   276→
+   277→    act(() => {
+   278→      harness.api().send({ message: "  Explain this comp  " });
+   279→    });
+   280→
+   281→    // Queued: one create started, nothing streamed yet (manual mode keeps the
+   282→    // thread id pending until resolveCreateThread).
+   283→    await waitFor(() => {
+   284→      expect(harness.createThreadCalls()).toBe(1);
+   285→    });
+   286→    expect(harness.streamCalls).toHaveLength(0);
+   287→
+   288→    await act(async () => {
+   289→      harness.resolveCreateThread();
+   290→    });
+   291→
+   292→    await waitFor(() => {
+   293→      expect(harness.streamCalls).toHaveLength(1);
+   294→    });
+   295→    const call = harness.streamCalls[0];
+   296→    expect(call?.threadId).toBe("thr_1");
+   297→    expect(call?.body.message).toBe("Explain this comp"); // trimmed
+   298→    expect(call?.body.context).toEqual(harness.api().flags); // the §5.1 effective flags
+   299→    expect(call?.body.model).toBe("studio-fast"); // defaulted from models
+   300→    expect(typeof call?.body.idempotencyKey).toBe("string");
+   301→
+   302→    // The user message rendered immediately (§3.4 send UX).
+   303→    await waitFor(() => {
+   304→      expect(harness.api().snapshot.messages).toHaveLength(1);
+   305→    });
+   306→    expect(harness.api().snapshot.messages[0]?.role).toBe("user");
+   307→    expect(harness.api().snapshot.messages[0]?.text).toBe("Explain this comp");
+   308→    expect(harness.api().threadId).toBe("thr_1");
+   309→    expect(harness.api().threadTitle).toBe("Agent");
+   310→  });
+   311→
+   312→  it("flushes queued sends in order: the first message streams, the second lands in the steer queue (§3.4)", async () => {
+   313→    const harness = makeHarness({ threadMode: "manual" });
+   314→    await waitFor(() => {
+   315→      expect(harness.api().models).not.toBeNull();
+   316→    });
+   317→
+   318→    act(() => {
+   319→      harness.api().send({ message: "first" });
+   320→    });
+   321→    act(() => {
+   322→      harness.api().send({ message: "second" });
+   323→    });
+   324→    await waitFor(() => {
+   325→      expect(harness.createThreadCalls()).toBe(1); // ONE create for both
+   326→    });
+   327→
+   328→    await act(async () => {
+   329→      harness.resolveCreateThread();
+   330→    });
+   331→
+   332→    await waitFor(() => {
+   333→      expect(harness.streamCalls).toHaveLength(1); // only the first hits the wire
+   334→    });
+   335→    expect(harness.streamCalls[0]?.body.message).toBe("first");
+   336→    // Both user messages rendered; the second waits for the run to settle.
+   337→    await waitFor(() => {
+   338→      expect(harness.api().snapshot.messages).toHaveLength(2);
+   339→    });
+   340→    expect(harness.api().snapshot.messages.map((message) => message.text)).toEqual([
+   341→      "first",
+   342→      "second",
+   343→    ]);
+   344→  });
+   345→
+   346→  it("reuses the thread for later sends (no second create); newThread() forces a fresh one", async () => {
+   347→    const harness = makeHarness();
+   348→    await waitFor(() => {
+   349→      expect(harness.api().models).not.toBeNull();
+   350→    });
+   351→
+   352→    act(() => {
+   353→      harness.api().send({ message: "hello" });
+   354→    });
+   355→    await waitFor(() => {
+   356→      expect(harness.streamCalls).toHaveLength(1);
+   357→    });
+   358→    expect(harness.createThreadCalls()).toBe(1);
+   359→    expect(harness.api().threadId).toBe("thr_1");
+   360→
+   361→    // newChat (⌘⇧L): the thread id is dropped, the transcript resets.
+   362→    act(() => {
+   363→      harness.api().newThread();
+   364→    });
+   365→    expect(harness.api().threadId).toBeNull();
+   366→    expect(harness.api().controller).toBeNull();
+   367→    expect(harness.api().snapshot.messages).toHaveLength(0);
+   368→
+   369→    act(() => {
+   370→      harness.api().send({ message: "fresh thread please" });
+   371→    });
+   372→    await waitFor(() => {
+   373→      expect(harness.streamCalls).toHaveLength(2);
+   374→    });
+   375→    expect(harness.createThreadCalls()).toBe(2);
+   376→    expect(harness.streamCalls[1]?.threadId).toBe("thr_2");
+   377→    expect(harness.streamCalls[1]?.body.message).toBe("fresh thread please");
+   378→  });
+   379→
+   380→  it("surfaces a typed thread error when creation fails, drops the queue, and retries on the next send", async () => {
+   381→    const harness = makeHarness({ threadMode: "reject-once" });
+   382→    await waitFor(() => {
+   383→      expect(harness.api().models).not.toBeNull();
+   384→    });
+   385→
+   386→    act(() => {
+   387→      harness.api().send({ message: "doomed" });
+   388→    });
+   389→    await waitFor(() => {
+   390→      expect(harness.api().threadError).not.toBeNull();
+   391→    });
+   392→    expect(harness.api().threadError?.code).toBe("THREAD_CREATE_FAILED");
+   393→    expect(harness.api().threadError?.retryable).toBe(true);
+   394→    expect(harness.streamCalls).toHaveLength(0);
+   395→
+   396→    // The failed queue is dropped — the next send starts over cleanly.
+   397→    act(() => {
+   398→      harness.api().send({ message: "try again" });
+   399→    });
+   400→    await waitFor(() => {
+   401→      expect(harness.streamCalls).toHaveLength(1);
+   402→    });
+   403→    expect(harness.createThreadCalls()).toBe(2);
+   404→    expect(harness.streamCalls[0]?.body.message).toBe("try again");
+   405→    await waitFor(() => {
+   406→      expect(harness.api().threadError).toBeNull();
+   407→    });
+   408→  });
+   409→});
+   410→
+   411→// ---------------------------------------------------------------------------
+   412→// Tool-executor wiring (snapshot diff → executor dispatch)
+   413→// ---------------------------------------------------------------------------
+   414→
+   415→describe("ChatProvider — tool executor wiring", () => {
+   416→  it("diffs running tool cards, executes client tools with the right call, posts the result, and never re-runs replays; plan_edit dispatches but never posts", async () => {
+   417→    const harness = makeHarness();
+   418→    await waitFor(() => {
+   419→      expect(harness.api().models).not.toBeNull();
+   420→    });
+   421→    act(() => {
+   422→      harness.api().send({ message: "what is in this project?" });
+   423→    });
+   424→    await waitFor(() => {
+   425→      expect(harness.streamCalls).toHaveLength(1);
+   426→    });
+   427→
+   428→    const handlers = harness.streamCalls[0]?.handlers;
+   429→    expect(handlers?.onEvent).toBeDefined();
+   430→    act(() => {
+   431→      handlers?.onEvent?.({ type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" });
+   432→    });
+   433→    await waitFor(() => {
+   434→      expect(harness.api().snapshot.phase).toBe("streaming");
+   435→    });
+   436→
+   437→    act(() => {
+   438→      handlers?.onEvent?.({
+   439→        type: "tool.started",
+   440→        runId: "run_1",
+   441→        seq: 2,
+   442→        toolCallId: "call_ctx",
+   443→        name: "studio.get_context",
+   444→        args: {},
+   445→      });
+   446→    });
+   447→
+   448→    // The provider diff dispatched exactly this call to the executor.
+   449→    await waitFor(() => {
+   450→      expect(executorRecorder.calls.some((call) => call.toolCallId === "call_ctx")).toBe(true);
+   451→    });
+   452→    expect(executorRecorder.calls.find((call) => call.toolCallId === "call_ctx")).toEqual({
+   453→      runId: "run_1",
+   454→      toolCallId: "call_ctx",
+   455→      name: "studio.get_context",
+   456→      args: {},
+   457→    });
+   458→
+   459→    // The REAL executor ran it against the bridge and posted the tool result.
+   460→    await waitFor(() => {
+   461→      expect(harness.postEvents).toHaveLength(1);
+   462→    });
+   463→    const posted = harness.postEvents[0];
+   464→    expect(posted?.runId).toBe("run_1");
+   465→    expect(posted?.body).toMatchObject({ type: "tool.result", toolCallId: "call_ctx" });
+   466→    expect(harness.bridgeCalls.queries).toContain("project.summary");
+   467→
+   468→    // Server-side tool (studio.plan_edit): the diff still hands it to the
+   469→    // executor (pinned observation pattern), which SKIPS it — nothing extra
+   470→    // is posted (the runner owns plan_edit's result server-side).
+   471→    act(() => {
+   472→      handlers?.onEvent?.({
+   473→        type: "tool.started",
+   474→        runId: "run_1",
+   475→        seq: 3,
+   476→        toolCallId: "call_plan",
+   477→        name: "studio.plan_edit",
+   478→        args: { request: "move the title" },
+   479→      });
+   480→    });
+   481→    await waitFor(() => {
+   482→      expect(executorRecorder.calls.some((call) => call.toolCallId === "call_plan")).toBe(true);
+   483→    });
+   484→    expect(harness.postEvents).toHaveLength(1); // unchanged
+   485→
+   486→    // Replaying the same tool.started (Last-Event-ID reconnect) never re-runs.
+   487→    act(() => {
+   488→      handlers?.onEvent?.({
+   489→        type: "tool.started",
+   490→        runId: "run_1",
+   491→        seq: 2,
+   492→        toolCallId: "call_ctx",
+   493→        name: "studio.get_context",
+   494→        args: {},
+   495→      });
+   496→    });
+   497→    await new Promise((resolve) => setTimeout(resolve, 20));
+   498→    expect(executorRecorder.calls.filter((call) => call.toolCallId === "call_ctx")).toHaveLength(1);
+   499→  });
+   500→});
+   501→
+   502→// ---------------------------------------------------------------------------
+   503→// Context orchestration (flags, collects, pinned, visibility)
+   504→// ---------------------------------------------------------------------------
+   505→
+   506→describe("ChatProvider — context orchestration", () => {
+   507→  it("collects the snapshot when the panel opens and re-collects on flag toggles", async () => {
+   508→    const harness = makeHarness();
+   509→    expect(harness.api().context).toBeNull(); // nothing collected while hidden
+   510→    expect(harness.api().panelVisible).toBe(false);
+   511→
+   512→    act(() => {
+   513→      harness.api().setPanelVisible(true);
+   514→    });
+   515→    await waitFor(() => {
+   516→      expect(harness.api().context).not.toBeNull();
+   517→    });
+   518→    const initialKinds = (harness.api().context?.blocks ?? []).map((block) => block.kind);
+   519→    expect(initialKinds).toContain("projectSummary");
+   520→    expect(initialKinds).toContain("activeComp");
+   521→    expect(initialKinds).not.toContain("recentCommands"); // default-off (§5.1)
+   522→
+   523→    // User opts a block in (§5.3 popover toggle) → the snapshot re-collects.
+   524→    act(() => {
+   525→      harness.api().setFlag("recentCommands", true);
+   526→    });
+   527→    await waitFor(() => {
+   528→      expect(
+   529→        (harness.api().context?.blocks ?? []).some((block) => block.kind === "recentCommands"),
+   530→      ).toBe(true);
+   531→    });
+   532→    expect(harness.bridgeCalls.queries).toContain("edit.history.list");
+   533→
+   534→    // ...and back off (removed auto-context STAYS removed, §3.2).
+   535→    act(() => {
+   536→      harness.api().setFlag("recentCommands", false);
+   537→    });
+   538→    await waitFor(() => {
+   539→      expect(
+   540→        (harness.api().context?.blocks ?? []).some((block) => block.kind === "recentCommands"),
+   541→      ).toBe(false);
+   542→    });
+   543→
+   544→    // "Remove all" clears every currently-on block via overrides.
+   545→    act(() => {
+   546→      harness.api().clearOptionalBlocks();
+   547→    });
+   548→    await waitFor(() => {
+   549→      expect(harness.api().context?.blocks).toHaveLength(0);
+   550→    });
+   551→    expect(harness.api().flags.projectSummary).toBe(false);
+   552→  });
+   553→
+   554→  it("carries pinned chips into the snapshot and the wire body", async () => {
+   555→    const harness = makeHarness();
+   556→    act(() => {
+   557→      harness.api().setPanelVisible(true);
+   558→    });
+   559→    await waitFor(() => {
+   560→      expect(harness.api().context).not.toBeNull();
+   561→    });
+   562→
+   563→    const chip = { kind: "frame" as const, label: "Frame at 00:03" };
+   564→    act(() => {
+   565→      harness.api().addPinned(chip);
+   566→    });
+   567→    await waitFor(() => {
+   568→      expect(harness.api().pinned).toEqual([chip]);
+   569→    });
+   570→    await waitFor(() => {
+   571→      expect(harness.api().context?.pinned).toEqual([chip]);
+   572→    });
+   573→    expect(harness.api().context?.totalTokenEstimate).toBeGreaterThan(0); // pinned chips count
+   574→
+   575→    act(() => {
+   576→      harness.api().send({ message: "use my pinned frame" });
+   577→    });
+   578→    await waitFor(() => {
+   579→      expect(harness.streamCalls).toHaveLength(1);
+   580→    });
+   581→    expect(harness.streamCalls[0]?.body.pinned).toEqual([chip]);
+   582→
+   583→    // Removing the chip clears it from the next snapshot.
+   584→    act(() => {
+   585→      harness.api().removePinned(chip);
+   586→    });
+   587→    await waitFor(() => {
+   588→      expect(harness.api().pinned).toHaveLength(0);
+   589→    });
+   590→  });
+   591→
+   592→  it("polls ui.inspect at 1 Hz only while the panel is visible (§11)", async () => {
+   593→    const harness = makeHarness();
+   594→    await act(async () => {
+   595→      vi.useFakeTimers();
+   596→    });
+   597→
+   598→    const beforeVisible = harness.bridgeCalls.inspect;
+   599→    act(() => {
+   600→      harness.api().setPanelVisible(true);
+   601→    });
+   602→    // The on-open collect runs one inspect; then the 1 Hz ticks take over.
+   603→    await act(async () => {
+   604→      await vi.advanceTimersByTimeAsync(2100);
+   605→    });
+   606→    const afterVisible = harness.bridgeCalls.inspect;
+   607→    // 1 (open collect) + 2 (interval ticks at 1s and 2s) — the exact count.
+   608→    expect(afterVisible - beforeVisible).toBe(3);
+   609→
+   610→    // Hidden: the interval is torn down; no further inspects.
+   611→    act(() => {
+   612→      harness.api().setPanelVisible(false);
+   613→    });
+   614→    await act(async () => {
+   615→      await vi.advanceTimersByTimeAsync(3000);
+   616→    });
+   617→    expect(harness.bridgeCalls.inspect).toBe(afterVisible);
+   618→  });
+   619→});
+   620→
+   621→// ---------------------------------------------------------------------------
+   622→// Quick actions + facades
+   623→// ---------------------------------------------------------------------------
+   624→
+   625→describe("ChatProvider — quick actions + facades", () => {
+   626→  it("sends on the studio:chat-quick-action window CustomEvent through the same send path", async () => {
+   627→    const harness = makeHarness();
+   628→    await waitFor(() => {
+   629→      expect(harness.api().models).not.toBeNull();
+   630→    });
+   631→
+   632→    act(() => {
+   633→      window.dispatchEvent(
+   634→        new CustomEvent("studio:chat-quick-action", { detail: "Render a preview" }),
+   635→      );
+   636→    });
+   637→
+   638→    await waitFor(() => {
+   639→      expect(harness.streamCalls).toHaveLength(1);
+   640→    });
+   641→    expect(harness.streamCalls[0]?.body.message).toBe("Render a preview");
+   642→    expect(harness.createThreadCalls()).toBe(1);
+   643→
+   644→    // Empty/garbage details never dispatch.
+   645→    act(() => {
+   646→      window.dispatchEvent(new CustomEvent("studio:chat-quick-action", { detail: "   " }));
+   647→    });
+   648→    await new Promise((resolve) => setTimeout(resolve, 20));
+   649→    expect(harness.streamCalls).toHaveLength(1);
+   650→  });
+   651→
+   652→  it("stop() routes through the live controller to the stream handle's fused cancel (§8.3)", async () => {
+   653→    const harness = makeHarness();
+   654→    await waitFor(() => {
+   655→      expect(harness.api().models).not.toBeNull();
+   656→    });
+   657→    act(() => {
+   658→      harness.api().send({ message: "stop me" });
+   659→    });
+   660→    await waitFor(() => {
+   661→      expect(harness.streamCalls).toHaveLength(1);
+   662→    });
+   663→
+   664→    act(() => {
+   665→      harness.api().stop();
+   666→    });
+   667→    await waitFor(() => {
+   668→      expect(harness.streamCalls[0]?.cancel).toHaveBeenCalled();
+   669→    });
+   670→    expect(harness.api().snapshot.phase).toBe("cancelled");
+   671→  });
+   672→
+   673→  it("useChatContextApi works inside the provider and throws outside it", async () => {
+   674→    const { useChatContextApi } = await import("./provider");
+   675→
+   676→    const OutsideProbe = (): ReactElement => {
+   677→      let message = "";
+   678→      try {
+   679→        useChatContextApi();
+   680→      } catch (error) {
+   681→        message = error instanceof Error ? error.message : String(error);
+   682→      }
+   683→      return <div data-testid="outside-probe">{message}</div>;
+   684→    };
+   685→    render(<OutsideProbe />);
+   686→    expect(screen.getByTestId("outside-probe").textContent).toMatch(/ChatProvider/);
+   687→    cleanup();
+   688→
+   689→    let phase = "";
+   690→    const InsideProbe = (): ReactElement => {
+   691→      const inner = useChatContextApi();
+   692→      phase = inner.snapshot.phase;
+   693→      return <div data-testid="inside-probe" />;
+   694→    };
+   695→    render(
+   696→      <ChatProvider
+   697→        client={{} as unknown as ApiClient}
+   698→        bridge={attachFakeBridge(createFakeEditor({ version: "0.13.0" }))}
+   699→        workspaceId="ws_test"
+   700→        projectId="prj_test"
+   701→        shortcutBus={createChatShortcutBus()}
+   702→      >
+   703→        {() => <InsideProbe />}
+   704→      </ChatProvider>,
+   705→    );
+   706→    expect(screen.getByTestId("inside-probe")).toBeInTheDocument();
+   707→    expect(phase).toBe("idle");
+   708→  });
+   709→});
+   710→
+   711→// ---------------------------------------------------------------------------
+   712→// Executor deps (live ContextSelection per flags change)
+   713→// ---------------------------------------------------------------------------
+   714→
+   715→describe("ChatProvider — executor deps", () => {
+   716→  it("recreates the executor with the live flags when the user toggles a block", async () => {
+   717→    const harness = makeHarness();
+   718→    await waitFor(() => {
+   719→      expect(executorRecorder.deps).toHaveLength(1); // created once per mount
+   720→    });
+   721→    expect(executorRecorder.deps[0]?.flags.recentCommands).toBe(false);
+   722→
+   723→    act(() => {
+   724→      harness.api().setFlag("recentCommands", true);
+   725→    });
+   726→    await waitFor(() => {
+   727→      expect(executorRecorder.deps.length).toBeGreaterThanOrEqual(2);
+   728→    });
+   729→    expect(executorRecorder.deps[executorRecorder.deps.length - 1]?.flags.recentCommands).toBe(
+   730→      true,
+   731→    );
+   732→  });
+   733→});
+   734→
