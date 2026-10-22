@@ -1,0 +1,772 @@
+     1→import { randomUUID } from "node:crypto";
+     2→import { relations } from "drizzle-orm";
+     3→import {
+     4→  type AnyPgColumn,
+     5→  bigint,
+     6→  boolean,
+     7→  index,
+     8→  integer,
+     9→  jsonb,
+    10→  pgTable,
+    11→  text,
+    12→  timestamp,
+    13→  uniqueIndex,
+    14→} from "drizzle-orm/pg-core";
+    15→
+    16→import { createId } from "./ids.js";
+    17→
+    18→/**
+    19→ * Studio schema (Postgres, drizzle-orm) — PRODUCT_ARCHITECTURE §9.1 (all tables),
+    20→ * §9.3 (versions/conflict), §8.8 (credit ledger) + Better Auth 1.7 core/org/api-key/admin
+    21→ * plugin tables, verified against `getSchema()` of the installed better-auth.
+    22→ *
+    23→ * Conventions:
+    24→ * - text primary keys (`${prefix}_${uuid}`) generated app-side; timestamps with
+    25→ *   time zone (JS Date mode).
+    26→ * - Column names are snake_case; TS property names are camelCase.
+    27→ *   EXCEPTION: Better Auth tables — property names MUST match the plugin model
+    28→ *   field names exactly (the drizzle adapter addresses columns by property name).
+    29→ * - Tenant scoping: content tables carry `workspace_id` (or scope through
+    30→ *   `project_id` -> projects.workspace_id). Cross-tenant access must read as
+    31→ *   "not found" (§12.1) — enforced in `src/repos/*`, not here.
+    32→ *
+    33→ * Decisions (documented for reviewers):
+    34→ * - `project_versions` is NOT unique on (project_id, sha256): re-saving identical
+    35→ *   content is a legitimate action and §9.3 forbids rewriting history; the
+    36→ *   object store dedupes the blob itself (§9.2 content-addressed). The composite
+    37→ *   index exists for fast "is this content already stored" lookups.
+    38→ * - `credit_ledger` is append-only by convention; balance is SUM(amount) under a
+    39→ *   per-workspace advisory lock (see src/repos/ledger.ts).
+    40→ * - `renders`, `comments` and `agent_*` scope through `project_id` per §9.1; the
+    41→ *   repos join projects to enforce tenancy.
+    42→ * - `projects.current_version_id` and `project_versions.parent_version_id` are
+    43→ *   plain text columns WITHOUT FK constraints: they form a circular reference
+    44→ *   pair with `project_versions.project_id`, and both are written only inside
+    45→ *   repo transactions that hold the project row lock (src/repos/versions.ts),
+    46→ *   so integrity is enforced where the conflict rules live (§9.3) without
+    47→ *   making schema-level DELETE semantics impossible.
+    48→ */
+    49→
+    50→const ts = (name: string) => timestamp(name, { withTimezone: true });
+    51→
+    52→// ─────────────────────────────────────────────────────────────────────────────
+    53→// Section 1 — Better Auth core tables (user / session / account / verification)
+    54→// Property names are better-auth model field names (adapter requirement).
+    55→// ─────────────────────────────────────────────────────────────────────────────
+    56→
+    57→export const user = pgTable(
+    58→  "user",
+    59→  {
+    60→    id: text("id")
+    61→      .primaryKey()
+    62→      .$defaultFn(() => randomUUID()),
+    63→    name: text("name").notNull(),
+    64→    email: text("email").notNull().unique(),
+    65→    emailVerified: boolean("email_verified").notNull().default(false),
+    66→    image: text("image"),
+    67→    createdAt: ts("created_at").notNull().defaultNow(),
+    68→    updatedAt: ts("updated_at")
+    69→      .notNull()
+    70→      .defaultNow()
+    71→      .$onUpdate(() => new Date()),
+    72→    // admin plugin (global/staff role — distinct from workspace roles):
+    73→    role: text("role"),
+    74→    banned: boolean("banned").default(false),
+    75→    banReason: text("ban_reason"),
+    76→    banExpires: ts("ban_expires"),
+    77→  },
+    78→  (t) => [index("user_email_idx").on(t.email)],
+    79→);
+    80→
+    81→export const session = pgTable(
+    82→  "session",
+    83→  {
+    84→    id: text("id")
+    85→      .primaryKey()
+    86→      .$defaultFn(() => randomUUID()),
+    87→    expiresAt: ts("expires_at").notNull(),
+    88→    token: text("token").notNull().unique(),
+    89→    createdAt: ts("created_at").notNull().defaultNow(),
+    90→    updatedAt: ts("updated_at")
+    91→      .notNull()
+    92→      .defaultNow()
+    93→      .$onUpdate(() => new Date()),
+    94→    ipAddress: text("ip_address"),
+    95→    userAgent: text("user_agent"),
+    96→    userId: text("user_id")
+    97→      .notNull()
+    98→      .references((): AnyPgColumn => user.id, { onDelete: "cascade" }),
+    99→    // organization plugin: last active workspace for this session
+   100→    activeOrganizationId: text("active_organization_id"),
+   101→    // admin plugin:
+   102→    impersonatedBy: text("impersonated_by"),
+   103→  },
+   104→  (t) => [index("session_user_idx").on(t.userId)],
+   105→);
+   106→
+   107→export const account = pgTable(
+   108→  "account",
+   109→  {
+   110→    id: text("id")
+   111→      .primaryKey()
+   112→      .$defaultFn(() => randomUUID()),
+   113→    accountId: text("account_id").notNull(),
+   114→    providerId: text("provider_id").notNull(),
+   115→    userId: text("user_id")
+   116→      .notNull()
+   117→      .references((): AnyPgColumn => user.id, { onDelete: "cascade" }),
+   118→    accessToken: text("access_token"),
+   119→    refreshToken: text("refresh_token"),
+   120→    idToken: text("id_token"),
+   121→    accessTokenExpiresAt: ts("access_token_expires_at"),
+   122→    refreshTokenExpiresAt: ts("refresh_token_expires_at"),
+   123→    scope: text("scope"),
+   124→    password: text("password"),
+   125→    createdAt: ts("created_at").notNull().defaultNow(),
+   126→    updatedAt: ts("updated_at")
+   127→      .notNull()
+   128→      .defaultNow()
+   129→      .$onUpdate(() => new Date()),
+   130→  },
+   131→  (t) => [index("account_user_idx").on(t.userId)],
+   132→);
+   133→
+   134→export const verification = pgTable(
+   135→  "verification",
+   136→  {
+   137→    id: text("id")
+   138→      .primaryKey()
+   139→      .$defaultFn(() => randomUUID()),
+   140→    identifier: text("identifier").notNull(),
+   141→    value: text("value").notNull(),
+   142→    expiresAt: ts("expires_at").notNull(),
+   143→    createdAt: ts("created_at").notNull().defaultNow(),
+   144→    updatedAt: ts("updated_at").notNull().defaultNow(),
+   145→  },
+   146→  (t) => [index("verification_identifier_idx").on(t.identifier)],
+   147→);
+   148→
+   149→// ─────────────────────────────────────────────────────────────────────────────
+   150→// Section 2 — Better Auth organization plugin (workspaces)
+   151→// Workspace == organization (ADR-0003). Roles: owner | admin | editor | viewer.
+   152→// ─────────────────────────────────────────────────────────────────────────────
+   153→
+   154→export const organization = pgTable(
+   155→  "organization",
+   156→  {
+   157→    id: text("id")
+   158→      .primaryKey()
+   159→      .$defaultFn(() => randomUUID()),
+   160→    name: text("name").notNull(),
+   161→    slug: text("slug").notNull().unique(),
+   162→    logo: text("logo"),
+   163→    createdAt: ts("created_at").notNull().defaultNow(),
+   164→    // better-auth serializes metadata objects to JSON strings itself
+   165→    metadata: text("metadata"),
+   166→  },
+   167→  (t) => [uniqueIndex("organization_slug_uniq").on(t.slug)],
+   168→);
+   169→
+   170→export const member = pgTable(
+   171→  "member",
+   172→  {
+   173→    id: text("id")
+   174→      .primaryKey()
+   175→      .$defaultFn(() => randomUUID()),
+   176→    organizationId: text("organization_id")
+   177→      .notNull()
+   178→      .references((): AnyPgColumn => organization.id, { onDelete: "cascade" }),
+   179→    userId: text("user_id")
+   180→      .notNull()
+   181→      .references((): AnyPgColumn => user.id, { onDelete: "cascade" }),
+   182→    role: text("role").notNull().default("member"),
+   183→    createdAt: ts("created_at").notNull().defaultNow(),
+   184→  },
+   185→  (t) => [
+   186→    index("member_organization_idx").on(t.organizationId),
+   187→    index("member_user_idx").on(t.userId),
+   188→  ],
+   189→);
+   190→
+   191→export const invitation = pgTable(
+   192→  "invitation",
+   193→  {
+   194→    id: text("id")
+   195→      .primaryKey()
+   196→      .$defaultFn(() => randomUUID()),
+   197→    organizationId: text("organization_id")
+   198→      .notNull()
+   199→      .references((): AnyPgColumn => organization.id, { onDelete: "cascade" }),
+   200→    email: text("email").notNull(),
+   201→    role: text("role"),
+   202→    status: text("status").notNull().default("pending"),
+   203→    expiresAt: ts("expires_at").notNull(),
+   204→    inviterId: text("inviter_id")
+   205→      .notNull()
+   206→      .references((): AnyPgColumn => user.id, { onDelete: "cascade" }),
+   207→    createdAt: ts("created_at").notNull().defaultNow(),
+   208→  },
+   209→  (t) => [
+   210→    index("invitation_organization_idx").on(t.organizationId),
+   211→    index("invitation_email_idx").on(t.email),
+   212→  ],
+   213→);
+   214→
+   215→// ─────────────────────────────────────────────────────────────────────────────
+   216→// Section 3 — Better Auth apiKey plugin (hashed, revocable API keys)
+   217→// Table name is the plugin default `apikey`; `referenceId` is the user id.
+   218→// ─────────────────────────────────────────────────────────────────────────────
+   219→
+   220→export const apiKey = pgTable(
+   221→  "apikey",
+   222→  {
+   223→    id: text("id")
+   224→      .primaryKey()
+   225→      .$defaultFn(() => randomUUID()),
+   226→    configId: text("config_id").notNull().default("default"),
+   227→    name: text("name"),
+   228→    start: text("start"),
+   229→    referenceId: text("reference_id").notNull(),
+   230→    prefix: text("prefix"),
+   231→    key: text("key").notNull(),
+   232→    refillInterval: integer("refill_interval"),
+   233→    refillAmount: integer("refill_amount"),
+   234→    lastRefillAt: ts("last_refill_at"),
+   235→    enabled: boolean("enabled").default(true),
+   236→    rateLimitEnabled: boolean("rate_limit_enabled").default(true),
+   237→    rateLimitTimeWindow: integer("rate_limit_time_window").default(86_400_000),
+   238→    rateLimitMax: integer("rate_limit_max").default(10),
+   239→    requestCount: integer("request_count").default(0),
+   240→    remaining: integer("remaining"),
+   241→    lastRequest: ts("last_request"),
+   242→    expiresAt: ts("expires_at"),
+   243→    createdAt: ts("created_at").notNull().defaultNow(),
+   244→    updatedAt: ts("updated_at").notNull().defaultNow(),
+   245→    permissions: text("permissions"),
+   246→    metadata: text("metadata"),
+   247→  },
+   248→  (t) => [index("apikey_reference_idx").on(t.referenceId), index("apikey_key_idx").on(t.key)],
+   249→);
+   250→
+   251→// ─────────────────────────────────────────────────────────────────────────────
+   252→// Section 4 — Projects, versions, leases (§9.1, §6.4, §9.3)
+   253→// ─────────────────────────────────────────────────────────────────────────────
+   254→
+   255→export const projects = pgTable(
+   256→  "projects",
+   257→  {
+   258→    id: text("id")
+   259→      .primaryKey()
+   260→      .$defaultFn(() => createId("prj")),
+   261→    workspaceId: text("workspace_id")
+   262→      .notNull()
+   263→      .references((): AnyPgColumn => organization.id, { onDelete: "cascade" }),
+   264→    name: text("name").notNull(),
+   265→    slug: text("slug").notNull(),
+   266→    description: text("description"),
+   267→    thumbnailUrl: text("thumbnail_url"),
+   268→    currentVersionId: text("current_version_id"),
+   269→    createdBy: text("created_by")
+   270→      .notNull()
+   271→      .references((): AnyPgColumn => user.id),
+   272→    createdAt: ts("created_at").notNull().defaultNow(),
+   273→    updatedAt: ts("updated_at").notNull().defaultNow(),
+   274→    deletedAt: ts("deleted_at"), // soft delete
+   275→  },
+   276→  (t) => [
+   277→    index("projects_workspace_updated_idx").on(t.workspaceId, t.updatedAt.desc()),
+   278→    uniqueIndex("projects_workspace_slug_uniq").on(t.workspaceId, t.slug),
+   279→    index("projects_current_version_idx").on(t.currentVersionId),
+   280→  ],
+   281→);
+   282→
+   283→export const projectVersions = pgTable(
+   284→  "project_versions",
+   285→  {
+   286→    id: text("id")
+   287→      .primaryKey()
+   288→      .$defaultFn(() => createId("ver")),
+   289→    projectId: text("project_id")
+   290→      .notNull()
+   291→      .references((): AnyPgColumn => projects.id, { onDelete: "cascade" }),
+   292→    version: integer("version").notNull(),
+   293→    parentVersionId: text("parent_version_id"),
+   294→    objectKey: text("object_key").notNull(),
+   295→    sha256: text("sha256").notNull(),
+   296→    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+   297→    label: text("label"),
+   298→    agentRunId: text("agent_run_id"),
+   299→    createdBy: text("created_by")
+   300→      .notNull()
+   301→      .references((): AnyPgColumn => user.id),
+   302→    createdAt: ts("created_at").notNull().defaultNow(),
+   303→    // IMMUTABLE: no update paths exist in the repository layer (§9.3).
+   304→  },
+   305→  (t) => [
+   306→    index("project_versions_project_idx").on(t.projectId, t.version.desc()),
+   307→    index("project_versions_project_sha_idx").on(t.projectId, t.sha256),
+   308→    index("project_versions_parent_idx").on(t.parentVersionId),
+   309→  ],
+   310→);
+   311→
+   312→export const projectLeases = pgTable("project_leases", {
+   313→  projectId: text("project_id")
+   314→    .primaryKey()
+   315→    .references((): AnyPgColumn => projects.id, { onDelete: "cascade" }),
+   316→  userId: text("user_id")
+   317→    .notNull()
+   318→    .references((): AnyPgColumn => user.id, { onDelete: "cascade" }),
+   319→  sessionId: text("session_id").notNull(),
+   320→  expiresAt: ts("expires_at").notNull(),
+   321→});
+   322→
+   323→// ─────────────────────────────────────────────────────────────────────────────
+   324→// Section 5 — Assets (workspace library + optional project scope) (§9.1)
+   325→// ─────────────────────────────────────────────────────────────────────────────
+   326→
+   327→export const assets = pgTable(
+   328→  "assets",
+   329→  {
+   330→    id: text("id")
+   331→      .primaryKey()
+   332→      .$defaultFn(() => createId("ast")),
+   333→    workspaceId: text("workspace_id")
+   334→      .notNull()
+   335→      .references((): AnyPgColumn => organization.id, { onDelete: "cascade" }),
+   336→    projectId: text("project_id").references((): AnyPgColumn => projects.id, {
+   337→      onDelete: "set null",
+   338→    }),
+   339→    name: text("name").notNull(),
+   340→    mime: text("mime").notNull(),
+   341→    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+   342→    sha256: text("sha256").notNull(),
+   343→    objectKey: text("object_key").notNull(),
+   344→    width: integer("width"),
+   345→    height: integer("height"),
+   346→    durationTicks: bigint("duration_ticks", { mode: "number" }),
+   347→    createdBy: text("created_by")
+   348→      .notNull()
+   349→      .references((): AnyPgColumn => user.id),
+   350→    createdAt: ts("created_at").notNull().defaultNow(),
+   351→  },
+   352→  (t) => [
+   353→    index("assets_workspace_created_idx").on(t.workspaceId, t.createdAt.desc()),
+   354→    index("assets_workspace_sha_idx").on(t.workspaceId, t.sha256),
+   355→    index("assets_project_idx").on(t.projectId),
+   356→  ],
+   357→);
+   358→
+   359→// ─────────────────────────────────────────────────────────────────────────────
+   360→// Section 6 — Agent threads / messages / runs / steps (§9.1, §8)
+   361→// ─────────────────────────────────────────────────────────────────────────────
+   362→
+   363→export const agentThreads = pgTable(
+   364→  "agent_threads",
+   365→  {
+   366→    id: text("id")
+   367→      .primaryKey()
+   368→      .$defaultFn(() => createId("thr")),
+   369→    projectId: text("project_id")
+   370→      .notNull()
+   371→      .references((): AnyPgColumn => projects.id, { onDelete: "cascade" }),
+   372→    createdBy: text("created_by")
+   373→      .notNull()
+   374→      .references((): AnyPgColumn => user.id),
+   375→    title: text("title"),
+   376→    createdAt: ts("created_at").notNull().defaultNow(),
+   377→    updatedAt: ts("updated_at").notNull().defaultNow(),
+   378→  },
+   379→  (t) => [index("agent_threads_project_idx").on(t.projectId, t.updatedAt.desc())],
+   380→);
+   381→
+   382→export const agentMessages = pgTable(
+   383→  "agent_messages",
+   384→  {
+   385→    id: text("id")
+   386→      .primaryKey()
+   387→      .$defaultFn(() => createId("msg")),
+   388→    threadId: text("thread_id")
+   389→      .notNull()
+   390→      .references((): AnyPgColumn => agentThreads.id, { onDelete: "cascade" }),
+   391→    role: text("role").notNull(),
+   392→    contentJson: jsonb("content_json").notNull(),
+   393→    runId: text("run_id"),
+   394→    createdAt: ts("created_at").notNull().defaultNow(),
+   395→  },
+   396→  (t) => [
+   397→    index("agent_messages_thread_created_idx").on(t.threadId, t.createdAt.desc()),
+   398→    index("agent_messages_run_idx").on(t.runId),
+   399→  ],
+   400→);
+   401→
+   402→export type RunStatus =
+   403→  | "queued"
+   404→  | "running"
+   405→  | "awaiting_approval"
+   406→  | "completed"
+   407→  | "failed"
+   408→  | "cancelled";
+   409→
+   410→export const agentRuns = pgTable(
+   411→  "agent_runs",
+   412→  {
+   413→    id: text("id")
+   414→      .primaryKey()
+   415→      .$defaultFn(() => createId("run")),
+   416→    threadId: text("thread_id")
+   417→      .notNull()
+   418→      .references((): AnyPgColumn => agentThreads.id, { onDelete: "cascade" }),
+   419→    projectId: text("project_id")
+   420→      .notNull()
+   421→      .references((): AnyPgColumn => projects.id, { onDelete: "cascade" }),
+   422→    model: text("model").notNull(),
+   423→    status: text("status").$type<RunStatus>().notNull().default("queued"),
+   424→    planJson: jsonb("plan_json"),
+   425→    reservedCredits: integer("reserved_credits").notNull().default(0),
+   426→    committedCredits: integer("committed_credits").notNull().default(0),
+   427→    baseVersionId: text("base_version_id"),
+   428→    resultVersionId: text("result_version_id"),
+   429→    errorCode: text("error_code"),
+   430→    createdAt: ts("created_at").notNull().defaultNow(),
+   431→    completedAt: ts("completed_at"),
+   432→  },
+   433→  (t) => [
+   434→    index("agent_runs_thread_idx").on(t.threadId),
+   435→    index("agent_runs_project_idx").on(t.projectId, t.createdAt.desc()),
+   436→    index("agent_runs_status_idx").on(t.status),
+   437→  ],
+   438→);
+   439→
+   440→export type StepStatus = "pending" | "running" | "success" | "failed";
+   441→
+   442→export const agentSteps = pgTable(
+   443→  "agent_steps",
+   444→  {
+   445→    id: text("id")
+   446→      .primaryKey()
+   447→      .$defaultFn(() => createId("stp")),
+   448→    runId: text("run_id")
+   449→      .notNull()
+   450→      .references((): AnyPgColumn => agentRuns.id, { onDelete: "cascade" }),
+   451→    seq: integer("seq").notNull(),
+   452→    tool: text("tool").notNull(),
+   453→    argsJson: jsonb("args_json"),
+   454→    resultJson: jsonb("result_json"),
+   455→    commandBatchJson: jsonb("command_batch_json"),
+   456→    status: text("status").$type<StepStatus>().notNull().default("pending"),
+   457→    durationMs: integer("duration_ms"),
+   458→  },
+   459→  (t) => [uniqueIndex("agent_steps_run_seq_uniq").on(t.runId, t.seq)],
+   460→);
+   461→
+   462→// ─────────────────────────────────────────────────────────────────────────────
+   463→// Section 7 — Credit ledger (§8.8, §10.2) — append-only
+   464→//   grant   +N   purchase / plan allowance / top-up pack
+   465→//   adjust  ±N   manual corrections, storage overage, promos (may be negative)
+   466→//   reserve −N   hold at run start (pessimistic: balance drops immediately)
+   467→//   commit  −M   actual cost at settle time (bounded by the run's hold)
+   468→//   refund  +R   release of an unspent hold (full refund on failure/cancel)
+   469→// balance = SUM(amount); writers serialize per workspace via pg_advisory_xact_lock.
+   470→// ─────────────────────────────────────────────────────────────────────────────
+   471→
+   472→export type LedgerKind = "grant" | "reserve" | "commit" | "refund" | "adjust";
+   473→
+   474→export const creditLedger = pgTable(
+   475→  "credit_ledger",
+   476→  {
+   477→    id: text("id")
+   478→      .primaryKey()
+   479→      .$defaultFn(() => createId("led")),
+   480→    workspaceId: text("workspace_id")
+   481→      .notNull()
+   482→      .references((): AnyPgColumn => organization.id, { onDelete: "cascade" }),
+   483→    kind: text("kind").$type<LedgerKind>().notNull(),
+   484→    amount: integer("amount").notNull(), // signed
+   485→    balanceAfter: integer("balance_after").notNull(),
+   486→    runId: text("run_id"),
+   487→    idempotencyKey: text("idempotency_key").notNull(),
+   488→    metadata: jsonb("metadata"),
+   489→    createdAt: ts("created_at").notNull().defaultNow(),
+   490→  },
+   491→  (t) => [
+   492→    uniqueIndex("credit_ledger_idempotency_uniq").on(t.idempotencyKey),
+   493→    index("credit_ledger_workspace_created_idx").on(t.workspaceId, t.createdAt.desc()),
+   494→    index("credit_ledger_run_idx").on(t.runId),
+   495→  ],
+   496→);
+   497→
+   498→// ─────────────────────────────────────────────────────────────────────────────
+   499→// Section 8 — Renders (§9.1) — queued→running→completed|failed|cancelled
+   500→// ─────────────────────────────────────────────────────────────────────────────
+   501→
+   502→export type RenderStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+   503→
+   504→export const renders = pgTable(
+   505→  "renders",
+   506→  {
+   507→    id: text("id")
+   508→      .primaryKey()
+   509→      .$defaultFn(() => createId("rdr")),
+   510→    projectId: text("project_id")
+   511→      .notNull()
+   512→      .references((): AnyPgColumn => projects.id, { onDelete: "cascade" }),
+   513→    compId: text("comp_id").notNull(),
+   514→    format: text("format").notNull(),
+   515→    settingsJson: jsonb("settings_json"),
+   516→    status: text("status").$type<RenderStatus>().notNull().default("queued"),
+   517→    objectKey: text("object_key"),
+   518→    error: text("error"),
+   519→    credits: integer("credits").notNull().default(0),
+   520→    createdBy: text("created_by")
+   521→      .notNull()
+   522→      .references((): AnyPgColumn => user.id),
+   523→    createdAt: ts("created_at").notNull().defaultNow(),
+   524→    completedAt: ts("completed_at"),
+   525→  },
+   526→  (t) => [
+   527→    index("renders_project_created_idx").on(t.projectId, t.createdAt.desc()),
+   528→    index("renders_status_idx").on(t.status),
+   529→  ],
+   530→);
+   531→
+   532→// ─────────────────────────────────────────────────────────────────────────────
+   533→// Section 9 — Comments (review notes anchored to comp/layer/time) (§9.1, §11)
+   534→// ─────────────────────────────────────────────────────────────────────────────
+   535→
+   536→export const comments = pgTable(
+   537→  "comments",
+   538→  {
+   539→    id: text("id")
+   540→      .primaryKey()
+   541→      .$defaultFn(() => createId("cmt")),
+   542→    projectId: text("project_id")
+   543→      .notNull()
+   544→      .references((): AnyPgColumn => projects.id, { onDelete: "cascade" }),
+   545→    compId: text("comp_id").notNull(),
+   546→    layerId: text("layer_id"),
+   547→    timeTicks: bigint("time_ticks", { mode: "number" }),
+   548→    body: text("body").notNull(),
+   549→    authorId: text("author_id")
+   550→      .notNull()
+   551→      .references((): AnyPgColumn => user.id),
+   552→    resolvedAt: ts("resolved_at"),
+   553→    createdAt: ts("created_at").notNull().defaultNow(),
+   554→  },
+   555→  (t) => [
+   556→    index("comments_project_resolved_idx").on(t.projectId, t.resolvedAt),
+   557→    index("comments_project_created_idx").on(t.projectId, t.createdAt.desc()),
+   558→  ],
+   559→);
+   560→
+   561→// ─────────────────────────────────────────────────────────────────────────────
+   562→// Section 10 — Audit log (§7.1: every role change / invite / key event is audited)
+   563→// ─────────────────────────────────────────────────────────────────────────────
+   564→
+   565→export const auditLog = pgTable(
+   566→  "audit_log",
+   567→  {
+   568→    id: text("id")
+   569→      .primaryKey()
+   570→      .$defaultFn(() => createId("aud")),
+   571→    workspaceId: text("workspace_id")
+   572→      .notNull()
+   573→      .references((): AnyPgColumn => organization.id, { onDelete: "cascade" }),
+   574→    actorId: text("actor_id").references((): AnyPgColumn => user.id, {
+   575→      onDelete: "set null",
+   576→    }),
+   577→    action: text("action").notNull(),
+   578→    targetType: text("target_type"),
+   579→    targetId: text("target_id"),
+   580→    metadata: jsonb("metadata"),
+   581→    ip: text("ip"),
+   582→    createdAt: ts("created_at").notNull().defaultNow(),
+   583→  },
+   584→  (t) => [
+   585→    index("audit_log_workspace_created_idx").on(t.workspaceId, t.createdAt.desc()),
+   586→    index("audit_log_target_idx").on(t.targetType, t.targetId),
+   587→  ],
+   588→);
+   589→
+   590→// ─────────────────────────────────────────────────────────────────────────────
+   591→// Section 11 — Drizzle relations (main joins)
+   592→// `projects.currentVersionId` vs `project_versions.projectId` are two distinct
+   593→// edges between the same tables → disambiguated with relationName.
+   594→// ─────────────────────────────────────────────────────────────────────────────
+   595→
+   596→export const userRelations = relations(user, ({ many }) => ({
+   597→  sessions: many(session),
+   598→  accounts: many(account),
+   599→  memberships: many(member),
+   600→}));
+   601→
+   602→export const sessionRelations = relations(session, ({ one }) => ({
+   603→  user: one(user, { fields: [session.userId], references: [user.id] }),
+   604→}));
+   605→
+   606→export const accountRelations = relations(account, ({ one }) => ({
+   607→  user: one(user, { fields: [account.userId], references: [user.id] }),
+   608→}));
+   609→
+   610→export const organizationRelations = relations(organization, ({ many }) => ({
+   611→  members: many(member),
+   612→  invitations: many(invitation),
+   613→  projects: many(projects),
+   614→  assets: many(assets),
+   615→  ledgerEntries: many(creditLedger),
+   616→  auditEntries: many(auditLog),
+   617→}));
+   618→
+   619→export const memberRelations = relations(member, ({ one }) => ({
+   620→  organization: one(organization, {
+   621→    fields: [member.organizationId],
+   622→    references: [organization.id],
+   623→  }),
+   624→  user: one(user, { fields: [member.userId], references: [user.id] }),
+   625→}));
+   626→
+   627→export const invitationRelations = relations(invitation, ({ one }) => ({
+   628→  organization: one(organization, {
+   629→    fields: [invitation.organizationId],
+   630→    references: [organization.id],
+   631→  }),
+   632→  inviter: one(user, { fields: [invitation.inviterId], references: [user.id] }),
+   633→}));
+   634→
+   635→export const projectsRelations = relations(projects, ({ one, many }) => ({
+   636→  workspace: one(organization, {
+   637→    fields: [projects.workspaceId],
+   638→    references: [organization.id],
+   639→  }),
+   640→  currentVersion: one(projectVersions, {
+   641→    fields: [projects.currentVersionId],
+   642→    references: [projectVersions.id],
+   643→    relationName: "current",
+   644→  }),
+   645→  versions: many(projectVersions, { relationName: "history" }),
+   646→  lease: one(projectLeases, {
+   647→    fields: [projects.id],
+   648→    references: [projectLeases.projectId],
+   649→    relationName: "lease",
+   650→  }),
+   651→  assets: many(assets),
+   652→  threads: many(agentThreads),
+   653→  runs: many(agentRuns),
+   654→  renders: many(renders),
+   655→  comments: many(comments),
+   656→  creator: one(user, { fields: [projects.createdBy], references: [user.id] }),
+   657→}));
+   658→
+   659→export const projectVersionsRelations = relations(projectVersions, ({ one, many }) => ({
+   660→  project: one(projects, {
+   661→    fields: [projectVersions.projectId],
+   662→    references: [projects.id],
+   663→    relationName: "history",
+   664→  }),
+   665→  parent: one(projectVersions, {
+   666→    fields: [projectVersions.parentVersionId],
+   667→    references: [projectVersions.id],
+   668→    relationName: "parent",
+   669→  }),
+   670→  currentFor: many(projects, { relationName: "current" }),
+   671→  creator: one(user, { fields: [projectVersions.createdBy], references: [user.id] }),
+   672→}));
+   673→
+   674→export const projectLeasesRelations = relations(projectLeases, ({ one }) => ({
+   675→  project: one(projects, {
+   676→    fields: [projectLeases.projectId],
+   677→    references: [projects.id],
+   678→    relationName: "lease",
+   679→  }),
+   680→  holder: one(user, { fields: [projectLeases.userId], references: [user.id] }),
+   681→}));
+   682→
+   683→export const assetsRelations = relations(assets, ({ one }) => ({
+   684→  workspace: one(organization, {
+   685→    fields: [assets.workspaceId],
+   686→    references: [organization.id],
+   687→  }),
+   688→  project: one(projects, { fields: [assets.projectId], references: [projects.id] }),
+   689→  creator: one(user, { fields: [assets.createdBy], references: [user.id] }),
+   690→}));
+   691→
+   692→export const agentThreadsRelations = relations(agentThreads, ({ one, many }) => ({
+   693→  project: one(projects, {
+   694→    fields: [agentThreads.projectId],
+   695→    references: [projects.id],
+   696→  }),
+   697→  creator: one(user, { fields: [agentThreads.createdBy], references: [user.id] }),
+   698→  messages: many(agentMessages),
+   699→  runs: many(agentRuns),
+   700→}));
+   701→
+   702→export const agentMessagesRelations = relations(agentMessages, ({ one }) => ({
+   703→  thread: one(agentThreads, {
+   704→    fields: [agentMessages.threadId],
+   705→    references: [agentThreads.id],
+   706→  }),
+   707→}));
+   708→
+   709→export const agentRunsRelations = relations(agentRuns, ({ one, many }) => ({
+   710→  thread: one(agentThreads, {
+   711→    fields: [agentRuns.threadId],
+   712→    references: [agentThreads.id],
+   713→  }),
+   714→  project: one(projects, {
+   715→    fields: [agentRuns.projectId],
+   716→    references: [projects.id],
+   717→  }),
+   718→  steps: many(agentSteps),
+   719→}));
+   720→
+   721→export const agentStepsRelations = relations(agentSteps, ({ one }) => ({
+   722→  run: one(agentRuns, { fields: [agentSteps.runId], references: [agentRuns.id] }),
+   723→}));
+   724→
+   725→export const creditLedgerRelations = relations(creditLedger, ({ one }) => ({
+   726→  workspace: one(organization, {
+   727→    fields: [creditLedger.workspaceId],
+   728→    references: [organization.id],
+   729→  }),
+   730→}));
+   731→
+   732→export const rendersRelations = relations(renders, ({ one }) => ({
+   733→  project: one(projects, { fields: [renders.projectId], references: [projects.id] }),
+   734→  creator: one(user, { fields: [renders.createdBy], references: [user.id] }),
+   735→}));
+   736→
+   737→export const commentsRelations = relations(comments, ({ one }) => ({
+   738→  project: one(projects, { fields: [comments.projectId], references: [projects.id] }),
+   739→  author: one(user, { fields: [comments.authorId], references: [user.id] }),
+   740→}));
+   741→
+   742→export const auditLogRelations = relations(auditLog, ({ one }) => ({
+   743→  workspace: one(organization, {
+   744→    fields: [auditLog.workspaceId],
+   745→    references: [organization.id],
+   746→  }),
+   747→  actor: one(user, { fields: [auditLog.actorId], references: [user.id] }),
+   748→}));
+   749→
+   750→// ─────────────────────────────────────────────────────────────────────────────
+   751→// Section 12 — Inferred domain types
+   752→// ─────────────────────────────────────────────────────────────────────────────
+   753→
+   754→export type User = typeof user.$inferSelect;
+   755→export type Session = typeof session.$inferSelect;
+   756→export type Organization = typeof organization.$inferSelect;
+   757→export type Member = typeof member.$inferSelect;
+   758→export type Invitation = typeof invitation.$inferSelect;
+   759→export type ApiKey = typeof apiKey.$inferSelect;
+   760→export type Project = typeof projects.$inferSelect;
+   761→export type ProjectVersion = typeof projectVersions.$inferSelect;
+   762→export type ProjectLease = typeof projectLeases.$inferSelect;
+   763→export type Asset = typeof assets.$inferSelect;
+   764→export type AgentThread = typeof agentThreads.$inferSelect;
+   765→export type AgentMessage = typeof agentMessages.$inferSelect;
+   766→export type AgentRun = typeof agentRuns.$inferSelect;
+   767→export type AgentStep = typeof agentSteps.$inferSelect;
+   768→export type LedgerEntry = typeof creditLedger.$inferSelect;
+   769→export type Render = typeof renders.$inferSelect;
+   770→export type Comment = typeof comments.$inferSelect;
+   771→export type AuditLogEntry = typeof auditLog.$inferSelect;
+   772→

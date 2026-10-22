@@ -18,9 +18,10 @@ on every documented ambiguity — read it before "deciding" anything.
 
 ## Environment truth (this box, re-probed 2026-10-22)
 
-- node 24, pnpm 9.15.9 (on PATH), bun available. **No Docker, no cargo** (the vendored
-  editor cannot be compiled here; the wasm dist is a CI artifact, owed — see
-  `editor/UPSTREAM.md`). ffmpeg IS available.
+- node 24, pnpm 9.15.9 (on PATH), bun available. **No Docker.** Rust toolchain IS
+  installed (rustup at /home/z/.rustup, cargo at /home/z/.cargo/bin — export
+  PATH="$HOME/.cargo/bin:$PATH") with the wasm32 target; the editor wasm dist is
+  built from the vendored pin. ffmpeg IS available.
 - PostgreSQL 17 is **installed and running** at `127.0.0.1:5432` (user `studio`, pw
   `studio`, db `studio`) via `scripts/dev-postgres.sh`. When a command needs the DB,
   export `DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio` — the shell may
@@ -36,17 +37,19 @@ on every documented ambiguity — read it before "deciding" anything.
 
 ## Editor strategy on this box (critical)
 
-No cargo → no wasm build → nothing servable at `/editor/` yet. The sanctioned stand-in
-is a **protocol-faithful mock editor** served from `apps/web/public/editor/`,
-clearly badged "mock engine build" inside its own UI. It must expose the exact
-`window.effectcraft` surface that `packages/editor-bridge/src/types.ts` types and
-`packages/editor-bridge/src/fake.ts` already models (execute with `engine.batch` +
-`$N` refs + atomic rollback + one-undo-step, request, inspect, commands, describe,
-query, renderFrame, addFile, readFile, saveToBrowser, screenshot, and the read-side
-`ui.inspect` / `project.summary` / `layer.tree` / `prop.get` / `render.frame` /
-`edit.history.list` / `edit.undo`). The bridge is written against the REAL contract;
-re-pinning upstream later is a dist swap (see `editor/UPSTREAM.md` re-pin checklist).
-**Never present the mock as the real engine.**
+The **real EffectCraft editor** is the product editor — no mocks, no stand-ins.
+The vendored source at `editor/` (pin `9db7f3b2`, v0.13.0) is byte-identical to
+upstream and IS the editor we ship. The wasm dist is built from it with the
+Rust toolchain (`rustup` → stable + `wasm32-unknown-unknown`, `wasm-bindgen-cli
+0.2.129`), emitted by `cargo xtask web` into `editor/target/web/dist`, and copied
+to `apps/web/public/editor/` (served same-origin at `/editor/` with COOP/COEP,
+flat relative URLs, trailing-slash already handled by `next.config.ts`).
+
+Dist policy until the CI artifact pipeline lands: the built dist is committed
+under `apps/web/public/editor/` (it is a build artifact — record size + date in
+`editor/UPSTREAM.md` whenever it is rebuilt). Rebuild = `cargo xtask web` in
+`editor/` then re-copy; the bridge (`packages/editor-bridge`) binds to the real
+`window.effectcraft` surface. **Never mock the editor.**
 
 ## Hard rules (violations fail the task)
 

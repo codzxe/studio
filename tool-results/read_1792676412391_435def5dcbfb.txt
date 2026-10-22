@@ -1,0 +1,1051 @@
+     1→# Packages layer cross-module map and gap - W-R3 (reader, 2026-10-22)
+     2→
+     3→Read-only survey of `packages/**` (contracts, db, config, editor-bridge, ui,
+     4→api-client, storage, billing) plus each package.json and test tree. No product
+     5→code modified, no installs run. Symbol names are copied letter-perfect from
+     6→source. Consumers verified by grep against `services/gateway/src/routes/*` and
+     7→`apps/web/src`.
+     8→
+     9→Headline numbers: 20 DB tables, 53 repo methods (10 repo files), 34 declared
+    10→env vars, 19 EditorBridge methods, 13 agent tools, 12 SSE event types, 24 UI
+    11→component files, 34 api-client methods, 16 contracts route domain files.
+    12→
+    13→Verdict scale: MET / PARTIAL / MISSING.
+    14→
+    15→---
+    16→
+    17→## 1. CONTRACTS (`packages/contracts`, @studio/contracts v0.1.0, zod ^4.6.7)
+    18→
+    19→### 1.1 Exported surface by file (all re-exported from src/index.ts)
+    20→
+    21→envelope.ts (wire envelope, PRODUCT_ARCHITECTURE 7.3):
+    22→- `WIRE_ERROR_CODES` (14 codes): RUN_MODEL_UNAVAILABLE, RUN_INVALID_TOOL,
+    23→  RUN_INVALID_COMMAND, RUN_BATCH_ROLLED_BACK, EDITOR_DISCONNECTED,
+    24→  RENDER_TIMEOUT, PROJECT_VERSION_CONFLICT, INSUFFICIENT_CREDITS,
+    25→  VALIDATION_FAILED, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, RATE_LIMITED,
+    26→  INTERNAL_ERROR; `WireErrorCode`, `WIRE_ERROR_CODE_SCHEMA`
+    27→- `ERROR_CODE_SCHEMA`, `REQUEST_ID_SCHEMA`, `META_SCHEMA`,
+    28→  `ERROR_BODY_SCHEMA`, `ERR_SCHEMA`, `Ok<T>`, `Envelope<T>`, `Err`
+    29→- constructors/guards: `ok()`, `err()`, `okSchema()`, `isEnvelope()`,
+    30→  `isOk()`, `isErr()`
+    31→
+    32→engine-batch.ts (engine.batch wire contract, 8.5):
+    33→- bounds: `MAX_BATCH_STEPS = 100`, `MAX_BATCH_BYTES = 2 * 1024 * 1024`,
+    34→  `MAX_BATCH_TIMEOUT_MS = 60_000`, `DEFAULT_BATCH_TIMEOUT_MS`,
+    35→  `MAX_BATCH_LABEL_LENGTH = 280`
+    36→- schemas/types: `BATCH_STEP_SCHEMA` ({command, params}),
+    37→  `BatchStep`, `AGENT_BATCH_SCHEMA` (superRefine: 2 MB serialized cap +
+    38→  `$N.key` ref validation; `atomic` is `z.literal(true)`),
+    39→  `AgentBatch`, `CommandParamInfo`, `CommandInfo`, `CommandSchema`,
+    40→  `BatchCommandIssue`
+    41→- functions: `collectRefs(value, origin)` (extracts `$N.key`, bare `$N`
+    42→  deliberately NOT a ref - currency safety), `validateBatchRefs(steps)`
+    43→  (reasons: "forward" | "self" | "out_of_range"), `checkBatchCommands(batch,
+    44→  registry)` (reasons: unknown_command | missing_required_param)
+    45→
+    46→edit-plan.ts (EditPlan, 8.6):
+    47→- `PLAN_INTENT_SCHEMA` = create | edit | animate | style | organize | render |
+    48→  explain | clarify; `PlanIntent`
+    49→- `PLAN_RISK_SCHEMA` = low | medium | high; `PlanRisk`
+    50→- `AFFECTED_LAYER_SCHEMA` {id?, name, change}; `AffectedLayer`
+    51→- `PLAN_STEP_SCHEMA` {title, tool, args, batch {label, steps 1..100}}
+    52→- `EDIT_PLAN_SCHEMA`: intent, summary (max 280), risk, requiresApproval,
+    53→  affectedLayers (max 50), estimatedCredits (nonnegative),
+    54→  steps (1..20); `EditPlan`
+    55→- constants: `MAX_PLAN_STEPS = 20`, `MAX_PLAN_AFFECTED_LAYERS = 50`,
+    56→  `MAX_PLAN_SUMMARY_LENGTH = 280`
+    57→- risk helpers: `PLAN_RISK_ORDER`, `isRiskAtLeast(risk, floor)`,
+    58→  `needsConfirmCheckbox(risk)`, `AUTO_APPLYABLE_INTENTS` = edit | style |
+    59→  animate, `isAutoApplicable(plan)`
+    60→- credit estimate: `ESTIMATE_BASE_CREDITS = 1`,
+    61→  `ESTIMATE_CREDITS_PER_STEP = 0.5`, `ESTIMATE_RISK_MULTIPLIERS`
+    62→  {low:1, medium:1.25, high:1.5}, `CREDIT_RESERVE_MULTIPLIER = 1.2`,
+    63→  `CREDIT_RESERVE_MINIMUM = 1`, `estimateCredits(plan)`,
+    64→  `reserveFor(estimatedCredits)` (both round to 2 decimals - see gap 7.6)
+    65→
+    66→events.ts (SSE events 7.4 + client reducer, EDITOR_CHAT_UX 8.1/8.2):
+    67→- 12 event schemas (each carries runId + monotonic seq):
+    68→  RUN_STARTED_EVENT_SCHEMA, MESSAGE_DELTA_EVENT_SCHEMA,
+    69→  TOOL_STARTED_EVENT_SCHEMA, TOOL_DELTA_EVENT_SCHEMA,
+    70→  TOOL_RESULT_EVENT_SCHEMA, PLAN_EVENT_SCHEMA, PREVIEW_EVENT_SCHEMA
+    71→  (pngBase64, width, height), APPROVAL_REQUIRED_EVENT_SCHEMA,
+    72→  CREDITS_EVENT_SCHEMA (reserved, committed, balance),
+    73→  RUN_COMPLETED_EVENT_SCHEMA (versionId?), RUN_FAILED_EVENT_SCHEMA
+    74→  (code, message, retryable), RUN_CANCELLED_EVENT_SCHEMA
+    75→- union: `STUDIO_STREAM_EVENT_TYPES` (12 members, wire order),
+    76→  `STUDIO_STREAM_EVENT_SCHEMA` (discriminatedUnion "type"),
+    77→  `StudioStreamEvent`, `isStudioStreamEvent()`
+    78→- client state machine: `RUN_STATUSES` (11: idle, sending, streaming,
+    79→  awaiting_approval, applying, applied, undoing, undone, cancelling,
+    80→  cancelled, failed), `RunStatus`, `ToolCallState`, `RunPreviewState`,
+    81→  `RunCreditsState`, `RunErrorState`, `RunState`, `INITIAL_RUN_STATE`,
+    82→  `RunClientAction` (run.submit | run.apply | run.applied | run.undo |
+    83→  run.undone | run.cancel), `applyEvents(state, input)` (pure, total),
+    84→  `reduceEvents(inputs, initial)`
+    85→
+    86→models.ts (model routing 8.2, plan entitlements 10.1):
+    87→- `MODEL_IDS` = studio-fast | studio-smart | studio-vision; `ModelId`,
+    88→  `ModelTier` = fast | smart | vision; `MODEL_CATALOG` (creditsPer1kInput /
+    89→  creditsPer1kOutput per model; studio-fast 0.01/0.03 all plans,
+    90→  studio-smart 0.1/0.4 pro+studio, studio-vision 0.25/0.5 studio only)
+    91→- `PLAN_IDS` = trial | starter | pro | studio; `PAID_PLAN_IDS` = starter |
+    92→  pro | studio; `PLAN_MODEL_ENTITLEMENTS` (trial->fast, starter->fast,
+    93→  pro->fast+smart, studio->all); `allowedModelsForPlan()`,
+    94→  `modelAllowedForPlan()`, `defaultModelForPlan()`
+    95→
+    96→tools.ts (curated tool surface 8.4):
+    97→- `TOOL_IDS` (13, all implemented; doc said "~12"), `ToolId`,
+    98→  `TOOL_ID_SCHEMA`, `ToolKind` = read | write,
+    99→  `ToolReturns` = data | "proposed-batch", `ToolDefinition`
+   100→  {id, kind, risk, description, args (zod), returns}, `TOOL_LIST`,
+   101→  `TOOL_CATALOG`, `getTool(id)`, `isWriteTool(id)`, `isReadTool(id)`
+   102→
+   103→routes/* (16 domain files + routes/index.ts barrel; all via src/index.ts):
+   104→common.ts: `ID_SCHEMA`, `Id`, `SHA256_SCHEMA`, `ROLES` = owner | admin |
+   105→  editor | viewer, `ROLE_SCHEMA`, `Role`, `IDEMPOTENCY_KEY_SCHEMA`
+   106→  (8..128 chars), `ISO8601_SCHEMA`, `PAGINATION_QUERY_SCHEMA`
+   107→  (cursor?, limit 1..100 default 50), `Page<T>`, `MAX_PAGE_LIMIT`,
+   108→  `CONTEXT_BLOCK_KEYS` (9), `CONTEXT_SELECTION_SCHEMA`,
+   109→  `PINNED_CONTEXT_KINDS` = frame | selection | composition | asset | comment,
+   110→  `PINNED_CONTEXT_ITEM_SCHEMA`
+   111→activity.ts: `ACTIVITY_QUERY_SCHEMA`, `ActivityEntry`
+   112→assets.ts: `ASSET_NAME_SCHEMA`, `ASSET_MIME_SCHEMA`, `CREATE_ASSET_SCHEMA`
+   113→  (name, mime, sizeBytes, sha256, width?, height?, durationTicks?),
+   114→  `Asset`, `CreateAssetResponse` (asset + upload {url, method "PUT",
+   115→  expiresAt, headers}), `SignedUrlResponse`
+   116→billing.ts: `CHECKOUT_SCHEMA` (exactly one of planId | packId),
+   117→  `CheckoutResponse` (sessionId, url), `PORTAL_SCHEMA` (returnUrl?),
+   118→  `PortalResponse` (url)
+   119→chat.ts: `CHAT_MESSAGE_SCHEMA` (1..8000), `CHAT_REQUEST_SCHEMA`
+   120→  {message, context, idempotencyKey, pinned (max 20)}
+   121→comments.ts: `CREATE_COMMENT_SCHEMA` (compId required, layerId?,
+   122→  timeTicks?, body 1..2000), `COMMENTS_QUERY_SCHEMA` (compId?, resolved?),
+   123→  `RESOLVE_COMMENT_SCHEMA` {resolved}, `Comment`
+   124→credits.ts: `LEDGER_KINDS` = grant | reserve | commit | refund | adjust,
+   125→  `LEDGER_KIND_SCHEMA`, `CreditsSummary` (balance, includedCredits,
+   126→  purchasedCredits, reserved, plan, renewsAt), `LEDGER_QUERY_SCHEMA`,
+   127→  `LedgerEntry` (id, workspaceId, kind, amount, balanceAfter, runId?,
+   128→  idempotencyKey, metadata, createdAt)
+   129→invites.ts: `INVITE_MEMBER_SCHEMA` (email, role), `ACCEPT_INVITE_SCHEMA`,
+   130→  `Invite`, `AcceptedInvite`, `INVITE_ID_SCHEMA`
+   131→leases.ts: `LEASE_HEARTBEAT_MS = 120_000`, `LEASE_TTL_MS = 300_000`,
+   132→  `LEASE_SESSION_ID_SCHEMA` (8..128), `ACQUIRE_LEASE_SCHEMA` {sessionId},
+   133→  `RELEASE_LEASE_SCHEMA`, `ProjectLease`
+   134→me.ts: `Membership`, `PlanSummary`, `MeResponse` (user + memberships + plan)
+   135→projects.ts: `CREATE_PROJECT_SCHEMA`, `PATCH_PROJECT_SCHEMA`
+   136→  (name? or description?), `DELETE_PROJECT_SCHEMA`, `Project`,
+   137→  `SignedUrl` (method GET | PUT | POST), `ManifestAsset`, `ProjectManifest`
+   138→  (currentVersion {id, version, sha256, label, sizeBytes, createdAt, url} |
+   139→  null + assets with signed urls)
+   140→renders.ts: `RENDER_FORMATS` = mp4 | prores | png-seq | gif | wav,
+   141→  `RENDER_SETTINGS_SCHEMA` (timeFrom?, timeTo? >= timeFrom, width?, height?,
+   142→  frameRate?, quality draft|good|best, extra?), `QUEUE_RENDER_SCHEMA`
+   143→  {projectId, compId, format, settings, idempotencyKey}, `RENDER_STATUSES` =
+   144→  queued | running | succeeded | failed | cancelled, `RenderJob`
+   145→runs.ts: `SERVER_RUN_STATUSES` = queued | streaming | awaiting_approval |
+   146→  applying | completed | failed | cancelled (NOTE: differs from db
+   147→  RunStatus - see gap 7.6), `TOOL_RESULT_EVENT_REQUEST_SCHEMA`,
+   148→  `APPLY_RESULT_EVENT_REQUEST_SCHEMA` (ok + sha256 required on success,
+   149→  errorCode on failure), `RUN_EVENT_REQUEST_SCHEMA`, `CANCEL_RUN_SCHEMA`,
+   150→  `RunStepRecord`, `RunRecord`, `RUN_ID_SCHEMA`
+   151→threads.ts: `CREATE_THREAD_SCHEMA` (title?), `Thread`,
+   152→  `THREAD_MESSAGE_ROLE_SCHEMA` = user | assistant | system,
+   153→  `ThreadMessage` (content opaque), `THREAD_ID_SCHEMA`
+   154→versions.ts: `UPLOAD_VERSION_SCHEMA` {baseVersionId, sha256, label?,
+   155→  agentRunId?, sizeBytes}, `RESTORE_VERSION_SCHEMA` {note?},
+   156→  `ProjectVersion` (no objectKey on the wire)
+   157→workspaces.ts: `WORKSPACE_SLUG_SCHEMA`, `WORKSPACE_NAME_SCHEMA`,
+   158→  `CREATE_WORKSPACE_SCHEMA` {name, slug}, `PATCH_WORKSPACE_SCHEMA`,
+   159→  `Workspace`
+   160→
+   161→### 1.2 Tool list (13, read then write, exact ids + arg shapes)
+   162→
+   163→Read (kind "read", returns "data"):
+   164→1. `studio.get_context` - args {include?: array of CONTEXT_BLOCK (max 9)}
+   165→2. `studio.list_layers` - args {compId?, depth int 1..8 default 2}
+   166→3. `studio.get_properties` - args {layerIds 1..12, paths? max 12}
+   167→4. `studio.plan_edit` - args {goal 1..4000}
+   168→5. `studio.render_preview` - args {compId?, timeSeconds?, maxWidth
+   169→   16..1200 default 1200}
+   170→
+   171→Write (kind "write", returns "proposed-batch" - proposal-only, 8.4 rules):
+   172→6. `studio.create_composition` (risk medium) - {name 1..120, width 16..8192,
+   173→   height 16..8192, frameRate <= 480 default 30, durationSeconds <= 3600
+   174→   default 10}
+   175→7. `studio.create_text` (risk low) - {compId?, text 1..5000, name?,
+   176→   fontSize?, fontFamily?, color? #hex, position? [x, y]}
+   177→8. `studio.set_properties` (risk low) - {updates 1..50 of {layer, path,
+   178→   value}}
+   179→9. `studio.add_effect` (risk medium) - {layer, effect, params?}
+   180→10. `studio.set_keyframes` (risk low) - {layer, propertyPath, keyframes
+   181→    1..200 of {time, value, easing? linear|ease-in|ease-out|ease-in-out}}
+   182→11. `studio.apply_preset` (risk medium) - {preset 1..200, targets 1..50}
+   183→12. `studio.undo_run` (risk medium) - {runId?}
+   184→13. `studio.save_version` (risk low) - {label? max 280}
+   185→
+   186→### 1.3 Consumer matrix (who imports what)
+   187→
+   188→- gateway (`services/gateway`, package.json deps: @studio/config,
+   189→  @studio/contracts, @studio/db): all route schemas from routes/*,
+   190→  envelope helpers, events reducer (chat SSE), edit-plan, engine-batch,
+   191→  tools catalog (chat runner), models (model gating)
+   192→- web (`apps/web`, deps: @studio/config, @studio/contracts, @studio/ui):
+   193→  currently consumes contracts types in lib/demo.ts etc.; does NOT yet
+   194→  import @studio/api-client or @studio/editor-bridge (gap 7.1)
+   195→- editor-bridge: imports AGENT_BATCH_SCHEMA / BATCH_STEP_SCHEMA /
+   196→  MAX_BATCH_* from @studio/contracts (batch.ts re-exports them)
+   197→- api-client: imports every route schema + events reducer + models types
+   198→- worker: imports nothing (worker src is empty - W-R4 finding confirmed)
+   199→
+   200→### 1.4 Contracts tests (8 files)
+   201→
+   202→barrel.test.ts, edit-plan.test.ts, engine-batch.test.ts, envelope.test.ts,
+   203→events.test.ts, models.test.ts, routes.test.ts, tools.test.ts
+   204→(plus vitest.config.ts). All 16 route domains + core modules covered.
+   205→
+   206→### 1.5 Contracts vs BUILD_PLAN
+   207→
+   208→Fulfills: M1 (workspaces/me/invites + roles + idempotency keys), M2
+   209→(projects/assets/versions/leases + manifest + 409 shape), M4 (chat request,
+   210→SSE events, read tools, context/pinned schemas), M5 (EditPlan + engine.batch
+   211→+ write tools + apply.result sha256 protocol), M6 (billing/credits/ledger
+   212→kinds), M7 (comments, activity), M8 (renders). MET for the wire layer.
+   213→Missing: M7 share-link contracts (`/s/:token`, share token revoke), presence
+   214→contracts (who is viewing / active comp / playheart), render LIST route
+   215→contract (repo + UI need it; only queue + get are typed), plan catalog route
+   216→(no GET /v1/plans), Stripe webhook event contracts (deliberately
+   217→service-side, but no typed webhook payload schemas anywhere).
+   218→
+   219→---
+   220→
+   221→## 2. DB (`packages/db`, @studio/db v0.1.0; better-auth ^1.7.12, drizzle-orm ^0.45.4, postgres ^3.4.9)
+   222→
+   223→### 2.1 schema.ts - all 20 tables (name + columns + relations)
+   224→
+   225→Better Auth core (property names = plugin model fields, adapter requirement):
+   226→1. `user` - id, name, email (unique), emailVerified, image, createdAt,
+   227→   updatedAt, role (admin plugin), banned, banReason, banExpires. Relations:
+   228→   many session/account/member.
+   229→2. `session` - id, expiresAt, token (unique), createdAt, updatedAt,
+   230→   ipAddress, userAgent, userId -> user, activeOrganizationId (org plugin),
+   231→   impersonatedBy (admin plugin).
+   232→3. `account` - id, accountId, providerId, userId -> user, accessToken,
+   233→   refreshToken, idToken, accessTokenExpiresAt, refreshTokenExpiresAt,
+   234→   scope, password, createdAt, updatedAt.
+   235→4. `verification` - id, identifier, value, expiresAt, createdAt, updatedAt.
+   236→
+   237→Organization plugin (workspace == organization, ADR-0003):
+   238→5. `organization` - id, name, slug (unique), logo, createdAt, metadata
+   239→   (text JSON). Relations: many member/invitation/projects/assets/
+   240→   ledgerEntries/auditEntries.
+   241→6. `member` - id, organizationId -> organization, userId -> user, role
+   242→   (default "member"; product assigns owner/admin/editor/viewer), createdAt.
+   243→7. `invitation` - id, organizationId, email, role, status (default
+   244→   "pending"), expiresAt, inviterId -> user, createdAt.
+   245→
+   246→apiKey plugin:
+   247→8. `apikey` - id, configId (default "default"), name, start, referenceId
+   248→   (= user id), prefix, key (hashed), refillInterval, refillAmount,
+   249→   lastRefillAt, enabled, rateLimitEnabled, rateLimitTimeWindow
+   250→   (default 86_400_000), rateLimitMax (default 10), requestCount, remaining,
+   251→   lastRequest, expiresAt, createdAt, updatedAt, permissions, metadata.
+   252→
+   253→Product (9.1; text pks `${prefix}_${uuid}` app-side, timestamps with tz):
+   254→9. `projects` - id (prj_), workspaceId -> organization, name, slug
+   255→   (uniqueIndex with workspaceId), description, thumbnailUrl,
+   256→   currentVersionId (text, NO FK - circular pair with project_versions,
+   257→   integrity enforced in version repo transactions), createdBy -> user,
+   258→   createdAt, updatedAt, deletedAt (soft delete). Relations: workspace,
+   259→   currentVersion (relationName "current"), versions ("history"), lease,
+   260→   assets, threads, runs, renders, comments, creator.
+   261→10. `project_versions` - id (ver_), projectId -> projects, version (int),
+   262→    parentVersionId (text, no FK), objectKey, sha256, sizeBytes (bigint),
+   263→    label, agentRunId, createdBy -> user, createdAt. IMMUTABLE (no update
+   264→    paths). Indexes: (projectId, version desc), (projectId, sha256), parent.
+   265→11. `project_leases` - projectId (pk) -> projects, userId -> user,
+   266→    sessionId, expiresAt. Single row per project = the atomic lease guard.
+   267→12. `assets` - id (ast_), workspaceId -> organization, projectId -> projects
+   268→    (set null), name, mime, sizeBytes (bigint), sha256, objectKey, width,
+   269→    height, durationTicks (bigint), createdBy -> user, createdAt.
+   270→13. `agent_threads` - id (thr_), projectId -> projects, createdBy -> user,
+   271→    title, createdAt, updatedAt.
+   272→14. `agent_messages` - id (msg_), threadId -> agent_threads, role, contentJson
+   273→    (jsonb), runId (text, no FK), createdAt.
+   274→15. `agent_runs` - id (run_), threadId -> agent_threads, projectId ->
+   275→    projects, model, status (`RunStatus` = queued | running |
+   276→    awaiting_approval | completed | failed | cancelled; NOTE: uses
+   277→    "running", no "streaming"/"applying" - gap 7.6), planJson (jsonb),
+   278→    reservedCredits (int), committedCredits (int), baseVersionId,
+   279→    resultVersionId, errorCode, createdAt, completedAt.
+   280→16. `agent_steps` - id (stp_), runId -> agent_runs, seq (uniqueIndex with
+   281→    runId), tool, argsJson, resultJson, commandBatchJson (jsonb),
+   282→    status (`StepStatus` = pending | running | success | failed),
+   283→    durationMs.
+   284→17. `credit_ledger` - id (led_), workspaceId -> organization, kind
+   285→    (`LedgerKind` = grant | reserve | commit | refund | adjust), amount
+   286→    (int, signed), balanceAfter (int), runId, idempotencyKey (UNIQUE global),
+   287→    metadata (jsonb), createdAt. Append-only; writers serialize via
+   288→    pg_advisory_xact_lock (repos/ledger.ts).
+   289→18. `renders` - id (rdr_), projectId -> projects, compId, format, settingsJson
+   290→    (jsonb), status (`RenderStatus` = queued | running | completed | failed |
+   291→    cancelled; NOTE: "completed" vs contracts "succeeded" - gap 7.6),
+   292→    objectKey, error, credits (int), createdBy -> user, createdAt,
+   293→    completedAt.
+   294→19. `comments` - id (cmt_), projectId -> projects, compId, layerId, timeTicks
+   295→    (bigint), body, authorId -> user, resolvedAt, createdAt.
+   296→20. `audit_log` - id (aud_), workspaceId -> organization, actorId -> user
+   297→    (set null), action, targetType, targetId, metadata (jsonb), ip,
+   298→    createdAt.
+   299→
+   300→Inferred types exported: User, Session, Organization, Member, Invitation,
+   301→ApiKey, Project, ProjectVersion, ProjectLease, Asset, AgentThread,
+   302→AgentMessage, AgentRun, AgentStep, LedgerEntry, Render, Comment,
+   303→AuditLogEntry. Migration: drizzle/0000_living_human_cannonball.sql (1
+   304→migration, forward-only). seed: scripts/seed.ts.
+   305→
+   306→### 2.2 Repos (src/repos/, created via `createRepos(db) -> Repos`)
+   307→
+   308→53 methods across 10 repos; every method takes workspaceId first
+   309→(tenant-scoped; cross-tenant reads as NOT_FOUND, 12.1). "Route" column =
+   310→gateway route file that calls it (grep-verified 2026-10-22).
+   311→
+   312→projects.ts (`ProjectsRepo` + exported `lockProject`):
+   313→- create(workspaceId, input: ProjectCreateInput{name, slug?, description?,
+   314→  thumbnailUrl?, createdBy}) -> Promise<Project> | route: routes/projects.ts
+   315→- list(workspaceId, options?: ProjectListOptions{limit?, cursor?,
+   316→  includeDeleted?}) -> Promise<Page<Project>> | routes/projects.ts
+   317→- get(workspaceId, projectId, options?) -> Promise<Project> |
+   318→  routes/projects.ts, routes/activity.ts (tenancy precheck), routes/chat.ts
+   319→- patch(workspaceId, projectId, input: ProjectPatchInput) |
+   320→  routes/projects.ts
+   321→- softDelete(workspaceId, projectId) | routes/projects.ts
+   322→- manifest(workspaceId, projectId) -> ProjectManifest{project,
+   323→  currentVersion, assets: AssetManifestEntry[]} | routes/projects.ts
+   324→- lockProject(tx, workspaceId, projectId) -> Promise<Project>
+   325→  (SELECT ... FOR UPDATE; used by versions upload/restore)
+   326→
+   327→versions.ts (`VersionsRepo`):
+   328→- upload(workspaceId, input: VersionUploadInput{projectId, expectedVersionId,
+   329→  objectKey, sha256, sizeBytes, label?, agentRunId?, createdBy}) ->
+   330→  {version, project}; transaction: lockProject -> assertExpectedVersion (409
+   331→  PROJECT_VERSION_CONFLICT) -> insert -> advance currentVersionId |
+   332→  routes/versions.ts, routes/runs.ts (apply.result path)
+   333→- restore(workspaceId, input: VersionRestoreInput{projectId, versionId,
+   334→  createdBy, expectedVersionId?, label?}) - creates NEW version with
+   335→  parentVersionId = restored one | routes/versions.ts
+   336→- list(workspaceId, projectId, options?) -> Page<ProjectVersion> |
+   337→  routes/versions.ts
+   338→- get(workspaceId, projectId, versionId) -> ProjectVersion | NO gateway
+   339→  caller yet
+   340→
+   341→leases.ts (`LeasesRepo`):
+   342→- acquire(workspaceId, projectId, input: LeaseAcquireInput{userId,
+   343→  sessionId, ttlMs?}) -> LeaseAcquireResult{acquired, holderId, expiresAt};
+   344→  atomic INSERT ... ON CONFLICT DO UPDATE ... WHERE (expired OR same holder)
+   345→  | routes/leases.ts (acquire-or-renew per 7.2)
+   346→- renew(...) -> LeaseRenewResult | NO direct gateway caller (acquire covers
+   347→  renew; contracts treat POST lease as acquire-or-renew)
+   348→- release(workspaceId, projectId, {userId, force?}) | routes/leases.ts
+   349→- get(workspaceId, projectId) -> LeaseSnapshot{lease, isHeld} | NO gateway
+   350→  caller yet
+   351→
+   352→assets.ts (`AssetsRepo`):
+   353→- create(workspaceId, input: AssetCreateInput{projectId?, name, mime,
+   354→  sizeBytes, sha256, objectKey, width?, height?, durationTicks?, createdBy})
+   355→  | routes/assets.ts
+   356→- list(workspaceId, options?: AssetListOptions{projectId?, limit?, cursor?})
+   357→  | routes/assets.ts
+   358→- get(workspaceId, assetId) | routes/assets.ts
+   359→- bySha256(workspaceId, sha256) -> Asset | null (dedupe lookup, 9.2) | NO
+   360→  gateway caller yet (M2 dedupe not wired)
+   361→- quota(workspaceId) -> {count, totalBytes} | NO gateway caller yet (M2
+   362→  storage quotas not wired)
+   363→
+   364→threads.ts (`ThreadsRepo`):
+   365→- create(workspaceId, input: ThreadCreateInput{projectId, createdBy,
+   366→  title?}) | routes/threads.ts, routes/chat.ts
+   367→- listByProject(workspaceId, projectId, options?) -> Page<AgentThread> |
+   368→  routes/threads.ts
+   369→- get(workspaceId, threadId) | routes/chat.ts
+   370→- addMessage(workspaceId, input: MessageInput{threadId, role
+   371→  (user|assistant|system|tool), contentJson, runId?}) | routes/chat.ts
+   372→- listMessages(workspaceId, threadId, options?) -> Page<AgentMessage> |
+   373→  routes/threads.ts
+   374→
+   375→runs.ts (`RunsRepo`):
+   376→- create(workspaceId, input: RunCreateInput{threadId, projectId, model,
+   377→  baseVersionId?, reservedCredits?, planJson?}) | routes/chat.ts
+   378→- update(workspaceId, runId, input: RunUpdateInput{status?, planJson?,
+   379→  reservedCredits?, committedCredits?, resultVersionId?, errorCode?}) -
+   380→  enforces assertRunTransition | routes/chat.ts, routes/runs.ts
+   381→- addStep(workspaceId, input: StepCreateInput{runId, seq, tool, argsJson?,
+   382→  resultJson?, commandBatchJson?, status?, durationMs?}) | routes/chat.ts,
+   383→  routes/runs.ts
+   384→- get(workspaceId, runId) -> RunWithSteps{run, steps} | routes/runs.ts,
+   385→  routes/chat.ts
+   386→- listByThread(workspaceId, threadId, options?) -> Page<AgentRun> | NO
+   387→  gateway caller yet
+   388→
+   389→ledger.ts (`LedgerRepo`, 10 methods; every mutation under
+   390→`pg_advisory_xact_lock(hashtext(workspaceId))`, global-UNIQUE idempotencyKey
+   391→with replay -> `{entry, replayed: true}`, wrong-workspace key = CONFLICT):
+   392→- grant | routes/billing.ts (pack/plan grant)
+   393→- reserve - throws DbError.insufficientCredits when balance < amount |
+   394→  routes/chat.ts
+   395→- commit (bounded by outstanding) | NO direct route caller (use settle)
+   396→- refund (bounded by outstanding) | NO direct route caller (use settle /
+   397→  refundAll)
+   398→- settle(workspaceId, {runId, actualCost, idempotencyKey, metadata?}) ->
+   399→  SettleResult{commit, refund, replayed} (commit = min(ceil(actualCost),
+   400→  outstanding); refund = rest) | routes/chat.ts, routes/runs.ts
+   401→- refundAll(workspaceId, {runId, idempotencyKey, metadata?}) ->
+   402→  RefundAllResult (failure/cancel path: full outstanding refunded) |
+   403→  routes/chat.ts, routes/runs.ts
+   404→- adjust (non-zero int; negative requires allowNegativeBalance) | NO
+   405→  gateway caller yet (admin/reconciliation path missing)
+   406→- balance(workspaceId) -> number (indexed SUM) | routes/me.ts,
+   407→  routes/chat.ts, routes/runs.ts, routes/credits.ts
+   408→- list(workspaceId, options?: LedgerListOptions{limit?, cursor?, kind?,
+   409→  runId?}) | routes/credits.ts
+   410→- getEntryByIdempotencyKey | NO gateway caller (webhook idempotency check
+   411→  does not reuse it)
+   412→
+   413→comments.ts (`CommentsRepo`):
+   414→- create(workspaceId, input: CommentCreateInput{projectId, compId, layerId?,
+   415→  timeTicks?, body, authorId}) | routes/comments.ts
+   416→- list(workspaceId, projectId, options?: CommentListOptions{resolved?,
+   417→  limit?, cursor?}) | routes/comments.ts
+   418→- get(workspaceId, commentId) | NO direct route caller
+   419→- resolve(workspaceId, commentId) (idempotent) | NO route caller (M7
+   420→  resolve not wired)
+   421→- unresolve(workspaceId, commentId) | NO route caller
+   422→
+   423→renders.ts (`RendersRepo`):
+   424→- create(workspaceId, input: RenderCreateInput{projectId, compId, format,
+   425→  settingsJson?, credits?, createdBy}) | routes/renders.ts
+   426→- markRunning / markCompleted({objectKey}) / markFailed({error}) /
+   427→  markCancelled - guarded by assertRenderTransition + optimistic status
+   428→  check | worker (M8) - NO caller exists yet (worker empty)
+   429→- get(workspaceId, renderId) | routes/renders.ts
+   430→- list(workspaceId, options?: RenderListOptions{projectId?, status?,
+   431→  limit?, cursor?}) | NO gateway caller (render history route missing)
+   432→
+   433→audit.ts (`AuditRepo`):
+   434→- append(workspaceId, input: AuditAppendInput{actorId?, action, targetType?,
+   435→  targetId?, metadata?, ip?}) | routes/workspaces.ts, routes/invites.ts,
+   436→  routes/projects.ts
+   437→- list(workspaceId, options?: AuditListOptions{targetType?, targetId?,
+   438→  limit?, cursor?}) | routes/activity.ts
+   439→
+   440→shared.ts: `WorkspaceId` (== organization id), re-export `Page`,
+   441→`isUniqueViolation(error)` (SQLSTATE 23505), `requireNonEmpty`,
+   442→`requireNonNegativeInt`, `requirePositiveInt`.
+   443→
+   444→### 2.3 Logic modules (all pure, unit-tested)
+   445→
+   446→- permissions.ts: ROLES (owner, admin, editor, viewer), `isRole()`,
+   447→  `atLeast(role, minimum)` (cumulative), `CAPABILITIES` (15: read, comment,
+   448→  openEditor, createProjects, takeLease, runAgent, uploadAssets, render,
+   449→  invite, removeMembers, manageBilling, manageApiKeys, manageWorkspace,
+   450→  deleteWorkspace, transferOwnership), `ROLE_CAPABILITIES` (viewer:
+   451→  read+comment+openEditor; editor: +createProjects/takeLease/runAgent/
+   452→  uploadAssets/render; admin: +invite/removeMembers/manageBilling/
+   453→  manageApiKeys/manageWorkspace; owner: +deleteWorkspace/transferOwnership),
+   454→  `capabilitiesFor(role)`, `can(role, capability)` + 15 named helpers
+   455→  (canCreateProjects, canRunAgent, ...). Matches 3.3 matrix exactly.
+   456→- lease-logic.ts: `DEFAULT_LEASE_TTL_MS = 5 * 60 * 1000`, `LeaseState`,
+   457→  `leaseDecision(existing, requesterId, now)` -> acquire | refuse
+   458→  (held-by-other), `isLeaseHeld(existing, now)`
+   459→- ledger-math.ts: `computeReserveAmount(estimatedCredits)` = max(1,
+   460→  ceil(est * 1.2)) (INTEGER credits; vs contracts fractional reserveFor -
+   461→  gap 7.6), `foldBalance(entries)`, `outstandingReserve(entries)` (>= 0),
+   462→  `planSettlement(outstanding, actualCost)` -> {commit, refund},
+   463→  `deriveIdempotencyKey(...parts)`
+   464→- version-logic.ts: `assertExpectedVersion(currentVersionId,
+   465→  expectedVersionId)` (throws PROJECT_VERSION_CONFLICT), `nextVersionNumber`,
+   466→  `buildRestorePlan`
+   467→- statuses.ts: RUN_TRANSITIONS / RENDER_TRANSITIONS state machines,
+   468→  `assertRunTransition`, `assertRenderTransition`, `isTerminalRunStatus`,
+   469→  `isTerminalRenderStatus`
+   470→- cursor.ts: base64url keyset cursor {t: ISO, id},
+   471→  `encodeCursor`/`decodeCursor`, `Page<T>`, `DEFAULT_PAGE_SIZE = 20`,
+   472→  `MAX_PAGE_SIZE = 100`, `clampLimit`
+   473→- ids.ts: `createId(prefix)` = `${prefix}_${uuid no dashes}`
+   474→- slug.ts: `slugify(name)` (NFKD, ascii, max 64), `ensureUniqueSlug(base,
+   475→  taken)` (-2, -3, ...)
+   476→- errors-lite.ts: `ERROR_CODES` (18: NOT_FOUND, FORBIDDEN, UNAUTHORIZED,
+   477→  VALIDATION_FAILED, CONFLICT, RATE_LIMITED, PROJECT_VERSION_CONFLICT,
+   478→  INSUFFICIENT_CREDITS, QUOTA_EXCEEDED, RUN_MODEL_UNAVAILABLE,
+   479→  RUN_INVALID_TOOL, RUN_INVALID_COMMAND, RUN_BATCH_ROLLED_BACK,
+   480→  EDITOR_DISCONNECTED, RENDER_TIMEOUT), `DbError` (code, status, retryable,
+   481→  hint, details; factory: notFound, validation, conflict, forbidden,
+   482→  versionConflict, insufficientCredits, quotaExceeded), `isDbError`,
+   483→  `toErrorPayload`
+   484→- auth.ts: `createAuth(env: AuthEnv)` -> Better Auth instance with
+   485→  organization (creatorRole "owner"; roles spread of defaultRoles + editor +
+   486→  viewer so owner/admin keep built-in statements), apiKey, admin plugins;
+   487→  drizzleAdapter over the 8 better-auth tables; emailAndPassword + Google +
+   488→  GitHub social providers; `Auth`, `AuthEnv`, `AuthHandler` (Hono mount
+   489→  `app.all("/auth/{*any}", ...)`)
+   490→- db.ts: `createDb(databaseUrl)` -> StudioDb (postgres.js max 10),
+   491→  `StudioTx`, `Executor`; migrate.ts: `migrateDatabase(db, folder)` +
+   492→  CLI main (DATABASE_URL)
+   493→
+   494→### 2.4 DB tests
+   495→
+   496→permissions.test.ts, ledger-math.test.ts, logic.test.ts, version-logic.test.ts,
+   497→schema.test.ts, integration/repos.test.ts (real Postgres).
+   498→
+   499→### 2.5 DB vs BUILD_PLAN
+   500→
+   501→Fulfills: M1 task 1 (Better Auth + roles, no custom auth tables), M1 task 2
+   502→(invites audited), M1 task 3 (tenant-scoped repos), M2 tasks 1/3/4/6
+   503→(projects CRUD + soft delete, immutable versions + 409, lease, manifest),
+   504→M2 task 5 partially (quota()/bySha256() exist but no route enforces quotas),
+   505→M4 (threads/messages/runs/steps persistence), M5 (plan_json,
+   506→command_batch_json, base/result version ids), M6 task 3 (append-only
+   507→credit_ledger + reserve/commit/refund + idempotency + advisory lock),
+   508→M7 (comments, audit_log + activity view), M8 rows (renders table).
+   509→Missing: subscription/plan-state tables (Stripe customer id, subscription
+   510→status, plan, renewsAt, seat count - nothing persists plan state; M6),
+   511→presence table (M7), share-token table (M7), render outputs retention
+   512→metadata, API-key scope enforcement helpers beyond better-auth defaults.
+   513→
+   514→---
+   515→
+   516→## 3. CONFIG (`packages/config`, @studio/config v0.2.0, zod ^4.6.7)
+   517→
+   518→### 3.1 Full env var table (34 vars; ENV_VAR_SPECS is the single source of truth)
+   519→
+   520→| # | Name | Type (zod) | Required? | Default | Consumer |
+   521→|---|------|------------|-----------|---------|---------|
+   522→| 1 | APP_URL | http(s) URL | required | - | web/gateway: auth redirects, OAuth callbacks, signed URLs, CORS |
+   523→| 2 | APP_ENV | enum local\|staging\|production | required | - | all: gates dev flags + billing requirements |
+   524→| 3 | LOG_LEVEL | enum debug\|info\|warn\|error | optional | "info" | gateway/worker structured logs |
+   525→| 4 | MOCK_MODEL | envBool | optional | false | gateway chat runner (rejected when APP_ENV=production) |
+   526→| 5 | DATABASE_URL | postgres:// URL (secret) | required | - | @studio/db (auth + repos) |
+   527→| 6 | VALKEY_URL | redis:// URL (secret) | optional | - | gateway/worker queues + rate limits (degrade when unset) |
+   528→| 7 | S3_ENDPOINT | http(s) URL | optional (required when APP_ENV != local) | - | object storage (gateway storage.ts, worker) |
+   529→| 8 | S3_REGION | string | optional (non-local: required) | - | storage |
+   530→| 9 | S3_ACCESS_KEY_ID | string (secret) | optional (non-local: required) | - | storage |
+   531→| 10 | S3_SECRET_ACCESS_KEY | string (secret) | optional (non-local: required) | - | storage |
+   532→| 11 | S3_BUCKET | S3 bucket name | optional (non-local: required) | - | storage |
+   533→| 12 | ASSET_MAX_BYTES | whole number >= 1 | required | - | gateway assets upload cap |
+   534→| 13 | PROJECT_MAX_BYTES | whole number >= 1 | required | - | gateway versions upload cap |
+   535→| 14 | STRIPE_SECRET_KEY | string (secret) | optional (required when APP_ENV != local) | - | gateway billing route |
+   536→| 15 | STRIPE_WEBHOOK_SECRET | string (secret) | required | - | gateway stripe webhook verification |
+   537→| 16 | STRIPE_PRICE_IDS | JSON map plan -> price id | required | - | billing checkout |
+   538→| 17 | AUTH_SECRET | string >= 32 chars (secret) | required | - | Better Auth session signing |
+   539→| 18 | AUTH_GOOGLE_ID | string | required | - | Google OAuth |
+   540→| 19 | AUTH_GOOGLE_SECRET | string (secret) | required | - | Google OAuth |
+   541→| 20 | AUTH_GITHUB_ID | string | required | - | GitHub OAuth |
+   542→| 21 | AUTH_GITHUB_SECRET | string (secret) | required | - | GitHub OAuth |
+   543→| 22 | LITELLM_BASE_URL | http(s) URL | required | - | gateway chat (studio-fast/smart/vision aliases) |
+   544→| 23 | LITELLM_API_KEY | string (secret) | required | - | gateway chat |
+   545→| 24 | LITELLM_VIRTUAL_KEY | string (secret) | optional (v1 platform keys only) | - | per-tenant budgets/spend logs |
+   546→| 25 | EDITOR_PUBLIC_PATH | absolute path, no trailing slash | optional | "/editor" | web/gateway editor serving + iframe src |
+   547→| 26 | EDITOR_DEV_SERVER_URL | http(s) URL | optional (dev only; rejected in production) | - | web dev proxy (cargo xtask web server) |
+   548→| 27 | EDITOR_WASM_MAX_MB | whole number >= 1 | optional | 18 | wasm size budget (CI + serving) |
+   549→| 28 | CHAT_MAX_STEPS | whole number >= 1 | required | - | gateway chat runner step limit |
+   550→| 29 | AGENT_BATCH_MAX_STEPS | whole number >= 1 | optional | 100 | chat apply path (matches contracts MAX_BATCH_STEPS) |
+   551→| 30 | AGENT_BATCH_MAX_BYTES | whole number >= 1 | optional | 2097152 (2 MB) | chat apply path |
+   552→| 31 | AGENT_BATCH_TIMEOUT_MS | whole number >= 1 | optional | 60000 | chat apply path |
+   553→| 32 | LEASE_HEARTBEAT_MS | whole number >= 1 | optional | 120000 (2 min) | lease client heartbeat |
+   554→| 33 | LEASE_TTL_MS | whole number >= 1 | optional | 300000 (5 min) | lease repo expiry (must exceed heartbeat) |
+   555→| 34 | OTEL_EXPORTER_OTLP_ENDPOINT | http(s) URL | optional (telemetry off when unset) | - | observability (OTLP traces/metrics) |
+   556→
+   557→Cross-field rules (crossCheckProblems, kind "rejected"): S3 group + bucket +
+   558→STRIPE_SECRET_KEY required when APP_ENV != "local"; MOCK_MODEL must be off in
+   559→production; EDITOR_DEV_SERVER_URL must be unset in production;
+   560→LEASE_TTL_MS must exceed LEASE_HEARTBEAT_MS.
+   561→
+   562→Public API: `parseEnv(source)` / `getEnv(source)` -> frozen grouped
+   563→`StudioEnv` (groups: app, db, queue, storage, stripe, auth, litellm, editor,
+   564→agent, lease, obs), `EnvFatalError` (lists EVERY problem + purpose; values
+   565→never echoed; `redact()` belt-and-braces), `ENV_VAR_NAMES`,
+   566→`SECRET_ENV_VARS`, `renderEnvExample()` / `writeEnvExample(path)` (generates
+   567→.env.example; root .env.example committed).
+   568→
+   569→Not env-schema vars yet (storage package requests them - W2-Q TODO in
+   570→packages/storage/src/index.ts): STORAGE_DRIVER (local|s3, required, no
+   571→silent default), STORAGE_LOCAL_DIR, STORAGE_SIGNING_SECRET (>= 16),
+   572→STORAGE_PUBLIC_BASE_URL, S3_PREFIX, S3_FORCE_R2_COMPAT. Gap 7.4.
+   573→
+   574→Other config exports:
+   575→- errors.ts: `ERROR_CATALOG` (23 codes: PROJECT_VERSION_CONFLICT,
+   576→  INSUFFICIENT_CREDITS, LEASE_HELD, LEASE_EXPIRED, RUN_MODEL_UNAVAILABLE,
+   577→  RUN_INVALID_TOOL, RUN_INVALID_COMMAND, RUN_BATCH_ROLLED_BACK,
+   578→  RUN_CANCELLED, EDITOR_DISCONNECTED, RENDER_TIMEOUT, RENDER_FAILED,
+   579→  ASSET_TOO_LARGE, ASSET_REJECTED, QUOTA_EXCEEDED, WORKSPACE_NOT_FOUND,
+   580→  PROJECT_NOT_FOUND, VERSION_NOT_FOUND, THREAD_NOT_FOUND, RUN_NOT_FOUND,
+   581→  RATE_LIMITED, AUTH_REQUIRED, FORBIDDEN, VALIDATION_FAILED, INTERNAL) with
+   582→  message/hint/retryable defaults; `StudioError` (toEnvelope/toJSON, never
+   583→  leaks cause), `okEnvelope()`, `fromUnknown()` (ZodError ->
+   584→  VALIDATION_FAILED), `isStudioError`, `isErrEnvelope`. NOTE: db
+   585→  errors-lite.ts is a "lite" local copy to be unified (W1-e).
+   586→- ids.ts: `ID_PREFIXES` (project prj, version ver, asset ast, thread thr,
+   587→  run run, render rnd, request req), `newId(kind)`, `idSchema(kind)`,
+   588→  `isNewId`, newProjectId/newVersionId/newAssetId/newThreadId/newRunId/
+   589→  newRenderId/newRequestId. NOTE: render prefix `rnd` but db renders rows
+   590→  use `rdr` (two id conventions coexist - cosmetic inconsistency).
+   591→- brand.ts: `Brand` (codename "Studio", productName "Studio", titleTag,
+   592→  tagline "Motion, directed by you", heroSubline, forbiddenNames
+   593→  [EffectCraft, ArtCraft, PhotoCraft, Photoshop, Cursor], domains, contact,
+   594→  social), `brandViolations(text)`, `assertBrandSafe(text)` (CI lint gate).
+   595→
+   596→Tests: brand.test.ts, env.test.ts, errors.test.ts, ids.test.ts.
+   597→
+   598→### 3.2 Config vs BUILD_PLAN
+   599→
+   600→Fulfills: M0 task 5 (.env.example with every variable + fail-fast startup
+   601→check), M1 (auth vars), M3 (editor vars + wasm budget), M4 (litellm vars +
+   602→CHAT_MAX_STEPS), M6 (stripe vars), M10 (OTEL endpoint). PARTIAL: storage
+   603→vars not unified (STORAGE_* missing from the schema; gateway passes storage
+   604→env separately via StorageEnvInput).
+   605→
+   606→---
+   607→
+   608→## 4. BRIDGE (`packages/editor-bridge`, @studio/editor-bridge v0.1.0; deps: @studio/contracts, zod; exports "." and "./fake")
+   609→
+   610→### 4.1 EditorBridge public API (19 methods, src/types.ts `EditorBridge`)
+   611→
+   612→| Method | Return | Notes |
+   613→|--------|--------|-------|
+   614→| ready() | Promise<void> | resolves when effectcraftLoad.readyMs set (re-resolves after editor reload) |
+   615→| inspect() | Promise<UiInspect> | ui.inspect; UiInspectSchema: window, pixelsPerPoint, fps, playing, time, activeComp, selectedLayers, selectedKeys, focusedPanel (derived from ui.focused), dialog, renderMs |
+   616→| commands(filter?) | Promise<CommandInfo[]> | engine.commands (CommandInfoSchema: id, label, menu[], shortcut, params, enabled, why) |
+   617→| describe(command) | Promise<CommandSchema> | command.describe (id, label, menu, shortcut, params doc, schema (JSON Schema), undoable, enabled, why) |
+   618→| query<T>(command, params?) | Promise<T> | read-only engine queries: project.summary, comp.info, layer.tree, prop.get, editor.state, edit.history.list, ... |
+   619→| execute<T>(command, params?) | Promise<T> | journaled engine commands (edit.undo, layer.newSolid, ...) |
+   620→| request<T>(method, params?) | Promise<T> | low-level control-method passthrough (ui.click, ui.key, ui.menu.invoke, render.frame, engine.execute, ...) |
+   621→| batch(batch: AgentBatchInput) | Promise<BatchResult> | normalizeAgentBatch (contracts 8.5 bounds) then execute("engine.batch", {label, atomic: true, steps}); timeout min(input.timeoutMs or 15 s, 60 s); BatchResult {steps, results} |
+   622→| renderFrame(params: RenderFrameParams) | Promise<RenderFrameResult> | RenderFrameParams {comp?, time?, max_side?, path?, transparent?}; result {comp, time, width, height, pngBase64} |
+   623→| addFile(file: Blob\|File\|string, name?) | Promise<string> | resolves with the editor-assigned table path |
+   624→| addAsset(asset: CloudAsset) | Promise<string> | virtual path `/assets/<assetId>/<sanitizedName>`; fetches signed url in PARENT frame; returns path the editor actually assigned (upstream keeps last path segment) |
+   625→| saveToBrowser(path) | Promise<SaveResult{path, bytes}> | SaveResultSchema |
+   626→| readFile(path) | Promise<Uint8Array> | throws EDITOR_CALL_FAILED when absent |
+   627→| screenshot(params?: ScreenshotParams) | Promise<ScreenshotResult> | ScreenshotParams {path?, panel?, id?}; result {path?, width?, height?, pngBase64} |
+   628→| on(event, cb) | () => void | event bus: "ready" (sticky), "focus", "resize", "error" - NO DOM polling |
+   629→| version() | string | sync from effectcraft.info() |
+   630→| info() | EditorInfo | {version, load {wasmMs, readyMs, error?}} |
+   631→| capabilities() | Promise<AppCapabilities> | app.capabilities: version, commands, effects, export[], import, expressions, scripting, gpu, parity |
+   632→| dispose() | void | removes listeners; later calls throw EDITOR_DISCONNECTED |
+   633→
+   634→Non-bridge exports:
+   635→- `attachEditorBridge(iframe, opts: AttachOptions)` -> Promise<EditorBridge>;
+   636→  AttachOptions {callTimeoutMs (default 15_000), readyTimeoutMs (default
+   637→  60_000), version (expected prefix; mismatch emits "error" event),
+   638→  onEvent}; handshake polls effectcraftLoad.readyMs every 100 ms (the only
+   639→  poll), one retry on "not running yet" rejections, BridgeError
+   640→  normalization (codes: EDITOR_TIMEOUT, EDITOR_CALL_FAILED,
+   641→  EDITOR_NOT_READY, EDITOR_DISCONNECTED)
+   642→- `forwardShortcut(iframe, handlers: ShortcutHandlers)` -> detach fn; chat
+   643→  shortcuts forwarded from the iframe: toggleChat (Cmd/Ctrl+L), inlineEdit
+   644→  (Cmd/Ctrl+K), agent (Cmd/Ctrl+I), stop (Cmd/Ctrl+.), send
+   645→  (Cmd/Ctrl+Enter), newChat (Cmd/Ctrl+Shift+L), undoAgentRun
+   646→  (Cmd/Ctrl+Shift+U), escape; handler returning false declines (editor sees
+   647→  the key)
+   648→- `sameOrigin(iframe)` -> boolean
+   649→- batch.ts: `AgentBatchInputSchema` (label defaults "Agent batch",
+   650→  atomic omitted-only-true, params default {}, timeoutMs), `AgentBatchInput`,
+   651→  `normalizeAgentBatch` = `validateAgentBatch` (re-exports contracts
+   652→  AGENT_BATCH_SCHEMA as AgentBatchSchema, MAX_BATCH_STEPS,
+   653→  MAX_BATCH_TIMEOUT_MS, MAX_BATCH_PAYLOAD_BYTES, AgentBatchStep)
+   654→- errors.ts: `BridgeError` {code, retryable, cause}, `isBridgeError`,
+   655→  `isBridgeErrorCode`, `messageOf` (upstream rejects with plain strings)
+   656→- types.ts schemas: UiInspectSchema, ProjectSummarySchema,
+   657→  ProjectItemSummarySchema, PropNodeSchema, PropKeyframeInfoSchema,
+   658→  LayerNodeSchema, CommandInfoSchema, CommandSchemaSchema, BatchResultSchema,
+   659→  RenderFrameResultSchema, ScreenshotResultSchema, EditorInfoSchema,
+   660→  EffectcraftLoadInfoSchema, AppCapabilitiesSchema, SaveResultSchema;
+   661→  EffectcraftGlobal (the verified window.effectcraft v0.13.0 surface:
+   662→  request, execute, commands, inspect, screenshot, renderFrame, files,
+   663→  readFile, addFile, info, saveToBrowser, listStored, removeStored, flush,
+   664→  workerFrameCheck), EffectcraftLoad, EffectcraftWindow
+   665→
+   666→### 4.2 Fake editor (`createFakeEditor`, subpath @studio/editor-bridge/fake) vs BUILD_PLAN M0 required surface
+   667→
+   668→M0 task 3 required surface - ALL present on FakeEditor:
+   669→- execute -> yes (`execute(command, params)`)
+   670→- request -> yes (`request(method, params)`; supports ui.inspect,
+   671→  ui.screenshot, render.frame, engine.commands, engine.execute,
+   672→  ui.playback; other methods rejected with "unknown method `x`" - matches
+   673→  upstream)
+   674→- inspect -> yes
+   675→- renderFrame -> yes (sets base64: true; returns {comp, time, width,
+   676→  height, png} - constant 1x1 transparent PNG stub, FAKE_PNG_BASE64)
+   677→- addFile -> yes (keeps last path segment, `fakePathFor`; parses
+   678→  "studio-fake-ecproj" .ecproj JSON and loads it)
+   679→- readFile -> yes (Uint8Array | undefined)
+   680→- saveToBrowser -> yes ({path, bytes}; marks dirty = false)
+   681→- screenshot -> yes (inline png or files[path])
+   682→- ui.inspect -> yes (request "ui.inspect"; focused panel override)
+   683→- project.summary -> yes (querySummary: path, dirty, bitDepth, renderer,
+   684→  items (comps with size/duration/layers/frameRate), activeComp, time,
+   685→  selectedLayers, undo labels)
+   686→- layer.tree -> yes (queryLayerTree: layer json + properties prop-node
+   687→  children; seeds transform/anchor, transform/position, transform/scale,
+   688→  transform/rotation, transform/opacity)
+   689→- prop.get -> yes (queryPropGet: value, animated, keys[], expression)
+   690→- render.frame -> yes (renderFrameResult; max_side scaling honored)
+   691→- edit.history.list -> yes (queryHistoryList: {states: [{index, id s0..,
+   692→  label, parent, depth, current, line, future}], current, branches: 0};
+   693→  labels = step that made each state, oldest "Original")
+   694→- edit.undo / edit.redo -> yes ({undone: label} / {redone: label}; guard
+   695→  errors "nothing to undo" / "nothing to redo")
+   696→- engine.batch with $N refs + atomic rollback -> yes (cmdBatch: $N.key
+   697→  substitution via reference()/substitute() incl. array index paths,
+   698→  NOT_IN_BATCH guard (engine.batch, file.runScript, script.run), atomic
+   699→  default true, failing step -> restore(pre-snapshot) + "the batch was
+   700→  rolled back (nothing changed)", batch folds into ONE undo entry named by
+   701→  `label` (suppressedJournals -> fold()), upstream error strings:
+   702→  "step N (`id`): ...")
+   703→
+   704→Registry (17 commands copied from upstream registrations): comp.new,
+   705→layer.newSolid, layer.newText, layer.rename, prop.set, prop.get,
+   706→engine.batch, edit.undo, edit.redo, edit.history.list, command.list,
+   707→command.describe, app.capabilities, project.summary, comp.info, layer.tree,
+   708→editor.state. Enabled guards mirror upstream: has_comp ("no composition is
+   709→open"), has_layers ("select a layer first"), can_undo/can_redo.
+   710→
+   711→Fake-only affordances: `state` (FakeEditorStateView: version, project,
+   712→windowSize, activeComp, selectedLayers, playhead, playing, focusedPanel,
+   713→windowFocused, projectPath, dirty, history {undo[], redo[]}, fileTable),
+   714→`script(steps, opts)` (batch runner, continueOnError), `reset()`,
+   715→overrides {version, windowSize, focusedPanel, playhead, playing, comps,
+   716→failOn (per-command error injection - atomicity test tool), latencyMs}.
+   717→
+   718→`attachFakeBridge(fake, opts)` -> EditorBridge synchronously (no DOM);
+   719→same typed surface + same Zod validation as the real bridge; addAsset
+   720→requires bytes (the fake does not fetch). Tests: bridge.test.ts,
+   721→fake.test.ts (jsdom).
+   722→
+   723→Documented fake divergences (in-file): renderFrame returns a constant 1x1
+   724→PNG; editor.state.times is comp seconds (upstream serializes ticks);
+   725→project.summary items are comps only; no ui.click/ui.key; history ids are
+   726→positional (s0, s1, ...) not content-keyed hex; no branches.
+   727→
+   728→### 4.3 Bridge vs BUILD_PLAN
+   729→
+   730→Fulfills: M0 task 3 verification surface (via the fake; the REAL editor
+   731→surface verification is blocked - no built editor dist exists, see
+   732→editor.md W-R5), M3 task 2 (typed wrapper, timeout/retry/error
+   733→normalization, readiness handshake, version check, event bus, no DOM
+   734→polling), M3 task 6 (shortcut forwarding incl. Cmd/Ctrl+L/K/I), M5 task 4
+   735→apply path (`batch()` -> engine.batch atomic, one undo step). MET at the
+   736→package level.
+   737→Missing: nothing inside the package scope; the real-iframe integration
+   738→(apps/web editor page, asset load sequence, autosave loop calling
+   739→saveToBrowser/readFile + versions.upload) is NOT wired anywhere in
+   740→apps/web (no file under apps/web imports @studio/editor-bridge).
+   741→
+   742→---
+   743→
+   744→## 5. UI (`packages/ui`, @studio/ui v0.1.0; radix primitives, cva, clsx, tailwind-merge, lucide-react; peer: react ^19)
+   745→
+   746→### 5.1 Component inventory (24 source files under src/components/, all exported from src/index.ts)
+   747→
+   748→Primitives: Button (+ buttonVariants), Input (+ SearchInput, inputVariants),
+   749→Textarea (+ useAutoGrow), Select (SelectTrigger, SelectValue, SelectContent,
+   750→SelectItem, SelectGroup, SelectLabel, SelectSeparator), Field (+
+   751→FieldControlProps), Kbd, Spinner.
+   752→Overlays: Dialog (DialogTrigger, DialogContent, DialogTitle,
+   753→DialogDescription, DialogClose, DialogActions, ConfirmDialog), Menu
+   754→(MenuTrigger, MenuContent, MenuItem, MenuCheckboxItem, MenuRadioGroup,
+   755→MenuRadioItem, MenuItemIndicator, MenuItemShortcut, MenuLabel, MenuGroup,
+   756→MenuSeparator), Popover (PopoverTrigger, PopoverAnchor, PopoverContent),
+   757→Tooltip (TooltipProvider, TooltipTrigger, TooltipContent,
+   758→TOOLTIP_DELAY_MS), CommandPalette (+ CommandItem, CommandGroup).
+   759→Data display: Card (CardHeader, CardTitle, CardDescription, CardContent,
+   760→CardFooter, ProjectCard), Table (TableHeader, TableBody, TableRow, TableHead,
+   761→TableCell, TableEmpty), Badge (+ RiskBadge, StatusDot, badgeVariants,
+   762→RiskLevel, StatusTone), Avatar, Skeleton, Slate, FrameLine, EmptyState,
+   763→CreditMeter (+ CreditState).
+   764→Feedback: Toast (ToastProvider, ToastViewport, Toast, ToastTitle,
+   765→ToastDescription, ToastAction, ToastClose, toastVariants,
+   766→TOAST_DURATION_MS).
+   767→Utilities: `cn`, `typeScaleTokens` (lib/utils.ts).
+   768→
+   769→Styles (exports map `css`): tokens.css (154 lines: 3.1 core palette
+   770→--ink-0..4/--line-subtle/--line-strong/--paper/--ash/--signal/--ice/
+   771→--success/--warning/--danger/--violet; 3.2 semantic tokens --bg-page/
+   772→--bg-app/--bg-panel/--bg-elevated/--bg-input/--text-*/--border*/
+   773→--focus-ring/--overlay; 4.1 font stacks Instrument Serif/Instrument Sans/
+   774→JetBrains Mono via next/font override; 4.2 type scale --text-display-xl
+   775→(72px/0.95) ... --text-body; 5.1 spacing, 5.3 radii, 5.4 elevations, 6
+   776→motion, 9 chat overlay measurements), theme.css (208 lines: tailwind
+   777→mapping via @theme), utilities.css (212 lines). Dark-only; semantic-token
+   778→rule; status never colour-only.
+   779→
+   780→Tests (9): badge, button, command-palette, credit-meter, dialog, input,
+   781→table, tabs, toast (all *.test.tsx, vitest + testing-library).
+   782→
+   783→### 5.2 UI vs BUILD_PLAN M9 task 1 primitives list
+   784→
+   785→M9 list: buttons -> Button; inputs -> Input/Textarea/Select/Field; dialogs
+   786→-> Dialog + ConfirmDialog; menus -> Menu; tabs -> Tabs; tables -> Table;
+   787→toasts -> Toast; badges -> Badge/RiskBadge/StatusDot; skeletons ->
+   788→Skeleton; command palette -> CommandPalette. VERDICT: MET - every named
+   789→primitive exists, plus extras (tooltip, popover, card, avatar, empty-state,
+   790→credit-meter, slate, frame-line, kbd, spinner).
+   791→M9 task 1 remainder: "Storybook/examples; axe tests" -> MISSING (no
+   792→storybook, no axe tests; component tests only). Fonts are stacks + README
+   793→wiring (apps side). Tailwind mapping -> MET (theme.css).
+   794→
+   795→---
+   796→
+   797→## 6. API-CLIENT (`packages/api-client`, @studio/api-client v0.1.0; deps: @studio/config, @studio/contracts; exports "." and "./fixtures")
+   798→
+   799→### 6.1 Every method -> gateway route (34 methods, `createApiClient(options) -> ApiClient`)
+   800→
+   801→| Method | Route | Envelope schema (response-schemas.ts) |
+   802→|--------|-------|------------------------|
+   803→| me.get | GET /v1/me | ME_RESPONSE_SCHEMA |
+   804→| workspaces.list | GET /v1/workspaces | PAGE_WORKSPACES_SCHEMA |
+   805→| workspaces.create | POST /v1/workspaces | WORKSPACE_SCHEMA |
+   806→| workspaces.patch | PATCH /v1/workspaces/:id | WORKSPACE_SCHEMA |
+   807→| invites.create | POST /v1/workspaces/:id/invites | INVITE_SCHEMA |
+   808→| invites.accept | POST /v1/invites/:token/accept | ACCEPTED_INVITE_SCHEMA |
+   809→| projects.list | GET /v1/projects | PAGE_PROJECTS_SCHEMA |
+   810→| projects.create | POST /v1/projects | PROJECT_SCHEMA |
+   811→| projects.get | GET /v1/projects/:id | PROJECT_SCHEMA |
+   812→| projects.patch | PATCH /v1/projects/:id | PROJECT_SCHEMA |
+   813→| projects.delete | DELETE /v1/projects/:id (soft) | none (null) |
+   814→| projects.manifest | GET /v1/projects/:id/manifest | PROJECT_MANIFEST_SCHEMA |
+   815→| versions.list | GET /v1/projects/:id/versions | PAGE_VERSIONS_SCHEMA |
+   816→| versions.upload | POST /v1/projects/:id/versions + PUT bytes to signed url (two-phase; UPLOAD_VERSION_RESPONSE_SCHEMA; non-envelope PUT checked by status only) | PROJECT_VERSION_SCHEMA |
+   817→| versions.restore | POST /v1/projects/:id/versions/:version/restore | PROJECT_VERSION_SCHEMA |
+   818→| leases.acquire | POST /v1/projects/:id/lease | PROJECT_LEASE_SCHEMA |
+   819→| leases.release | DELETE /v1/projects/:id/lease | none (null) |
+   820→| assets.list | GET /v1/assets | PAGE_ASSETS_SCHEMA |
+   821→| assets.createDescriptor | POST /v1/assets | CREATE_ASSET_RESPONSE_SCHEMA |
+   822→| assets.getUrl | GET /v1/assets/:id/url | SIGNED_URL_RESPONSE_SCHEMA |
+   823→| threads.list | GET /v1/projects/:id/threads | PAGE_THREADS_SCHEMA |
+   824→| threads.create | POST /v1/projects/:id/threads | THREAD_SCHEMA |
+   825→| threads.messages | GET /v1/threads/:id/messages | PAGE_MESSAGES_SCHEMA |
+   826→| chat.stream | POST /v1/threads/:id/chat (SSE; delegates to sse.ts) | n/a (events) |
+   827→| runs.get | GET /v1/runs/:id | RUN_RECORD_SCHEMA |
+   828→| runs.cancel | POST /v1/runs/:id/cancel | none (null) |
+   829→| runs.postEvent | POST /v1/runs/:id/events (tool.result / apply.result) | none (null) |
+   830→| credits.get | GET /v1/credits | CREDITS_SUMMARY_SCHEMA |
+   831→| credits.ledger | GET /v1/credits/ledger | PAGE_LEDGER_SCHEMA |
+   832→| billing.checkout | POST /v1/billing/checkout | CHECKOUT_RESPONSE_SCHEMA |
+   833→| billing.portal | POST /v1/billing/portal | PORTAL_RESPONSE_SCHEMA |
+   834→| renders.create | POST /v1/renders | RENDER_JOB_SCHEMA |
+   835→| renders.get | GET /v1/renders/:id | RENDER_JOB_SCHEMA |
+   836→| comments.list | GET /v1/projects/:id/comments | PAGE_COMMENTS_SCHEMA |
+   837→| comments.create | POST /v1/projects/:id/comments | COMMENT_SCHEMA |
+   838→| activity.list | GET /v1/projects/:id/activity | PAGE_ACTIVITY_SCHEMA |
+   839→
+   840→(33 rows above; with chat.stream counted as 1, total distinct call
+   841→signatures = 34.)
+   842→
+   843→Client guarantees: 7.3 envelope unwrap (Ok -> data, Err -> ApiError), Zod
+   844→runtime validation of data (strip unknown), client-side body validation with
+   845→contracts schemas before sending, `Idempotency-Key` header on every
+   846→mutation (explicit or crypto.randomUUID; explicit keys validated against
+   847→IDEMPOTENCY_KEY_SCHEMA), AbortSignal everywhere, GET-only retry with
+   848→RETRY_DELAYS_MS = [250, 500, 1000] on network error / 408 / 429 / retryable
+   849→5xx. ApiError (api-error.ts): wire codes + client-local codes
+   850→NETWORK_ERROR, MALFORMED_RESPONSE, UPLOAD_FAILED, VALIDATION_FAILED
+   851→(status 0), safe toJSON, fromResponse, isApiError.
+   852→
+   853→### 6.2 SSE reader semantics (sse.ts)
+   854→
+   855→- WHATWG parser `createSseParser(onMessage)` (SseMessage {event, id, data,
+   856→  retryMs}); CRLF/LF/CR, multi-line data, comments, streaming UTF-8;
+   857→  documented deviation: trailing block without blank-line terminator still
+   858→  dispatched.
+   859→- Dual payload normalization: native AI SDK UI parts (text-delta,
+   860→  tool-input-start, tool-input-delta, tool-call, tool-output-available,
+   861→  tool-output-error, tool-result, error; v4 names accepted) and Studio
+   862→  data parts (direct or `{"type":"data-*","data":{...}}` wrapped) -> all
+   863→  normalized to StudioStreamEvent and folded through contracts
+   864→  applyEvents. STREAM_ERROR_CODE = "STREAM_ERROR" for SDK error parts.
+   865→- Seq model: server seq dedup (`seq <= lastServerSeq` dropped -> Last-Event-ID
+   866→  replay idempotent), strictly-increasing LOCAL seq to the reducer,
+   867→  pre-run SDK parts counted in ignoredParts (never guessed).
+   868→- Reconnect (8.4): re-POSTs the SAME body with the SAME idempotency key
+   869→  (never duplicates a run) + `Last-Event-ID` = highest server seq seen (or
+   870→  raw SSE id: when opaque); RECONNECT_SCHEDULE_MS = [1000, 2000, 4000,
+   871→  8000], RECONNECT_MAX_DELAY_MS = 30_000, RECONNECT_MAX_AUTO_ATTEMPTS = 3,
+   872→  then paused (onPause; "Run paused") with manual controller.reconnect().
+   873→  User aborts (signal / abort() / cancel()) never auto-reconnect.
+   874→- Controller (ChatStreamController): state, runId, status, text, toolCalls,
+   875→  plan, credits, preview, error, versionId, lastServerSeq, lastEventId,
+   876→  paused, fatalError, cancelError, ignoredParts, cancel() (POSTs
+   877→  /v1/runs/:id/cancel best-effort + aborts), abort(), reconnect(), done
+   878→  promise (resolves once per segment; reasons: terminal | aborted | paused |
+   879→  closed | error).
+   880→- 2xx JSON envelope where a stream was expected -> Err body mapped to
+   881→  ApiError, else MALFORMED_RESPONSE.
+   882→
+   883→Tests: client.test.ts, sse.test.ts, retry.test.ts, api-error.test.ts,
+   884→_smoke.test.ts, helpers.ts. Fixtures (`./fixtures`): deterministic demo
+   885→dataset (demo user, 2 workspaces, 6 projects x 4 versions, assets, threads
+   886→with applied + undone runs, ledger balancing to 3200, comments, activity,
+   887→renders, SETTINGS_FIXTURES, prj_demo_ ids, studio.example.com urls),
+   888→`validateFixtures()` runs everything through the response schemas +
+   889→EDIT_PLAN_SCHEMA + STUDIO_STREAM_EVENT_SCHEMA + CHAT_REQUEST_SCHEMA.
+   890→
+   891→### 6.3 api-client vs BUILD_PLAN
+   892→
+   893→Fulfills: typed client for every 7.2 route domain (M1-M8), SSE + reconnect +
+   894→Last-Event-ID (M4 task 7 "SSE contract; reconnect; cancel"), idempotency
+   895→(M1 task 3), two-phase version upload (M2 task 3). PARTIAL vs contracts:
+   896→no comments.resolve/unresolve method (schema exists), no renders.list
+   897→method (repo supports it, no route), no asset delete, no plan catalog, no
+   898→presence/share (M7). NOT YET CONSUMED: apps/web does not import
+   899→@api-client (no dependency in apps/web/package.json) - the loop is not
+   900→wired on the client side.
+   901→
+   902→---
+   903→
+   904→## 7. Storage + Billing (legacy) and the consolidated gap list
+   905→
+   906→### 7.1 Wiring gaps (packages not consumed)
+   907→
+   908→- apps/web deps: @studio/config, @studio/contracts, @studio/ui only.
+   909→  @studio/api-client and @studio/editor-bridge are NOT dependencies and no
+   910→  app file imports them. The editor page (M3), chat overlay consumption of
+   911→  the reducer (M4), and apply path (M5) have no client wiring yet.
+   912→- services/worker exists but is EMPTY (no package.json; W-R4 confirms) ->
+   913→  renders repo markRunning/markCompleted/markFailed/markCancelled and
+   914→  storage/renders outputs have no consumer (M8 MISSING).
+   915→- services/gateway consumes @studio/config + @studio/contracts + @studio/db
+   916→  (all 17 route files incl. health + local-storage).
+   917→
+   918→### 7.2 STORAGE (`packages/storage` v0.1.0; zod ^3.24.1, optional aws4fetch)
+   919→
+   920→- Structural `Storage` seam (types.ts): put(key, data, PutOptions) ->
+   921→  StorageObject {key, bytes, contentType, sha256}; get; delete (idempotent);
+   922→  sign(key, SignOptions) -> SignedUrl (MAX_SIGN_TTL_SECONDS = 900, 15.1);
+   923→  list(prefix) async iterable.
+   924→- Typed failure envelope: STORAGE_ERROR_CODES (storage_invalid_key,
+   925→  cross_tenant_key, storage_config_invalid, storage_invalid_ttl,
+   926→  storage_invalid_argument, storage_driver_unavailable, storage_io_error,
+   927→  storage_checksum_mismatch), StorageResult<T>, StorageError/StorageFailure,
+   928→  isStorageError/isStorageFailure, storageFailure.
+   929→- Drivers: LocalFsStorage (dev/single-box; HMAC-signed local URLs,
+   930→  LOCAL_SIGNED_URL_PATH = "/v1/storage/local-object" - gateway
+   931→  routes/local-storage.ts verifies) and S3Storage (AWS S3 / Cloudflare R2
+   932→  only; MinIO/Garage are AGPL and forbidden; SigV4 presign in
+   933→  drivers/sigv4.ts: presignS3Get, s3RequestHost, s3ObjectUrl; R2 compat
+   934→  flag), plus createStorageFromEnv(env) fail-fast factory
+   935→  (STORAGE_DRIVER=local|s3, no silent default).
+   936→- keys.ts: tenant-scoped key space `organizations/<orgId>/...`
+   937→  (validateStorageKey, extractTenant, assertTenant, validateStoragePrefix,
+   938→  parseStorageKey) + builders assetKey, previewKey, exportKey,
+   939→  documentKey, checkpointKey.
+   940→- validate.ts (photo-era, NOT re-exported from the barrel): sniffMime,
+   941→  pngDimensions, jpegDimensions, dimensions, hasExif, stripExifPlan,
+   942→  validateUpload, checksum (ImageMime png/jpeg/webp; DEFAULT_MAX_UPLOAD_BYTES
+   943→  25 MB, DEFAULT_MAX_UPLOAD_MEGAPIXELS 60).
+   944→- Tests: keys, local-fs, s3, s3-sign, validate + fuzz corpus.
+   945→
+   946→VERDICT: PARTIAL / LEGACY-LEANING. The driver + key-validation + signing
+   947→core is sound and reused by the gateway, but the key NAMESPACES and
+   948→EXPORT_FORMATS ("pcraft", "png", "jpg", "psd"), `documents`/`sessions`
+   949→segments and the photo upload validators belong to the superseded
+   950→PhotoCraft product. The EffectCraft product needs `.ecproj` version blobs,
+   951→render outputs (mp4/prores/png-seq/gif/wav) and asset virtual paths
+   952→`/assets/<assetId>/<name>` (bridge CloudAsset). BUILD_PLAN M0 task 2 said
+   953→"keep/adapt: packages/storage (validation, S3)" - the adaptation has not
+   954→happened: no `versions/` or `renders/` key builders; MIME sniffing is
+   955→image-only (no video/audio/font/LUT/SVG/PDF sniffers required by 12.3).
+   956→
+   957→### 7.3 BILLING (`packages/billing` v0.1.0 - PhotoCraft legacy)
+   958→
+   959→- ledger.ts: LedgerStore seam + reserve/commit/refund/adjustment with
+   960→  one-append-per-phase and derived idempotency keys `${runId}:reserve` etc.;
+   961→  CREDIT_LEDGER_KINDS = reserve | commit | refund | adjustment | grant |
+   962→  pack (mismatch with the landed db kinds grant|reserve|commit|refund|
+   963→  adjust - "pack" and "adjustment" do not exist in schema.ts, and the seam
+   964→  is organizationId-based while @studio/db is workspaceId-based).
+   965→- plans.ts (PLAN_IDS, PLANS, PLAN_LIMITS, CREDIT_PACK, TRIAL_CREDITS,
+   966→  planView, PLAN_CATALOG, canRunTier, seatPlanLimits, dailySpendPolicy,
+   967→  trialGrantKey), policy.ts (free retry, partial-failure charge caps),
+   968→  limits/ (PlanLimitsService, RUN_INTAKE_SCHEMA, TRIAL_PLAN_LIMITS,
+   969→  TRIAL_MAX_RUN_CREDITS = 2, TRIAL_ALLOWED_RUN_TIERS, TRIAL_MAX_ASSETS =
+   970→  25), guardrails/ (DailySpendGuard, DemoWorkspaceGuard, ProviderHealthPolicy
+   971→  with PROVIDER_CIRCUIT_CLASSES text|image_draft|image_final -
+   972→  PhotoCraft image-provider concepts, not the Studio studio-fast/smart/
+   973→  vision model ids).
+   974→- Extensive tests (ledger, plans, policy, barrel, edge/ concurrency +
+   975→  grace-and-partial + dunning notes + expiry display).
+   976→
+   977→VERDICT: PARTIAL / LEGACY. Money-math semantics (reserve -> commit |
+   978→refund, exactly-once keys, never-negative) carried over into
+   979→@studio/db/src/repos/ledger.ts + ledger-math.ts, which is the version the
+   980→gateway actually uses. The @studio/billing package itself is unwired
+   981→(nothing depends on it; gateway does not import it), keeps PhotoCraft
+   982→kinds/ids, and M6 entitlements (seats, storage, render minutes, model
+   983→gating) for the EffectCraft product live only in contracts models.ts +
+   984→gateway code - there is no plan-state table or entitlements service yet.
+   985→
+   986→### 7.4 Config gaps
+   987→
+   988→- STORAGE_* env vars absent from the config env schema (storage requests
+   989→  6 more; see 3.1). The .env.example generator therefore cannot emit
+   990→  them; gateway local-storage route depends on vars outside the schema.
+   991→- Two id schemes: config ids.ts render prefix `rnd_` vs db renders rows
+   992→  `rdr_` (harmless but should be unified before public ids appear).
+   993→- errors-lite (db) vs config errors: two catalogs, unification (W1-e)
+   994→  still open; db has QUOTA_EXCEEDED, config has ASSET_TOO_LARGE /
+   995→  ASSET_REJECTED etc. - gateway must pick per-route.
+   996→
+   997→### 7.5 Cross-package contract mismatches (builders must reconcile)
+   998→
+   999→- Run status enums: contracts SERVER_RUN_STATUSES = queued | streaming |
+  1000→  awaiting_approval | applying | completed | failed | cancelled vs db
+  1001→  RunStatus = queued | running | awaiting_approval | completed | failed |
+  1002→  cancelled. The gateway maps between them today; a shared enum would remove
+  1003→  the drift risk.
+  1004→- Render statuses: contracts RENDER_STATUSES uses "succeeded"; db
+  1005→  RenderStatus uses "completed". Same drift.
+  1006→- Credit granularity: contracts estimateCredits/reserveFor return
+  1007→  fractional credits rounded to 2 decimals (CREDIT_RESERVE_MULTIPLIER 1.2);
+  1008→  db credit_ledger.amount is INTEGER and computeReserveAmount uses ceil.
+  1009→  Fractional model rates (MODEL_CATALOG creditsPer1kInput 0.01) cannot be
+  1010→  committed to the integer ledger as-is; commit path must round or the
+  1011→  ledger column must become numeric.
+  1012→- Lease TTL defaults agree (LEASE_TTL_MS 300000 = DEFAULT_LEASE_TTL_MS) -
+  1013→  OK.
+  1014→- Comments: RESOLVE_COMMENT_SCHEMA + CommentsRepo.resolve/unresolve exist;
+  1015→  no gateway route and no api-client method (M7 task 1 "resolve" PARTIAL).
+  1016→- Versions: VersionsRepo.get + AssetsRepo.bySha256 + quota + LeasesRepo.get
+  1017→  + RunsRepo.listByThread + LedgerRepo.commit/refund/adjust/
+  1018→  getEntryByIdempotencyKey are implemented but unreachable through the
+  1019→  current API surface (dead until M2 dedupe/quota, M6 reconciliation and
+  1020→  run-history routes land).
+  1021→
+  1022→### 7.6 Milestone scorecard for packages/**
+  1023→
+  1024→| Package | Fulfills | Gaps |
+  1025→|---------|----------|------|
+  1026→| contracts | M1 wire, M2, M4 chat+events+tools, M5 EditPlan/batch/apply, M6 route shapes, M7 comments/activity, M8 renders | share-link + presence + render-list + plan-catalog contracts; run/render status enum drift |
+  1027→| db | M1 auth/roles/repos, M2 projects/versions/leases/assets, M4 threads/runs, M5 run persistence, M6 credit ledger, M7 comments/audit, M8 renders rows | subscription/plan-state tables, presence, share tokens, quota enforcement wiring, unused repo surface |
+  1028→| config | M0 env + .env.example generator, M1/M3/M4/M6/M10 vars | STORAGE_* unification, id prefix drift, error-catalog unification |
+  1029→| editor-bridge | M0 surface (fake), M3 bridge/handshake/events/shortcuts, M5 batch apply | real-editor verification blocked (no dist); no app consumer |
+  1030→| ui | M9 task 1 primitives + tokens COMPLETE (all 10 named primitives + 14 extras) | Storybook, axe tests; M9 tasks 2-6 are apps-side |
+  1031→| api-client | all 7.2 route domains typed, SSE reconnect/Last-Event-ID (M4), idempotent mutations, two-phase uploads (M2) | resolve/render-list methods, presence/share, not consumed by apps/web |
+  1032→| storage | M0 "keep/adapt" partially kept: drivers, keys, signing, tests | PhotoCraft namespaces/formats/validators; no .ecproj/render key builders; env vars split |
+  1033→| billing | M0 "keep/adapt" kept as reference: reserve/commit/refund math + tests | legacy kinds/orgId/provider classes; unwired; Studio entitlements live only in gateway code |
+  1034→
+  1035→### 7.7 Recommended next actions (packages layer)
+  1036→
+  1037→1. Wire apps/web to @studio/api-client + @studio/editor-bridge (editor page,
+  1038→   autosave loop -> versions.upload, chat overlay reducer), which unblocks
+  1039→   M3/M4/M5 exit criteria.
+  1040→2. Add subscriptions/plan-state table + entitlements route (M6), then wire
+  1041→   LedgerRepo.adjust for reconciliation.
+  1042→3. Expose the implemented-but-unrouted repo surface: renders list,
+  1043→   comments resolve/unresolve, assets bySha256 dedupe + quota, run history
+  1044→   (GET /v1/threads/:id/runs or similar), lease GET.
+  1045→4. Unify enums (run/render statuses) and credit granularity between
+  1046→   contracts and db before any external consumer locks onto them.
+  1047→5. Port storage key builders to the Studio world (versions/renders/assets
+  1048→   namespaces, .ecproj, render formats) and fold STORAGE_* into the config
+  1049→   env schema.
+  1050→6. Add Storybook + axe to @studio/ui to finish M9 task 1's tail.
+  1051→
