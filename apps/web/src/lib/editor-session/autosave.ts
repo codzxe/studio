@@ -267,6 +267,12 @@ export function createAutosaveController(
       return startSave(reason);
     },
 
+    currentVersion(): VersionRef | null {
+      // The honest chain head — the M5 reapply-drift gate reads this.
+      if (disposed) return null;
+      return currentVersion;
+    },
+
     dispose(): void {
       if (disposed) return;
       disposed = true;

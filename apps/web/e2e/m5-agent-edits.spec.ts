@@ -423,6 +423,8 @@ test.describe("M5 agent edits — plan card journey", () => {
   // applicablePlanOf (lib/chat/run-state.ts), the M5-E apply/undo routes and
   // the M5-D persistence.
   //
+  // FLIPPED 2026-10-24: the thread wiring (M5-Q) + the host applyPorts mount
+  // (K-1 fix) landed; the journey below is ACTIVE. Original flip note:
   // FLIP: change `test.fixme` → `test` when the thread layer maps the
   // planRuntime outcome to the card's status props and passes
   // onApply/onUndo/onReapply (+ reapplyDrifted per the session's version
@@ -437,93 +439,92 @@ test.describe("M5 agent edits — plan card journey", () => {
   // reapply gate answers base-version-changed ⇒ Re-apply disabled + the
   // §M5.5 explanation. If the wiring later restores the pointer, flip the
   // two drifted assertions to the enabled + re-applied path.
-  test.fixme(
-    "high-risk journey: checkbox gates Apply → confirm dialog → applied (one undo step) → Undo → undone → Re-apply blocked (drifted)",
-    async ({ page }) => {
-      await installScriptedRun(page, highRiskRunEvents());
+  test("high-risk journey: checkbox gates Apply → confirm dialog → applied (one undo step) → Undo → undone → Re-apply blocked (drifted)", async ({
+    page,
+  }) => {
+    await installScriptedRun(page, highRiskRunEvents());
 
-      const composer = page.getByLabel("Message the agent");
-      await composer.click();
-      await composer.fill("Blend the Background layer to Multiply");
-      await composer.press("Enter");
+    const composer = page.getByLabel("Message the agent");
+    await composer.click();
+    await composer.fill("Blend the Background layer to Multiply");
+    await composer.press("Enter");
 
-      const plan = page.getByTestId("plan-card");
-      await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
-      await expect(plan).toHaveAttribute("data-status", "proposed");
-      await expect(plan).toHaveAttribute("data-risk", "high");
+    const plan = page.getByTestId("plan-card");
+    await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+    await expect(plan).toHaveAttribute("data-status", "proposed");
+    await expect(plan).toHaveAttribute("data-risk", "high");
 
-      // Preview: the M5-H PlanPreview is not thread-mounted in this
-      // environment — the card renders without the slot (asserted ACTIVE in
-      // the mock-plan scenario above). When the wiring mounts it, assert
-      // plan-preview-panel data-status="ready" + plan-preview-frames here.
-      await expect(page.getByTestId("plan-preview")).toHaveCount(0);
+    // Preview: the M5-H PlanPreview is not thread-mounted in this
+    // environment — the card renders without the slot (asserted ACTIVE in
+    // the mock-plan scenario above). When the wiring mounts it, assert
+    // plan-preview-panel data-status="ready" + plan-preview-frames here.
+    await expect(page.getByTestId("plan-preview")).toHaveCount(0);
 
-      // §6.2: the confirm CHECKBOX gates the Apply button.
-      const checkbox = plan.getByTestId("plan-confirm-checkbox");
-      const applyButton = plan.getByTestId("plan-apply");
-      await expect(checkbox).toBeVisible();
-      await expect(applyButton).toBeDisabled();
-      await checkbox.check();
-      await expect(applyButton).toBeEnabled();
+    // §6.2: the confirm CHECKBOX gates the Apply button.
+    const checkbox = plan.getByTestId("plan-confirm-checkbox");
+    const applyButton = plan.getByTestId("plan-apply");
+    await expect(checkbox).toBeVisible();
+    await expect(applyButton).toBeDisabled();
+    await checkbox.check();
+    await expect(applyButton).toBeEnabled();
 
-      // The confirm dialog is the second gate — Escape cancels WITHOUT
-      // applying (the card stays proposed, no engine.batch).
-      await applyButton.click();
-      const dialog = page.getByTestId("chat-confirm-dialog");
-      await expect(dialog).toBeVisible();
-      await expect(page.getByTestId("chat-confirm-title")).toContainText(
-        "Apply this high-risk plan?",
-      );
-      await page.keyboard.press("Escape");
-      await expect(dialog).toHaveCount(0);
-      await expect(plan).toHaveAttribute("data-status", "proposed");
+    // The confirm dialog is the second gate — Escape cancels WITHOUT
+    // applying (the card stays proposed, no engine.batch).
+    await applyButton.click();
+    const dialog = page.getByTestId("chat-confirm-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(page.getByTestId("chat-confirm-title")).toContainText(
+      "Apply this high-risk plan?",
+    );
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(plan).toHaveAttribute("data-status", "proposed");
 
-      // Confirmed apply: ONE atomic engine.batch → applying → applied with
-      // the one-undo-step indicator (law #6).
-      await applyButton.click();
-      await expect(dialog).toBeVisible();
-      await page.getByTestId("chat-confirm-confirm").click();
-      await expect(plan).toHaveAttribute("data-status", "applied", {
-        timeout: APPLY_SETTLE_TIMEOUT_MS,
-      });
-      await expect(page.getByTestId("plan-applied")).toContainText(/· one undo step\./);
-      await expect(plan.getByTestId("plan-undo")).toBeVisible();
+    // Confirmed apply: ONE atomic engine.batch → applying → applied with
+    // the one-undo-step indicator (law #6).
+    await applyButton.click();
+    await expect(dialog).toBeVisible();
+    await page.getByTestId("chat-confirm-confirm").click();
+    await expect(plan).toHaveAttribute("data-status", "applied", {
+      timeout: APPLY_SETTLE_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId("plan-applied")).toContainText(/· one undo step\./);
+    await expect(plan.getByTestId("plan-undo")).toBeVisible();
 
-      // Undo: ONE edit.undo reverts the whole batch (§7.2).
-      await plan.getByTestId("plan-undo").click();
-      await expect(plan).toHaveAttribute("data-status", "undone", {
-        timeout: APPLY_SETTLE_TIMEOUT_MS,
-      });
-      await expect(page.getByTestId("plan-undone")).toContainText(
-        "Undone — the batch reverted; the version stays in history.",
-      );
+    // Undo: ONE edit.undo reverts the whole batch (§7.2).
+    await plan.getByTestId("plan-undo").click();
+    await expect(plan).toHaveAttribute("data-status", "undone", {
+      timeout: APPLY_SETTLE_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId("plan-undone")).toContainText(
+      "Undone — the batch reverted; the version stays in history.",
+    );
 
-      // Re-apply is the version-head gate (§M5.5): the fixture's session
-      // sits on the APPLIED version (never restored to the plan's base), so
-      // the gate answers drifted — disabled + the explanation.
-      await expect(plan.getByTestId("plan-reapply")).toBeDisabled();
-      await expect(page.getByTestId("plan-reapply-blocked")).toContainText(
-        "Re-apply is blocked — the project moved on since this run was undone.",
-      );
+    // Re-apply is the version-head gate (§M5.5): the fixture's session
+    // sits on the APPLIED version (never restored to the plan's base), so
+    // the gate answers drifted — disabled + the explanation.
+    await expect(plan.getByTestId("plan-reapply")).toBeDisabled();
+    await expect(page.getByTestId("plan-reapply-blocked")).toContainText(
+      "Re-apply is blocked — the project moved on since this run was undone.",
+    );
 
-      // The editor is visually unchanged OUTSIDE the canvas area by the
-      // whole journey (applied then undone): mask the chat chrome AND the
-      // canvas viewport (editor-viewport hosts the wasm iframe where the
-      // edit legitimately changed pixels) — the pinned shot is the editor
-      // chrome (timeline/panels/header), M4 mask approach.
-      await page.mouse.move(320, 400);
-      await expect(page).toHaveScreenshot("editor-unchanged-m5-journey.png", {
-        animations: "disabled",
-        caret: "hide",
-        maxDiffPixelRatio: 0.01,
-        mask: [
-          page.getByTestId("chat-panel-layer"),
-          page.getByTestId("chat-collapsed-layer"),
-          page.getByTestId("editor-viewport"),
-        ],
-      });
-    },
-  );
+    // The editor is visually unchanged OUTSIDE the canvas area by the
+    // whole journey (applied then undone): mask the chat chrome AND the
+    // canvas viewport (editor-viewport hosts the wasm iframe where the
+    // edit legitimately changed pixels) — the pinned shot is the editor
+    // chrome (timeline/panels/header), M4 mask approach.
+    await page.mouse.move(320, 400);
+    await expect(page).toHaveScreenshot("editor-unchanged-m5-journey.png", {
+      animations: "disabled",
+      caret: "hide",
+      maxDiffPixelRatio: 0.01,
+      mask: [
+        page.getByTestId("chat-panel-layer"),
+        page.getByTestId("chat-collapsed-layer"),
+        page.getByTestId("editor-viewport"),
+      ],
+    });
+  });
 
   test("the editor is visually unchanged by the M5 read-only chat journey", async ({ page }) => {
     // After a full plan-bearing run (mock plan card in the thread, nothing

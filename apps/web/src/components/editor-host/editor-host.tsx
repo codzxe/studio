@@ -249,6 +249,7 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
             workspaceId={payload.workspaceId}
             projectId={projectId}
             shortcutBus={bus}
+            applyPorts={session.applyPorts}
           >
             {(api) => <ChatPanelSlot api={api} onSidebarDock={handleSidebarDock} />}
           </ChatProvider>

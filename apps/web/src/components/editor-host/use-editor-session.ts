@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { ChatApplyPorts } from "@/lib/chat/provider";
 import {
   type AutosaveController,
   type MissingAsset,
+  type SaveOutcome,
   type VersionRef,
   createAutosaveController,
   loadProjectSession,
@@ -103,6 +105,15 @@ export interface EditorSessionApi {
    * invoke it from the agent overlay.
    */
   readonly saveAfterAgentApply: () => void;
+  /**
+   * The M5 apply-session ports (K-1 fix): the ChatProvider builds the real
+   * ApplyController from these — `saveNow("agent-apply")` uploads the
+   * applied version (D-6) and `currentVersionId()` drives the reapply-drift
+   * gate (M5.5). Conservative when the autosave controller is absent
+   * (read-only/parked sessions): `saveNow` resolves `{saved:false}` and the
+   * gate reports `null` — apply then fails safely at the gateway.
+   */
+  readonly applyPorts: ChatApplyPorts;
 }
 
 const INITIAL_STATE: EditorSessionState = {
@@ -438,10 +449,36 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
   }, []);
 
   const saveAfterAgentApply = useCallback((): void => {
-    // TODO(M4, BUILD_PLAN §M5 / D-6): the agent overlay calls this after a
-    // successfully applied engine.batch so the edit becomes ONE version.
+    // The agent overlay's ApplyController now drives this via applyPorts
+    // (K-1 fix); kept for the page-level API surface (Cmd+S parity callers).
     saveNow("agent-apply");
   }, [saveNow]);
+
+  // K-1: referentially-stable apply ports for the ChatProvider (the provider
+  // builds the real ApplyController from these; the autosaveRef indirection
+  // means read-only sessions degrade conservatively without remounting).
+  const manifestVersionId = payload.manifest.currentVersion.id;
+  const applyPorts = useMemo<ChatApplyPorts>(
+    () => ({
+      autosave: {
+        saveNow: (reason: string): Promise<SaveOutcome> => {
+          const controller = autosaveRef.current;
+          if (controller === null) {
+            return Promise.resolve({ saved: false } satisfies SaveOutcome);
+          }
+          return controller.saveNow(reason);
+        },
+        markDirty: (reason?: string): void => {
+          autosaveRef.current?.markDirty(reason);
+        },
+      },
+      session: {
+        currentVersionId: (): string | null =>
+          autosaveRef.current?.currentVersion()?.id ?? manifestVersionId,
+      },
+    }),
+    [manifestVersionId],
+  );
 
   return {
     state,
@@ -450,5 +487,6 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
     retryBoot,
     reloadServerVersion,
     saveAfterAgentApply,
+    applyPorts,
   };
 }
