@@ -31,20 +31,26 @@ import {
 } from "@studio/contracts";
 
 import { StudioError } from "@studio/config";
-import type { AgentMessage } from "@studio/db";
+import type { AgentMessage, Repos } from "@studio/db";
 
+import {
+  AUTO_APPLY_SETTING_UNAVAILABLE,
+  autoApplyDecision,
+} from "../auto-apply.js";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
 import { pathParam } from "../http.js";
 import { TOOL_RESULT_TIMEOUT_MS } from "../litellm/runner.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import { resolvePlan } from "../plan.js";
+import type { CompilePlanResult } from "../plan-compiler.js";
 import {
   type AgentRun,
   type AgentRunHistoryTurn,
   type AgentRunOutcome,
   type AgentRunStream,
   type RunLog,
+  type RunStreamPayload,
   estimateRunCredits,
   reserveAmountFor,
 } from "../runner.js";
@@ -74,6 +80,93 @@ export function resolveChatModel(input: {
     });
   }
   return input.requested ?? defaultModelForPlan(input.plan);
+}
+
+// ---------------------------------------------------------------------------
+// M5.6 auto-apply wiring (BUILD_PLAN §M5 task 6, EDITOR_CHAT_UX §7.3 — off by
+// default; policy module: src/auto-apply.ts). The plan event is stamped with
+// the server-side verdict as it passes through this route's emit seam:
+// UI GUIDANCE ONLY in v1 — the client never executes a plan from the event
+// alone; `mode: "auto"` arms the card, Apply stays the user's click (D-22
+// candidate ruling, worklog M5-O).
+// ---------------------------------------------------------------------------
+
+/**
+ * Pinned M6-D seam (packages/db/src/repos/settings.ts, this wave):
+ * `repos.settings.getUserAutoApply(userId): Promise<boolean>` over the
+ * userSettings table (autoApplyEnabled, default false). Structural — read
+ * through a guard so boots without the repo (stub suites, mid-flight test
+ * trees) degrade to a propose verdict, never a crash.
+ */
+interface SettingsAutoApplySeam {
+  getUserAutoApply(userId: string): Promise<boolean>;
+}
+
+/** The per-user setting as this route sees it: readable ⇒ enabled flag. */
+type UserAutoApplySetting =
+  | { readonly readable: true; readonly enabled: boolean }
+  | { readonly readable: false };
+
+async function readUserAutoApplySetting(
+  gatewayDeps: GatewayDeps,
+  userId: string,
+): Promise<UserAutoApplySetting> {
+  const settings = (gatewayDeps.repos as Repos & { readonly settings?: SettingsAutoApplySeam })
+    .settings;
+  if (settings === undefined || typeof settings.getUserAutoApply !== "function") {
+    return { readable: false };
+  }
+  try {
+    const enabled = await settings.getUserAutoApply(userId);
+    return { readable: true, enabled: enabled === true };
+  } catch {
+    // Repo present but the read failed (e.g. the table hasn't landed yet):
+    // fail closed to propose — the run itself must never break.
+    return { readable: false };
+  }
+}
+
+/** The plan payload's compile view (server-recomputed fields only). */
+type PlanStreamPayload = Extract<RunStreamPayload, { type: "plan" }>;
+
+/**
+ * Rebuilds the compiler-result view the policy needs from the plan event's
+ * SERVER-recomputed fields (the plan event is the compiler's own projection —
+ * risk/estimatedCredits/compiledBatch, never the model's plan numbers). An
+ * event missing any of the three enrichment fields (M4-shaped or un-compiled
+ * plans) is treated as not-compiled — fail closed, never fabricates values.
+ */
+function compiledViewOfPlanPayload(payload: PlanStreamPayload): CompilePlanResult {
+  const { compiledBatch, risk, estimatedCredits } = payload;
+  if (compiledBatch === undefined || risk === undefined || estimatedCredits === undefined) {
+    return { ok: false, issues: [] };
+  }
+  return {
+    ok: true,
+    batch: compiledBatch,
+    risk,
+    estimatedCredits,
+    resolutionRequests: [],
+    placeholders: [],
+    warnings: [],
+  };
+}
+
+/** Stamps `{type: "plan"}` payloads with the §7.3 verdict; others pass through. */
+function attachAutoApplyVerdict(
+  payload: RunStreamPayload,
+  setting: UserAutoApplySetting,
+): RunStreamPayload {
+  if (payload.type !== "plan") return payload;
+  const decision =
+    setting.readable === true
+      ? autoApplyDecision({
+          plan: payload.plan,
+          compiled: compiledViewOfPlanPayload(payload),
+          userAutoApplyEnabled: setting.enabled,
+        })
+      : AUTO_APPLY_SETTING_UNAVAILABLE;
+  return { ...payload, autoApply: decision };
 }
 
 export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
@@ -161,6 +254,11 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
         status: "running",
         reservedCredits: reserveAmount,
       });
+
+      // M5.6: read the per-user auto-apply setting ONCE per run (off by
+      // default; pinned M6-D seam — guarded, so a missing/failed read degrades
+      // to the propose verdict and never breaks the run).
+      const userAutoApply = await readUserAutoApplySetting(deps, c.get("auth").user.id);
 
       const { log, signal } = deps.runs.register(runId);
       deps.chatReplay.store(replayKey, { runId, log });
@@ -284,7 +382,8 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
       });
 
       const streamApi: AgentRunStream = {
-        emit: (payload) => log.emit(payload),
+        // M5.6: the §7.3 verdict rides the plan event (UI guidance only).
+        emit: (payload) => log.emit(attachAutoApplyVerdict(payload, userAutoApply)),
         yieldToStream: () => new Promise<void>((resolveYield) => setImmediate(resolveYield)),
         expectToolCall: (toolCallId, tool) => log.expectToolCall(toolCallId, tool),
         // Seam 2: the runner waits for the client's POST /v1/runs/:id/events;

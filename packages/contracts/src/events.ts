@@ -76,6 +76,24 @@ export const LAYER_RESOLUTION_REQUEST_SCHEMA = z.object({
 
 export type LayerResolutionRequest = z.infer<typeof LAYER_RESOLUTION_REQUEST_SCHEMA>;
 
+/** M5.6 (§7.3): the auto-apply verdict modes — "auto" arms the card, never
+ * bypasses the Apply click (D-22 candidate ruling, worklog M5-O). */
+export const AUTO_APPLY_MODE_SCHEMA = z.enum(["auto", "propose"]);
+
+/**
+ * M5.6 auto-apply verdict (BUILD_PLAN §M5 task 6, EDITOR_CHAT_UX §7.3 — off
+ * by default): the gateway's SERVER-SIDE decision attached to the plan event.
+ * `reason` is a stable, human-safe policy CODE from the gateway's decision
+ * module (services/gateway/src/auto-apply.ts — never stack traces, paths or
+ * internal ids, law #1); clients own their human copy per reason.
+ */
+export const PLAN_AUTO_APPLY_SCHEMA = z.object({
+  mode: AUTO_APPLY_MODE_SCHEMA,
+  reason: z.string().min(1).max(120),
+});
+
+export type PlanAutoApplyDecision = z.infer<typeof PLAN_AUTO_APPLY_SCHEMA>;
+
 export const PLAN_EVENT_SCHEMA = z.object({
   type: z.literal("plan"),
   runId: runIdField,
@@ -94,6 +112,10 @@ export const PLAN_EVENT_SCHEMA = z.object({
   risk: PLAN_RISK_SCHEMA.optional(),
   /** Server-recomputed deterministic credit estimate (§8.8). */
   estimatedCredits: z.number().nonnegative().optional(),
+  // M5.6 (§7.3, additive + optional like the four above): the server-side
+  // auto-apply verdict — UI GUIDANCE ONLY in v1: the client NEVER executes a
+  // plan from the event alone; Apply stays the user's explicit button press.
+  autoApply: PLAN_AUTO_APPLY_SCHEMA.optional(),
 });
 
 export const PREVIEW_EVENT_SCHEMA = z.object({
