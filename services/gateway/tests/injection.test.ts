@@ -21,8 +21,8 @@
 //   3. the system prompt stays FIRST and byte-exact under corpus payloads;
 //   4. redaction holds: fingerprints + logs carry lengths/sha256 only;
 //   5. tool args validation rejects hostile payloads (bounds, enums,
-//      duplicate keys) and strips prototype-pollution keys — write tools
-//      included (the write tool's STRICT Zod schema is the boundary);
+//      duplicate keys) and strips prototype-pollution keys (the write
+//      tools' STRICT Zod boundary is pinned in litellm-runner.test.ts);
 //   6. EDIT_PLAN_SCHEMA bounds hold (steps/summary/risk/affectedLayers,
 //      $ref escapes) and a twice-invalid plan degrades to PLAN_INVALID with
 //      the run surviving; the M5 plan-event enrichment adds ONLY optional

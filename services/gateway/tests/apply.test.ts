@@ -272,7 +272,9 @@ d("apply → undo lifecycle (§8.7, §8.8/D-20)", () => {
     const response = await applyCall(ws, runId, { batchSha256: sha, versionId: appliedVersionId, idempotencyKey: key });
     const body = await envelope(response);
     expect(response.status).toBe(200);
-    expect(body.ok).toEqual({ applied: true, versionId: appliedVersionId, creditsCommitted: 2 });
+    expect(body.ok).toEqual({
+      data: { applied: true, versionId: appliedVersionId, creditsCommitted: 2 },
+    });
 
     // Run row: lifecycle columns recorded, linked to the uploaded version.
     expect(await planStatus(ws.id, runId)).toBe("applied");
@@ -302,7 +304,9 @@ d("apply → undo lifecycle (§8.7, §8.8/D-20)", () => {
     const body = await envelope(response);
     expect(response.status).toBe(200);
     expect(response.headers.get("x-idempotent-replay")).toBe("true");
-    expect(body.ok).toEqual({ applied: true, versionId: appliedVersionId, creditsCommitted: 2 });
+    expect(body.ok).toEqual({
+      data: { applied: true, versionId: appliedVersionId, creditsCommitted: 2 },
+    });
     const entries = await runLedger(ws.id, runId);
     expect(entries.filter((entry) => entry.kind === "commit")).toHaveLength(1);
   });
@@ -316,7 +320,9 @@ d("apply → undo lifecycle (§8.7, §8.8/D-20)", () => {
     const body = await envelope(response);
     expect(response.status).toBe(200);
     expect(response.headers.get("x-idempotent-replay")).toBeNull();
-    expect(body.ok).toEqual({ applied: true, versionId: appliedVersionId, creditsCommitted: 2 });
+    expect(body.ok).toEqual({
+      data: { applied: true, versionId: appliedVersionId, creditsCommitted: 2 },
+    });
     const entries = await runLedger(ws.id, runId);
     expect(entries.filter((entry) => entry.kind === "commit")).toHaveLength(1);
   });
@@ -343,7 +349,7 @@ d("apply → undo lifecycle (§8.7, §8.8/D-20)", () => {
     const response = await undoCall(ws, runId, undoKey);
     const body = await envelope(response);
     expect(response.status).toBe(200);
-    expect(body.ok).toEqual({ undone: true });
+    expect(body.ok).toEqual({ data: { undone: true } });
     expect(await planStatus(ws.id, runId)).toBe("undone");
 
     const after = await runLedger(ws.id, runId);
@@ -357,13 +363,13 @@ d("apply → undo lifecycle (§8.7, §8.8/D-20)", () => {
     const sameBody = await envelope(sameKey);
     expect(sameKey.status).toBe(200);
     expect(sameKey.headers.get("x-idempotent-replay")).toBe("true");
-    expect(sameBody.ok).toEqual({ undone: true });
+    expect(sameBody.ok).toEqual({ data: { undone: true } });
 
     const freshKey = unique("undo");
     const fresh = await undoCall(ws, runId, freshKey);
     const freshBody = await envelope(fresh);
     expect(fresh.status).toBe(200);
-    expect(freshBody.ok).toEqual({ undone: true });
+    expect(freshBody.ok).toEqual({ data: { undone: true } });
     expect(await planStatus(ws.id, runId)).toBe("undone");
   });
 
