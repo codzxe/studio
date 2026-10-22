@@ -16,17 +16,17 @@
  * `code`, fenced ``` blocks, "- " lists, headings h1–h3.
  */
 
-import { type ReactElement, type ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 // ---------------------------------------------------------------------------
 // Block parsing
 // ---------------------------------------------------------------------------
 
 type Block =
-  | { kind: "heading"; level: 1 | 2 | 3; text: string }
-  | { kind: "paragraph"; lines: readonly string[] }
-  | { kind: "list"; items: readonly string[] }
-  | { kind: "code"; lines: readonly string[] };
+  | { kind: "heading"; id: string; level: 1 | 2 | 3; text: string }
+  | { kind: "paragraph"; id: string; lines: readonly string[] }
+  | { kind: "list"; id: string; items: readonly { id: string; text: string }[] }
+  | { kind: "code"; id: string; lines: readonly string[] };
 
 const FENCE = /^```/;
 const HEADING = /^(#{1,3})\s+(.*)$/;
@@ -39,6 +39,7 @@ function startsBlock(line: string): boolean {
 
 function parseBlocks(text: string): Block[] {
   const blocks: Block[] = [];
+  const nextId = () => `b${blocks.length}`;
   const lines = text.split("\n");
   let i = 0;
   while (i < lines.length) {
@@ -62,26 +63,27 @@ function parseBlocks(text: string): Block[] {
         body.push(inner);
         i += 1;
       }
-      blocks.push({ kind: "code", lines: body });
+      blocks.push({ kind: "code", id: nextId(), lines: body });
       continue;
     }
     const heading = HEADING.exec(line);
     if (heading) {
       const hashes = heading[1]?.length ?? 0;
       const level = hashes === 1 ? 1 : hashes === 2 ? 2 : 3;
-      blocks.push({ kind: "heading", level, text: heading[2] ?? "" });
+      blocks.push({ kind: "heading", id: nextId(), level, text: heading[2] ?? "" });
       i += 1;
       continue;
     }
     if (LIST_ITEM.test(line)) {
-      const items: string[] = [];
+      const id = nextId();
+      const items: { id: string; text: string }[] = [];
       while (i < lines.length) {
         const item = lines[i];
         if (item === undefined || !LIST_ITEM.test(item)) break;
-        items.push(item.replace(LIST_ITEM, ""));
+        items.push({ id: `${id}-${items.length}`, text: item.replace(LIST_ITEM, "") });
         i += 1;
       }
-      blocks.push({ kind: "list", items });
+      blocks.push({ kind: "list", id, items });
       continue;
     }
     const paragraph: string[] = [];
@@ -91,7 +93,7 @@ function parseBlocks(text: string): Block[] {
       paragraph.push(run);
       i += 1;
     }
-    blocks.push({ kind: "paragraph", lines: paragraph });
+    blocks.push({ kind: "paragraph", id: nextId(), lines: paragraph });
   }
   return blocks;
 }
@@ -146,8 +148,8 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
 // ---------------------------------------------------------------------------
 
 function renderBlocks(blocks: readonly Block[]): ReactNode[] {
-  return blocks.map((block, index) => {
-    const key = `b${index}`;
+  return blocks.map((block) => {
+    const key = block.id;
     switch (block.kind) {
       case "heading": {
         // Headings keep their semantics but are rescaled to the chat column
@@ -186,8 +188,8 @@ function renderBlocks(blocks: readonly Block[]): ReactNode[] {
       case "list":
         return (
           <ul key={key} className="list-disc pl-5">
-            {block.items.map((item, itemIndex) => (
-              <li key={`${key}-${itemIndex}`}>{renderInline(item, `${key}-${itemIndex}`)}</li>
+            {block.items.map((item) => (
+              <li key={item.id}>{renderInline(item.text, item.id)}</li>
             ))}
           </ul>
         );

@@ -13,10 +13,10 @@
  * aria-live region — see thread.tsx).
  */
 
-import type { ReactElement } from "react";
 import { RUN_PAUSED_ERROR } from "@/lib/chat/run-state";
 import { Button } from "@studio/ui";
 import { CircleAlert, CircleCheck, Info, TriangleAlert, X } from "lucide-react";
+import type { ReactElement } from "react";
 
 export interface ChatBannerProps {
   kind: "info" | "warning" | "error" | "success";
@@ -72,12 +72,7 @@ export function ChatBanner({
       />
       <p className="min-w-0 flex-1">{message}</p>
       {showAction ? (
-        <Button
-          variant="secondary"
-          size="sm"
-          data-testid="chat-banner-action"
-          onClick={onAction}
-        >
+        <Button variant="secondary" size="sm" data-testid="chat-banner-action" onClick={onAction}>
           {actionLabel}
         </Button>
       ) : null}

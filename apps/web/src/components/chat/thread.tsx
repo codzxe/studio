@@ -21,8 +21,8 @@
  * (event) => setComposerText((event as CustomEvent<string>).detail)).
  */
 
-import { type ReactElement, useEffect, useRef } from "react";
 import type { ChatUiError, ChatUiMessage, RunPhase } from "@/lib/chat/types";
+import { type ReactElement, useEffect, useRef } from "react";
 import { ChatBanner, RunPausedBanner } from "./banners";
 import { ChatMessageView } from "./message";
 
@@ -77,6 +77,7 @@ export function ChatThread({
     if (el != null && atBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
+    // biome-ignore lint/correctness/useExhaustiveDependencies: messages.length/lastTextLength/phase are deliberate triggers for the DOM side effect (stream deltas change the text, not the array)
   }, [messages.length, lastTextLength, phase]);
 
   const onScroll = () => {

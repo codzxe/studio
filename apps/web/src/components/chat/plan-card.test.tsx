@@ -4,9 +4,9 @@
  * read-only guarantee (NO Apply/Cancel). Deterministic; jsdom.
  */
 
+import type { EditPlan } from "@studio/contracts";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { EditPlan } from "@studio/contracts";
 import { PlanCard } from "./plan-card";
 
 function plan(overrides: Partial<EditPlan> = {}): EditPlan {
