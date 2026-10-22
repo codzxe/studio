@@ -111,14 +111,14 @@ function isStoredLayout(value: unknown): value is ChatLayout {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Partial<Record<keyof ChatLayout, unknown>>;
   return (
-    candidate.mode === "floating" ||
-    candidate.mode === "sidebar" ||
-    candidate.mode === "collapsed"
-  ) &&
+    (candidate.mode === "floating" ||
+      candidate.mode === "sidebar" ||
+      candidate.mode === "collapsed") &&
     Number.isFinite(candidate.x) &&
     Number.isFinite(candidate.y) &&
     Number.isFinite(candidate.w) &&
-    Number.isFinite(candidate.h);
+    Number.isFinite(candidate.h)
+  );
 }
 
 /**
@@ -169,9 +169,7 @@ export function cycleMode(m: ChatMode): ChatMode {
 }
 
 /** One deterministic layout outcome for an incoming shortcut-bus event. */
-export type ChatLayoutAction =
-  | { type: "setMode"; mode: ChatMode }
-  | { type: "noop" };
+export type ChatLayoutAction = { type: "setMode"; mode: ChatMode } | { type: "noop" };
 
 /**
  * Map an incoming editor shortcut (M3.6 `chat-shortcut-bus`, D-5) to a

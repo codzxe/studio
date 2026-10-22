@@ -105,9 +105,9 @@ describe("ContextStrip — chips", () => {
       expect(chip).toHaveTextContent(block.label);
     }
     expect(screen.queryByTestId("context-strip-summary")).not.toBeInTheDocument();
-    // The total estimate is surfaced through the group's accessible name.
+    // The total estimate is surfaced through the list's accessible name.
     expect(
-      screen.getByRole("group", { name: "Chat context, ~620 tokens total" }),
+      screen.getByRole("list", { name: "Chat context, ~620 tokens total" }),
     ).toBeInTheDocument();
   });
 
@@ -193,7 +193,7 @@ describe("ContextStrip — narrow collapse", () => {
     // The collapsed summary keeps the picker reachable and carries the total.
     expect(summary).toHaveAttribute("title", "~620 tokens total");
     expect(
-      screen.getByRole("group", { name: "Chat context, ~620 tokens total" }),
+      screen.getByRole("list", { name: "Chat context, ~620 tokens total" }),
     ).toBeInTheDocument();
   });
 

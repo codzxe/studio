@@ -13,10 +13,10 @@
  * All deterministic: no real mouse movement, no fake timers.
  */
 
-import { cleanup, fireEvent, render, screen, type RenderResult } from "@testing-library/react";
+import { type RenderResult, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type ChatLayout, MIN_PANEL, saveLayout } from "./layout";
-import { type ChatPanelProps, ChatPanel } from "./panel";
+import { ChatPanel, type ChatPanelProps } from "./panel";
 
 // ---------------------------------------------------------------------------
 // jsdom PointerEvent shim (see file header)

@@ -9,10 +9,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CHAT_MODES,
+  type ChatLayout,
   DEFAULT_LAYOUT,
   LAYOUT_STORAGE_KEY,
   MIN_PANEL,
-  type ChatLayout,
   clampLayout,
   cycleMode,
   loadLayout,
@@ -90,7 +90,12 @@ describe("clampLayout", () => {
 
   it("falls back to DEFAULT fields for non-finite input (never throws)", () => {
     const out = clampLayout(
-      layout({ x: Number.NaN, y: Number.POSITIVE_INFINITY, w: Number.NEGATIVE_INFINITY, h: Number.NaN }),
+      layout({
+        x: Number.NaN,
+        y: Number.POSITIVE_INFINITY,
+        w: Number.NEGATIVE_INFINITY,
+        h: Number.NaN,
+      }),
       VP,
     );
     expect(out).toEqual(clampLayout(DEFAULT_LAYOUT, VP));
@@ -135,18 +140,23 @@ describe("loadLayout / saveLayout", () => {
   });
 
   it("returns null for well-formed JSON that is not a ChatLayout", () => {
-    for (const bad of ['"hello"', "42", "null", "{}", '{"mode":"nope","x":1,"y":1,"w":2,"h":3}', '{"mode":"floating","x":"1","y":1,"w":2,"h":3}']) {
+    for (const bad of [
+      '"hello"',
+      "42",
+      "null",
+      "{}",
+      '{"mode":"nope","x":1,"y":1,"w":2,"h":3}',
+      '{"mode":"floating","x":"1","y":1,"w":2,"h":3}',
+    ]) {
       localStorage.setItem(LAYOUT_STORAGE_KEY, bad);
       expect(loadLayout()).toBeNull();
     }
   });
 
   it("saveLayout is quota-safe (a throwing localStorage never propagates)", () => {
-    const spy = vi
-      .spyOn(window.localStorage, "setItem")
-      .mockImplementation(() => {
-        throw new Error("QuotaExceededError");
-      });
+    const spy = vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
     expect(() => saveLayout(layout())).not.toThrow();
     spy.mockRestore();
   });

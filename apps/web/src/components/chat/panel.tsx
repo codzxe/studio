@@ -29,16 +29,18 @@
  *   z-35  THIS panel — above host chrome, below blocking overlays (ECUX
  *         §2.1 "above the editor iframe, below modals, menus, dialogs")
  *   z-40  boot/load-failure overlays + conflict banner (must cover the chat)
- *   body  Radix popovers/menus/tooltools portal at z-50 — above the panel,
+ *   body  Radix popovers/menus/tooltips portal at z-50 — above the panel,
  *         which is what makes the §9 Esc dismissal order portal-first.
  *
- * a11y (ECUX §9.2): `complementary` landmark labelled "Agent"; focus ring
- * is the global `:focus-visible` 2px `--signal` outline (theme.css base);
- * `aria-busy` reflects streaming; the grips are pointer-only (keyboard
- * users reach geometry through header controls + shortcuts instead).
+ * a11y (ECUX §9.2): the <aside> carries the implicit `complementary`
+ * landmark role labelled "Agent" (explicit role omitted — it is redundant
+ * on aside per lint); focus ring is the global `:focus-visible` 2px
+ * `--signal` outline (theme.css base); `aria-busy` reflects streaming; the
+ * grips are pointer-only (keyboard users reach geometry through header
+ * controls + shortcuts instead).
  */
 
-import type { PointerEvent as ReactPointerEvent, ReactElement, ReactNode } from "react";
+import type { ReactElement, ReactNode, PointerEvent as ReactPointerEvent } from "react";
 import { useRef, useState } from "react";
 import { type ChatLayout, MIN_PANEL } from "./layout";
 // Convenience re-export: M4-J's slot imports the pill from the panel module
@@ -145,14 +147,22 @@ export function ChatPanel({
 
   // --- floating: header drag + SE resize (shared pointer machinery) ------
 
-  const onGripPointerDown = (kind: DragState["kind"]) => (e: ReactPointerEvent<HTMLElement>): void => {
-    // Interactive header children (model picker, buttons, …) never drag:
-    // excluded by closest() AND by any child that stops propagation itself.
-    if (layout.mode !== "floating" || e.button !== 0 || isInteractiveTarget(e.target)) return;
-    dragRef.current = { pointerId: e.pointerId, kind, startX: e.clientX, startY: e.clientY, origin: layout };
-    setDragging(true);
-    capturePointer(e.currentTarget, e.pointerId);
-  };
+  const onGripPointerDown =
+    (kind: DragState["kind"]) =>
+    (e: ReactPointerEvent<HTMLElement>): void => {
+      // Interactive header children (model picker, buttons, …) never drag:
+      // excluded by closest() AND by any child that stops propagation itself.
+      if (layout.mode !== "floating" || e.button !== 0 || isInteractiveTarget(e.target)) return;
+      dragRef.current = {
+        pointerId: e.pointerId,
+        kind,
+        startX: e.clientX,
+        startY: e.clientY,
+        origin: layout,
+      };
+      setDragging(true);
+      capturePointer(e.currentTarget, e.pointerId);
+    };
 
   const onGripPointerMove = (e: ReactPointerEvent<HTMLElement>): void => {
     const d = dragRef.current;
@@ -190,7 +200,10 @@ export function ChatPanel({
     if (d === null || e.pointerId !== d.pointerId) return;
     // Dragging the left edge LEFT widens the rail; clamped to §2.2 bounds —
     // the store's viewport cap (D-18) still wins on narrow viewports.
-    const nextW = Math.min(SIDEBAR_MAX_W, Math.max(MIN_PANEL.w, d.originW + (d.startX - e.clientX)));
+    const nextW = Math.min(
+      SIDEBAR_MAX_W,
+      Math.max(MIN_PANEL.w, d.originW + (d.startX - e.clientX)),
+    );
     resize(nextW, layout.h);
   };
 
@@ -217,7 +230,6 @@ export function ChatPanel({
 
   return (
     <aside
-      role="complementary"
       aria-label="Agent"
       aria-busy={streaming}
       tabIndex={-1}
@@ -233,16 +245,16 @@ export function ChatPanel({
           : // Sidebar: the §2.2 right rail — docked flat, 100% height.
             "absolute top-0 right-0 bottom-0 z-[35] flex flex-col overflow-hidden border-l border-border bg-panel"
       }
-      style={floating ? { left: layout.x, top: layout.y, width: layout.w, height: layout.h } : { width: Math.max(MIN_PANEL.w, layout.w) }}
+      style={
+        floating
+          ? { left: layout.x, top: layout.y, width: layout.w, height: layout.h }
+          : { width: Math.max(MIN_PANEL.w, layout.w) }
+      }
     >
       {/* Header — doubles as the floating drag region (ECUX §2.1). */}
       <div
         data-testid="chat-panel-drag-handle"
-        className={
-          floating
-            ? "shrink-0 cursor-move touch-none select-none"
-            : "shrink-0"
-        }
+        className={floating ? "shrink-0 cursor-move touch-none select-none" : "shrink-0"}
         onPointerDown={onGripPointerDown("move")}
         onPointerMove={onGripPointerMove}
         onPointerUp={onGripPointerEnd}

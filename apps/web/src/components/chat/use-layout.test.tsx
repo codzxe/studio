@@ -10,8 +10,14 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createChatShortcutBus } from "../editor-host/chat-shortcut-bus";
-import { DEFAULT_LAYOUT, type ChatLayout, clampLayout, nextLayoutAction, saveLayout } from "./layout";
-import { createChatLayoutStore, useChatLayout, type ChatLayoutStore } from "./use-layout";
+import {
+  type ChatLayout,
+  DEFAULT_LAYOUT,
+  clampLayout,
+  nextLayoutAction,
+  saveLayout,
+} from "./layout";
+import { type ChatLayoutStore, createChatLayoutStore, useChatLayout } from "./use-layout";
 
 const VP = { w: 1280, h: 800 };
 
@@ -141,7 +147,7 @@ describe("window resize re-clamp", () => {
 
   afterEach(() => {
     // Drop the own property so the prototype getter is visible again.
-    delete (window as { innerWidth?: number }).innerWidth;
+    Reflect.deleteProperty(window, "innerWidth");
   });
 
   it("re-clamps the snapshot when the window shrinks, and dispose stops it", () => {

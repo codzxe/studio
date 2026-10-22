@@ -1,8 +1,9 @@
 /**
- * EditorHost component tests (M3.5/M3.6/M3.7) — the real `attachEditorBridge`
- * against a DIST-SHAPED mount: `window.effectcraft` + `window.effectcraftLoad`
- * installed on the host's own iframe `contentWindow` exactly the way the
- * shipped dist defines them (`apps/web/public/editor/index.html`, from
+ * EditorHost component tests (M3.5/M3.6/M3.7 + the M4-J chat layer mount) —
+ * the real `attachEditorBridge` against a DIST-SHAPED mount: `window.effectcraft`
+ * + `window.effectcraftLoad` installed on the host's own iframe `contentWindow`
+ * exactly the way the shipped dist defines them
+ * (`apps/web/public/editor/index.html`, from
  * `editor/apps/effectcraft-web/web/index.html`), with the deterministic
  * fake editor behind the API (M3-C's harness pattern).
  *
@@ -11,15 +12,43 @@
  * `createFakeEditorSessionClient`; the lease port is a fake §11 seam.
  * Real timers (the save chain crosses real WebCrypto); every wait uses
  * `vi.waitFor`. No network, no dev servers, deterministic.
+ *
+ * M4-J: the chat overlay is exercised with the REAL ChatProvider against a
+ * stub api-client, with the peer-composed ChatPanelSlot mocked at this seam
+ * (the slot's own composition suite lives in chat-panel-slot.test.tsx) — so
+ * these tests stay independent of the wave-2 peer components.
  */
 
+import type { ApiClient } from "@studio/api-client";
 import { type FakeEditorSessionClient, createFakeEditorSessionClient } from "@/lib/editor-session";
+import type { ChatContextApi } from "@/lib/chat/provider";
 import { type FakeEditor, createFakeEditor } from "@studio/editor-bridge/fake";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ChatShortcutBus, createChatShortcutBus } from "./chat-shortcut-bus";
 import { EditorHost } from "./editor-host";
 import type { EditorHostPayload, LeasePort } from "./types";
+
+// ---------------------------------------------------------------------------
+// M4-J: ChatPanelSlot mock — records its props so the host tests can drive the
+// provider api + the sidebar-dock callback without loading the wave-2 peers.
+// (The slot file is ours; its imports are mocked so the peer components never
+// load from this suite.)
+// ---------------------------------------------------------------------------
+
+const slotMock = vi.hoisted(() => ({
+  mounts: [] as Array<{ api: ChatContextApi; onSidebarDock: (docked: boolean, widthPx: number) => void }>,
+}));
+
+vi.mock("@/components/editor-host/chat-panel-slot", () => ({
+  ChatPanelSlot: (props: {
+    api: ChatContextApi;
+    onSidebarDock: (docked: boolean, widthPx: number) => void;
+  }) => {
+    slotMock.mounts.push(props);
+    return <div data-testid="chat-panel-slot-mock" />;
+  },
+}));
 
 // ---------------------------------------------------------------------------
 // Dist-shaped mount helpers (mirror packages/editor-bridge/tests/dist.test.ts)
@@ -148,6 +177,8 @@ function renderHost(
         }
       | { ok: false; conflict: true; serverVersion: null }
       | { ok: false; error: Error };
+    /** M4-J: a stub api-client exposed via the session factory mounts the chat layer. */
+    readonly chatApi?: ApiClient;
   } = {},
 ): HostHarness {
   const uploadBehavior = overrides.upload;
@@ -162,7 +193,11 @@ function renderHost(
   render(
     <EditorHost
       payload={PAYLOAD}
-      sessionFactory={() => ({ client: sessionClient.client, leases })}
+      sessionFactory={() => ({
+        client: sessionClient.client,
+        leases,
+        ...(overrides.chatApi === undefined ? {} : { api: overrides.chatApi }),
+      })}
       shortcutBus={bus}
     />,
   );
@@ -445,3 +480,108 @@ describe("EditorHost — shortcuts", () => {
     expect(harness.bus.recent()[1]?.shortcut).toBe("toggleChat");
   });
 });
+
+// ---------------------------------------------------------------------------
+// M4-J: the chat layer over the editor (additive overlay, D-18)
+// ---------------------------------------------------------------------------
+
+/** A stub api-client covering exactly the calls the ChatProvider makes. */
+function createStubChatClient() {
+  const calls = { modelsListed: 0, threadsCreated: [] as string[] };
+  const client = {
+    threads: {
+      create: async (projectId: string) => {
+        calls.threadsCreated.push(projectId);
+        return {
+          id: `thr_${calls.threadsCreated.length}`,
+          projectId,
+          title: null,
+          createdBy: "usr_test",
+          createdAt: "2026-10-22T00:00:00.000Z",
+          updatedAt: "2026-10-22T00:00:00.000Z",
+        };
+      },
+    },
+    models: {
+      list: async () => {
+        calls.modelsListed += 1;
+        return {
+          plan: "trial",
+          models: [
+            {
+              id: "studio-fast",
+              tier: "fast",
+              use: "Cheap planning, classification, quick edits",
+              creditsPer1kInput: 0.01,
+              creditsPer1kOutput: 0.03,
+            },
+          ],
+        };
+      },
+    },
+    chat: {
+      stream: () => ({
+        paused: false,
+        cancel: async () => undefined,
+        abort: () => undefined,
+        reconnect: async () => undefined,
+      }),
+    },
+    runs: { postEvent: async () => null },
+  } as unknown as ApiClient;
+  return { client, calls };
+}
+
+describe("EditorHost — M4-J chat layer", () => {
+  it("mounts no chat layer when the injected session has no api client", async () => {
+    const harness = renderHost();
+    await bootToOpen(harness);
+    expect(screen.queryByTestId("chat-layer")).not.toBeInTheDocument();
+    expect(slotMock.mounts).toHaveLength(0);
+  });
+
+  it("mounts the chat provider + slot over the OPEN editor with the page's ids, bus and dock wiring", async () => {
+    const stub = createStubChatClient();
+    const harness = renderHost({ chatApi: stub.client });
+    await bootToOpen(harness);
+
+    // The overlay layer + the real provider mounted (models fetched through
+    // the session's api client exactly once on open).
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-layer")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-panel-slot-mock")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(stub.calls.modelsListed).toBe(1);
+    });
+
+    const mount = slotMock.mounts[slotMock.mounts.length - 1];
+    expect(mount).toBeDefined();
+    expect(mount.api.shortcutBus).toBe(harness.bus); // the page's bus flows through
+    expect(typeof mount.onSidebarDock).toBe("function");
+
+    // The lazily-created thread uses the RSC payload's project id.
+    await act(async () => {
+      mount.api.send({ message: "what is here?" });
+    });
+    await waitFor(() => {
+      expect(stub.calls.threadsCreated).toEqual(["prj_test"]);
+    });
+    expect(screen.getByTestId("editor-iframe")).not.toHaveAttribute("style"); // never restyled
+
+    // Sidebar dock (D-18): the viewport WRAPPER resizes; the iframe keeps its own styles.
+    await act(async () => {
+      mount.onSidebarDock(true, 380);
+    });
+    expect(screen.getByTestId("editor-viewport")).toHaveStyle({ width: "calc(100% - 380px)" });
+    await act(async () => {
+      mount.onSidebarDock(false, 380);
+    });
+    expect(screen.getByTestId("editor-viewport")).not.toHaveStyle({
+      width: "calc(100% - 380px)",
+    });
+  });
+});
+
