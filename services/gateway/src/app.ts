@@ -18,6 +18,7 @@ import {
 } from "./middleware.js";
 
 import { activityRoutes } from "./routes/activity.js";
+import { applyRoutes } from "./routes/apply.js";
 import { assetsRoutes } from "./routes/assets.js";
 import { billingRoutes } from "./routes/billing.js";
 import { chatRoutes } from "./routes/chat.js";
@@ -135,6 +136,7 @@ export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
   app.route("/", threadsRoutes(deps));
   app.route("/", chatRoutes(deps));
   app.route("/", runsRoutes(deps));
+  app.route("/", applyRoutes(deps));
   app.route("/", modelsRoutes(deps));
   app.route("/", creditsRoutes(deps));
   app.route("/", billingRoutes(deps));
