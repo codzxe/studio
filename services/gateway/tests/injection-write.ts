@@ -36,20 +36,22 @@
  *     literal below rides inside a STRING on purpose.
  *
  * FINDINGS this corpus pins (full write-up in docs/phases/M5-SAFETY.md):
- *   F-5 (HIGH, drift): the compiler's translate() reads an EARLIER draft of the
- *     write-tool args shapes (`updates`, `layer`, `keyframes`, `targets`,
- *     `fontSize`…) while the landed @studio/contracts write-tools.ts uses
- *     `layers`+`properties`, `keys`+`timeSeconds`, `effect.name`, `size`/`font`.
- *     Five of the eight tools compile zero commands from perfectly-argued
- *     calls (PROPOSAL_INVALID) and a mixed plan silently DROPS the drifted
- *     steps. The `drift-*` fixtures pin today's behavior so the fix owner can
- *     flip them.
- *   F-6 (LOW, defense-in-depth): AGENT_BATCH_SCHEMA bounds the batch but does
- *     NOT allowlist command ids — a plan event whose compiledBatch carries
- *     `evil.delete` or `engine.batch` PARSES on the wire and survives the
- *     client's shape-only gates; the engine's own registry/NOT_IN_BATCH
- *     rejection is the final gate. The `wire-dunder-command` /
- *     `wire-shadow-engine-batch` fixtures pin that gap.
+ *   F-5 (HIGH, drift — FIXED by the M5 wave-2 integrator): translate() used to
+ *     read an EARLIER draft of the write-tool args shapes (`updates`, `layer`,
+ *     `keyframes`, `targets`, `fontSize`…) while the landed @studio/contracts
+ *     write-tools.ts uses `layers`+`properties`, `keys`+`timeSeconds`,
+ *     `effect.name`, `size`/`font`. The M5-S flip turns the `drift-*`
+ *     fixtures into the fix's ACCEPTANCE pins: perfectly-argued current-shape
+ *     calls now COMPILE to their registry commands, old-draft shapes answer
+ *     the typed invalid_args fatal, and a mixed plan with ANY zero-command
+ *     step is fatally empty_step (G-3 — never a silently partial batch).
+ *   F-6 (LOW, defense-in-depth — still pinned): AGENT_BATCH_SCHEMA bounds the
+ *     batch but does NOT allowlist command ids — a plan event whose
+ *     compiledBatch carries `evil.delete` or `engine.batch` PARSES on the
+ *     wire and survives the client's shape-only gates; the engine's own
+ *     registry/NOT_IN_BATCH rejection is the final gate. The
+ *     `wire-dunder-command` / `wire-shadow-engine-batch` fixtures pin that
+ *     gap.
  */
 
 import type { WriteToolId } from "@studio/contracts";
@@ -117,22 +119,25 @@ export interface HostileBatchWireFixture {
 
 /**
  * PERFECT, perfectly-valid args under the CURRENT @studio/contracts schemas —
- * not hostile input, but the sharpest probe of FINDING F-5: the plan compiler's
- * translate() still reads the OLD draft shapes, so five of the eight tools
- * translate these to ZERO commands (PROPOSAL_INVALID today). `compiledToday`
- * pins what compilePlan does with the step TODAY so the fix owner flips it.
+ * not hostile input, but the sharpest probe of FINDING F-5. The M5 wave-2
+ * integrator fix made translate() read the LANDED shapes, so these probes
+ * are now the fix's ACCEPTANCE pins: each step MUST compile to its registry
+ * command (and only the editor-side passthrough fields stay out of the
+ * batch, warned as uncompilable_arg).
  */
 export interface CompilerDriftFixture {
   readonly id: string;
-  /** The F-5 drift story for this tool (report-only; see M5-SAFETY.md §2). */
+  /** The F-5 drift story for this tool (post-fix: the acceptance pin). */
   readonly threat: string;
   readonly tool: WriteToolId;
   /** Schema-valid argsJson under the CURRENT WRITE_TOOL_ARGS_SCHEMAS[tool]. */
   readonly argsJson: string;
   readonly needle: string;
-  /** "empty" — translates to zero commands (empty_batch fatal today);
-   *  "partial" — translates but silently DROPS validated fields. */
-  readonly compiledToday: "empty" | "partial";
+  /** The registry command the step compiles to under the FIXED translate(). */
+  readonly expectedCommand: string;
+  /** True when the needle rides the compiled batch as inert VALUE data;
+   *  false when the needle sat in an uncompilable passthrough (warned + dropped). */
+  readonly needleRidesBatch: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,32 +1152,33 @@ export const WRITE_PLAN_INJECTIONS: readonly HostileWritePlanFixture[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// 3) FINDING F-5 — perfect args under the CURRENT schemas vs the compiler's
-//     OLD draft shapes (report-only pins; flip when the compiler is fixed).
+// 3) FINDING F-5 acceptance probes — perfect args under the CURRENT schemas
+//     (the M5-S flip: the FIXED compiler translates them; old-draft shapes
+//     are invalid_args fatals; zero-command steps are fatally empty_step).
 // ---------------------------------------------------------------------------
 
 export const COMPILER_DRIFT_PROBES: readonly CompilerDriftFixture[] = [
   {
     id: "drift-set-properties",
     threat:
-      "FINDING F-5 (HIGH, report-only): perfect set_properties args under the " +
-      "landed contracts schema ({layers, properties}) — but translate() reads " +
-      "the old draft shape ({updates: [{layer, path, value}]}), so the step " +
-      "compiles to ZERO commands and every perfectly-argued call answers " +
-      "PROPOSAL_INVALID today.",
+      "FINDING F-5 (FIXED — M5-S acceptance pin): perfect set_properties args " +
+      "under the landed contracts schema ({layers, properties}). The FIXED " +
+      "translate() reads exactly this shape: the cross-product of 1 layer × 1 " +
+      "property ⇒ one prop.set carrying the value as inert DATA.",
     tool: "set_properties",
     argsJson: JSON.stringify(
       setPropertiesArgs("Headline", "text/sourceText", "M5N-DRIFT-SET-PROPERTIES"),
     ),
     needle: "M5N-DRIFT-SET-PROPERTIES",
-    compiledToday: "empty",
+    expectedCommand: "prop.set",
+    needleRidesBatch: true,
   },
   {
     id: "drift-set-keyframes",
     threat:
-      "FINDING F-5: perfect set_keyframes args ({layers, propertyPath, keys with " +
-      "timeSeconds}) vs the old shape ({layer, keyframes with time/easing}) — " +
-      "the compiler sees no `layer` and compiles nothing.",
+      "FINDING F-5 (FIXED — M5-S acceptance pin): perfect set_keyframes args " +
+      "({layers, propertyPath, keys with timeSeconds}) — one prop.addKey with " +
+      "timeSeconds mapped to the engine's `time`, value riding as inert DATA.",
     tool: "set_keyframes",
     argsJson: JSON.stringify({
       layers: [{ name: "Headline" }],
@@ -1180,13 +1186,16 @@ export const COMPILER_DRIFT_PROBES: readonly CompilerDriftFixture[] = [
       keys: [{ timeSeconds: 0, value: "M5N-DRIFT-SET-KEYFRAMES" }],
     }),
     needle: "M5N-DRIFT-SET-KEYFRAMES",
-    compiledToday: "empty",
+    expectedCommand: "prop.addKey",
+    needleRidesBatch: true,
   },
   {
     id: "drift-add-effect",
     threat:
-      "FINDING F-5: perfect add_effect args ({layers, effect: {name}, params}) vs " +
-      "the old shape ({layer, effect as a bare string}) — compiles nothing.",
+      "FINDING F-5 (FIXED — M5-S acceptance pin): perfect add_effect args " +
+      "({layers, effect: {name}, params}) — effect.apply {effect, layers}. The " +
+      "effect `params` are editor-side state: the needle must NEVER reach the " +
+      "batch (uncompilable_arg warn only).",
     tool: "add_effect",
     argsJson: JSON.stringify({
       layers: [{ name: "Headline" }],
@@ -1194,13 +1203,16 @@ export const COMPILER_DRIFT_PROBES: readonly CompilerDriftFixture[] = [
       params: { note: "M5N-DRIFT-ADD-EFFECT" },
     }),
     needle: "M5N-DRIFT-ADD-EFFECT",
-    compiledToday: "empty",
+    expectedCommand: "effect.apply",
+    needleRidesBatch: false,
   },
   {
     id: "drift-apply-preset",
     threat:
-      "FINDING F-5: perfect apply_preset args ({preset: {name}, layers}) vs the " +
-      "old shape ({targets, preset as a string}) — compiles nothing.",
+      "FINDING F-5 (FIXED — M5-S acceptance pin): perfect apply_preset args " +
+      "({preset: {name}, layers, args}) — anim.applyBuiltinPreset {preset, " +
+      "layers}. The preset `args` are editor-side state: the needle must NEVER " +
+      "reach the batch (uncompilable_arg warn only).",
     tool: "apply_preset",
     argsJson: JSON.stringify({
       preset: { name: "Fade In" },
@@ -1208,15 +1220,16 @@ export const COMPILER_DRIFT_PROBES: readonly CompilerDriftFixture[] = [
       args: { note: "M5N-DRIFT-APPLY-PRESET" },
     }),
     needle: "M5N-DRIFT-APPLY-PRESET",
-    compiledToday: "empty",
+    expectedCommand: "anim.applyBuiltinPreset",
+    needleRidesBatch: false,
   },
   {
     id: "drift-create-text-fields",
     threat:
-      "FINDING F-5 (partial): create_text args validate under the landed schema " +
-      "({font, style, size, fill, stroke}) but translate() reads the old draft " +
-      "names ({fontFamily, fontSize, color}) — the step COMPILES but silently " +
-      "DROPS every typography field the model and the user approved.",
+      "FINDING F-5 (FIXED — M5-S acceptance pin): create_text typography " +
+      "(font/style/size/fill) validates under the landed schema and the FIXED " +
+      "translate() maps it 1:1 into layer.newText — no field may be silently " +
+      "dropped from what the user approved.",
     tool: "create_text",
     argsJson: JSON.stringify({
       text: "M5N-DRIFT-CREATE-TEXT",
@@ -1228,11 +1241,17 @@ export const COMPILER_DRIFT_PROBES: readonly CompilerDriftFixture[] = [
       position: [960, 540],
     }),
     needle: "M5N-DRIFT-CREATE-TEXT",
-    compiledToday: "partial",
+    expectedCommand: "layer.newText",
+    needleRidesBatch: true,
   },
 ];
 
-/** The mixed-plan F-5 edge: a working tool + a drifted tool in ONE plan. */
+/**
+ * The mixed-plan F-5 edge, FLIPPED: a working tool + a previously-drifted tool
+ * in ONE plan. Post-fix BOTH steps compile — the user approves two edits and
+ * Apply performs exactly two. The G-3 companion probe (a zero-command step in
+ * a mixed plan ⇒ fatally empty_step) lives in injection-write.test.ts.
+ */
 export const DRIFT_MIXED_PLAN: Record<string, unknown> = writePlan([
   writeStep(
     "create_text",

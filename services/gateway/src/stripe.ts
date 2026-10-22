@@ -21,11 +21,11 @@ import Stripe from "stripe";
 import type { StudioEnv } from "@studio/config";
 import type {
   StripeEventLike,
+  StripeSdkLike,
+  StripeSdkSubscriptionLike,
   StripeSeam,
   StripeSeamErrorCode,
   StripeSeamResult,
-  StripeSdkLike,
-  StripeSdkSubscriptionLike,
   SubscriptionSnapshot,
 } from "./context.js";
 import { GatewayError } from "./errors.js";
@@ -35,7 +35,10 @@ export interface StripeSeamOptions {
   readonly sdk?: StripeSdkLike;
 }
 
-export function createStripeSeam(env: StudioEnv, options: StripeSeamOptions = {}): StripeSeam | null {
+export function createStripeSeam(
+  env: StudioEnv,
+  options: StripeSeamOptions = {},
+): StripeSeam | null {
   if (env.stripe.secretKey === undefined) return null;
   // The assignment proves the real SDK satisfies the structural seam type;
   // tests inject the FakeStripe harness through options.sdk instead.
@@ -55,11 +58,13 @@ export function createStripeSeam(env: StudioEnv, options: StripeSeamOptions = {}
     op: string,
     error: unknown,
   ): { code: StripeSeamErrorCode; reason: string } {
-    const record = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
+    const record =
+      typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
     const type = typeof record.type === "string" ? record.type : "";
     const statusCode = typeof record.statusCode === "number" ? record.statusCode : 0;
     if (type === "invalid_request_error") {
-      if (statusCode === 404) return { code: "not_found", reason: `stripe ${op}: object not found` };
+      if (statusCode === 404)
+        return { code: "not_found", reason: `stripe ${op}: object not found` };
       return { code: "invalid_request", reason: `stripe ${op}: request rejected` };
     }
     return { code: "upstream_error", reason: `stripe ${op}: request failed` };
@@ -82,11 +87,15 @@ export function createStripeSeam(env: StudioEnv, options: StripeSeamOptions = {}
     try {
       return await run();
     } catch (error) {
-      throw new GatewayError("SERVICE_UNAVAILABLE", "The billing provider is unavailable right now.", {
-        retryable: true,
-        hint: "We couldn't reach the billing provider. Try again in a moment.",
-        cause: error,
-      });
+      throw new GatewayError(
+        "SERVICE_UNAVAILABLE",
+        "The billing provider is unavailable right now.",
+        {
+          retryable: true,
+          hint: "We couldn't reach the billing provider. Try again in a moment.",
+          cause: error,
+        },
+      );
     }
   }
 
@@ -159,7 +168,8 @@ export function createStripeSeam(env: StudioEnv, options: StripeSeamOptions = {}
           metadata: params.metadata,
           subscription_data:
             params.mode === "subscription" ? { metadata: params.metadata } : undefined,
-          payment_intent_data: params.mode === "payment" ? { metadata: params.metadata } : undefined,
+          payment_intent_data:
+            params.mode === "payment" ? { metadata: params.metadata } : undefined,
         }),
       );
       return { id: session.id, url: session.url ?? "" };

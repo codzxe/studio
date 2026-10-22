@@ -887,10 +887,12 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
     // The plan event: server-compiled batch + resolution requests for the
     // two DECLARED layer names, server-recomputed risk + credits (the model
-    // claimed risk "high" + 99 credits — both overridden).
+    // claimed 99 credits — overridden; it declared risk "high" — G-4: the
+    // declared risk is a FLOOR, so the wire carries high, never lower).
     expect(plan.plan.summary).toBe(PLAN_SUMMARY);
-    expect(plan.risk).toBe("low");
-    expect(plan.estimatedCredits).toBe(2);
+    expect(plan.risk).toBe("high");
+    // (1 + 2×0.5) × 1.5 — estimateCredits for the FLOORED risk, 2 plan steps.
+    expect(plan.estimatedCredits).toBe(3);
     expect(plan.compiledBatch).toMatchObject({
       label: `Agent: ${PLAN_SUMMARY}`,
       atomic: true,
@@ -1423,7 +1425,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     expect(events.filter((event) => event.type === "tool.result")).toHaveLength(1);
   });
 
-  it("12. write-tool propose path on the live wire: create_text → proposedBatch envelope + redacted model feedback; set_properties → PROPOSAL_INVALID (M5-A⇄M5-B args drift pinned, law #12)", async () => {
+  it("12. write-tool propose path on the live wire: create_text + set_properties → proposedBatch envelopes + redacted model feedback (F-5 fixed: both compile)", async () => {
     const fx = await newFixture("propose");
     fake.enqueue(
       writeToolRound("call_propose_1", "studio.create_text", { text: "Hello", name: "Headline" }),
@@ -1474,18 +1476,18 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
       stepCount: 1,
     });
 
-    // The M5-A⇄M5-B ARGS-VOCABULARY DRIFT, pinned at the live wire (law #12 —
-    // report-only): the REAL contracts schema for set_properties speaks
-    // {layers: [{name}], properties: [{path, value}]}, but the compiler's
-    // translate() reads the M5-B fixture vocabulary (`updates`), so the call
-    // compiles to ZERO commands → PROPOSAL_INVALID. The run SURVIVES.
+    // The F-5 FIX at the live wire (M5-S flip): the REAL contracts schema for
+    // set_properties speaks {layers: [{name}], properties: [{path, value}]}
+    // and the FIXED compiler translates exactly that — the call now PROPOSES
+    // the cross-product batch (2 layers × 1 property ⇒ 2 prop.set commands)
+    // instead of answering PROPOSAL_INVALID. The run SURVIVES either way.
     const fx2 = await newFixture("drift");
     fake.enqueue(
       writeToolRound("call_drift_1", "studio.set_properties", {
         layers: [{ name: "Headline" }, { name: "Sub" }],
         properties: [{ path: "transform/opacity", value: 40 }],
       }),
-      finalAnswerRound("I could not propose that change."),
+      finalAnswerRound("Proposed the opacity change — apply it from the card."),
     );
     const driftResponse = await chatStream(fx2, {
       message: "dim the two layers",
@@ -1495,10 +1497,44 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     });
     const driftStream = new SseStream(driftResponse);
     const driftEvents = expectValidStream(await driftStream.rest());
-    expect(driftEvents.at(-1)).toMatchObject({ type: "run.completed" });
+    expect(typeSeq(driftEvents)).toEqual([
+      "run.started",
+      "tool.started",
+      "tool.result",
+      "message.delta",
+      "credits",
+      "run.completed",
+    ]);
+    // Still NO plan event for a write-tool proposal (proposals, not plans).
+    expect(driftEvents.filter((event) => event.type === "plan")).toHaveLength(0);
     expect(findToolResult(driftEvents).result).toEqual({
-      error: "PROPOSAL_INVALID",
-      message: "the plan compiles to an empty command batch (only annotation steps)",
+      proposedBatch: {
+        label: "Agent: Set 1 property on 2 layers",
+        steps: [
+          {
+            command: "prop.set",
+            params: { layer: "Headline", path: "transform/opacity", value: 40 },
+          },
+          {
+            command: "prop.set",
+            params: { layer: "Sub", path: "transform/opacity", value: 40 },
+          },
+        ],
+      },
+      note: PROPOSED_BATCH_NOTE,
+    });
+    // Law #5 again, second arm: the model is fed the REDACTED envelope — the
+    // compiled registry command ids never enter its context.
+    const driftFeedback = (fake.calls[3]?.body.messages ?? []).filter(
+      (message) => message.role === "tool",
+    );
+    const rawDriftFeedback = String(driftFeedback.at(-1)?.content);
+    expect(rawDriftFeedback).not.toContain("prop.set");
+    expect(JSON.parse(rawDriftFeedback)).toEqual({
+      proposed: true,
+      summary: "Set 1 property on 2 layers",
+      note: PROPOSED_BATCH_NOTE,
+      stepCount: 2,
     });
   });
 });

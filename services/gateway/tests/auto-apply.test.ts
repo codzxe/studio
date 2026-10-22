@@ -39,14 +39,14 @@ import {
   AGENT_COMMAND_IDS,
   AUTO_APPLYABLE_INTENTS,
   EDIT_PLAN_SCHEMA,
-  PLAN_EVENT_SCHEMA,
-  STUDIO_STREAM_EVENT_SCHEMA,
-  isAutoApplicable,
-  reduceEvents,
   type EditPlan,
+  PLAN_EVENT_SCHEMA,
   type PlanAutoApplyDecision,
   type PlanRisk,
+  STUDIO_STREAM_EVENT_SCHEMA,
   type StudioStreamEvent,
+  isAutoApplicable,
+  reduceEvents,
 } from "@studio/contracts";
 
 import {
@@ -54,11 +54,11 @@ import {
   AUTO_APPLY_MAX_STEPS,
   AUTO_APPLY_REASON_MESSAGES,
   AUTO_APPLY_SETTING_UNAVAILABLE,
+  type AutoApplyDecision,
+  type AutoApplyReason,
   REVERSIBLE_AUTO_COMMANDS,
   autoApplyDecision,
   describeAutoApplyReason,
-  type AutoApplyDecision,
-  type AutoApplyReason,
 } from "../src/auto-apply.js";
 import type { CompilePlanResult, PlanIssue } from "../src/plan-compiler.js";
 import { createRunnerForEnv } from "../src/runner.js";
@@ -94,7 +94,9 @@ function basePlan(overrides: Partial<EditPlan> = {}): EditPlan {
         args: { layers: [{ name: "Headline" }], properties: [{ path: "name", value: "Subtitle" }] },
         batch: {
           label: "Rename layer",
-          steps: [{ command: "prop.set", params: { layer: "Headline", path: "name", value: "Subtitle" } }],
+          steps: [
+            { command: "prop.set", params: { layer: "Headline", path: "name", value: "Subtitle" } },
+          ],
         },
       },
     ],
@@ -145,7 +147,13 @@ describe("auto-apply policy — pure decision matrix", () => {
       expect(decide(basePlan(), compiledOk(), true)).toEqual({ mode: "auto", reason: "eligible" });
     });
 
-    it("uses SERVER values, not the model's lies (plan risk high / credits 99, server low / 2.0)", () => {
+    it("uses SERVER values, not the model's declarations (credits lie; synthetic risk floor pin)", () => {
+      // The decision reads ONLY compiled.risk / compiled.estimatedCredits. The
+      // credits lie (99) is overwritten by the server value (2.0) ⇒ auto. The
+      // risk pair is a synthetic policy pin: since the landed G-4 semantics the
+      // compiler floors recomputed risk at the model's claim, so plan-risk
+      // "high" + compiled "low" never arises from compilePlan — the policy
+      // still documents that it would trust the SERVER value.
       const lyingPlan = basePlan({ risk: "high", estimatedCredits: 99 });
       const honestServer = compiledOk({ commands: ["prop.set", "prop.set"], credits: 2 });
       expect(decide(lyingPlan, honestServer, true)).toEqual({ mode: "auto", reason: "eligible" });
@@ -292,9 +300,9 @@ describe("auto-apply policy — pure decision matrix", () => {
         });
       }
       // one bad step poisons the whole (otherwise perfect) batch
-      expect(decide(basePlan(), compiledOk({ commands: ["prop.set", "effect.remove"] }), true)).toEqual(
-        { mode: "propose", reason: "command-not-reversible" },
-      );
+      expect(
+        decide(basePlan(), compiledOk({ commands: ["prop.set", "effect.remove"] }), true),
+      ).toEqual({ mode: "propose", reason: "command-not-reversible" });
     });
 
     it("REVERSIBLE_AUTO_COMMANDS is exactly the pinned nine, all curated registry ids", () => {
@@ -362,9 +370,9 @@ describe("auto-apply policy — pure decision matrix", () => {
 
   describe("first-failing reason follows the rule order", () => {
     it("risk beats approval; approval beats intent", () => {
-      expect(decide(basePlan({ requiresApproval: true }), compiledOk({ risk: "medium" }), true).reason).toBe(
-        "risk-not-low",
-      );
+      expect(
+        decide(basePlan({ requiresApproval: true }), compiledOk({ risk: "medium" }), true).reason,
+      ).toBe("risk-not-low");
       expect(
         decide(basePlan({ requiresApproval: true, intent: "render" }), compiledOk(), true).reason,
       ).toBe("approval-required");
@@ -372,7 +380,8 @@ describe("auto-apply policy — pure decision matrix", () => {
 
     it("intent beats the command subset; commands beat credits; credits beat step count", () => {
       expect(
-        decide(basePlan({ intent: "render" }), compiledOk({ commands: ["effect.remove"] }), true).reason,
+        decide(basePlan({ intent: "render" }), compiledOk({ commands: ["effect.remove"] }), true)
+          .reason,
       ).toBe("intent-not-auto-applyable");
       expect(
         decide(basePlan(), compiledOk({ commands: ["effect.remove"], credits: 99 }), true).reason,
@@ -445,7 +454,15 @@ describe("auto-apply policy — pure decision matrix", () => {
         expect(message).toBe(AUTO_APPLY_REASON_MESSAGES[reason]);
         expect(message.length).toBeGreaterThan(10);
         expect(message.length).toBeLessThanOrEqual(200);
-        for (const banned of ["stack", "/home/", "node_modules", "http://", "@studio", ".ts", "{}"]) {
+        for (const banned of [
+          "stack",
+          "/home/",
+          "node_modules",
+          "http://",
+          "@studio",
+          ".ts",
+          "{}",
+        ]) {
           expect(message).not.toContain(banned);
         }
       }
@@ -570,19 +587,26 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     return frameOf({
       choices: [
         {
-          delta: { tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }] },
+          delta: {
+            tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }],
+          },
         },
       ],
     });
   }
   function toolCallArgs(index: number, args: string): string {
-    return frameOf({ choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }] });
+    return frameOf({
+      choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }],
+    });
   }
   function finishReason(reason: string): string {
     return frameOf({ choices: [{ delta: {}, finish_reason: reason }] });
   }
   function usageChunk(promptTokens: number, completionTokens: number): string {
-    return frameOf({ choices: [], usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens } });
+    return frameOf({
+      choices: [],
+      usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
+    });
   }
   const DONE = "data: [DONE]\n\n";
 
@@ -756,14 +780,18 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     const events: StudioStreamEvent[] = [];
     let terminals = 0;
     for (const wireFrame of frames) {
-      expect(wireFrame.raw).toBe(`id: ${wireFrame.event.seq}\ndata: ${JSON.stringify(wireFrame.event)}`);
+      expect(wireFrame.raw).toBe(
+        `id: ${wireFrame.event.seq}\ndata: ${JSON.stringify(wireFrame.event)}`,
+      );
       expect(wireFrame.id).toBe(wireFrame.event.seq);
       if (previousSeq === null) expect(wireFrame.event.seq).toBe(0);
       else expect(wireFrame.event.seq).toBe(previousSeq + 1);
       previousSeq = wireFrame.event.seq;
       const checked = STUDIO_STREAM_EVENT_SCHEMA.safeParse(wireFrame.event);
       if (!checked.success) {
-        throw new Error(`event seq ${wireFrame.event.seq} failed the §7.4 schema: ${checked.error.message}`);
+        throw new Error(
+          `event seq ${wireFrame.event.seq} failed the §7.4 schema: ${checked.error.message}`,
+        );
       }
       events.push(checked.data);
       if (TERMINAL_TYPES.has(checked.data.type)) terminals += 1;
@@ -914,11 +942,19 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
   // Scripted model rounds (server A) — the two plans under test
   // -------------------------------------------------------------------------
 
-  /** Two studio.create_text steps ⇒ two reversible layer.newText commands. */
+  /**
+   * Two studio.create_text steps ⇒ two reversible layer.newText commands.
+   * The model is HONEST on risk ("low") — the landed G-4 compiler semantics
+   * treat the model's declared risk as a FLOOR that server-side recompute
+   * never lowers, so a lying "high" can never recompute low — but it still
+   * LIES on estimatedCredits (99): credits are always recomputed server-side
+   * (2.0), never floored, so the credit-recompute path stays proven on the
+   * wire. Fixture self-check below: parses against EDIT_PLAN_SCHEMA (§8.6).
+   */
   const AUTO_PLAN = {
     intent: "edit",
     summary: "Add two text layers",
-    risk: "high", // the model LIES — the server recomputes "low"
+    risk: "low",
     requiresApproval: false,
     affectedLayers: [
       { id: 0, name: "Headline", change: "Add a headline text layer" },
@@ -972,7 +1008,11 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
   EDIT_PLAN_SCHEMA.parse(AUTO_PLAN);
   EDIT_PLAN_SCHEMA.parse(UNDO_PLAN);
 
-  async function planRun(fx: Fixture, plan: unknown): Promise<{ events: StudioStreamEvent[]; plan: PlanEvent }> {
+  async function planRun(
+    fx: Fixture,
+    plan: unknown,
+    key = unique("chat"),
+  ): Promise<{ events: StudioStreamEvent[]; plan: PlanEvent; key: string }> {
     fake.enqueue(
       () => [
         toolCallStart(0, "call_m5o_plan", "studio.plan_edit"),
@@ -983,12 +1023,12 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
       () => [textDelta(JSON.stringify(plan)), usageChunk(50, 12), finishReason("stop"), DONE],
       () => [textDelta("Planned."), usageChunk(40, 8), finishReason("stop"), DONE],
     );
-    const response = await chatStream(fx, unique("chat"));
+    const response = await chatStream(fx, key);
     expect(response.status).toBe(200);
     const stream = new SseStream(response);
     const frames = await stream.rest();
     const events = expectValidStream(frames);
-    return { events, plan: findPlan(events) };
+    return { events, plan: findPlan(events), key };
   }
 
   async function mockRun(fx: Fixture): Promise<{ events: StudioStreamEvent[]; plan: PlanEvent }> {
@@ -1018,9 +1058,28 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     }
   }
 
+  /**
+   * The exact propose reason the route must give a FRESH (default) user,
+   * probed through the same seam the route uses: readable false ⇒
+   * setting-disabled; repo absent or read failing ⇒ setting-unavailable.
+   */
+  async function expectedDefaultReason(
+    server: RunningTestServer,
+    userId: string,
+  ): Promise<"setting-disabled" | "setting-unavailable"> {
+    const seam = settingsSeamOf(server.deps.repos);
+    if (seam === null) return "setting-unavailable";
+    try {
+      const value = await seam.getUserAutoApply(userId);
+      return value === false ? "setting-disabled" : "setting-unavailable";
+    } catch {
+      return "setting-unavailable";
+    }
+  }
+
   it("default user ⇒ propose (off by default), on the enriched plan event + replay", async () => {
     const fx = await newFixture(serverA, "m5o-default");
-    const { plan: planEvent } = await planRun(fx, AUTO_PLAN);
+    const { plan: planEvent, key } = await planRun(fx, AUTO_PLAN);
 
     // The event is compile-enriched: the verdict was genuinely evaluated.
     expect(planEvent.compiledBatch?.steps.map((step) => step.command)).toEqual([
@@ -1028,17 +1087,21 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
       "layer.newText",
     ]);
     expect(planEvent.risk).toBe("low");
-    expect(planEvent.estimatedCredits).toBe(2);
+    expect(planEvent.estimatedCredits).toBe(2); // server-recomputed, not the model's 99
     expect(planEvent.autoApply?.mode).toBe("propose");
-    // Setting readable ⇒ setting-disabled (row default false); repo absent
-    // (mid-flight tree) ⇒ setting-unavailable. Both are propose.
-    const seam = settingsSeamOf(serverA.deps.repos);
-    const expectedReason = seam === null ? "setting-unavailable" : "setting-disabled";
-    expect(planEvent.autoApply?.reason).toBe(expectedReason);
+    // The exact propose reason mirrors the seam the route read: setting row
+    // default false ⇒ setting-disabled; repo/table not there ⇒ the guarded
+    // setting-unavailable degrade (mid-flight trees).
+    expect(planEvent.autoApply?.reason).toBe(await expectedDefaultReason(serverA, fx.userId));
 
-    // Replay (law #4): the same idempotencyKey replays the SAME enriched log.
-    const replayResponse = await chatStream(fx, `replay-${fx.threadId}`);
-    void replayResponse;
+    // Replay (law #4): the same idempotencyKey replays the SAME enriched log —
+    // the stamped verdict is part of the stored event, byte-identical.
+    const replayResponse = await chatStream(fx, key);
+    expect(replayResponse.status).toBe(200);
+    const replayStream = new SseStream(replayResponse);
+    const replayFrames = await replayStream.rest();
+    const replayEvents = expectValidStream(replayFrames);
+    expect(findPlan(replayEvents)).toEqual(planEvent);
   }, 15_000);
 
   it("enabled user ⇒ {mode:auto} on the reversible compiled plan (M6-D seam)", async () => {
@@ -1047,8 +1110,8 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     const { plan: planEvent } = await planRun(fx, AUTO_PLAN);
 
     if (enabled) {
-      // Auto even though the MODEL declared risk high / 99 credits: the
-      // verdict used the server-recomputed low / 2.0.
+      // Auto even though the MODEL declared 99 credits: the verdict used the
+      // server-recomputed low / 2.0 and the reversible layer.newText batch.
       expect(planEvent.autoApply).toEqual({ mode: "auto", reason: "eligible" });
     } else {
       // Mid-flight degrade (repo absent or table not applied): propose with
@@ -1076,7 +1139,7 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     const fx = await newFixture(serverB, "m5o-guard");
     const holder = serverB.deps.repos as { settings?: SettingsAutoApplySeam };
     const saved = holder.settings;
-    delete holder.settings;
+    holder.settings = undefined;
     try {
       const { plan: planEvent } = await mockRun(fx);
       expect(planEvent.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
@@ -1090,11 +1153,10 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
   it("un-enriched (mock) plan event ⇒ propose; compile-failed once the setting is on", async () => {
     const fx = await newFixture(serverB, "m5o-mock");
     const before = await mockRun(fx);
-    // Default user: propose via the setting gate (disabled or unavailable).
+    // Default user: propose via the setting gate (off by default), with the
+    // exact reason the seam dictates (disabled / unavailable).
     expect(before.plan.autoApply?.mode).toBe("propose");
-    expect(before.plan.autoApply?.reason === "setting-unavailable").toBe(
-      settingsSeamOf(serverB.deps.repos) === null,
-    );
+    expect(before.plan.autoApply?.reason).toBe(await expectedDefaultReason(serverB, fx.userId));
 
     const { enabled } = await enableAutoApply(serverB, fx.userId);
     const after = await mockRun(fx);

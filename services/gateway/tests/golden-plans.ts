@@ -125,6 +125,26 @@
 // `expected.commands` — once G-1/G-2 land, flip `expected.compile` to
 // "compiled" for the blocked fixtures and the suite becomes the acceptance
 // test for the fix without any other edit.
+//
+// M5-S FLIP STATUS (wave-2 integrator fix landed — translate() now reads the
+// LANDED M5-A shapes; see services/gateway/src/plan-compiler.ts):
+//   G-1 FIXED — layers/properties, layers/keys+timeSeconds, layers+effect.name,
+//     preset.{name|builtinId}+layers all translate (cross-products pinned).
+//   G-2 FIXED — create_text typography reaches layer.newText 1:1 (gp-06).
+//   G-3 FIXED — any zero-command step is a fatal empty_step; gp-11 now
+//     compiles COMPLETE (create + 2 keyframes + save annotation).
+//   G-4 FIXED — risk = max(command/tool floors, the model's DECLARED risk):
+//     the wire never carries a lower badge than the model claimed (gp-07,
+//     gp-03, gp-12 flip to the declared medium).
+//   G-6 FIXED via D-21 — apply_preset with layers omitted targets the plan's
+//     affectedLayers NAMES (never the live editor selection) — gp-08 compiles.
+//   G-7 FIXED — set_properties path "name" → layer.rename (gp-05 pins it).
+//   G-5 REMAINS (by design) — save_version is annotation-only; a
+//     save-version-only plan is still the pinned empty_batch fatal.
+//   G-8 REMAINS (INFO) — create-only plans still mint an orphan resolution
+//     request for the declared new-layer name (gp-06/gp-10/gp-11); the M5-F
+//     resolver must tolerate it.
+// ALL 12 fixtures now carry expected.compile = "compiled".
 // ---------------------------------------------------------------------------
 
 import type { ContextSelection, EditPlan, PinnedContextItem, PlanRisk } from "@studio/contracts";
@@ -293,18 +313,17 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       ],
     },
     expected: {
-      // BLOCKED today by G-1: `{layers, keys}` ≠ the compiler's
-      // `{layer, keyframes}` ⇒ zero commands ⇒ typed empty_batch fatal.
-      compile: "blocked",
-      fatalCode: "empty_batch",
-      // Post-fix golden: one prop.addKey per key, name stays in the batch.
+      // M5-S FLIP: compiles post-G-1-fix — one prop.addKey per key (1 layer ×
+      // 2 keys, key-major order); the bezier interpolations warn (editor-side
+      // keyframe state, uncompilable_arg).
+      compile: "compiled",
       commands: ["prop.addKey", "prop.addKey"],
       batchStepRange: [2, 2],
       risk: "low",
       estimatedCredits: 1.5,
       resolutionRequests: ["Headline"],
-      warningCodes: [],
-      findings: ["G-1"],
+      warningCodes: ["uncompilable_arg", "unknown_command", "batch_mismatch"],
+      findings: [],
     },
   },
 
@@ -339,16 +358,16 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       ],
     },
     expected: {
-      // BLOCKED today by G-1: `{layers, properties}` ≠ `{updates}`.
-      compile: "blocked",
-      fatalCode: "empty_batch",
+      // M5-S FLIP: compiles post-G-1-fix — the cross-product of 1 layer × 1
+      // property ⇒ one prop.set; the name stays in the batch (§8.7).
+      compile: "compiled",
       commands: ["prop.set"],
       batchStepRange: [1, 1],
       risk: "low",
       estimatedCredits: 1.5,
       resolutionRequests: ["Backdrop"],
-      warningCodes: [],
-      findings: ["G-1"],
+      warningCodes: ["unknown_command", "batch_mismatch"],
+      findings: [],
     },
   },
 
@@ -384,18 +403,18 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       ],
     },
     expected: {
-      // BLOCKED today by G-1: `{layers, effect:{name}}` ≠ `{layer, effect:<string>}`.
-      compile: "blocked",
-      fatalCode: "empty_batch",
-      // Post-fix golden: effect.apply {effect:"Gaussian Blur", layers:["Logo"]};
-      // the effect `params` stay client state (radius → uncompilable_arg warn).
+      // M5-S FLIP: compiles post-G-1-fix — effect.apply {effect:"Gaussian
+      // Blur", layers:["Logo"]}; the effect `params` stay editor-side state
+      // (radius → uncompilable_arg warn). G-4: the model declared medium and
+      // the declared risk is a floor — the wire carries medium (never lower).
+      compile: "compiled",
       commands: ["effect.apply"],
       batchStepRange: [1, 1],
-      risk: "low",
-      estimatedCredits: 1.5,
+      risk: "medium",
+      estimatedCredits: 1.88,
       resolutionRequests: ["Logo"],
-      warningCodes: ["uncompilable_arg"],
-      findings: ["G-1"],
+      warningCodes: ["uncompilable_arg", "unknown_command", "batch_mismatch"],
+      findings: [],
     },
   },
 
@@ -431,15 +450,16 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       ],
     },
     expected: {
-      compile: "blocked",
-      fatalCode: "empty_batch",
+      // M5-S FLIP: compiles post-G-1-fix — timeSeconds → time; the key lands
+      // as one prop.addKey with the layer NAME in the batch.
+      compile: "compiled",
       commands: ["prop.addKey"],
       batchStepRange: [1, 1],
       risk: "low",
       estimatedCredits: 1.5,
       resolutionRequests: ["Subtitle"],
-      warningCodes: [],
-      findings: ["G-1"],
+      warningCodes: ["unknown_command", "batch_mismatch"],
+      findings: [],
     },
   },
 
@@ -484,19 +504,25 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       ],
     },
     expected: {
-      // BLOCKED today by G-1. Post-fix golden: the set_properties
-      // cross-product — 3 layers × 2 properties ⇒ 6 prop.set commands.
-      // The `path:"name"` renames are G-7: layer.rename is the real engine
-      // command; prop.set path "name" is the model's only approximation.
-      compile: "blocked",
-      fatalCode: "empty_batch",
-      commands: ["prop.set", "prop.set", "prop.set", "prop.set", "prop.set", "prop.set"],
+      // M5-S FLIP: compiles post-G-1/G-7-fix — the set_properties
+      // cross-product: 3 layers × 2 properties ⇒ the path:"name" renames map
+      // to layer.rename (G-7) and the opacity updates to prop.set, 6 commands
+      // total (property-major order).
+      compile: "compiled",
+      commands: [
+        "layer.rename",
+        "layer.rename",
+        "layer.rename",
+        "prop.set",
+        "prop.set",
+        "prop.set",
+      ],
       batchStepRange: [6, 6],
       risk: "low",
       estimatedCredits: 1.5,
       resolutionRequests: ["Headline", "Sub", "Byline"],
-      warningCodes: [],
-      findings: ["G-1", "G-7"],
+      warningCodes: ["unknown_command", "batch_mismatch"],
+      findings: [],
     },
   },
 
@@ -537,11 +563,10 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       ],
     },
     expected: {
-      // COMPILES today — but G-2: font/size/fill are schema-valid args the
-      // compiler never reads (it looks for fontSize/fontFamily/color), so the
-      // golden batch carries ONLY {text, name, position}. Pinned exactly.
-      // G-8: the declared new-layer name still mints a resolution request
-      // (lr-1) even though no batch step references it.
+      // M5-S FLIP: G-2 is FIXED — the validated typography (font/size/fill)
+      // now reaches the compiled layer.newText 1:1 (pinned in the deep test).
+      // G-8 REMAINS: the declared new-layer name still mints a resolution
+      // request (lr-1) even though no batch step references it.
       compile: "compiled",
       commands: ["layer.newText"],
       batchStepRange: [1, 1],
@@ -549,7 +574,7 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       estimatedCredits: 1.5,
       resolutionRequests: ["Launch Title"],
       warningCodes: ["unknown_command", "batch_mismatch"],
-      findings: ["G-2", "G-8"],
+      findings: ["G-8"],
     },
   },
 
@@ -581,18 +606,18 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       ],
     },
     expected: {
-      // COMPILES today; durationSeconds → duration is the one mapped param
-      // name. G-4: the model says medium, the tool catalog says medium, but
-      // the wire carries the RECOMPUTED low (no delete/history/render command
-      // and the catalog risk floors don't flow through bare args schemas).
+      // M5-S FLIP: G-4 is FIXED — the model declared medium and the declared
+      // risk is a FLOOR: the wire carries medium (the recompute may raise it
+      // but NEVER lower it — the plan card must never understate).
+      // durationSeconds → duration stays the one mapped param name.
       compile: "compiled",
       commands: ["comp.new"],
       batchStepRange: [1, 1],
-      risk: "low",
-      estimatedCredits: 1.5,
+      risk: "medium",
+      estimatedCredits: 1.88,
       resolutionRequests: [],
       warningCodes: ["unknown_command", "batch_mismatch"],
-      findings: ["G-4"],
+      findings: [],
     },
   },
 
@@ -627,18 +652,18 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       ],
     },
     expected: {
-      // BLOCKED: G-6 — the tool documents selection targeting, the compiler's
-      // anti-selection-capture policy refuses unnamed targets (needs a ruling;
-      // blocked even after G-1 lands).
-      compile: "blocked",
-      fatalCode: "empty_batch",
+      // M5-S FLIP: G-6 is RESOLVED via the D-21 ruling — apply_preset with
+      // layers omitted targets the plan's affectedLayers NAMES (never the
+      // live editor selection, which the compiler refuses to capture): the
+      // "Make it pop" quick action now compiles against Headline.
+      compile: "compiled",
       commands: ["anim.applyBuiltinPreset"],
       batchStepRange: [1, 1],
       risk: "low",
       estimatedCredits: 1.5,
-      resolutionRequests: [],
-      warningCodes: [],
-      findings: ["G-1", "G-6"],
+      resolutionRequests: ["Headline"],
+      warningCodes: ["unknown_command", "batch_mismatch"],
+      findings: [],
     },
   },
 
@@ -739,7 +764,7 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       resolutionRequests: ["DRAFT Watermark"],
       warningCodes: ["unknown_command", "batch_mismatch"],
       saveVersionLabel: "Draft stamp",
-      findings: ["G-2", "G-5", "G-8"],
+      findings: ["G-5", "G-8"], // G-2 fixed (typography lands); G-5 annotation-only + G-8 orphan request remain
     },
   },
 
@@ -805,20 +830,21 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       ],
     },
     expected: {
-      // G-3 (HIGH): the set_keyframes step translates to ZERO commands with
-      // WARN severity only, so the plan compiles "successfully" to a batch
-      // that is MISSING the animation — the card shows 3 steps, the applied
-      // batch performs 1. Pinned on the wire exactly as users hit it today.
+      // M5-S FLIP: G-3 is FIXED — every step of the compound plan compiles:
+      // the create_text typography lands 1:1, the slide-in keyframes compile
+      // (2 × prop.addKey, key-major), and save_version stays the ANNOTATION.
+      // What the card shows (3 steps) is exactly what the batch performs (3
+      // commands). G-8 REMAINS: the orphan request for the created layer.
       compile: "compiled",
-      commands: ["layer.newText"],
-      batchStepRange: [1, 1],
+      commands: ["layer.newText", "prop.addKey", "prop.addKey"],
+      batchStepRange: [3, 3],
       risk: "low",
-      // 3 plan steps ⇒ (1 + 3×0.5) × 1 — the animation step still counts.
+      // 3 plan steps ⇒ (1 + 3×0.5) × 1 — the annotation step still counts.
       estimatedCredits: 2.5,
       resolutionRequests: ["Speaker Lower Third"],
-      warningCodes: ["unusable_args", "unknown_command", "batch_mismatch"],
+      warningCodes: ["unknown_command", "batch_mismatch"],
       saveVersionLabel: "Lower third v1",
-      findings: ["G-1", "G-2", "G-3", "G-8"],
+      findings: ["G-8"],
     },
   },
 
@@ -856,20 +882,19 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
       ],
     },
     expected: {
-      // BLOCKED today by G-1: `{preset:{name}, layers:[{name}]}` ≠ the
-      // compiler's `{preset:<string>, targets:[<string>]}`. Post-fix golden:
-      // anim.applyBuiltinPreset {preset:"Fade In", layers:["Headline","Sub"]}
-      // — apply_preset NEVER compiles to anim.applyPreset (filesystem paths
-      // are law #5 poison; pinned by M5-B).
-      compile: "blocked",
-      fatalCode: "empty_batch",
+      // M5-S FLIP: compiles post-G-1-fix — anim.applyBuiltinPreset
+      // {preset:"Fade In", layers:["Headline","Sub"]}. G-4: the model declared
+      // medium and the declared risk is a floor — the wire carries medium.
+      // apply_preset NEVER compiles to anim.applyPreset (filesystem paths are
+      // law #5 poison; pinned by M5-B).
+      compile: "compiled",
       commands: ["anim.applyBuiltinPreset"],
       batchStepRange: [1, 1],
-      risk: "low",
-      estimatedCredits: 1.5,
+      risk: "medium",
+      estimatedCredits: 1.88,
       resolutionRequests: ["Headline", "Sub"],
-      warningCodes: [],
-      findings: ["G-1"],
+      warningCodes: ["unknown_command", "batch_mismatch"],
+      findings: [],
     },
   },
 ];

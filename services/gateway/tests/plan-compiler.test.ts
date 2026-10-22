@@ -144,7 +144,10 @@ const HEX_COLOR = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-
 // the compiler's own batch_too_large gate below needs oversized args to PASS
 // args validation. Risk metadata mirrors the real WRITE_TOOLS badges.
 const SAFE_NAME_FIXTURE = z.string().min(1).max(120);
-const LAYER_REFS_FIXTURE = z.array(z.object({ name: SAFE_NAME_FIXTURE })).min(1).max(50);
+const LAYER_REFS_FIXTURE = z
+  .array(z.object({ name: SAFE_NAME_FIXTURE }))
+  .min(1)
+  .max(50);
 const PROPERTY_PATH_FIXTURE = z.string().min(1).max(200);
 const COLOR_FIXTURE = z.union([
   HEX_COLOR,
@@ -343,26 +346,40 @@ describe("golden compiles per tool", () => {
     expect(result.batch.timeoutMs).toBeUndefined(); // omitted ⇒ the 60 s ceiling (§8.5)
   });
 
-  it("create_text (full args) → layer.newText with curated param mapping", () => {
+  it("create_text (full args) → layer.newText with a 1:1 curated param mapping", () => {
+    // M5-A shape: text/name/position/box/font/style/size/fill/stroke/
+    // strokeWidth/tracking/leading — the FIXED translate() passes them through
+    // 1:1 to the engine's layer.newText params (no more fontSize/fontFamily/
+    // color/compId renames, no more silent typography drop — G-2 fix).
     const args = {
-      compId: "Main",
       text: "Hello",
       name: "Title",
-      fontSize: 64,
-      fontFamily: "Inter",
-      color: "#0B0D10",
       position: [960, 540] as [number, number],
+      box: [100, 200, 640, 120] as [number, number, number, number],
+      font: "Inter",
+      style: "Bold",
+      size: 64,
+      fill: "#0B0D10",
+      stroke: "#F5F1E8",
+      strokeWidth: 2,
+      tracking: 50,
+      leading: 72,
     };
     const expected = {
       command: "layer.newText",
       params: {
         text: "Hello",
         name: "Title",
-        comp: "Main",
-        size: 64,
-        font: "Inter",
-        fill: "#0B0D10",
         position: [960, 540],
+        box: [100, 200, 640, 120],
+        font: "Inter",
+        style: "Bold",
+        size: 64,
+        fill: "#0B0D10",
+        stroke: "#F5F1E8",
+        strokeWidth: 2,
+        tracking: 50,
+        leading: 72,
       },
     };
     const result = expectOk(compile(plan([step("create_text", args, [expected])])));
@@ -382,11 +399,12 @@ describe("golden compiles per tool", () => {
     expect(result.batch.steps).toEqual([{ command: "layer.newText", params: { text: "Hi" } }]);
   });
 
-  it("set_properties → one prop.set per update, order preserved", () => {
+  it("set_properties → cross-product prop.set per layer × property (property-major order)", () => {
     const args = {
-      updates: [
-        { layer: "Headline", path: "transform/opacity", value: 40 },
-        { layer: "Sub", path: "text/sourceText", value: "New text" },
+      layers: [{ name: "Headline" }, { name: "Sub" }],
+      properties: [
+        { path: "transform/opacity", value: 40 },
+        { path: "text/sourceText", value: "New text" },
       ],
     };
     const result = expectOk(
@@ -401,17 +419,52 @@ describe("golden compiles per tool", () => {
     );
     expect(result.batch.steps).toEqual([
       { command: "prop.set", params: { layer: "Headline", path: "transform/opacity", value: 40 } },
+      { command: "prop.set", params: { layer: "Sub", path: "transform/opacity", value: 40 } },
+      {
+        command: "prop.set",
+        params: { layer: "Headline", path: "text/sourceText", value: "New text" },
+      },
       { command: "prop.set", params: { layer: "Sub", path: "text/sourceText", value: "New text" } },
     ]);
   });
 
-  it("set_keyframes → one prop.addKey per keyframe; easing warns (client state)", () => {
+  it('set_properties path "name" → layer.rename per layer (G-7: rename is now expressible)', () => {
     const args = {
-      layer: "Headline",
+      layers: [{ name: "Headline" }, { name: "Sub" }],
+      properties: [
+        { path: "name", value: "Title" },
+        { path: "transform/opacity", value: 40 },
+      ],
+    };
+    const result = expectOk(compile(plan([step("set_properties", args)])));
+    expect(result.batch.steps).toEqual([
+      { command: "layer.rename", params: { layer: "Headline", name: "Title" } },
+      { command: "layer.rename", params: { layer: "Sub", name: "Title" } },
+      { command: "prop.set", params: { layer: "Headline", path: "transform/opacity", value: 40 } },
+      { command: "prop.set", params: { layer: "Sub", path: "transform/opacity", value: 40 } },
+    ]);
+  });
+
+  it('set_properties path "name" with a non-string value is skipped with a warn (no bogus rename)', () => {
+    const args = {
+      layers: [{ name: "Headline" }],
+      properties: [
+        { path: "name", value: 40 }, // renames need a STRING value
+        { path: "transform/opacity", value: 40 },
+      ],
+    };
+    const result = expectOk(compile(plan([step("set_properties", args)])));
+    expect(result.batch.steps.map((s) => s.command)).toEqual(["prop.set"]);
+    expect(warningCodes(result)).toContain("unusable_args");
+  });
+
+  it("set_keyframes → cross-product prop.addKey per layer × key; interpolation warns (client state)", () => {
+    const args = {
+      layers: [{ name: "Headline" }],
       propertyPath: "transform/position",
-      keyframes: [
-        { time: 0, value: [0, 540, 0] },
-        { time: 1, value: [960, 540, 0], easing: "ease-in-out" },
+      keys: [
+        { timeSeconds: 0, value: [0, 540, 0] },
+        { timeSeconds: 1, value: [960, 540, 0], interpolation: "bezier" },
       ],
     };
     const result = expectOk(
@@ -450,34 +503,46 @@ describe("golden compiles per tool", () => {
         params: { layer: "Headline", path: "transform/position", time: 1, value: [960, 540, 0] },
       },
     ]);
-    const easingWarnings = result.warnings.filter((w) => w.code === "uncompilable_arg");
-    expect(easingWarnings).toHaveLength(1);
-    expect(easingWarnings[0]?.param).toBe("easing");
+    // timeSeconds → time, and a non-linear interpolation is editor-side state.
+    const interpolationWarnings = result.warnings.filter((w) => w.code === "uncompilable_arg");
+    expect(interpolationWarnings).toHaveLength(1);
+    expect(interpolationWarnings[0]?.param).toBe("interpolation");
   });
 
-  it("add_effect → effect.apply {effect, layers:[name]}; effect params warn", () => {
+  it("add_effect → effect.apply {effect, layers:[names]}; effect params warn", () => {
     const args = {
-      layer: "Headline",
-      effect: "Gaussian Blur",
+      layers: [{ name: "Headline" }, { name: "Sub" }],
+      effect: { name: "Gaussian Blur" },
       params: { blur: 5, dimensions: "b" },
     };
     const result = expectOk(compile(plan([step("add_effect", args)])));
     expect(result.batch.steps).toEqual([
-      { command: "effect.apply", params: { layers: ["Headline"], effect: "Gaussian Blur" } },
+      {
+        command: "effect.apply",
+        params: { layers: ["Headline", "Sub"], effect: "Gaussian Blur" },
+      },
     ]);
     const paramWarnings = result.warnings.filter((w) => w.code === "uncompilable_arg");
     expect(paramWarnings.map((w) => w.param).sort()).toEqual(["blur", "dimensions"]);
   });
 
-  it("apply_preset → anim.applyBuiltinPreset with every target", () => {
+  it("apply_preset → anim.applyBuiltinPreset with every named target", () => {
     const result = expectOk(
       compile(
-        plan([step("apply_preset", { preset: "Fade In", targets: ["Headline", "Sub"] })], {
-          affectedLayers: [
-            { name: "Headline", change: "Fade" },
-            { name: "Sub", change: "Fade" },
+        plan(
+          [
+            step("apply_preset", {
+              preset: { name: "Fade In" },
+              layers: [{ name: "Headline" }, { name: "Sub" }],
+            }),
           ],
-        }),
+          {
+            affectedLayers: [
+              { name: "Headline", change: "Fade" },
+              { name: "Sub", change: "Fade" },
+            ],
+          },
+        ),
       ),
     );
     expect(result.batch.steps).toEqual([
@@ -488,10 +553,31 @@ describe("golden compiles per tool", () => {
     ]);
   });
 
+  it("apply_preset with layers omitted targets the plan's affectedLayers names (D-21)", () => {
+    const result = expectOk(
+      compile(
+        plan([step("apply_preset", { preset: { builtinId: "pop-in" } })], {
+          affectedLayers: [{ name: "Headline", change: "Pop-in preset" }],
+        }),
+      ),
+    );
+    expect(result.batch.steps).toEqual([
+      {
+        command: "anim.applyBuiltinPreset",
+        params: { layers: ["Headline"], preset: "pop-in" },
+      },
+    ]);
+  });
+
   it("apply_preset with a path-like preset warns and never compiles a filesystem path", () => {
     const result = expectOk(
       compile(
-        plan([step("apply_preset", { preset: "C:/presets/fade.ecpreset", targets: ["Headline"] })]),
+        plan([
+          step("apply_preset", {
+            preset: { name: "C:/presets/fade.ecpreset" },
+            layers: [{ name: "Headline" }],
+          }),
+        ]),
       ),
     );
     expect(result.batch.steps).toEqual([
@@ -518,7 +604,10 @@ describe("golden compiles per tool", () => {
         plan([
           step(
             "set_properties",
-            { updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }] },
+            {
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "transform/opacity", value: 40 }],
+            },
             [
               {
                 command: "prop.set",
@@ -540,7 +629,8 @@ describe("golden compiles per tool", () => {
       compile(
         plan([
           step("set_properties", {
-            updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }],
+            layers: [{ name: "Headline" }],
+            properties: [{ path: "transform/opacity", value: 40 }],
           }),
           step("save_version", { label: "first" }),
           step("save_version", { label: "second" }),
@@ -571,7 +661,10 @@ describe("merge + bounds", () => {
             ]),
             step(
               "set_properties",
-              { updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }] },
+              {
+                layers: [{ name: "Headline" }],
+                properties: [{ path: "transform/opacity", value: 40 }],
+              },
               [
                 {
                   command: "prop.set",
@@ -582,9 +675,9 @@ describe("merge + bounds", () => {
             step(
               "set_keyframes",
               {
-                layer: "Headline",
+                layers: [{ name: "Headline" }],
                 propertyPath: "transform/scale",
-                keyframes: [{ time: 0, value: 100 }],
+                keys: [{ timeSeconds: 0, value: 100 }],
               },
               [
                 {
@@ -609,11 +702,12 @@ describe("merge + bounds", () => {
 
   it("over 100 compiled commands is a fatal bound violation", () => {
     const fifty = Array.from({ length: 50 }, (_v, i) => ({
-      layer: "Headline",
-      path: "transform/opacity",
+      path: `transform/opacity-${i}`,
       value: i,
     }));
-    const threeSteps = [1, 2, 3].map(() => step("set_properties", { updates: fifty }));
+    const threeSteps = [1, 2, 3].map(() =>
+      step("set_properties", { layers: [{ name: "Headline" }], properties: fifty }),
+    );
     expectFatal(compile(plan(threeSteps)), "too_many_commands");
   });
 
@@ -622,7 +716,8 @@ describe("merge + bounds", () => {
     const result = compile(
       plan([
         step("set_properties", {
-          updates: [{ layer: "Headline", path: "text/sourceText", value: huge }],
+          layers: [{ name: "Headline" }],
+          properties: [{ path: "text/sourceText", value: huge }],
         }),
       ]),
     );
@@ -642,7 +737,8 @@ describe("merge + bounds", () => {
       plan(
         [
           step("set_properties", {
-            updates: [{ layer: "Extra", path: "transform/opacity", value: 1 }],
+            layers: [{ name: "Extra" }],
+            properties: [{ path: "transform/opacity", value: 1 }],
           }),
         ],
         {
@@ -659,7 +755,10 @@ describe("merge + bounds", () => {
         plan([
           step(
             "set_properties",
-            { updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }] },
+            {
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "transform/opacity", value: 40 }],
+            },
             [
               {
                 command: "prop.set",
@@ -680,7 +779,10 @@ describe("merge + bounds", () => {
         plan([
           step(
             "set_properties",
-            { updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }] },
+            {
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "transform/opacity", value: 40 }],
+            },
             [
               { command: "prop.set", params: { layer: "$2.layer", path: "x", value: 1 } }, // proposal noise
             ],
@@ -712,7 +814,12 @@ describe("allowlist + proposed-batch validation", () => {
     };
     expectFatal(
       compile(
-        plan([step("set_properties", { updates: [{ layer: "H", path: "p", value: 1 }] })]),
+        plan([
+          step("set_properties", {
+            layers: [{ name: "H" }],
+            properties: [{ path: "p", value: 1 }],
+          }),
+        ]),
         customDeps,
       ),
       "unknown_tool",
@@ -748,7 +855,12 @@ describe("allowlist + proposed-batch validation", () => {
     };
     const issues = expectFatal(
       compile(
-        plan([step("set_properties", { updates: [{ layer: "Headline", path: "name" }] })]),
+        plan([
+          step("set_properties", {
+            layers: [{ name: "Headline" }],
+            properties: [{ path: "transform/opacity" }], // no `value` key
+          }),
+        ]),
         weakDeps,
       ),
       "missing_required_param",
@@ -762,7 +874,10 @@ describe("allowlist + proposed-batch validation", () => {
         plan([
           step(
             "set_properties",
-            { updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }] },
+            {
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "transform/opacity", value: 40 }],
+            },
             [{ command: "layer.nuke", params: { everything: true } }],
           ),
         ]),
@@ -780,7 +895,10 @@ describe("allowlist + proposed-batch validation", () => {
         plan([
           step(
             "set_properties",
-            { updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }] },
+            {
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "transform/opacity", value: 40 }],
+            },
             [{ command: "__proto__", params: { polluted: "PWNED" } }],
           ),
         ]),
@@ -796,7 +914,10 @@ describe("allowlist + proposed-batch validation", () => {
         plan([
           step(
             "set_properties",
-            { updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }] },
+            {
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "transform/opacity", value: 40 }],
+            },
             [
               { command: "prop.set", params: { layer: "Headline", path: "x" } }, // no value
             ],
@@ -813,7 +934,10 @@ describe("allowlist + proposed-batch validation", () => {
         plan([
           step(
             "set_properties",
-            { updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }] },
+            {
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "transform/opacity", value: 40 }],
+            },
             [
               {
                 command: "prop.set",
@@ -833,7 +957,10 @@ describe("allowlist + proposed-batch validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("$N references", () => {
-  const baseArgs = { updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }] };
+  const baseArgs = {
+    layers: [{ name: "Headline" }],
+    properties: [{ path: "transform/opacity", value: 40 }],
+  };
 
   it("a forward reference warns", () => {
     const result = expectOk(
@@ -886,12 +1013,13 @@ describe("layer name resolution", () => {
       compile(
         plan([
           step("set_properties", {
-            updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }],
+            layers: [{ name: "Headline" }],
+            properties: [{ path: "transform/opacity", value: 40 }],
           }),
           step("set_keyframes", {
-            layer: "Headline",
+            layers: [{ name: "Headline" }],
             propertyPath: "transform/scale",
-            keyframes: [{ time: 0, value: 100 }],
+            keys: [{ timeSeconds: 0, value: 100 }],
           }),
         ]),
       ),
@@ -915,7 +1043,8 @@ describe("layer name resolution", () => {
         plan(
           [
             step("set_properties", {
-              updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }],
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "transform/opacity", value: 40 }],
             }),
           ],
           {
@@ -936,8 +1065,14 @@ describe("layer name resolution", () => {
     const result = expectOk(
       compile(
         plan([
-          step("set_properties", { updates: [{ layer: "Headline", path: "x", value: 1 }] }),
-          step("add_effect", { layer: "Headline", effect: "Gaussian Blur" }),
+          step("set_properties", {
+            layers: [{ name: "Headline" }],
+            properties: [{ path: "x", value: 1 }],
+          }),
+          step("add_effect", {
+            layers: [{ name: "Headline" }],
+            effect: { name: "Gaussian Blur" },
+          }),
         ]),
         { ...DEPS, layerResolver: (name) => (name === "Headline" ? 7 : undefined) },
       ),
@@ -954,10 +1089,8 @@ describe("layer name resolution", () => {
         plan(
           [
             step("set_properties", {
-              updates: [
-                { layer: "Headline", path: "x", value: 1 },
-                { layer: "Logo", path: "y", value: 2 },
-              ],
+              layers: [{ name: "Headline" }, { name: "Logo" }],
+              properties: [{ path: "x", value: 1 }],
             }),
           ],
           { affectedLayers: [{ name: "Headline", change: "Set" }] },
@@ -976,7 +1109,12 @@ describe("layer name resolution", () => {
   it("a throwing resolver degrades to name-based resolution with a warn", () => {
     const result = expectOk(
       compile(
-        plan([step("set_properties", { updates: [{ layer: "Headline", path: "x", value: 1 }] })]),
+        plan([
+          step("set_properties", {
+            layers: [{ name: "Headline" }],
+            properties: [{ path: "x", value: 1 }],
+          }),
+        ]),
         {
           ...DEPS,
           layerResolver: () => {
@@ -999,27 +1137,34 @@ describe("hostile args (injection corpus patterns)", () => {
   it("dunder/proto keys in args never pollute anything", () => {
     const args = JSON.parse(
       '{"__proto__":{"polluted":"ARG-PROTO-PWNED"},"constructor":{"prototype":{"polluted":"ARG-PROTO-PWNED"}},' +
-        '"updates":[{"layer":"Headline","path":"transform/opacity","value":40}]}',
+        '"layers":[{"name":"Headline"}],"properties":[{"path":"transform/opacity","value":40}]}',
     );
     const result = expectOk(compile(plan([step("set_properties", args)])));
     expect(JSON.stringify(result.batch)).not.toContain("polluted");
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
-  it("a 999-entry updates array is rejected by the tool schema bound (no crash)", () => {
-    const updates = Array.from({ length: 999 }, (_v, i) => ({
-      layer: `l${i}`,
-      path: "transform/opacity",
+  it("a 999-entry properties array is rejected by the tool schema bound (no crash)", () => {
+    const properties = Array.from({ length: 999 }, (_v, i) => ({
+      path: `transform/opacity-${i}`,
       value: 1,
     }));
-    expectFatal(compile(plan([step("set_properties", { updates })])), "invalid_args");
+    expectFatal(
+      compile(plan([step("set_properties", { layers: [{ name: "Headline" }], properties })])),
+      "invalid_args",
+    );
   });
 
   it("deeply nested values compile to a typed result without throwing", () => {
     let deep: unknown = { leaf: true };
     for (let depth = 0; depth < 500; depth += 1) deep = { nested: deep };
     const result = compile(
-      plan([step("set_properties", { updates: [{ layer: "Headline", path: "x", value: deep }] })]),
+      plan([
+        step("set_properties", {
+          layers: [{ name: "Headline" }],
+          properties: [{ path: "x", value: deep }],
+        }),
+      ]),
     );
     expect(result.ok).toBe(true);
   });
@@ -1032,10 +1177,11 @@ describe("hostile args (injection corpus patterns)", () => {
 
   it("cyclic structures yield a typed fatal, never a throw", () => {
     const cyclic: Record<string, unknown> = {
-      updates: [{ layer: "Headline", path: "x", value: null }],
+      layers: [{ name: "Headline" }],
+      properties: [{ path: "x", value: null }],
     };
-    const firstUpdate = (cyclic.updates as Array<Record<string, unknown>>)[0];
-    if (firstUpdate !== undefined) firstUpdate.value = cyclic;
+    const firstProperty = (cyclic.properties as Array<Record<string, unknown>>)[0];
+    if (firstProperty !== undefined) firstProperty.value = cyclic;
     const result = compile(plan([step("set_properties", cyclic)]));
     expect(result.ok).toBe(false);
   });
@@ -1054,7 +1200,12 @@ describe("hostile args (injection corpus patterns)", () => {
       },
     };
     const result = compile(
-      plan([step("set_properties", { updates: [{ layer: "H", path: "p", value: 1 }] })]),
+      plan([
+        step("set_properties", {
+          layers: [{ name: "H" }],
+          properties: [{ path: "p", value: 1 }],
+        }),
+      ]),
       hostileDeps,
     );
     expectFatal(result, "invalid_args");
@@ -1062,17 +1213,18 @@ describe("hostile args (injection corpus patterns)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. Risk + credits recompute (never the model's numbers)
+// 7. Risk + credits recompute (server-side; G-4: the declared risk is a floor)
 // ---------------------------------------------------------------------------
 
 describe("risk + credits recompute", () => {
-  it("a lying model (risk high, 999 credits) is recomputed from the compiled commands", () => {
+  it("a lying model (risk high, 999 credits): the declared risk is a floor (G-4) and the credits are recomputed server-side", () => {
     const result = expectOk(
       compile(
         plan(
           [
             step("set_properties", {
-              updates: [{ layer: "Headline", path: "transform/opacity", value: 40 }],
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "transform/opacity", value: 40 }],
             }),
           ],
           {
@@ -1083,8 +1235,12 @@ describe("risk + credits recompute", () => {
         ),
       ),
     );
-    expect(result.risk).toBe("low");
-    expect(result.estimatedCredits).toBe(estimateCredits({ risk: "low", steps: [{}] }));
+    // G-4: the commands alone recompute "low", but the model declared "high"
+    // and the wire NEVER carries a lower badge than the model claimed (the
+    // plan card must never understate risk).
+    expect(result.risk).toBe("high");
+    // Credits are still the SERVER's deterministic estimate — never 999.
+    expect(result.estimatedCredits).toBe(estimateCredits({ risk: "high", steps: [{}] }));
     expect(result.estimatedCredits).not.toBe(999);
   });
 
@@ -1102,7 +1258,14 @@ describe("risk + credits recompute", () => {
 
   it("add_effect floors risk at medium via the tool-catalog floor", () => {
     const result = expectOk(
-      compile(plan([step("add_effect", { layer: "Headline", effect: "Glow" })])),
+      compile(
+        plan([
+          step("add_effect", {
+            layers: [{ name: "Headline" }],
+            effect: { name: "Glow" },
+          }),
+        ]),
+      ),
     );
     expect(result.risk).toBe("medium");
   });
@@ -1127,7 +1290,10 @@ describe("determinism + input forms", () => {
       step("create_text", { text: "Hello" }, [
         { command: "layer.newText", params: { text: "Hello" } },
       ]),
-      step("set_properties", { updates: [{ layer: "Headline", path: "x", value: 1 }] }),
+      step("set_properties", {
+        layers: [{ name: "Headline" }],
+        properties: [{ path: "x", value: 1 }],
+      }),
     ]);
     const first = compile(thePlan);
     const second = compile(thePlan);
@@ -1136,10 +1302,16 @@ describe("determinism + input forms", () => {
 
   it("arg field order does not change the compiled result", () => {
     const a = plan([
-      step("set_properties", { updates: [{ layer: "Headline", path: "x", value: 1 }] }),
+      step("set_properties", {
+        layers: [{ name: "Headline" }],
+        properties: [{ path: "x", value: 1 }],
+      }),
     ]);
     const b = plan([
-      step("set_properties", { updates: [{ value: 1, path: "x", layer: "Headline" }] }),
+      step("set_properties", {
+        properties: [{ value: 1, path: "x" }],
+        layers: [{ name: "Headline" }],
+      }),
     ]);
     expect(JSON.stringify(compile(a))).toBe(JSON.stringify(compile(b)));
   });
@@ -1155,9 +1327,14 @@ describe("determinism + input forms", () => {
     const result = expectOk(
       compile(
         plan([
-          step("studio.set_properties", { updates: [{ layer: "Headline", path: "x", value: 1 }] }, [
-            { command: "prop.set", params: { layer: "Headline", path: "x", value: 1 } },
-          ]),
+          step(
+            "studio.set_properties",
+            {
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "x", value: 1 }],
+            },
+            [{ command: "prop.set", params: { layer: "Headline", path: "x", value: 1 } }],
+          ),
         ]),
       ),
     );
@@ -1165,8 +1342,9 @@ describe("determinism + input forms", () => {
     expect(warningCodes(result)).not.toContain("batch_mismatch");
   });
 
-  it("an unusable step under the stub-era (passthrough) schemas warns and still compiles the rest", () => {
-    // M5-A's stub is passthrough — a step with no usable fields must not crash.
+  it("an unusable field under the stub-era (passthrough) schemas warns and the step still compiles", () => {
+    // The stub-era schemas are passthrough — a junk `position` must not crash
+    // the step that has a usable `text` (the bad field warns, the rest lands).
     const stubDeps: CompileDeps = {
       registry: REGISTRY,
       writeTools: Object.fromEntries(
@@ -1176,14 +1354,43 @@ describe("determinism + input forms", () => {
     const result = expectOk(
       compile(
         plan([
-          step("set_properties", { updates: [{ layer: "Headline", path: "x", value: 1 }] }),
-          step("create_text", { position: "top-left" }),
+          step("set_properties", {
+            layers: [{ name: "Headline" }],
+            properties: [{ path: "x", value: 1 }],
+          }),
+          step("create_text", { text: "Hi", position: "top-left" }),
         ]),
         stubDeps,
       ),
     );
     const codes = warningCodes(result);
     expect(codes).toContain("unusable_args");
-    expect(result.batch.steps).toHaveLength(1);
+    expect(result.batch.steps).toHaveLength(2);
+  });
+
+  it("a step that translates to ZERO commands is fatally empty_step (G-3) — no partial plan ever applies", () => {
+    // Same stub-era passthrough world, but the second step has NO usable field
+    // at all (no `text`) ⇒ zero commands. G-3: the WHOLE plan is rejected —
+    // the user must never approve N steps and silently get fewer.
+    const stubDeps: CompileDeps = {
+      registry: REGISTRY,
+      writeTools: Object.fromEntries(
+        Object.keys(WRITE_TOOLS).map((id) => [id, z.object({}).passthrough()]),
+      ),
+    };
+    const issues = expectFatal(
+      compile(
+        plan([
+          step("set_properties", {
+            layers: [{ name: "Headline" }],
+            properties: [{ path: "x", value: 1 }],
+          }),
+          step("create_text", { position: "top-left" }),
+        ]),
+        stubDeps,
+      ),
+      "empty_step",
+    );
+    expect(issues.find((issue) => issue.code === "empty_step")?.step).toBe(2);
   });
 });
