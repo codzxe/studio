@@ -54,11 +54,11 @@
  *    unknown keys until that lands, so the client treats them as optional).
  */
 
+import type { SaveOutcome } from "@/lib/editor-session";
+import { sha256Hex } from "@/lib/editor-session";
 import type { AgentBatch, BatchStep } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { isBridgeError, messageOf } from "@studio/editor-bridge";
-import type { SaveOutcome } from "@/lib/editor-session";
-import { sha256Hex } from "@/lib/editor-session";
 
 // ---------------------------------------------------------------------------
 // Pinned types (M5-SEAMS `ApplyController` + the runtime ports this engine needs)
@@ -238,18 +238,25 @@ export interface ApplySessionPort {
 
 /** POST /v1/runs/:id/apply response (M5-SEAMS; M5-E owns the route). */
 export interface ApplyRunResponse {
-  readonly applied: boolean;
+  readonly applied: true;
   readonly versionId: string;
-  readonly creditsCommitted?: number;
+  /** Plan credits committed by this apply (§8.8; 0 for replayed keys). */
+  readonly creditsCommitted: number;
 }
 
 /** POST /v1/runs/:id/undo response. */
 export interface UndoRunResponse {
-  readonly undone: boolean;
+  readonly undone: true;
+}
+
+/** The name→id resolutions posted with the apply (contracts RESOLVED_LAYER_SCHEMA). */
+export interface PostedResolvedLayer {
+  readonly requestId: string;
+  readonly layerId: number;
 }
 
 /**
- * The apply surface of `@studio/api-client`'s `ApiClient` (M5-E adds
+ * The apply surface of `@studio/api-client`'s `ApiClient` (M5-E landed
  * `runs.applyRun`/`runs.undoRun` — names pinned by the task + M5-SEAMS).
  */
 export interface ApplyApiClient {
@@ -261,6 +268,7 @@ export interface ApplyApiClient {
         readonly batchSha256: string;
         readonly versionId: string;
         readonly idempotencyKey: string;
+        readonly resolvedLayers?: readonly PostedResolvedLayer[];
       },
       options?: { readonly idempotencyKey?: string },
     ): Promise<ApplyRunResponse>;
@@ -328,12 +336,17 @@ function bridgeOutcome(error: unknown): {
 }
 
 /** The typed fields of an api-client throw (ApiError-shaped), without zod. */
-function apiFailure(error: unknown): { status: number | null; code: string | undefined; message: string } {
+function apiFailure(error: unknown): {
+  status: number | null;
+  code: string | undefined;
+  message: string;
+} {
   if (typeof error === "object" && error !== null && "status" in error) {
     const record = error as { status?: unknown; code?: unknown; message?: unknown };
     const status = typeof record.status === "number" ? record.status : null;
     const code = typeof record.code === "string" && record.code !== "" ? record.code : undefined;
-    const message = typeof record.message === "string" && record.message !== "" ? record.message : "";
+    const message =
+      typeof record.message === "string" && record.message !== "" ? record.message : "";
     return { status, code, message };
   }
   return { status: null, code: undefined, message: "" };
@@ -371,7 +384,9 @@ async function listLayers(bridge: EditorBridge): Promise<readonly CompLayerEntry
 async function resolveRequests(
   requests: readonly LayerResolutionRequest[],
   bridge: EditorBridge,
-): Promise<{ ok: true; resolved: readonly ResolvedLayer[] } | { ok: false; outcome: ApplyOutcome }> {
+): Promise<
+  { ok: true; resolved: readonly ResolvedLayer[] } | { ok: false; outcome: ApplyOutcome }
+> {
   let layers: readonly CompLayerEntry[];
   try {
     layers = await listLayers(bridge);
@@ -473,7 +488,10 @@ function validCompiledBatch(batch: unknown): AgentBatch | null {
     const stepRecord = step as Record<string, unknown>;
     if (typeof stepRecord.command !== "string" || stepRecord.command.length === 0) return null;
     if (typeof stepRecord.params !== "object" || stepRecord.params === null) return null;
-    steps.push({ command: stepRecord.command, params: stepRecord.params as Record<string, unknown> });
+    steps.push({
+      command: stepRecord.command,
+      params: stepRecord.params as Record<string, unknown>,
+    });
   }
   const timeoutMs =
     typeof record.timeoutMs === "number" &&
@@ -553,6 +571,7 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
     // 1. Resolve layer names against the live list — read-only; on any
     //    ambiguity NOTHING executes (no engine.batch, no save, no applyRun).
     let resolvedById: Readonly<Record<string, number>> = {};
+    let resolvedForWire: readonly PostedResolvedLayer[] = [];
     const requests = plan.resolutionRequests ?? [];
     if (requests.length > 0) {
       const resolution = await resolveRequests(requests, bridge);
@@ -563,6 +582,12 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
       const map = Object.create(null) as Record<string, number>;
       for (const entry of resolution.resolved) map[entry.requestId] = entry.layerId;
       resolvedById = map;
+      // §8.7/M5-E: the name→id bindings ride the applyRun body (auditable
+      // server-side even though the batch already ran client-side).
+      resolvedForWire = resolution.resolved.map((entry) => ({
+        requestId: entry.requestId,
+        layerId: entry.layerId,
+      }));
     }
 
     // 2. Patch the placeholders with the resolved ids (deterministic clone).
@@ -572,7 +597,10 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
     for (const step of compiled.steps) {
       const patch = patchPlaceholders(step.params, resolvedById);
       unresolved.push(...patch.unresolved);
-      patchedSteps.push({ command: step.command, params: patch.patched as Record<string, unknown> });
+      patchedSteps.push({
+        command: step.command,
+        params: patch.patched as Record<string, unknown>,
+      });
     }
     if (unresolved.length > 0) {
       return failApply(plan.runId, {
@@ -623,7 +651,12 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
 
     // 5. Report to the gateway (ledger commit + run.applied, idempotent).
     try {
-      const response = await api.runs.applyRun(plan.runId, { batchSha256, versionId, idempotencyKey });
+      const response = await api.runs.applyRun(plan.runId, {
+        batchSha256,
+        versionId,
+        idempotencyKey,
+        ...(resolvedForWire.length > 0 ? { resolvedLayers: resolvedForWire } : {}),
+      });
       const outcome: ApplyOutcome = {
         ok: true,
         versionId: typeof response.versionId === "string" ? response.versionId : versionId,

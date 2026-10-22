@@ -46,21 +46,21 @@ import {
   type AgentBatch,
   EDIT_PLAN_SCHEMA,
   type EditPlan,
-  estimateCredits,
   type LayerResolutionRequest,
   MAX_BATCH_LABEL_LENGTH,
   MAX_PLAN_AFFECTED_LAYERS,
   MAX_PLAN_SUMMARY_LENGTH,
   MODEL_CATALOG,
   type ModelId,
+  PROPOSED_BATCH_NOTE,
   type PlanIntent,
   type PlanRisk,
-  PROPOSED_BATCH_NOTE,
-  type ToolDefinition,
-  getTool,
   TOOL_LIST,
-  WRITE_TOOL_RESULT_SCHEMA,
+  type ToolDefinition,
   WRITE_TOOL_IDS,
+  WRITE_TOOL_RESULT_SCHEMA,
+  estimateCredits,
+  getTool,
   studioWriteToolId,
 } from "@studio/contracts";
 
@@ -188,14 +188,15 @@ export const RUNNER_READ_TOOLS: readonly ToolDefinition[] = TOOL_LIST.filter(
  * never an invented id). PROPOSE-ONLY (§8.4 rules 1-5): results are proposed
  * batches (WRITE_TOOL_RESULT_SCHEMA).
  */
-export const RUNNER_WRITE_TOOLS: readonly ToolDefinition[] = WRITE_TOOL_IDS.map(
-  (id) => getTool(studioWriteToolId(id)),
-).filter(
-  (tool): tool is ToolDefinition => tool !== undefined && tool.kind === "write",
-);
+export const RUNNER_WRITE_TOOLS: readonly ToolDefinition[] = WRITE_TOOL_IDS.map((id) =>
+  getTool(studioWriteToolId(id)),
+).filter((tool): tool is ToolDefinition => tool !== undefined && tool.kind === "write");
 
 /** Everything registered on the provider wire: 5 read + 8 write = 13. */
-export const RUNNER_TOOLS: readonly ToolDefinition[] = [...RUNNER_READ_TOOLS, ...RUNNER_WRITE_TOOLS];
+export const RUNNER_TOOLS: readonly ToolDefinition[] = [
+  ...RUNNER_READ_TOOLS,
+  ...RUNNER_WRITE_TOOLS,
+];
 
 const TOOL_BY_ID: ReadonlyMap<string, ToolDefinition> = new Map(
   RUNNER_TOOLS.map((tool) => [tool.id, tool]),

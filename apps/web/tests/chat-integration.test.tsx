@@ -832,6 +832,9 @@ describe("M4-L web chat integration — read-only guarantees (M4.6)", () => {
     harness.wire.finishRun("run_1");
 
     const card = screen.getByTestId("plan-card");
+    // M5: the card is a status machine now — without callbacks it stays a
+    // read-only preview (status "proposed", no action row mounted).
+    expect(card.dataset.status).toBe("proposed");
     expect(card.dataset.applied).toBe("false");
     expect(card.dataset.risk).toBe("low");
     expect(screen.getByTestId("plan-risk").textContent).toBe("Low risk");
@@ -840,7 +843,9 @@ describe("M4-L web chat integration — read-only guarantees (M4.6)", () => {
     expect(steps).toHaveLength(2);
     expect(steps[0]?.textContent).toContain("Keyframe Scale 20% → 110% → 100%");
     expect(screen.getByTestId("plan-credits").textContent).toBe("≈ 12 credits");
-    expect(screen.getByTestId("plan-note").textContent).toContain("Apply arrives with M5");
+    expect(screen.queryByTestId("plan-note")).toBeNull(); // the M4 notice is gone — apply is real now
+    // The action-row container may render, but with no callbacks it holds ZERO buttons.
+    expect(within(screen.getByTestId("plan-actions")).queryAllByRole("button")).toHaveLength(0);
 
     // M4.6 read-only proof at the UI level: no apply/cancel control anywhere.
     expect(screen.queryByRole("button", { name: /^apply/i })).toBeNull();

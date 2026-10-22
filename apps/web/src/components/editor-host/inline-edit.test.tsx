@@ -8,20 +8,20 @@
  * disables submission with the §12 message.
  */
 
-import { InlineEditBar } from "@/components/editor-host/inline-edit";
+import { InlineEditBar, type InlineEditBarProps } from "@/components/editor-host/inline-edit";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-const PROPS = {
+const PROPS: InlineEditBarProps = {
   open: true,
-  scopeLabel: null as string | null,
-  lockMessage: null as string | null,
+  scopeLabel: null,
+  lockMessage: null,
   focusSeq: 0,
   onSubmit: vi.fn(),
   onClose: vi.fn(),
-} as const;
+};
 
-function mountBar(overrides: Partial<typeof PROPS> = {}) {
+function mountBar(overrides: Partial<InlineEditBarProps> = {}) {
   const props = { ...PROPS, ...overrides };
   return render(<InlineEditBar {...props} />);
 }

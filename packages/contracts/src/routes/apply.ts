@@ -17,7 +17,7 @@
 
 import { z } from "zod";
 
-import { ID_SCHEMA, IDEMPOTENCY_KEY_SCHEMA, SHA256_SCHEMA, type Id } from "./common.js";
+import { IDEMPOTENCY_KEY_SCHEMA, ID_SCHEMA, type Id, SHA256_SCHEMA } from "./common.js";
 
 /**
  * One client-side layer resolution posted with the apply (§8.7): the plan

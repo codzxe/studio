@@ -8,8 +8,8 @@ import {
   CONTEXT_SELECTION_SCHEMA,
   EDIT_PLAN_SCHEMA,
   PROPOSED_BATCH_NOTE,
-  type StudioStreamEvent,
   STUDIO_STREAM_EVENT_SCHEMA,
+  type StudioStreamEvent,
   TOOL_LIST,
   WRITE_TOOL_IDS,
   WRITE_TOOL_RESULT_SCHEMA,
@@ -649,9 +649,8 @@ describe("LiteLLM runner — write tools (M5.1: propose-only, never execute)", (
       },
     });
     expect(
-      WRITE_TOOL_RESULT_SCHEMA.safeParse(
-        (result as { result?: unknown } | undefined)?.result,
-      ).success,
+      WRITE_TOOL_RESULT_SCHEMA.safeParse((result as { result?: unknown } | undefined)?.result)
+        .success,
     ).toBe(true);
     // LAW #5: the model's tool-role content is the REDACTED envelope — human
     // summary + step count + note; the compiled registry command ids NEVER
@@ -694,9 +693,7 @@ describe("LiteLLM runner — write tools (M5.1: propose-only, never execute)", (
     expect(stream.events.some((event) => event.type === "tool.started")).toBe(false);
     expect(stream.events.some((event) => event.type === "tool.result")).toBe(false);
     const repair = JSON.parse(
-      String(
-        fetchStub.calls[1]?.body.messages.find((message) => message.role === "tool")?.content,
-      ),
+      String(fetchStub.calls[1]?.body.messages.find((message) => message.role === "tool")?.content),
     ) as { error: string; message: string };
     expect(repair.error).toBe("VALIDATION_FAILED");
     expect(repair.message).toContain("studio.set_properties");
@@ -778,10 +775,13 @@ describe("LiteLLM runner — write tools (M5.1: propose-only, never execute)", (
         finish("tool_calls"),
         DONE,
       ]);
-    const { runner, fetchStub, stream } = makeRunner([textRound("w1"), textRound("w2"), textRound("w3")], {
-      maxSteps: 2,
-      compilePlan: stubCompilePlan,
-    });
+    const { runner, fetchStub, stream } = makeRunner(
+      [textRound("w1"), textRound("w2"), textRound("w3")],
+      {
+        maxSteps: 2,
+        compilePlan: stubCompilePlan,
+      },
+    );
 
     const outcome = await runToOutcome(runner, makeRun(), stream);
 
@@ -830,9 +830,9 @@ describe("LiteLLM runner — plan event carries the server-side compile (M5.2)",
     if (planEvent?.type !== "plan") throw new Error("no plan event");
     // Backwards-compatible enrichment: the event still parses against the
     // §7.4 schema union and carries the compiler's server-side output.
-    expect(STUDIO_STREAM_EVENT_SCHEMA.safeParse({ ...planEvent, runId: "run_test", seq: 2 }).success).toBe(
-      true,
-    );
+    expect(
+      STUDIO_STREAM_EVENT_SCHEMA.safeParse({ ...planEvent, runId: "run_test", seq: 2 }).success,
+    ).toBe(true);
     expect(planEvent.compiledBatch).toEqual(STUB_BATCH);
     expect(planEvent.resolutionRequests).toEqual(STUB_RESOLUTION_REQUESTS);
     expect(planEvent.risk).toBe("medium");

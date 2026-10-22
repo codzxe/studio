@@ -5,9 +5,10 @@
  * 4 client tools' happy paths, the posted RUN_EVENT_REQUEST shape,
  * validation/forbidden/server-tool gates, per-item degradation, flags
  * filtering, the toolCallId guard, post retries, the whole-call timeout guard
- * — and the M5 slice: the 8 write tools PROPOSE (never execute; the only
- * bridge traffic is read-only live-state validation) and the RAW engine
- * surface as a tool name stays TOOL_FORBIDDEN (law #6 backstop).
+ * — and the M5 slice: write tools stay refused client-side (M5 resolves them
+ * SERVER-SIDE via the plan compiler; the runs route 400s client posts for
+ * them) and the RAW engine surface as a tool name is TOOL_FORBIDDEN with
+ * zero bridge calls (the law #6 backstop — only the ApplyController batches).
  */
 
 import { type ApiClient, ApiError } from "@studio/api-client";
@@ -390,6 +391,33 @@ describe("executeClientTool gating", () => {
     expect(world.calls.renderFrames).toHaveLength(0);
   });
 
+  it("write tools → TOOL_FORBIDDEN, never executed (M5 resolves them server-side)", async () => {
+    const world = await makeWorld();
+    await executeClientTool(
+      toolCall("studio.set_properties", {
+        layers: [{ name: "Hello" }],
+        properties: [{ path: "transform/opacity", value: 50 }],
+      }),
+      world.deps,
+    );
+    await executeClientTool(
+      toolCall("studio.create_composition", { name: "X" }, "call_test_2"),
+      world.deps,
+    );
+
+    expect(world.events).toHaveLength(2);
+    expect(resultOf(world.events[0] as PostedEvent)).toEqual({
+      error: "TOOL_FORBIDDEN",
+      message: "Write tools are not available yet.",
+    });
+    expect(resultOf(world.events[1] as PostedEvent).error).toBe("TOOL_FORBIDDEN");
+    expect(world.calls.inspect).toBe(0);
+    expect(world.calls.queries).toHaveLength(0);
+    expect(world.calls.renderFrames).toHaveLength(0);
+    // The editor is untouched: the setup newText is the only journaled command.
+    expect(world.fake.state.history.undo).toHaveLength(1);
+  });
+
   it("raw engine command ids as tool names → TOOL_FORBIDDEN, zero bridge calls (law #6 backstop)", async () => {
     const world = await makeWorld();
     await executeClientTool(
@@ -421,197 +449,6 @@ describe("executeClientTool gating", () => {
     expect(world.events).toHaveLength(0);
     expect(world.postCalls()).toBe(0);
     expect(world.calls.inspect).toBe(0);
-    expect(world.calls.queries).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The 8 write tools — PROPOSE only (M5, §8.4 rule 1): nothing executes, the
-// only bridge traffic is read queries for live-state validation
-// ---------------------------------------------------------------------------
-
-describe("executeClientTool write tools propose (never execute)", () => {
-  it("studio.create_composition → a comp.new proposal with the Zod defaults; ZERO bridge calls", async () => {
-    const world = await makeWorld();
-    await executeClientTool(
-      toolCall("studio.create_composition", { name: "Intro", width: 1920, height: 1080 }),
-      world.deps,
-    );
-
-    expect(world.events).toHaveLength(1);
-    const result = resultOf(world.events[0] as PostedEvent);
-    expect(result).toEqual({
-      proposed: true,
-      tool: "studio.create_composition",
-      summary: 'create composition "Intro" (1920×1080 @ 30fps, 10s)',
-      batch: {
-        label: "Agent: create composition \"Intro\" (1920×1080 @ 30fps, 10s)",
-        steps: [
-          {
-            command: "comp.new",
-            params: { name: "Intro", width: 1920, height: 1080, frameRate: 30, duration: 10 },
-          },
-        ],
-      },
-    });
-    // NOTHING executed: zero bridge traffic of any kind.
-    expect(world.calls.inspect).toBe(0);
-    expect(world.calls.queries).toHaveLength(0);
-    expect(world.calls.renderFrames).toHaveLength(0);
-    // The editor is untouched (the setup newText is the only journaled command).
-    expect(world.fake.state.history.undo).toHaveLength(1);
-  });
-
-  it("studio.set_properties → prop.set steps + prop.get no-op warnings from live state", async () => {
-    const world = await makeWorld();
-    await executeClientTool(
-      toolCall("studio.set_properties", {
-        updates: [
-          // transform/opacity is 100 in the fake — proposing 100 is a no-op.
-          { layer: "1", path: "transform/opacity", value: 100 },
-          { layer: "1", path: "transform/position", value: [960, 540, 0] },
-          { layer: "1", path: "text/sourceText", value: "New words" },
-        ],
-      }),
-      world.deps,
-    );
-
-    expect(world.events).toHaveLength(1);
-    const result = resultOf(world.events[0] as PostedEvent) as {
-      proposed: boolean;
-      warnings: string[];
-      batch: { steps: Array<{ command: string; params: Record<string, unknown> }> };
-    };
-    expect(result.proposed).toBe(true);
-    // Live-state reads: one prop.get per update, read-only.
-    expect(world.calls.queries).toEqual([
-      { command: "prop.get", params: { layer: "1", path: "transform/opacity" } },
-      { command: "prop.get", params: { layer: "1", path: "transform/position" } },
-      { command: "prop.get", params: { layer: "1", path: "text/sourceText" } },
-    ]);
-    // The first two updates are already the current values → no-op warnings.
-    expect(result.warnings).toHaveLength(2);
-    expect(result.warnings[0]).toContain("already 100");
-    expect(result.warnings[1]).toContain("already [960,540,0]");
-    // The proposed steps echo the model's values verbatim (data, not code).
-    expect(result.batch.steps).toEqual([
-      { command: "prop.set", params: { layer: "1", path: "transform/opacity", value: 100 } },
-      { command: "prop.set", params: { layer: "1", path: "transform/position", value: [960, 540, 0] } },
-      { command: "prop.set", params: { layer: "1", path: "text/sourceText", value: "New words" } },
-    ]);
-  });
-
-  it("each content tool proposes its grep-verified registry command", async () => {
-    const world = await makeWorld();
-    await executeClientTool(
-      toolCall("studio.create_text", { text: "Hello plan", position: [100, 200], color: "#112233" }),
-      world.deps,
-    );
-    await executeClientTool(
-      toolCall("studio.add_effect", { layer: "1", effect: "ec.control.slider", params: { slider: 10 } }),
-      world.deps,
-      "call_text_2",
-    );
-    await executeClientTool(
-      toolCall("studio.set_keyframes", {
-        layer: "1",
-        propertyPath: "transform/scale",
-        keyframes: [
-          { time: 0, value: 100, easing: "linear" },
-          { time: 1, value: 200 },
-        ],
-      }),
-      world.deps,
-      "call_keys",
-    );
-    await executeClientTool(
-      toolCall("studio.apply_preset", { preset: "fade-in", targets: ["1", "2"] }),
-      world.deps,
-      "call_preset",
-    );
-
-    const [text, effect, keys, preset] = world.events.map((event) =>
-      resultOf(event),
-    ) as Array<{ batch?: { steps: Array<{ command: string; params: unknown }> }; action?: string }>;
-    expect(text.batch?.steps).toEqual([
-      { command: "layer.newText", params: { text: "Hello plan", position: [100, 200], color: "#112233" } },
-    ]);
-    expect(effect.batch?.steps).toEqual([
-      {
-        command: "effect.apply",
-        params: { layers: ["1"], effect: "ec.control.slider", slider: 10 },
-      },
-    ]);
-    expect(keys.batch?.steps).toEqual([
-      { command: "prop.addKey", params: { layer: "1", path: "transform/scale", time: 0, value: 100 } },
-      { command: "prop.addKey", params: { layer: "1", path: "transform/scale", time: 1, value: 200 } },
-    ]);
-    expect(preset.batch?.steps).toEqual([
-      { command: "anim.applyBuiltinPreset", params: { layers: ["1"], preset: "fade-in" } },
-      { command: "anim.applyBuiltinPreset", params: { layers: ["2"], preset: "fade-in" } },
-    ]);
-    expect(world.calls.queries).toHaveLength(0); // these tools need no live state
-  });
-
-  it("studio.undo_run / studio.save_version → run-level actions, no batch steps", async () => {
-    const world = await makeWorld();
-    await executeClientTool(toolCall("studio.undo_run", {}), world.deps);
-    await executeClientTool(
-      toolCall("studio.save_version", { label: "Before the big edit" }),
-      world.deps,
-      "call_save",
-    );
-
-    const [undo, save] = world.events.map((event) => resultOf(event)) as Array<
-      Record<string, unknown>
-    >;
-    expect(undo).toMatchObject({ proposed: true, tool: "studio.undo_run", action: "undo_run" });
-    expect("batch" in undo).toBe(false);
-    expect(save).toMatchObject({
-      proposed: true,
-      tool: "studio.save_version",
-      action: "save_version",
-      label: "Before the big edit",
-    });
-    expect("batch" in save).toBe(false);
-    expect(world.calls.queries).toHaveLength(0);
-  });
-
-  it("dunder identifier args → RUN_INVALID_TOOL before any bridge call (F-1 posture)", async () => {
-    const world = await makeWorld();
-    await executeClientTool(
-      toolCall("studio.set_properties", {
-        updates: [{ layer: "__proto__", path: "transform/opacity", value: 1 }],
-      }),
-      world.deps,
-    );
-    await executeClientTool(
-      toolCall("studio.add_effect", { layer: "constructor", effect: "x" }),
-      world.deps,
-      "call_fx",
-    );
-    await executeClientTool(
-      toolCall("studio.apply_preset", { preset: "p", targets: ["1", "prototype"] }),
-      world.deps,
-      "call_preset",
-    );
-
-    for (const event of world.events) {
-      expect(resultOf(event)).toMatchObject({ error: "RUN_INVALID_TOOL" });
-      expect(String(resultOf(event).message)).toContain("dunder");
-    }
-    expect(world.calls.queries).toHaveLength(0);
-    expect(Object.hasOwn(Object.prototype, "transform/opacity")).toBe(false);
-    expect(Object.hasOwn(Object.prototype, "x")).toBe(false);
-  });
-
-  it("invalid write-tool args → RUN_INVALID_TOOL (the model gets its repair turn)", async () => {
-    const world = await makeWorld();
-    await executeClientTool(
-      toolCall("studio.create_composition", { name: "", width: 10, height: 10 }),
-      world.deps,
-    );
-    expect(resultOf(world.events[0] as PostedEvent)).toMatchObject({ error: "RUN_INVALID_TOOL" });
     expect(world.calls.queries).toHaveLength(0);
   });
 });
