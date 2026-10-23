@@ -35,9 +35,9 @@ import {
   RESTORE_VERSION_SCHEMA,
   ROLE_SCHEMA,
   RUN_EVENT_REQUEST_SCHEMA,
-  SET_VERSION_LABEL_SCHEMA,
   SETTINGS_PATCH_SCHEMA,
   SETTINGS_RESPONSE_SCHEMA,
+  SET_VERSION_LABEL_SCHEMA,
   TOPUP_SCHEMA,
   UPLOAD_VERSION_SCHEMA,
 } from "../src/routes/index.js";
@@ -178,8 +178,9 @@ describe("routes: leases (§9.1, §11)", () => {
     expect(LEASE_ACQUIRE_RESPONSE_SCHEMA.safeParse({ ...refused, holderName: "" }).success).toBe(
       false,
     );
-    expect(LEASE_ACQUIRE_RESPONSE_SCHEMA.safeParse({ ...refused, expiresAt: "soon" }).success)
-      .toBe(false);
+    expect(LEASE_ACQUIRE_RESPONSE_SCHEMA.safeParse({ ...refused, expiresAt: "soon" }).success).toBe(
+      false,
+    );
   });
 
   it("release response always states the elected next holder (§M7 task 3)", () => {
@@ -402,8 +403,10 @@ describe("routes: credits + billing", () => {
     ).toBe(true);
     // Ordered window, real modes only, bounded note.
     expect(
-      RECONCILE_REQUEST_SCHEMA.safeParse({ sinceTs: "2026-01-02T00:00:00Z", uptoTs: "2026-01-01T00:00:00Z" })
-        .success,
+      RECONCILE_REQUEST_SCHEMA.safeParse({
+        sinceTs: "2026-01-02T00:00:00Z",
+        uptoTs: "2026-01-01T00:00:00Z",
+      }).success,
     ).toBe(true); // ordering is a GATEWAY rule (92d/≤now) — the wire accepts ISO bounds
     expect(RECONCILE_REQUEST_SCHEMA.safeParse({ ...window, mode: "purge" }).success).toBe(false);
     expect(RECONCILE_REQUEST_SCHEMA.safeParse({ ...window, note: "" }).success).toBe(false);
@@ -430,7 +433,13 @@ describe("routes: credits + billing", () => {
       },
       balance: 990,
       discrepancies: [],
-      external: { source: "none", spendCredits: null, perModel: [], unknownModels: [], error: null },
+      external: {
+        source: "none",
+        spendCredits: null,
+        perModel: [],
+        unknownModels: [],
+        error: null,
+      },
       action: {
         attempted: false,
         applied: false,
@@ -580,9 +589,9 @@ describe("routes: user settings (W3-G2/W5-09)", () => {
     expect(SETTINGS_PATCH_SCHEMA.safeParse({ autoApplyEnabled: "yes" }).success).toBe(false);
     expect(SETTINGS_PATCH_SCHEMA.safeParse({}).success).toBe(false);
     // Strict: unknown keys never ride the upsert.
-    expect(
-      SETTINGS_PATCH_SCHEMA.safeParse({ autoApplyEnabled: true, theme: "dark" }).success,
-    ).toBe(false);
+    expect(SETTINGS_PATCH_SCHEMA.safeParse({ autoApplyEnabled: true, theme: "dark" }).success).toBe(
+      false,
+    );
     expect(SETTINGS_RESPONSE_SCHEMA.safeParse({ autoApplyEnabled: false }).success).toBe(true);
     expect(SETTINGS_RESPONSE_SCHEMA.safeParse({ autoApplyEnabled: 1 }).success).toBe(false);
   });
@@ -611,14 +620,14 @@ describe("routes: workspace audit feed (W3-G2/W5-09)", () => {
       createdAt: "2026-01-01T00:00:00Z",
     };
     expect(AUDIT_ENTRY_SCHEMA.safeParse(entry).success).toBe(true);
-    expect(
-      AUDIT_ENTRY_SCHEMA.safeParse({ ...entry, actorId: null, actorName: null }).success,
-    ).toBe(true);
+    expect(AUDIT_ENTRY_SCHEMA.safeParse({ ...entry, actorId: null, actorName: null }).success).toBe(
+      true,
+    );
     // Law #1: metadata/ip never cross the wire on this feed (strip-unknown
     // drops them client-side too).
-    expect(
-      AUDIT_ENTRY_SCHEMA.safeParse({ ...entry, metadata: { ip: "10.0.0.1" } }).success,
-    ).toBe(true);
+    expect(AUDIT_ENTRY_SCHEMA.safeParse({ ...entry, metadata: { ip: "10.0.0.1" } }).success).toBe(
+      true,
+    );
     expect(AUDIT_ENTRY_SCHEMA.safeParse({ ...entry, actorName: 42 }).success).toBe(false);
     const typed: AuditEntry = AUDIT_ENTRY_SCHEMA.parse(entry);
     expect(typed.actorName).toBe("Ada");
