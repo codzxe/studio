@@ -13,7 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceMembership } from "@/lib/workspace-membership";
-import { TopBar, type ShellPort } from "./top-bar";
+import { type ShellPort, TopBar } from "./top-bar";
 
 const { routerPush, pathname, searchParams } = vi.hoisted(() => ({
   routerPush: vi.fn(),

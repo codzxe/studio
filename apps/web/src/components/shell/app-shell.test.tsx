@@ -144,7 +144,10 @@ describe("AppShell — composition", () => {
 
   it("no-credits arm: the top bar degrades to the billing link, children still render", () => {
     render(
-      <AppShell payload={payload({ credits: null, entitlements: null })} createPort={fakePortFactory([])}>
+      <AppShell
+        payload={payload({ credits: null, entitlements: null })}
+        createPort={fakePortFactory([])}
+      >
         <p data-testid="page-content">Dashboard page</p>
       </AppShell>,
     );
@@ -157,7 +160,11 @@ describe("AppShell — composition", () => {
     const user = userEvent.setup();
     render(
       <AppShell
-        payload={payload({ memberships: [OWNER, VIEWER], activeWorkspaceId: "ws_second", activeWorkspaceSlug: "second-studio" })}
+        payload={payload({
+          memberships: [OWNER, VIEWER],
+          activeWorkspaceId: "ws_second",
+          activeWorkspaceSlug: "second-studio",
+        })}
         createPort={fakePortFactory([])}
       >
         <p data-testid="page-content">Viewer page</p>

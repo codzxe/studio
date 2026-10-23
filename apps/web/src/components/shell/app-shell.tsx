@@ -26,8 +26,8 @@
 
 import { type ApiClient, createApiClient } from "@studio/api-client";
 import type { BillingState } from "@studio/contracts";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import type { WorkspaceMembership } from "@/lib/workspace-membership";
 import { OfflineBanner } from "./offline-banner";
@@ -119,9 +119,10 @@ function matchMembership(
 }
 
 /** Narrow the billing state to the shell's credit/entitlement view. */
-function toShellBilling(
-  state: BillingState,
-): { credits: ShellCredits; entitlements: ShellEntitlements } {
+function toShellBilling(state: BillingState): {
+  credits: ShellCredits;
+  entitlements: ShellEntitlements;
+} {
   return {
     credits: { balance: state.credits.balance, reserved: state.credits.reserved },
     entitlements: {
@@ -240,11 +241,7 @@ export function AppShell({ payload, createPort, children }: AppShellProps) {
           </div>
         </div>
       </div>
-      <ShellCommandPalette
-        open={paletteOpen}
-        onOpenChange={setPaletteOpen}
-        port={port}
-      />
+      <ShellCommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} port={port} />
     </ShellToastHost>
   );
 }

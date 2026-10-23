@@ -1,13 +1,13 @@
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { type ShellEntitlements, AppShell, type ShellPayload } from "@/components/shell/app-shell";
+import { AppShell, type ShellEntitlements, type ShellPayload } from "@/components/shell/app-shell";
 import { gatewayCall, isGatewayHttpError } from "@/lib/gateway";
 import {
+  type WorkspaceMembership,
   classifyGatewayError,
   parseMemberships,
   signInPath,
-  type WorkspaceMembership,
 } from "@/lib/workspace-membership";
 
 /**
@@ -61,7 +61,10 @@ const ENTITLEMENT_FIELDS = [
 /** The shell's slice of the billing state: credits + entitlements, or null. */
 function parseShellBilling(
   value: unknown,
-): { readonly credits: { balance: number; reserved: number }; readonly entitlements: ShellEntitlements } | null {
+): {
+  readonly credits: { balance: number; reserved: number };
+  readonly entitlements: ShellEntitlements;
+} | null {
   if (!isRecord(value)) return null;
   const credits = isRecord(value.credits) ? value.credits : null;
   if (
@@ -75,7 +78,10 @@ function parseShellBilling(
   }
   const entitlements = isRecord(value.entitlements) ? value.entitlements : null;
   if (entitlements === null) return null;
-  if (!Array.isArray(entitlements.models) || entitlements.models.some((m) => typeof m !== "string")) {
+  if (
+    !Array.isArray(entitlements.models) ||
+    entitlements.models.some((m) => typeof m !== "string")
+  ) {
     return null;
   }
   const numbers: Record<(typeof ENTITLEMENT_FIELDS)[number], number> = {
@@ -142,12 +148,10 @@ export async function ShellLayout({ children }: { readonly children: ReactNode }
   }
   const active: WorkspaceMembership | undefined = memberships[0];
 
-  let billing:
-    | {
-        readonly credits: { readonly balance: number; readonly reserved: number };
-        readonly entitlements: ShellEntitlements;
-      }
-    | null = null;
+  let billing: {
+    readonly credits: { readonly balance: number; readonly reserved: number };
+    readonly entitlements: ShellEntitlements;
+  } | null = null;
   if (active !== undefined) {
     try {
       const state = await gatewayCall<unknown>("/v1/billing/state", {

@@ -63,9 +63,7 @@ function fakePort(listMock?: ReturnType<typeof vi.fn>): ShellPort {
 
 function renderPalette(open = true, port?: ShellPort) {
   const onOpenChange = vi.fn();
-  render(
-    <ShellCommandPalette open={open} onOpenChange={onOpenChange} port={port ?? fakePort()} />,
-  );
+  render(<ShellCommandPalette open={open} onOpenChange={onOpenChange} port={port ?? fakePort()} />);
   return { onOpenChange };
 }
 
