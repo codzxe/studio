@@ -16,10 +16,16 @@
  */
 
 import { ApiError } from "@studio/api-client";
-import type { ShareLinkIssued, ShareLinkView } from "@studio/contracts";
+import type {
+  Page,
+  ShareLinkIssued,
+  ShareLinkRevoked,
+  ShareLinkView,
+} from "@studio/contracts";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectBar } from "./project-bar";
+import type { ShareClient } from "./project-bar";
 
 afterEach(() => {
   cleanup();
@@ -46,6 +52,15 @@ const LINK_B: ShareLinkView = {
   hasPassword: true,
 };
 
+/**
+ * The public share surface (getInfo/getManifest/comments/request-access) this
+ * suite never exercises — stubbed so every fake below is a WHOLE ShareClient,
+ * not a partial cast (house style: lease-banner.test.tsx's typed fake).
+ */
+function unusedShareMethod(): never {
+  throw new Error("share method not used in this suite");
+}
+
 function makeClient(script: {
   readonly links?: readonly ShareLinkView[];
   readonly issued?: ShareLinkIssued;
@@ -58,15 +73,17 @@ function makeClient(script: {
     issues: number;
     revokes: string[];
   };
-  readonly client: { share: Record<string, unknown> };
+  readonly client: ShareClient;
 } {
   const calls = { list: 0, issues: 0, revokes: [] as string[] };
-  const client = {
+  const client: ShareClient = {
     share: {
-      listLinks: async (): Promise<{
-        items: readonly ShareLinkView[];
-        nextCursor: string | null;
-      }> => {
+      getInfo: unusedShareMethod,
+      getManifest: unusedShareMethod,
+      listComments: unusedShareMethod,
+      createComment: unusedShareMethod,
+      requestAccess: unusedShareMethod,
+      listLinks: async (): Promise<Page<ShareLinkView>> => {
         calls.list += 1;
         if (script.listError !== undefined) throw script.listError;
         return { items: script.links ?? [], nextCursor: null };
@@ -83,14 +100,14 @@ function makeClient(script: {
           }
         );
       },
-      revokeLink: async (id: string): Promise<{ id: string; revokedAt: string | null }> => {
+      revokeLink: async (id: string): Promise<ShareLinkRevoked> => {
         calls.revokes.push(id);
         if (script.revokeError !== undefined) throw script.revokeError;
         return { id, revokedAt: "2026-10-22T00:00:00.000Z" };
       },
     },
   };
-  return { calls, client: client as never };
+  return { calls, client };
 }
 
 function apiError(message: string): ApiError {
@@ -230,16 +247,21 @@ describe("ProjectBar — the real Share dialog", () => {
   it("revokes through the ConfirmDialog, then refreshes the list", async () => {
     let links: readonly ShareLinkView[] = [LINK_A, LINK_B];
     const calls = { list: 0, revokes: [] as string[] };
-    const client = {
+    const client: ShareClient = {
       share: {
-        listLinks: async (): Promise<{ items: readonly ShareLinkView[]; nextCursor: null }> => {
+        getInfo: unusedShareMethod,
+        getManifest: unusedShareMethod,
+        listComments: unusedShareMethod,
+        createComment: unusedShareMethod,
+        requestAccess: unusedShareMethod,
+        listLinks: async (): Promise<Page<ShareLinkView>> => {
           calls.list += 1;
           return { items: links, nextCursor: null };
         },
         issueLink: async (): Promise<never> => {
           throw new Error("not used");
         },
-        revokeLink: async (id: string): Promise<{ id: string; revokedAt: null }> => {
+        revokeLink: async (id: string): Promise<ShareLinkRevoked> => {
           calls.revokes.push(id);
           links = links.filter((link) => link.id !== id);
           return { id, revokedAt: null };
@@ -250,7 +272,7 @@ describe("ProjectBar — the real Share dialog", () => {
       <ProjectBar
         projectName="P"
         readOnly={false}
-        share={{ projectId: "prj_1", client: client as never }}
+        share={{ projectId: "prj_1", client }}
       />,
     );
     openShareDialog();
@@ -258,7 +280,7 @@ describe("ProjectBar — the real Share dialog", () => {
       expect(screen.getAllByTestId("editor-share-link")).toHaveLength(2);
     });
 
-    fireEvent.click(screen.getAllByTestId("editor-share-revoke")[0]);
+    fireEvent.click(screen.getAllByTestId("editor-share-revoke")[0] as HTMLElement);
     expect(await screen.findByText("Revoke this link?")).toBeInTheDocument();
 
     // Confirm is the ONLY revoke path (Cancel just closes).
@@ -268,7 +290,7 @@ describe("ProjectBar — the real Share dialog", () => {
     });
     expect(calls.revokes).toEqual([]);
 
-    fireEvent.click(screen.getAllByTestId("editor-share-revoke")[0]);
+    fireEvent.click(screen.getAllByTestId("editor-share-revoke")[0] as HTMLElement);
     fireEvent.click(screen.getByTestId("confirm-confirm"));
     await waitFor(() => {
       expect(calls.revokes).toEqual(["shr_a"]);
@@ -281,9 +303,14 @@ describe("ProjectBar — the real Share dialog", () => {
 
   it("surfaces a typed issue error and a typed list error with a retry", async () => {
     let failList = true;
-    const client = {
+    const client: ShareClient = {
       share: {
-        listLinks: async (): Promise<{ items: readonly ShareLinkView[]; nextCursor: null }> => {
+        getInfo: unusedShareMethod,
+        getManifest: unusedShareMethod,
+        listComments: unusedShareMethod,
+        createComment: unusedShareMethod,
+        requestAccess: unusedShareMethod,
+        listLinks: async (): Promise<Page<ShareLinkView>> => {
           if (failList) {
             failList = false;
             throw apiError("You need edit access to share.");
@@ -302,7 +329,7 @@ describe("ProjectBar — the real Share dialog", () => {
       <ProjectBar
         projectName="P"
         readOnly={false}
-        share={{ projectId: "prj_1", client: client as never }}
+        share={{ projectId: "prj_1", client }}
       />,
     );
     openShareDialog();

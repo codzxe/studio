@@ -35,7 +35,7 @@ import { afterAll, describe, expect, it } from "vitest";
 // prefix and vite 5.4's builtin list predates node:sqlite, so a static ESM
 // import fails to resolve under the test runner ("Failed to load url sqlite").
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import(
-  "node:sqlite",
+  "node:sqlite"
 );
 
 import { type ServerType, serve } from "@hono/node-server";

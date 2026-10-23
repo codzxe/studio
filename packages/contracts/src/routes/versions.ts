@@ -1,7 +1,8 @@
 // @studio/contracts — project versions (PRODUCT_ARCHITECTURE.md §7.2, §9.1, §9.3).
 //
-// Versions are immutable, content-addressed snapshots (§9.2). Upload requires
-// `baseVersionId`; a stale base returns 409 PROJECT_VERSION_CONFLICT (§9.3) —
+// Versions are immutable, content-addressed snapshots (§9.2). Upload carries
+// `baseVersionId` — nullable (W3-G3): null = a root upload with no parent;
+// a stale (non-null) base returns 409 PROJECT_VERSION_CONFLICT (§9.3) —
 // never overwrite. The JSON descriptor below accompanies the multipart body
 // (bytes go to the signed URL, descriptor goes to POST /v1/projects/:id/versions).
 
@@ -19,9 +20,13 @@ export const VERSION_LABEL_SCHEMA = z.string().max(280);
  */
 export const TIMELINE_LABEL_SCHEMA = z.string().min(1).max(120);
 
-/** `POST /v1/projects/:id/versions` body (JSON descriptor; bytes via signed URL). */
+/**
+ * `POST /v1/projects/:id/versions` body (JSON descriptor; bytes via signed URL).
+ * `baseVersionId` is REQUIRED but nullable (W3-G3): null = a root upload
+ * (no parent); a missing key stays invalid — the base is always stated.
+ */
 export const UPLOAD_VERSION_SCHEMA = z.strictObject({
-  baseVersionId: ID_SCHEMA,
+  baseVersionId: ID_SCHEMA.nullable(),
   sha256: SHA256_SCHEMA,
   label: VERSION_LABEL_SCHEMA.optional(),
   agentRunId: ID_SCHEMA.optional(),

@@ -3,6 +3,7 @@
 export * from "./activity.js";
 export * from "./apply.js";
 export * from "./assets.js";
+export * from "./audit.js";
 export * from "./billing.js";
 export * from "./chat.js";
 export * from "./comments.js";
@@ -18,6 +19,7 @@ export * from "./presence.js";
 export * from "./projects.js";
 export * from "./renders.js";
 export * from "./runs.js";
+export * from "./settings.js";
 export * from "./share.js";
 export * from "./threads.js";
 export * from "./versions.js";
