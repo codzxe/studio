@@ -1371,3 +1371,20 @@ Stage Summary:
 - Files: packages/db/src/schema.ts, src/statuses.ts, src/repos/renders.ts, src/repos/ledger.ts, src/repos/index.ts, drizzle/0005_wild_tombstone.sql (+ meta via db:generate), tests/logic.test.ts, tests/integration/repos.test.ts (render pin fixture), tests/integration/renders-queue.test.ts (new), vitest.config.ts.
 - Key decisions: version FK ON DELETE CASCADE (NOT NULL column); claimNext returns richer ScopedRender[] satisfying the pinned Promise<Render[]>; error_code as a TEXT column value (RENDER_INTERNAL) not an error-catalog code; ledger XOR at repo layer per ruling; worker = the one trusted-internal workspace-free caller (documented in code).
 - Migration: 0005_wild_tombstone.sql, forward-only, generated + applied; BLOCKER: none.
+---
+Task ID: M8-E
+Agent: main-orchestrator (spike takeover; original dispatch orphaned pre-flight, only a build-start stamp survived)
+Task: Build effectcraft-cli + the M8 render spike (worker contract evidence).
+
+Work Log:
+- cargo build --release -p effectcraft-cli: DONE (rustc 1.99.1, binary 86.5MB at editor/target/release/effectcraft-cli, untracked per D-17).
+- Smoke: demo comp 10.01s@1080p → H.264 MP4 in 59s wall (exit-criteria target <5min ✓); ffprobe h264 1920x1080 29.97fps.
+- Progress grammar captured: stderr lines `progress <done> <total> <elapsed> <left|->` + banner + `done:` tail; success JSON `{"rendered":[{comp,output,seconds}]}`; failure `{"error":"..."}` exit 1 (may contain absolute paths — worker must sanitize, law #1).
+- HYDRATION SPIKE (the critical answer): browser-saved footage paths are `/name` (path_for last segment) and natively render the MISSING placeholder even with the file present (B==C byte-identical proof); rewriting the working copy `/name`→`name` makes #652 next-to-project resolution find it (D==A md5-identical proof). Worker recipe: write .ecproj + assets in confined dir, strip leading slashes on single-segment footage paths (+ sequence[]), render, NEVER --save (open+save rewrites paths to absolute).
+- PNG-seq: --format png writes stem_00000.png…; worker zips → output.zip (ext zip).
+- Missing assets: CLI exits 0 with placeholder frames — worker pre-validates manifest downloads and fails RENDER_ASSET_MISSING before spawning the CLI.
+- Evidence: docs/phases/m8-cli-spike.md (the worker wave's contract).
+
+Stage Summary:
+- The native render path is PROVEN end-to-end on this box: real binary, real project, real pixels, timing inside target. No editor source changes needed for M8 — the upstream CLI render surface is sufficient as-is.
+- The worker wave codes against docs/phases/m8-cli-spike.md sections 2-5 exactly.
