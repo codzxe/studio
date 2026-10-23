@@ -1,0 +1,138 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "Studio — home" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - generic [ref=e8]: Studio
+        - generic [ref=e9]:
+          - link "Sign in" [ref=e10] [cursor=pointer]:
+            - /url: /sign-in
+          - link "Start trial" [ref=e11] [cursor=pointer]:
+            - /url: /sign-up
+    - main [ref=e12]:
+      - generic [ref=e13]:
+        - paragraph [ref=e14]: Studio — Legal
+        - heading "Licences and attribution" [level=1] [ref=e15]
+        - paragraph [ref=e16]: Studio is built on open-source software. This page lists the pieces a customer touches directly; every runtime dependency, licence text and vendor pin is tracked in the repository.
+        - generic [ref=e17]: This is a beta product; final terms are being reviewed. This page is the working draft we operate under today — clear about what the service does, without legalese.
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - heading "01 Open-source components" [level=2] [ref=e20]:
+              - generic [ref=e21]: "01"
+              - text: Open-source components
+            - generic [ref=e22]:
+              - paragraph [ref=e23]: The editor is a real open-source application, used under the terms of its permissive licence and pinned to an exact upstream release. Its UI is frozen — we serve it as-is and do not reskin it.
+              - list [ref=e24]:
+                - listitem [ref=e25]:
+                  - generic [ref=e26]:
+                    - generic [ref=e27]: EffectCraft
+                    - generic [ref=e28]: MIT OR Apache-2.0
+                  - paragraph [ref=e29]: The compositing editor and engine — used unmodified (UI-frozen)
+                  - generic [ref=e30]:
+                    - link "Upstream project" [ref=e31] [cursor=pointer]:
+                      - /url: https://github.com/storytold/effectcraft
+                    - generic [ref=e32]: 9db7f3b21700fd821f215782ed1c82afe077880f (v0.13.0)
+                - listitem [ref=e33]:
+                  - generic [ref=e34]:
+                    - generic [ref=e35]: Instrument Serif · Instrument Sans
+                    - generic [ref=e36]: SIL Open Font License 1.1
+                  - paragraph [ref=e37]: Display and UI typefaces
+                  - generic [ref=e38]:
+                    - link "Upstream project" [ref=e39] [cursor=pointer]:
+                      - /url: https://github.com/Instrument/instrument-serif
+                    - generic [ref=e40]: n/a — fonts are never committed to this repository
+                - listitem [ref=e41]:
+                  - generic [ref=e42]:
+                    - generic [ref=e43]: JetBrains Mono
+                    - generic [ref=e44]: SIL Open Font License 1.1
+                  - paragraph [ref=e45]: Monospace — timecode, code, keyboard hints
+                  - generic [ref=e46]:
+                    - link "Upstream project" [ref=e47] [cursor=pointer]:
+                      - /url: https://github.com/JetBrains/JetBrainsMono
+                    - generic [ref=e48]: n/a — fonts are never committed to this repository
+          - generic [ref=e49]:
+            - heading "02 Everything else" [level=2] [ref=e50]:
+              - generic [ref=e51]: "02"
+              - text: Everything else
+            - generic [ref=e52]:
+              - paragraph [ref=e53]: Runtime dependencies are pinned in the repository lockfile and must pass a permissive-licence gate (MIT, Apache-2.0, BSD, ISC, MPL-2.0 unmodified) before they can ship. The full attribution — including every dependency row, infrastructure images and licence texts — lives in ATTRIBUTION.md and the LICENSES/ directory of the source repository.
+              - paragraph [ref=e54]:
+                - text: No copyleft (GPL/AGPL) component is linked into the product.
+                - link "Ask us" [ref=e55] [cursor=pointer]:
+                  - /url: mailto:support@studio.example.com
+                - text: for the machine-readable licence manifest if you need it for your own compliance work.
+          - generic [ref=e58]: 00:00:13 — ATTRIBUTION
+          - paragraph [ref=e59]:
+            - text: "See also:"
+            - link "Terms" [ref=e60] [cursor=pointer]:
+              - /url: /legal/terms
+            - text: ·
+            - link "Privacy" [ref=e61] [cursor=pointer]:
+              - /url: /legal/privacy
+            - text: ·
+            - link "Licences" [ref=e62] [cursor=pointer]:
+              - /url: /legal/licences
+        - generic [ref=e63]:
+          - generic [ref=e65]: END — LEGAL
+          - paragraph [ref=e66]:
+            - text: Questions about this page?
+            - link "support@studio.example.com" [ref=e67] [cursor=pointer]:
+              - /url: mailto:support@studio.example.com
+    - contentinfo [ref=e68]:
+      - generic [ref=e69]:
+        - generic [ref=e70]:
+          - generic [ref=e71]:
+            - generic [ref=e74]: Studio
+            - paragraph [ref=e75]: A composition editor with an agent that understands layers, keyframes and taste. Built on an open-source compositing engine — see the licences page.
+          - navigation "Product" [ref=e76]:
+            - heading "Product" [level=2] [ref=e77]
+            - list [ref=e78]:
+              - listitem [ref=e79]:
+                - link "Pricing" [ref=e80] [cursor=pointer]:
+                  - /url: /pricing
+              - listitem [ref=e81]:
+                - link "FAQ" [ref=e82] [cursor=pointer]:
+                  - /url: /faq
+              - listitem [ref=e83]:
+                - link "The agent" [ref=e84] [cursor=pointer]:
+                  - /url: /#agent
+              - listitem [ref=e85]:
+                - link "The editor" [ref=e86] [cursor=pointer]:
+                  - /url: /#product
+              - listitem [ref=e87]:
+                - link "Changelog" [ref=e88] [cursor=pointer]:
+                  - /url: /changelog
+          - navigation "Resources" [ref=e89]:
+            - heading "Resources" [level=2] [ref=e90]
+            - list [ref=e91]:
+              - listitem [ref=e92]:
+                - link "Support" [ref=e93] [cursor=pointer]:
+                  - /url: mailto:support@studio.example.com
+              - listitem [ref=e94]:
+                - link "Status" [ref=e95] [cursor=pointer]:
+                  - /url: /status
+          - navigation "Legal" [ref=e96]:
+            - heading "Legal" [level=2] [ref=e97]
+            - list [ref=e98]:
+              - listitem [ref=e99]:
+                - link "Terms" [ref=e100] [cursor=pointer]:
+                  - /url: /legal/terms
+              - listitem [ref=e101]:
+                - link "Privacy" [ref=e102] [cursor=pointer]:
+                  - /url: /legal/privacy
+              - listitem [ref=e103]:
+                - link "Licences" [ref=e104] [cursor=pointer]:
+                  - /url: /legal/licences
+        - generic [ref=e105]:
+          - paragraph [ref=e106]: © 2026 Studio. Studio — Motion, directed by you.
+          - paragraph [ref=e107]: This is a beta product. Prices, plans and placeholder links are finalised at launch.
+  - button "Open Next.js Dev Tools" [ref=e113] [cursor=pointer]:
+    - img [ref=e114]
+  - alert [ref=e117]
+```

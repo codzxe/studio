@@ -1,0 +1,66 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - main [ref=e4]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - heading "Create your workspace." [level=1] [ref=e8]
+          - paragraph [ref=e9]: 14 days free, then $12/mo. Card required today. Cancel anytime.
+        - generic [ref=e10]:
+          - button "Continue with Google" [ref=e11]:
+            - img [ref=e12]
+            - text: Continue with Google
+          - button "Continue with GitHub" [ref=e14]:
+            - img [ref=e15]
+            - text: Continue with GitHub
+        - generic [ref=e19]: or continue with email
+        - generic [ref=e21]:
+          - generic [ref=e22]:
+            - generic [ref=e23]: Name*
+            - textbox "Name" [ref=e24]
+          - generic [ref=e25]:
+            - generic [ref=e26]: Email*
+            - textbox "Email" [ref=e27]
+          - generic [ref=e28]:
+            - generic [ref=e29]: Password*
+            - generic [ref=e30]:
+              - textbox "Password" [ref=e31]
+              - button "Show password" [ref=e32]:
+                - img [ref=e33]
+            - paragraph [ref=e36]: At least 8 characters.
+          - generic [ref=e38]:
+            - checkbox "I accept the terms of service and the privacy policy." [ref=e39]
+            - generic [ref=e40]:
+              - text: I accept the
+              - link "terms of service" [ref=e41] [cursor=pointer]:
+                - /url: /legal/terms
+              - text: and the
+              - link "privacy policy" [ref=e42] [cursor=pointer]:
+                - /url: /legal/privacy
+              - text: .
+          - button "Create account" [ref=e43]
+        - paragraph [ref=e44]:
+          - text: Already have a workspace?
+          - link "Sign in" [ref=e45] [cursor=pointer]:
+            - /url: /sign-in
+      - paragraph [ref=e46]:
+        - text: By continuing you agree to the
+        - link "terms" [ref=e47] [cursor=pointer]:
+          - /url: /legal/terms
+        - text: and
+        - link "privacy policy" [ref=e48] [cursor=pointer]:
+          - /url: /legal/privacy
+        - text: .
+    - complementary "Studio — the approach" [ref=e49]:
+      - generic [ref=e51]: 00:00:00 — OPENING FRAME
+      - figure "The agent's working thesis — Studio, an agent motion suite." [ref=e52]:
+        - blockquote [ref=e53]: “Ask. Review the plan. Apply.”
+        - generic [ref=e54]: The agent's working thesis — Studio, an agent motion suite.
+  - button "Open Next.js Dev Tools" [ref=e60] [cursor=pointer]:
+    - img [ref=e61]
+  - alert [ref=e64]
+```

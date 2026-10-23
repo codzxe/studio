@@ -1,0 +1,87 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - button "Open Next.js Dev Tools" [ref=e8] [cursor=pointer]:
+    - img [ref=e9]
+  - alert [ref=e12]: Workspace — Studio
+  - generic [ref=e13]:
+    - banner [ref=e14]:
+      - link "Studio — dashboard" [ref=e15] [cursor=pointer]:
+        - /url: /w
+        - generic [ref=e17]: Studio
+      - 'button "Workspace: Demo Workspace. Switch workspace." [ref=e18]':
+        - generic [ref=e19]: Demo Workspace
+        - img [ref=e20]
+      - generic [ref=e23]:
+        - generic [ref=e25]:
+          - img
+          - searchbox "Search projects and commands" [ref=e26]
+          - generic:
+            - generic: ⌘K
+        - generic [ref=e27]:
+          - link "Credits balance 0.00 — open billing" [ref=e28] [cursor=pointer]:
+            - /url: /w/billing
+            - text: 0.00 credits
+          - generic [ref=e29]:
+            - meter "Credits used this cycle" [ref=e30]
+            - generic [ref=e32]: 1,000 credits
+            - generic [ref=e33]:
+              - img [ref=e34]
+              - generic [ref=e36]: Low
+        - button "Account menu" [ref=e37]:
+          - img "Demo User" [ref=e38]:
+            - generic [ref=e39]: DU
+    - generic [ref=e40]:
+      - navigation "Workspace" [ref=e41]:
+        - list [ref=e42]:
+          - listitem [ref=e43]:
+            - link "Dashboard" [ref=e44] [cursor=pointer]:
+              - /url: /w
+              - img [ref=e45]
+              - generic [ref=e50]: Dashboard
+          - listitem [ref=e51]:
+            - link "Projects" [ref=e52] [cursor=pointer]:
+              - /url: /w/projects
+              - img [ref=e53]
+              - generic [ref=e55]: Projects
+          - listitem [ref=e56]:
+            - link "Billing" [ref=e57] [cursor=pointer]:
+              - /url: /w/billing
+              - img [ref=e58]
+              - generic [ref=e60]: Billing
+          - listitem [ref=e61]:
+            - link "Settings" [ref=e62] [cursor=pointer]:
+              - /url: /w/settings
+              - img [ref=e63]
+              - generic [ref=e66]: Settings
+        - button "Collapse sidebar" [expanded] [ref=e68]:
+          - img [ref=e69]
+      - main [ref=e73]:
+        - generic [ref=e74]:
+          - generic [ref=e75]:
+            - heading "Good afternoon, Demo User" [level=1] [ref=e76]
+            - generic [ref=e77]:
+              - button "New project" [ref=e78]
+              - button "Import .ecproj" [ref=e79]
+          - region "Recent projects" [ref=e80]:
+            - generic [ref=e82]: 00:00:00 — RECENT
+            - article [ref=e85]:
+              - generic [ref=e86]:
+                - img [ref=e88]
+                - generic [ref=e92]:
+                  - button "Open" [ref=e93]
+                  - button "Duplicate" [ref=e94]:
+                    - img [ref=e95]
+                    - text: Duplicate
+                  - button "More actions for Demo Project" [ref=e98]:
+                    - img [ref=e99]
+              - generic [ref=e103]:
+                - heading "Demo Project" [level=3] [ref=e104]
+                - paragraph [ref=e105]: — · 0 comps
+                - paragraph [ref=e106]: Updated 2h ago
+  - region "Notifications (F8)":
+    - list
+```
