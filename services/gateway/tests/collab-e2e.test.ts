@@ -49,12 +49,7 @@ import {
   STUDIO_STREAM_EVENT_SCHEMA,
   type StudioStreamEvent,
 } from "@studio/contracts";
-import {
-  createDb,
-  presenceHeartbeats,
-  projectLeases,
-  shareTokens as shareTokensTable,
-} from "@studio/db";
+import { createDb, tablesFor } from "@studio/db";
 import { eq } from "drizzle-orm";
 
 import { createRunnerForEnv } from "../src/runner.js";
@@ -66,6 +61,7 @@ import {
   TEST_APP_ORIGIN,
   api,
   bootServer,
+  closeDb,
   envelope,
   testEnv,
   unique,
@@ -398,10 +394,18 @@ const openai = new FakeOpenAIServer();
 let server: RunningTestServer;
 /** Raw db handle for the time-travel updates (expiry pins). */
 let rawDb: ReturnType<typeof createDb> | undefined;
+/** Dialect-correct tables for rawDb (W4-GWI: tablesFor over the pg schema). */
+let tables: ReturnType<typeof tablesFor> | undefined;
 
 function db(): ReturnType<typeof createDb> {
   if (rawDb === undefined) throw new Error("rawDb not booted (no DATABASE_URL)");
   return rawDb;
+}
+
+/** The dialect-correct table registry for the raw handle (see db()). */
+function t(): ReturnType<typeof tablesFor> {
+  if (tables === undefined) throw new Error("rawDb not booted (no DATABASE_URL)");
+  return tables;
 }
 
 beforeAll(async () => {
@@ -414,13 +418,16 @@ beforeAll(async () => {
   };
   const env = testEnv(envSource);
   server = await bootServer({ env: envSource, runner: createRunnerForEnv(env) });
-  if (DATABASE_URL !== null) rawDb = createDb(DATABASE_URL, { max: 2 });
+  if (DATABASE_URL !== null) {
+    rawDb = createDb(DATABASE_URL, { max: 2 });
+    tables = tablesFor(rawDb);
+  }
 }, 30_000);
 
 afterAll(async () => {
   await server?.close();
   try {
-    await rawDb?.$client.end({ timeout: 5 });
+    await closeDb(rawDb);
   } catch {
     // already closed
   }
@@ -1351,9 +1358,9 @@ d(
       // Time travel (presence.test precedent): A's heartbeat row is 10 minutes
       // old — far past the 240s TTL — so the repo sweep drops A from every list.
       await db()
-        .update(presenceHeartbeats)
+        .update(t().presenceHeartbeats)
         .set({ lastSeenAt: new Date(Date.now() - 10 * 60 * 1000) })
-        .where(eq(presenceHeartbeats.projectId, projectId));
+        .where(eq(t().presenceHeartbeats.projectId, projectId));
 
       const bBeat = await beatPresence(team.bJar, team.wsId, projectId, {
         clientNonce: "j2-b-beat-0002",
@@ -1367,9 +1374,9 @@ d(
       // Time travel (share.test force-expiry precedent): the lease row's
       // expires_at is 1s in the past — lease-logic classifies it as free.
       await db()
-        .update(projectLeases)
+        .update(t().projectLeases)
         .set({ expiresAt: new Date(Date.now() - 1000) })
-        .where(eq(projectLeases.projectId, projectId));
+        .where(eq(t().projectLeases.projectId, projectId));
 
       const bState = await leaseState(team.bJar, team.wsId, projectId);
       expect(bState.holder).toBeNull(); // the dead row is never a holder
@@ -1915,9 +1922,9 @@ d("journey 5 — the share journey: anonymous review, password, abuse, revoke, e
     expect(expiring.expiresAt).not.toBeNull();
     expect((await api(server.base, `/v1/share/${expiring.token}`)).status).toBe(200);
     await db()
-      .update(shareTokensTable)
+      .update(t().shareTokens)
       .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(eq(shareTokensTable.id, expiring.id));
+      .where(eq(t().shareTokens.id, expiring.id));
     expect((await api(server.base, `/v1/share/${expiring.token}`)).status).toBe(404);
     expect((await api(server.base, `/v1/share/${expiring.token}/manifest`)).status).toBe(404);
   });

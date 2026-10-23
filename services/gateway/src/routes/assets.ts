@@ -54,18 +54,12 @@ import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
 import { assetKey, sanitizeName } from "../storage.js";
 import { audit, planEntitlements } from "./projects.js";
 
-// Vendor seam (mirrors apps/web/src/vendor/studio-config.ts): @studio/storage
-// is not yet a declared dependency of @studio/gateway (its package.json /
-// tsconfig paths / lockfile entries are registry files outside this task's
-// ownership — the worklog records the one-line follow-up), so validate.ts is
-// imported through its source path. The module is pure zero-dependency byte
-// parsing (node:crypto only) with 39 tests; convert to the bare
-// "@studio/storage/validate" specifier when the package graph owns the edge.
-import {
-  DEFAULT_MAX_UPLOAD_MEGAPIXELS,
-  dimensions,
-  sniffMime,
-} from "../../../../packages/storage/src/validate.js";
+// @studio/storage is a declared dependency of @studio/gateway (W4-KILL, audit
+// REPLACE-6 — the old relative ../../packages/storage/src/validate.js vendor
+// seam ran a stale committed tsc snapshot at runtime); validate.ts is pure
+// zero-dependency byte parsing (node:crypto only) with 39 tests, imported
+// through its "./validate" package subpath export.
+import { DEFAULT_MAX_UPLOAD_MEGAPIXELS, dimensions, sniffMime } from "@studio/storage/validate";
 
 /**
  * Head budget for the verify step: enough for a PNG IHDR and a JPEG header

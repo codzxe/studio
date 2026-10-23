@@ -21,9 +21,11 @@
 //         the pre-reserve integer exactly), journey 3 (every entitlement
 //         gate refuses BEFORE any row or ledger write).
 //
-// GATES (both documented, both required — the file skips without them):
-//   1. DATABASE_URL must resolve to the sandbox Postgres (helpers'
-//      HAS_DATABASE — the house DB gate for every gateway E2E).
+// GATES (both documented, both required — the file skips without them,
+// reason in every describe title, W4-GWI):
+//   1. DATABASE_URL must resolve to the POSTGRES dialect (helpers'
+//      HAS_POSTGRES): the sqlite dev twin does not carry FOR UPDATE SKIP
+//      LOCKED, which this file's surgical claim needs.
 //   2. The real CLI binary must exist at
 //      <repo>/editor/target/release/effectcraft-cli (the spike §1
 //      repo-build resolution order; never committed — CI rebuilds it).
@@ -102,10 +104,11 @@ import type { LocalFSDriver, StorageDriver } from "../src/storage.js";
 import {
   CookieJar,
   DATABASE_URL,
-  HAS_DATABASE,
+  HAS_POSTGRES,
   type RunningTestServer,
   api,
   bootServer,
+  closeDb,
   testEnv,
   unique,
   uniqueEmail,
@@ -192,7 +195,7 @@ const loadWorkerModule = async (): Promise<WorkerModule> => {
 };
 
 // ───────────────────────────────────────────────────────────────────────────
-// Gates: real Postgres + the real CLI binary
+// Gates: the Postgres dialect + the real CLI binary (reasons in the titles)
 // ───────────────────────────────────────────────────────────────────────────
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -200,7 +203,29 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const CLI_PATH = join(REPO_ROOT, "editor", "target", "release", "effectcraft-cli");
 const HAS_CLI = existsSync(CLI_PATH);
 
-const d = describe.skipIf(!HAS_DATABASE || !HAS_CLI);
+/**
+ * File-level gates (both must hold; the reason rides the describe titles so a
+ * skip is never silent — the W4-GWI honest-skip contract):
+ *  - Postgres dialect (helpers' HAS_POSTGRES): the surgical claim below is
+ *    the repo's own FOR UPDATE SKIP LOCKED transactional SQL and the raw
+ *    table builders resolve the canonical pg schema.
+ *  - the real CLI binary at <repo>/editor/target/release/effectcraft-cli
+ *    (the spike §1 repo-build resolution order; never committed — CI
+ *    rebuilds it).
+ */
+const SKIP_REASON = !HAS_POSTGRES
+  ? "requires the Postgres dialect (FOR UPDATE SKIP LOCKED surgical claim + pg-schema table builders)"
+  : !HAS_CLI
+    ? `effectcraft-cli binary not found at ${CLI_PATH} (repo build; CI rebuilds it)`
+    : null;
+
+const TITLE_SUFFIX = SKIP_REASON === null ? "" : ` — SKIPPED: ${SKIP_REASON}`;
+
+/** describe with the file's skip reason appended to every title (never silent). */
+function d(name: string, fn: () => void): void {
+  const suite = SKIP_REASON === null ? describe : describe.skip;
+  suite(`${name}${TITLE_SUFFIX}`, fn);
+}
 
 /** 1 credit = 1_000_000 µc (D-12) — grants are RAW ledger µc. */
 const MICRO = 1_000_000;
@@ -491,8 +516,8 @@ let worker: WorkerModule;
 const ownedRenders: { wsId: string; renderId: string }[] = [];
 
 beforeAll(async () => {
-  // The file-level gates (no DB / no CLI binary): skip everything cleanly.
-  if (!HAS_DATABASE || !HAS_CLI) return;
+  // The file-level gates (no Postgres dialect / no CLI binary): skip cleanly.
+  if (SKIP_REASON !== null) return;
   if (DATABASE_URL === null) throw new Error("render-e2e requires DATABASE_URL");
   server = await bootServer();
   worker = await loadWorkerModule();
@@ -612,7 +637,7 @@ afterAll(async () => {
   }
   await server?.close();
   try {
-    await workerDb?.$client.end({ timeout: 5 });
+    await closeDb(workerDb);
   } catch {
     // already closed
   }

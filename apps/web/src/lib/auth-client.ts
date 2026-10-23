@@ -3,7 +3,8 @@ import { organizationClient } from "better-auth/client/plugins";
 
 /**
  * Better Auth browser client (client only — the server half lives in the
- * gateway, Wave 3, and MUST stay on the same better-auth version: ^1.7.12).
+ * gateway's better-auth setup, and both MUST stay on the same better-auth
+ * version: ^1.7.12).
  *
  * baseURL points at the auth API root: `${NEXT_PUBLIC_APP_URL}/v1/auth`
  * (docs/PRODUCT_ARCHITECTURE.md §7.1/§7.2 — auth is mounted under /v1/auth).

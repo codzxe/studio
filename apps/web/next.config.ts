@@ -25,7 +25,29 @@ import type { NextConfig } from "next";
 const EDITOR_DEV_SERVER_URL =
   process.env.NODE_ENV === "production" ? undefined : process.env.EDITOR_DEV_SERVER_URL;
 
+// W3-I: Turbopack still lacks webpack's `extensionAlias` (".js" → ".ts"),
+// so the NodeNext workspace packages (`@studio/config` via the vendor shim,
+// `@studio/contracts` via tsconfig paths — see README "Turbopack and NodeNext
+// barrels") cannot be compiled by `next dev`/`next build` ("Can't resolve
+// './errors.js'" on every page). The loader below rewrites their relative
+// `.js`-suffixed import specifiers to extensionless form — the same mapping
+// tsx (gateway) and vitest (Vite) already apply to these exact files — scoped
+// by resourcePath to `packages/config` + `packages/contracts` only. Delete
+// this block when the packages move to bundler-resolution re-exports.
+const nodenextLoader = new URL(
+  "../../scripts/captures/nodenext-js-strip-loader.cjs",
+  import.meta.url,
+).pathname;
+
 const nextConfig: NextConfig = {
+  turbopack: {
+    rules: {
+      "*.ts": {
+        loaders: [{ loader: nodenextLoader }],
+      },
+    },
+  },
+
   poweredByHeader: false,
   // The editor is served at `/editor/` (trailing slash). Next would otherwise
   // 308 `/editor/` → `/editor`, which breaks the editor's relative asset URLs

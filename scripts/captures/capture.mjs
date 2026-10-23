@@ -8,8 +8,11 @@
  *   - editor-frame.png   the real editor page (/w/demo-project/editor), 16:9
  *                        1920×1080, wasm open, timeline scrubbed to a
  *                        composed frame, chat collapsed (pure editor).
- *   - agent-ask.png      real crop: the user message + the studio.get_context
- *                        tool card (details expanded) from the real chat panel.
+ *   - agent-ask.png      real crop: the user message + the agent's streamed
+ *                        reply from the real chat panel (the exchange the
+ *                        MOCK_MODEL runner always produces — a rename
+ *                        request, so the canned mock reply + plan read
+ *                        coherently in the still).
  *   - agent-plan.png     real crop: the real plan card (proposed state).
  *   - .raw/demo-loop.raw.webm — page video of the whole session; the runner
  *                        trims the tail (deterministic: -sseof) into the
@@ -34,7 +37,12 @@ mkdirSync(RAW, { recursive: true });
 const log = (...a) => console.log(`[capture ${new Date().toISOString().slice(11, 19)}]`, ...a);
 const marks = { contextStart: 0, typingStart: 0, sentAt: 0, streamDoneAt: 0, motionStart: 0, closedAt: 0 };
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({
+  // /dev/shm is 64MB on this box — Chromium's default shm usage crashes the
+  // renderer ("Page crashed") without this flag. --disable-gpu avoids the
+  // headless GL path (the wasm canvas renders via software WebGL).
+  args: ["--disable-dev-shm-usage", "--disable-gpu"],
+});
 const context = await browser.newContext({
   viewport: { width: 1920, height: 1080 },
   deviceScaleFactor: 1,
@@ -43,13 +51,14 @@ const context = await browser.newContext({
 marks.contextStart = Date.now();
 const page = await context.newPage();
 page.on("pageerror", (e) => log("PAGEERROR:", String(e).slice(0, 200)));
+page.on("crash", () => log("PAGE CRASHED"));
 
 try {
   // ── 1. the REAL sign-in form → the seeded editor ──────────────────────
   log("signing in via the real /sign-in form");
   await page.goto(`${BASE}/sign-in?next=${encodeURIComponent(EDITOR_PATH)}`, {
     waitUntil: "domcontentloaded",
-    timeout: 60_000,
+    timeout: 180_000,
   });
   await page.locator("#sign-in-email").fill(EMAIL);
   await page.locator("#sign-in-password").fill(PASSWORD);
@@ -132,7 +141,10 @@ try {
   const composer = page.getByLabel("Message the agent");
   await composer.click();
   marks.typingStart = Date.now();
-  await page.keyboard.type("What's on this comp?", { delay: 110 });
+  // A rename request — the mock runner's canned reply ("I'll rename that
+  // layer for you…") and its rename plan read coherently against it, so the
+  // still crops tell one true story (the same mock flow the m4 e2e pins).
+  await page.keyboard.type("Rename the headline layer to Subtitle.", { delay: 110 });
   await composer.press("Enter");
   marks.sentAt = Date.now();
   log("question sent");
@@ -150,31 +162,40 @@ try {
   await page.waitForTimeout(1200); // settle animations
 
   // ── 6. real chat crops for the agent story ────────────────────────────
-  // Ask: the user message + the expanded context tool card (union clip).
+  // Ask: the user message + the agent's reply text (label + markdown), i.e.
+  // everything from the user bubble down to just above the tool card — the
+  // raw tool-card JSON and the plan card get their own crop / none.
+  const userMsg = page.locator('[data-testid="chat-message"][data-role="user"]');
   const toolCard = page.locator(
     '[data-testid="tool-card"][data-tool="studio.get_context"]',
   );
-  await toolCard.getByTestId("tool-card-toggle").click();
-  await page.waitForTimeout(500);
-  const userMsg = page.locator('[data-testid="chat-message"][data-role="user"]');
   const panelBox = await page
     .getByTestId("chat-panel-layer")
     .boundingBox();
   const b1 = await userMsg.boundingBox();
-  const b2 = await toolCard.boundingBox();
+  const bTool = await toolCard.boundingBox();
   const pad = 10;
+  // Bottom bound: the tool card's top (the reply text ends above it).
+  const clipTop = Math.max(panelBox.y, b1.y - pad);
+  const clipBottom = Math.min(panelBox.y + panelBox.height, bTool.y - pad);
   const clip = {
-    x: Math.max(panelBox.x, Math.min(b1.x, b2.x) - pad),
-    y: Math.max(panelBox.y, b1.y - pad),
-    width: 0,
-    height: Math.min(panelBox.y + panelBox.height, Math.max(b1.y + b1.height, b2.y + b2.height) + pad) - (b1.y - pad),
+    x: panelBox.x,
+    y: clipTop,
+    width: panelBox.width,
+    height: clipBottom - clipTop,
   };
-  clip.width = Math.min(panelBox.x + panelBox.width, Math.max(b1.x + b1.width, b2.x + b2.width) + pad) - clip.x;
   await page.screenshot({ path: `${OUT}/agent-ask.png`, type: "png", clip });
   log(`agent-ask.png saved (${Math.round(clip.width)}x${Math.round(clip.height)})`);
+  log(
+    `ask crop spans user msg + agent reply (${Math.round(b1.height)}px + ${Math.round(
+      clipBottom - b1.y,
+    )}px of reply)`,
+  );
 
   // Plan: the real plan card element.
   const planCard = page.locator('[data-testid="plan-card"]');
+  await planCard.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300); // scroll settle
   await planCard.screenshot({ path: `${OUT}/agent-plan.png`, type: "png" });
   const pb = await planCard.boundingBox();
   log(`agent-plan.png saved (${Math.round(pb.width)}x${Math.round(pb.height)})`);

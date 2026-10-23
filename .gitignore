@@ -73,6 +73,20 @@ packages/contracts/src/**/*.d.ts
 packages/db/src/**/*.js
 packages/db/src/**/*.js.map
 packages/db/src/**/*.d.ts
+# W4-KILL (stub audit KILL-1/KILL-2): the 1989de5 add -A sweep committed 18
+# more of these into editor-bridge/storage src (storage/validate.js was even
+# load-bearing through a relative .js import — fixed via the @studio/storage
+# dependency seam). The wildcard below keeps the sweep out of EVERY
+# source-only package, so git-sync add -A can never bring them back.
+packages/editor-bridge/src/**/*.js
+packages/editor-bridge/src/**/*.js.map
+packages/editor-bridge/src/**/*.d.ts
+packages/storage/src/**/*.js
+packages/storage/src/**/*.js.map
+packages/storage/src/**/*.d.ts
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts
 
 # repo purge (W1-01, user order 2026-10-23): these trees were deleted; the ignore
 # rules stay so nothing resurrects or re-commits them. Content lives in git

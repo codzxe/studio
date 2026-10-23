@@ -136,6 +136,40 @@ describe("history RSC route", () => {
     expect(Number.isNaN(Date.parse(props.nowIso))).toBe(false);
   });
 
+  it("hands the hub the viewer id (me.user.id) and the project's createdBy (ownerId)", async () => {
+    gatewayMock.mockImplementation((path: string, init?: { workspaceId?: string }) => {
+      if (path === "/v1/me") {
+        return Promise.resolve({
+          user: { id: "usr_viewer_01", name: "Viewer", email: "viewer@example.test" },
+          memberships: MEMBERSHIPS,
+        });
+      }
+      if (path.startsWith("/v1/projects?")) {
+        return Promise.resolve({
+          items: [{ ...PROJECT_ROW, createdBy: "usr_owner_01" }],
+          nextCursor: null,
+        });
+      }
+      throw new Error(`unexpected gateway path: ${path}`);
+    });
+    const page = await renderPage("launch-film");
+    render(page);
+
+    const props = capturedProps();
+    expect(props.viewerId).toBe("usr_viewer_01");
+    expect(props.ownerId).toBe("usr_owner_01");
+  });
+
+  it("degrades the hub ids to null when the wire omits them (never a stack)", async () => {
+    scriptHappyPath();
+    const page = await renderPage("launch-film");
+    render(page);
+
+    const props = capturedProps();
+    expect(props.viewerId).toBeNull();
+    expect(props.ownerId).toBeNull();
+  });
+
   it("narrows the scan to the ?ws workspace (the switcher seam)", async () => {
     gatewayMock.mockImplementation((path: string, init?: { workspaceId?: string }) => {
       if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });

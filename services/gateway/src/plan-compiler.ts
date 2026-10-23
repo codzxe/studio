@@ -160,8 +160,9 @@ export interface WriteToolDef {
 
 export type WriteToolsDep = Readonly<Record<string, ZodTypeAny | WriteToolDef>>;
 
-/** Injected so compilation can be tested against fixtures while M5-A/M5-J
- * land (their stubs are intentionally empty/passthrough today). */
+/** Injected so compilation can be tested against fixtures without the live
+ * contract surfaces (both are real today: the curated command registry and
+ * the write-tools catalog — see defaultCompileDeps). */
 export interface CompileDeps {
   /** Curated agent command allowlist (M5-J) — id → descriptor. */
   readonly registry: CommandSchema;

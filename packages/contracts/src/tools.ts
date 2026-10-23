@@ -59,13 +59,13 @@ export interface ToolDefinition {
   readonly risk: PlanRisk;
   /** Model-facing description. No command ids, no engine internals. */
   readonly description: string;
-  /** Args stub the gateway validates before the tool runs. */
+  /** Args schema (Zod) the gateway validates before the tool runs. */
   readonly args: z.ZodType<unknown>;
   readonly returns: ToolReturns;
 }
 
 // ---------------------------------------------------------------------------
-// Args stubs (§8.3 budgets: depth-2 layer trees, ≤12 properties, 1200 px frames)
+// Args schemas (§8.3 budgets: depth-2 layer trees, ≤12 properties, 1200 px frames)
 // ---------------------------------------------------------------------------
 
 /**

@@ -156,5 +156,4 @@ export { CreditMeter, type CreditMeterProps, type CreditState } from "./componen
 export { EmptyState, type EmptyStateProps } from "./components/empty-state";
 export { Skeleton } from "./components/skeleton";
 export { FrameLine, type FrameLineProps } from "./components/frame-line";
-export { Slate, type SlateProps } from "./components/slate";
 export { Avatar, type AvatarProps } from "./components/avatar";

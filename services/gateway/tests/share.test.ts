@@ -12,7 +12,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createDb, shareTokens as shareTokensTable, user as userTable } from "@studio/db";
+import { createDb, tablesFor } from "@studio/db";
 
 import {
   CookieJar,
@@ -21,6 +21,7 @@ import {
   type RunningTestServer,
   api,
   bootServer,
+  closeDb,
   unique,
   uniqueEmail,
 } from "./helpers.js";
@@ -30,16 +31,21 @@ const d = describe.skipIf(!HAS_DATABASE);
 let server: RunningTestServer;
 /** Raw db handle for row-level pins (hash-only storage, force-expiry). */
 let rawDb: ReturnType<typeof createDb>;
+/** Dialect-correct tables for rawDb (W4-GWI: tablesFor over the pg schema). */
+let t: ReturnType<typeof tablesFor>;
 
 beforeAll(async () => {
   server = await bootServer();
-  if (DATABASE_URL !== null) rawDb = createDb(DATABASE_URL, { max: 2 });
+  if (DATABASE_URL !== null) {
+    rawDb = createDb(DATABASE_URL, { max: 2 });
+    t = tablesFor(rawDb);
+  }
 }, 30_000);
 
 afterAll(async () => {
   await server?.close();
   try {
-    await rawDb?.$client.end({ timeout: 5 });
+    await closeDb(rawDb);
   } catch {
     // already closed
   }
@@ -155,10 +161,7 @@ d("share links: issue, verify, hash-only storage", () => {
   });
 
   it("stores ONLY the sha256 hash — the raw token is in no row and no GET", async () => {
-    const [row] = await rawDb
-      .select()
-      .from(shareTokensTable)
-      .where(eq(shareTokensTable.id, issued.id));
+    const [row] = await rawDb.select().from(t.shareTokens).where(eq(t.shareTokens.id, issued.id));
     expect(row).toBeDefined();
     const expectedHash = createHash("sha256").update(issued.token).digest("hex");
     expect(row?.tokenHash).toBe(expectedHash);
@@ -351,9 +354,9 @@ d("share links: expiry + revocation kill the public surface", () => {
 
     // Force the row into the past (time travel without waiting a day).
     await rawDb
-      .update(shareTokensTable)
+      .update(t.shareTokens)
       .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(eq(shareTokensTable.id, issued.id));
+      .where(eq(t.shareTokens.id, issued.id));
     const expired = await getShare(`/v1/share/${issued.token}`);
     expect(expired.status).toBe(404);
   });
@@ -651,7 +654,7 @@ d("presence repo: beat / viewers / sweep (pinned M7-E surface)", () => {
     const viewerA = `usr_pres_${randomUUID().slice(0, 8)}`;
     const viewerB = `usr_pres_${randomUUID().slice(0, 8)}`;
     await rawDb
-      .insert(userTable)
+      .insert(t.user)
       .values([
         { id: viewerA, name: "A", email: `${viewerA}@studio.test`, emailVerified: true },
         { id: viewerB, name: "B", email: `${viewerB}@studio.test`, emailVerified: true },

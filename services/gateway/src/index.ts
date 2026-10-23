@@ -1,10 +1,10 @@
 // @studio/gateway — entrypoint (§14 deployment).
 //
 // startServer(): parse env (fail fast via @studio/config), wire real deps
-// (postgres via @studio/db — LAZY: the pool connects on first query, so the
-// gateway boots with db:false and /health reports it), build the app and
+// (the db handle via @studio/db — LAZY: pg pools connect on first query, so
+// the gateway boots with db:false and /health reports it), build the app and
 // listen on PORT (default 8787). Graceful shutdown closes the listener and
-// the pool.
+// the db handle (dialect-aware: pg pool drains, sqlite handle closes).
 
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
 import { sql } from "drizzle-orm";
 
-import { createAuth, createDb, createRepos } from "@studio/db";
+import { createAuth, createDb, createRepos, getDialect } from "@studio/db";
 
 import { buildApp } from "./app.js";
 import { adaptBetterAuth } from "./auth.js";
@@ -99,7 +99,16 @@ export async function startServer(): Promise<RunningServer> {
       });
     });
     try {
-      await db.$client.end({ timeout: 5 });
+      // Dialect-aware teardown (W4-GWI, W3-A follow-up #1): the pg pool ends
+      // (draining in-flight queries, bounded at 5s); the sqlite dev handle
+      // closes synchronously. The static type stays createDb's pg-flavored
+      // seam, so the sqlite client goes through a structural cast — the same
+      // runtime-dialect-over-static-type seam the repos key off getDialect.
+      if (getDialect(db) === "sqlite") {
+        (db.$client as unknown as { close(): void }).close();
+      } else {
+        await db.$client.end({ timeout: 5 });
+      }
     } catch {
       // pool already gone
     }

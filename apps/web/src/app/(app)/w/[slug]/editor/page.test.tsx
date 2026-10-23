@@ -2,11 +2,15 @@
  * The editor RSC route tests — project resolution by slug, manifest mapping
  * into the host payload, and the 404/redirect semantics (hard rule 3).
  * `@/lib/gateway` is mocked (the seam's own tests cover the unwrap);
- * `EditorHost` is stubbed so this stays an RSC-logic test.
+ * `EditorHost` is stubbed so this stays an RSC-logic test. The §8.7
+ * `EditorCapabilityGate` stays REAL (the page mounts it around the host) —
+ * jsdom is an unsupported browser (no navigator.gpu, no WebGL2), so the
+ * supported paths stub `navigator.gpu` present and one arm keeps jsdom's
+ * natural unsupported state to prove the gate blocks the host.
  */
 
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorHostPayload } from "@/components/editor-host/types";
 
 vi.mock("next/navigation", () => ({
@@ -47,6 +51,32 @@ vi.mock("@/components/editor-host/editor-host", () => ({
 
 import { GatewayHttpError } from "@/lib/gateway";
 import EditorPage from "./page";
+
+// ---------------------------------------------------------------------------
+// Capability-probe stubs (§8.7) — mirror capability-gate.test.tsx: jsdom has
+// neither navigator.gpu nor WebGL2, so without a stub the real gate blocks
+// the editor-host stub in every supported-path render.
+// ---------------------------------------------------------------------------
+
+/**
+ * Define (or clear) navigator.gpu. `undefined` is the honest "absent" stub —
+ * the gate probes `navigator.gpu !== undefined` (biome bans `delete`).
+ */
+function stubNavigatorGpu(present: boolean): void {
+  const nav = navigator as Navigator & { gpu?: unknown };
+  Object.defineProperty(nav, "gpu", {
+    value: present ? {} : undefined,
+    configurable: true,
+    writable: true,
+  });
+}
+
+/** Stub canvas.getContext("webgl2") — `null` = no WebGL2 (jsdom's answer). */
+function stubWebgl2(context: WebGL2RenderingContext | null) {
+  return vi
+    .spyOn(HTMLCanvasElement.prototype, "getContext")
+    .mockReturnValue(context as WebGL2RenderingContext | null);
+}
 
 // ---------------------------------------------------------------------------
 // Wire fixtures (the real §7.2 shapes)
@@ -135,6 +165,15 @@ async function renderPage(slug: string): Promise<React.ReactNode> {
 beforeEach(() => {
   lastHostPayload = null;
   gatewayMock.mockReset();
+  // The page mounts the REAL gate around the host stub — pretend WebGPU
+  // exists so the supported paths render the host (jsdom has neither probe).
+  stubNavigatorGpu(true);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  // "Absent" for the next arm is undefined (see stubNavigatorGpu).
+  (navigator as Navigator & { gpu?: unknown }).gpu = undefined;
 });
 
 describe("editor RSC route", () => {
@@ -171,6 +210,28 @@ describe("editor RSC route", () => {
     ]);
     // Exactly one manifest fetch — the RSC payload is the single source.
     expect(gatewayMock.mock.calls.filter(([path]) => path.endsWith("/manifest"))).toHaveLength(1);
+  });
+
+  it("blocks the editor host when the browser has neither WebGPU nor WebGL2 (§8.7 gate)", async () => {
+    // jsdom's natural state: no navigator.gpu, no WebGL2. The getContext spy
+    // keeps jsdom's "Not implemented" console error quiet (house pattern).
+    stubNavigatorGpu(false);
+    stubWebgl2(null);
+    scriptHappyPath();
+    const page = await renderPage("launch-film");
+    render(<>{page}</>);
+
+    // The gate replaces the canvas page with the §8.11 full-page state; the
+    // host (and its wasm boot) never runs — `lastHostPayload` stays null.
+    expect(screen.queryByTestId("editor-host-stub")).not.toBeInTheDocument();
+    expect(lastHostPayload).toBeNull();
+    const gate = screen.getByTestId("editor-capability-gate");
+    expect(gate).toHaveAttribute("data-gate-state", "unsupported");
+    // §8.11 static-preview offer routes to THIS project's history page.
+    expect(screen.getByTestId("editor-gate-preview-link")).toHaveAttribute(
+      "href",
+      "/w/launch-film/history",
+    );
   });
 
   it("404s when no workspace has the slug (cross-tenant = 404, hard rule 3)", async () => {

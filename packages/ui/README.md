@@ -99,7 +99,7 @@ headings only; never weight 300 on dark (§4.3).
 `ProjectCard`, `Tabs*`, `Dialog*`, `ConfirmDialog`, `Popover*`, `Menu*`,
 `Tooltip*`, `Toast*`, `Badge`, `StatusDot`, `RiskBadge`, `Table*`,
 `CommandPalette`, `CreditMeter`, `EmptyState`, `Skeleton`, `Spinner`,
-`FrameLine`, `Slate`, `Avatar`, `Kbd` — all named exports from `@studio/ui`.
+`FrameLine`, `Avatar`, `Kbd` — all named exports from `@studio/ui`.
 
 ```tsx
 import { Button, ProjectCard } from "@studio/ui";
@@ -136,7 +136,7 @@ pnpm --filter @studio/ui lint        # biome
 
 ## 5. Component examples & accessibility coverage (M9-A)
 
-**Examples.** Every one of the 23 primitives ships a Storybook-style example
+**Examples.** Every one of the 22 primitives ships a Storybook-style example
 gallery beside its source: `src/components/<name>.example.tsx`. Each is a
 single-file, default-exported showcase rendering canonical usage of every
 variant / size / state in a token-styled wrapper — documentation-as-code: a

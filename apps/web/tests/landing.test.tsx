@@ -1,6 +1,6 @@
 import MarketingLayout from "@/app/(marketing)/layout";
 import LandingPage from "@/app/(marketing)/page";
-import { brandViolations } from "@studio/config";
+import { MICROCREDITS_PER_CREDIT, PLAN_CATALOG, brandViolations } from "@studio/config";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
@@ -124,14 +124,35 @@ describe("landing page", () => {
     expect(within(section).getByText("p75, reference machine.")).toBeInTheDocument();
   });
 
-  it("pricing: three plans, Pro featured with 'Most popular', trial line", () => {
+  it("pricing: the SAME catalog-derived cards as /pricing — never a second price set", () => {
     renderLanding();
-    const starter = screen.getByTestId("pricing-starter");
-    const pro = screen.getByTestId("pricing-pro");
-    const studio = screen.getByTestId("pricing-studio");
-    expect(within(starter).getByText("$29")).toBeInTheDocument();
-    expect(within(pro).getByText("$79")).toBeInTheDocument();
-    expect(within(studio).getByText("$199")).toBeInTheDocument();
+    // W4-KILL: the section renders the shared PricingCards component
+    // (pricing-card-* testids), so every pin below is DERIVED from
+    // PLAN_CATALOG exactly as tests/pricing.test.tsx derives it — a catalog
+    // change moves both pages, and a hardcoded price set on either fails here.
+    const starter = screen.getByTestId("pricing-card-starter");
+    const pro = screen.getByTestId("pricing-card-pro");
+    const studio = screen.getByTestId("pricing-card-studio");
+    const usd = (cents: number): string => {
+      const dollars = cents / 100;
+      return `$${Number.isInteger(dollars) ? dollars.toString() : dollars.toFixed(2)}`;
+    };
+    for (const [card, id] of [
+      [starter, "starter"],
+      [pro, "pro"],
+      [studio, "studio"],
+    ] as const) {
+      const plan = PLAN_CATALOG[id];
+      expect(within(card).getByText(usd(plan.monthlyPriceCents))).toBeInTheDocument();
+      expect(
+        within(card).getByText(
+          `${(plan.monthlyCreditAllowance / MICROCREDITS_PER_CREDIT).toLocaleString("en-US")} credits/mo`,
+        ),
+      ).toBeInTheDocument();
+      expect(
+        within(card).getByText(`${plan.seats.toLocaleString("en-US")} seats`),
+      ).toBeInTheDocument();
+    }
     expect(within(pro).getByText("Most popular")).toBeInTheDocument();
     expect(
       screen.getByText("14 days free with card. No free tier. Cancel anytime."),
