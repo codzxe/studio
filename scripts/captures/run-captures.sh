@@ -50,10 +50,14 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=""
 
 PIDS=()
 cleanup() {
-  echo "[runner] killing ${#PIDS[@]} booted processes"
-  for pid in "${PIDS[@]:-}"; do kill "$pid" 2>/dev/null || true; done
+  echo "[runner] killing ${#PIDS[@]} booted process groups"
+  for pid in "${PIDS[@]:-}"; do
+    kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+  done
   sleep 1
-  for pid in "${PIDS[@]:-}"; do kill -9 "$pid" 2>/dev/null || true; done
+  for pid in "${PIDS[@]:-}"; do
+    kill -9 -- "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+  done
   for p in 3100 3000 8787; do
     if (echo >/dev/tcp/127.0.0.1/$p) 2>/dev/null; then
       echo "[runner] WARN port $p still open"
@@ -64,7 +68,9 @@ cleanup() {
 trap cleanup EXIT TERM INT
 
 # ── boot: edge + gateway + web (playwright.config.ts shapes) ─────────────
-node -e '
+# Each process gets its own session (setsid) so `kill -- -PGID` reaps the
+# whole tree (pnpm → sh → tsx/next → node server children).
+setsid node -e '
 const http = require("http");
 const targets = { api: 8787, web: 3000 };
 http.createServer((req, res) => {
@@ -83,10 +89,10 @@ http.createServer((req, res) => {
 ' >"$LOGS/edge.log" 2>&1 &
 PIDS+=($!)
 
-(cd services/gateway && corepack pnpm dev) >"$LOGS/gateway.log" 2>&1 &
+setsid bash -c 'cd services/gateway && exec corepack pnpm dev' >"$LOGS/gateway.log" 2>&1 &
 PIDS+=($!)
 
-(cd apps/web && corepack pnpm dev) >"$LOGS/web.log" 2>&1 &
+setsid bash -c 'cd apps/web && exec corepack pnpm dev' >"$LOGS/web.log" 2>&1 &
 PIDS+=($!)
 
 wait_http() {
@@ -102,7 +108,7 @@ wait_http() {
   return 1
 }
 
-wait_http "http://127.0.0.1:${GATEWAY_PORT}/v1/models" "gateway" 150 || {
+wait_http "http://127.0.0.1:${GATEWAY_PORT}/v1/health" "gateway" 150 || {
   echo "[runner] gateway boot failed — log tail:"; tail -30 "$LOGS/gateway.log"; exit 1; }
 wait_http "http://127.0.0.1:${WEB_PORT}/" "web(next)" 240 || {
   echo "[runner] web boot failed — log tail:"; tail -30 "$LOGS/web.log"; exit 1; }

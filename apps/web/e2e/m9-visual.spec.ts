@@ -270,11 +270,20 @@ const AUTHED_PAGES: readonly SweptPage[] = [
   },
 ];
 
+/** Resolve a swept page by id (noUncheckedIndexedAccess-safe). */
+function byId(pages: readonly SweptPage[], id: string): SweptPage {
+  const found = pages.find((page) => page.id === id);
+  if (found === undefined) {
+    throw new Error(`unknown swept page id: ${id}`);
+  }
+  return found;
+}
+
 /** The reduced-motion arm pages: the two richest layouts + one auth page. */
 const REDUCED_MOTION_PAGES: readonly SweptPage[] = [
-  MARKETING_PAGES[0],
-  MARKETING_PAGES[1],
-  AUTH_PAGES[0],
+  byId(MARKETING_PAGES, "landing"),
+  byId(MARKETING_PAGES, "pricing"),
+  byId(AUTH_PAGES, "sign-in"),
 ];
 
 /** The arm re-checks the mobile gate width + one desktop width. */

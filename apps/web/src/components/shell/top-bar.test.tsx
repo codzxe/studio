@@ -109,7 +109,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("TopBar — chrome", () => {
-  it("shows the active workspace, the numeric credits link and the avatar initials", () => {
+  it("shows the active workspace, the numeric credits link and the avatar initials", async () => {
     view();
     expect(screen.getByTestId("workspace-switcher")).toHaveTextContent("First Films");
     const credits = screen.getByTestId("topbar-credits");
@@ -120,7 +120,8 @@ describe("TopBar — chrome", () => {
       "/w/billing",
     );
     expect(screen.getByTestId("account-menu")).toBeInTheDocument();
-    expect(screen.getByTestId("account-menu")).toHaveTextContent("AJ");
+    // Radix Avatar fallback mounts on a timer — initials appear async.
+    expect(await screen.findByText("AJ")).toBeInTheDocument();
   });
 
   it("degrades to a quiet Billing link when credits are unavailable", () => {
