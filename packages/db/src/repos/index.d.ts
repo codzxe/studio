@@ -1,0 +1,57 @@
+import type { StudioDb } from "../db.js";
+import { type AssetsRepo } from "./assets.js";
+import { type AuditRepo } from "./audit.js";
+import { type CommentsRepo } from "./comments.js";
+import { type InvoicesRepo } from "./invoices.js";
+import { type LeasesRepo } from "./leases.js";
+import { type LedgerRepo } from "./ledger.js";
+import { type PresenceRepo } from "./presence.js";
+import { type ProjectsRepo } from "./projects.js";
+import { type RendersRepo } from "./renders.js";
+import { type RunsRepo } from "./runs.js";
+import { type SettingsRepo } from "./settings.js";
+import { type ShareTokensRepo } from "./share-tokens.js";
+import { type SubscriptionsRepo } from "./subscriptions.js";
+import { type ThreadsRepo } from "./threads.js";
+import { type VersionsRepo } from "./versions.js";
+import { type WebhookEventsRepo } from "./webhook-events.js";
+export type { WorkspaceId, Page } from "./shared.js";
+export type { ProjectsRepo } from "./projects.js";
+export type { VersionsRepo } from "./versions.js";
+export type { LeasesRepo } from "./leases.js";
+export type { AssetsRepo } from "./assets.js";
+export type { ThreadsRepo } from "./threads.js";
+export type { RunsRepo, RecordAppliedInput, RecordUndoneInput, PlanState, PlanLifecycleStatus, } from "./runs.js";
+export type { LedgerRepo } from "./ledger.js";
+export type { LedgerScope } from "./ledger.js";
+export type { CommentsRepo } from "./comments.js";
+export type { RendersRepo } from "./renders.js";
+export type { ScopedRender, RenderHeartbeatInput, RenderCompleteResult, RenderFailResult, RenderClaimOptions, } from "./renders.js";
+export type { AuditRepo } from "./audit.js";
+export type { SubscriptionsRepo, SubscriptionUpsertInput, SubscriptionTransitionInput, EnsureStripeCustomerInput, } from "./subscriptions.js";
+export type { InvoicesRepo, RecordInvoiceInput, InvoiceResult, InvoiceListOptions, } from "./invoices.js";
+export type { SettingsRepo } from "./settings.js";
+export type { WebhookEventsRepo, WebhookSeenInput } from "./webhook-events.js";
+export type { ShareTokensRepo, ShareTokenIssueInput, ShareTokenRevokeInput, ShareTokenView, ResolvedShare, } from "./share-tokens.js";
+export type { PresenceRepo, PresenceViewer, PresenceBeatInput, PresenceViewersOptions, } from "./presence.js";
+/** The full tenant-scoped repository bundle. */
+export interface Repos {
+    readonly projects: ProjectsRepo;
+    readonly versions: VersionsRepo;
+    readonly leases: LeasesRepo;
+    readonly assets: AssetsRepo;
+    readonly threads: ThreadsRepo;
+    readonly runs: RunsRepo;
+    readonly ledger: LedgerRepo;
+    readonly comments: CommentsRepo;
+    readonly renders: RendersRepo;
+    readonly audit: AuditRepo;
+    readonly subscriptions: SubscriptionsRepo;
+    readonly invoices: InvoicesRepo;
+    readonly settings: SettingsRepo;
+    readonly webhookEvents: WebhookEventsRepo;
+    /** §M7: share-link tokens (issue/verify/revoke) + presence heartbeats. */
+    readonly shareTokens: ShareTokensRepo;
+    readonly presence: PresenceRepo;
+}
+export declare function createRepos(db: StudioDb): Repos;

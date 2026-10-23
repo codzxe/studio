@@ -387,7 +387,11 @@ function activityEntry(index: number): Record<string, unknown> {
  * audit table cannot seed > 25 deterministic rows; pagination is the point.
  */
 async function installScriptedActivityPages(page: Page): Promise<void> {
-  await page.route("**/v1/projects/*/activity", async (route) => {
+  // Regex, not a glob: Playwright globs match the FULL URL including the
+  // query string, so "**/v1/projects/*/activity" can never intercept the real
+  // `?limit=25&cursor=…` request (M-1, flagged by the M8 wave; playwright-core
+  // urlMatch.ts anchors globs at `$`).
+  await page.route(/\/v1\/projects\/[^/]+\/activity(\?|$)/, async (route) => {
     const cursor = new URL(route.request().url()).searchParams.get("cursor");
     if (cursor === null) {
       await route.fulfill(
