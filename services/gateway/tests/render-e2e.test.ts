@@ -81,13 +81,13 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { type StudioEnv, estimateRenderCostUc } from "@studio/config";
 import {
+  type EstimateResult,
   RENDER_STATUSES,
   RENDER_STATUS_SCHEMA,
-  type EstimateResult,
   type RenderJob,
 } from "@studio/contracts";
-import { type StudioEnv, estimateRenderCostUc } from "@studio/config";
 import {
   type Repos,
   type StudioDb,
@@ -317,7 +317,14 @@ function browserEcproj(assetName: string, spec: FixtureSpec): Buffer {
     shown_dims?: number;
     three_d_only?: boolean;
   };
-  const prop = (uid: number, match: string, name: string, t: string, v: unknown, extra?: Partial<Prop>): Prop => ({
+  const prop = (
+    uid: number,
+    match: string,
+    name: string,
+    t: string,
+    v: unknown,
+    extra?: Partial<Prop>,
+  ): Prop => ({
     uid,
     match,
     name,
@@ -360,9 +367,18 @@ function browserEcproj(assetName: string, spec: FixtureSpec): Buffer {
           }),
         },
         { node: "Prop", ...prop(23, "scale", "Scale", "Vec3", [100, 100, 100], { shown_dims: 2 }) },
-        { node: "Prop", ...prop(24, "orientation", "Orientation", "Vec3", [0, 0, 0], { three_d_only: true }) },
-        { node: "Prop", ...prop(25, "rotationX", "X Rotation", "Scalar", 0, { three_d_only: true }) },
-        { node: "Prop", ...prop(26, "rotationY", "Y Rotation", "Scalar", 0, { three_d_only: true }) },
+        {
+          node: "Prop",
+          ...prop(24, "orientation", "Orientation", "Vec3", [0, 0, 0], { three_d_only: true }),
+        },
+        {
+          node: "Prop",
+          ...prop(25, "rotationX", "X Rotation", "Scalar", 0, { three_d_only: true }),
+        },
+        {
+          node: "Prop",
+          ...prop(26, "rotationY", "Y Rotation", "Scalar", 0, { three_d_only: true }),
+        },
         { node: "Prop", ...prop(27, "rotation", "Rotation", "Scalar", 0) },
         { node: "Prop", ...prop(28, "opacity", "Opacity", "Scalar", 100) },
       ]),
@@ -704,7 +720,10 @@ async function uploadVersion(ws: Workspace, projectId: string, bytes: Buffer): P
 }
 
 /** The shared fixture: seeded-noise asset + the browser-shaped version. */
-async function renderableWorkspace(spec: FixtureSpec, seed: number): Promise<{
+async function renderableWorkspace(
+  spec: FixtureSpec,
+  seed: number,
+): Promise<{
   ws: Workspace;
   projectId: string;
   versionId: string;
@@ -732,7 +751,12 @@ async function call<T>(
 ): Promise<Envelope<T>> {
   const headers: Record<string, string> = { "x-workspace-id": ws.id, ...init.headers };
   if (init.key !== undefined) headers["idempotency-key"] = init.key;
-  const response = await api(server.base, path, { method: init.method, jar: ws.jar, headers, body: init.body });
+  const response = await api(server.base, path, {
+    method: init.method,
+    jar: ws.jar,
+    headers,
+    body: init.body,
+  });
   const parsed = (await response.json()) as { data?: T; error?: { code: string } };
   return { status: response.status, data: parsed.data, error: parsed.error };
 }
@@ -754,7 +778,12 @@ async function queue(
   return result;
 }
 
-async function estimate(ws: Workspace, projectId: string, compId: string, format: string): Promise<Envelope<EstimateResult>> {
+async function estimate(
+  ws: Workspace,
+  projectId: string,
+  compId: string,
+  format: string,
+): Promise<Envelope<EstimateResult>> {
   return call<EstimateResult>(ws, "/v1/renders/estimate", {
     method: "POST",
     body: { projectId, compId, format, settings: {} },
@@ -770,7 +799,11 @@ async function getJob(ws: Workspace, renderId: string): Promise<RenderJob> {
 }
 
 /** Bounded poll (250 ms granularity, house waitFor discipline — no sleeps). */
-async function waitFor(description: string, probe: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
+async function waitFor(
+  description: string,
+  probe: () => Promise<boolean>,
+  timeoutMs = 10_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await probe()) return;
@@ -805,150 +838,157 @@ function expectIsoTimestamp(value: string | null, description: string): string {
 
 // The shared journey fixtures.
 /** 2 s @ 640×360, 30 fps — renders in ~0.8 s (the 1–2 s comp the task pins). */
-const SMALL: FixtureSpec = { compName: "Main", width: 640, height: 360, fps: 30, durationSeconds: 2 };
+const SMALL: FixtureSpec = {
+  compName: "Main",
+  width: 640,
+  height: 360,
+  fps: 30,
+  durationSeconds: 2,
+};
 /** 10 s @ 1920×1080 — ~33 s of real render time: the cancel-journey margin. */
-const LONG: FixtureSpec = { compName: "Long", width: 1920, height: 1080, fps: 30, durationSeconds: 10 };
+const LONG: FixtureSpec = {
+  compName: "Long",
+  width: 1920,
+  height: 1080,
+  fps: 30,
+  durationSeconds: 10,
+};
 
 // ───────────────────────────────────────────────────────────────────────────
 // JOURNEY 1 — queue → render → download → ledger (THE exit criterion)
 // ───────────────────────────────────────────────────────────────────────────
 
 d("journey 1: queue → real worker → real CLI → signed download → exact ledger", () => {
-  it(
-    "renders a real project and downloads a playable mp4, charging exactly the single formula",
-    async () => {
-      const { ws, projectId, versionId } = await renderableWorkspace(SMALL, 20261023);
-      await grant(ws, 10);
+  it("renders a real project and downloads a playable mp4, charging exactly the single formula", async () => {
+    const { ws, projectId, versionId } = await renderableWorkspace(SMALL, 20261023);
+    await grant(ws, 10);
 
-      // THE PURE-READ ESTIMATE, before any queue — the one-formula identity.
-      const expectedUc = estimateRenderCostUc({
-        format: "mp4",
-        outputSeconds: 2,
-        longEdgePx: 640,
-        quality: "good",
-      });
-      // 100_000 µc/s × 2 s × ½ tier = 100_000 µc < the 250_000 minimum → clamped.
-      expect(expectedUc).toBe(250_000);
-      const quote = await estimate(ws, projectId, "Main", "mp4");
-      expect(quote.status).toBe(200);
-      expect(quote.data).toEqual({
-        credits: 0.25,
-        outputSeconds: 2,
-        longEdgePx: 640,
-        format: "mp4",
-        quality: "good",
-        minApplied: true,
-      });
-      // Pure read: no render row, no ledger row.
-      expect((await server.deps.repos.renders.list(ws.id, { projectId })).items).toHaveLength(0);
-      expect((await server.deps.repos.ledger.list(ws.id, {})).items).toHaveLength(0);
+    // THE PURE-READ ESTIMATE, before any queue — the one-formula identity.
+    const expectedUc = estimateRenderCostUc({
+      format: "mp4",
+      outputSeconds: 2,
+      longEdgePx: 640,
+      quality: "good",
+    });
+    // 100_000 µc/s × 2 s × ½ tier = 100_000 µc < the 250_000 minimum → clamped.
+    expect(expectedUc).toBe(250_000);
+    // Pure read: the estimate queued nothing and wrote no ledger row
+    // (the only ledger entry so far is the fixture's own grant).
+    const ledgerBefore = (await server.deps.repos.ledger.list(ws.id, {})).items.length;
+    const quote = await estimate(ws, projectId, "Main", "mp4");
+    expect(quote.status).toBe(200);
+    expect(quote.data).toEqual({
+      credits: 0.25,
+      outputSeconds: 2,
+      longEdgePx: 640,
+      format: "mp4",
+      quality: "good",
+      minApplied: true,
+    });
+    expect((await server.deps.repos.renders.list(ws.id, { projectId })).items).toHaveLength(0);
+    expect((await server.deps.repos.ledger.list(ws.id, {})).items).toHaveLength(ledgerBefore);
 
-      // QUEUE (Idempotency-Key): the row, the pinned version, the precreated key.
-      const key = unique("queue");
-      const queued = await queue(ws, projectId, "Main", "mp4", key);
-      expect(queued.status).toBe(201);
-      const job = queued.data;
-      if (job === undefined) throw new Error("queue did not return a job");
-      expect(job.id).toMatch(/^rdr_/);
-      expect(job.status).toBe("queued"); // D-11 vocabulary
-      expect(job.versionId).toBe(versionId); // SERVER-pinned head, never client-supplied
-      expect(job.credits).toBe(quote.data?.credits); // the wire identity: estimate == reserve display
-      expect(job.progress).toEqual({ framesDone: 0, framesTotal: 0, percent: 0 });
-      expect(job.resultUrl).toBeNull();
-      expect(job.settings).toMatchObject({ frameRate: 30 }); // effective fps materialized
-      expect(job.createdBy).toBe(ws.userId);
-      expectIsoTimestamp(job.createdAt, "createdAt");
+    // QUEUE (Idempotency-Key): the row, the pinned version, the precreated key.
+    const key = unique("queue");
+    const queued = await queue(ws, projectId, "Main", "mp4", key);
+    expect(queued.status).toBe(201);
+    const job = queued.data;
+    if (job === undefined) throw new Error("queue did not return a job");
+    expect(job.id).toMatch(/^rdr_/);
+    expect(job.status).toBe("queued"); // D-11 vocabulary
+    expect(job.versionId).toBe(versionId); // SERVER-pinned head, never client-supplied
+    expect(job.credits).toBe(quote.data?.credits); // the wire identity: estimate == reserve display
+    expect(job.progress).toEqual({ framesDone: 0, framesTotal: 0, percent: 0 });
+    expect(job.resultUrl).toBeNull();
+    expect(job.settings).toMatchObject({ frameRate: 30 }); // effective fps materialized
+    expect(job.createdBy).toBe(ws.userId);
+    expectIsoTimestamp(job.createdAt, "createdAt");
 
-      const row = await server.deps.repos.renders.get(ws.id, job.id);
-      // The §9.2 output key was pre-created at queue time (worker never guesses).
-      expect(row.objectKey).toBe(
-        `workspaces/${ws.id}/projects/${projectId}/renders/${job.id}/output.mp4`,
-      );
-      // The row's credits COLUMN is the integer µc hold (the reconciliation dialect).
-      expect(row.credits).toBe(expectedUc);
+    const row = await server.deps.repos.renders.get(ws.id, job.id);
+    // The §9.2 output key was pre-created at queue time (worker never guesses).
+    expect(row.objectKey).toBe(
+      `workspaces/${ws.id}/projects/${projectId}/renders/${job.id}/output.mp4`,
+    );
+    // The row's credits COLUMN is the integer µc hold (the reconciliation dialect).
+    expect(row.credits).toBe(expectedUc);
 
-      // The hold is visible on the API: GET /v1/credits reports balance + reserved.
-      const creditsView = await call<{ balance: number; reserved: number }>(ws, "/v1/credits", {
-        method: "GET",
-      });
-      expect(creditsView.status).toBe(200);
-      expect(creditsView.data?.balance).toBe(10 * MICRO - expectedUc);
-      expect(creditsView.data?.reserved).toBe(expectedUc);
+    // The hold is visible on the API: GET /v1/credits reports balance + reserved.
+    const creditsView = await call<{ balance: number; reserved: number }>(ws, "/v1/credits", {
+      method: "GET",
+    });
+    expect(creditsView.status).toBe(200);
+    expect(creditsView.data?.balance).toBe(10 * MICRO - expectedUc);
+    expect(creditsView.data?.reserved).toBe(expectedUc);
 
-      // Drive the REAL worker: ONE deterministic tick claims + hydrates +
-      // renders with the real CLI + settles (D-20) — synchronously.
-      const tick = await worker.runOnce(workerDeps);
-      expect(tick.claimed).toBe(1);
-      const outcome = tick.outcomes.at(0);
-      expect(outcome?.outcome).toBe("completed");
-      if (outcome?.outcome !== "completed") throw new Error("the worker tick did not complete");
-      expect(outcome.renderId).toBe(job.id);
-      expect(outcome.objectKey).toBe(row.objectKey);
-      expect(outcome.costUc).toBe(expectedUc); // actual == estimate == reserve
-      expect(outcome.sizeBytes).toBeGreaterThan(10_000);
+    // Drive the REAL worker: ONE deterministic tick claims + hydrates +
+    // renders with the real CLI + settles (D-20) — synchronously.
+    const tick = await worker.runOnce(workerDeps);
+    expect(tick.claimed).toBe(1);
+    const outcome = tick.outcomes.at(0);
+    expect(outcome?.outcome).toBe("completed");
+    if (outcome?.outcome !== "completed") throw new Error("the worker tick did not complete");
+    expect(outcome.renderId).toBe(job.id);
+    expect(outcome.objectKey).toBe(row.objectKey);
+    expect(outcome.costUc).toBe(expectedUc); // actual == estimate == reserve
+    expect(outcome.sizeBytes).toBeGreaterThan(10_000);
 
-      // Poll the API until the terminal state is visible (bounded ≤ 30 s).
-      let completed: RenderJob | undefined;
-      await waitFor(
-        "the render to reach completed on the API",
-        async () => {
-          completed = await getJob(ws, job.id);
-          return completed.status === "completed";
-        },
-        30_000,
-      );
-      const done = completed ?? (await getJob(ws, job.id));
-      expect(done.status).toBe("completed");
-      // Progress fields present (framesTotal > 0): 2 s × 30 fps = 60 frames.
-      expect(done.progress.framesTotal).toBe(60);
-      expect(done.progress.framesDone).toBeLessThanOrEqual(60);
-      expect(done.progress.percent).toBe(
-        Math.min(
-          100,
-          Math.floor((done.progress.framesDone * 100) / done.progress.framesTotal),
-        ),
-      );
-      expect(done.sizeBytes).toBe(outcome.sizeBytes);
-      expectIsoTimestamp(done.startedAt, "startedAt");
-      expectIsoTimestamp(done.completedAt, "completedAt");
-      expect(done.errorCode).toBeNull();
-      expect(done.error).toBeNull();
+    // Poll the API until the terminal state is visible (bounded ≤ 30 s).
+    let completed: RenderJob | undefined;
+    await waitFor(
+      "the render to reach completed on the API",
+      async () => {
+        completed = await getJob(ws, job.id);
+        return completed.status === "completed";
+      },
+      30_000,
+    );
+    const done = completed ?? (await getJob(ws, job.id));
+    expect(done.status).toBe("completed");
+    // Progress fields present (framesTotal > 0): 2 s × 30 fps = 60 frames.
+    expect(done.progress.framesTotal).toBe(60);
+    expect(done.progress.framesDone).toBeLessThanOrEqual(60);
+    expect(done.progress.percent).toBe(
+      Math.min(100, Math.floor((done.progress.framesDone * 100) / done.progress.framesTotal)),
+    );
+    expect(done.sizeBytes).toBe(outcome.sizeBytes);
+    expectIsoTimestamp(done.startedAt, "startedAt");
+    expectIsoTimestamp(done.completedAt, "completedAt");
+    expect(done.errorCode).toBeNull();
+    expect(done.error).toBeNull();
 
-      // THE DOWNLOAD: follow the signed URL → real bytes, playable mp4.
-      const bytes = await downloadResult(ws, done);
-      expect(bytes.length).toBe(done.sizeBytes);
-      expect(bytes.length).toBeGreaterThan(10_000); // not a placeholder-sized stub
-      expect(bytes.subarray(4, 8).toString("ascii")).toBe("ftyp"); // MP4 box signature
+    // THE DOWNLOAD: follow the signed URL → real bytes, playable mp4.
+    const bytes = await downloadResult(ws, done);
+    expect(bytes.length).toBe(done.sizeBytes);
+    expect(bytes.length).toBeGreaterThan(10_000); // not a placeholder-sized stub
+    expect(bytes.subarray(4, 8).toString("ascii")).toBe("ftyp"); // MP4 box signature
 
-      // THE LEDGER (D-20): reserve −N, commit −N, refund +N ⇒ nets EXACTLY −N.
-      // (The /v1/credits/ledger wire DTO drops renderId — the documented M6-K
-      // finding — so the render-scoped proof reads the repos directly.)
-      const entries = await server.deps.repos.ledger.list(ws.id, { renderId: job.id });
-      const byKind = new Map<string, number[]>();
-      for (const entry of entries.items) {
-        byKind.set(entry.kind, [...(byKind.get(entry.kind) ?? []), entry.amount]);
-      }
-      expect(byKind.get("reserve")).toEqual([-expectedUc]);
-      expect(byKind.get("commit")).toEqual([-expectedUc]);
-      expect(byKind.get("refund")).toEqual([expectedUc]); // the FULL hold released (D-20)
-      const net = entries.items.reduce((sum, entry) => sum + entry.amount, 0);
-      expect(net).toBe(-expectedUc); // charged exactly the completed render's cost
-      expect(await server.deps.repos.ledger.balance(ws.id)).toBe(10 * MICRO - expectedUc);
-      // The hold is fully consumed: nothing outstanding any more.
-      const after = await call<{ reserved: number }>(ws, "/v1/credits", { method: "GET" });
-      expect(after.data?.reserved).toBe(0);
+    // THE LEDGER (D-20): reserve −N, commit −N, refund +N ⇒ nets EXACTLY −N.
+    // (The /v1/credits/ledger wire DTO drops renderId — the documented M6-K
+    // finding — so the render-scoped proof reads the repos directly.)
+    const entries = await server.deps.repos.ledger.list(ws.id, { renderId: job.id });
+    const byKind = new Map<string, number[]>();
+    for (const entry of entries.items) {
+      byKind.set(entry.kind, [...(byKind.get(entry.kind) ?? []), entry.amount]);
+    }
+    expect(byKind.get("reserve")).toEqual([-expectedUc]);
+    expect(byKind.get("commit")).toEqual([-expectedUc]);
+    expect(byKind.get("refund")).toEqual([expectedUc]); // the FULL hold released (D-20)
+    const net = entries.items.reduce((sum, entry) => sum + entry.amount, 0);
+    expect(net).toBe(-expectedUc); // charged exactly the completed render's cost
+    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(10 * MICRO - expectedUc);
+    // The hold is fully consumed: nothing outstanding any more.
+    const after = await call<{ reserved: number }>(ws, "/v1/credits", { method: "GET" });
+    expect(after.data?.reserved).toBe(0);
 
-      // No duplicate outputs on retry (API-visible half): re-queue with the
-      // SAME Idempotency-Key replays the stored result — the SAME row.
-      const replay = await queue(ws, projectId, "Main", "mp4", key);
-      expect(replay.status).toBe(201); // §7.2 replay returns the stored result
-      expect(replay.data?.id).toBe(job.id);
-      const history = await server.deps.repos.renders.list(ws.id, { projectId });
-      expect(history.items).toHaveLength(1);
-      expect(history.items.at(0)?.id).toBe(job.id);
-    },
-    45_000,
-  );
+    // No duplicate outputs on retry (API-visible half): re-queue with the
+    // SAME Idempotency-Key replays the stored result — the SAME row.
+    const replay = await queue(ws, projectId, "Main", "mp4", key);
+    expect(replay.status).toBe(201); // §7.2 replay returns the stored result
+    expect(replay.data?.id).toBe(job.id);
+    const history = await server.deps.repos.renders.list(ws.id, { projectId });
+    expect(history.items).toHaveLength(1);
+    expect(history.items.at(0)?.id).toBe(job.id);
+  }, 45_000);
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -956,95 +996,91 @@ d("journey 1: queue → real worker → real CLI → signed download → exact l
 // ───────────────────────────────────────────────────────────────────────────
 
 d("journey 2: cancel + full refund", () => {
-  it(
-    "cancels a real 1080p render mid-flight and refunds the hold exactly",
-    async () => {
-      const { ws, projectId } = await renderableWorkspace(LONG, 424242);
-      await grant(ws, 5);
+  it("cancels a real 1080p render mid-flight and refunds the hold exactly", async () => {
+    const { ws, projectId } = await renderableWorkspace(LONG, 424242);
+    await grant(ws, 5);
 
-      // 10 s @ 1080p good mp4: 100_000 µc/s × 10 s × 1 = 1_000_000 µc.
-      const expectedUc = estimateRenderCostUc({
-        format: "mp4",
-        outputSeconds: 10,
-        longEdgePx: 1920,
-        quality: "good",
+    // 10 s @ 1080p good mp4: 100_000 µc/s × 10 s × 1 = 1_000_000 µc.
+    const expectedUc = estimateRenderCostUc({
+      format: "mp4",
+      outputSeconds: 10,
+      longEdgePx: 1920,
+      quality: "good",
+    });
+    expect(expectedUc).toBe(1_000_000);
+
+    const queued = await queue(ws, projectId, "Long", "mp4", unique("queue"));
+    expect(queued.status).toBe(201);
+    const job = queued.data;
+    if (job === undefined) throw new Error("queue did not return a job");
+    expect(job.credits).toBe(1); // whole-credit display of the µc hold
+    const balanceAfterReserve = await server.deps.repos.ledger.balance(ws.id);
+    expect(balanceAfterReserve).toBe(5 * MICRO - expectedUc);
+
+    // Start the REAL worker loop (100 ms polls): it claims the row and
+    // spawns the real CLI — a ~33 s render on this box, so the cancel
+    // below lands mid-flight with generous margin.
+    const handle = await worker.startWorker(workerDeps);
+    try {
+      await waitFor(
+        "the render to be claimed (running)",
+        async () => (await getJob(ws, job.id)).status === "running",
+        15_000,
+      );
+      const running = await getJob(ws, job.id);
+      // The claim stamped started_at — visible on the wire while running.
+      expectIsoTimestamp(running.startedAt, "startedAt");
+      // The CLI's progress reaches the wire while the render is live.
+      await waitFor(
+        "worker frames to reach the wire",
+        async () => (await getJob(ws, job.id)).progress.framesTotal === 300,
+        15_000,
+      );
+
+      // Cancel (Idempotency-Key): the cooperative flag, mid-render.
+      const cancel = await call<RenderJob>(ws, `/v1/renders/${job.id}/cancel`, {
+        method: "POST",
+        body: { reason: "journey cancel" },
+        key: unique("cancel"),
       });
-      expect(expectedUc).toBe(1_000_000);
+      expect(cancel.status).toBe(200);
+      expect(cancel.data?.cancelRequested).toBe(true);
 
-      const queued = await queue(ws, projectId, "Long", "mp4", unique("queue"));
-      expect(queued.status).toBe(201);
-      const job = queued.data;
-      if (job === undefined) throw new Error("queue did not return a job");
-      expect(job.credits).toBe(1); // whole-credit display of the µc hold
-      const balanceAfterReserve = await server.deps.repos.ledger.balance(ws.id);
-      expect(balanceAfterReserve).toBe(5 * MICRO - expectedUc);
+      // The worker observes the flag (≤ 2 s poll), kills the CLI process
+      // group, terminal-transitions the row and refunds the FULL hold.
+      await waitFor(
+        "the render to reach cancelled",
+        async () => (await getJob(ws, job.id)).status === "cancelled",
+        30_000,
+      );
+      const cancelled = await getJob(ws, job.id);
+      expect(cancelled.status).toBe("cancelled");
+      expect(cancelled.resultUrl).toBeNull();
+      expect(cancelled.errorCode).toBeNull();
+      expectIsoTimestamp(cancelled.completedAt, "completedAt");
+    } finally {
+      await handle.stop(); // stop claiming; nothing in flight any more
+    }
 
-      // Start the REAL worker loop (100 ms polls): it claims the row and
-      // spawns the real CLI — a ~33 s render on this box, so the cancel
-      // below lands mid-flight with generous margin.
-      const handle = await worker.startWorker(workerDeps);
-      try {
-        await waitFor(
-          "the render to be claimed (running)",
-          async () => (await getJob(ws, job.id)).status === "running",
-          15_000,
-        );
-        const running = await getJob(ws, job.id);
-        // The claim stamped started_at — visible on the wire while running.
-        expectIsoTimestamp(running.startedAt, "startedAt");
-        // The CLI's progress reaches the wire while the render is live.
-        await waitFor(
-          "worker frames to reach the wire",
-          async () => (await getJob(ws, job.id)).progress.framesTotal === 300,
-          15_000,
-        );
+    // No output was ever written: the precreated key has no object.
+    const row = await server.deps.repos.renders.get(ws.id, job.id);
+    expect(row.objectKey).not.toBeNull();
+    expect(await server.deps.storage.read(row.objectKey ?? "none")).toBeNull();
 
-        // Cancel (Idempotency-Key): the cooperative flag, mid-render.
-        const cancel = await call<RenderJob>(ws, `/v1/renders/${job.id}/cancel`, {
-          method: "POST",
-          body: { reason: "journey cancel" },
-          key: unique("cancel"),
-        });
-        expect(cancel.status).toBe(200);
-        expect(cancel.data?.cancelRequested).toBe(true);
-
-        // The worker observes the flag (≤ 2 s poll), kills the CLI process
-        // group, terminal-transitions the row and refunds the FULL hold.
-        await waitFor(
-          "the render to reach cancelled",
-          async () => (await getJob(ws, job.id)).status === "cancelled",
-          30_000,
-        );
-        const cancelled = await getJob(ws, job.id);
-        expect(cancelled.status).toBe("cancelled");
-        expect(cancelled.resultUrl).toBeNull();
-        expect(cancelled.errorCode).toBeNull();
-        expectIsoTimestamp(cancelled.completedAt, "completedAt");
-      } finally {
-        await handle.stop(); // stop claiming; nothing in flight any more
-      }
-
-      // No output was ever written: the precreated key has no object.
-      const row = await server.deps.repos.renders.get(ws.id, job.id);
-      expect(row.objectKey).not.toBeNull();
-      expect(await server.deps.storage.read(row.objectKey ?? "none")).toBeNull();
-
-      // FULL refund (D-20 failure/cancel path): reserve −N, refund +N, net 0.
-      const entries = await server.deps.repos.ledger.list(ws.id, { renderId: job.id });
-      const byKind = new Map<string, number[]>();
-      for (const entry of entries.items) {
-        byKind.set(entry.kind, [...(byKind.get(entry.kind) ?? []), entry.amount]);
-      }
-      expect(byKind.get("reserve")).toEqual([-expectedUc]);
-      expect(byKind.get("refund")).toEqual([expectedUc]);
-      expect(byKind.get("commit")).toBeUndefined(); // charged NOTHING
-      const net = entries.items.reduce((sum, entry) => sum + entry.amount, 0);
-      expect(net).toBe(0);
-      // The balance is back to the pre-reserve amount, exactly (integer µc).
-      expect(await server.deps.repos.ledger.balance(ws.id)).toBe(5 * MICRO);
-    },
-    90_000,
-  );
+    // FULL refund (D-20 failure/cancel path): reserve −N, refund +N, net 0.
+    const entries = await server.deps.repos.ledger.list(ws.id, { renderId: job.id });
+    const byKind = new Map<string, number[]>();
+    for (const entry of entries.items) {
+      byKind.set(entry.kind, [...(byKind.get(entry.kind) ?? []), entry.amount]);
+    }
+    expect(byKind.get("reserve")).toEqual([-expectedUc]);
+    expect(byKind.get("refund")).toEqual([expectedUc]);
+    expect(byKind.get("commit")).toBeUndefined(); // charged NOTHING
+    const net = entries.items.reduce((sum, entry) => sum + entry.amount, 0);
+    expect(net).toBe(0);
+    // The balance is back to the pre-reserve amount, exactly (integer µc).
+    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(5 * MICRO);
+  }, 90_000);
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1101,7 +1137,10 @@ d("journey 3: entitlement gates fire typed, before any ledger write", () => {
     await server.deps.repos.renders.markRunning(ws.id, seeded.id);
     await server.deps.repos.renders.heartbeat(ws.id, seeded.id, { framesTotal: 300 * 30 });
     await server.deps.repos.renders.markCompleted(ws.id, seeded.id, { objectKey: "seed/out.mp4" });
-    expect(await server.deps.repos.renders.renderSecondsUsed(ws.id, new Date())).toBe(300);
+    // The same monthly window the queue route uses (UTC calendar month).
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    expect(await server.deps.repos.renders.renderSecondsUsed(ws.id, monthStart)).toBe(300);
 
     const result = await queue(ws, projectId, "Main", "mp4", unique("queue"));
     expect(result.status).toBe(429);
@@ -1136,70 +1175,66 @@ d("journey 3: entitlement gates fire typed, before any ledger write", () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 d("journey 4: png-seq queues, renders and downloads as a ZIP with one entry per frame", () => {
-  it(
-    "produces a real ZIP whose entry count equals the rendered frame count",
-    async () => {
-      const { ws, projectId } = await renderableWorkspace(SMALL, 666666);
-      await grant(ws, 10);
+  it("produces a real ZIP whose entry count equals the rendered frame count", async () => {
+    const { ws, projectId } = await renderableWorkspace(SMALL, 666666);
+    await grant(ws, 10);
 
-      // png-seq costs 50_000 µc/s × 2 s × ½ = 50_000 → the 250_000 minimum.
-      const expectedUc = estimateRenderCostUc({
-        format: "png-seq",
-        outputSeconds: 2,
-        longEdgePx: 640,
-        quality: "good",
-      });
-      expect(expectedUc).toBe(250_000);
+    // png-seq costs 50_000 µc/s × 2 s × ½ = 50_000 → the 250_000 minimum.
+    const expectedUc = estimateRenderCostUc({
+      format: "png-seq",
+      outputSeconds: 2,
+      longEdgePx: 640,
+      quality: "good",
+    });
+    expect(expectedUc).toBe(250_000);
 
-      const queued = await queue(ws, projectId, "Main", "png-seq", unique("queue"));
-      expect(queued.status).toBe(201);
-      const job = queued.data;
-      if (job === undefined) throw new Error("queue did not return a job");
-      expect(job.format).toBe("png-seq");
-      // The output key rule (spike §5): sequences download as output.ZIP.
-      const row = await server.deps.repos.renders.get(ws.id, job.id);
-      expect(row.objectKey).toBe(
-        `workspaces/${ws.id}/projects/${projectId}/renders/${job.id}/output.zip`,
-      );
+    const queued = await queue(ws, projectId, "Main", "png-seq", unique("queue"));
+    expect(queued.status).toBe(201);
+    const job = queued.data;
+    if (job === undefined) throw new Error("queue did not return a job");
+    expect(job.format).toBe("png-seq");
+    // The output key rule (spike §5): sequences download as output.ZIP.
+    const row = await server.deps.repos.renders.get(ws.id, job.id);
+    expect(row.objectKey).toBe(
+      `workspaces/${ws.id}/projects/${projectId}/renders/${job.id}/output.zip`,
+    );
 
-      const tick = await worker.runOnce(workerDeps);
-      expect(tick.claimed).toBe(1);
-      const outcome = tick.outcomes.at(0);
-      expect(outcome?.outcome).toBe("completed");
+    const tick = await worker.runOnce(workerDeps);
+    expect(tick.claimed).toBe(1);
+    const outcome = tick.outcomes.at(0);
+    expect(outcome?.outcome).toBe("completed");
 
-      let completed: RenderJob | undefined;
-      await waitFor(
-        "the png-seq render to complete on the API",
-        async () => {
-          completed = await getJob(ws, job.id);
-          return completed.status === "completed";
-        },
-        30_000,
-      );
-      const done = completed ?? (await getJob(ws, job.id));
-      expect(done.progress.framesTotal).toBe(60); // 2 s × 30 fps
-      const frames = done.progress.framesTotal;
-      expect(frames).toBeGreaterThanOrEqual(2);
+    let completed: RenderJob | undefined;
+    await waitFor(
+      "the png-seq render to complete on the API",
+      async () => {
+        completed = await getJob(ws, job.id);
+        return completed.status === "completed";
+      },
+      30_000,
+    );
+    const done = completed ?? (await getJob(ws, job.id));
+    expect(done.progress.framesTotal).toBe(60); // 2 s × 30 fps
+    const frames = done.progress.framesTotal;
+    expect(frames).toBeGreaterThanOrEqual(2);
 
-      const bytes = await downloadResult(ws, done);
-      expect(bytes.length).toBe(done.sizeBytes);
+    const bytes = await downloadResult(ws, done);
+    expect(bytes.length).toBe(done.sizeBytes);
 
-      // ZIP magic: local file header first, a real end-of-central-directory.
-      expect(bytes.subarray(0, 4).toString("ascii")).toBe("PK\u0003\u0004");
-      const EOCD_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
-      let eocdAt = -1;
-      for (let at = bytes.length - 22; at >= Math.max(0, bytes.length - 66_000); at -= 1) {
-        if (bytes.subarray(at, at + 4).equals(EOCD_SIGNATURE)) {
-          eocdAt = at;
-          break;
-        }
+    // ZIP magic: local file header first, a real end-of-central-directory.
+    expect(bytes.subarray(0, 4).toString("ascii")).toBe("PK\u0003\u0004");
+    const EOCD_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+    let eocdAt = -1;
+    for (let at = bytes.length - 22; at >= Math.max(0, bytes.length - 66_000); at -= 1) {
+      if (bytes.subarray(at, at + 4).equals(EOCD_SIGNATURE)) {
+        eocdAt = at;
+        break;
       }
-      expect(eocdAt).toBeGreaterThan(0);
-      const entryCount = bytes.readUInt16LE(eocdAt + 8);
-      expect(entryCount).toBe(frames); // one archive member per rendered frame
-    },
-    45_000,
-  );
+    }
+    expect(eocdAt).toBeGreaterThan(0);
+    const entryCount = bytes.readUInt16LE(eocdAt + 8);
+    expect(entryCount).toBe(frames); // one archive member per rendered frame
+  }, 45_000);
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1207,102 +1242,96 @@ d("journey 4: png-seq queues, renders and downloads as a ZIP with one entry per 
 // ───────────────────────────────────────────────────────────────────────────
 
 d("journey 5: render history, cursor pages and the v2 RenderJob shape", () => {
-  it(
-    "lists completed renders with the contracts shape, field by field",
-    async () => {
-      const { ws, projectId, versionId } = await renderableWorkspace(SMALL, 777777);
-      await grant(ws, 10);
+  it("lists completed renders with the contracts shape, field by field", async () => {
+    const { ws, projectId, versionId } = await renderableWorkspace(SMALL, 777777);
+    await grant(ws, 10);
 
-      // Two completed renders in this workspace (sequential, so the trial's
-      // maxConcurrentRenders=1 gate stays satisfied at every instant).
-      const ids: string[] = [];
-      for (let index = 0; index < 2; index += 1) {
-        const queued = await queue(ws, projectId, "Main", "mp4", unique("queue"));
-        expect(queued.status).toBe(201);
-        const id = queued.data?.id;
-        if (id === undefined) throw new Error("queue did not return a job");
-        const tick = await worker.runOnce(workerDeps);
-        expect(tick.claimed).toBe(1);
-        await waitFor(
-          `render ${index + 1} to complete`,
-          async () => (await getJob(ws, id)).status === "completed",
-          30_000,
-        );
-        ids.push(id);
-      }
+    // Two completed renders in this workspace (sequential, so the trial's
+    // maxConcurrentRenders=1 gate stays satisfied at every instant).
+    const ids: string[] = [];
+    for (let index = 0; index < 2; index += 1) {
+      const queued = await queue(ws, projectId, "Main", "mp4", unique("queue"));
+      expect(queued.status).toBe(201);
+      const id = queued.data?.id;
+      if (id === undefined) throw new Error("queue did not return a job");
+      const tick = await worker.runOnce(workerDeps);
+      expect(tick.claimed).toBe(1);
+      await waitFor(
+        `render ${index + 1} to complete`,
+        async () => (await getJob(ws, id)).status === "completed",
+        30_000,
+      );
+      ids.push(id);
+    }
 
-      // History: workspace scope, newest first, both filters.
-      const list = await call<{ items: RenderJob[]; nextCursor: string | null }>(
-        ws,
-        `/v1/renders?projectId=${projectId}`,
-        { method: "GET" },
-      );
-      expect(list.status).toBe(200);
-      expect(list.data?.items).toHaveLength(2);
-      expect(list.data?.items.map((item) => item.id)).toEqual([ids[1], ids[0]]);
-      const filtered = await call<{ items: RenderJob[] }>(
-        ws,
-        `/v1/renders?projectId=${projectId}&status=completed`,
-        { method: "GET" },
-      );
-      expect(filtered.data?.items.map((item) => item.id)).toEqual([ids[1], ids[0]]);
+    // History: workspace scope, newest first, both filters.
+    const list = await call<{ items: RenderJob[]; nextCursor: string | null }>(
+      ws,
+      `/v1/renders?projectId=${projectId}`,
+      { method: "GET" },
+    );
+    expect(list.status).toBe(200);
+    expect(list.data?.items).toHaveLength(2);
+    expect(list.data?.items.map((item) => item.id)).toEqual([ids[1], ids[0]]);
+    const filtered = await call<{ items: RenderJob[] }>(
+      ws,
+      `/v1/renders?projectId=${projectId}&status=completed`,
+      { method: "GET" },
+    );
+    expect(filtered.data?.items.map((item) => item.id)).toEqual([ids[1], ids[0]]);
 
-      // Cursor pagination (house Page convention).
-      const pageOne = await call<{ items: RenderJob[]; nextCursor: string | null }>(
-        ws,
-        `/v1/renders?projectId=${projectId}&limit=1`,
-        { method: "GET" },
-      );
-      expect(pageOne.data?.items).toHaveLength(1);
-      expect(pageOne.data?.items.at(0)?.id).toBe(ids[1]);
-      expect(pageOne.data?.nextCursor).not.toBeNull();
-      const pageTwo = await call<{ items: RenderJob[]; nextCursor: string | null }>(
-        ws,
-        `/v1/renders?projectId=${projectId}&limit=1&cursor=${pageOne.data?.nextCursor ?? ""}`,
-        { method: "GET" },
-      );
-      expect(pageTwo.data?.items.at(0)?.id).toBe(ids[0]);
-      expect(pageTwo.data?.nextCursor).toBeNull();
+    // Cursor pagination (house Page convention).
+    const pageOne = await call<{ items: RenderJob[]; nextCursor: string | null }>(
+      ws,
+      `/v1/renders?projectId=${projectId}&limit=1`,
+      { method: "GET" },
+    );
+    expect(pageOne.data?.items).toHaveLength(1);
+    expect(pageOne.data?.items.at(0)?.id).toBe(ids[1]);
+    expect(pageOne.data?.nextCursor).not.toBeNull();
+    const pageTwo = await call<{ items: RenderJob[]; nextCursor: string | null }>(
+      ws,
+      `/v1/renders?projectId=${projectId}&limit=1&cursor=${pageOne.data?.nextCursor ?? ""}`,
+      { method: "GET" },
+    );
+    expect(pageTwo.data?.items.at(0)?.id).toBe(ids[0]);
+    expect(pageTwo.data?.nextCursor).toBeNull();
 
-      // THE SHAPE — the full v2 RenderJob, field by field, against the
-      // contracts type (compile-time `RenderJob` + runtime assertions).
-      const job: RenderJob = list.data?.items.at(0) ?? ({} as RenderJob);
-      expect(job.id).toMatch(/^rdr_/);
-      expect(job.projectId).toBe(projectId);
-      expect(job.compId).toBe("Main");
-      expect(job.versionId).toBe(versionId);
-      expect(job.format).toBe("mp4");
-      expect(job.settings).toMatchObject({ frameRate: 30 });
-      // D-11: the DB status vocabulary IS the wire vocabulary.
-      expect(job.status).toBe("completed");
-      expect(RENDER_STATUSES).toContain(job.status);
-      expect(RENDER_STATUSES).not.toContain("succeeded");
-      expect(RENDER_STATUS_SCHEMA.safeParse(job.status).success).toBe(true);
-      expect(job.cancelRequested).toBe(false);
-      expect(job.progress).toEqual({
-        framesDone: expect.any(Number),
-        framesTotal: 60,
-        percent: expect.any(Number),
-      });
-      expect(job.credits).toBe(0.25); // D-12 whole-credit display number
-      expect(typeof job.resultUrl).toBe("string");
-      expect(job.errorCode).toBeNull();
-      expect(job.error).toBeNull();
-      expect(job.sizeBytes).toBeGreaterThan(10_000);
-      expect(job.createdBy).toBe(ws.userId);
-      const createdAt = expectIsoTimestamp(job.createdAt, "createdAt");
-      const startedAt = expectIsoTimestamp(job.startedAt, "startedAt");
-      const completedAt = expectIsoTimestamp(job.completedAt, "completedAt");
-      // Retention by plan: completed outputs carry a future expiresAt
-      // (trial = 3 days) — the retention sweep's input, visible on the wire.
-      const expiresAt = expectIsoTimestamp(job.expiresAt, "expiresAt");
-      expect(Date.parse(expiresAt)).toBeGreaterThan(Date.parse(completedAt));
-      expect(Date.parse(expiresAt) - Date.parse(completedAt)).toBeGreaterThanOrEqual(
-        3 * 86_400_000,
-      );
-      expect(Date.parse(startedAt)).toBeGreaterThanOrEqual(Date.parse(createdAt));
-      expect(Date.parse(completedAt)).toBeGreaterThanOrEqual(Date.parse(startedAt));
-    },
-    60_000,
-  );
+    // THE SHAPE — the full v2 RenderJob, field by field, against the
+    // contracts type (compile-time `RenderJob` + runtime assertions).
+    const job: RenderJob = list.data?.items.at(0) ?? ({} as RenderJob);
+    expect(job.id).toMatch(/^rdr_/);
+    expect(job.projectId).toBe(projectId);
+    expect(job.compId).toBe("Main");
+    expect(job.versionId).toBe(versionId);
+    expect(job.format).toBe("mp4");
+    expect(job.settings).toMatchObject({ frameRate: 30 });
+    // D-11: the DB status vocabulary IS the wire vocabulary.
+    expect(job.status).toBe("completed");
+    expect(RENDER_STATUSES).toContain(job.status);
+    expect(RENDER_STATUSES).not.toContain("succeeded");
+    expect(RENDER_STATUS_SCHEMA.safeParse(job.status).success).toBe(true);
+    expect(job.cancelRequested).toBe(false);
+    expect(job.progress).toEqual({
+      framesDone: expect.any(Number),
+      framesTotal: 60,
+      percent: expect.any(Number),
+    });
+    expect(job.credits).toBe(0.25); // D-12 whole-credit display number
+    expect(typeof job.resultUrl).toBe("string");
+    expect(job.errorCode).toBeNull();
+    expect(job.error).toBeNull();
+    expect(job.sizeBytes).toBeGreaterThan(10_000);
+    expect(job.createdBy).toBe(ws.userId);
+    const createdAt = expectIsoTimestamp(job.createdAt, "createdAt");
+    const startedAt = expectIsoTimestamp(job.startedAt, "startedAt");
+    const completedAt = expectIsoTimestamp(job.completedAt, "completedAt");
+    // Retention by plan: completed outputs carry a future expiresAt
+    // (trial = 3 days) — the retention sweep's input, visible on the wire.
+    const expiresAt = expectIsoTimestamp(job.expiresAt, "expiresAt");
+    expect(Date.parse(expiresAt)).toBeGreaterThan(Date.parse(completedAt));
+    expect(Date.parse(expiresAt) - Date.parse(completedAt)).toBeGreaterThanOrEqual(3 * 86_400_000);
+    expect(Date.parse(startedAt)).toBeGreaterThanOrEqual(Date.parse(createdAt));
+    expect(Date.parse(completedAt)).toBeGreaterThanOrEqual(Date.parse(startedAt));
+  }, 60_000);
 });

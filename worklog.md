@@ -1423,3 +1423,20 @@ Stage Summary:
 - Files: services/worker/tests/integration/harness.ts (NEW), tests/integration/render-pipeline.test.ts (NEW, 7 tests), tests/fixtures/project.ecproj (NEW committed fixture), tests/fixtures/photo.png (regenerated noise 640×360), vitest.config.ts (fileParallelism:false), src/hydrate.ts (typed-throw workdir leak fix, +16 lines).
 - Test inventory → exit criteria: golden = "credits charged only for completed renders" + queue→claim→render→store journey + D-20 integer net; png-seq = the zip artifact rule (spike §5); cancel = cooperative cancel + full refund; timeout = hard-kill → typed RENDER_TIMEOUT + refund; crash = "job survives worker restart, no duplicate outputs, no double charge"; missing-asset = spike §4 pre-validation (never trust CLI exit 0); malformed = typed project failure.
 - Findings (report-only): (1) settle/refund idempotency sub-keys are %3A-escaped by db deriveIdempotencyKey — asserted escaped forms; (2) the pipeline's first cancel poll fires immediately (lastCancelPoll starts at 0) so cancel lands in ~300ms, not ~2s — margin better than the dispatch assumed; (3) peers' in-flight files (gateway render-e2e.test.ts + package.json @studio/worker devDep + lockfile) swept by the add -A sync per the documented fleet pattern — their waves own them.
+---
+Task ID: M8-L
+Agent: main-orchestrator (orphan-recovery; the dispatched agent died after finishing the file but before gates/sync — recovered, gated, landed)
+Task: Journey-level render E2E — services/gateway/tests/render-e2e.test.ts: the M8 exit criteria through the REAL gateway + REAL in-process worker + REAL effectcraft-cli binary.
+
+Work Log:
+- 5 journeys / 9 tests, ~1337 lines, one server boot, real PG, real auth fixtures, the worker driven in-process via real WorkerDeps (repos + the gateway's own storage under the same env/root), the real CLI at editor/target/release/effectcraft-cli.
+- Journey 1 (the core exit criterion): queue → version pinned server-side → worker tick → completed → signed download = REAL mp4 (ftyp, >10KB) → ledger nets EXACTLY the single-formula cost (D-20 integer equality); idempotent re-queue returns the same row.
+- Journey 2: mid-flight cancel of a real 1080p render (1080p gives cancel margin) → cancelled + full refund, balance restored exactly.
+- Journey 3: entitlement gates journey-proven — 415 RENDER_UNSUPPORTED_FORMAT (prores, D-2), 429 RENDER_CONCURRENCY_LIMIT, 429 RENDER_QUOTA_EXCEEDED, the INSUFFICIENT_CREDITS 402 pattern, and estimate-as-pure-read (no ledger row).
+- Journey 4: png-seq → ZIP download (PK signature + EOCD + one entry per rendered frame).
+- Journey 5: history list + cursor pages + the full v2 RenderJob shape field-by-field vs contracts (D-11 vocabulary pinned: "succeeded" rejected at the wire).
+- Gates: typecheck 0 errors; full gateway suite 735/735 (726 baseline + 9); render-e2e solo 9/9 in 9.8s; biome clean.
+
+Stage Summary:
+- M8's user-facing exit criteria are now JOURNEY-PROVEN: a real user queues a render from the API, the real worker renders it with the real engine, and the downloaded file plays; credits are charged exactly once, only on completion; the wire speaks the DB status vocabulary; retention is visible on the wire.
+- The @studio/worker devDep line + lockfile entry for gateway tests landed with this wave.
