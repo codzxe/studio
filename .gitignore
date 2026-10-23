@@ -88,3 +88,12 @@ packages/db/src/**/*.d.ts
 # only in 0600 env files). Untracked by W1-01; history scrub + rotation owed to
 # the platform owner.
 /.github-token
+
+# repo purge round 2 (W3-B, user order 2026-10-23): these trees stay on disk
+# (skills/ is the LIVE agent harness) but are never repo content. upload/ and
+# download/ are reproducible session paste/deliverable dirs; bun.lock is bun
+# contamination (repo is pnpm-only — pnpm-lock.yaml + pnpm-workspace.yaml).
+/skills/
+/upload/
+/download/
+/bun.lock

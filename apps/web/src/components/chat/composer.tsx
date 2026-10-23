@@ -25,6 +25,13 @@ import {
  * disabled states (§12) and quick-action chips (§4.4) when the parent passes
  * them (the parent decides the thread is empty).
  *
+ * §9 envelope (UI_DESIGN_SYSTEM §9 “composer 96–160px”): the input box
+ * carries `--chat-composer-min-h`/`--chat-composer-max-h` (tokens.css:140-141)
+ * via its `min-h`/`max-h` classes, and the auto-grow cap is CLAMPED inside
+ * that envelope (autoGrowCapPx below — unit-tested). jsdom has no layout, so
+ * the computed cap no-ops there and the token classes alone carry the
+ * envelope (the documented no-op path; tests assert the classes).
+ *
  * Keyboard law (§9 + M4-SEAMS pins):
  * - Enter sends (also while `streaming` — steer messages, §3.4: the composer
  *   stays enabled and the run queue appends; M4-J maps that in the controller).
@@ -145,6 +152,26 @@ function rowsForValue(value: string): number {
   return Math.min(MAX_ROWS, Math.max(1, value.split("\n").length));
 }
 
+/**
+ * §9 envelope clamp (exported for the unit test): the §3.4 auto-grow cap
+ * (MAX_ROWS lines + vertical padding, in px) may never exceed the resolved
+ * `--chat-composer-max-h` token. Returns `null` when line-height is
+ * unavailable — the jsdom no-op path (no computed layout), where the token
+ * classes alone enforce the envelope.
+ */
+export function autoGrowCapPx(
+  lineHeightPx: number,
+  padYPx: number,
+  envelopeMaxPx: number,
+): number | null {
+  if (!Number.isFinite(lineHeightPx) || lineHeightPx <= 0) return null;
+  const rowsCap = Math.ceil(
+    MAX_ROWS * lineHeightPx + (Number.isFinite(padYPx) ? padYPx : 0),
+  );
+  if (!Number.isFinite(envelopeMaxPx) || envelopeMaxPx <= 0) return rowsCap;
+  return Math.min(rowsCap, envelopeMaxPx);
+}
+
 export function ChatComposer({
   streaming,
   disabled = null,
@@ -181,18 +208,21 @@ export function ChatComposer({
     [autoGrowRef],
   );
 
-  // Cap the auto-grow at MAX_ROWS lines, then scroll internally (§3.4). Runs
-  // once per mount in real browsers; jsdom reports no computed line-height,
-  // so it no-ops there and the `rows` attribute stays the deterministic base.
+  // Cap the auto-grow at MAX_ROWS lines, then scroll internally (§3.4) —
+  // CLAMPED into the §9 96–160px envelope (autoGrowCapPx reads the resolved
+  // --chat-composer-max-h from the max-h token class below). Runs once per
+  // mount in real browsers; jsdom reports no computed line-height, so it
+  // no-ops there and the `rows` attribute stays the deterministic base.
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     const computed = window.getComputedStyle(el);
-    const lineHeight = Number.parseFloat(computed.lineHeight);
-    const padY = Number.parseFloat(computed.paddingTop) + Number.parseFloat(computed.paddingBottom);
-    if (Number.isFinite(lineHeight) && lineHeight > 0) {
-      el.style.maxHeight = `${Math.ceil(MAX_ROWS * lineHeight + (Number.isFinite(padY) ? padY : 0))}px`;
-    }
+    const cap = autoGrowCapPx(
+      Number.parseFloat(computed.lineHeight),
+      Number.parseFloat(computed.paddingTop) + Number.parseFloat(computed.paddingBottom),
+      Number.parseFloat(computed.maxHeight),
+    );
+    if (cap !== null) el.style.maxHeight = `${cap}px`;
   }, []);
 
   const trimmed = value.trim();
@@ -302,7 +332,9 @@ export function ChatComposer({
           disabled={isLocked}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={handleKeyDown}
-          className="overflow-y-auto pr-11"
+          // §9 envelope (96–160px): the token classes carry the min/max; the
+          // useAutoGrow hook sizes inside them (autoGrowCapPx clamps the cap).
+          className="min-h-[var(--chat-composer-min-h)] max-h-[var(--chat-composer-max-h)] overflow-y-auto pr-11"
         />
         {streaming ? (
           // Stop outranks even the credits lock while a run is live (§8.3:

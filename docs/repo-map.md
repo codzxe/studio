@@ -12,6 +12,12 @@ described the archived PhotoCraft layout — see git history).
 > legacy tree — retained in git history only, `git log --oneline -- archive/`),
 > `agent-ctx/` (stale subagent handoff files) and `tool-results/` (session scratch).
 > All three are gitignored; do not recreate or commit them.
+>
+> **Untracked 2026-10-23 (user order, W3-B purge round 2):** `skills/` (the live
+> agent harness — 1070 files, stays on disk), `upload/` + `download/` (session
+> paste/deliverable dirs), `bun.lock` (bun contamination; repo is pnpm-only) and
+> `services/gateway/scratch-w1-07.ts` (self-declared scratch swept into a sync).
+> All gitignored; do not re-commit them.
 
 ### `apps/` — deployable UI
 
@@ -119,9 +125,10 @@ AGPL/SSPL/BUSL/RSALv2/Elastic).
 
 ### Not mapped (deliberate)
 
-`upload/` and `download/` hold user-provided session files; `skills/` holds
-sandbox tooling — all outside the product tree (see W1-01's worklog entry);
-`node_modules/`, `.local/`, `.turbo/` are build/state dirs.
+`skills/` (the live agent-harness tooling), `upload/` and `download/` (session
+paste/deliverable dirs) are on disk but **untracked + gitignored** since the W3-B
+purge (see also W1-01's worklog entry); `bun.lock` is deleted outright (pnpm-only
+repo). `node_modules/`, `.local/`, `.turbo/` are build/state dirs.
 
 ### Root files
 

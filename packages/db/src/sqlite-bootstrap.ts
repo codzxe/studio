@@ -19,7 +19,11 @@
  * Statement count is pinned by SQLITE_BOOTSTRAP_STATEMENTS + the twin test.
  */
 
-import type Database from "better-sqlite3";
+// Named type import from the `export = Database` merged namespace — the same
+// pattern drizzle-orm's own better-sqlite3 driver uses
+// (`import { type Database } from 'better-sqlite3'`); a DEFAULT type import
+// resolves to the constructor's namespace, not the instance type (TS2709).
+import type { Database } from "better-sqlite3";
 
 /** One statement per entry; parents before children, indexes after their table. */
 const BOOTSTRAP_DDL: readonly string[] = [

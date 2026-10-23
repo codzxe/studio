@@ -87,19 +87,17 @@ export interface ShareTokensRepo {
 }
 
 /** Active filter: not revoked AND (no expiry OR expiry in the future). */
-function activeFilter() {
+function activeFilter(db: StudioDb) {
   return and(
     isNull(shareTokens.revokedAt),
     or(
-          isNull(shareTokens.expiresAt),
-          // Dialect fork: pg now() vs the twin's integer-ms clock (unixepoch ms).
-          gt(
-            shareTokens.expiresAt,
-            getDialect(db) === "sqlite"
-              ? sql`(unixepoch('subsec') * 1000)`
-              : sql`now()`,
-          ),
-        ),
+      isNull(shareTokens.expiresAt),
+      // Dialect fork: pg now() vs the twin's integer-ms clock (unixepoch ms).
+      gt(
+        shareTokens.expiresAt,
+        getDialect(db) === "sqlite" ? sql`(unixepoch('subsec') * 1000)` : sql`now()`,
+      ),
+    ),
   );
 }
 
@@ -181,7 +179,7 @@ export function createShareTokensRepo(db: StudioDb): ShareTokensRepo {
           and(
             eq(shareTokens.projectId, projectId),
             eq(shareTokens.tokenHash, tokenHash),
-            activeFilter(),
+            activeFilter(db),
           ),
         )
         .limit(1);
@@ -193,7 +191,7 @@ export function createShareTokensRepo(db: StudioDb): ShareTokensRepo {
       const [row] = await db
         .select()
         .from(shareTokens)
-        .where(and(eq(shareTokens.tokenHash, tokenHash), activeFilter()))
+        .where(and(eq(shareTokens.tokenHash, tokenHash), activeFilter(db)))
         .limit(1);
       return row ?? null;
     },
@@ -210,7 +208,7 @@ export function createShareTokensRepo(db: StudioDb): ShareTokensRepo {
         .from(shareTokens)
         .innerJoin(projects, eq(shareTokens.projectId, projects.id))
         .where(
-          and(eq(shareTokens.tokenHash, tokenHash), activeFilter(), isNull(projects.deletedAt)),
+          and(eq(shareTokens.tokenHash, tokenHash), activeFilter(db), isNull(projects.deletedAt)),
         )
         .limit(1);
       if (!row) return null;
@@ -252,7 +250,7 @@ export function createShareTokensRepo(db: StudioDb): ShareTokensRepo {
           and(
             eq(projects.workspaceId, workspaceId),
             eq(shareTokens.projectId, projectId),
-            activeFilter(),
+            activeFilter(db),
           ),
         )
         .orderBy(desc(shareTokens.createdAt));

@@ -484,7 +484,8 @@ export function ChatMessageView({
         </p>
       )}
       {isUser ? (
-        <div className="max-w-[72ch] rounded-[var(--chat-message-radius)] border border-subtle bg-elevated px-3 py-2">
+        // §9 letter-spec: surface + radius only — no border hairline.
+        <div className="max-w-[72ch] rounded-[var(--chat-message-radius)] bg-elevated px-3 py-2">
           <Markdown text={message.text} />
         </div>
       ) : (
