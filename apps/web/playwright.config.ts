@@ -73,8 +73,17 @@ const EDGE_PROXY_JS = [
 const BOOT_COMMAND = [
   "trap 'kill 0' EXIT TERM INT;",
   `node -e '${EDGE_PROXY_JS}' &`,
-  "pnpm --filter @studio/gateway dev &",
-  "pnpm --filter @studio/web dev &",
+  // The E2E_*_PORT knobs must reach the PROCESSES, not just the edge's
+  // upstream table: with defaults held by an already-running stack (e.g. the
+  // canonical dev-stack.sh on :8787/:3000), an override that only repointed
+  // the edge would proxy at ports nobody in this process group owns. The
+  // gateway override rides an inline `PORT=` (never an export — `next dev`
+  // reads PORT too), the web override rides `next dev`'s own flag.
+  // `corepack pnpm` (not bare `pnpm`): the spawned /bin/sh PATH on dev
+  // boxes may not carry the pnpm shim — corepack proxies the packageManager
+  // pin (pnpm@9.15.9) everywhere Node ≥16.9 lives, CI included.
+  `PORT=${GATEWAY_PORT} corepack pnpm --filter @studio/gateway dev &`,
+  `corepack pnpm --filter @studio/web exec next dev --port ${WEB_PORT} &`,
   "wait",
 ].join(" ");
 

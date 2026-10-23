@@ -36,7 +36,6 @@ import {
   Button,
   ConfirmDialog,
   EmptyState,
-  ProjectCard,
   SearchInput,
   Select,
   SelectContent,
@@ -62,6 +61,7 @@ import type { ReactElement } from "react";
 import { loadProjectsPage } from "@/app/(app)/w/(shell)/projects/actions";
 import { formatTimeAgo } from "@/components/activity/activity-feed";
 import { BulkActionsBar } from "./bulk-actions-bar";
+import { ProjectTile } from "./project-tile";
 import {
   PROJECTS_PAGE_LIMIT,
   type ProjectsListRow,
@@ -597,13 +597,12 @@ export function ProjectsListView({
             Archived
           </Badge>
         ) : null}
-        <ProjectCard
+        <ProjectTile
           name={row.name}
-          // Honest stand-ins (the list wire carries neither duration nor
-          // comps — the hub manifest owns them; mirrors the slate-thumbnail
-          // precedent): "— · 0 comps" until a comps seam lands.
-          duration="—"
-          comps={0}
+          // No duration/comps metadata renders (M9): the list wire carries
+          // neither field (the hub manifest owns them and doesn't expose them
+          // either) — the shared ProjectTile omits the line instead of
+          // faking "— · 0 comps".
           updated={`Updated ${formatTimeAgo(row.updatedAt, nowIso)}`}
           stagger={index < 8 ? index * 40 : undefined}
           onOpen={() => router.push(openPath(row))}

@@ -11,7 +11,9 @@
  * - the left {@link WorkspaceRail} (240↔64px, persisted collapse);
  * - the sticky {@link TopBar} (switcher / search trigger / credits / account);
  * - the {@link ShellCommandPalette} behind ⌘K (D-5 — shell only; the editor
- *   route never mounts this tree);
+ *   route never mounts this tree); ⌘N mirrors the palette's "New project"
+ *   action (navigate to `/w`, where the creation dialog lives — the same
+ *   one-binding-point rule as ⌘K);
  * - the {@link OfflineBanner} (renders null while online);
  * - the {@link ShellToastHost} (toasts mounted exactly once).
  *
@@ -26,7 +28,7 @@
 
 import { type ApiClient, createApiClient } from "@studio/api-client";
 import type { BillingState } from "@studio/contracts";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import type { WorkspaceMembership } from "@/lib/workspace-membership";
@@ -149,6 +151,7 @@ export interface AppShellProps {
 
 export function AppShell({ payload, createPort, children }: AppShellProps) {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const defaultMembership = useMemo(
@@ -197,16 +200,25 @@ export function AppShell({ payload, createPort, children }: AppShellProps) {
   }, [active, payload.activeWorkspaceId, createPort]);
 
   // ⌘K / Ctrl+K toggles the palette (D-5; shell-only mount — never the editor).
+  // ⌘N / Ctrl+N mirrors the palette's "New project" action: navigate to /w,
+  // where the dashboard's creation dialog lives (W2-B4 — the palette's ⌘N
+  // badge is only honest because this binding exists; same listener pattern
+  // as ⌘K, and the browser falls back to its own new-window shortcut
+  // wherever it reserves ⌘N).
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPaletteOpen((open) => !open);
       }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        router.push("/w");
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [router]);
 
   const openPalette = useCallback(() => setPaletteOpen(true), []);
 

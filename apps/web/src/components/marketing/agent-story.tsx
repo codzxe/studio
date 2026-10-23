@@ -1,12 +1,29 @@
-import { Badge, Button, Card, RiskBadge, StatusDot } from "@studio/ui";
+import { Badge, Card, RiskBadge, StatusDot } from "@studio/ui";
 import { Check } from "lucide-react";
 
 /**
  * The agent three-step story (§8.1 §3): ask → review the plan → applied, with
  * the approval model visible. Presentational only — this is the real content
  * of a chat plan card, built from @studio/ui pieces (Card, RiskBadge, Badge,
- * StatusDot, Button), honest per §13 tone: no "AI magic", no invented metrics.
+ * StatusDot), honest per §13 tone: no "AI magic", no invented metrics.
+ *
+ * M9 (W2-B4): the action rows are inert EXHIBIT LABELS, never buttons — the
+ * landing page must not render an affordance it cannot honour, so
+ * Preview/Apply/Cancel/Undo render as non-interactive chips (the real,
+ * wired actions live in the product's chat plan card).
  */
+
+/**
+ * Inert action chip — illustrates a plan-card action without faking a
+ * clickable affordance (button-sized so the exhibit keeps its rhythm).
+ */
+function ActionChip({ label }: { label: string }) {
+  return (
+    <span className="inline-flex h-7 items-center rounded-sm border border-border bg-elevated px-3 text-body-s text-secondary">
+      {label}
+    </span>
+  );
+}
 
 /** Small numbered step header — editorial, left-aligned. */
 function StepLabel({
@@ -77,16 +94,11 @@ export function PlanCard() {
           Render a preview frame at 00:02:00 for the result.
         </li>
       </ol>
+      {/* Inert exhibit labels — never buttons (M9: no faked affordances). */}
       <div className="flex items-center gap-2">
-        <Button variant="secondary" size="sm">
-          Preview
-        </Button>
-        <Button variant="primary" size="sm">
-          Apply
-        </Button>
-        <Button variant="ghost" size="sm">
-          Cancel
-        </Button>
+        <ActionChip label="Preview" />
+        <ActionChip label="Apply" />
+        <ActionChip label="Cancel" />
       </div>
     </Card>
   );
@@ -104,9 +116,9 @@ export function AppliedCard() {
         The comp updates live. Nothing is destructive — every run is one undo step, and the version
         history records the change.
       </p>
-      <Button variant="link" size="sm">
-        Undo
-      </Button>
+      <div>
+        <ActionChip label="Undo" />
+      </div>
     </Card>
   );
 }

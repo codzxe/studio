@@ -7,7 +7,7 @@
  *   nothing is saved; a saved off-plan default reads as unselected + note);
  * - the auto-apply toggle: D-22 copy VERBATIM ("Apply is always your
  *   explicit click"), OPTIMISTIC flip, server adoption on success, typed
- *   §7.3 revert on failure, and the honest W3-G2 seam degrade;
+ *   §7.3 revert on failure, and the sanitized generic degrade;
  * - the chat layout reset clearing studio.chat.layout.v1 (ECUX §2.5);
  * - the dark-only honest note (§8.9 "Preferences: theme (dark only v1)").
  *
@@ -15,6 +15,7 @@
  */
 
 import { ApiError } from "@studio/api-client";
+import type { SettingsResponse } from "@studio/contracts";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +26,7 @@ import {
   readDefaultModel,
   writeDefaultModel,
 } from "./models-preferences-view";
-import { type SettingsPort, SettingsSeamPendingError, type UserSettings } from "./settings-port";
+import type { SettingsPort } from "./settings-port";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -172,11 +173,11 @@ describe("ModelsPreferencesView — auto-apply (D-22)", () => {
   });
 
   it("toggle is OPTIMISTIC: it flips before the PATCH resolves, then adopts the server value", async () => {
-    let resolveUpdate: (value: UserSettings) => void = () => {};
+    let resolveUpdate: (value: SettingsResponse) => void = () => {};
     const port = fakePort({
       updateSettings: vi.fn().mockImplementation(
         () =>
-          new Promise<UserSettings>((resolve) => {
+          new Promise<SettingsResponse>((resolve) => {
             resolveUpdate = resolve;
           }),
       ),
@@ -206,7 +207,7 @@ describe("ModelsPreferencesView — auto-apply (D-22)", () => {
     const port = fakePort({
       updateSettings: vi.fn().mockImplementation(
         () =>
-          new Promise<UserSettings>((_, reject) => {
+          new Promise<SettingsResponse>((_, reject) => {
             rejectUpdate = reject;
           }),
       ),
@@ -240,15 +241,19 @@ describe("ModelsPreferencesView — auto-apply (D-22)", () => {
     });
   });
 
-  it("the W3-G2 seam degrade is honest: the pending-seam error reads as not-wired-yet", async () => {
+  it("an unexpected throw degrades to the sanitized generic — never a stack", async () => {
+    // A raw client-side throw (network TypeError etc.): the port surface is
+    // fully landed now, so the only remaining failure arms are typed ApiErrors
+    // and unexpected throws — the latter must read as the bounded §7.3 generic.
     const port = fakePort({
-      getSettings: vi.fn().mockRejectedValue(new SettingsSeamPendingError("settings")),
+      getSettings: vi.fn().mockRejectedValue(new TypeError("fetch failed /var/secrets")),
     });
     renderView(port);
 
     expect(await screen.findByTestId("auto-apply-unavailable")).toHaveTextContent(
-      "This part of Settings isn’t wired on this deployment yet.",
+      "Something went wrong on our side.",
     );
+    expect(screen.getByTestId("auto-apply-unavailable")).not.toHaveTextContent("fetch failed");
     expect(screen.queryByTestId("auto-apply-toggle")).not.toBeInTheDocument();
   });
 

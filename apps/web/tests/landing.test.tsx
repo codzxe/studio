@@ -91,10 +91,18 @@ describe("landing page", () => {
     expect(within(plan).getByText("Plan · Edit 3 layers")).toBeInTheDocument();
     expect(within(plan).getByText("Low risk")).toBeInTheDocument();
     expect(within(plan).getByText("~12 credits")).toBeInTheDocument();
-    expect(within(plan).getByRole("button", { name: "Preview" })).toBeInTheDocument();
-    expect(within(plan).getByRole("button", { name: "Apply" })).toBeInTheDocument();
-    expect(within(plan).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    // M9 (W2-B4): the action rows are INERT exhibit labels, never buttons —
+    // the landing page renders no affordance it cannot honour.
+    expect(within(plan).getByText("Preview")).toBeInTheDocument();
+    expect(within(plan).getByText("Apply")).toBeInTheDocument();
+    expect(within(plan).getByText("Cancel")).toBeInTheDocument();
+    expect(within(plan).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.getByText("Applied · 3 layers · 0.8s")).toBeInTheDocument();
+    expect(screen.getByText("Undo")).toBeInTheDocument();
+    // The whole three-step exhibit is button-free.
+    expect(
+      within(screen.getByTestId("agent-story-applied")).queryByRole("button"),
+    ).not.toBeInTheDocument();
   });
 
   it("editor frame: honest caption and the three callouts", () => {

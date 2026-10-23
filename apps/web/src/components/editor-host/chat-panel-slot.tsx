@@ -39,8 +39,10 @@
  * Wiring pins kept from M4:
  * - `toggleChat`/`agent` go through `nextLayoutAction` (M4-E's deterministic
  *   bus→layout mapping); `newChat` resets the thread via `api.newThread()`,
- *   `stop` hits the §8.3 fused cancel, `send` focuses the composer,
- *   `undoAgentRun` still surfaces the M5 notice chip (apply/undo is M5-F's).
+ *   `stop` hits the §8.3 fused cancel, `send` focuses the composer, and
+ *   `undoAgentRun` (§M5.5) undoes the thread's newest applied run through
+ *   `controller.undo` — the same call the applied plan card's Undo button
+ *   makes — with an honest "nothing to undo" notice when no run is applied.
  * - `agent`/`send` focus the composer via the `studio:chat-focus-composer`
  *   window CustomEvent (M4-G listens; this container focus is the fallback).
  * - `escape` closes layers top-first (§9): inline bar → context popover →
@@ -71,7 +73,7 @@ import { type ChatLayoutStore, useChatLayout } from "@/components/chat/use-layou
 import type { ChatContextApi } from "@/lib/chat/provider";
 import { LIVE_RUN_PHASES } from "@/lib/chat/run-state";
 import { formatTokenEstimate } from "@/lib/chat/tokens";
-import type { ToolCardState } from "@/lib/chat/types";
+import type { ChatUiMessage, ToolCardState } from "@/lib/chat/types";
 import type { EditPlan } from "@studio/contracts";
 import { Badge, Button } from "@studio/ui";
 import { X } from "lucide-react";
@@ -119,7 +121,19 @@ const EMPTY_QUICK_ACTIONS = [
 /** How long a transient notice chip stays up (ms). */
 const NOTICE_MS = 4000;
 
-/** The §3.1 shortcut sheet copy surfaced by the more menu until M5's sheet. */
+/**
+ * §M5.5: the honest answer when Cmd/Ctrl+Shift+U finds nothing applied — the
+ * same copy apply.ts folds for its `nothing-to-undo` outcome.
+ */
+const NOTHING_TO_UNDO_NOTICE = "There is nothing to undo.";
+
+/**
+ * §M5.5: the honest answer while an apply/undo gesture is still settling —
+ * the same states whose plan cards hide the Undo button (message.tsx).
+ */
+const EDIT_IN_FLIGHT_NOTICE = "Still finishing the last edit — try again in a moment.";
+
+/** The §3.1 shortcut one-liner surfaced by the header's more menu. */
 const SHORTCUTS_NOTICE = "⌘L chat · ⌘I agent · ⌘↵ send · ⌘. stop · Esc close";
 
 /** The seam-6 tool failure shape `{ error: string; message?: string }`. */
@@ -158,6 +172,37 @@ function lastFailedToolCard(
     if (card !== undefined && card.status === "failed" && card.result !== undefined) return card;
   }
   return null;
+}
+
+/**
+ * The run id Cmd/Ctrl+Shift+U undoes (§M5.5): the NEWEST plan whose outcome is
+ * currently applied (or retryable after a failed undo) — exactly the states
+ * the applied plan card's live Undo button serves (message.tsx). `null` when
+ * nothing qualifies (no plan, only proposed/undone plans, or a gesture still
+ * in flight — whose card deliberately hides Undo, because a second
+ * `edit.undo` would pop a foreign undo step).
+ */
+function undoableRunId(messages: readonly ChatUiMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message === undefined) continue;
+    const runId = message.runId;
+    const outcome = message.planRuntime?.outcome;
+    if (runId === undefined) continue;
+    if (outcome === "applied" || outcome === "undo-failed") return runId;
+  }
+  return null;
+}
+
+/**
+ * True while any plan's apply/undo gesture is still settling — the shortcut
+ * must neither fire a second `edit.undo` nor claim there is nothing to undo.
+ */
+function editGestureInFlight(messages: readonly ChatUiMessage[]): boolean {
+  return messages.some(
+    (message) =>
+      message.planRuntime?.outcome === "applying" || message.planRuntime?.outcome === "undoing",
+  );
 }
 
 export function ChatPanelSlot({
@@ -302,6 +347,11 @@ export function ChatPanelSlot({
       ? selectionNames.join(", ")
       : contextDataName(api.context, "activeComp");
 
+  // §M5.5: the run Cmd/Ctrl+Shift+U undoes — the newest applied plan (the
+  // same gate as the plan card's Undo button; null when nothing is applied).
+  const undoableRun = undoableRunId(snapshot.messages);
+  const undoGestureInFlight = editGestureInFlight(snapshot.messages);
+
   const composerDisabled = useMemo(() => {
     if (snapshot.error?.code === "INSUFFICIENT_CREDITS") {
       // §3.4: the composer disables with a clear message; the peer's Upgrade
@@ -342,9 +392,17 @@ export function ChatPanelSlot({
           openInlineEdit();
           break;
         }
-        case "undoAgentRun":
-          showNotice("Undo arrives with M5.");
+        case "undoAgentRun": {
+          // §M5.5: undo the thread's newest applied run through the controller
+          // — the same `undo` the applied plan card's Undo button calls. Every
+          // no-op answer is honest inline notice copy, never a fake action.
+          if (undoableRun !== null && api.controller !== null) {
+            api.controller.undo(undoableRun);
+            break;
+          }
+          showNotice(undoGestureInFlight ? EDIT_IN_FLIGHT_NOTICE : NOTHING_TO_UNDO_NOTICE);
           break;
+        }
         case "newChat":
           api.newThread();
           setAgentMode(false); // a fresh thread starts unmoded
@@ -388,6 +446,8 @@ export function ChatPanelSlot({
     lastMessage,
     closeInlineEdit,
     openInlineEdit,
+    undoableRun,
+    undoGestureInFlight,
   ]);
 
   // Visibility gates the provider's 1 Hz inspect poll + context collects (§11).

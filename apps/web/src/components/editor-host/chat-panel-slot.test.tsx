@@ -19,6 +19,9 @@
  *   and a click can only ever reach chat: no bridge, no engine, no mutation.
  * - Edit cards (§6.4/§8.6): the clarify card renders the model's question +
  *   answer chips; the error card renders human copy only.
+ * - Undo shortcut (§M5.5): bus "undoAgentRun" drives the controller's REAL
+ *   undo of the newest applied run (the card's Undo rule); every no-op
+ *   answer is honest inline notice copy — nothing fake ever runs.
  */
 
 import { DEFAULT_LAYOUT } from "@/components/chat/layout";
@@ -27,10 +30,11 @@ import { CHAT_QUICK_ACTION_EVENT } from "@/components/chat/thread";
 import { type ChatLayoutStore, createChatLayoutStore } from "@/components/chat/use-layout";
 import { ChatPanelSlot } from "@/components/editor-host/chat-panel-slot";
 import { createChatShortcutBus } from "@/components/editor-host/chat-shortcut-bus";
+import type { ChatController } from "@/lib/chat/chat-controller";
 import { type ContextSnapshot, DEFAULT_FLAGS } from "@/lib/chat/context";
 import type { ChatContextApi, ChatModelSummary } from "@/lib/chat/provider";
-import type { ChatUiMessage, ChatUiState } from "@/lib/chat/types";
-import type { EditPlan } from "@studio/contracts";
+import type { ChatUiMessage, ChatUiState, PlanRuntime } from "@/lib/chat/types";
+import type { AgentBatch, EditPlan } from "@studio/contracts";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -76,6 +80,39 @@ function assistantMessage(overrides: Partial<ChatUiMessage>): ChatUiMessage {
   };
 }
 
+/** A minimal valid compiled batch (the runtime's only required payload). */
+const COMPILED_BATCH: AgentBatch = {
+  label: "Agent: restyle",
+  atomic: true,
+  steps: [{ command: "prop.set", params: {} }],
+};
+
+/** One plan runtime at the given lifecycle point (§M5.5 gesture states). */
+function planRuntime(outcome: PlanRuntime["outcome"]): PlanRuntime {
+  return { compiledBatch: COMPILED_BATCH, outcome };
+}
+
+/** A controller double so the Cmd/Ctrl+Shift+U undo shortcut can be observed. */
+function fakeController(): { controller: ChatController; undo: ReturnType<typeof vi.fn> } {
+  const undo = vi.fn();
+  const controller: ChatController = {
+    runId: null,
+    getSnapshot: () => ({ messages: [], phase: "idle", activeRunId: null, lastSeq: -1 }),
+    subscribe: () => () => undefined,
+    send: vi.fn(),
+    stop: vi.fn(),
+    retry: vi.fn(),
+    apply: vi.fn(),
+    undo,
+    reapply: vi.fn(),
+    retrySave: vi.fn(),
+    dismissPlan: vi.fn(),
+    resolveCandidate: vi.fn(),
+    dispose: vi.fn(),
+  };
+  return { controller, undo };
+}
+
 function snapshot(messages: ChatUiMessage[], phase: ChatUiState["phase"] = "idle"): ChatUiState {
   return { messages, phase, activeRunId: null, lastSeq: -1 };
 }
@@ -108,11 +145,12 @@ function makeApi(options: {
   readonly snapshot?: ChatUiState;
   readonly flags?: typeof DEFAULT_FLAGS;
   readonly context?: ContextSnapshot | null;
+  readonly controller?: ChatController | null;
 }): { api: ChatContextApi; send: ReturnType<typeof vi.fn>; retry: ReturnType<typeof vi.fn> } {
   const send = vi.fn();
   const retry = vi.fn();
   const api: ChatContextApi = {
-    controller: null,
+    controller: options.controller ?? null,
     snapshot: options.snapshot ?? snapshot([]),
     models: [FAST_MODEL],
     activeModelId: "studio-fast",
@@ -649,6 +687,117 @@ describe("ChatPanelSlot — error card (§6.4)", () => {
 
     expect(screen.getByTestId("edit-clarify-card")).toBeInTheDocument();
     expect(screen.queryByTestId("edit-error-card")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §M5.5 — Cmd/Ctrl+Shift+U (undoAgentRun) drives the REAL controller undo
+// ---------------------------------------------------------------------------
+
+describe("ChatPanelSlot — undoAgentRun (§M5.5)", () => {
+  it("undoes the NEWEST applied run through the controller", () => {
+    const bus = createChatShortcutBus();
+    const { controller, undo } = fakeController();
+    const { api } = makeApi({
+      bus,
+      controller,
+      snapshot: snapshot([
+        assistantMessage({
+          id: "run:run_1",
+          runId: "run_1",
+          text: "First edit applied.",
+          planRuntime: planRuntime("applied"),
+        }),
+        assistantMessage({
+          id: "run:run_2",
+          runId: "run_2",
+          text: "Second edit applied.",
+          planRuntime: planRuntime("applied"),
+        }),
+      ]),
+    });
+    mountSlot(api);
+
+    act(() => bus.publish("undoAgentRun", "u"));
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(undo).toHaveBeenCalledWith("run_2");
+    // The shortcut answers with action, never a notice.
+    expect(screen.queryByTestId("chat-notice")).not.toBeInTheDocument();
+  });
+
+  it("a failed undo stays retryable from the shortcut (the card's Undo rule)", () => {
+    const bus = createChatShortcutBus();
+    const { controller, undo } = fakeController();
+    const { api } = makeApi({
+      bus,
+      controller,
+      snapshot: snapshot([
+        assistantMessage({
+          text: "The engine undid a foreign step.",
+          planRuntime: {
+            ...planRuntime("undo-failed"),
+            error: {
+              code: "UNDO_STACK_MISMATCH",
+              message: "A different edit was on top.",
+              retryable: false,
+            },
+          },
+        }),
+      ]),
+    });
+    mountSlot(api);
+
+    act(() => bus.publish("undoAgentRun", "u"));
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(undo).toHaveBeenCalledWith("run_1");
+  });
+
+  it("does NOT fire a second undo while one is settling (the card hides Undo then)", () => {
+    const bus = createChatShortcutBus();
+    const { controller, undo } = fakeController();
+    const { api } = makeApi({
+      bus,
+      controller,
+      snapshot: snapshot([assistantMessage({ planRuntime: planRuntime("undoing") })]),
+    });
+    mountSlot(api);
+
+    act(() => bus.publish("undoAgentRun", "u"));
+    expect(undo).not.toHaveBeenCalled();
+    // Honest in-flight answer — not the false "nothing to undo".
+    expect(screen.getByTestId("chat-notice")).toHaveTextContent(
+      "Still finishing the last edit — try again in a moment.",
+    );
+  });
+
+  it("answers the honest nothing-to-undo notice when no run is applied", () => {
+    const bus = createChatShortcutBus();
+    const { controller, undo } = fakeController();
+    const { api } = makeApi({
+      bus,
+      controller,
+      snapshot: snapshot([
+        assistantMessage({
+          text: "A proposed plan.",
+          plan: plan("edit", "Restyle the title", ["Headline"]),
+          planRuntime: planRuntime("idle"),
+        }),
+      ]),
+    });
+    mountSlot(api);
+
+    act(() => bus.publish("undoAgentRun", "u"));
+    expect(undo).not.toHaveBeenCalled();
+    expect(screen.getByTestId("chat-notice")).toHaveTextContent("There is nothing to undo.");
+  });
+
+  it("without a controller (no thread yet) the notice answers and nothing runs", () => {
+    const bus = createChatShortcutBus();
+    const { api } = makeApi({ bus }); // controller stays null
+    mountSlot(api);
+
+    act(() => bus.publish("undoAgentRun", "u"));
+    expect(screen.getByTestId("chat-notice")).toHaveTextContent("There is nothing to undo.");
   });
 });
 

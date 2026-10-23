@@ -50,7 +50,7 @@ Run: `pnpm --filter @studio/storage test` (Vitest discovers `tests/fuzz/` automa
 | Filename payloads (traversal, null bytes, huge names, RTLO) | **Corpus only (deferred enforcement)** | The four `filename/*` cases carry the payloads as metadata with clean bytes; `validate.ts` is deliberately **bytes-only** (it never sees filenames). The gateway upload route owns filename policy — reject traversal, NUL bytes, oversized and RTLO names **before** storage keys are minted. |
 | SSRF on webhook-like URLs | **Deferred** | Needs the storage driver layer (S3 endpoint/presign) and the gateway's outbound fetch — `validate.ts` performs no I/O. Documented as a **gateway concern**. |
 | CSRF / session replay | **Deferred** | HTTP-layer concerns (gateway auth/middleware), not byte validation. |
-| Rate-limit bypass, prompt injection, cross-tenant | **Other suites** | Gateway `tests/integration/` and `packages/agent` suites own these. |
+| Rate-limit bypass, prompt injection, cross-tenant | **Other suites** | The gateway suite (`services/gateway/tests/` — e.g. `injection.test.ts`, `injection-write.test.ts`) owns these. |
 
 ## Known boundaries (documented, deliberate)
 

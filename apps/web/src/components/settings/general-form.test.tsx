@@ -2,8 +2,8 @@
  * GeneralForm tests (W2-06) — the §8.9 General card: name/slug edit through
  * `workspaces.patch` (dirty-only PATCH bodies), client-side validation, the
  * typed 409 CONFLICT landing inline on the slug field, the bounded §7.3
- * fallback strip, the v2 honesty note (no fake visibility/logo fields) and
- * the read-only arm for non-admins. Deterministic RTL + injected port.
+ * fallback strip, no placeholder future-feature fields (M9) and the
+ * read-only arm for non-admins. Deterministic RTL + injected port.
  */
 
 import { ApiError } from "@studio/api-client";
@@ -42,15 +42,15 @@ describe("GeneralForm — display", () => {
     expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
   });
 
-  it("states honestly that logo and default visibility are v2 — no fake fields", () => {
+  it("renders only real fields — no logo/visibility inputs and no future-feature card (M9)", () => {
     renderForm();
-    expect(screen.getByText("Not configurable yet")).toBeInTheDocument();
-    expect(
-      screen.getByText(/workspace logo and a default project visibility setting arrive in v2/i),
-    ).toBeInTheDocument();
-    // No logo/visibility inputs exist.
+    // Workspace logo + default project visibility don't exist in v1: no
+    // inputs, and no "coming in v2" placeholder card (M9 bans placeholder
+    // copy — the controls ship with the feature, not before it).
     expect(screen.queryByLabelText(/Logo/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Visibility/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not configurable yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/arrive in v2/i)).not.toBeInTheDocument();
   });
 
   it("read-only for non-admins: disabled fields, no save button, honest note", () => {

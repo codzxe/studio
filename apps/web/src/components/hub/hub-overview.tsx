@@ -275,11 +275,13 @@ export function HubOverview({
 
   return (
     <Card data-testid="hub-overview" className="flex flex-col gap-6">
-      {/* Large preview stand-in — the honest 16/9 frame until a thumbnail
-          route exists (the W2-03 ProjectCard slate precedent, §7.3). */}
+      {/* Large preview — the honest 16/9 empty state: no project thumbnail
+          exists (none is generated or served in v1), so the frame carries
+          the project name over the slate geometry (§7.3, the ProjectTile
+          precedent). */}
       <div
         data-testid="hub-overview-preview"
-        aria-label={`${projectName} preview`}
+        aria-label={`No preview available for ${projectName}`}
         className="flex aspect-video w-full max-w-[440px] items-center justify-center overflow-hidden rounded-md border border-border bg-input/30"
       >
         <span className="max-w-[80%] truncate px-4 text-body text-muted">

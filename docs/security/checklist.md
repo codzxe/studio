@@ -350,7 +350,7 @@ Enforcement is server-side on every endpoint — UI hiding is never enforcement.
 
 | # | Gap | Control | Owner / next action |
 |---|---|---|---|
-| G1 | EXIF strip is planned (`stripExifPlan`) but the live re-slice/rewrite step is unwired in the upload path | C6 | upload-route owner (flagged in `docs/phases/acceptance-matrix.md`); the fuzz corpus already pins that reassembled plans re-validate clean + EXIF-free |
+| G1 | EXIF strip is planned (`stripExifPlan`) but the live re-slice/rewrite step is unwired in the upload path | C6 | upload-route owner (flagged in `docs/phases/acceptance-matrix.md` — *historical, pre-pivot PhotoCraft era*); the fuzz corpus already pins that reassembled plans re-validate clean + EXIF-free |
 | G2 | Filename policy (traversal, NUL bytes, oversized names, RTLO) must be enforced by the gateway upload route before storage keys are minted; `validate.ts` is deliberately bytes-only | C6 | gateway upload route; payloads already carried in `packages/storage/tests/fuzz/corpus.mjs` metadata (W10-A flag) |
 | G3 | CSP with nonces (§15.2 "no inline scripts except nonce'd") is a TODO in the web app | C12 | web owner |
 | G4 | `pnpm-lock.yaml` not committed; `pnpm audit` + Dependabot unconfigured until CI is enabled (workflows staged in `infra/ci-staged/`) | §2 A06 | CI owner; `license-check.yml` already staged |

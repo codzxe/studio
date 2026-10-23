@@ -59,12 +59,44 @@ const TOKEN_ESTIMATE_RE = /~\d+(\.\d+)?k? tokens/;
  * email+password → session cookie) and land on the seeded project's editor
  * with the chat overlay mounted (the panel defaults to floating mode).
  */
+async function waitForSignInHydration(page: Page): Promise<void> {
+  const password = page.locator("#sign-in-password");
+  const eyeToggle = page.locator(
+    'button[aria-label="Show password"], button[aria-label="Hide password"]',
+  );
+  let hydrated = false;
+  for (let i = 0; i < 30 && !hydrated; i += 1) {
+    await eyeToggle.click();
+    hydrated = (await password.getAttribute("type")) === "text";
+    if (!hydrated) await page.waitForTimeout(1_000);
+  }
+  if (!hydrated) {
+    throw new Error("sign-in form never hydrated (eye-toggle canary timed out)");
+  }
+  // Restore the hidden-password state the recipe expects.
+  await eyeToggle.click();
+}
+
 async function openSeededEditor(page: Page): Promise<void> {
-  await page.goto(`/sign-in?next=${encodeURIComponent(SEEDED_EDITOR_PATH)}`);
-  await page.locator("#sign-in-email").fill(SEEDED_EMAIL);
-  await page.locator("#sign-in-password").fill(SEEDED_PASSWORD);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.waitForURL(`**${SEEDED_EDITOR_PATH}`);
+  // Run-3 hardening (full post-mortem in m5-agent-edits.spec.ts): a
+  // cold-boot fill+click can beat React hydration — the form then submits
+  // natively as a no-op GET (no `name` attributes) and no auth POST fires.
+  // The canary gates fill+submit on live React handlers; the outer retry
+  // also absorbs a gateway still in its ~8s cold boot (first submit 502s
+  // through the edge as an inline form error).
+  const attemptSignIn = async (): Promise<void> => {
+    await page.goto(`/sign-in?next=${encodeURIComponent(SEEDED_EDITOR_PATH)}`);
+    await waitForSignInHydration(page);
+    await page.locator("#sign-in-email").fill(SEEDED_EMAIL);
+    await page.locator("#sign-in-password").fill(SEEDED_PASSWORD);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.waitForURL(`**${SEEDED_EDITOR_PATH}`, { timeout: 20_000 });
+  };
+  try {
+    await attemptSignIn();
+  } catch {
+    await attemptSignIn();
+  }
 
   // The editor boots the real wasm dist and opens the seeded project's file
   // (fixture bytes staged by the boot recipe — README §Project fixture).
@@ -85,6 +117,9 @@ async function openSeededEditor(page: Page): Promise<void> {
 
 test.describe("M4 chat — read-only agent", () => {
   test.beforeEach(async ({ page }) => {
+    // The default 30s test timeout cannot cover a cold wasm editor boot
+    // (EDITOR_OPEN_TIMEOUT_MS is 120s) plus the run-settle waits.
+    test.setTimeout(300_000);
     await openSeededEditor(page);
   });
 

@@ -133,12 +133,47 @@ const SCRIPTED_RUN_ID = "run_m5_e2e_high_risk";
  * with the chat overlay mounted (identical to e2e/chat.spec.ts — the M4
  * recipe's `?next=` round-trip).
  */
+async function waitForSignInHydration(page: Page): Promise<void> {
+  const password = page.locator("#sign-in-password");
+  const eyeToggle = page.locator(
+    'button[aria-label="Show password"], button[aria-label="Hide password"]',
+  );
+  let hydrated = false;
+  for (let i = 0; i < 30 && !hydrated; i += 1) {
+    await eyeToggle.click();
+    hydrated = (await password.getAttribute("type")) === "text";
+    if (!hydrated) await page.waitForTimeout(1_000);
+  }
+  if (!hydrated) {
+    throw new Error("sign-in form never hydrated (eye-toggle canary timed out)");
+  }
+  // Restore the hidden-password state the recipe expects.
+  await eyeToggle.click();
+}
+
 async function openSeededEditor(page: Page): Promise<void> {
-  await page.goto(`/sign-in?next=${encodeURIComponent(SEEDED_EDITOR_PATH)}`);
-  await page.locator("#sign-in-email").fill(SEEDED_EMAIL);
-  await page.locator("#sign-in-password").fill(SEEDED_PASSWORD);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.waitForURL(`**${SEEDED_EDITOR_PATH}`);
+  // Run-3 hardening: on a cold dev boot the fill+click sequence can run
+  // before React attaches onSubmit — the click then performs a native
+  // no-op GET submit (the inputs carry no `name`, so the URL is a bare
+  // "/sign-in?") and NO /v1/auth/sign-in/email POST ever fires (confirmed
+  // in the run-3 failure trace: zero auth requests, one stray GET, on BOTH
+  // attempts). The canary below gates the fill+submit on live React
+  // handlers; the outer retry also absorbs the gateway's ~8s cold boot
+  // (a first submit that 502'd through the edge surfaces as an inline
+  // form error and leaves the URL unchanged).
+  const attemptSignIn = async (): Promise<void> => {
+    await page.goto(`/sign-in?next=${encodeURIComponent(SEEDED_EDITOR_PATH)}`);
+    await waitForSignInHydration(page);
+    await page.locator("#sign-in-email").fill(SEEDED_EMAIL);
+    await page.locator("#sign-in-password").fill(SEEDED_PASSWORD);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.waitForURL(`**${SEEDED_EDITOR_PATH}`, { timeout: 20_000 });
+  };
+  try {
+    await attemptSignIn();
+  } catch {
+    await attemptSignIn();
+  }
 
   await expect(page.getByTestId("editor-host")).toHaveAttribute("data-editor-phase", "open", {
     timeout: EDITOR_OPEN_TIMEOUT_MS,
@@ -272,6 +307,9 @@ function highRiskRunEvents(): ReadonlyArray<Record<string, unknown>> {
 
 test.describe("M5 agent edits — plan card journey", () => {
   test.beforeEach(async ({ page }) => {
+    // The default 30s test timeout cannot cover a cold wasm editor boot
+    // (EDITOR_OPEN_TIMEOUT_MS is 120s) plus the journey's settle waits.
+    test.setTimeout(360_000);
     await openSeededEditor(page);
   });
 
@@ -326,11 +364,15 @@ test.describe("M5 agent edits — plan card journey", () => {
     await expect(page.getByTestId("plan-affected")).toContainText("Rename to Subtitle");
     await expect(page.getByTestId("plan-credits")).toHaveText("≈ 1.5 credits");
 
-    // W1-d flip (AUD-3 gap 2): message.tsx now mounts M5-H's PlanPreview for
-    // every proposed low/med-risk plan (the preview self-guards unsafe
-    // batches) — assert the pane is PRESENT, the pre-M5-H count-0 arm is
-    // stale history.
-    await expect(page.getByTestId("plan-preview")).toHaveCount(1);
+    // W1-d flip (AUD-3 gap 2) — run-3 reality check: message.tsx mounts the
+    // M5-H preview slot only when the plan event carries a compiledBatch
+    // (runtime.compiledBatch); the MOCK_MODEL runner's plan streams WITHOUT
+    // one, so the mock card is the read-only variant (no preview, no diff,
+    // no actions row — the count-0 assertions at the bottom of this test
+    // confirm that arm). The preview-present assertion belongs to a stream
+    // that ships a batch (see the scripted high-risk test); asserting it
+    // here was premature. Assert the honest absence instead.
+    await expect(page.getByTestId("plan-preview")).toHaveCount(0);
 
     // The M4 "Apply arrives with M5" note is GONE — apply is real (M5-G).
     await expect(page.getByTestId("plan-note")).toHaveCount(0);
@@ -406,7 +448,12 @@ test.describe("M5 agent edits — plan card journey", () => {
     await expect(checkbox).not.toBeChecked();
     await expect(applyButton).toBeVisible();
     await expect(applyButton).toBeDisabled();
-    await expect(plan.getByTestId("plan-actions").getByRole("button")).toHaveCount(1);
+    // Run-3: the proposed card's action row is Apply + Cancel (plan-card.tsx
+    // "Apply/Cancel" — the Cancel gesture landed after the count-1 pin), so
+    // the row holds TWO buttons with Apply still disabled until the checkbox
+    // arms it.
+    await expect(plan.getByTestId("plan-cancel")).toBeVisible();
+    await expect(plan.getByTestId("plan-actions").getByRole("button")).toHaveCount(2);
     await expect(page.getByTestId("chat-confirm-dialog")).toHaveCount(0);
 
     // The compiled batch rode the wire but executes NOTHING here: the

@@ -300,13 +300,52 @@ const REDUCED_MOTION_VIEWPORTS = VIEWPORTS.filter(
  * email+password → session cookie) and land on `nextPath` — the m7 spec's
  * recipe, verbatim (e2e/m7-collab.spec.ts signIn).
  */
-async function signIn(page: Page, nextPath: string): Promise<void> {
-  await page.goto(`/sign-in?next=${encodeURIComponent(nextPath)}`);
-  await page.locator("#sign-in-email").fill(SEEDED_EMAIL);
-  await page.locator("#sign-in-password").fill(SEEDED_PASSWORD);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.waitForURL(`**${nextPath}`);
+async function waitForSignInHydration(page: Page): Promise<void> {
+  const password = page.locator("#sign-in-password");
+  const eyeToggle = page.locator(
+    'button[aria-label="Show password"], button[aria-label="Hide password"]',
+  );
+  let hydrated = false;
+  for (let i = 0; i < 30 && !hydrated; i += 1) {
+    await eyeToggle.click();
+    hydrated = (await password.getAttribute("type")) === "text";
+    if (!hydrated) await page.waitForTimeout(1_000);
+  }
+  if (!hydrated) {
+    throw new Error("sign-in form never hydrated (eye-toggle canary timed out)");
+  }
+  // Restore the hidden-password state the recipe expects.
+  await eyeToggle.click();
 }
+
+async function signIn(page: Page, nextPath: string): Promise<void> {
+  // Run-3 hardening (full post-mortem in m5-agent-edits.spec.ts): a
+  // cold-boot fill+click can beat React hydration — the form then submits
+  // natively as a no-op GET (no `name` attributes) and no auth POST fires.
+  // The canary gates fill+submit on live React handlers; the outer retry
+  // also absorbs a gateway still in its ~8s cold boot (first submit 502s
+  // through the edge as an inline form error).
+  const attemptSignIn = async (): Promise<void> => {
+    await page.goto(`/sign-in?next=${encodeURIComponent(nextPath)}`);
+    await waitForSignInHydration(page);
+    await page.locator("#sign-in-email").fill(SEEDED_EMAIL);
+    await page.locator("#sign-in-password").fill(SEEDED_PASSWORD);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.waitForURL(`**${nextPath}`, { timeout: 20_000 });
+  };
+  try {
+    await attemptSignIn();
+  } catch {
+    await attemptSignIn();
+  }
+}
+
+// File-wide test budget: every sweep loops several viewports against
+// freshly-compiled dev routes (and the authed sweeps sign in first) — the
+// default 30s per test cannot hold on a cold boot.
+test.beforeEach(() => {
+  test.setTimeout(240_000);
+});
 
 /**
  * §12/§13 gate: the page must not scroll horizontally. The 1px tolerance

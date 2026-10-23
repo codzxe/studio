@@ -2,6 +2,7 @@ import { Brand } from "@studio/config";
 import { FrameLine } from "@studio/ui";
 
 import { LegalCrossLinks, LegalPage, LegalSection } from "@/components/marketing/legal-page";
+import { OSS_ATTRIBUTIONS } from "@/components/marketing/oss-attributions";
 import { pageMetadata } from "@/lib/seo";
 
 export const metadata = pageMetadata({
@@ -18,37 +19,14 @@ export const metadata = pageMetadata({
  * `components/marketing/legal-page.tsx` shell (the manifest's sanctioned
  * reuse).
  *
- * The attribution rows are RESTATED from
- * `app/(marketing)/legal/licences/page.tsx` (its OSS_ATTRIBUTIONS, sourced
- * from docs/legal/license-audit.md + ATTRIBUTION.md) — keep the two copies in
- * sync; the test pins the three components so drift fails here first. This is
- * the one place in the commercial UI where the upstream editor's real name is
+ * The attribution rows (incl. the vendored editor's exact upstream pin) come
+ * from the shared `components/marketing/oss-attributions.ts` module — ONE
+ * copy for this page and the marketing licences page, so an upstream pin
+ * bump is a single edit; the per-page tests pin the three rows. This is the
+ * one place in the commercial UI where the upstream editor's real name is
  * legitimate (brand.ts: "attribution files and licences pages legitimately
  * mention the upstream marks").
  */
-const OSS_ATTRIBUTIONS = [
-  {
-    component: "EffectCraft",
-    role: "The compositing editor and engine — used unmodified (UI-frozen)",
-    license: "MIT OR Apache-2.0",
-    upstream: "https://github.com/storytold/effectcraft",
-    pin: "9db7f3b21700fd821f215782ed1c82afe077880f (v0.13.0)",
-  },
-  {
-    component: "Instrument Serif · Instrument Sans",
-    role: "Display and UI typefaces",
-    license: "SIL Open Font License 1.1",
-    upstream: "https://github.com/Instrument/instrument-serif",
-    pin: "n/a — fonts are never committed to this repository",
-  },
-  {
-    component: "JetBrains Mono",
-    role: "Monospace — timecode, code, keyboard hints",
-    license: "SIL Open Font License 1.1",
-    upstream: "https://github.com/JetBrains/JetBrainsMono",
-    pin: "n/a — fonts are never committed to this repository",
-  },
-] as const;
 
 export default function LicencesSettingsPage() {
   return (

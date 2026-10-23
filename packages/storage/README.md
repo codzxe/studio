@@ -1,60 +1,44 @@
 # @studio/storage
 
-The `objects` service seam (spec §3.1): object storage for uploaded originals,
-generated images, previews, exports and `.pcraft` backups on **AWS S3 or
-Cloudflare R2** (MinIO/Garage are AGPL and forbidden, §16.5), plus a local
-filesystem driver for dev/single-box. Structural, injected everywhere; zod-only
-runtime dependency (`aws4fetch` is optional, MIT).
+Upload validation only (since W2-B6). This package is the byte-guard seam for
+the asset upload path: magic-byte MIME sniffing, size + megapixel ceilings and
+EXIF strip planning — pure, zero-dependency (`node:crypto` only) readers that
+never decode or inflate pixel data.
 
-## Key space (src/keys.ts)
+> Scope note (ADR-0006): the PhotoCraft-era object-storage surface — the
+> S3/R2 + local drivers, the `.pcraft` document key space, SigV4 presigning
+> and the `createStorageFromEnv` factory — was deleted in W2-B6. It was
+> dormant: nothing outside its own tests consumed it. Live object storage
+> lives in the gateway (`services/gateway/src/storage.ts` — LocalFS/S3
+> drivers + asset/render/snapshot key builders, shared with the worker via
+> `@studio/gateway/storage`).
 
-Every key embeds the tenant: `…/organizations/<orgId>/…` (§15.1 per-workspace
-prefixes). Builders validate every input and drivers re-validate every key —
-rejection, never normalization.
+## Live surface
 
-| Kind | Key |
+| Import | What |
 |---|---|
-| Uploaded asset | `assets/organizations/<orgId>/assets/<assetId>[/<filename>]` |
-| Cached preview | `renders/organizations/<orgId>/documents/<docId>/preview-<width>-<revision>.png` |
-| Export | `exports/organizations/<orgId>/documents/<docId>/<format>-<versionId>.<format>` |
-| Document version | `documents/organizations/<orgId>/documents/<docId>/<versionId>.pcraft` |
-| Session checkpoint | `checkpoints/organizations/<orgId>/documents/<docId>/sessions/<sessionId>/checkpoint-<revision>.pcraft` |
+| `@studio/storage/validate` (also the root export `.`) | `sniffMime`, `dimensions` (PNG IHDR / JPEG SOF header parsing), `validateUpload`, `stripExifPlan`, `hasExif`, `checksum`, `DEFAULT_MAX_UPLOAD_*` limits |
 
-`assertTenant(key, orgId)` (keys.ts) is the cross-tenant guard: run it on any
-key derived from request input before touching storage. `list(prefix)` is
-prefix-scoped only — keep applying the guard to every yielded key.
+Sole consumer: the gateway asset routes
+(`services/gateway/src/routes/assets.ts`) — upload accept/verify steps use
+`DEFAULT_MAX_UPLOAD_MEGAPIXELS`, `dimensions`, `sniffMime`.
 
-## Storage surface (src/types.ts)
+## Security posture
 
-`put(key, data, { contentType, contentSha256? })` → `StorageObject`
-(sha256 always computed; supplied digests are verified);
-`get(key)` → `Uint8Array | null`; `delete(key)` idempotent;
-`sign(key, { ttlSeconds ≤ 900, download? })` → `{ url, expiresAt }`
-(§15.1: short-lived URLs, no public buckets); `list(prefix)` → `AsyncIterable<string>`.
+- Dimensions come from HEADER PARSING ONLY; pixel data is never inflated, so
+  zip-bomb IDAT payloads cannot hurt this module (§20.2: the 60 MP ceiling is
+  enforced on the claimed dimensions).
+- Polyglot policy: a PNG must terminate at IEND with nothing after it; the
+  whole-buffer scan only trusts signatures ≥ 8 bytes long.
+- All failures are typed envelopes `{ ok:false, code, message, hint,
+  retryable:false }`; nothing throws on malformed input.
+- SVG is deliberately not sniffable (§15.2 XSS note) → `unsupported_media_type`.
 
-Pure helpers return typed result envelopes; driver methods reject with
-`StorageError`, which IS the `{ ok:false, code, message, hint, retryable? }`
-envelope (`toFailure()` for the plain shape).
+## Tests
 
-## Drivers
+- `tests/validate.test.ts` — §20.2 acceptance + §15.2/§21 guards (synthetic
+  hand-crafted byte fixtures only, no image libraries).
+- `tests/fuzz/` — §21 upload-fuzzing corpus: truth table, invariants and a
+  seeded mutation sweep. See `tests/fuzz/README.md`.
 
-- **local** (`src/drivers/local-fs.ts`) — `node:fs/promises` under a base dir,
-  traversal-proof (validate + containment re-check). Signed URLs are
-  HMAC-SHA256 query URLs: `GET <base>/v1/storage/local-object?key&exp&sig[&dl=1]`,
-  `sig = HMAC-SHA256(secret, `${key}\n${exp}\n${inline|attachment}`)`. The dev
-  gateway verifies with the exported `verifyLocalSignedUrlParams` (timing-safe).
-- **s3** (`src/drivers/s3.ts`) — global fetch, headers signed via the OPTIONAL
-  `aws4fetch` (dynamic import; missing → typed `storage_driver_unavailable`).
-  Presigned GETs are produced inline (zero deps, `src/drivers/sigv4.ts`),
-  canonical request unit-tested against botocore-verified vectors.
-  `forceR2Compat` = path-style addressing for R2/compatible endpoints.
-
-## Driver selection (src/index.ts)
-
-```ts
-const result = createStorageFromEnv(parsedEnv); // StorageResult<Storage>
-```
-
-`STORAGE_DRIVER=local|s3` (required — no silent local fallback), fail-fast on
-missing driver config. See `src/index.ts` header for the full env key list to
-add to `packages/config` schemas + `.env.example`.
+Run: `corepack pnpm --filter @studio/storage test`

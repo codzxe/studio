@@ -14,10 +14,11 @@
  *   billing/history pages stamp `nowIso` for the same reason);
  * - actions row: New project (the ONE primary, opens the dialog) +
  *   Import .ecproj (secondary, opens the import dialog);
- * - Recent grid: ≤8 ProjectCards with the 40ms slate stagger (§6.3) — the
- *   16:9 slate thumbnail is the designed §7.3 honest stand-in (real
- *   thumbnails arrive with a thumbnail route), and `— · 0 comps` is the
- *   honest duration/comps stand-in (Project rows carry neither in v1);
+ * - Recent grid: ≤8 project tiles with the 40ms slate stagger (§6.3) — the
+ *   16:9 slate frame is the designed §7.3 empty state (the wire carries no
+ *   project thumbnail), and NO duration/comps metadata renders: the Project
+ *   row carries neither field in v1, so the shared {@link ProjectTile}
+ *   omits the line rather than faking "— · 0 comps";
  * - EmptyState "No projects yet." carries the same two actions (§7.12 one
  *   primary) — when it renders, the header actions row hides so exactly ONE
  *   "New project" button is visible at a time (§7.1 one primary per view);
@@ -34,12 +35,13 @@
 
 import { type ApiClient, type CallOptions, createApiClient } from "@studio/api-client";
 import type { CreateProjectRequest, Page, Project, ProjectVersion } from "@studio/contracts";
-import { Button, EmptyState, FrameLine, ProjectCard, Skeleton } from "@studio/ui";
+import { Button, EmptyState, FrameLine, Skeleton } from "@studio/ui";
 import { CircleAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ReactElement, useState } from "react";
 
 import { formatTimeAgo } from "../activity/activity-feed";
+import { ProjectTile } from "../projects/project-tile";
 import { PermissionState } from "../system/system-states";
 import { ImportProjectDialog, type ImportUploadInput } from "./import-project-dialog";
 import { NewProjectDialog } from "./new-project-dialog";
@@ -243,7 +245,7 @@ function toLoadError(cause: unknown): DashboardLoadError {
   return { message: "Your projects could not be loaded.", hint: "Try again in a moment." };
 }
 
-/** One skeleton card — preserves the ProjectCard footprint (§7.13 no shift). */
+/** One skeleton tile — preserves the ProjectTile footprint (§7.13 no shift). */
 function DashboardSkeletonCard(): ReactElement {
   return (
     <div
@@ -421,15 +423,14 @@ export function DashboardView({
             ) : recent !== null ? (
               <div className={RECENT_GRID_CLASS} data-testid="dashboard-grid">
                 {recent.map((project, index) => (
-                  <ProjectCard
+                  <ProjectTile
                     key={project.id}
                     data-testid="dashboard-project-card"
                     name={project.name}
-                    // Honest stand-ins until the manifest/thumbnail reads
-                    // land (§7.3): the wire's Project row carries neither
-                    // duration nor composition counts.
-                    duration="—"
-                    comps={0}
+                    // No duration/comps metadata renders: the wire's Project
+                    // row carries neither field in v1, and faking "— · 0
+                    // comps" is the fake-metadata class M9 bans — the shared
+                    // ProjectTile omits the line entirely.
                     updated={`Updated ${formatTimeAgo(project.updatedAt, nowIso)}`}
                     stagger={index * 40}
                     onOpen={() => router.push(`/w/${project.slug}/history`)}

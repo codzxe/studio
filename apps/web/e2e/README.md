@@ -317,6 +317,49 @@ Baseline policy:
 - `maxDiffPixelRatio: 0.01` absorbs benign antialias jitter; anything real
   exceeds it.
 
+### 5b. Run-3 recipe — `E2E_BASE_URL=http://localhost:3000` (Next 16 dev-origin rule)
+
+`next` is 16.4.2 (Turbopack) and its dev server treats **any origin other
+than its own bind origin (`localhost:3000`) as cross-origin and silently
+blocks the client bootstrap — pages never hydrate** (the run-2/run-3
+"eye-toggle canary timed out" signature: React DevTools logs, chunks 200,
+zero `__react*` keys on the document). `127.0.0.1` counts as cross-origin,
+and the config's node edge (`:3100`, Host-rewritten) is cross-origin at any
+port. Until `next.config.ts` grows `allowedDevOrigins` (app-code change,
+Wave 3), boot the stack yourself and point the suite straight at `next dev`
+— its own `/v1/:path*` rewrite (next.config.ts, W5-01) already proxies to
+the gateway, so no edge is needed:
+
+```sh
+cd /home/z/my-project
+# orphan cleanup (a previous run's gateway/next can hold :8787/:3000)
+for port in 3000 8787; do pid=$(ss -tlnp "sport = :$port" | grep -o 'pid=[0-9]*' | head -1 | grep -o '[0-9]*'); [ -n "$pid" ] && kill -9 "$pid"; done
+
+export DATABASE_URL="file:/home/z/my-project/.local/e2e.db" \
+  APP_URL=http://localhost:3000 NEXT_PUBLIC_APP_URL=http://localhost:3000 \
+  APP_ENV=local MOCK_MODEL=true GATEWAY_INTERNAL_URL=http://127.0.0.1:8787 \
+  AUTH_SECRET="dev-local-secret-0123456789abcdef0123456789abcdef" \
+  AUTH_GOOGLE_ID=replace-me AUTH_GOOGLE_SECRET=replace-me \
+  AUTH_GITHUB_ID=replace-me AUTH_GITHUB_SECRET=replace-me \
+  STRIPE_WEBHOOK_SECRET=whsec_replace_me \
+  STRIPE_PRICE_IDS='{"starter":"price_starter","pro":"price_pro","studio":"price_studio"}' \
+  LITELLM_BASE_URL=http://localhost:4000 LITELLM_API_KEY=sk-litellm-replace-me \
+  ASSET_MAX_BYTES=524288000 PROJECT_MAX_BYTES=262144000 CHAT_MAX_STEPS=50
+
+setsid bash -c 'cd /home/z/my-project && PORT=8787 corepack pnpm --filter @studio/gateway dev' >/tmp/e2e-gw.log 2>&1 &
+setsid bash -c 'cd /home/z/my-project && corepack pnpm --filter @studio/web exec next dev --port 3000' >/tmp/e2e-web.log 2>&1 &
+for i in $(seq 1 60); do curl -sf http://127.0.0.1:3000/sign-in >/dev/null && break; sleep 2; done
+
+cd apps/web && E2E_BASE_URL=http://localhost:3000 corepack pnpm exec playwright test <spec> --reporter=line
+# mint/refresh baselines: add --update-snapshots
+```
+
+`E2E_BASE_URL` switches the config to external-stack mode (the `webServer`
+block is skipped — the caller owns the stack), and `localhost` (never
+`127.0.0.1`) keeps Next's dev-origin check happy so hydration works. Keep
+boot + test inside ONE shell invocation when the sandbox reaps background
+processes between calls.
+
 ### Edge alternatives
 
 - **Caddy (production shape).** `infra/caddy/Caddyfile` is the real edge;

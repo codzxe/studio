@@ -8,7 +8,8 @@ import type { TopUpPackId, TopUpResponse } from "@studio/contracts";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_TOP_UP_PACKS, type TopUpAttemptOptions, TopUpFlow } from "./topup-flow";
+import { TOP_UP_PACKS } from "./top-up-packs";
+import { type TopUpAttemptOptions, TopUpFlow } from "./topup-flow";
 
 const USER = userEvent.setup();
 
@@ -33,18 +34,19 @@ function deferredStartTopUp() {
 }
 
 // ---------------------------------------------------------------------------
-// Pack catalog (contracts TOP_UP_PACK_IDS pin, held locally — boundary law)
+// Pack catalog (the shared ./top-up-packs pin — values pinned against
+// @studio/contracts TOP_UP_PACKS in top-up-packs.test.ts)
 // ---------------------------------------------------------------------------
 
 describe("TopUpFlow — pack catalog", () => {
   it("defaults to the wire packs credits100/credits500/credits2000 with whole-credit labels", () => {
     render(<TopUpFlow startTopUp={vi.fn()} redirectTo={vi.fn()} />);
-    expect(DEFAULT_TOP_UP_PACKS).toEqual([
+    expect(TOP_UP_PACKS).toEqual([
       { packId: "credits100", credits: 100 },
       { packId: "credits500", credits: 500 },
       { packId: "credits2000", credits: 2000 },
     ]);
-    for (const pack of DEFAULT_TOP_UP_PACKS) {
+    for (const pack of TOP_UP_PACKS) {
       expect(screen.getByTestId(`topup-pack-${pack.packId}`)).toBeInTheDocument();
     }
     expect(screen.getByTestId("topup-pack-credits2000")).toHaveTextContent("2,000");

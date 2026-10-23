@@ -2,7 +2,8 @@
  * DashboardView tests (W2-03, §8.4) — the /w client surface: the
  * time-aware greeting (deterministic from the RSC-stamped nowIso), the
  * actions row (ONE "New project" primary in every state), the Recent grid
- * (≤8 ProjectCards, 40ms stagger, honest "— · 0 comps" stand-ins), the
+ * (≤8 project tiles, 40ms stagger, NO duration/comps metadata — the wire
+ * carries neither field, and the shared ProjectTile renders neither), the
  * EmptyState arms (incl. the no-workspace /onboarding link), the loading
  * skeletons (6, only while a read is actually in flight) and the §8.4 error
  * law (inline banner + retry, the page stays usable). The api port is
@@ -144,9 +145,10 @@ describe("DashboardView", () => {
 
     const cards = screen.getAllByTestId("dashboard-project-card");
     expect(cards).toHaveLength(3);
-    // Honest metadata stand-ins (§7.3): the wire's Project row carries
-    // neither duration nor composition counts in v1.
-    expect(within(cards[0] as HTMLElement).getByText("— · 0 comps")).toBeInTheDocument();
+    // NO fake metadata (M9): the wire's Project row carries neither duration
+    // nor composition counts in v1, so the card renders NEITHER — no
+    // "— · 0 comps" line, just the real updated time.
+    expect(within(cards[0] as HTMLElement).queryByText(/comps/)).not.toBeInTheDocument();
     expect(within(cards[0] as HTMLElement).getByText("Updated 2h ago")).toBeInTheDocument();
   });
 
@@ -167,19 +169,20 @@ describe("DashboardView", () => {
     expect(delays).toEqual(["", "40ms", "80ms", "120ms", "160ms", "200ms", "240ms", "280ms"]);
   });
 
-  it("hover reveals the card actions; Open navigates to the project hub", async () => {
+  it("hover reveals the card's wired actions; Open navigates to the project hub", async () => {
     const user = userEvent.setup();
     render(<DashboardView {...baseProps()} api={makePort()} />);
 
     const card = screen.getAllByTestId("dashboard-project-card")[0] as HTMLElement;
     await user.hover(card);
-    // §8.4 hover actions: Open (wired below), Duplicate + ⋯ are the
-    // projects-list surface (W2-04) — rendered by the kit card, unbound here.
+    // §8.4 hover actions, honest (no dead buttons): the dashboard card only
+    // wires Open — Duplicate/⋯ are the projects-list surface (W2-04), so the
+    // shared tile renders ONLY the actions that are actually bound.
     expect(within(card).getByRole("button", { name: "Open" })).toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: "Duplicate" })).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Duplicate" })).not.toBeInTheDocument();
     expect(
-      within(card).getByRole("button", { name: "More actions for Film 0" }),
-    ).toBeInTheDocument();
+      within(card).queryByRole("button", { name: "More actions for Film 0" }),
+    ).not.toBeInTheDocument();
 
     await user.click(within(card).getByRole("button", { name: "Open" }));
     expect(routerPush).toHaveBeenCalledWith("/w/film-0/history");

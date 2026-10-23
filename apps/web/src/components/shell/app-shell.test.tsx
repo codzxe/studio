@@ -2,9 +2,10 @@
  * AppShell tests (W2-01, §8.4) — the client shell root: rail + top bar +
  * children composition, the manifest payload arms (no credits, viewer role,
  * many workspaces), the ?ws display refinement (client-side billing.state
- * refetch through the workspace-scoped port), and the ⌘K palette wiring
- * (D-5). next/navigation and the better-auth client are mocked; the port
- * factory is faked (the fakePort/asBillingPort house pattern — no network).
+ * refetch through the workspace-scoped port), and the keyboard wiring
+ * (⌘K palette per D-5; ⌘N new-project per W2-B4). next/navigation and the
+ * better-auth client are mocked; the port factory is faked (the
+ * fakePort/asBillingPort house pattern — no network).
  */
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -263,6 +264,33 @@ describe("AppShell — ⌘K palette wiring (D-5)", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("command-input")).not.toBeInTheDocument();
     });
+  });
+
+  it("⌘N/ctrl+N runs the New project action — navigate to /w (W2-B4, the palette badge's binding)", async () => {
+    render(
+      <AppShell payload={payload()} createPort={fakePortFactory([])}>
+        <p data-testid="page-content">Billing page</p>
+      </AppShell>,
+    );
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "n", metaKey: true });
+    });
+    expect(routerPush).toHaveBeenCalledWith("/w");
+
+    // Ctrl+N mirrors it for non-macOS layouts, and neither opens the palette.
+    routerPush.mockClear();
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "n", ctrlKey: true });
+    });
+    expect(routerPush).toHaveBeenCalledWith("/w");
+    expect(screen.queryByTestId("command-input")).not.toBeInTheDocument();
+
+    // A bare N (no modifier) is just typing — never a navigation.
+    routerPush.mockClear();
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "n" });
+    });
+    expect(routerPush).not.toHaveBeenCalled();
   });
 
   it("does not fetch projects until the palette opens", async () => {

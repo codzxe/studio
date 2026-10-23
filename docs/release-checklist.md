@@ -2,9 +2,10 @@
 
 THE gate for tagging `v0.1.0-beta.0`. Every item must be green **on the exact commit
 being tagged**. Any SKIP, red job, or gate below threshold = NO-GO. Companion docs:
-`CHANGELOG.md` (what's in the cut), `docs/phases/acceptance-matrix.md` (live-command
-evidence per §20 criterion), `infra/environments.md` (env matrix + secrets),
-`docs/phases/phase-exit-audit.md`.
+`CHANGELOG.md` (what's in the cut), `docs/phases/acceptance-matrix.md` *(historical —
+pre-pivot PhotoCraft era)* (live-command evidence per §20 criterion),
+`infra/environments.md` (env matrix + secrets), `docs/phases/phase-exit-audit.md`
+*(historical — pre-pivot PhotoCraft era)*.
 
 ## 0. Preconditions
 
@@ -104,4 +105,5 @@ Run in order; each step must pass before the next.
 Automatic NO-GO: any CI job red or skipped-by-excuse, any eval gate below threshold,
 license check not strict-clean, smoke engine-skip, backup unverified, or a rollback
 path that has never been rehearsed. On GO: tag `v0.1.0-beta.0`, publish
-`CHANGELOG.md`, record evidence links in `docs/phases/acceptance-matrix.md`.
+`CHANGELOG.md`, record evidence links in `docs/phases/acceptance-matrix.md`
+*(historical — pre-pivot PhotoCraft era)*.

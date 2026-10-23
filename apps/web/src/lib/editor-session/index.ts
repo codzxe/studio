@@ -63,11 +63,8 @@ export {
 } from "./read-only";
 export type { ReadOnlyGate, ReadOnlyGateHandle } from "./read-only";
 
-export {
-  createFakeEditorSessionClient,
-  defaultFakeProjectBytes,
-  fakeBaseVersion,
-  type FakeEditorSessionClient,
-  type FakeEditorSessionClientCalls,
-  type FakeSessionClientOptions,
-} from "./testing";
+// Test support (createFakeEditorSessionClient + the fake .ecproj bytes) lives
+// in ./testing and is deliberately NOT re-exported here: this barrel sits in
+// the production module graph of every "@/lib/editor-session" import, and
+// test fakes must never ride it (W2-B1 purge). Tests import
+// "@/lib/editor-session/testing" directly.

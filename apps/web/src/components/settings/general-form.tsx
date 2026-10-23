@@ -10,8 +10,9 @@
  * field; every other §7.3 failure surfaces as the bounded
  * message/hint/request-id strip (§14).
  *
- * HONESTY (manifest W2-06): workspace logo and default project visibility
- * are v2 — this page renders NO fake fields for them, just the note.
+ * HONESTY (manifest W2-06, M9): workspace logo and default project
+ * visibility do not exist in v1 — no fields and no copy for them ship on
+ * this page. When the features land, their controls ship with them.
  *
  * Boundary law (apps/web): `@studio/contracts` is `import type` ONLY, so the
  * slug grammar is restated locally from WORKSPACE_SLUG_SCHEMA.
@@ -228,16 +229,6 @@ export function GeneralForm({
             </Button>
           ) : null}
         </form>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Not configurable yet</CardTitle>
-          <CardDescription>
-            A workspace logo and a default project visibility setting arrive in v2 — there is
-            nothing to set for them today, so nothing is shown here.
-          </CardDescription>
-        </CardHeader>
       </Card>
     </section>
   );

@@ -10,6 +10,11 @@
 // apps/web never runtime-imports the `@studio/contracts` barrel (Turbopack
 // constraint, see lib/gateway.ts) — this module restates the one wire shape
 // the page consumes, exactly like the billing page's `MembershipWire`.
+//
+// W2-B4: `thumbnailUrl` is deliberately NOT restated — the gateway sends the
+// field (contracts Project) but nothing consumes it in apps/web (every card
+// renders the slate empty state; no producer writes a thumbnail key), so
+// restating it here was a dead wire field.
 
 /** One `GET /v1/projects` row (§7.2 `Project`; W1-c `archived` lifecycle). */
 export interface ProjectsListRow {
@@ -17,7 +22,6 @@ export interface ProjectsListRow {
   readonly workspaceId: string;
   readonly name: string;
   readonly slug: string;
-  readonly thumbnailUrl: string | null;
   /** §9.1 lifecycle flag: archived ≠ deleted — rows stay readable. */
   readonly archived: boolean;
   readonly currentVersionId: string | null;
@@ -83,7 +87,6 @@ export function parseProjectsListRow(value: unknown): ProjectsListRow | null {
     workspaceId: value.workspaceId,
     name: value.name,
     slug: value.slug,
-    thumbnailUrl: stringOrNull(value.thumbnailUrl),
     archived: value.archived,
     currentVersionId: stringOrNull(value.currentVersionId),
     createdBy: value.createdBy,

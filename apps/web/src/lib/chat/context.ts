@@ -94,7 +94,12 @@ export const DEFAULT_FLAGS: ContextSelection = {
   selectedProperties: false, // §5.1 When selection exists (≤ 12 props)
   currentFrame: false, // §5.1 When the prompt is visual (rendered on demand)
   recentCommands: false, // §5.1 When relevant (last 10)
-  comments: false, // §5.1 When the prompt mentions feedback (gateway API)
+  // Dormant wire field, pinned false: the §5.1 "Comments" block was never
+  // wired (no gateway fetch feeds the collector or `studio.get_context`), so
+  // its placeholder was purged (W2-B1) — an enabled flag produces NO block
+  // until a real fetch lands. The key itself stays: `ContextSelection` is the
+  // wire shape (contracts) and every request body carries it.
+  comments: false,
 };
 
 /**
@@ -130,15 +135,6 @@ export function timecodeLabel(seconds: number | null | undefined): string {
   const whole = Math.floor(rest / 10);
   const frac = rest % 10;
   return `${String(minutes).padStart(2, "0")}:${String(whole).padStart(2, "0")}.${frac}`;
-}
-
-/**
- * Comments come from the gateway API (§5.1 "GET /comments"), not the bridge —
- * this module only reserves the block; M4-J wires the real fetch. `data` stays
- * undefined so the chip renders and the flag is accounted for.
- */
-export function commentsBlockPlaceholder(): ContextBlock {
-  return { kind: "comments", label: "Comments", tokenEstimate: 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -303,9 +299,9 @@ async function collect(
     );
   }
 
-  if (flags.comments) {
-    blocks.push(commentsBlockPlaceholder());
-  }
+  // `flags.comments` deliberately has NO arm here: the comments block was
+  // never wired (see DEFAULT_FLAGS) — an enabled flag must not grow a chip
+  // that promises context the model never receives.
 
   const blockTotal = blocks.reduce((sum, b) => sum + b.tokenEstimate, 0);
   const pinnedTotal = pinned.reduce((sum, item) => sum + estimateTokens(item), 0);

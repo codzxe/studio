@@ -13,8 +13,11 @@
  * sequences come from the api-client's committed fixtures.
  */
 
-import { ApiError, fixtures } from "@studio/api-client";
+// W2-B3: fixtures moved off the main barrel to the `./fixtures` subpath
+// (bundle hygiene — production code can no longer import demo data).
+import { ApiError } from "@studio/api-client";
 import type { ApiClient, ChatStreamHandlers } from "@studio/api-client";
+import { fixtures } from "@studio/api-client/fixtures";
 import type { ChatRequest, ContextSelection, ModelId, StudioStreamEvent } from "@studio/contracts";
 import { describe, expect, it } from "vitest";
 

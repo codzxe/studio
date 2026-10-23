@@ -22,7 +22,8 @@
  * timestamps degrade to "—", and there is no raw-HTML path.
  */
 
-import { isApiError } from "@studio/api-client";
+import { type AuditQueryInput, isApiError } from "@studio/api-client";
+import type { AuditEntry } from "@studio/contracts";
 import {
   Badge,
   Button,
@@ -49,12 +50,7 @@ import { CircleAlert, Download } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 
-import {
-  type AuditEntry,
-  type AuditQueryInput,
-  type SettingsPort,
-  createDefaultSettingsPort,
-} from "./settings-port";
+import { type SettingsPort, createDefaultSettingsPort } from "./settings-port";
 
 // ---------------------------------------------------------------------------
 // Display bounds (law #1 spirit: wire strings bounded before the DOM)

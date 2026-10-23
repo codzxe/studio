@@ -208,6 +208,32 @@ describe("createApiClient — query params", () => {
     expect(url).toContain("limit=50");
   });
 
+  // W2-B3 regression pin: projects.list must validate with
+  // PROJECTS_QUERY_SCHEMA (W1-c §9.1), not the bare pagination schema —
+  // `archived` used to be silently stripped before it reached the wire.
+  it("passes the projects archived filter through (W1-c §9.1)", async () => {
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ items: [], nextCursor: null })),
+    );
+    // Archived window continuation — the cursor MUST stay window-consistent
+    // (cursor + archived=true on the same request).
+    await client.projects.list({ archived: true, cursor: "cur_arch", limit: 25 });
+    expect(calls[0]?.input).toBe(`${BASE}/projects?cursor=cur_arch&limit=25&archived=true`);
+  });
+
+  it("keeps the default projects window unarchived (no archived param)", async () => {
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ items: [], nextCursor: null })),
+    );
+    await client.projects.list();
+    expect(calls[0]?.input).toBe(`${BASE}/projects?limit=50`);
+
+    // Explicit false rides the wire (the gateway treats it as the default
+    // view) instead of being dropped client-side.
+    await client.projects.list({ archived: false });
+    expect(calls[1]?.input).toBe(`${BASE}/projects?limit=50&archived=false`);
+  });
+
   it("rejects limit > 100 client-side (contracts bound)", async () => {
     const { client, calls } = makeClient(() =>
       Promise.resolve(jsonOk({ items: [], nextCursor: null })),

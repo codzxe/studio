@@ -2,4 +2,3 @@ packages:
   - "apps/*"
   - "services/*"
   - "packages/*"
-# archive/* is deliberately excluded — it is reference-only.

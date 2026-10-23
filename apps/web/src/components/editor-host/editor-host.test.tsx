@@ -9,7 +9,9 @@
  *
  * The session engine runs for real (`loadProjectSession` +
  * `createAutosaveController` from @/lib/editor-session) against
- * `createFakeEditorSessionClient`; the lease port is a fake §11 seam.
+ * `createFakeEditorSessionClient` (imported from the test-only
+ * @/lib/editor-session/testing subpath — never the production barrel); the
+ * lease port is a fake §11 seam.
  * Real timers (the save chain crosses real WebCrypto); every wait uses
  * `vi.waitFor`. No network, no dev servers, deterministic.
  *
@@ -20,7 +22,10 @@
  */
 
 import type { ChatContextApi } from "@/lib/chat/provider";
-import { type FakeEditorSessionClient, createFakeEditorSessionClient } from "@/lib/editor-session";
+import {
+  type FakeEditorSessionClient,
+  createFakeEditorSessionClient,
+} from "@/lib/editor-session/testing";
 import type { ApiClient } from "@studio/api-client";
 import { type FakeEditor, createFakeEditor } from "@studio/editor-bridge/fake";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";

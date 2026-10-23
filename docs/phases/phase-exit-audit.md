@@ -1,3 +1,7 @@
+> **HISTORICAL — pre-pivot (PhotoCraft era).** Superseded by ADR-0006 and the
+> EffectCraft build plan. Kept for audit trail; nothing here describes the
+> current product. Current milestone evidence: `docs/phases/M0.md`–`M8.md`.
+
 # Phase Exit Audit — §19 criteria, scored honestly (W7-K, 2026-10-21)
 
 One row per §19 exit criterion, per phase. Statuses mean exactly this:

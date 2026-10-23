@@ -62,7 +62,6 @@ function row(overrides: Partial<ProjectsListRow> = {}): ProjectsListRow {
     workspaceId: "ws_first",
     name: "Launch film",
     slug: "launch-film",
-    thumbnailUrl: null,
     archived: false,
     currentVersionId: null,
     createdBy: ME,
@@ -261,6 +260,11 @@ describe("ProjectsListView — filters", () => {
     view(makePort());
     await user.click(screen.getByTestId("projects-filter-all"));
     expect(cardIds()).toEqual(["prj_beta", "prj_alpha", "prj_gamma", "prj_eps", "prj_delta"]);
+    // No fake metadata (M9): the list wire carries neither duration nor comps,
+    // so the tiles render neither — no "— · 0 comps" line on any card.
+    for (const card of screen.getAllByTestId(/projects-card-/)) {
+      expect(card.textContent ?? "").not.toMatch(/comps/);
+    }
   });
 
   it("Mine keeps only createdBy === me.user.id (client-side)", async () => {

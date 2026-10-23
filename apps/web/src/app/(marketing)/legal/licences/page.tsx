@@ -1,4 +1,5 @@
 import { LegalCrossLinks, LegalPage, LegalSection } from "@/components/marketing/legal-page";
+import { OSS_ATTRIBUTIONS } from "@/components/marketing/oss-attributions";
 import { pageMetadata } from "@/lib/seo";
 import { Brand } from "@studio/config";
 import { FrameLine } from "@studio/ui";
@@ -12,33 +13,13 @@ export const metadata = pageMetadata({
 
 /**
  * Open-source attribution page (docs/legal/license-audit.md, ATTRIBUTION.md).
- * This is the one place in the commercial UI where the upstream editor's real
- * name is legitimate (packages/config/src/brand.ts: "attribution files and
- * licences pages legitimately mention the upstream marks").
+ * The attribution table (incl. the vendored editor's exact upstream pin) is
+ * the shared `components/marketing/oss-attributions.ts` module — ONE copy,
+ * consumed by this page and the in-app settings licences page. This is the
+ * one place in the commercial UI where the upstream editor's real name is
+ * legitimate (packages/config/src/brand.ts: "attribution files and licences
+ * pages legitimately mention the upstream marks").
  */
-const OSS_ATTRIBUTIONS = [
-  {
-    component: "EffectCraft",
-    role: "The compositing editor and engine — used unmodified (UI-frozen)",
-    license: "MIT OR Apache-2.0",
-    upstream: "https://github.com/storytold/effectcraft",
-    pin: "9db7f3b21700fd821f215782ed1c82afe077880f (v0.13.0)",
-  },
-  {
-    component: "Instrument Serif · Instrument Sans",
-    role: "Display and UI typefaces",
-    license: "SIL Open Font License 1.1",
-    upstream: "https://github.com/Instrument/instrument-serif",
-    pin: "n/a — fonts are never committed to this repository",
-  },
-  {
-    component: "JetBrains Mono",
-    role: "Monospace — timecode, code, keyboard hints",
-    license: "SIL Open Font License 1.1",
-    upstream: "https://github.com/JetBrains/JetBrainsMono",
-    pin: "n/a — fonts are never committed to this repository",
-  },
-] as const;
 
 export default function LicencesPage() {
   return (

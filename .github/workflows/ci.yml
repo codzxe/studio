@@ -1,0 +1,365 @@
+# CI — EffectCraft Studio monorepo (first CI ever: W1-A7 flagged ".github/workflows
+# DOES NOT EXIST — every gate is CI-owed"). Authored by W2-B7.
+#
+# Shape: 7 independent parallel jobs (no `needs` — failures isolate cleanly).
+# Conventions honored repo-wide:
+#   - ALWAYS `corepack pnpm ...` (packageManager pin pnpm@9.15.9 in package.json).
+#   - Node >=22 (root engines field).
+#   - Ownership: this file covers apps/web, services/*, packages/*, editor/ gates
+#     only as described per job; nothing here mutates the repo.
+#
+# HONESTY LEDGER (what this first workflow deliberately does NOT claim):
+#   - The e2e job is `continue-on-error: true` — the boot recipe has never run in
+#     CI (baselines are runner-image-dependent per apps/web/e2e/README.md §5).
+#   - editor-cargo runs `cargo check` on the cli crate only; `cargo test
+#     --workspace` / clippy / the wasm dist rebuild (W1-09) are owed on a beefier
+#     runner — commented at the job.
+#   - Every env assumption below is flagged with "# ASSUMPTION" — verify on the
+#     first real run.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never let corepack block a run on an interactive download prompt.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+jobs:
+  # ── apps/web ────────────────────────────────────────────────────────────────
+  web:
+    name: "web: typegen · tsc · lint · test · build"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # ASSUMPTION: web unit tests (jsdom) and `next build` import @studio/config,
+      # whose optional vars fall back permissively when APP_ENV=local (the dev
+      # default — same posture lib/seo.ts uses for the SITE_URL fallback).
+      # No secrets are provisioned: nothing in this job should call out.
+      APP_ENV: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # reads packageManager: pnpm@9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies (frozen lockfile)
+        run: corepack pnpm install --frozen-lockfile
+      - name: "next typegen (route/typed-routes types — tsc depends on the generated .next/types)"
+        run: corepack pnpm --filter @studio/web exec next typegen
+      - name: "typecheck: tsc --noEmit"
+        run: corepack pnpm --filter @studio/web typecheck
+      - name: "lint: biome check src tests"
+        run: corepack pnpm --filter @studio/web lint
+      - name: "test: vitest run"
+        run: corepack pnpm --filter @studio/web test
+      - name: "build: next build"
+        run: corepack pnpm --filter @studio/web build
+
+  # ── services/gateway ────────────────────────────────────────────────────────
+  gateway:
+    name: "gateway: tsc · vitest (postgres:16 service)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      # Recon (services/gateway/tests/helpers.ts resolveDatabaseUrl): suites gate
+      # on DATABASE_URL — with no DB they SKIP (postgres-specific suites carry the
+      # skip reason in their describe title); with a live PG the full suite runs.
+      # The URL below is exactly the SANDBOX_DATABASE_URL the helpers expect
+      # (studio:studio@127.0.0.1:5432/studio) and matches apps/web/e2e/README.md.
+      postgres:
+        image: postgres:16 # unit/integration suites are drizzle-based; 16 suffices
+        env:
+          POSTGRES_USER: studio
+          POSTGRES_PASSWORD: studio
+          POSTGRES_DB: studio
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U studio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://studio:studio@127.0.0.1:5432/studio
+      # The documented test invocation (helpers.ts header):
+      #   DATABASE_URL=… MOCK_MODEL=true pnpm --filter @studio/gateway test
+      MOCK_MODEL: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies (frozen lockfile)
+        run: corepack pnpm install --frozen-lockfile
+      - name: "db migrations (idempotent safety net — tests may create schema themselves; harmless if so)"
+        run: corepack pnpm db:migrate
+      - name: "typecheck: tsc --noEmit"
+        run: corepack pnpm --filter @studio/gateway typecheck
+      - name: "test: vitest run (full suite incl. postgres-only suites)"
+        run: corepack pnpm --filter @studio/gateway test
+
+  # ── services/worker ─────────────────────────────────────────────────────────
+  worker:
+    name: "worker: tsc · vitest"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies (frozen lockfile)
+        run: corepack pnpm install --frozen-lockfile
+      - name: "typecheck: tsc --noEmit"
+        run: corepack pnpm --filter @studio/worker typecheck
+      # Honest scope: the render-pipeline integration suite self-skips here — its
+      # harness (services/worker/tests/integration/harness.ts) gates on BOTH a
+      # postgres DATABASE_URL and a resolvable effectcraft-cli binary; neither is
+      # provisioned in this job, and the skip reason is encoded in the suite title.
+      - name: "test: vitest run (integration suite self-skips: no PG, no CLI binary)"
+        run: corepack pnpm --filter @studio/worker test
+
+  # ── packages/* ──────────────────────────────────────────────────────────────
+  typecheck-packages:
+    name: "packages/*: tsc --noEmit (all 7)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies (frozen lockfile)
+        run: corepack pnpm install --frozen-lockfile
+      # Recon: every workspace package (api-client, config, contracts, db,
+      # editor-bridge, storage, ui) ships a tsconfig.json — a plain recursive
+      # exec works with no missing-tsconfig guard. If a future package lacks
+      # one, `pnpm -r exec tsc` fails loudly and this needs a per-package loop.
+      - name: "typecheck every package: tsc --noEmit"
+        run: corepack pnpm -r --filter './packages/*' exec tsc --noEmit
+
+  # ── licence gate ────────────────────────────────────────────────────────────
+  licence-gate:
+    name: "licence gate: check:licenses"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Currently RED on main's tree (verified on-box: exit 1, 17 violations — 16
+    # of which reproduce on a fresh checkout): 9 undeclared deps
+    # (@better-auth/api-key, @playwright/test, 5 × @radix-ui/*,
+    # @types/better-sqlite3, better-sqlite3 — need licenses.overrides.json rows)
+    # plus 7 font binaries that ARE git-tracked under editor/assets/fonts/
+    # (spec §1.5 rule 9 bans committed fonts). The 17th (.env) is dev-box-only —
+    # untracked, absent from a fresh checkout. Manifest/fonts fixes sit outside
+    # .github/** ownership, so the gate stays VISIBLE but non-blocking until the
+    # owner clears it — REMOVE continue-on-error once it exits 0 on main.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # Root script name verified in package.json: check:licenses →
+      # node scripts/check-licenses.mjs. The script is zero-dependency and reads
+      # only the checkout's manifests (9 package.json + licenses.overrides.json
+      # + a repo walk for forbidden files — verified in its dry-run output), so
+      # no `pnpm install` step is needed here.
+      - name: "licence audit: corepack pnpm check:licenses"
+        run: corepack pnpm check:licenses
+
+  # ── editor/ (vendored Rust workspace — tracked in git, pin 9db7f3b2) ────────
+  editor-cargo:
+    name: "editor: cargo check --release -p effectcraft-cli"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      # Recon: `git ls-files editor/` shows the vendored tree IS tracked, so this
+      # gate belongs in CI (root script `editor:cli` = `cd editor && cargo build
+      # -p effectcraft-cli`; crate name confirmed in root package.json).
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: editor
+      - name: "cargo check (release, cli crate only)"
+        working-directory: editor
+        run: cargo check --release -p effectcraft-cli
+      # OWED (deliberately not here — needs a beefier runner): `cargo test
+      # --workspace` (root `editor:test`), clippy, and the wasm dist rebuild
+      # (`cargo xtask web`, W1-09 CLI/wasm re-tune). This job only proves the
+      # vendored workspace still COMPILES against stable Rust.
+
+  # ── e2e (Playwright chromium, full stack) ───────────────────────────────────
+  e2e:
+    name: "e2e: playwright chromium (full stack boot)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # 20 not 15: README recipe adds a cargo fixture build + cold `next dev` compiles on top of the house 10–15 min guidance; first green run will tell if this sticks.
+    # OWED: first green run. The boot recipe (apps/web/e2e/README.md) has never
+    # been exercised on a GH runner: visual baselines are runner-image-dependent
+    # (README §5: WebGL output is GPU/driver-dependent; the committed
+    # chromium-linux PNGs were generated on the dev sandbox, not this image),
+    # and the env/template dance below is unverified. CI must stay green while
+    # this is proven, hence continue-on-error.
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:17 # README §2 pins PostgreSQL 17 for the e2e stack
+        env:
+          POSTGRES_USER: studio
+          POSTGRES_PASSWORD: studio
+          POSTGRES_DB: studio
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U studio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://studio:studio@127.0.0.1:5432/studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # README §3's fixture generator builds against the vendored editor crates
+      # (path deps), so Rust is needed here too.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies (frozen lockfile)
+        run: corepack pnpm install --frozen-lockfile
+      - name: "Playwright browsers: chromium only (README §1b — single deterministic engine)"
+        run: corepack pnpm --filter @studio/web exec playwright install --with-deps chromium
+      - name: "Write .env per README §4 (template + the seven overrides)"
+        run: |
+          cp .env.example .env
+          for kv in \
+            "APP_URL=http://127.0.0.1:3100" \
+            "NEXT_PUBLIC_APP_URL=http://127.0.0.1:3100" \
+            "APP_ENV=local" \
+            "MOCK_MODEL=true" \
+            "DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio" \
+            "GATEWAY_INTERNAL_URL=http://127.0.0.1:8787"; do
+            key="${kv%%=*}"
+            sed -i "/^${key}=/d" .env
+            printf '%s\n' "$kv" >> .env
+          done
+          # AUTH_SECRET must be >=32 chars (README §4); throwaway per-run value.
+          sed -i '/^AUTH_SECRET=/d' .env
+          echo "AUTH_SECRET=$(openssl rand -base64 32)" >> .env
+      - name: "DB migrate + seed (README §2 — demo user/workspace/project, idempotent)"
+        run: |
+          corepack pnpm db:migrate
+          corepack pnpm db:seed
+      - name: "Engine-openable .ecproj fixture (README §3 — the one custom step)"
+        run: |
+          REPO="$(pwd)"
+          mkdir -p /tmp/ecf-fixture/src
+          cat > /tmp/ecf-fixture/Cargo.toml <<'EOF'
+          [package]
+          name = "ecf-fixture"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          effectcraft-project = { path = "REPO_PATH/editor/crates/project" }
+          effectcraft-time = { path = "REPO_PATH/editor/crates/time" }
+          effectcraft-keyframe = { path = "REPO_PATH/editor/crates/keyframe" }
+          effectcraft-color = { path = "REPO_PATH/editor/crates/color" }
+          serde_json = "1.0.151"
+          EOF
+          sed -i "s|REPO_PATH|$REPO|g" /tmp/ecf-fixture/Cargo.toml
+          cat > /tmp/ecf-fixture/src/main.rs <<'EOF'
+          use effectcraft_project::build;
+          use effectcraft_color::Label;
+          use effectcraft_project::{Comp, ItemId, ItemKind, LayerSource, Project, Solid};
+          use effectcraft_time::{FrameRate, Tick};
+
+          fn main() {
+              let mut p = Project::default();
+              let folder: ItemId = p.add_item("Solids", Label::Blue, None, ItemKind::Folder);
+              let mut comp = Comp::new(1920, 1080, FrameRate::FPS_29_97, Tick::from_seconds_f64(5.0));
+
+              let solid = p.add_item(
+                  "Background",
+                  Label::Red,
+                  Some(folder),
+                  ItemKind::Solid(Solid { color: [0.07, 0.08, 0.10], width: comp.width, height: comp.height, pixel_aspect: 1.0 }),
+              );
+              let mut bg = build::layer(&mut p, &comp, "Background", LayerSource::Solid { item: solid }, (comp.width, comp.height), None);
+              if let Some(prop) = bg.props.prop_mut("transform/position") {
+                  prop.value = effectcraft_keyframe::Value::Vec3([960.0, 540.0, 0.0]);
+              }
+              comp.layers.push(bg);
+
+              let mut title = build::layer(&mut p, &comp, "Headline", LayerSource::Text, (comp.width, comp.height), None);
+              if let Some(prop) = title.props.prop_mut("text/sourceText") {
+                  prop.value = effectcraft_keyframe::Value::Text(Box::new(effectcraft_keyframe::TextDoc {
+                      text: "Studio".into(),
+                      size: 120.0,
+                      ..Default::default()
+                  }));
+              }
+              if let Some(prop) = title.props.prop_mut("transform/position") {
+                  prop.value = effectcraft_keyframe::Value::Vec3([960.0, 540.0, 0.0]);
+              }
+              comp.layers.push(title);
+
+              p.add_item("Main", Label::Yellow, Some(folder), ItemKind::Comp(comp.into()));
+
+              let json = p.to_json();
+              let (reparsed, notes) = Project::from_json_repaired(&json).expect("round-trip");
+              assert!(notes.is_empty(), "repair notes: {notes:?}");
+              assert_eq!(reparsed.to_json_compact(), p.to_json_compact(), "round-trip drift");
+              let comps: Vec<String> = reparsed
+                  .comps()
+                  .map(|(id, _)| reparsed.items.get(&id).map(|i| i.name.clone()).unwrap_or_default())
+                  .collect();
+              eprintln!("verified: comps={comps:?} items={} next_id={}", reparsed.items.len(), reparsed.next_id);
+              print!("{json}");
+          }
+          EOF
+          # --offline dropped from the README command: a cold CI box has no warm
+          # cargo registry cache (README itself says "drop the flag otherwise").
+          (cd /tmp/ecf-fixture && cargo run -q 2>fixture.log) > demo-project.ecproj
+          # Determinism fingerprint (README-recorded: sha256
+          # aec54404efd423674555df2388bbf8b0ed59f378dbb3e3fe20684c818351f91d,
+          # 47997 bytes) — printed for eyeballing, NOT hard-asserted: a drift is
+          # expected exactly when the vendored editor pin moves.
+          sha256sum demo-project.ecproj
+          # Stage at the seeded object keys (gateway local driver reads
+          # <cwd>/.local/storage/<key>; gateway dev runs with cwd services/gateway).
+          for v in ver_demo_1 ver_demo_2 ver_demo_3; do
+            d="services/gateway/.local/storage/workspaces/org_demo/projects/prj_demo/versions/$v"
+            mkdir -p "$d" && cp demo-project.ecproj "$d/project.ecproj"
+          done
+      # README §5: apps/web has NO `e2e` script in package.json — use the README's
+      # own alternative invocation (`exec playwright test`). The config's single
+      # webServer boots the edge proxy (:3100) + gateway (:8787) + `next dev`
+      # (:3000) itself and waits for http://127.0.0.1:3100/ — CI=true is set by
+      # the runner (forbidOnly, retries: 2, reuseExistingServer: false).
+      # ASSUMPTION: `set -a; source .env` — README §4: "no dotenv loader — export
+      # everything"; template values must source cleanly (verify on first run).
+      - name: "Playwright: chromium suite (boots edge + gateway + web itself)"
+        run: |
+          set -a; source .env; set +a
+          corepack pnpm --filter @studio/web exec playwright test

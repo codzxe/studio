@@ -8,6 +8,8 @@ import {
 import { buttonVariants } from "@studio/ui";
 import Link from "next/link";
 
+import { TOP_UP_PACKS } from "@/components/billing/top-up-packs";
+
 /**
  * PricingCards — the §8.1 §8 "three plans + top-ups" block, built for the
  * /pricing page (M9-E, AUD-5 finding).
@@ -19,10 +21,11 @@ import Link from "next/link";
  * metrics. The trial is a subscription STATE on the Starter row (D-4), so
  * the §8.2 trial copy quotes the Starter price.
  *
- * The top-up packs mirror the wire catalog (`@studio/contracts`
- * `TOP_UP_PACKS`: credits100/500/2000 — runtime import is forbidden in
- * apps/web, so the ids/credits are pinned here and pointed at the source).
- * Pack PRICES live in Stripe only and are never on the wire — the cards say
+ * The top-up packs come from the ONE web-side pin of the wire catalog
+ * (`@studio/contracts` `TOP_UP_PACKS` — runtime import is forbidden in
+ * apps/web, so billing/top-up-packs.ts restates it type-pinned, and
+ * top-up-packs.test.ts pins the values against the real catalog). Pack
+ * PRICES live in Stripe only and are never on the wire — the cards say
  * "price at checkout", exactly like the billing page's TopUpFlow.
  */
 
@@ -87,13 +90,6 @@ const PRICING_PAGE_CARDS: readonly PricingPlanCard[] = [
   { id: "pro", featured: true, blurb: "For small teams shipping every week." },
   { id: "studio", featured: false, blurb: "For studios with heavy render volume." },
 ] as const;
-
-/** The wire top-up pack catalog, pinned (see the module header). */
-const TOP_UP_PACKS: readonly { readonly credits: number }[] = Object.freeze([
-  { credits: 100 },
-  { credits: 500 },
-  { credits: 2000 },
-] as const);
 
 // ---------------------------------------------------------------------------
 // The cards

@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "./src/index.ts",
-  "exports": { ".": "./src/index.ts", "./validate": "./src/validate.ts" },
-  "dependencies": { "zod": "^3.24.1" },
-  "optionalDependencies": { "aws4fetch": "^1.0.20" },
+  "main": "./src/validate.ts",
+  "exports": {
+    ".": "./src/validate.ts",
+    "./validate": "./src/validate.ts"
+  },
   "devDependencies": { "@types/node": "^22.10.0", "vitest": "^2.1.8" },
   "scripts": { "typecheck": "tsc --noEmit", "lint": "biome check src tests", "test": "vitest run" }
 }

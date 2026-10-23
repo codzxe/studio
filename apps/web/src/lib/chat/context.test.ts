@@ -10,7 +10,6 @@ import {
   type SelectionBlockData,
   autoFlags,
   collectContextSnapshot,
-  commentsBlockPlaceholder,
   timecodeLabel,
 } from "./context";
 import { estimateTokens } from "./tokens";
@@ -134,7 +133,9 @@ describe("collectContextSnapshot", () => {
       "focusedPanel",
       "currentFrame",
       "recentCommands",
-      "comments",
+      // No "comments" block: the §5.1 Comments context was never wired, so
+      // the dormant flag is purged (W2-B1) — even ALL_ON grows no Comments
+      // chip that would promise context the model never receives.
     ]);
 
     const labels = Object.fromEntries(snap.blocks.map((b) => [b.kind, b.label]));
@@ -146,7 +147,6 @@ describe("collectContextSnapshot", () => {
     expect(labels.focusedPanel).toBe("Panel: Timeline");
     expect(labels.currentFrame).toBe("Frame preview");
     expect(labels.recentCommands).toBe("Recent commands");
-    expect(labels.comments).toBe("Comments");
 
     const summary = byKind(snap.blocks, "projectSummary").data as {
       items: Array<{ name: string }>;
@@ -176,9 +176,9 @@ describe("collectContextSnapshot", () => {
     const history = byKind(snap.blocks, "recentCommands").data as { states: unknown[] };
     expect(history.states).toHaveLength(2); // "Original" + the journaled text layer
 
-    // every data-carrying block estimates > 0; placeholders estimate 0
+    // every data-carrying block estimates > 0; the frame placeholder estimates 0
     for (const block of snap.blocks) {
-      if (block.kind === "currentFrame" || block.kind === "comments") {
+      if (block.kind === "currentFrame") {
         expect(block.tokenEstimate).toBe(0);
         expect(block.data).toBeUndefined();
       } else {
@@ -386,12 +386,12 @@ describe("placeholders and pinned chips", () => {
     expect("data" in byKind(snap.blocks, "currentFrame")).toBe(false);
   });
 
-  it("comments is a gateway-fed placeholder block", () => {
-    expect(commentsBlockPlaceholder()).toEqual({
-      kind: "comments",
-      label: "Comments",
-      tokenEstimate: 0,
+  it("the purged comments flag grows NO block — even switched on (W2-B1)", async () => {
+    const { bridge } = setup();
+    const snap = await collectContextSnapshot(bridge, {
+      flags: { ...DEFAULT_FLAGS, comments: true },
     });
+    expect(kinds(snap.blocks)).not.toContain("comments");
   });
 
   it("pinned chips count toward the total estimate", async () => {

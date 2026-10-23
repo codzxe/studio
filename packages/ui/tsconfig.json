@@ -8,7 +8,7 @@
     "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     // No rootDir/outDir: tests sit beside components and `tsc --noEmit` is the gate
-    // (fleet precedent — packages/storage, packages/billing).
+    // (fleet precedent — packages/storage).
     "noEmit": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "vitest.config.ts", "vitest.setup.ts"]

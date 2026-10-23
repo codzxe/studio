@@ -1,8 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    // No rootDir/outDir: tests/ sits next to src/ and `tsc --noEmit` is the gate
-    // (fleet precedent — packages/billing, packages/tools; avoids the TS6059 trap).
+    // No rootDir/outDir: tests/ sits next to src/ and `tsc --noEmit` is the
+    // gate (avoids the TS6059 emit trap). Scope since W2-B6: upload
+    // validation only — the PhotoCraft-era drivers/keys surface was deleted
+    // per ADR-0006.
     "noEmit": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]

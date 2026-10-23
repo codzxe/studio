@@ -20,13 +20,14 @@
  *    session is never a charge (only completing the hosted checkout is).
  *
  * Boundary law (apps/web): `@studio/contracts` is import-type only, so the
- * pack catalog is pinned LOCALLY against the wire types (`satisfies readonly
- * BillingTopUpPack[]` — a contracts change breaks typecheck) instead of a
- * runtime import. The api-client validates the real wire at runtime.
+ * pack catalog is pinned in ONE shared module — ./top-up-packs (`satisfies
+ * readonly BillingTopUpPack[]` against the wire types: a contracts change
+ * breaks typecheck, and top-up-packs.test.ts pins the values) — instead of
+ * a runtime import. The api-client validates the real wire at runtime.
  *
  * Exported surface (binding for M6-F):
  *   TopUpFlowProps + TopUpFlow + TopUpStart + TopUpAttemptOptions + RedirectTo
- *   + DEFAULT_TOP_UP_PACKS (the wire pack catalog pin)
+ *   (the wire pack catalog pin lives in ./top-up-packs)
  */
 
 import type { BillingTopUpPack, TopUpPackId, TopUpResponse } from "@studio/contracts";
@@ -35,23 +36,7 @@ import { CircleAlert, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import type { ReactElement } from "react";
 import { truncateForDisplay } from "./ledger-table";
-
-// ---------------------------------------------------------------------------
-// The wire pack catalog, pinned locally (import-type-only boundary law)
-// ---------------------------------------------------------------------------
-
-/**
- * Default pack catalog — mirrors `@studio/contracts` `TOP_UP_PACKS` /
- * `TOP_UP_PACK_IDS` (credits100 / credits500 / credits2000; credits in
- * DISPLAY units, prices in Stripe). Type-pinned via `BillingTopUpPack`, so a
- * wire-side id change is a typecheck failure here. Callers normally pass
- * `BillingState.topUpPacks` instead.
- */
-export const DEFAULT_TOP_UP_PACKS: readonly BillingTopUpPack[] = Object.freeze([
-  { packId: "credits100", credits: 100 },
-  { packId: "credits500", credits: 500 },
-  { packId: "credits2000", credits: 2000 },
-] satisfies readonly BillingTopUpPack[]);
+import { TOP_UP_PACKS } from "./top-up-packs";
 
 // ---------------------------------------------------------------------------
 // Seam types
@@ -127,7 +112,7 @@ export interface TopUpFlowProps {
 }
 
 export function TopUpFlow({
-  packs = DEFAULT_TOP_UP_PACKS,
+  packs = TOP_UP_PACKS,
   startTopUp,
   redirectTo = defaultRedirectTo,
   idempotencyKeyFactory = () => crypto.randomUUID(),

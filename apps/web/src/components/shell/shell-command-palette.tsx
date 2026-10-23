@@ -10,9 +10,10 @@
  * - **Projects** — `projects.list` (limit 10) on OPEN; picking one navigates
  *   to its hub `/w/<slug>/history`. A failed/empty read degrades to an empty
  *   group (never a spinner, never a crash).
- * - **Actions** — the shell-level verbs: New project (the dashboard's dialog
- *   owns creation — the palette navigates to `/w` where it lives) and Buy
- *   credits (`/w/billing`).
+ * - **Actions** — the shell-level verbs: New project (⌘N — bound in
+ *   `app-shell.tsx` exactly like ⌘K; the dashboard's dialog owns creation,
+ *   so the action navigates to `/w` where it lives) and Buy credits
+ *   (`/w/billing`).
  * - **Navigation** — the four §8.4 rail destinations.
  * - **Help** — the real marketing/status routes (status, changelog,
  *   licences); nothing speculative.

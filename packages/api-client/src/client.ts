@@ -82,7 +82,7 @@ import {
   PORTAL_SCHEMA,
   PRESENCE_BEAT_SCHEMA,
   PRESENCE_VIEWERS_SCHEMA,
-  type PROJECTS_QUERY_SCHEMA,
+  PROJECTS_QUERY_SCHEMA,
   type Page,
   type PatchMemberRoleRequest,
   type PatchProjectRequest,
@@ -1179,8 +1179,16 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         }),
     },
     projects: {
+      // W2-B3: the W1-c §9.1 `archived` filter must reach the wire — route
+      // through PROJECTS_QUERY_SCHEMA (cursor/limit/archived), NOT the bare
+      // paginated() helper, which strips it (the /w/projects workaround seam).
       list: async (query, options) =>
-        impl.get("/projects", paginated(query), PAGE_PROJECTS_SCHEMA, options?.signal),
+        impl.get(
+          "/projects",
+          queryOf(PROJECTS_QUERY_SCHEMA, query),
+          PAGE_PROJECTS_SCHEMA,
+          options?.signal,
+        ),
       create: async (body, options) =>
         impl.mutate("POST", "/projects", {
           body,

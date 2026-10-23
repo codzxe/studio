@@ -7,7 +7,8 @@
  * do not exercise (fail/cancel/freeze/orphan tools).
  */
 
-import { fixtures } from "@studio/api-client";
+// W2-B3: fixtures moved off the main barrel to the `./fixtures` subpath.
+import { fixtures } from "@studio/api-client/fixtures";
 import type { EditPlan, StudioStreamEvent } from "@studio/contracts";
 import { describe, expect, it } from "vitest";
 

@@ -14,6 +14,7 @@
  */
 
 import { ApiError } from "@studio/api-client";
+import type { AuditEntry } from "@studio/contracts";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +26,7 @@ import {
   csvCell,
   formatAuditTimestamp,
 } from "./audit-log-view";
-import type { AuditEntry, SettingsPort } from "./settings-port";
+import type { SettingsPort } from "./settings-port";
 
 // ---------------------------------------------------------------------------
 // Fixtures (the §9.1 audit shapes)

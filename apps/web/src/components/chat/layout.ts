@@ -183,7 +183,7 @@ export type ChatLayoutAction = { type: "setMode"; mode: ChatMode } | { type: "no
  * | agent         | collapsed → `setMode("floating")` (Cmd/Ctrl+I must reach a  |
  * |               | composer; expanding restores the remembered geometry),        |
  * |               | already open → `noop` (M4-J then focuses the composer)       |
- * | inlineEdit    | `noop` — Cmd/Ctrl+K shows the M5 notice chip (D-5, M5 work)  |
+ * | inlineEdit    | `noop` — the slot opens the inline edit bar (D-5, §4.2)   |
  * | escape        | `noop` AT THE SHELL LEVEL — the §9 dismissal order is        |
  * |               | popovers FIRST, panel collapse second; popovers are owned    |
  * |               | by header/context peers and close in their own portal        |
@@ -192,7 +192,7 @@ export type ChatLayoutAction = { type: "setMode"; mode: ChatMode } | { type: "no
  * |               | `setMode("collapsed")`                                       |
  * | stop          | `noop` — composer/controller own the §8.3 stop               |
  * | newChat       | `noop` — header more-menu / thread lifecycle (M4-J)          |
- * | undoAgentRun  | `noop` — apply/undo is M5 (read-only agent in M4)             |
+ * | undoAgentRun  | `noop` — the slot drives controller.undo (§M5.5, M5 shipped) |
  * | send          | `noop` — composer (Cmd/Ctrl+Enter)                            |
  */
 export function nextLayoutAction(
