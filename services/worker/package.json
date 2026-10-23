@@ -16,7 +16,7 @@
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check src tests"
+    "lint": "biome check src tests scripts"
   },
   "dependencies": {
     "@studio/config": "workspace:*",

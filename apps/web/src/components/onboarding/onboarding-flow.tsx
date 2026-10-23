@@ -25,7 +25,7 @@
  * Boundary law (apps/web): `@studio/contracts` is `import type` ONLY.
  */
 
-import { type ApiClient, type CallOptions, createApiClient } from "@studio/api-client";
+import { type CallOptions, createApiClient } from "@studio/api-client";
 import type { CreateWorkspaceRequest, TrialResponse, Workspace } from "@studio/contracts";
 import { Card, cn } from "@studio/ui";
 import { useRouter } from "next/navigation";
@@ -73,19 +73,6 @@ export function createOnboardingPort(): OnboardingPort {
         baseUrl: API_BASE_URL,
         headers: { "x-workspace-id": workspaceId },
       }).billing.startTrial(undefined, options),
-  };
-}
-
-/**
- * Compile-time pin (and adapter): the production `ApiClient` satisfies the
- * create arm directly; the trial arm is workspace-scoped BY DESIGN (the
- * `x-workspace-id` header is only known after step 1), so it always builds
- * its own scoped client.
- */
-export function asOnboardingPort(client: ApiClient): OnboardingPort {
-  return {
-    createWorkspace: (body, options) => client.workspaces.create(body, options),
-    startTrial: (workspaceId, options) => createOnboardingPort().startTrial(workspaceId, options),
   };
 }
 

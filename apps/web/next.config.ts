@@ -107,7 +107,20 @@ const nextConfig: NextConfig = {
         ? [{ source: "/v1/:path*", destination: `${GATEWAY_INTERNAL_URL}/v1/:path*` }]
         : [];
     if (!EDITOR_DEV_SERVER_URL) {
-      return v1Rewrites;
+      return [
+        ...v1Rewrites,
+        // Bare `/editor` + `/editor/` → the committed dist's index.html
+        // (public/editor/). Next's public handler serves the dist's files
+        // verbatim (`/editor/effectcraft_web.js` → 200) but does NOT resolve
+        // a directory index for `/editor/`, so the iframe URL `/editor/?empty`
+        // 404s and the editor-host parks on "booting" — the e2e suite's
+        // editor never loads. Both bare forms rewrite to the index so the
+        // dist's relative asset URLs keep resolving against `/editor/`
+        // (skipTrailingSlashRedirect above keeps the trailing-slash form
+        // alive; an EDITOR_DEV_SERVER_URL boot keeps its own proxy below).
+        { source: "/editor", destination: "/editor/index.html" },
+        { source: "/editor/", destination: "/editor/index.html" },
+      ];
     }
     return [
       ...v1Rewrites,

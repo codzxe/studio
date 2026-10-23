@@ -43,9 +43,13 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         aria-label={`${Brand.productName} — the approach`}
         className="relative flex aspect-video items-center justify-center border-b border-border bg-page px-8 lg:aspect-auto lg:min-h-svh lg:border-b-0 lg:border-l"
       >
+        {/* w-auto overrides FrameLine's w-full: with left-6/right-6 insets the
+            rule stretches between them (w-full would pin it to the containing
+            block's width ON TOP of the left inset → 24px horizontal overflow
+            at 320px, §12/§13 gate). */}
         <FrameLine
           label="00:00:00 — OPENING FRAME"
-          className="absolute top-6 right-6 left-6"
+          className="absolute top-6 right-6 left-6 w-auto"
           draw
         />
         <figure className="flex max-w-[36ch] flex-col items-center gap-4 text-center">

@@ -69,9 +69,6 @@ import { QueueRenderCard, formatRenderCredits } from "./queue-render-card";
 /** §14 display bound for any wire-derived string rendered here. */
 const MAX_RENDER_TEXT = 200;
 
-/** D-2: the formats the QUEUE surface offers. History rows degrade honestly. */
-export const HUB_RENDER_FORMATS = ["mp4", "png-seq"] as const satisfies readonly RenderFormat[];
-
 /** Format badge labels (D-2: MP4 + PNG sequence are the enabled two). */
 export const RENDER_FORMAT_LABELS: Readonly<Record<RenderFormat, string>> = {
   mp4: "MP4",

@@ -831,13 +831,53 @@ describe("createApiClient — leases (real §7.2 wire)", () => {
     expect(lease.readOnly).toBe(false);
   });
 
-  it("parses the release outcome { released }", async () => {
-    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({ released: true })));
+  it("parses the release outcome { released, nextHolder } — the REAL gateway shape", async () => {
+    // The gateway ALWAYS sends nextHolder (null when nobody waits) — the
+    // §M7 takeover election. The validator is the contracts schema
+    // (LEASE_RELEASE_RESPONSE_SCHEMA), so the field is REQUIRED-but-nullable
+    // (the old client-local mirror allowed omission "for pre-M7 gateways" —
+    // stale: M7 shipped and the handler emits it unconditionally).
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(
+        jsonOk({
+          released: true,
+          nextHolder: {
+            userId: "usr_dana",
+            displayName: "Dana Flow",
+            queuedAt: "2026-10-15T09:00:00Z",
+          },
+        }),
+      ),
+    );
     const outcome = await client.leases.release("prj_1");
-    expect(outcome).toEqual({ released: true });
+    expect(outcome).toEqual({
+      released: true,
+      nextHolder: {
+        userId: "usr_dana",
+        displayName: "Dana Flow",
+        queuedAt: "2026-10-15T09:00:00Z",
+      },
+    });
     const del = calls[0];
     expect(del?.init?.method).toBe("DELETE");
     expect(del?.input).toBe(`${BASE}/projects/prj_1/lease`);
+  });
+
+  it("parses a release with NO queue (nextHolder null)", async () => {
+    const { client } = makeClient(() =>
+      Promise.resolve(jsonOk({ released: true, nextHolder: null })),
+    );
+    await expect(client.leases.release("prj_1")).resolves.toEqual({
+      released: true,
+      nextHolder: null,
+    });
+  });
+
+  it("rejects a release outcome missing nextHolder — the gateway always states it", async () => {
+    const { client } = makeClient(() => Promise.resolve(jsonOk({ released: true })));
+    await expectAsyncFail(client.leases.release("prj_1"), (error) => {
+      expect(error.code).toBe("MALFORMED_RESPONSE");
+    });
   });
 });
 

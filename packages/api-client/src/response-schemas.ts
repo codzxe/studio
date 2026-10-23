@@ -37,9 +37,7 @@ import {
   ISO8601_SCHEMA,
   type Invite,
   type InvoiceRecord,
-  LEASE_QUEUE_ENTRY_SCHEMA,
   LEDGER_KIND_SCHEMA,
-  type LeaseQueueEntry,
   type LedgerEntry,
   MODEL_ID_SCHEMA,
   type ManifestAsset,
@@ -284,60 +282,41 @@ export const VERSION_DIFF_SUMMARY_SCHEMA = z.object({
 }) satisfies z.ZodType<VersionDiffSummary>;
 
 // ---------------------------------------------------------------------------
-// Leases — the REAL §7.2 wire response (compat note, first real consumer)
+// Leases — contracts owns the full §7.2 wire vocabulary (W5-09 gap close)
 // ---------------------------------------------------------------------------
 // `POST /v1/projects/:id/lease` answers with the acquire/renew OUTCOME, not
-// the §9.1 lease row the contracts `ProjectLease` interface documents:
-//   { acquired, holderName, expiresAt, readOnly }   (gateway leases.ts ok body)
+// the §9.1 lease row: { acquired, holderName, expiresAt, readOnly } —
 // `acquired: false` + `readOnly: true` = another editor holds the lease and
-// this session must open read-only (§9.3). The gateway suite (leases.test.ts)
-// pins this shape against live Postgres; follow-up for the contracts owner:
-// add a LeaseAcquireResponse type so the row/response drift is documented in
-// one place.
-
-export interface LeaseAcquireResponse {
-  /** `true` = we hold (or just renewed) the lease. */
-  readonly acquired: boolean;
-  /** Display name of the current holder (the gateway resolves ids to names). */
-  readonly holderName: string;
-  readonly expiresAt: string;
-  /** `true` = this session must open read-only (§9.3: a refused acquire). */
-  readonly readOnly: boolean;
-}
-
-export const LEASE_ACQUIRE_RESPONSE_SCHEMA = z.object({
-  acquired: z.boolean(),
-  holderName: z.string(),
-  expiresAt: isoSchema,
-  readOnly: z.boolean(),
-}) satisfies z.ZodType<LeaseAcquireResponse>;
-
-export const LEASE_RELEASE_RESPONSE_SCHEMA = z.object({
-  released: z.boolean(),
-  // §M7 task 3 takeover: the OLDEST queued requester popped at release time.
-  // OPTIONAL in the client validator — pre-M7 gateways omit the field.
-  nextHolder: LEASE_QUEUE_ENTRY_SCHEMA.nullable().optional(),
-}) satisfies z.ZodType<LeaseReleaseResponse>;
-
-/** `DELETE /v1/projects/:id/lease` — release + the §M7 next-holder election. */
-export interface LeaseReleaseResponse {
-  readonly released: boolean;
-  readonly nextHolder?: LeaseQueueEntry | null;
-}
+// this session must open read-only (§9.3). contracts `LeaseAcquireResponse`
+// now documents that row/response drift in one place (the earlier local
+// mirror here was the client-side workaround); the gateway suite
+// (leases.test.ts) pins the shape against live Postgres.
+//
+// `DELETE /v1/projects/:id/lease` answers { released, nextHolder } — the
+// §M7 task 3 takeover election. The gateway ALWAYS sends `nextHolder`
+// (null when nobody waits), so the client validator uses the contracts
+// schema with the field REQUIRED-but-nullable; the old local mirror marked
+// it optional "for pre-M7 gateways" — stale, M7 shipped.
 
 // ── M7 lease UX (BUILD_PLAN §M7 task 3) ─────────────────────────────────────
 // contracts fixes the full Zod schemas for these wires (co-designed with the
 // gateway routes), so they are re-exported directly instead of mirrored:
+//   POST   /v1/projects/:id/lease         acquire/renew outcome (W5-09)
+//   DELETE /v1/projects/:id/lease         release + next-holder election
 //   GET    /v1/projects/:id/lease-state   the "Alex is editing" banner data
 //   POST   /v1/projects/:id/lease-request join the edit queue (dedupe/cap)
 //   DELETE /v1/projects/:id/lease-request leave the queue
 export {
+  LEASE_ACQUIRE_RESPONSE_SCHEMA,
+  LEASE_RELEASE_RESPONSE_SCHEMA,
   LEASE_REQUEST_CANCELLED_RESPONSE_SCHEMA,
   LEASE_REQUEST_RESPONSE_SCHEMA,
   LEASE_STATE_RESPONSE_SCHEMA,
 } from "@studio/contracts";
 export type {
+  LeaseAcquireResponse,
   LeaseQueueEntry,
+  LeaseReleaseResponse,
   LeaseRequestCancelledResponse,
   LeaseRequestResponse,
   LeaseStateHolder,

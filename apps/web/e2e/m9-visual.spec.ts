@@ -437,8 +437,11 @@ test.describe("M9 visual — authed shell pages viewport sweep (W2 wave-pending 
     }, testInfo) => {
       // The m7 boot recipe: REAL /sign-in as the seeded demo user → session
       // cookie. Every later viewport re-navigates with that cookie.
+      // (No extra toHaveURL here: signIn()'s waitForURL already pins the
+      // landing URL — and expect().toHaveURL MERGES relative string globs
+      // with baseURL, so `**/w` would become "<baseURL>/**/w", which can
+      // never match. Playwright asymmetry, not app truth.)
       await signIn(page, entry.path);
-      await expect(page).toHaveURL(`**${entry.path}`);
       await sweepViewports(page, testInfo, entry);
     });
   }

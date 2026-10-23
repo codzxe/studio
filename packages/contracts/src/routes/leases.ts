@@ -47,6 +47,30 @@ export interface ProjectLease {
 }
 
 /**
+ * `POST /v1/projects/:id/lease` response (W5-09): the acquire/renew OUTCOME,
+ * not the §9.1 lease row `ProjectLease` above — the row is server-private
+ * (it leaks holder userId/sessionId); the wire answers whether WE hold, who
+ * holds as a DISPLAY NAME (law #1: human copy, never an id), when their
+ * window ends, and whether this session must open read-only (§9.3).
+ */
+export interface LeaseAcquireResponse {
+  /** `true` = we hold (or just renewed) the lease. */
+  readonly acquired: boolean;
+  /** Display name of the current holder (the gateway resolves ids to names). */
+  readonly holderName: string;
+  readonly expiresAt: string;
+  /** `true` = this session must open read-only (§9.3: a refused acquire). */
+  readonly readOnly: boolean;
+}
+
+export const LEASE_ACQUIRE_RESPONSE_SCHEMA = z.object({
+  acquired: z.boolean(),
+  holderName: z.string().min(1),
+  expiresAt: ISO8601_SCHEMA,
+  readOnly: z.boolean(),
+}) satisfies z.ZodType<LeaseAcquireResponse>;
+
+/**
  * §M7 read-only enforcement (D-23): a project-scoped mutation by anyone but
  * the ACTIVE lease holder answers 409 with this code. In @studio/config's
  * catalog it maps to HTTP 409, message "Someone else is editing this project

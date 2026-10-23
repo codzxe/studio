@@ -20,6 +20,8 @@ import {
   GUEST_COMMENT_SCHEMA,
   IDEMPOTENCY_KEY_SCHEMA,
   INVITE_MEMBER_SCHEMA,
+  LEASE_ACQUIRE_RESPONSE_SCHEMA,
+  LEASE_RELEASE_RESPONSE_SCHEMA,
   LEASE_TTL_MS,
   LEDGER_KIND_SCHEMA,
   PAGINATION_QUERY_SCHEMA,
@@ -146,6 +148,56 @@ describe("routes: leases (§9.1, §11)", () => {
     expect(ACQUIRE_LEASE_SCHEMA.safeParse({ sessionId: "session-123" }).success).toBe(true);
     expect(ACQUIRE_LEASE_SCHEMA.safeParse({}).success).toBe(false);
     expect(LEASE_TTL_MS).toBe(300_000);
+  });
+
+  it("acquire response is the OUTCOME, not the §9.1 lease row (W5-09)", () => {
+    // The gateway (leases.ts ok body) answers the acquire/renew call with
+    // whether WE hold, the holder's DISPLAY name (law #1), the window end,
+    // and the §9.3 read-only verdict — never the row's userId/sessionId.
+    const refused = {
+      acquired: false,
+      holderName: "Dana Flow",
+      expiresAt: "2026-10-15T09:07:00Z",
+      readOnly: true,
+    };
+    expect(LEASE_ACQUIRE_RESPONSE_SCHEMA.safeParse(refused).success).toBe(true);
+    expect(
+      LEASE_ACQUIRE_RESPONSE_SCHEMA.safeParse({ ...refused, acquired: true, readOnly: false })
+        .success,
+    ).toBe(true);
+    // A response echoing the ROW shape (userId/sessionId instead of the
+    // outcome) is invalid — the row/response drift is the point of the type.
+    expect(
+      LEASE_ACQUIRE_RESPONSE_SCHEMA.safeParse({
+        projectId: "prj_1",
+        userId: "usr_1",
+        sessionId: "session-123",
+        expiresAt: "2026-10-15T09:07:00Z",
+      }).success,
+    ).toBe(false);
+    expect(LEASE_ACQUIRE_RESPONSE_SCHEMA.safeParse({ ...refused, holderName: "" }).success).toBe(
+      false,
+    );
+    expect(LEASE_ACQUIRE_RESPONSE_SCHEMA.safeParse({ ...refused, expiresAt: "soon" }).success)
+      .toBe(false);
+  });
+
+  it("release response always states the elected next holder (§M7 task 3)", () => {
+    const noQueue = { released: true, nextHolder: null };
+    expect(LEASE_RELEASE_RESPONSE_SCHEMA.safeParse(noQueue).success).toBe(true);
+    expect(
+      LEASE_RELEASE_RESPONSE_SCHEMA.safeParse({
+        released: true,
+        nextHolder: {
+          userId: "usr_dana",
+          displayName: "Dana Flow",
+          queuedAt: "2026-10-15T09:00:00Z",
+        },
+      }).success,
+    ).toBe(true);
+    // The gateway emits nextHolder unconditionally — a response omitting it
+    // (the stale "pre-M7" shape) is invalid.
+    expect(LEASE_RELEASE_RESPONSE_SCHEMA.safeParse({ released: true }).success).toBe(false);
   });
 });
 

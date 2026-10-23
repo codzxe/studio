@@ -57,8 +57,8 @@ assets/leases, chat SSE with the LiteLLM runner + plan compiler, comments/
 presence/share, billing (Stripe seam) + credits ledger, renders v2, members +
 api-keys + invites, settings + workspace audit. Key entries: `src/index.ts`,
 `src/app.ts` (the mount table), `src/routes/` (one module per API domain —
-23 modules at the W5-08 purge, 25 while the settings/workspace-audit waves
-land), `src/middleware.ts`,
+25 modules incl. the `health` and `local-storage` infra routes that have no
+contracts module), `src/middleware.ts`,
 `src/plan-compiler.ts`, `src/litellm/` (runner + prompt), `src/stripe.ts`,
 `src/storage.ts`, `src/signing.ts`. Wire contract: `@studio/contracts` route
 schemas + `Ok`/`Err` envelopes on `/v1/*`; error codes add-only in
@@ -145,10 +145,23 @@ are the source of truth), `runbooks/`,
 ### `scripts/` — fleet tooling
 
 `git-sync.sh` — the ONLY sanctioned push path (stage, commit, `pull --rebase`,
-push; serialized fleet-wide; never force-push). Dev services:
-`dev-postgres.sh` (PG17 on 127.0.0.1:5432), `dev-valkey.sh` (optional),
-`dev-litellm.sh`. Editor dist build: `build-editor-dist.sh`. License gate:
-`check-licenses.mjs`. Env matrix generator: `gen-env.ts` (`.env.example`).
+push; serialized fleet-wide; never force-push). Dev services: `dev-postgres.sh`
+(PG17 on 127.0.0.1:5432), `dev-sqlite.sh` (the file-backed dev DB — W5-01's
+stack runs on it), `dev-stack.sh` (one-shot boot of the REAL stack: gateway
+:8787 + web :3000 on the SQLite DB, `start|stop`, logs under `.local/`),
+`dev-valkey.sh` (optional), `dev-litellm.sh` (optional, 127.0.0.1:4000).
+Editor: `build-editor-dist.sh` (canonical wasm-dist build + staging into
+`apps/web/public/editor/`), `build_editor_web.sh` (the 4 GB-box OOM-workaround
+chunked `cargo build` primitive behind it), `debrand_editor.py` +
+`make_studio_assets.py` (provenance: they generate the editor/patches/0001
+de-brand patch per ADR-0006 d10 — keep for upstream re-pins). Captures:
+`captures/` (marketing/editor screenshot + webm tooling; `run-captures.sh`
+is the entry — off-limits to doc purges). License gate: `check-licenses.mjs`.
+Env matrix generator: `gen-env.ts` via `gen-env.sh` (`pnpm dev:env` →
+`.env.example`). Purged by W5-08 as executed one-offs: `fix-plan-compiler.py`
+(M6-A integrator migration, changes landed + test-pinned) and
+`serve-editor.py` (superseded by `pnpm editor:serve` = `cargo xtask web
+--serve`).
 
 ### `LICENSES/` · `ATTRIBUTION.md` · `licenses.overrides.json`
 

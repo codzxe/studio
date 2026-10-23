@@ -80,11 +80,3 @@ export const CURRENT_PLAN_DISPLAY: Readonly<Record<PlanId, CurrentPlanDisplay>> 
     priceCents: PLAN_CATALOG.studio.monthlyPriceCents,
   },
 };
-
-/** Plan-rank for upgrade/downgrade copy decisions (trial is lowest). */
-export const PLAN_DISPLAY_RANK: Readonly<Record<PlanId, number>> = {
-  trial: -1,
-  starter: 0,
-  pro: 1,
-  studio: 2,
-};

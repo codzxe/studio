@@ -1,0 +1,122 @@
+# Page snapshot
+
+```yaml
+- generic:
+  - link "Skip to content" [ref=e1] [cursor=pointer]:
+    - /url: "#main"
+  - button "Open Next.js Dev Tools" [ref=e7] [cursor=pointer]:
+    - img [ref=e8]
+  - alert [ref=e11]
+  - main [ref=e12]:
+    - iframe [active] [ref=e14]:
+      - textbox [ref=f1e3]
+    - generic:
+      - generic:
+        - link "Back to workspace":
+          - /url: /w
+          - img
+        - generic "Demo Project"
+        - button "Share project":
+          - img
+          - text: Share
+    - complementary "Agent" [ref=e16]:
+      - generic [ref=e18]:
+        - generic:
+          - generic: Agent
+        - 'button "Model: Fast" [ref=e20]':
+          - img [ref=e21]
+          - generic [ref=e23]: Fast
+          - img [ref=e24]
+        - generic [ref=e26]:
+          - button "Render…" [ref=e27]:
+            - img [ref=e28]
+            - generic [ref=e33]: Render…
+          - button "Render history" [ref=e34]:
+            - img [ref=e35]
+        - button "Context 6" [ref=e39]
+        - generic [ref=e40]:
+          - button "Cycle panel mode" [ref=e41]:
+            - img [ref=e42]
+          - button "Toggle sidebar dock" [ref=e47]:
+            - img [ref=e48]
+          - button "Close chat" [ref=e50]:
+            - img [ref=e51]
+        - button "More chat actions" [ref=e54]:
+          - img [ref=e55]
+      - list "Chat context, ~1.5k tokens total" [ref=e60]:
+        - listitem [ref=e61]:
+          - generic [ref=e62]:
+            - img [ref=e63]
+            - generic [ref=e65]: Project summary
+            - button "Remove Project summary from context" [ref=e66]:
+              - img [ref=e67]
+        - listitem [ref=e70]:
+          - generic [ref=e71]:
+            - img [ref=e72]
+            - generic [ref=e74]: "Comp: Main"
+            - 'button "Remove Comp: Main from context" [ref=e75]':
+              - img [ref=e76]
+        - listitem [ref=e79]:
+          - generic [ref=e80]:
+            - img [ref=e81]
+            - generic [ref=e83]: "Selection: Backdrop"
+            - 'button "Remove Selection: Backdrop from context" [ref=e84]':
+              - img [ref=e85]
+        - listitem [ref=e88]:
+          - generic [ref=e89]:
+            - img [ref=e90]
+            - generic [ref=e92]: Selected properties
+            - button "Remove Selected properties from context" [ref=e93]:
+              - img [ref=e94]
+        - listitem [ref=e97]:
+          - generic [ref=e98]:
+            - img [ref=e99]
+            - generic [ref=e101]: Playhead 00:00.0
+            - button "Remove Playhead 00:00.0 from context" [ref=e102]:
+              - img [ref=e103]
+        - listitem [ref=e106]:
+          - generic [ref=e107]:
+            - img [ref=e108]
+            - generic [ref=e110]: "Panel: Composition"
+            - 'button "Remove Panel: Composition from context" [ref=e111]':
+              - img [ref=e112]
+        - listitem [ref=e115]:
+          - button "Add context" [ref=e116]:
+            - img [ref=e117]
+      - log "Agent conversation" [ref=e120]:
+        - generic [ref=e121]:
+          - heading "What should we build?" [level=2] [ref=e122]
+          - generic [ref=e123]:
+            - button "Explain this comp" [ref=e124]
+            - button "What's on this comp?" [ref=e125]
+            - button "Render a preview" [ref=e126]
+      - generic [ref=e128]:
+        - generic [ref=e129]:
+          - button "Animate in" [ref=e130]
+          - button "Animate out" [ref=e131]
+          - button "Make it pop" [ref=e132]
+          - button "Match brand colors" [ref=e133]
+          - button "Clean up layers" [ref=e134]
+          - button "Explain this comp" [ref=e135]
+          - button "Render a preview" [ref=e136]
+        - generic [ref=e137]:
+          - generic [ref=e138]:
+            - textbox "Message the agent" [ref=e140]:
+              - /placeholder: Ask for an edit, or describe what you want to build…
+            - button "Send" [disabled]:
+              - img
+          - paragraph [ref=e142]: Fast · ~1.5k tokens
+      - generic "Chat run status" [ref=e144]:
+        - generic [ref=e145]: Fast
+        - generic [ref=e146]: ·
+        - generic "Estimate; actual usage is metered" [ref=e147]: ~1 credit
+        - generic [ref=e148]: ·
+        - generic [ref=e149]: ⌘↵ to send
+    - status "1 person is viewing":
+      - img "Demo User" [ref=e152]:
+        - generic [ref=e153]: DU
+    - status:
+      - generic [ref=e156]: You have the edit lease
+  - button "Comments" [ref=e158]:
+    - img [ref=e159]
+```

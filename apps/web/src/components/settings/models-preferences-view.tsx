@@ -114,11 +114,8 @@ function TierGlyph({ tier, className }: { tier: string; className?: string }): R
 }
 
 // ---------------------------------------------------------------------------
-// D-22 copy (VERBATIM ruling fragment — pinned by tests)
+// D-22 copy (VERBATIM ruling fragment — pinned by tests, ruling in DECISIONS.md)
 // ---------------------------------------------------------------------------
-
-/** The D-22 ruling fragment, VERBATIM — tests pin this exact substring. */
-export const D22_COPY = "Apply is always your explicit click";
 
 const AUTO_APPLY_HELPER = "Pre-arms safe agent plans. Apply is always your explicit click.";
 

@@ -46,7 +46,13 @@ export function SiteHeader() {
         </nav>
 
         <div className="flex items-center gap-2">
-          <Link href="/sign-in" className={buttonVariants({ variant: "ghost", size: "lg" })}>
+          {/* §12/§13: no horizontal scroll at 320px — the ghost Sign in folds
+              away below sm (§13 "never hide the PRIMARY action": Start trial
+              stays; Sign in remains one tap away via /sign-up's cross-link). */}
+          <Link
+            href="/sign-in"
+            className={`${buttonVariants({ variant: "ghost", size: "lg" })} max-sm:hidden`}
+          >
             Sign in
           </Link>
           <Link href="/sign-up" className={buttonVariants({ variant: "primary", size: "lg" })}>
