@@ -313,6 +313,141 @@ async function collect(
 }
 
 // ---------------------------------------------------------------------------
+// Old-value reads for the plan diff card (EDITOR_CHAT_UX §6.3, W1-d)
+// ---------------------------------------------------------------------------
+
+/**
+ * One pre-change property read for the diff card: `layer` is the batch's raw
+ * layer ref — a layer NAME (the plan compiler emits names), a resolved numeric
+ * layer id, or a `$request:` placeholder token (the wire's pre-picked shape).
+ * `path` is the property path (e.g. `transform/scale`, `text/sourceText`).
+ */
+export interface OldValueRequest {
+  readonly layer: number | string;
+  readonly path: string;
+}
+
+/**
+ * The answer to one {@link OldValueRequest}. `known: false` is HONEST — it
+ * covers every reason a before-value could not be read (the editor is not
+ * answering, `comp.info` failed, the layer ref is ambiguous or missing, the
+ * property path does not resolve, or the read-budget cap tripped); the diff
+ * card then renders "—" rather than guessing.
+ */
+export interface OldValueResult {
+  readonly layer: number | string;
+  readonly path: string;
+  readonly known: boolean;
+  readonly value?: unknown;
+  /**
+   * The resolved DISPLAY name of the layer (for numeric refs: looked up from
+   * the live comp; for name refs: the name when it resolved uniquely).
+   * `undefined` when it could not be resolved.
+   */
+  readonly layerName?: string;
+}
+
+/**
+ * Read budget for old-value collection (bounded bridge traffic per diff card,
+ * in the spirit of §5.1's ≤ 12 property reads; over-budget requests answer
+ * `known: false`).
+ */
+export const MAX_OLD_VALUE_READS = 24;
+
+/**
+ * Read the CURRENT (pre-apply) value of up to {@link MAX_OLD_VALUE_READS}
+ * distinct (layer, path) pairs — read-only bridge traffic ONLY (`comp.info`
+ * once, then `prop.get` per pair, waves of ≤ 4 — the exact same read surface
+ * the collector uses above). This runs while a plan is PROPOSED, so the values
+ * read ARE the "before" side of the §6.3 diff.
+ *
+ * Never throws: every failure degrades to `known: false` per request. Duplicate
+ * (layer, path) pairs are read once.
+ */
+export async function collectOldPropertyValues(
+  bridge: EditorBridge,
+  requests: readonly OldValueRequest[],
+): Promise<readonly OldValueResult[]> {
+  // Deduplicate by (layer, path) while preserving first-seen order.
+  const seen = new Set<string>();
+  const unique: OldValueRequest[] = [];
+  for (const request of requests) {
+    const key = `${typeof request.layer}:${String(request.layer)}\u0000${request.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(request);
+  }
+
+  // ONE comp.info feeds both directions of the name/id resolution.
+  let layers: ReadonlyArray<{ readonly id: number; readonly name: string }> = [];
+  try {
+    const info = await bridge.query<{ layers?: unknown }>("comp.info", {});
+    const raw = info?.layers;
+    if (Array.isArray(raw)) {
+      for (const entry of raw) {
+        if (typeof entry !== "object" || entry === null) continue;
+        const record = entry as Record<string, unknown>;
+        if (typeof record.id !== "number" || typeof record.name !== "string") continue;
+        layers = [...layers, { id: record.id, name: record.name }];
+      }
+    }
+  } catch {
+    layers = [];
+  }
+  const byName = new Map<string, number[]>();
+  const nameById = new Map<number, string>();
+  for (const layer of layers) {
+    byName.set(layer.name, [...(byName.get(layer.name) ?? []), layer.id]);
+    nameById.set(layer.id, layer.name);
+  }
+
+  /** Resolve one raw ref to an engine layer id — uniquely, or not at all. */
+  const resolveId = (ref: number | string): number | undefined => {
+    if (typeof ref === "number" && Number.isFinite(ref)) {
+      return nameById.has(ref) ? ref : undefined;
+    }
+    const matches = byName.get(ref) ?? [];
+    // Exact-name, UNIQUE matches only (apply.ts's rule: a fuzzy or ambiguous
+    // name could bind the WRONG layer — refuse instead).
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+
+  const queue = unique.slice(0, MAX_OLD_VALUE_READS);
+  const reads = await mapLimit(queue, QUERY_CONCURRENCY, async (request) => {
+    const id = resolveId(request.layer);
+    if (id === undefined) {
+      return { ...request, known: false, layerName: undefined };
+    }
+    try {
+      const prop = await bridge.query<{ value?: unknown }>("prop.get", {
+        layer: id,
+        path: request.path,
+      });
+      // prop.get answers `{value, keys, expression, …}` (prop.rs `get`, fake
+      // `queryPropGet`) — a successful read is KNOWN even when the value is
+      // null/undefined-shaped engine JSON.
+      return {
+        ...request,
+        known: true,
+        value: prop?.value,
+        layerName: nameById.get(id),
+      };
+    } catch {
+      return { ...request, known: false, layerName: nameById.get(id) };
+    }
+  });
+
+  const readByKey = new Map<string, OldValueResult>();
+  for (const read of reads) {
+    readByKey.set(`${typeof read.layer}:${String(read.layer)}\u0000${read.path}`, read);
+  }
+  return unique.map((request) => {
+    const key = `${typeof request.layer}:${String(request.layer)}\u0000${request.path}`;
+    return readByKey.get(key) ?? { ...request, known: false };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 

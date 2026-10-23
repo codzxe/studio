@@ -74,6 +74,22 @@ export interface AcceptedInviteInfo {
   readonly role: string;
 }
 
+/**
+ * W1-b — the result of minting an API key (better-auth apiKey plugin server
+ * API). `key` is the PLAINTEXT key and crosses this seam exactly ONCE (the
+ * plugin hashes it at rest and never returns it again).
+ */
+export interface ApiKeyMintResult {
+  readonly id: string;
+  readonly name: string | null;
+  readonly createdAt: string;
+  readonly expiresAt: string | null;
+  readonly enabled: boolean;
+  /** First characters of the key (prefix included) for UI identification. */
+  readonly start: string | null;
+  readonly key: string;
+}
+
 /** The auth surface the gateway consumes. */
 export interface GatewayAuth {
   handler(request: Request): Promise<Response>;
@@ -95,6 +111,29 @@ export interface GatewayAuth {
   ): Promise<InviteInfo>;
   acceptInvitation(headers: Headers, invitationId: string): Promise<AcceptedInviteInfo>;
   checkSlug(headers: Headers, slug: string): Promise<{ available: boolean }>;
+  // ── W1-b (§M1 tasks 1+2, AUD-1 gap #2): workspace API keys ────────────────
+  /**
+   * Mint a workspace API key via the apiKey plugin server API (hashing,
+   * show-once plaintext and `enabled: true` are the plugin's). The caller
+   * (route) has ALREADY enforced the owner/admin capability + workspace
+   * membership; the seam only carries the plugin's server-only fields.
+   */
+  createWorkspaceApiKey(input: {
+    readonly userId: string;
+    readonly workspaceId: string;
+    readonly name: string;
+    /** Lifetime in seconds; null = never expires. */
+    readonly expiresInSeconds: number | null;
+    /** Better-auth access-control statements (see @studio/contracts api-keys). */
+    readonly statements: Record<string, string[]>;
+  }): Promise<ApiKeyMintResult>;
+  /**
+   * Revoke (disable) a key via the plugin's server-only `userId` ownership
+   * path: `referenceId` is the KEY's minting user, not the caller — the
+   * route did the authorization and the workspace-binding tenant gate.
+   * Revoked keys fail every later verification (401).
+   */
+  revokeApiKey(keyId: string, referenceId: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +239,14 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
+/** ISO-string view of a possibly-absent date field from a plugin row. */
+function asIsoDate(value: unknown): string | null {
+  if (typeof value === "string" || typeof value === "number" || value instanceof Date) {
+    return new Date(value as string | number | Date).toISOString();
+  }
+  return null;
+}
+
 function toWorkspaceSummary(raw: unknown): WorkspaceSummary {
   const record = asRecord(raw);
   const createdAt = record.createdAt;
@@ -238,7 +285,30 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
     handler: (request) => auth.handler(request),
 
     async getSession(headers) {
-      const result = await auth.api.getSession({ headers });
+      let result: unknown;
+      try {
+        result = await auth.api.getSession({ headers });
+      } catch (error) {
+        // W1-b: with the apiKey plugin's session hook enabled, an invalid,
+        // revoked or expired `Authorization: Bearer <key>` makes better-auth
+        // throw an APIError out of getSession. That is a NEGATIVE auth
+        // result, not a server failure: return null so requireAuth renders
+        // 401 AUTH_REQUIRED (a valid cookie session, if any, still wins via
+        // the header-stripped retry below). Cookie-only requests rethrow —
+        // infrastructure failures must stay loud.
+        if (headers.get("authorization") !== null && error instanceof APIError) {
+          const withoutBearer = new Headers(headers);
+          withoutBearer.delete("authorization");
+          try {
+            result = await auth.api.getSession({ headers: withoutBearer });
+          } catch {
+            return null;
+          }
+          if (result === null || result === undefined) return null;
+        } else {
+          throw error;
+        }
+      }
       if (result === null || result === undefined) return null;
       const { session, user } = result as unknown as {
         session: Record<string, unknown>;
@@ -379,6 +449,52 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
         }
         throw error;
       }
+    },
+
+    // ── W1-b: workspace API keys (better-auth apiKey plugin server API) ─────
+    async createWorkspaceApiKey(input) {
+      // Server-to-server call (no request headers): the plugin accepts its
+      // server-only fields on this path — `userId` (minting user → the
+      // user-referenced row that the Bearer session hook resolves), the
+      // native `permissions` statements (scope enforcement) and the
+      // workspace-binding `metadata`. `rateLimitEnabled: false` is the
+      // documented W1-b posture: the plugin's default is 10 requests/day per
+      // key while the gateway already applies §7.3 per-IP route-class
+      // buckets; `lastUsedAt` (last_request) is still tracked on every verify.
+      // The `studio_` prefix makes keys identifiable on sight and feeds the
+      // plugin's `start` column for the UI.
+      const raw = await call<unknown>("createApiKey", {
+        body: {
+          userId: input.userId,
+          name: input.name,
+          expiresIn: input.expiresInSeconds,
+          permissions: input.statements,
+          metadata: { workspaceId: input.workspaceId, createdBy: input.userId },
+          prefix: "studio_",
+          rateLimitEnabled: false,
+        },
+      });
+      const record = asRecord(raw);
+      return {
+        id: asString(record.id) ?? "",
+        name: asString(record.name),
+        createdAt: asIsoDate(record.createdAt) ?? new Date().toISOString(),
+        expiresAt: asIsoDate(record.expiresAt),
+        enabled: record.enabled !== false,
+        start: asString(record.start),
+        key: asString(record.key) ?? "",
+      };
+    },
+
+    async revokeApiKey(keyId, referenceId) {
+      // Server-side disable via the plugin's update endpoint — its ownership
+      // check (referenceId match) is satisfied by passing the KEY's minting
+      // user; the workspace-admin authorization already happened in the
+      // route (§12.1 tenant gate via the apiKeys repo). The plugin hard-fails
+      // verification for disabled keys, so revoke is effective immediately.
+      await call<unknown>("updateApiKey", {
+        body: { keyId, userId: referenceId, enabled: false },
+      });
     },
   };
 }

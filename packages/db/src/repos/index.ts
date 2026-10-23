@@ -1,4 +1,5 @@
 import type { StudioDb } from "../db.js";
+import { type ApiKeysRepo, createApiKeysRepo } from "./api-keys.js";
 import { type AssetsRepo, createAssetsRepo } from "./assets.js";
 import { type AuditRepo, createAuditRepo } from "./audit.js";
 import { type CommentsRepo, createCommentsRepo } from "./comments.js";
@@ -18,6 +19,8 @@ import { type WebhookEventsRepo, createWebhookEventsRepo } from "./webhook-event
 
 export type { WorkspaceId, Page } from "./shared.js";
 export type { ProjectsRepo } from "./projects.js";
+// W1-b (§M1 tasks 1+2, AUD-1 gap #2): tenant-scoped workspace api-key reads.
+export type { ApiKeysRepo, ApiKeyRecord, ApiKeysListOptions } from "./api-keys.js";
 export type { VersionsRepo } from "./versions.js";
 export type { LeasesRepo } from "./leases.js";
 export type { AssetsRepo } from "./assets.js";
@@ -89,6 +92,8 @@ export interface Repos {
   /** §M7: share-link tokens (issue/verify/revoke) + presence heartbeats. */
   readonly shareTokens: ShareTokensRepo;
   readonly presence: PresenceRepo;
+  /** §M1 tasks 1+2 (W1-b): workspace api-key list/tenant gate (read-only). */
+  readonly apiKeys: ApiKeysRepo;
 }
 
 export function createRepos(db: StudioDb): Repos {
@@ -109,5 +114,6 @@ export function createRepos(db: StudioDb): Repos {
     webhookEvents: createWebhookEventsRepo(db),
     shareTokens: createShareTokensRepo(db),
     presence: createPresenceRepo(db),
+    apiKeys: createApiKeysRepo(db),
   };
 }

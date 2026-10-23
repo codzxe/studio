@@ -36,9 +36,34 @@ export interface AssetsRepo {
   create(workspaceId: WorkspaceId, input: AssetCreateInput): Promise<Asset>;
   list(workspaceId: WorkspaceId, options?: AssetListOptions): Promise<Page<Asset>>;
   get(workspaceId: WorkspaceId, assetId: string): Promise<Asset>;
-  /** Dedupe lookup by content hash (§9.2 content-addressed). */
-  bySha256(workspaceId: WorkspaceId, sha256: string): Promise<Asset | null>;
+  /**
+   * Dedupe lookup by content hash (§9.2 content-addressed). W1-c: the
+   * optional `excludeAssetId` lets the verify step find an OTHER row with
+   * the same bytes (the descriptor under completion is excluded so a
+   * self-hit never dedupes against itself).
+   */
+  bySha256(
+    workspaceId: WorkspaceId,
+    sha256: string,
+    excludeAssetId?: string,
+  ): Promise<Asset | null>;
   quota(workspaceId: WorkspaceId): Promise<AssetQuota>;
+  /**
+   * W1-c: record the server-side probe result from the verify step —
+   * header-parsed image dimensions (width/height; null leaves the column
+   * untouched). Tenant-scoped; unknown ids read as NOT_FOUND (§12.1).
+   */
+  recordProbe(
+    workspaceId: WorkspaceId,
+    assetId: string,
+    probe: { width: number | null; height: number | null },
+  ): Promise<Asset>;
+  /**
+   * W1-c: delete an asset ROW (verify-step rejection cleanup — the wrong-typed
+   * upload must not linger as a usable row). Bytes live in object storage and
+   * are reclaimed by the §9.2 lifecycle policy. Tenant-scoped (§12.1).
+   */
+  remove(workspaceId: WorkspaceId, assetId: string): Promise<void>;
 }
 
 export function createAssetsRepo(db: StudioDb): AssetsRepo {
@@ -130,11 +155,17 @@ export function createAssetsRepo(db: StudioDb): AssetsRepo {
       return asset;
     },
 
-    async bySha256(workspaceId, sha256) {
+    async bySha256(workspaceId, sha256, excludeAssetId) {
       const [asset] = await db
         .select()
         .from(assets)
-        .where(and(eq(assets.workspaceId, workspaceId), eq(assets.sha256, sha256)))
+        .where(
+          and(
+            eq(assets.workspaceId, workspaceId),
+            eq(assets.sha256, sha256),
+            excludeAssetId === undefined ? undefined : sql`${assets.id} <> ${excludeAssetId}`,
+          ),
+        )
         .orderBy(desc(assets.createdAt))
         .limit(1);
       return asset ?? null;
@@ -152,6 +183,30 @@ export function createAssetsRepo(db: StudioDb): AssetsRepo {
         count: Number(row?.count ?? 0),
         totalBytes: Number(row?.totalBytes ?? 0),
       };
+    },
+
+    async recordProbe(workspaceId, assetId, probe) {
+      const values: Partial<typeof assets.$inferInsert> = {};
+      if (probe.width !== null) values.width = probe.width;
+      if (probe.height !== null) values.height = probe.height;
+      if (Object.keys(values).length === 0) {
+        return this.get(workspaceId, assetId);
+      }
+      const [asset] = await db
+        .update(assets)
+        .set(values)
+        .where(and(eq(assets.id, assetId), eq(assets.workspaceId, workspaceId)))
+        .returning();
+      if (!asset) throw DbError.notFound("asset");
+      return asset;
+    },
+
+    async remove(workspaceId, assetId) {
+      // Idempotent by design: removing an already-removed asset is a no-op
+      // (a second complete on a removed id 404s at the get() above).
+      await db
+        .delete(assets)
+        .where(and(eq(assets.id, assetId), eq(assets.workspaceId, workspaceId)));
     },
   };
 }

@@ -3,6 +3,7 @@
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { PasswordField } from "@/components/auth/password-field";
 import { authClient } from "@/lib/auth-client";
+import { useOnlineStatus } from "@/lib/use-online-status";
 import { Brand } from "@studio/config";
 import { Button, Input } from "@studio/ui";
 import Link from "next/link";
@@ -17,6 +18,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  */
 export function SignUpForm() {
   const router = useRouter();
+  const online = useOnlineStatus();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -43,6 +45,12 @@ export function SignUpForm() {
     setTermsError(nextTermsError);
     setFormError(null);
     if (nextNameError || nextEmailError || nextPasswordError || nextTermsError) {
+      return;
+    }
+
+    // Offline gate (M9-H, §8.11): don't fire a sign-up the browser can't send.
+    if (!online) {
+      setFormError("You're offline. Reconnect and try again — no account was created.");
       return;
     }
 

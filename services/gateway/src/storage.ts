@@ -16,13 +16,15 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 import type { Readable as NodeReadable } from "node:stream";
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -59,6 +61,20 @@ export interface StorageDriver {
   ): Promise<void>;
   /** Object metadata or null when absent. */
   head(key: string): Promise<ObjectMeta | null>;
+  /**
+   * W1-c (§M2.2 verify-by-head): read ONLY the first `length` bytes of an
+   * object — the bounded head the upload-verify step sniffs. Never buffers
+   * more than `length` bytes (the 24MP/100MB streaming requirement stands).
+   * Resolves null ONLY when the object is absent; I/O failures propagate so
+   * the error boundary can map them (never a silent false "not uploaded").
+   */
+  readRange(key: string, length: number): Promise<Buffer | null>;
+  /**
+   * W1-c (§M2.1 duplicate): server-side object copy — S3 CopyObject / a
+   * streaming filesystem copy; bytes never transit the gateway process.
+   * The destination key must not exist yet (callers mint fresh keys).
+   */
+  copy(fromKey: string, toKey: string): Promise<void>;
   /** Short-lived signed URL (5–15 min, §9.2). */
   getSignedUrl(key: string, ttlSeconds: number, options?: SignedUrlOptions): Promise<SignedUrl>;
   /** Remove an object; missing objects are not an error. */
@@ -196,6 +212,35 @@ export class LocalFSDriver implements StorageDriver {
     }
   }
 
+  async readRange(key: string, length: number): Promise<Buffer | null> {
+    if (!Number.isInteger(length) || length <= 0) {
+      throw new Error("invalid readRange length");
+    }
+    const path = this.path(key);
+    let handle: FileHandle;
+    try {
+      handle = await open(path, "r");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+    try {
+      const buffer = Buffer.alloc(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, 0);
+      return buffer.subarray(0, bytesRead);
+    } finally {
+      await handle.close();
+    }
+  }
+
+  async copy(fromKey: string, toKey: string): Promise<void> {
+    const from = this.path(fromKey);
+    const to = this.path(toKey);
+    await mkdir(dirname(to), { recursive: true });
+    // fs.copyFile streams in the kernel — the bytes never enter this process.
+    await copyFile(from, to);
+  }
+
   async getSignedUrl(
     key: string,
     ttlSeconds: number,
@@ -294,6 +339,49 @@ export class S3Driver implements StorageDriver {
     }
   }
 
+  async readRange(key: string, length: number): Promise<Buffer | null> {
+    if (!Number.isInteger(length) || length <= 0) {
+      throw new Error("invalid readRange length");
+    }
+    try {
+      const out = await this.client.send(
+        new GetObjectCommand({ ...this.object(key), Range: `bytes=0-${length - 1}` }),
+      );
+      const body = out.Body;
+      if (body === undefined) return null;
+      // S3 serves exactly the requested range — the stream is already bounded
+      // by `length`; collect it without any further buffering.
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of body as AsyncIterable<Buffer | Uint8Array>) {
+        const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        chunks.push(part);
+        total += part.byteLength;
+        if (total >= length) break;
+      }
+      return Buffer.concat(chunks, Math.min(total, length));
+    } catch (error) {
+      // Only "the object is absent" reads as null; transport/config failures
+      // propagate so the error boundary maps them honestly. (A NoSuchKey from
+      // the ranged GET, not a mid-stream failure, is the null case.)
+      if ((error as { name?: string }).name === "NoSuchKey") return null;
+      throw error;
+    }
+  }
+
+  async copy(fromKey: string, toKey: string): Promise<void> {
+    // Server-side copy: CopyObject never routes the bytes through the gateway.
+    // CopySource is "<bucket>/<key>" with the key percent-encoded (§9.2 keys
+    // are ASCII-safe; the encoding is belt-and-braces for S3's parser).
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        Key: toKey,
+        CopySource: `${encodeURIComponent(this.bucket)}/${encodeS3Key(fromKey)}`,
+      }),
+    );
+  }
+
   async getSignedUrl(
     key: string,
     ttlSeconds: number,
@@ -382,4 +470,13 @@ export function createStorage(env: StudioEnv, fsRoot?: string): StorageChoice {
 /** SHA-256 helper shared by the upload routes (single-pass hashing). */
 export function sha256Hex(data: Buffer | Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
+}
+
+/** Percent-encode an object key for S3 CopySource (path segments kept). */
+function encodeS3Key(key: string): string {
+  assertSafeKey(key);
+  return key
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }

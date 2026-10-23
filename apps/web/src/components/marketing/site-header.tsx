@@ -12,7 +12,9 @@ const NAV_LINKS = [
   { label: "Product", href: "/#product" },
   { label: "Agents", href: "/#agent" },
   { label: "Work", href: "/#work" },
-  { label: "Pricing", href: "/#pricing" },
+  // M9-E: /pricing is a real page now — the nav points at the catalog-derived
+  // spread instead of the landing's teaser anchor (§8.1 nav stays 4 items).
+  { label: "Pricing", href: "/pricing" },
 ] as const;
 
 export function SiteHeader() {

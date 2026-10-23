@@ -9,11 +9,22 @@ import { Button, EmptyState } from "@studio/ui";
  */
 
 /** Offline: honest about what is and isn't at risk, with a retry. */
-export function OfflineState({ onRetry }: { onRetry?: () => void }) {
+export function OfflineState({
+  title = "You're offline. Your last saved version is safe.",
+  onRetry,
+}: {
+  /**
+   * One §7.12/§14 sentence. Defaults to the editor copy; pages whose safety
+   * story differs (e.g. auth: nothing is at risk, the network is) pass their
+   * own instead of duplicating the component.
+   */
+  title?: string;
+  onRetry?: () => void;
+}) {
   return (
     <div data-testid="offline-state">
       <EmptyState
-        title="You're offline. Your last saved version is safe."
+        title={title}
         action={
           onRetry ? (
             <Button variant="primary" size="md" onClick={onRetry}>

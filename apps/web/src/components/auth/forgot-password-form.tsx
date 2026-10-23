@@ -1,6 +1,7 @@
 "use client";
 
 import { authClient } from "@/lib/auth-client";
+import { useOnlineStatus } from "@/lib/use-online-status";
 import { Button, Input } from "@studio/ui";
 import { MailCheck } from "lucide-react";
 import Link from "next/link";
@@ -14,6 +15,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * enumeration).
  */
 export function ForgotPasswordForm() {
+  const online = useOnlineStatus();
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -24,6 +26,12 @@ export function ForgotPasswordForm() {
     const nextEmailError = EMAIL_PATTERN.test(email) ? null : "Enter a valid email address.";
     setEmailError(nextEmailError);
     if (nextEmailError) {
+      return;
+    }
+
+    // Offline gate (M9-H, §8.11): don't fire a request the browser can't send.
+    if (!online) {
+      setEmailError("You're offline. Reconnect and we'll send the reset link.");
       return;
     }
 

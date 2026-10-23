@@ -73,6 +73,9 @@ const STATUS_BY_CODE: Record<string, number> = {
   CONFLICT: 409,
   SERVICE_UNAVAILABLE: 503,
   RUN_NOT_ACTIVE: 409,
+  // W1-c (§M2.2 verify-by-head): magic-byte sniff on the uploaded head
+  // contradicts the declared MIME — 415, upload rejected.
+  ASSET_TYPE_MISMATCH: 415,
   ASSET_NOT_FOUND: 404,
   RENDER_NOT_FOUND: 404,
   COMMENT_NOT_FOUND: 404,
@@ -80,6 +83,9 @@ const STATUS_BY_CODE: Record<string, number> = {
   INVITE_RECIPIENT_MISMATCH: 403,
   BILLING_NOT_CONFIGURED: 400,
   SHA256_MISMATCH: 400,
+  // W1-e (AUD-3 gap 3a): the plan-catalog seat limit hit on invite creation
+  // — a quota-shaped refusal (mirrors QUOTA_EXCEEDED/RENDER_QUOTA_EXCEEDED).
+  SEATS_EXCEEDED: 429,
 };
 
 /** HTTP status for a wire code (default: 500 INTERNAL — never leak details). */

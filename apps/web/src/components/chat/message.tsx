@@ -44,6 +44,20 @@
  *    (the user has not confirmed anything yet); the component self-guards an
  *    unsafe batch. Only in the proposed state (after apply/undo a re-probe is
  *    pointless churn).
+ *  * Diff card (W1-d, ECUX §6.3): the semantic per-property old → new rows
+ *    are mounted for EVERY proposed plan with a compiled batch — low, medium
+ *    AND high risk: unlike the preview probe, the diff is derived from the
+ *    batch and reads the live (pre-apply) values with READ-ONLY bridge
+ *    queries (one comp.info + prop.get per pair), so a high-risk card gains
+ *    review context without anything executing before the user confirms.
+ *    Only in the proposed state — after apply the live values ARE the new
+ *    values and a "before" column would lie.
+ *  * View in timeline (W1-d, §6.3): the APPLIED card's affordance seeks the
+ *    playhead to the plan's first affected time and activates the affected
+ *    comp — bridge calls only (comp.open + time.set; journaled view-state
+ *    commands that never touch the undo stack, verified against the vendored
+ *    engine: comp.rs `open`, time.rs `set`). Best-effort and quiet on
+ *    failure; the editor UI itself is frozen (law #7).
  *  * D-22 pre-arm: `autoApply.mode === "auto"` (never for high risk) renders
  *    the "Auto-apply is on" hint and focuses the Apply button — Apply is
  *    STILL the user's explicit click; nothing ever executes from the event.
@@ -54,9 +68,12 @@
 
 import type { ChatController } from "@/lib/chat/chat-controller";
 import { applicablePlanFromRuntime } from "@/lib/chat/run-state";
-import type { ChatUiMessage, PlanRuntime, RunPhase } from "@/lib/chat/types";
+import type { AgentBatch, ChatUiMessage, PlanRuntime, RunPhase } from "@/lib/chat/types";
+import { firstAffectedTimeTicks, ticksToSeconds } from "@/lib/chat/preview";
+import type { EditPlan } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { type ReactElement, type ReactNode, useEffect, useRef } from "react";
+import { PlanDiffCard } from "./diff-card";
 import { Markdown } from "./markdown";
 import {
   PlanCard,
@@ -146,6 +163,56 @@ function deriveAmbiguousRequests(runtime: PlanRuntime): readonly PlanResolutionR
 }
 
 /**
+ * "View in timeline" (§6.3, W1-d) — reveal an APPLIED plan in the timeline:
+ * activate the affected comp, then seek the playhead to the plan's first
+ * affected time. Bridge calls ONLY (`bridge.execute` through the real editor
+ * surface — the editor UI is frozen, law #7; comp activation + transport are
+ * allowed engine commands, not a UI change):
+ *
+ *  * comp target — a `comp.new` step names the comp it will have created
+ *    (comp.open accepts `id|name`, comp.rs `open`); otherwise agent batches
+ *    execute in the ACTIVE comp (apply.ts resolves names there), so the
+ *    current active comp is the affected one — re-opened (idempotent when
+ *    already active; a no-op that restores the tab if the user switched).
+ *  * seek — the plan's first affected time (preview.ts's scanner, ECUX
+ *    §6.2/§6.3); a plan that names no time keeps the playhead where it is.
+ *
+ * `time.set`/`comp.open` are view-state commands (session `times`/`open_comps`)
+ * — they never push an undo step, so the card's own Undo (F-L4 label
+ * verification) is undisturbed. Best-effort: a failure is quiet (the
+ * affordance is a convenience, never a gate) and never mutates project data.
+ */
+async function revealPlanInTimeline(
+  bridge: EditorBridge,
+  plan: EditPlan,
+  batch: AgentBatch,
+): Promise<void> {
+  try {
+    const newCompName = batch.steps.find(
+      (step) =>
+        step.command === "comp.new" &&
+        typeof step.params?.name === "string" &&
+        (step.params.name as string).length > 0,
+    )?.params?.name as string | undefined;
+    if (newCompName !== undefined) {
+      await bridge.execute("comp.open", { comp: newCompName });
+    } else {
+      const inspect = await bridge.inspect();
+      if (typeof inspect.activeComp === "number") {
+        await bridge.execute("comp.open", { comp: inspect.activeComp });
+      }
+    }
+    const ticks = firstAffectedTimeTicks(plan);
+    if (ticks !== null) {
+      await bridge.execute("time.set", { time: ticksToSeconds(ticks) });
+    }
+  } catch {
+    // Quiet best-effort (see the doc block): a failed reveal never disturbs
+    // the card, the editor state or the run.
+  }
+}
+
+/**
  * The full M5-G card contract derived from one message's runtime + the wiring.
  * Pure: every branch is pinned by the chat-integration M5 scenarios. `null`
  * when the message carries no plan (the caller renders no card).
@@ -202,6 +269,9 @@ function derivePlanCardProps(
     controller.reapply(next);
   };
   const onUndo = () => controller.undo(runId);
+  const onViewInTimeline = () => {
+    void revealPlanInTimeline(wiring.bridge, plan, runtime.compiledBatch);
+  };
   const onCancel = () => controller.dismissPlan(runId);
   const onResolveCandidate = (requestId: string, candidate: string) =>
     controller.resolveCandidate(runId, requestId, candidate);
@@ -289,7 +359,7 @@ function derivePlanCardProps(
     }
   }
 
-  // ---- preview slot (M5-H) + D-22 pre-arm -----------------------------------
+  // ---- preview slot (M5-H) + diff slot (W1-d) + D-22 pre-arm -----------------
   const resolvedRisk = runtime.risk ?? plan.risk;
   const proposed = status === "proposed";
   const highRisk = resolvedRisk === "high";
@@ -299,6 +369,19 @@ function derivePlanCardProps(
     // high-risk card must never probe (§6.2 — nothing runs before the user
     // confirms). PlanPreview self-guards when the batch is unsafe.
     preview = <PlanPreview batch={runtime.compiledBatch} plan={plan} bridge={wiring.bridge} />;
+  }
+  let diff: ReactNode | undefined;
+  if (proposed) {
+    // Every risk (see the module header): pure derivation + READ-ONLY
+    // before-value reads — nothing executes, so even a high-risk card may
+    // show the semantic diff while its batch stays unprobed.
+    diff = (
+      <PlanDiffCard
+        batch={runtime.compiledBatch}
+        bridge={wiring.bridge}
+        resolutionRequests={runtime.resolutionRequests}
+      />
+    );
   }
   const preArmed = proposed && !highRisk && runtime.autoApply?.mode === "auto";
 
@@ -311,10 +394,11 @@ function derivePlanCardProps(
     reapplyDrifted,
     ...(resolutionRequests !== undefined ? { resolutionRequests } : {}),
     preview,
+    ...(diff !== undefined ? { diff } : {}),
     ...(onApplyCallback !== undefined ? { onApply: onApplyCallback } : {}),
     ...(proposed ? { onCancel } : {}),
     ...(status === "applied" && (runtime.outcome === "applied" || runtime.outcome === "undo-failed")
-      ? { onUndo }
+      ? { onUndo, onViewInTimeline }
       : {}),
     ...(onReapplyCallback !== undefined ? { onReapply: onReapplyCallback } : {}),
     ...(status === "ambiguous-resolution" ? { onResolveCandidate } : {}),

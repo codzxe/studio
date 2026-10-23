@@ -3,18 +3,21 @@ import Link from "next/link";
 
 /**
  * SiteFooter — §8.1 §11: product / resources / legal / licences / status /
- * changelog columns, signal dot + wordmark, honest footer copy. Placeholder
- * domain tokens (docs, status) are Brand tokens — they resolve at launch.
+ * changelog columns, signal dot + wordmark, honest footer copy. M9-E: the
+ * pricing, FAQ, changelog and status links point at the REAL in-app routes;
+ * documentation remains a placeholder domain token (Brand token — resolves
+ * at launch), which the honest footer note still covers.
  */
 
 const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
   {
     title: "Product",
     links: [
-      { label: "Pricing", href: "/#pricing" },
+      { label: "Pricing", href: "/pricing" },
+      { label: "FAQ", href: "/faq" },
       { label: "The agent", href: "/#agent" },
       { label: "The editor", href: "/#product" },
-      { label: "Changelog", href: `https://${Brand.domains.docs}/changelog` },
+      { label: "Changelog", href: "/changelog" },
     ],
   },
   {
@@ -22,7 +25,7 @@ const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
     links: [
       { label: "Documentation", href: `https://${Brand.domains.docs}` },
       { label: "Support", href: `mailto:${Brand.contact.support}` },
-      { label: "Status", href: `https://${Brand.domains.status}` },
+      { label: "Status", href: "/status" },
     ],
   },
   {
