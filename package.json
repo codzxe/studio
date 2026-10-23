@@ -5,32 +5,41 @@
   "description": "Agentic motion-graphics SaaS (codename studio, internal only)",
   "type": "module",
   "packageManager": "pnpm@9.15.9",
-  "engines": { "node": ">=22" },
-  "scripts": {
-    "dev": "turbo run dev",
-    "dev:web": "pnpm --filter @studio/web dev",
-    "dev:gateway": "pnpm --filter @studio/gateway dev",
-    "dev:pg": "bash scripts/dev-postgres.sh start",
-    "dev:pg:stop": "bash scripts/dev-postgres.sh stop",
-    "dev:env": "bash scripts/gen-env.sh",
-    "build": "turbo run build",
-    "lint": "biome check .",
-    "format": "biome check --write .",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "db:generate": "pnpm --filter @studio/db generate",
-    "db:migrate": "pnpm --filter @studio/db migrate",
-    "db:seed": "pnpm --filter @studio/db seed",
-    "editor:web": "cd editor && cargo xtask web",
-    "editor:serve": "cd editor && cargo xtask web --serve 8765",
-    "editor:cli": "cd editor && cargo build -p effectcraft-cli",
-    "editor:test": "cd editor && cargo test --workspace",
-    "check:licenses": "node scripts/check-licenses.mjs"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
-    "turbo": "^2.3.3",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
-  }
+  "engines": {
+  "node": ">=22"
+},
+"scripts": {
+  "dev": "turbo run dev",
+  "dev:web": "pnpm --filter @studio/web dev",
+  "dev:gateway": "pnpm --filter @studio/gateway dev",
+  "dev:pg": "bash scripts/dev-postgres.sh start",
+  "dev:pg:stop": "bash scripts/dev-postgres.sh stop",
+  "dev:sqlite": "bash scripts/dev-sqlite.sh start",
+  "dev:sqlite:reset": "bash scripts/dev-sqlite.sh reset",
+  "dev:env": "bash scripts/gen-env.sh",
+  "build": "turbo run build",
+  "lint": "biome check .",
+  "format": "biome check --write .",
+  "typecheck": "turbo run typecheck",
+  "test": "turbo run test",
+  "db:generate": "pnpm --filter @studio/db generate",
+  "db:migrate": "pnpm --filter @studio/db migrate",
+  "db:seed": "pnpm --filter @studio/db seed",
+  "editor:web": "cd editor && cargo xtask web",
+  "editor:serve": "cd editor && cargo xtask web --serve 8765",
+  "editor:cli": "cd editor && cargo build -p effectcraft-cli",
+  "editor:test": "cd editor && cargo test --workspace",
+  "check:licenses": "node scripts/check-licenses.mjs"
+},
+"devDependencies": {
+  "@biomejs/biome": "^1.9.4",
+  "turbo": "^2.3.3",
+  "typescript": "^5.7.2",
+  "vitest": "^2.1.8"
+},
+"workspaces": [
+  "apps/*",
+  "services/*",
+  "packages/*"
+]
 }
