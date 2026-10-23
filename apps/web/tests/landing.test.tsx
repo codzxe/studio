@@ -73,7 +73,10 @@ describe("landing page", () => {
 
   it("proof strip: the five capability tokens, no logos", () => {
     renderLanding();
-    for (const token of ["Keyframes", "3D", "306 effects", "Agent edits", "Version history"]) {
+    // W5-03: "300+ effects" — the vendored registry pins 307 built-ins
+    // (editor i18n every_effect_has_a_row), so a stale exact count can never
+    // drift from the shipped editor again.
+    for (const token of ["Keyframes", "3D", "300+ effects", "Agent edits", "Version history"]) {
       expect(screen.getByText(token)).toBeInTheDocument();
     }
   });
@@ -109,19 +112,27 @@ describe("landing page", () => {
     }
   });
 
-  it("performance: honest SLO rows with the p75 footnote", () => {
+  it("performance: the §6 budget rows, framed as budgets — never faked measurements", () => {
     renderLanding();
     const section = screen.getByTestId("landing-performance");
-    expect(within(section).getByText("Editor ready, warm cache")).toBeInTheDocument();
+    // W5-03: nothing has a measured p75 yet (docs/performance.md), so the
+    // rows carry the BUILD_PLAN §6 budgets and say so — no "p75, reference
+    // machine" invented-metric framing.
+    expect(within(section).getByText("Editor ready, warm cache (budget)")).toBeInTheDocument();
     expect(within(section).getByText("< 6 s")).toBeInTheDocument();
-    expect(within(section).getByText("Editor ready, cold")).toBeInTheDocument();
+    expect(within(section).getByText("Editor ready, cold (budget)")).toBeInTheDocument();
     expect(within(section).getByText("< 12 s")).toBeInTheDocument();
-    expect(within(section).getByText("First chat token")).toBeInTheDocument();
+    expect(within(section).getByText("First chat token (budget)")).toBeInTheDocument();
     expect(within(section).getByText("< 1.5 s")).toBeInTheDocument();
-    expect(within(section).getByText("Local apply")).toBeInTheDocument();
+    expect(within(section).getByText("Local apply (budget)")).toBeInTheDocument();
     expect(within(section).getByText("< 300 ms")).toBeInTheDocument();
     expect(within(section).getByText("60 fps")).toBeInTheDocument();
-    expect(within(section).getByText("p75, reference machine.")).toBeInTheDocument();
+    expect(
+      within(section).getByText(
+        /Performance budgets from our build plan; p75 measurements land with the first staging deploys\./,
+      ),
+    ).toBeInTheDocument();
+    expect(within(section).queryByText("p75, reference machine.")).not.toBeInTheDocument();
   });
 
   it("pricing: the SAME catalog-derived cards as /pricing — never a second price set", () => {

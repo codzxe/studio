@@ -61,6 +61,8 @@ interface HarnessOptions {
   readonly threadMode?: ThreadMode;
   /** "fail" makes every models.list attempt reject (entitlement failure → []). */
   readonly models?: "ok" | "fail";
+  /** Overrides the models.list payload (the saved-default tests need two models). */
+  readonly modelsResponse?: { plan: string; models: unknown[] };
 }
 
 interface RecordedStreamCall {
@@ -106,7 +108,16 @@ const FAST_MODEL = {
   creditsPer1kOutput: 0.03,
 };
 
+const SMART_MODEL = {
+  id: "studio-smart",
+  tier: "smart" as const,
+  use: "Heavy reasoning, complex multi-step plans",
+  creditsPer1kInput: 0.4,
+  creditsPer1kOutput: 1.2,
+};
+
 const MODELS_OK = { plan: "trial", models: [FAST_MODEL] };
+const MODELS_FAST_SMART = { plan: "starter", models: [FAST_MODEL, SMART_MODEL] };
 
 function makeHarness(options: HarnessOptions = {}): Harness {
   const threadMode: ThreadMode = options.threadMode ?? "auto";
@@ -140,7 +151,7 @@ function makeHarness(options: HarnessOptions = {}): Harness {
       list: () => {
         modelsCalls += 1;
         if (modelsFail) return Promise.reject(new Error("models endpoint down"));
-        return Promise.resolve(MODELS_OK);
+        return Promise.resolve(options.modelsResponse ?? MODELS_OK);
       },
     },
     chat: {
@@ -225,6 +236,7 @@ function makeHarness(options: HarnessOptions = {}): Harness {
 beforeEach(() => {
   executorRecorder.deps.length = 0;
   executorRecorder.calls.length = 0;
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -260,6 +272,33 @@ describe("ChatProvider — models", () => {
     });
     expect(harness.modelsListCalls()).toBe(2); // exactly one retry
     expect(harness.api().activeModelId).toBeNull(); // nothing to default to
+  });
+
+  it("adopts the Settings-saved default (studio.chat.model.v1) when it is on-plan", async () => {
+    // W5-03: the §8.9 Models radio WRITES the seam; the provider READS it on
+    // the first adoption — a saved on-plan default beats "first allowed".
+    window.localStorage.setItem("studio.chat.model.v1", "studio-smart");
+    const harness = makeHarness({ modelsResponse: MODELS_FAST_SMART });
+    await waitFor(() => {
+      expect(harness.api().models).not.toBeNull();
+    });
+    expect(harness.api().activeModelId).toBe("studio-smart");
+  });
+
+  it("falls back to the first allowed model when the saved default is off-plan or absent", async () => {
+    window.localStorage.setItem("studio.chat.model.v1", "studio-vision"); // D-8: never on a plan
+    const offPlan = makeHarness({ modelsResponse: MODELS_FAST_SMART });
+    await waitFor(() => {
+      expect(offPlan.api().models).not.toBeNull();
+    });
+    expect(offPlan.api().activeModelId).toBe("studio-fast");
+
+    window.localStorage.removeItem("studio.chat.model.v1");
+    const absent = makeHarness({ modelsResponse: MODELS_FAST_SMART });
+    await waitFor(() => {
+      expect(absent.api().models).not.toBeNull();
+    });
+    expect(absent.api().activeModelId).toBe("studio-fast");
   });
 });
 

@@ -5,10 +5,15 @@
  *
  * Five choices: motion graphics, title design, social video, product film,
  * other. SKIP is allowed (§8.3: skip is allowed for use case, not for the
- * workspace name). The choice persists to localStorage
- * `studio.onboarding.usecase.v1` ONLY — there is no backend field for it
- * (D-10 key style; honest: nothing is faked server-side, and the copy says
- * so). Skipping persists nothing.
+ * workspace name).
+ *
+ * W5-03 honesty fix: the choice used to persist to localStorage
+ * `studio.onboarding.usecase.v1` with the copy "This tunes where you start" —
+ * but NOTHING ever read the key (no backend field exists and no surface
+ * consumed it locally), so both the write and the claim were dead. The key
+ * is GONE; the copy says plainly that the pick changes nothing today. The
+ * step itself stays — §8.3 prescribes the 3-step journey and skip stays the
+ * honest default.
  */
 
 import { Button, cn } from "@studio/ui";
@@ -25,18 +30,6 @@ const USE_CASES = [
 
 export type UseCaseId = (typeof USE_CASES)[number]["id"];
 
-/** localStorage key (D-10) — the honest local-only seam. */
-export const USE_CASE_STORAGE_KEY = "studio.onboarding.usecase.v1";
-
-/** Best-effort write: private-mode/quota failures never block onboarding. */
-function persistUseCase(useCase: UseCaseId): void {
-  try {
-    window.localStorage.setItem(USE_CASE_STORAGE_KEY, useCase);
-  } catch {
-    // The choice is advisory; a storage failure is not the user's problem.
-  }
-}
-
 export interface UseCaseStepProps {
   /** Advance to step 3, carrying the choice (or null when skipped). */
   readonly onNext: (useCase: UseCaseId | null) => void;
@@ -50,8 +43,7 @@ export function UseCaseStep({ onNext }: UseCaseStepProps) {
       <div className="flex flex-col gap-2">
         <h2 className="text-body-l font-medium text-primary">What are you making?</h2>
         <p className="text-body-s text-secondary">
-          This tunes where you start. It stays on this device — skip it if you&apos;d rather jump
-          straight in.
+          Optional — it changes nothing today. Skip it if you&apos;d rather jump straight in.
         </p>
       </div>
 
@@ -87,7 +79,6 @@ export function UseCaseStep({ onNext }: UseCaseStepProps) {
           disabled={selected === null}
           onClick={() => {
             if (selected !== null) {
-              persistUseCase(selected);
               onNext(selected);
             }
           }}

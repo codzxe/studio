@@ -1,14 +1,16 @@
 /**
- * UseCaseStep tests (W2-02) — the §8.3 choice list (motion graphics, title
- * design, social video, product film, other), SKIP semantics, and the honest
- * local-only persistence: `studio.onboarding.usecase.v1` and NOTHING else.
+ * UseCaseStep tests (W2-02; W5-03 honesty pass) — the §8.3 choice list
+ * (motion graphics, title design, social video, product film, other), SKIP
+ * semantics, and the honest NO-persistence contract: the orphaned
+ * `studio.onboarding.usecase.v1` localStorage write is GONE (nothing ever
+ * read it), so advancing — pick or skip — writes NOTHING anywhere.
  * Deterministic RTL; no network.
  */
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { USE_CASE_STORAGE_KEY, UseCaseStep } from "./use-case-step";
+import { UseCaseStep } from "./use-case-step";
 
 const USER = userEvent.setup();
 
@@ -44,7 +46,14 @@ describe("UseCaseStep", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   });
 
-  it("continuing persists the choice to localStorage ONLY — no backend field, no fake write", async () => {
+  it("the copy claims no effect: the pick changes nothing today", () => {
+    render(<UseCaseStep onNext={vi.fn()} />);
+    expect(
+      screen.getByText("Optional — it changes nothing today. Skip it if you'd rather jump straight in."),
+    ).toBeInTheDocument();
+  });
+
+  it("continuing advances with the choice and persists NOTHING (the orphaned key is dead)", async () => {
     const onNext = vi.fn();
     render(<UseCaseStep onNext={onNext} />);
 
@@ -52,9 +61,9 @@ describe("UseCaseStep", () => {
     await USER.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(onNext).toHaveBeenCalledWith("title-design");
-    expect(localStorage.getItem(USE_CASE_STORAGE_KEY)).toBe("title-design");
-    // The storage key is the ONLY thing written — nothing else leaks in.
-    expect(localStorage.length).toBe(1);
+    // W5-03: `studio.onboarding.usecase.v1` had no consumer — nothing is
+    // written, and no other key leaks in either.
+    expect(localStorage.length).toBe(0);
   });
 
   it("skip is allowed: it advances without persisting anything", async () => {
@@ -64,7 +73,6 @@ describe("UseCaseStep", () => {
     await USER.click(screen.getByTestId("onboarding-usecase-skip"));
 
     expect(onNext).toHaveBeenCalledWith(null);
-    expect(localStorage.getItem(USE_CASE_STORAGE_KEY)).toBeNull();
     expect(localStorage.length).toBe(0);
   });
 
@@ -76,6 +84,6 @@ describe("UseCaseStep", () => {
     await USER.click(screen.getByTestId("onboarding-usecase-skip"));
 
     expect(onNext).toHaveBeenCalledWith(null);
-    expect(localStorage.getItem(USE_CASE_STORAGE_KEY)).toBeNull();
+    expect(localStorage.length).toBe(0);
   });
 });

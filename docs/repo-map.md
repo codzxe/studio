@@ -24,6 +24,30 @@ described the archived PhotoCraft layout — see git history).
 One app: `apps/web` (Next.js 16 marketing + product UI). The old multi-service
 `apps/` split died with the pivot — the API lives under `services/`.
 
+Route groups under `apps/web/src/app/` (URLs carry no group names):
+
+- `(marketing)/` — public site: `/` (landing), `/pricing`, `/faq`, `/status`,
+  `/changelog`, `/legal/{terms,privacy,licences}`.
+- `(auth)/` — `/sign-in`, `/sign-up`, `/forgot-password`, `/reset-password`,
+  `/verify-email`, `/invite/[token]`.
+- `(app)/onboarding/` — the 3-step workspace/trial onboarding (fresh accounts
+  only; any existing membership redirects to `/w`).
+- `(app)/w/(shell)/` — the signed-in shell (rail + top bar + ⌘K palette from
+  `components/shell/*`, resolved by `lib/workspace-membership.ts`):
+  `/w` (dashboard), `/w/projects` (workspace project browser), `/w/billing`,
+  `/w/settings{,/members,/api-keys,/audit,/models,/licences}`.
+- `(app)/w/[slug]/` — per-project: `(shell)/history` (project hub: overview,
+  versions, comments, share links) and `editor` (the real EffectCraft host
+  page via `components/editor-host/*` + `lib/editor-session/`).
+- `(share)/s/[token]/` — the public share/review page.
+
+Component dirs mirror those surfaces (`components/{marketing,auth,onboarding,
+shell,dashboard,projects,hub,billing,settings,share,editor-host,chat,comments,
+presence,activity,render,renders-hub,versions,system}`), wired to the gateway
+only through `@studio/api-client` via port interfaces. `src/lib/` holds the
+`gatewayCall` seam, `lib/chat/` (client chat controller + tool executor),
+`lib/editor-session/` (load/autosave engine) and `lib/workspace-membership.ts`.
+
 ### `services/` — backend services
 
 #### `services/gateway` — Hono REST + SSE API (the only service the browser talks to)
@@ -31,11 +55,14 @@ One app: `apps/web` (Next.js 16 marketing + product UI). The old multi-service
 Auth (Better Auth), RBAC + rate limits, tenant-scoped repos, projects/versions/
 assets/leases, chat SSE with the LiteLLM runner + plan compiler, comments/
 presence/share, billing (Stripe seam) + credits ledger, renders v2, members +
-api-keys + invites. Key entries: `src/index.ts`, `src/app.ts` (the mount
-table), `src/routes/` (23 route modules), `src/middleware.ts`,
+api-keys + invites, settings + workspace audit. Key entries: `src/index.ts`,
+`src/app.ts` (the mount table), `src/routes/` (one module per API domain —
+23 modules at the W5-08 purge, 25 while the settings/workspace-audit waves
+land), `src/middleware.ts`,
 `src/plan-compiler.ts`, `src/litellm/` (runner + prompt), `src/stripe.ts`,
 `src/storage.ts`, `src/signing.ts`. Wire contract: `@studio/contracts` route
-schemas + `Ok`/`Err` envelopes on `/v1/*`; error codes add-only in `src/errors.ts`.
+schemas + `Ok`/`Err` envelopes on `/v1/*`; error codes add-only in
+`packages/config/src/errors.ts` (code → status table in `src/errors.ts`).
 
 #### `services/worker` — render worker (M8)
 
@@ -69,13 +96,12 @@ see the .gitignore stale-tsc-emit block).
   signing, workspace-scoped keys (§9.2), magic-byte `validate.ts` (the asset
   verify step's sniffer), sha256. Key entries: `src/index.ts`,
   `src/drivers/{local-fs,s3,sigv4}.ts`, `src/keys.ts`, `src/validate.ts`.
-  NOTE: not yet a declared dependency of `@studio/gateway` (imported via a
-  relative source-path seam, `services/gateway/src/routes/assets.ts:64-68`) —
-  one-line package-graph follow-up owed.
+  A declared dependency of `@studio/gateway` since W4-KILL
+  (`@studio/storage` + the `./validate` subpath export).
 - `packages/editor-bridge` — the `EditorBridge` binding to the real
   `window.effectcraft` surface. Key entries: `src/types.ts`,
   `attachEditorBridge` / dev `attachFake`.
-- `packages/ui` — design-system primitives + tokens (23 components, dark-only,
+- `packages/ui` — design-system primitives + tokens (22 components, dark-only,
   token-styled; every primitive has a `*.example.tsx` gallery + unit tests).
   Key entries: `src/components/*`, `src/styles/tokens.css`.
 
@@ -95,18 +121,25 @@ run locally via `scripts/dev-litellm.sh` (127.0.0.1:4000, optional).
 
 ### `infra/` — hosting & operations
 
-`compose/` (single-box stack: caddy, gateway, web, db, valkey), `caddy/` (the
-only host-port publisher; TLS/ACME), `obs/` (alert rules, scrape configs,
-dashboards), `scripts/` (backup/verify/drill/deploy/migrate/smoke operating
-tooling), `ci-staged/` (parked GitHub Actions until the PAT gains `workflow`
-scope), `tofu/` (optional OpenTofu), `environments.md`.
+`compose/` (single-box stack: db, valkey, minio + litellm data plane, with a
+pending `apps` profile for the app containers; `db-init/` LiteLLM schema),
+`caddy/` (the only host-port publisher; TLS/ACME, `/editor/*` static +
+COOP/COEP), `systemd/` (native no-Docker service units for
+gateway/web/worker), `litellm/` (the compose-stack EDIT-ME proxy config — the
+richer dev/runbook config lives at `deploy/litellm/`; both are wired,
+consolidation candidate), `README.md` (bring-up, backup, upgrade, rollback).
+The pre-pivot `obs/`, `scripts/`, `ci-staged/`, `tofu/` and `environments.md`
+were deleted with the W0 monorepo skeleton (git history retains them).
 
 ### `docs/` — the paper trail
 
 `AGENTS.md` (fleet law), `BUILD_PLAN.md` (M0–M10), `PRODUCT_ARCHITECTURE.md`,
 `EDITOR_CHAT_UX.md`, `UI_DESIGN_SYSTEM.md`, `DECISIONS.md` (binding rulings —
 read before deciding anything), `adr/` (0001–0006, incl. the EffectCraft pivot),
-`phases/` (milestone evidence files + gap maps), `api/`, `runbooks/`,
+`phases/` (milestone evidence files + `gap/` — the W-R read-wave completion
+maps, superseded by the W1–W5 landing; each carries a SUPERSEDED header),
+`api/` (the wire-contract pointer — `@studio/contracts` + `@studio/api-client`
+are the source of truth), `runbooks/`,
 `devlog.md`, `repo-map.md` (this file).
 
 ### `scripts/` — fleet tooling
@@ -141,5 +174,7 @@ here — only in a 0600 `.env` on the box (docs/secrets-policy.md).
 ---
 
 Ownership note: this file describes the tree as-built. Keep it updated when
-the layout changes (W1-10 refreshed it 2026-10-23 after the W1-01 purge; the
-per-milestone proof lives in `docs/phases/*.md` and the fleet `worklog.md`).
+the layout changes (W1-10 refreshed it 2026-10-23 after the W1-01 purge;
+W5-08 refreshed the apps/web route-group map, the gateway route-module count
+and the infra paragraph on 2026-10-23; the per-milestone proof lives in
+`docs/phases/*.md` and the fleet `worklog.md`).

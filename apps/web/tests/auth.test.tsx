@@ -1,8 +1,10 @@
 import { ForgotPasswordForm } from "@/components/auth/forgot-password-form";
 import { SignInForm } from "@/components/auth/sign-in-form";
 import { SignUpForm } from "@/components/auth/sign-up-form";
+import { formatMonthlyPrice } from "@/components/billing/page-format";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { PLAN_CATALOG } from "@studio/config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -11,6 +13,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * The better-auth client is mocked — these tests are about form behaviour,
  * not the network.
  */
+
+/**
+ * The expected D-4 sentence, derived from PLAN_CATALOG exactly like the
+ * component (W5-03) — a catalog price change moves both together, and the
+ * stale pre-pivot "$29" pin can never silently return.
+ */
+const SIGN_UP_TRIAL_COPY = `${PLAN_CATALOG.trial.trialDays} days free, then ${formatMonthlyPrice(
+  PLAN_CATALOG.starter.monthlyPriceCents,
+)}. Card required today. Cancel anytime.`;
 
 const { requestPasswordReset, pushMock } = vi.hoisted(() => ({
   requestPasswordReset: vi.fn(),
@@ -94,9 +105,7 @@ describe("sign-in form", () => {
 describe("sign-up form", () => {
   it("states the trial terms up front and starts the terms checkbox unchecked", () => {
     render(<SignUpForm />);
-    expect(screen.getByTestId("sign-up-trial-copy")).toHaveTextContent(
-      "14 days free, then $29/mo. Card required today. Cancel anytime.",
-    );
+    expect(screen.getByTestId("sign-up-trial-copy")).toHaveTextContent(SIGN_UP_TRIAL_COPY);
     const terms = screen.getByTestId("sign-up-terms") as HTMLInputElement;
     expect(terms).not.toBeChecked();
   });

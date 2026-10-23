@@ -55,15 +55,53 @@ page.on("crash", () => log("PAGE CRASHED"));
 
 try {
   // ── 1. the REAL sign-in form → the seeded editor ──────────────────────
+  // The form's submit handler is client-side (better-auth → router.push). A
+  // click that lands before hydration fires a NATIVE form GET (→ "/sign-in?")
+  // and the fields reset — the W5-02 runs pinned exactly that failure under
+  // fleet CPU contention. Strategy: hydration-aware retries on the real form;
+  // if the form never lands, sign in through the REAL better-auth endpoint
+  // (cookie shared via the request context) and go straight to the editor.
   log("signing in via the real /sign-in form");
   await page.goto(`${BASE}/sign-in?next=${encodeURIComponent(EDITOR_PATH)}`, {
-    waitUntil: "domcontentloaded",
+    waitUntil: "load",
     timeout: 180_000,
   });
-  await page.locator("#sign-in-email").fill(EMAIL);
-  await page.locator("#sign-in-password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.waitForURL(`**${EDITOR_PATH}`, { timeout: 60_000 });
+  await page.waitForLoadState("networkidle", { timeout: 60_000 }).catch(() => {
+    log("WARN: networkidle never settled (continuing)");
+  });
+  let signedIn = false;
+  for (let attempt = 1; attempt <= 3 && !signedIn; attempt++) {
+    await page.locator("#sign-in-email").waitFor({ state: "visible", timeout: 30_000 });
+    await page.waitForTimeout(2500); // hydration settle
+    await page.locator("#sign-in-email").fill(EMAIL);
+    await page.locator("#sign-in-password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    try {
+      await page.waitForURL(`**${EDITOR_PATH}`, { timeout: 30_000 });
+      signedIn = true;
+    } catch {
+      const url = page.url();
+      if (url.includes("/sign-in?")) {
+        log(`sign-in attempt ${attempt}: pre-hydration native submit — settling and retrying`);
+      } else {
+        log(`sign-in attempt ${attempt}: still on ${url} — retrying`);
+      }
+      await page.waitForLoadState("load", { timeout: 60_000 }).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: 60_000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+    }
+  }
+  if (!signedIn) {
+    log("form sign-in did not land — falling back to the real better-auth endpoint");
+    const response = await context.request.post(`${BASE}/v1/auth/sign-in/email`, {
+      headers: { "content-type": "application/json", origin: BASE },
+      data: { email: EMAIL, password: PASSWORD },
+    });
+    if (!response.ok()) {
+      throw new Error(`better-auth sign-in failed: ${response.status()} ${await response.text()}`);
+    }
+    await page.goto(`${BASE}${EDITOR_PATH}`, { waitUntil: "load", timeout: 180_000 });
+  }
   log("signed in, landed on the editor route");
 
   // ── 2. the real wasm editor opens the seeded project ──────────────────
@@ -192,13 +230,40 @@ try {
     )}px of reply)`,
   );
 
-  // Plan: the real plan card element.
+  // Plan: the real plan card element — first collapsed (summary + risk +
+  // actions = the approval model at a glance), then with the steps disclosure
+  // expanded (the atomic batch step visible).
   const planCard = page.locator('[data-testid="plan-card"]');
   await planCard.scrollIntoViewIfNeeded();
   await page.waitForTimeout(300); // scroll settle
   await planCard.screenshot({ path: `${OUT}/agent-plan.png`, type: "png" });
   const pb = await planCard.boundingBox();
   log(`agent-plan.png saved (${Math.round(pb.width)}x${Math.round(pb.height)})`);
+
+  // Expanded plan card (steps disclosure) + expanded tool card (the agent's
+  // evidence: the real get_context result for the open comp).
+  const stepsToggle = planCard.getByTestId("plan-steps-toggle");
+  if (await stepsToggle.count()) {
+    await stepsToggle.click();
+    await page.waitForTimeout(400);
+    await planCard.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+    await planCard.screenshot({ path: `${OUT}/agent-plan-expanded.png`, type: "png" });
+    log("agent-plan-expanded.png saved (steps disclosure open)");
+  } else {
+    log("WARN: plan-steps-toggle not found (skipping expanded crop)");
+  }
+  const toolToggle = toolCard.getByTestId("tool-card-toggle");
+  if (await toolToggle.count()) {
+    await toolToggle.click();
+    await page.waitForTimeout(400);
+    await toolCard.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+    await toolCard.screenshot({ path: `${OUT}/agent-context.png`, type: "png" });
+    log("agent-context.png saved (tool card expanded)");
+  } else {
+    log("WARN: tool-card-toggle not found (skipping context crop)");
+  }
 
   // A full-panel still (fallback/inspection asset).
   await page

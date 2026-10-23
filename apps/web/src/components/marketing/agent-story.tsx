@@ -37,8 +37,9 @@ function StepLabel({
 export function AskCard() {
   return (
     <Card className="flex flex-col gap-3" data-testid="agent-story-ask">
-      {/* User message surface per §9: ink-3, 8px radius, no bubble tail. */}
-      <p className="rounded-[8px] bg-elevated p-3 text-body-s text-primary">
+      {/* User message surface per §9: ink-3, the --chat-message-radius token
+          (8px — the same token chat/message.tsx uses), no bubble tail. */}
+      <p className="rounded-[var(--chat-message-radius)] bg-elevated p-3 text-body-s text-primary">
         Make the title reveal feel weightier — stretch the ease-out over eight frames.
       </p>
       <div className="flex flex-col gap-2">

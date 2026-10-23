@@ -19,6 +19,7 @@ import {
   type ApiKey,
   type ApplyResponse,
   type Asset,
+  type AuditEntry,
   type AuditExport,
   type AuditExportRow,
   BILLING_STATUS_SCHEMA,
@@ -65,6 +66,8 @@ import {
   type RevokedApiKey,
   type RunRecord,
   type RunStepRecord,
+  type ReconcileReport,
+  type SettingsResponse,
   type ShareComment,
   type ShareInfo,
   type ShareLinkIssued,
@@ -84,6 +87,7 @@ import {
   type VersionTimelineEntry,
   WORKSPACE_SLUG_SCHEMA,
   type Workspace,
+  type WorkspaceDetail,
 } from "@studio/contracts";
 import { z } from "zod";
 
@@ -137,6 +141,21 @@ export const WORKSPACE_SCHEMA = z.object({
   createdAt: isoSchema,
   updatedAt: isoSchema,
 }) satisfies z.ZodType<Workspace>;
+
+// W5-09 — GET /v1/workspaces/:id: the row + the CALLER's role + the roster
+// (contracts routes/workspaces.ts WorkspaceDetail; gateway workspaces.ts
+// resolveWorkspaceContext shape).
+const WORKSPACE_MEMBER_SUMMARY_SCHEMA = z.object({
+  userId: idSchema,
+  role: ROLE_SCHEMA,
+  name: z.string().nullable(),
+  email: z.string().nullable(),
+});
+
+export const WORKSPACE_DETAIL_SCHEMA = WORKSPACE_SCHEMA.extend({
+  role: ROLE_SCHEMA,
+  members: z.array(WORKSPACE_MEMBER_SUMMARY_SCHEMA),
+}) satisfies z.ZodType<WorkspaceDetail>;
 
 export const INVITE_SCHEMA = z.object({
   id: idSchema,
@@ -211,9 +230,11 @@ export const PROJECT_MANIFEST_SCHEMA = z.object({
 }) satisfies z.ZodType<ProjectManifest>;
 
 // ---------------------------------------------------------------------------
-// Versions (upload response is the client-side two-phase contract: the
-// descriptor POST returns the immutable version row + the signed PUT target;
-// mirrors the assets two-phase shape)
+// Versions — the upload is a SINGLE multipart POST (W5-09): the gateway
+// buffers the `file` part, hashes it server-side and answers with the
+// immutable version row itself (Ok<ProjectVersion>). The earlier imagined
+// two-phase descriptor/signed-URL handshake never existed on this route —
+// signed URLs are the ASSETS upload's protocol, not versions'.
 // ---------------------------------------------------------------------------
 
 export const PROJECT_VERSION_SCHEMA = z.object({
@@ -261,26 +282,6 @@ export const VERSION_DIFF_SUMMARY_SCHEMA = z.object({
     .nullable(),
   summary: z.string().max(200),
 }) satisfies z.ZodType<VersionDiffSummary>;
-
-export interface UploadVersionResponse {
-  readonly version: ProjectVersion;
-  readonly upload: {
-    readonly url: string;
-    readonly method: "PUT";
-    readonly expiresAt: string;
-    readonly headers: Readonly<Record<string, string>>;
-  };
-}
-
-export const UPLOAD_VERSION_RESPONSE_SCHEMA = z.object({
-  version: PROJECT_VERSION_SCHEMA,
-  upload: z.object({
-    url: z.string(),
-    method: z.literal("PUT"),
-    expiresAt: isoSchema,
-    headers: z.record(z.string(), z.string()),
-  }),
-}) satisfies z.ZodType<UploadVersionResponse>;
 
 // ---------------------------------------------------------------------------
 // Leases — the REAL §7.2 wire response (compat note, first real consumer)
@@ -503,6 +504,111 @@ export const LEDGER_ENTRY_SCHEMA = z.object({
   createdAt: isoSchema,
 }) satisfies z.ZodType<LedgerEntry>;
 
+// W5-09 — POST /v1/credits/reconcile (admin true-up; contracts routes/credits.ts
+// ReconcileReport mirrors the gateway's reconciliation.ts report). The
+// discrepancy union discriminates on `code`; the report is ops data, never UI.
+const RECONCILE_RUN_DRIFT_SCHEMA = z.object({
+  runId: z.string(),
+  ledgerCommits: z.number(),
+  rowCommitted: z.number(),
+});
+
+const MODEL_SPEND_ROW_SCHEMA = z.object({
+  model: z.string(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  credits: z.number(),
+});
+
+const RECONCILE_SPEND_FAILURE_SCHEMA = z.object({
+  code: z.enum([
+    "unconfigured",
+    "unreachable",
+    "timeout",
+    "unauthorized",
+    "upstream_error",
+    "bad_response",
+  ]),
+  reason: z.string(),
+});
+
+const RECONCILE_DISCREPANCY_SCHEMA = z.discriminatedUnion("code", [
+  z.object({
+    code: z.literal("ledger_usage_mismatch"),
+    ledgerCommitSum: z.number(),
+    usageSum: z.number(),
+    delta: z.number(),
+    runsUsage: z.number(),
+    rendersUsage: z.number(),
+    runCount: z.number().int().nonnegative(),
+    renderCount: z.number().int().nonnegative(),
+    runDrift: z.array(RECONCILE_RUN_DRIFT_SCHEMA),
+  }),
+  z.object({
+    code: z.literal("zombie_reserve"),
+    runId: z.string(),
+    outstanding: z.number(),
+    reservedAt: isoSchema,
+    ageMs: z.number().int().nonnegative(),
+    runStatus: z.string(),
+  }),
+  z.object({
+    code: z.literal("external_spend_mismatch"),
+    ledgerCommitSum: z.number(),
+    externalSpendCredits: z.number(),
+    delta: z.number(),
+    byModel: z.array(MODEL_SPEND_ROW_SCHEMA),
+  }),
+  z.object({
+    code: z.literal("negative_balance"),
+    balance: z.number(),
+  }),
+]);
+
+export const RECONCILE_REPORT_SCHEMA = z.object({
+  workspaceId: z.string(),
+  window: z.object({ sinceTs: isoSchema, uptoTs: isoSchema }),
+  mode: z.enum(["report", "reconcile"]),
+  ledger: z.object({
+    grants: z.number(),
+    reserves: z.number(),
+    outstandingReserves: z.number(),
+    commits: z.number(),
+    refunds: z.number(),
+    adjusts: z.number(),
+    entryCount: z.number().int().nonnegative(),
+  }),
+  usage: z.object({
+    runs: z.object({
+      discovered: z.number().int().nonnegative(),
+      settledInWindow: z.number().int().nonnegative(),
+      committedCredits: z.number(),
+    }),
+    renders: z.object({ count: z.number().int().nonnegative(), credits: z.number() }),
+    usageSum: z.number(),
+  }),
+  balance: z.number(),
+  discrepancies: z.array(RECONCILE_DISCREPANCY_SCHEMA),
+  external: z.object({
+    source: z.enum(["none", "litellm"]),
+    spendCredits: z.number().nullable(),
+    perModel: z.array(MODEL_SPEND_ROW_SCHEMA),
+    unknownModels: z.array(z.string()),
+    error: RECONCILE_SPEND_FAILURE_SCHEMA.nullable(),
+  }),
+  action: z.object({
+    attempted: z.boolean(),
+    applied: z.boolean(),
+    replayed: z.boolean(),
+    adjustAmount: z.number().nullable(),
+    entryId: z.string().nullable(),
+    balanceAfter: z.number().nullable(),
+    skippedReason: z.string().nullable(),
+  }),
+  scan: z.object({ truncated: z.boolean(), scannedEntries: z.number().int().nonnegative() }),
+  generatedAt: isoSchema,
+}) satisfies z.ZodType<ReconcileReport>;
+
 export const CHECKOUT_RESPONSE_SCHEMA = z.object({
   sessionId: z.string(),
   url: z.string(),
@@ -686,6 +792,29 @@ export const AUDIT_EXPORT_SCHEMA = z.object({
 }) satisfies z.ZodType<AuditExport>;
 
 // ---------------------------------------------------------------------------
+// Settings + workspace audit (W3-G2 — gateway routes/settings.ts +
+// routes/workspace-audit.ts; contracts routes/{settings,audit}.ts). The
+// workspace audit feed is the viewer-floor UI surface: actor display name,
+// action, target refs, time — never metadata, ip or email (law #1).
+// ---------------------------------------------------------------------------
+
+/** GET/PATCH /v1/me/settings — the user's preferences echo. */
+export const SETTINGS_RESPONSE_SCHEMA = z.object({
+  autoApplyEnabled: z.boolean(),
+}) satisfies z.ZodType<SettingsResponse>;
+
+/** One `GET /v1/workspaces/:id/audit` row (viewer-floor feed). */
+export const AUDIT_ENTRY_SCHEMA = z.object({
+  id: idSchema,
+  actorId: nullableId,
+  actorName: z.string().nullable(),
+  action: z.string(),
+  targetType: z.string().nullable(),
+  targetId: nullableId,
+  createdAt: isoSchema,
+}) satisfies z.ZodType<AuditEntry>;
+
+// ---------------------------------------------------------------------------
 // Cursor pagination (§7.2 list endpoints)
 // ---------------------------------------------------------------------------
 
@@ -708,6 +837,7 @@ export const PAGE_LEDGER_SCHEMA = pageSchema(LEDGER_ENTRY_SCHEMA);
 export const PAGE_INVOICES_SCHEMA = pageSchema(INVOICE_SCHEMA);
 export const PAGE_COMMENTS_SCHEMA = pageSchema(COMMENT_SCHEMA);
 export const PAGE_ACTIVITY_SCHEMA = pageSchema(ACTIVITY_ENTRY_SCHEMA);
+export const PAGE_AUDIT_SCHEMA = pageSchema(AUDIT_ENTRY_SCHEMA);
 export const PAGE_RENDERS_SCHEMA = pageSchema(RENDER_JOB_SCHEMA);
 
 // ---------------------------------------------------------------------------

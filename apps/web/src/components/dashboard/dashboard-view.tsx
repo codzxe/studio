@@ -40,6 +40,7 @@ import { useRouter } from "next/navigation";
 import { type ReactElement, useState } from "react";
 
 import { formatTimeAgo } from "../activity/activity-feed";
+import { PermissionState } from "../system/system-states";
 import { ImportProjectDialog, type ImportUploadInput } from "./import-project-dialog";
 import { NewProjectDialog } from "./new-project-dialog";
 
@@ -49,8 +50,10 @@ import { NewProjectDialog } from "./new-project-dialog";
 
 /**
  * The upload input the dashboard needs — `baseVersionId` NULLABLE for the
- * imported file's FIRST version (§9.3). The api-client's own input type is
- * being widened to match by sibling W3-G2 in this same wave.
+ * imported file's FIRST version (§9.3). The WIRE is nullable (contracts
+ * routes/versions.ts, W3-G3), but `ApiClient["versions"]["upload"]`'s input
+ * type still pins `baseVersionId: string` — a packages/api-client gap
+ * (documented in the W5-03 worklog; the one cast below is type-only).
  */
 export type DashboardUploadInput = ImportUploadInput;
 
@@ -86,13 +89,13 @@ export function asDashboardPort(client: ApiClient): DashboardPort {
       upload: (projectId, input, options) =>
         client.versions.upload(
           projectId,
-          // TODO(W3-G2, same wave): drop this cast once the sibling task
-          // widens ApiClient["versions"]["upload"]'s input to
+          // packages/api-client gap (see DashboardUploadInput): the wire is
           // `baseVersionId: string | null` (the gateway already accepts null
           // for a project's FIRST snapshot — services/gateway
-          // routes/versions.ts UPLOAD_VERSION_GATEWAY_SCHEMA). This is the
-          // ONE call site; client.ts is sibling-owned and NOT edited here.
-          // The value passes through unchanged — type-only.
+          // routes/versions.ts UPLOAD_VERSION_GATEWAY_SCHEMA) but the client
+          // input type still pins `string`. This is the ONE call site; the
+          // cast dies when the client type widens. The value passes through
+          // unchanged — type-only.
           input as unknown as Parameters<typeof client.versions.upload>[1],
           options,
         ),
@@ -150,6 +153,13 @@ export interface DashboardViewProps {
    * the manifest's "if no workspace was ever created" affordance.
    */
   readonly hasWorkspace?: boolean;
+  /**
+   * Role-derived edit bit (W5-06, §8.11 permission state): viewers get no
+   * create/import affordances — the shared PermissionState explains instead
+   * (the gateway re-checks every capability regardless; this only shapes
+   * the UI, the api-keys-view readonly-arm pattern).
+   */
+  readonly canEdit?: boolean;
   /** Injectable port (tests). Production leaves it undefined. */
   readonly api?: DashboardPort;
 }
@@ -260,6 +270,7 @@ export function DashboardView({
   initialProjects,
   initialError,
   hasWorkspace = true,
+  canEdit = true,
   api,
 }: DashboardViewProps): ReactElement {
   const router = useRouter();
@@ -297,8 +308,9 @@ export function DashboardView({
   const isEmpty = projects !== null && projects.length === 0;
   // §7.1 one primary per view: while the EmptyState owns the actions (§7.12
   // one primary + secondary), the header actions row hides — exactly ONE
-  // "New project" button is visible in every state.
-  const showHeaderActions = !isEmpty;
+  // "New project" button is visible in every state. Viewers never own the
+  // actions at all (§8.11 permission state).
+  const showHeaderActions = !isEmpty && canEdit;
 
   return (
     <main id="main" data-testid="dashboard-view" className="min-h-svh bg-app px-5 py-10">
@@ -370,30 +382,42 @@ export function DashboardView({
                 ))}
               </div>
             ) : isEmpty ? (
-              <EmptyState
-                data-testid="dashboard-empty"
-                title="No projects yet."
-                action={
-                  <>
-                    <Button
-                      data-testid="dashboard-empty-new-project"
-                      onClick={() => setNewProjectOpen(true)}
-                    >
-                      New project
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      data-testid="dashboard-empty-import"
-                      onClick={() => setImportOpen(true)}
-                    >
-                      Import .ecproj
-                    </Button>
-                  </>
-                }
-                secondaryLink={
-                  hasWorkspace ? undefined : { label: "Create a workspace", href: "/onboarding" }
-                }
-              />
+              canEdit ? (
+                <EmptyState
+                  data-testid="dashboard-empty"
+                  title="No projects yet."
+                  action={
+                    <>
+                      <Button
+                        data-testid="dashboard-empty-new-project"
+                        onClick={() => setNewProjectOpen(true)}
+                      >
+                        New project
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        data-testid="dashboard-empty-import"
+                        onClick={() => setImportOpen(true)}
+                      >
+                        Import .ecproj
+                      </Button>
+                    </>
+                  }
+                  secondaryLink={
+                    hasWorkspace ? undefined : { label: "Create a workspace", href: "/onboarding" }
+                  }
+                />
+              ) : (
+                // §8.11 permission state (W5-06): a viewer with no projects
+                // cannot create one — the shared PermissionState replaces the
+                // create affordances (the hub's viewer-note pattern).
+                <div
+                  data-testid="dashboard-viewer-note"
+                  className="rounded-md border border-border p-2"
+                >
+                  <PermissionState />
+                </div>
+              )
             ) : recent !== null ? (
               <div className={RECENT_GRID_CLASS} data-testid="dashboard-grid">
                 {recent.map((project, index) => (

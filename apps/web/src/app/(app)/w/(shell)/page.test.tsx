@@ -150,6 +150,31 @@ describe("dashboard RSC route", () => {
     expect(props.initialProjects).toEqual([]);
   });
 
+  it("maps the membership role to the edit bit (viewer → canEdit=false, W5-06 §8.11)", async () => {
+    const VIEWER_ME = {
+      ...ME,
+      memberships: [
+        {
+          workspaceId: "ws_first",
+          role: "viewer",
+          workspace: { id: "ws_first", name: "First Films", slug: "first-films" },
+        },
+      ],
+    };
+    gatewayMock.mockImplementation((path: string) => {
+      if (path === "/v1/me") return Promise.resolve(VIEWER_ME);
+      if (path === "/v1/projects?limit=12") {
+        return Promise.resolve({ items: [], nextCursor: null });
+      }
+      throw new Error(`unexpected gateway path: ${path}`);
+    });
+    const page = await renderPage();
+    render(page);
+
+    const props = lastViewProps as DashboardViewProps;
+    expect(props.canEdit).toBe(false);
+  });
+
   it("redirects to /onboarding when the user has no membership (W2-02 first-run)", async () => {
     gatewayMock.mockImplementation((path: string) => {
       if (path === "/v1/me") return Promise.resolve({ memberships: [] });

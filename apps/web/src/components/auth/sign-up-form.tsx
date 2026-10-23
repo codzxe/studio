@@ -2,15 +2,28 @@
 
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { PasswordField } from "@/components/auth/password-field";
+import { formatMonthlyPrice } from "@/components/billing/page-format";
 import { authClient } from "@/lib/auth-client";
 import { useOnlineStatus } from "@/lib/use-online-status";
-import { Brand } from "@studio/config";
+import { Brand, PLAN_CATALOG } from "@studio/config";
 import { Button, Input } from "@studio/ui";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The D-4 trial copy (§8.2) — sentence shape VERBATIM, both numbers DERIVED
+ * from PLAN_CATALOG (W5-03, same derivation as onboarding's TrialStep and
+ * /pricing's TrialBlock): the trial is a state on the Starter row, so the
+ * "then" price is Starter's monthly price and the free length is the trial
+ * row's trialDays. The stale hardcoded "$29/mo" (pre-pivot pricing that
+ * contradicted the catalog's Starter price) can never come back.
+ */
+const TRIAL_COPY = `${PLAN_CATALOG.trial.trialDays} days free, then ${formatMonthlyPrice(
+  PLAN_CATALOG.starter.monthlyPriceCents,
+)}. Card required today. Cancel anytime.`;
 
 /**
  * Sign-up form (§8.2): name, email, password, terms checkbox — unchecked by
@@ -82,7 +95,7 @@ export function SignUpForm() {
           Create your workspace.
         </h1>
         <p className="text-body-s text-secondary" data-testid="sign-up-trial-copy">
-          14 days free, then $29/mo. Card required today. Cancel anytime.
+          {TRIAL_COPY}
         </p>
       </div>
 

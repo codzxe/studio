@@ -1,60 +1,57 @@
 /**
- * Plan display data for the billing page (M6-F).
+ * Plan display data for the billing page (M6-F), DERIVED from
+ * `@studio/config` `PLAN_CATALOG` (W5-03) — the catalog of record (M6-A:
+ * names, monthlyPriceCents, seats, allowances). The previous version pinned
+ * the display rows locally ($12/$39/$99 + "2 seats"/"500 credits/mo") while
+ * claiming apps/web could not import the catalog; that stopped being true
+ * when the Turbopack shim (src/vendor/studio-config.ts) grew the plans
+ * re-export — /pricing (PricingCards) and onboarding (TrialStep) already
+ * derive from it. A local second copy is exactly the price drift the stub
+ * audit killed (W4-KILL), so this file now derives everything.
  *
- * THE GAP (noted in the M6-F worklog): `@studio/config`'s `plans.ts` is the
- * catalog of record (M6-A: names, monthlyPriceCents BUSINESS-PENDING
- * placeholders, seats, allowances) but apps/web CANNOT import it today — the
- * tsconfig `@studio/config` path routes to `src/vendor/studio-config.ts`,
- * which re-exports the brand module ONLY (plans.ts pulls `./errors.js`, a
- * NodeNext `.js`-suffixed import Turbopack cannot resolve, per the shim's
- * header). And `GET /v1/billing/state` — the ONE read — carries the current
- * plan's ENTITLEMENTS but no display names, no price cents and no pricing
- * list for the three paid tiers.
+ * What stays local: the D-4 shape decisions (exactly starter/pro/studio in
+ * the strip; trial renders "Included during the trial", never a price) and
+ * `GET /v1/billing/state`'s role as the ONE read for the CURRENT plan's
+ * live entitlements — every entitlement the page renders for the current
+ * plan still comes from the billing state (never this file).
  *
- * Until config becomes importable (or the wire grows a pricing surface), the
- * display layer carries the M6-A catalog values as a LOCAL PIN — the same
- * convention the billing kit already shipped for the pack catalog
- * (`DEFAULT_TOP_UP_PACKS` in topup-flow.tsx: pinned locally, type-checked
- * against the wire). Nothing here gates anything server-side; every
- * entitlement the page renders for the CURRENT plan still comes from the
- * billing state (never this file).
- *
- * BUSINESS-PENDING: the price cents are the M6-A placeholders ($12/$39/$99);
- * real Stripe pricing supersedes them when the pricing wave lands.
+ * BUSINESS-PENDING: the catalog's monthlyPriceCents are the documented
+ * placeholders ($12/$39/$99, packages/config/src/plans.ts); real Stripe
+ * pricing supersedes them there and every surface updates together.
  */
 
 import type { PlanId } from "@studio/contracts";
+import { MICROCREDITS_PER_CREDIT, PLAN_CATALOG, type PaidPlanId } from "@studio/config";
 
+import { formatCount } from "./page-format";
 import type { UpgradePlanOption } from "./upgrade-cta";
 
 // ---------------------------------------------------------------------------
 // The D-4 pricing list (exactly starter/pro/studio — trial is a state)
 // ---------------------------------------------------------------------------
 
-/** Display names per UI_DESIGN_SYSTEM §14 ("Starter", "Pro", "Studio"). */
-export const BILLING_PLAN_DISPLAY: readonly UpgradePlanOption[] = [
-  {
-    planId: "starter",
-    name: "Starter",
-    // BUSINESS-PENDING: M6-A catalog placeholder ($12/mo).
-    priceCents: 1200,
-    highlights: ["2 seats", "500 credits/mo"],
-  },
-  {
-    planId: "pro",
-    name: "Pro",
-    // BUSINESS-PENDING: M6-A catalog placeholder ($39/mo).
-    priceCents: 3900,
-    highlights: ["5 seats", "2,000 credits/mo"],
-  },
-  {
-    planId: "studio",
-    name: "Studio",
-    // BUSINESS-PENDING: M6-A catalog placeholder ($99/mo).
-    priceCents: 9900,
-    highlights: ["15 seats", "10,000 credits/mo"],
-  },
-] as const satisfies readonly UpgradePlanOption[];
+/** The D-4 display order (the purchasable tiers; PRICING_PAGE_PLANS order). */
+const PAID_PLAN_ORDER: readonly PaidPlanId[] = ["starter", "pro", "studio"];
+
+/** "2 seats" / "500 credits/mo" — derived so a catalog change can never drift. */
+function planHighlights(id: PaidPlanId): readonly string[] {
+  const plan = PLAN_CATALOG[id];
+  return [
+    `${formatCount(plan.seats)} seats`,
+    `${formatCount(plan.monthlyCreditAllowance / MICROCREDITS_PER_CREDIT)} credits/mo`,
+  ];
+}
+
+/** Display name/price/highlights for the three paid tiers, in D-4 order. */
+export const BILLING_PLAN_DISPLAY: readonly UpgradePlanOption[] = PAID_PLAN_ORDER.map((id) => {
+  const plan = PLAN_CATALOG[id];
+  return {
+    planId: id,
+    name: plan.name,
+    priceCents: plan.monthlyPriceCents,
+    highlights: planHighlights(id),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Current-plan display (adds the trial state row, D-4)
@@ -66,14 +63,23 @@ export interface CurrentPlanDisplay {
   readonly priceCents: number | null;
 }
 
-/** Display name/price for the EFFECTIVE plan (`BillingState.plan`). */
+/**
+ * Display name/price for the EFFECTIVE plan (`BillingState.plan`). Paid rows
+ * derive from the catalog; the trial row is the D-4 state copy (no price).
+ */
 export const CURRENT_PLAN_DISPLAY: Readonly<Record<PlanId, CurrentPlanDisplay>> = {
   // D-4: trial is a subscription state — "Included during the trial" copy.
   trial: { name: "Trial", priceCents: null },
-  starter: { name: "Starter", priceCents: 1200 },
-  pro: { name: "Pro", priceCents: 3900 },
-  studio: { name: "Studio", priceCents: 9900 },
-} as const;
+  starter: {
+    name: PLAN_CATALOG.starter.name,
+    priceCents: PLAN_CATALOG.starter.monthlyPriceCents,
+  },
+  pro: { name: PLAN_CATALOG.pro.name, priceCents: PLAN_CATALOG.pro.monthlyPriceCents },
+  studio: {
+    name: PLAN_CATALOG.studio.name,
+    priceCents: PLAN_CATALOG.studio.monthlyPriceCents,
+  },
+};
 
 /** Plan-rank for upgrade/downgrade copy decisions (trial is lowest). */
 export const PLAN_DISPLAY_RANK: Readonly<Record<PlanId, number>> = {
@@ -81,4 +87,4 @@ export const PLAN_DISPLAY_RANK: Readonly<Record<PlanId, number>> = {
   starter: 0,
   pro: 1,
   studio: 2,
-} as const;
+};

@@ -56,6 +56,14 @@ export interface AuditRepo {
   append(workspaceId: WorkspaceId, input: AuditAppendInput): Promise<AuditLogEntry>;
   list(workspaceId: WorkspaceId, options?: AuditListOptions): Promise<Page<AuditLogEntry>>;
   /**
+   * W3-G2 workspace feed (§7.2 GET /v1/workspaces/:id/audit): the workspace's
+   * audit rows joined with the actor's display name (null for system rows /
+   * gone users) — newest-first, same (createdAt, id) cursor protocol as
+   * `list`. The route layer strips metadata/ip before anything crosses the
+   * wire (law #1); this row shape is the join `listForProject` uses.
+   */
+  listFeed(workspaceId: WorkspaceId, options?: AuditListOptions): Promise<Page<AuditFeedRow>>;
+  /**
    * M7 task 4 project feed: every audit row recorded against the project OR
    * any of its versions — the union of project-targeted events (project.*,
    * version.uploaded, run.applied, comment.*) and version-targeted events
@@ -126,6 +134,43 @@ export function createAuditRepo(db: StudioDb): AuditRepo {
         .limit(limit + 1);
 
       const items = rows.slice(0, limit);
+      const last = items.at(-1);
+      const hasMore = rows.length > limit;
+      return {
+        items,
+        nextCursor:
+          hasMore && last ? encodeCursor({ t: last.createdAt.toISOString(), id: last.id }) : null,
+      };
+    },
+
+    async listFeed(workspaceId, options) {
+      const limit = clampLimit(options?.limit);
+      const cursor = decodeCursor(options?.cursor ?? null);
+      const rows = await db
+        .select({ entry: auditLog, actorName: user.name, actorEmail: user.email })
+        .from(auditLog)
+        .leftJoin(user, eq(user.id, auditLog.actorId))
+        .where(
+          and(
+            eq(auditLog.workspaceId, workspaceId),
+            options?.targetType === undefined
+              ? undefined
+              : eq(auditLog.targetType, options.targetType),
+            options?.targetId === undefined ? undefined : eq(auditLog.targetId, options.targetId),
+            cursor
+              ? or(
+                  lt(auditLog.createdAt, new Date(cursor.t)),
+                  and(eq(auditLog.createdAt, new Date(cursor.t)), lt(auditLog.id, cursor.id)),
+                )
+              : undefined,
+          ),
+        )
+        .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+        .limit(limit + 1);
+
+      const items: AuditFeedRow[] = rows
+        .slice(0, limit)
+        .map((row) => ({ ...row.entry, actorName: row.actorName, actorEmail: row.actorEmail }));
       const last = items.at(-1);
       const hasMore = rows.length > limit;
       return {

@@ -7,9 +7,13 @@
 set -u
 cd "$(dirname "$0")/../.." || exit 1
 
-EDGE_PORT=3100
-WEB_PORT=3000
-GATEWAY_PORT=8787
+# Dedicated ports (W5-02): the shared 3000/8787/3100 trio is contended by
+# sibling fleet agents' runtime-verification boots (the 14:14 run lost 8787
+# to a peer's `pnpm --filter @studio/gateway dev` and its warmup sign-in hit
+# the PEER's DB/secret). 3001/8788/3101 are ours alone.
+EDGE_PORT="${CAPTURE_EDGE_PORT:-3101}"
+WEB_PORT="${CAPTURE_WEB_PORT:-3001}"
+GATEWAY_PORT="${CAPTURE_GATEWAY_PORT:-8788}"
 EDITOR_PATH=/w/demo-project/editor
 ROOT="$(pwd)"
 LOGS="$ROOT/scripts/captures/.logs"
@@ -48,6 +52,10 @@ export EDITOR_WASM_MAX_MB=18
 export CHAT_MAX_STEPS=50
 export RENDER_WORKER_ENABLED=false
 export OTEL_EXPORTER_OTLP_ENDPOINT=""
+# the gateway binds process.env.PORT (services/gateway/src/index.ts:44)
+export PORT="$GATEWAY_PORT"
+# ports for the edge's inline node payload (read via process.env at boot)
+export GATEWAY_PORT_="$GATEWAY_PORT" WEB_PORT_="$WEB_PORT" EDGE_PORT_="$EDGE_PORT"
 
 PIDS=()
 cleanup() {
@@ -59,9 +67,21 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     kill -9 -- "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
   done
-  for p in 3100 3000 8787; do
+  # pnpm sometimes re-groups its grandchildren, so group-kill can miss the
+  # actual listeners — reap anything still bound to OUR ports only (3000/8787
+  # may legitimately belong to sibling agents and are never touched).
+  sleep 1
+  for p in "$EDGE_PORT" "$WEB_PORT" "$GATEWAY_PORT"; do
     if (echo >/dev/tcp/127.0.0.1/$p) 2>/dev/null; then
-      echo "[runner] WARN port $p still open"
+      owner=$(ss -tlnp 2>/dev/null | awk -v port=":$p\$" '$4 ~ port {print $NF}' | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
+      if [ -n "${owner:-}" ]; then
+        echo "[runner] port $p still held by pid $owner — killing"
+        kill "$owner" 2>/dev/null || true
+        sleep 1
+        kill -9 "$owner" 2>/dev/null || true
+      else
+        echo "[runner] WARN port $p still open (owner unknown)"
+      fi
     fi
   done
   echo "[runner] teardown complete"
@@ -80,11 +100,12 @@ node scripts/captures/build-fixture.mjs || {
 # whole tree (pnpm → sh → tsx/next → node server children).
 setsid node -e '
 const http = require("http");
-const targets = { api: 8787, web: 3000 };
+const targets = { api: process.env.GATEWAY_PORT_, web: process.env.WEB_PORT_ };
+const port = Number(process.env.EDGE_PORT_);
 http.createServer((req, res) => {
-  const port = req.url.startsWith("/v1") ? targets.api : targets.web;
-  const upstream = http.request({ host: "127.0.0.1", port, method: req.method, path: req.url,
-    headers: { ...req.headers, host: "127.0.0.1:" + port } }, (up) => {
+  const upstreamPort = req.url.startsWith("/v1") ? targets.api : targets.web;
+  const upstream = http.request({ host: "127.0.0.1", port: upstreamPort, method: req.method, path: req.url,
+    headers: { ...req.headers, host: "127.0.0.1:" + upstreamPort } }, (up) => {
     res.writeHead(up.statusCode || 502, up.headers);
     up.pipe(res);
   });
@@ -93,14 +114,14 @@ http.createServer((req, res) => {
     res.end("e2e edge: upstream not reachable yet");
   });
   req.pipe(upstream);
-}).listen(3100, "127.0.0.1", () => console.log("e2e edge on 3100"));
+}).listen(port, "127.0.0.1", () => console.log(`capture edge on ${port}`));
 ' >"$LOGS/edge.log" 2>&1 &
 PIDS+=($!)
 
 setsid bash -c 'cd services/gateway && exec corepack pnpm dev' >"$LOGS/gateway.log" 2>&1 &
 PIDS+=($!)
 
-setsid bash -c 'cd apps/web && exec corepack pnpm dev' >"$LOGS/web.log" 2>&1 &
+setsid bash -c "cd apps/web && exec corepack pnpm dev -- -p $WEB_PORT" >"$LOGS/web.log" 2>&1 &
 PIDS+=($!)
 
 wait_http() {
@@ -116,10 +137,12 @@ wait_http() {
   return 1
 }
 
-wait_http "http://127.0.0.1:${GATEWAY_PORT}/v1/health" "gateway" 150 || {
+wait_http "http://127.0.0.1:${GATEWAY_PORT}/v1/health" "gateway" 200 || {
   echo "[runner] gateway boot failed — log tail:"; tail -30 "$LOGS/gateway.log"; exit 1; }
-wait_http "http://127.0.0.1:${WEB_PORT}/" "web(next)" 240 || {
-  echo "[runner] web boot failed — log tail:"; tail -30 "$LOGS/web.log"; exit 1; }
+# 480s: cold Turbopack on this 2-CPU box (W5-02 probe measured 4s warm, but
+# a cold .next/dev compile of the / route can take minutes).
+wait_http "http://127.0.0.1:${WEB_PORT}/" "web(next)" 480 || {
+  echo "[runner] web boot failed — log tail:"; tail -40 "$LOGS/web.log"; exit 1; }
 wait_http "http://127.0.0.1:${EDGE_PORT}/" "edge" 60 || exit 1
 echo "[runner] stack up"
 
@@ -145,7 +168,7 @@ fi
 rm -f "$JAR"
 
 # ── the captures ──────────────────────────────────────────────────────────
-node scripts/captures/capture.mjs
+CAPTURE_BASE_URL="http://127.0.0.1:${EDGE_PORT}" node scripts/captures/capture.mjs
 CAPTURE_RC=$?
 echo "[runner] capture.mjs exit=$CAPTURE_RC"
 

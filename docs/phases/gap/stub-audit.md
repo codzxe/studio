@@ -1,5 +1,14 @@
 # Stub / Hardcode Audit - W3-C (read-only)
 
+> **SUPERSEDED / EXECUTED (W5-08 note, 2026-10-23):** this audit's Top-10 kill
+> list was executed by W4-KILL (see its worklog entry: landing pricing from
+> PLAN_CATALOG, sign-up metadata neutral, real Share dialog, honest changelog,
+> the @studio/storage dependency seam, 18 stray artifacts, Slate deletion) and
+> follow-through waves. What remains unexecuted is tracked in the fleet
+> `worklog.md` hand-forwards. Treat all findings below as historical; kept for
+> the paper trail.
+
+
 Date: 2026-10-23. Auditor: W3-C (stub-auditor). Scope per task: `apps/web/src`,
 `services/gateway/src`, `services/worker/src`, `packages/*/src`. NOT audited:
 `editor/` (vendored upstream), tests/fixtures (legitimate by definition).
