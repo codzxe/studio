@@ -404,9 +404,7 @@ export async function collectOldPropertyValues(
   /** Resolve one raw ref to an engine layer id — uniquely, or not at all. */
   const resolveId = (ref: number | string): number | undefined => {
     if (typeof ref !== "string") {
-      return typeof ref === "number" && Number.isFinite(ref) && nameById.has(ref)
-        ? ref
-        : undefined;
+      return typeof ref === "number" && Number.isFinite(ref) && nameById.has(ref) ? ref : undefined;
     }
     const matches = byName.get(ref) ?? [];
     // Exact-name, UNIQUE matches only (apply.ts's rule: a fuzzy or ambiguous

@@ -24,10 +24,19 @@
 // afterAll.
 
 import { mkdtempSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
+
+// node:sqlite (node >= 22.5) is loaded through createRequire — the same
+// bundler-invisible trick @studio/db's createDb uses for better-sqlite3:
+// vitest's vite pipeline normalizes node: builtins by stripping the "node:"
+// prefix and vite 5.4's builtin list predates node:sqlite, so a static ESM
+// import fails to resolve under the test runner ("Failed to load url sqlite").
+const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import(
+  "node:sqlite",
+);
 
 import { type ServerType, serve } from "@hono/node-server";
 import { type StudioEnv, parseEnv } from "@studio/config";

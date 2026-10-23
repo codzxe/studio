@@ -1,14 +1,20 @@
 // W3-gw — shared test harness for the gateway suite.
 //
 // Two boot modes:
-//   * stubDeps()   — buildApp with in-memory fakes (app.test.ts); no Postgres.
-//   * bootServer() — a REAL HTTP server on an ephemeral port wired to real
-//     Postgres + Better Auth + the MockRunner (integration tests). Those files
-//     `describe.skipIf(!process.env.DATABASE_URL)`.
+//   * stubDeps()   — buildApp with in-memory fakes (app.test.ts); no database.
+//   * bootServer() — a REAL HTTP server on an ephemeral port wired to the real
+//     @studio/db handle (better-auth + repos + the MockRunner). Those files
+//     `describe.skipIf(!HAS_DATABASE)`.
+//
+// Dialect note (W4-GWI): since W3-A the db seam is dual-dialect — DATABASE_URL
+// may be a Postgres URL OR a sqlite dev URL (`file:…`/`sqlite:…`, the
+// scripts/dev-sqlite.sh twin). resolveDatabaseUrl() accepts both; suites that
+// need Postgres-specific machinery gate on HAS_POSTGRES and carry the reason in
+// their describe title (a skip must never be silent).
 //
 // Env note: the gateway reads DATABASE_URL from the PROCESS ENV only (fleet
 // convention) — pass it explicitly when running vitest:
-//   DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio MOCK_MODEL=true \
+//   DATABASE_URL=file:.local/studio-dev.db MOCK_MODEL=true \
 //     pnpm --filter @studio/gateway test
 
 import { execSync } from "node:child_process";
@@ -18,7 +24,7 @@ import { join } from "node:path";
 
 import { type ServerType, serve } from "@hono/node-server";
 import { type StudioEnv, parseEnv } from "@studio/config";
-import { type Repos, createAuth, createDb, createRepos } from "@studio/db";
+import { type Repos, createAuth, createDb, createRepos, getDialect, isSqliteUrl } from "@studio/db";
 import type { Page } from "@studio/db";
 
 import { buildApp } from "../src/app.js";
@@ -41,14 +47,17 @@ export const TEST_APP_ORIGIN = "http://localhost:3000";
 const SANDBOX_DATABASE_URL = "postgres://studio:studio@127.0.0.1:5432/studio";
 
 /**
- * The gateway reads DATABASE_URL from the process env only — but the agent
- * sandbox may carry an unrelated DATABASE_URL (e.g. "file:…"), so: use an
- * explicitly passed postgres:// URL when present, else fall back to the
- * sandbox dev Postgres when it is reachable, else null (tests skip).
+ * The gateway reads DATABASE_URL from the process env only — and the env may
+ * carry anything (the agent sandbox's shell often holds an unrelated
+ * `file:…` URL). Resolution order (W4-GWI): an explicitly passed postgres://
+ * URL wins; an explicitly passed sqlite dev URL (`file:…`/`sqlite:…`) is
+ * equally first-class since the W3-A dual-dialect seam; otherwise fall back
+ * to the sandbox dev Postgres when reachable, else null (tests skip).
  */
 export function resolveDatabaseUrl(): string | null {
   const raw = process.env.DATABASE_URL ?? "";
   if (/^postgres(ql)?:\/\//.test(raw)) return raw;
+  if (isSqliteUrl(raw)) return raw;
   try {
     execSync('timeout 1 bash -c "echo > /dev/tcp/127.0.0.1/5432"', { stdio: "ignore" });
     return SANDBOX_DATABASE_URL;
@@ -60,6 +69,26 @@ export function resolveDatabaseUrl(): string | null {
 export const DATABASE_URL: string | null = resolveDatabaseUrl();
 export const HAS_DATABASE = DATABASE_URL !== null;
 export const INTEGRATION_SKIP = DATABASE_URL === null;
+/** True when the resolved URL is the sqlite dev twin (`file:…`/`sqlite:…`). */
+export const IS_SQLITE = DATABASE_URL !== null && isSqliteUrl(DATABASE_URL);
+/** True only on the canonical Postgres dialect — PG-only suites gate on this. */
+export const HAS_POSTGRES = DATABASE_URL !== null && !IS_SQLITE;
+
+/**
+ * Dialect-aware teardown for a createDb handle (mirrors src/index.ts close):
+ * the pg pool ends (bounded 5s drain); the sqlite handle closes synchronously.
+ * Callers keep their own try/catch — "already gone" stays non-fatal.
+ */
+export async function closeDb(handle: unknown): Promise<void> {
+  if (handle === undefined || handle === null) return; // never booted (skipped suite)
+  if (getDialect(handle) === "sqlite") {
+    (handle as { $client: { close(): void } }).$client.close();
+  } else {
+    await (
+      handle as { $client: { end(options?: { timeout?: number }): Promise<void> } }
+    ).$client.end({ timeout: 5 });
+  }
+}
 
 export interface EnvOverrides {
   readonly [key: string]: string | undefined;
@@ -688,8 +717,9 @@ export interface ServerOptions {
 }
 
 /**
- * Boots the full gateway against real Postgres on an ephemeral port.
- * Mirrors src/index.ts startServer without the process-level signal wiring.
+ * Boots the full gateway against the resolved database (Postgres or the
+ * sqlite dev twin) on an ephemeral port. Mirrors src/index.ts startServer
+ * without the process-level signal wiring.
  */
 export async function bootServer(options: ServerOptions = {}): Promise<RunningTestServer> {
   if (DATABASE_URL === null) throw new Error("bootServer: no DATABASE_URL resolved");
@@ -737,7 +767,7 @@ export async function bootServer(options: ServerOptions = {}): Promise<RunningTe
     close: async () => {
       await new Promise<void>((resolveClose) => server.server.close(() => resolveClose()));
       try {
-        await db.$client.end({ timeout: 5 });
+        await closeDb(db);
       } catch {
         // already gone
       }

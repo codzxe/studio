@@ -10,6 +10,7 @@ cd "$(dirname "$0")/../.." || exit 1
 EDGE_PORT=3100
 WEB_PORT=3000
 GATEWAY_PORT=8787
+EDITOR_PATH=/w/demo-project/editor
 ROOT="$(pwd)"
 LOGS="$ROOT/scripts/captures/.logs"
 RAW="$ROOT/scripts/captures/.raw"
@@ -67,6 +68,13 @@ cleanup() {
 }
 trap cleanup EXIT TERM INT
 
+# ── fixture staging (idempotent, deterministic bytes) ─────────────────────
+# The seeded object_keys are version-ID-keyed; build-fixture.mjs (re)stages
+# the engine-openable project at those keys so the editor has real bytes to
+# open. Deterministic: re-running produces byte-identical .ecproj files.
+node scripts/captures/build-fixture.mjs || {
+  echo "[runner] fixture staging failed"; exit 1; }
+
 # ── boot: edge + gateway + web (playwright.config.ts shapes) ─────────────
 # Each process gets its own session (setsid) so `kill -- -PGID` reaps the
 # whole tree (pnpm → sh → tsx/next → node server children).
@@ -116,9 +124,25 @@ wait_http "http://127.0.0.1:${EDGE_PORT}/" "edge" 60 || exit 1
 echo "[runner] stack up"
 
 # Warm the sign-in page + editor route through the edge (first Turbopack
-# compile happens here, not inside the capture's timeouts).
-curl -sf -o /dev/null --max-time 90 "http://127.0.0.1:${EDGE_PORT}/sign-in" \
+# compile happens here, not inside the capture's timeouts). The editor tree
+# needs an authenticated request to render/compile — sign in via the real
+# better-auth endpoint (cookie jar), then GET the editor route.
+curl -sf -o /dev/null --max-time 240 "http://127.0.0.1:${EDGE_PORT}/sign-in" \
   && echo "[runner] /sign-in compiled" || echo "[runner] WARN: /sign-in warmup failed"
+JAR="$LOGS/warm-cookies.txt"
+if curl -sf -c "$JAR" -o /dev/null --max-time 60 \
+  -H "content-type: application/json" \
+  -H "origin: http://127.0.0.1:${EDGE_PORT}" \
+  -X POST "http://127.0.0.1:${EDGE_PORT}/v1/auth/sign-in/email" \
+  -d '{"email":"demo@studio.test","password":"demo-password-12345"}'; then
+  curl -sf -b "$JAR" -o /dev/null --max-time 240 \
+    "http://127.0.0.1:${EDGE_PORT}${EDITOR_PATH}" \
+    && echo "[runner] editor route compiled (authenticated warmup)" \
+    || echo "[runner] WARN: editor warmup failed (first compile happens in-session)"
+else
+  echo "[runner] WARN: warmup sign-in failed (first compile happens in-session)"
+fi
+rm -f "$JAR"
 
 # ── the captures ──────────────────────────────────────────────────────────
 node scripts/captures/capture.mjs
@@ -154,3 +178,7 @@ for f in "$OUT"/*; do
   [ -f "$f" ] && echo "$(sha256sum "$f")"
 done
 echo "[runner] done (teardown via trap)"
+
+# The capture's exit code is the runner's exit code (a failed capture must
+# never look green). teardown runs via the EXIT trap.
+exit "$CAPTURE_RC"

@@ -8,12 +8,18 @@
  * The RSC route (`app/(app)/w/[slug]/history/page.tsx`) resolves the project by
  * slug across the user's workspaces and hands this view ONE serializable
  * payload (project id/name, workspace id, current version id, the caller's
- * role-derived permissions, an `nowIso` stamp). Everything interactive lives
- * here, composing the M7-H kit:
+ * role-derived permissions, viewer/owner ids, an `nowIso` stamp). Everything
+ * interactive lives here, composing the M7-H kit:
  *
+ * - Overview tab — `HubOverview` (§8.6: metadata, lease-aware "Open editor"
+ *   CTA, the Share action; W2-05).
  * - Versions tab — `VersionTimeline` (timeline, inline labels, restore
  *   confirm, diff summaries) through `@studio/api-client` same-origin calls.
+ * - Comments tab — `HubComments` (the M7-F panel in degraded mode; W2-05).
+ * - Renders tab — `RendersHubPanel` (queue/history; §M8 task 2).
  * - Activity tab — `ActivityFeed` (day-grouped, cursor-paginated audit feed).
+ * - Right rail — `HubRightRail` (members with access, live lease status,
+ *   asset count; §8.6; W2-05).
  * - Audit export — the admin-only "Export audit log" button →
  *   `client.activity.auditExport` → a JSON download. The api-client returns
  *   the PARSED payload (the gateway's Content-Disposition filename is
@@ -45,6 +51,10 @@ import { useCallback, useState } from "react";
 import type { ReactElement } from "react";
 
 import { ActivityFeed } from "@/components/activity/activity-feed";
+import { HubComments } from "@/components/hub/hub-comments";
+import { HubOverview } from "@/components/hub/hub-overview";
+import type { HubPort, ShareLinksPort } from "@/components/hub/hub-port";
+import { HubRightRail } from "@/components/hub/hub-right-rail";
 import { RendersHubPanel, type RendersHubPort } from "@/components/renders-hub/renders-panel";
 import { VersionTimeline } from "@/components/versions/version-timeline";
 
@@ -177,6 +187,14 @@ export interface HistoryPageViewProps {
   readonly canEdit: boolean;
   /** Owner/admin only — the audit export surface (`requireWorkspace("admin")`). */
   readonly canExport: boolean;
+  /**
+   * The calling user's id (`GET /v1/me` via the RSC payload) — hub "You"
+   * labels. Optional so sibling surfaces keep compiling; the page always
+   * passes it.
+   */
+  readonly viewerId?: string | null;
+  /** The project's `createdBy` — resolved to an owner name on the Overview tab. */
+  readonly ownerId?: string | null;
   /** ISO instant stamped by the RSC — pins the feed's relative times. */
   readonly nowIso: string;
   /** Injectable port (tests). Production leaves it undefined. */
@@ -187,6 +205,14 @@ export interface HistoryPageViewProps {
    * builds its own same-origin client.
    */
   readonly rendersApi?: RendersHubPort;
+  /**
+   * Hub port (W2-05 §8.6) — Overview tab + right rail. Injectable for
+   * tests; production leaves it undefined and each hub component builds
+   * its own same-origin client.
+   */
+  readonly hubApi?: HubPort;
+  /** Share-links port (Overview's secondary Share action; tests inject). */
+  readonly shareApi?: ShareLinksPort;
   /** URL opener seam for the current-version download (tests spy it). */
   readonly openUrl?: (url: string) => void;
 }
@@ -203,9 +229,13 @@ export function HistoryPageView({
   currentVersionId,
   canEdit,
   canExport,
+  viewerId = null,
+  ownerId = null,
   nowIso,
   api,
   rendersApi,
+  hubApi,
+  shareApi,
   openUrl,
 }: HistoryPageViewProps): ReactElement {
   const port = api ?? createHistoryPort(workspaceId, projectId);
@@ -265,7 +295,7 @@ export function HistoryPageView({
 
   return (
     <main id="main" data-testid="history-view" className="min-h-svh bg-app px-5 py-10">
-      <div className="mx-auto flex w-full max-w-[900px] flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-6">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="min-w-0">
             <p className="text-label uppercase tracking-[0.06em] text-muted">History</p>
@@ -288,113 +318,154 @@ export function HistoryPageView({
           </a>
         </header>
 
-        <Tabs defaultValue="versions" data-testid="history-tabs">
-          <TabsList aria-label="History sections">
-            <TabsTrigger value="versions" data-testid="history-tab-versions">
-              Versions
-            </TabsTrigger>
-            <TabsTrigger value="renders" data-testid="history-tab-renders">
-              Renders
-            </TabsTrigger>
-            <TabsTrigger value="activity" data-testid="history-tab-activity">
-              Activity
-            </TabsTrigger>
-          </TabsList>
+        <div className="flex flex-col items-start gap-6 lg:flex-row">
+          <Tabs defaultValue="versions" data-testid="history-tabs" className="min-w-0 w-full">
+            <TabsList aria-label="History sections">
+              <TabsTrigger value="overview" data-testid="history-tab-overview">
+                Overview
+              </TabsTrigger>
+              <TabsTrigger value="versions" data-testid="history-tab-versions">
+                Versions
+              </TabsTrigger>
+              <TabsTrigger value="comments" data-testid="history-tab-comments">
+                Comments
+              </TabsTrigger>
+              <TabsTrigger value="renders" data-testid="history-tab-renders">
+                Renders
+              </TabsTrigger>
+              <TabsTrigger value="activity" data-testid="history-tab-activity">
+                Activity
+              </TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="versions" className="mt-4" data-testid="history-panel-versions">
-            <VersionTimeline
-              currentVersionId={currentId}
-              fetchPage={port.listVersions}
-              fetchDiff={port.diff}
-              restore={canEdit ? port.restore : undefined}
-              setLabel={canEdit ? port.setLabel : undefined}
-              onDownload={currentId === null ? undefined : runDownload}
-              onCurrentVersionChange={setCurrentId}
-              editorHref={`/w/${encodeURIComponent(slug)}/editor`}
-            />
-            {downloadBusy ? (
-              <p className="mt-3 text-caption text-muted" data-testid="history-download-busy">
-                Preparing the download…
-              </p>
-            ) : null}
-            {downloadError !== null ? (
-              <p
-                role="alert"
-                data-testid="history-download-error"
-                className="mt-3 flex items-center gap-2 rounded-sm border border-danger/40 bg-danger/10 px-3 py-2 text-caption text-primary"
-              >
-                <CircleAlert
-                  size={16}
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                  className="shrink-0 text-danger"
-                />
-                {downloadError}
-              </p>
-            ) : null}
-          </TabsContent>
+            <TabsContent value="overview" className="mt-4" data-testid="history-panel-overview">
+              <HubOverview
+                projectId={projectId}
+                projectName={projectName}
+                workspaceId={workspaceId}
+                slug={slug}
+                viewerId={viewerId}
+                ownerId={ownerId}
+                canEdit={canEdit}
+                nowIso={nowIso}
+                api={hubApi}
+                shareApi={shareApi}
+              />
+            </TabsContent>
 
-          <TabsContent value="renders" className="mt-4" data-testid="history-panel-renders">
-            <RendersHubPanel
-              projectId={projectId}
-              workspaceId={workspaceId}
-              canQueue={canEdit}
-              nowIso={nowIso}
-              editorHref={`/w/${encodeURIComponent(slug)}/editor`}
-              api={rendersApi}
-            />
-          </TabsContent>
-
-          <TabsContent value="activity" className="mt-4" data-testid="history-panel-activity">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-caption text-muted">
-                Actions by everyone with access, newest first.
-              </p>
-              {canExport ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  loading={exportBusy}
-                  disabled={exportBusy}
-                  onClick={runAuditExport}
-                  data-testid="audit-export-button"
-                >
-                  <Download size={14} strokeWidth={1.75} aria-hidden="true" />
-                  Export audit log
-                </Button>
+            <TabsContent value="versions" className="mt-4" data-testid="history-panel-versions">
+              <VersionTimeline
+                currentVersionId={currentId}
+                fetchPage={port.listVersions}
+                fetchDiff={port.diff}
+                restore={canEdit ? port.restore : undefined}
+                setLabel={canEdit ? port.setLabel : undefined}
+                onDownload={currentId === null ? undefined : runDownload}
+                onCurrentVersionChange={setCurrentId}
+                editorHref={`/w/${encodeURIComponent(slug)}/editor`}
+              />
+              {downloadBusy ? (
+                <p className="mt-3 text-caption text-muted" data-testid="history-download-busy">
+                  Preparing the download…
+                </p>
               ) : null}
-            </div>
-            {exportError !== null ? (
-              <div
-                role="alert"
-                data-testid="audit-export-error"
-                className="mb-4 flex items-start gap-2 rounded-sm border border-danger/40 bg-danger/10 px-3 py-2 text-caption text-primary"
-              >
-                <CircleAlert
-                  size={16}
-                  strokeWidth={1.75}
-                  aria-hidden="true"
-                  className="mt-0.5 shrink-0 text-danger"
-                />
-                <span className="min-w-0 flex-1">
-                  {errorLine(exportError)}
-                  {exportError.hint === undefined ? null : (
-                    <span className="block text-muted">{boundedText(exportError.hint, 160)}</span>
-                  )}
-                </span>
+              {downloadError !== null ? (
+                <p
+                  role="alert"
+                  data-testid="history-download-error"
+                  className="mt-3 flex items-center gap-2 rounded-sm border border-danger/40 bg-danger/10 px-3 py-2 text-caption text-primary"
+                >
+                  <CircleAlert
+                    size={16}
+                    strokeWidth={1.75}
+                    aria-hidden="true"
+                    className="shrink-0 text-danger"
+                  />
+                  {downloadError}
+                </p>
+              ) : null}
+            </TabsContent>
+
+            <TabsContent value="comments" className="mt-4" data-testid="history-panel-comments">
+              <HubComments
+                workspaceId={workspaceId}
+                projectId={projectId}
+                projectName={projectName}
+                viewerId={viewerId}
+              />
+            </TabsContent>
+
+            <TabsContent value="renders" className="mt-4" data-testid="history-panel-renders">
+              <RendersHubPanel
+                projectId={projectId}
+                workspaceId={workspaceId}
+                canQueue={canEdit}
+                nowIso={nowIso}
+                editorHref={`/w/${encodeURIComponent(slug)}/editor`}
+                api={rendersApi}
+              />
+            </TabsContent>
+
+            <TabsContent value="activity" className="mt-4" data-testid="history-panel-activity">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-caption text-muted">
+                  Actions by everyone with access, newest first.
+                </p>
+                {canExport ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={exportBusy}
+                    disabled={exportBusy}
+                    onClick={runAuditExport}
+                    data-testid="audit-export-button"
+                  >
+                    <Download size={14} strokeWidth={1.75} aria-hidden="true" />
+                    Export audit log
+                  </Button>
+                ) : null}
               </div>
-            ) : null}
-            {exportNote !== null ? (
-              <p
-                data-testid="audit-export-note"
-                className="mb-4 rounded-sm border border-border bg-elevated/40 px-3 py-2 text-caption text-secondary"
-              >
-                {exportNote}
-              </p>
-            ) : null}
-            <ActivityFeed fetchPage={port.listActivity} nowIso={nowIso} />
-          </TabsContent>
-        </Tabs>
+              {exportError !== null ? (
+                <div
+                  role="alert"
+                  data-testid="audit-export-error"
+                  className="mb-4 flex items-start gap-2 rounded-sm border border-danger/40 bg-danger/10 px-3 py-2 text-caption text-primary"
+                >
+                  <CircleAlert
+                    size={16}
+                    strokeWidth={1.75}
+                    aria-hidden="true"
+                    className="mt-0.5 shrink-0 text-danger"
+                  />
+                  <span className="min-w-0 flex-1">
+                    {errorLine(exportError)}
+                    {exportError.hint === undefined ? null : (
+                      <span className="block text-muted">{boundedText(exportError.hint, 160)}</span>
+                    )}
+                  </span>
+                </div>
+              ) : null}
+              {exportNote !== null ? (
+                <p
+                  data-testid="audit-export-note"
+                  className="mb-4 rounded-sm border border-border bg-elevated/40 px-3 py-2 text-caption text-secondary"
+                >
+                  {exportNote}
+                </p>
+              ) : null}
+              <ActivityFeed fetchPage={port.listActivity} nowIso={nowIso} />
+            </TabsContent>
+          </Tabs>
+
+          {/* §8.6 right rail — members with access, lease status, asset count. */}
+          <HubRightRail
+            workspaceId={workspaceId}
+            projectId={projectId}
+            viewerId={viewerId}
+            canEdit={canEdit}
+            api={hubApi}
+          />
+        </div>
       </div>
     </main>
   );

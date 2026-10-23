@@ -23,6 +23,7 @@ import userEvent from "@testing-library/user-event";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ActivityPageFetcher } from "@/components/activity/activity-feed";
+import type { HubPort, ShareLinksPort } from "@/components/hub/hub-port";
 import { HistoryPageView, type HistoryPort, sanitizeAuditFilePart } from "./history-view";
 import type { VersionPageFetcher } from "./version-timeline";
 
@@ -120,6 +121,8 @@ interface ViewOverrides {
   readonly canExport: boolean;
   readonly currentVersionId: string | null;
   readonly openUrl: (url: string) => void;
+  readonly hubApi: HubPort;
+  readonly shareApi: ShareLinksPort;
 }
 
 function makePort(overrides: Partial<HistoryPort> = {}): HistoryPort {
@@ -142,6 +145,57 @@ function makePort(overrides: Partial<HistoryPort> = {}): HistoryPort {
   };
 }
 
+/** The W2-05 hub port fake (Overview tab + right rail). */
+function makeHubPort(): HubPort {
+  return {
+    listMembers: vi.fn(async () => ({
+      items: [
+        {
+          id: "usr_alex",
+          name: "Alex",
+          email: "alex@example.test",
+          role: "editor" as const,
+          status: "active" as const,
+          lastActiveAt: null,
+          isCurrentUser: false,
+        },
+      ],
+      nextCursor: null,
+    })),
+    listVersions: vi.fn(async () => ({ items: [version()], nextCursor: null })),
+    listAssets: vi.fn(async () => ({ items: [], nextCursor: null })),
+    getManifest: vi.fn(async () => MANIFEST),
+    leaseState: vi.fn(async () => ({
+      holder: null,
+      queue: [],
+      youAre: "viewer" as const,
+      canAcquire: true,
+    })),
+    requestLease: vi.fn(async () => ({
+      queued: true as const,
+      position: 1,
+      queueLength: 1,
+      queuedAt: NOW,
+      duplicate: false,
+    })),
+    cancelLeaseRequest: vi.fn(async () => ({ cancelled: true })),
+  };
+}
+
+/** The W2-05 share-links port fake (the Share dialog; reads stay dark until open). */
+function makeSharePort(): ShareLinksPort {
+  return {
+    issueLink: vi.fn(async () => ({
+      id: "shr_new",
+      token: "tok_new",
+      expiresAt: null,
+      hasPassword: false,
+    })),
+    listLinks: vi.fn(async () => ({ items: [], nextCursor: null })),
+    revokeLink: vi.fn(async (id: string) => ({ id, revokedAt: null })),
+  };
+}
+
 function renderView(
   overrides: Partial<ViewOverrides> & { readonly openUrl?: (url: string) => void } = {},
 ): HistoryPort {
@@ -155,8 +209,12 @@ function renderView(
       currentVersionId={overrides.currentVersionId ?? "ver_0001"}
       canEdit={overrides.canEdit ?? true}
       canExport={overrides.canExport ?? true}
+      viewerId="usr_alex"
+      ownerId="usr_alex"
       nowIso={NOW}
       api={port}
+      hubApi={overrides.hubApi ?? makeHubPort()}
+      shareApi={overrides.shareApi ?? makeSharePort()}
       openUrl={overrides.openUrl}
     />,
   );
@@ -472,5 +530,85 @@ describe("restore through the page port", () => {
     expect(rows[0]).toHaveAttribute("data-version", "3");
     expect(rows[0]).toHaveAttribute("data-current", "true");
     expect(rows[1]).toHaveAttribute("data-current", "false");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W2-05 hub composition — the five §8.6 tabs, their order, and the right rail
+// ---------------------------------------------------------------------------
+
+describe("hub tab composition (W2-05, §8.6)", () => {
+  it("renders the five hub tabs in order: Overview · Versions · Comments · Renders · Activity", () => {
+    renderView();
+
+    const order = ["overview", "versions", "comments", "renders", "activity"] as const;
+    const labels: Record<(typeof order)[number], string> = {
+      overview: "Overview",
+      versions: "Versions",
+      comments: "Comments",
+      renders: "Renders",
+      activity: "Activity",
+    };
+    for (const tab of order) {
+      expect(screen.getByTestId(`history-tab-${tab}`)).toHaveTextContent(labels[tab]);
+    }
+    const triggers = order.map((tab) => screen.getByTestId(`history-tab-${tab}`));
+    for (let index = 1; index < triggers.length; index++) {
+      expect(triggers[index - 1].compareDocumentPosition(triggers[index])).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    }
+    // All five panels exist (Radix keeps the wrappers; content mounts on
+    // activation).
+    for (const tab of order) {
+      expect(screen.getByTestId(`history-panel-${tab}`)).toBeInTheDocument();
+    }
+  });
+
+  it("mounts the right rail with the page (members/lease/assets via the hub port)", async () => {
+    const hubApi = makeHubPort();
+    renderView({ hubApi });
+
+    expect(screen.getByTestId("hub-right-rail")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(hubApi.listMembers).toHaveBeenCalledTimes(1);
+    });
+    expect(hubApi.listAssets).toHaveBeenCalledTimes(1);
+    expect(hubApi.leaseState).toHaveBeenCalledTimes(1);
+    // The rail renders the roster through the same port.
+    await waitFor(() => {
+      expect(screen.getByTestId("hub-rail-member-usr_alex")).toHaveTextContent("Alex");
+    });
+  });
+
+  it("keeps the Overview tab dark until activated (no manifest/version reads)", async () => {
+    const hubApi = makeHubPort();
+    renderView({ hubApi });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("version-row")).toBeInTheDocument();
+    });
+    expect(hubApi.getManifest).not.toHaveBeenCalled();
+    expect(hubApi.listVersions).not.toHaveBeenCalled();
+    expect(screen.getByTestId("history-panel-overview")).toHaveAttribute("data-state", "inactive");
+
+    await USER.click(screen.getByTestId("history-tab-overview"));
+    await waitFor(() => {
+      expect(hubApi.getManifest).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("hub-overview")).toBeInTheDocument();
+    });
+    // The lease-aware CTA renders once the lease read lands (free arm).
+    await waitFor(() => {
+      expect(screen.getByTestId("hub-open-editor")).toBeInTheDocument();
+    });
+  });
+
+  it("keeps the Comments tab dark until activated (the panel mounts on first open)", async () => {
+    renderView();
+
+    expect(screen.getByTestId("history-panel-comments")).toHaveAttribute("data-state", "inactive");
+    expect(screen.queryByTestId("hub-comments")).toBeNull();
   });
 });

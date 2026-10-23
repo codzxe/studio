@@ -165,7 +165,9 @@
   /**
    * §2.3 signature element — the slate.
    * A compact project header card: name, duration and comp count, like a film
-   * slate. Compose with the <Slate /> component.
+   * slate. Raw-CSS utility kept for non-React surfaces; the former <Slate />
+   * React wrapper was removed in W4-KILL (stub audit KILL-3 — zero
+   * consumers; git history retains it).
    */
   .slate {
     display: flex;

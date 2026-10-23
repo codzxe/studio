@@ -5,8 +5,11 @@
 // app code never reads process.env directly, §4/.env.example rules). It fails
 // fast with a typed storage_config_invalid envelope on anything missing.
 //
-// NOTE (W2-O coordination): src/validate.ts is owned separately and is
-// intentionally NOT re-exported here; import it directly where needed.
+// NOTE (W2-O coordination; W4-KILL seam fix): src/validate.ts is owned
+// separately and is intentionally NOT re-exported here — it ships as its own
+// "./validate" package subpath export (import "@studio/storage/validate"),
+// so the root barrel never drags its byte-parsing surface into consumers
+// that only need a storage driver.
 //
 // NOTE (W2-Q / config owners): add to env schemas + .env.example —
 //   STORAGE_DRIVER=local|s3            (required, no silent default)

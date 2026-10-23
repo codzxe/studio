@@ -1,6 +1,7 @@
 import { AgentStory } from "@/components/marketing/agent-story";
 import { EditorFrame } from "@/components/marketing/editor-frame";
 import { FilmSlot } from "@/components/marketing/film-slot";
+import { PricingCards } from "@/components/marketing/pricing-cards";
 import { Brand } from "@studio/config";
 import { Avatar, Badge, FrameLine, buttonVariants } from "@studio/ui";
 import { Clapperboard, FileUp, KeySquare, LayoutGrid, MessageSquare } from "lucide-react";
@@ -102,32 +103,11 @@ const PERFORMANCE_ROWS = [
 
 /* ------------------------------------------------------------------ §8.1 8 · Pricing */
 
-const PLANS = [
-  {
-    name: "Starter",
-    price: "$29",
-    credits: "1,000 credits/mo",
-    seats: "1 seat",
-    models: "Fast model",
-    featured: false,
-  },
-  {
-    name: "Pro",
-    price: "$79",
-    credits: "3,000 credits/mo",
-    seats: "3 seats",
-    models: "Fast + smart models",
-    featured: true,
-  },
-  {
-    name: "Studio",
-    price: "$199",
-    credits: "8,000 credits/mo",
-    seats: "10 seats",
-    models: "Fast + smart + vision",
-    featured: false,
-  },
-] as const;
+// The section renders the SAME catalog-derived PricingCards component as
+// /pricing (components/marketing/pricing-cards.tsx → @studio/config
+// PLAN_CATALOG). No local plan table exists on this page by design: a second
+// price set here is exactly the drift the stub audit killed (W4-KILL), so the
+// landing can never contradict /pricing again.
 
 /* --------------------------------------------------------------------- §8.1 9 · FAQ */
 
@@ -382,54 +362,17 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* 8 · Pricing — three plans, top-ups, no free tier. */}
+      {/* 8 · Pricing — the /pricing cards verbatim (catalog-derived, §8.8). */}
       <SectionShell id="pricing" testid="landing-pricing">
         <FrameLine label="00:00:11 — PRICING" draw />
         <div className="mt-12">
           <SectionHeading
             title="Pricing"
-            line="Three plans with included monthly credits and seats. One model tier per plan, top-ups any time."
+            line="Three plans with included monthly credits, seats, storage and render minutes. One-time credit top-ups any time."
           />
         </div>
-        <div className="mt-12 grid gap-6 md:grid-cols-3 lg:gap-8">
-          {PLANS.map((plan) => (
-            <div
-              key={plan.name}
-              data-testid={`pricing-${plan.name.toLowerCase()}`}
-              className={`flex flex-col gap-4 rounded-md border bg-panel p-6 transition-colors duration-120 ${
-                plan.featured ? "border-signal" : "border-border hover:border-border-strong"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-title-m text-primary">{plan.name}</h3>
-                {plan.featured ? (
-                  <span className="rounded-xs bg-signal px-1.5 py-0.5 text-hint font-medium tracking-[0.06em] uppercase text-signal-ink">
-                    Most popular
-                  </span>
-                ) : null}
-              </div>
-              <p className="flex items-baseline gap-1">
-                <span className="font-display text-display-m tabular text-primary">
-                  {plan.price}
-                </span>
-                <span className="text-caption text-muted">/mo</span>
-              </p>
-              <ul className="flex flex-col gap-2 border-t border-border pt-4 text-body-s text-secondary">
-                <li className="tabular">{plan.credits}</li>
-                <li className="tabular">{plan.seats}</li>
-                <li>{plan.models}</li>
-              </ul>
-              <Link
-                href="/sign-up"
-                className={`mt-auto ${buttonVariants({
-                  variant: plan.featured ? "primary" : "secondary",
-                  size: "lg",
-                })}`}
-              >
-                Start trial
-              </Link>
-            </div>
-          ))}
+        <div className="mt-12">
+          <PricingCards />
         </div>
         <div className="mt-8 flex flex-col gap-2 border-t border-border pt-6">
           <p className="text-body-s text-secondary">

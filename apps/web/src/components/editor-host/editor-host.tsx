@@ -36,7 +36,9 @@ import { useEditorSession } from "./use-editor-session";
  * (`/editor/?empty` — the `?empty` flag skips the dist's local-session
  * restore), a CSS-only floating project bar, additive banners, and the save
  * trigger wiring. HARD RULES 7/12: no injected CSS, no editor restyle, no
- * persistent top nav, no presence — Share is a disabled M7 placeholder.
+ * persistent top nav. The project bar's Share button is REAL (W4-KILL,
+ * audit REPLACE-2): it opens the share dialog against the live share API
+ * (issue/list/revoke) whenever a session api client exists.
  *
  * The iframe URL keeps its trailing slash (`skipTrailingSlashRedirect`) so
  * every relative asset URL in the upstream dist resolves; COOP/COEP come from
@@ -233,8 +235,14 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
         />
       </div>
 
-      {/* M3.5 chrome — floating, auto-hides via CSS (hover sliver / focus). */}
-      <ProjectBar projectName={projectName} readOnly={state.readOnly} />
+      {/* M3.5 chrome — floating, auto-hides via CSS (hover sliver / focus).
+          W4-KILL: Share is live — the dialog mounts whenever a session api
+          client exists (test sessions without one keep the bar chrome-only). */}
+      <ProjectBar
+        projectName={projectName}
+        readOnly={state.readOnly}
+        share={chatClient === undefined ? null : { projectId, client: chatClient }}
+      />
 
       {/* M4-J chat overlay — additive layer over the editor (D-18). The layer
           root swallows no editor clicks (pointer-events: none); the panel and

@@ -4,10 +4,12 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 /**
- * /changelog contract (M9-E, AUD-5): the page renders the REAL repository
- * changelog — [0.1.0-beta.0] of 2026-10-21, the only release that exists —
- * with its real sections, faithfully reproduced (internal codenames
- * generalised per ADR-0006, which the brand-safety test pins). No invented
+ * /changelog contract (M9-E, AUD-5; rewritten post-pivot by W4-KILL, audit
+ * REPLACE-5): the page renders the REAL repository record — the [Unreleased]
+ * post-pivot rebuild (newest) and the 0.1.0-beta.0 baseline TRIMMED to a
+ * historical note, because that entry describes the deleted pre-pivot
+ * product. The pre-pivot feature sections (templates, PSD import, i18n, the
+ * 872748fb engine) must never read as this product's features. No invented
  * future releases, no "documents" domain word (law #9), no fake entries.
  */
 
@@ -17,48 +19,61 @@ describe("changelog page", () => {
     expect((metadata.description ?? "").length).toBeGreaterThan(0);
   });
 
-  it("renders exactly the one real release, with the real version and date", () => {
+  it("renders exactly the two real entries: the unreleased rebuild, then the historical baseline", () => {
     const { container } = render(<ChangelogPage />);
     const releases = Array.from(container.querySelectorAll('[data-testid^="changelog-release-"]'));
-    expect(releases).toHaveLength(1); // no invented future entries
-    const release = screen.getByTestId("changelog-release-0.1.0-beta.0");
-    expect(within(release).getByRole("heading", { name: "0.1.0-beta.0" })).toBeInTheDocument();
+    expect(releases).toHaveLength(2); // no invented future entries
+
+    // Newest first: [Unreleased] — in progress, no invented date.
+    const unreleased = screen.getByTestId("changelog-release-Unreleased");
+    expect(within(unreleased).getByRole("heading", { name: "Unreleased" })).toBeInTheDocument();
+    expect(within(unreleased).getByText("In progress")).toBeInTheDocument();
+
+    // Then the pre-pivot baseline, kept as history with its real date.
+    const baseline = screen.getByTestId("changelog-release-0.1.0-beta.0");
+    expect(within(baseline).getByRole("heading", { name: "0.1.0-beta.0" })).toBeInTheDocument();
     // §14 date format: "Oct 21, 2026".
-    expect(within(release).getByText("Oct 21, 2026")).toBeInTheDocument();
-    expect(screen.getByText(/One release so far/i)).toBeInTheDocument();
+    expect(within(baseline).getByText("Oct 21, 2026")).toBeInTheDocument();
   });
 
-  it("carries the real summary and every real section, including the limitations", () => {
+  it("tells the pivot story honestly: the pivot decision, the real rebuild, the purge", () => {
     render(<ChangelogPage />);
-    // The real opening sentence + the real commit count from CHANGELOG.md.
-    expect(screen.getByText(/First beta baseline of the studio SaaS/)).toBeInTheDocument();
+    const unreleased = screen.getByTestId("changelog-release-Unreleased");
+    // The pivot decision + the frozen-editor rule (ADR-0006).
+    expect(within(unreleased).getByText(/frozen exactly as upstream ships it/)).toBeInTheDocument();
+    expect(within(unreleased).getByText(/Projects and compositions/)).toBeInTheDocument();
+    // The rebuild describes what EXISTS (workspaces, leases, share links,
+    // credit ledger, billing, agent chat) and stays honestly unreleased.
+    expect(within(unreleased).getByText(/real but unreleased/)).toBeInTheDocument();
+    expect(within(unreleased).getByText(/single-writer edit lease/)).toBeInTheDocument();
+    expect(within(unreleased).getByText(/show-once tokens/)).toBeInTheDocument();
+    expect(within(unreleased).getByText(/Ships when it ships/)).toBeInTheDocument();
+    // The purge is stated, not hidden.
     expect(
-      screen.getByText(/147 commits from the parallel build waves W0–W10/),
+      within(unreleased).getByText(/user order on 2026-10-23 the pre-pivot archive was deleted/),
     ).toBeInTheDocument();
-    for (const section of [
-      "Added — Foundations (W0–W1)",
-      "Added — Engine integration (W2)",
-      "Added — Engine patches (W2–W3, ADR-0001 policy)",
-      "Added — Gateway (W4, W10-G)",
-      "Added — Tools (W5)",
-      "Added — Agent runtime (W6–W7)",
-      "Added — Templates & evals (W3, W7)",
-      "Added — Web app (W8)",
-      "Added — Billing & observability (W9–W10)",
-      "Added — Infra & QA (W9–W10)",
-      "Known Limitations",
-      "Security",
-    ]) {
-      expect(
-        screen.getByRole("heading", { name: section }),
-        `missing changelog section: ${section}`,
-      ).toBeInTheDocument();
-    }
-    // Known Limitations is reproduced, not sanitised away.
-    expect(screen.getByText(/CI workflows staged pending token scope/)).toBeInTheDocument();
+  });
+
+  it("keeps the pre-pivot baseline as HISTORY — its features are named as not existing", () => {
+    render(<ChangelogPage />);
+    const baseline = screen.getByTestId("changelog-release-0.1.0-beta.0");
+    // The real record: the pre-pivot descriptor, engine pin, commit count.
     expect(
-      screen.getByText(/Redaction: run\/SSE events, audit logs and error envelopes/),
+      within(baseline).getByText(/agent-first, template-driven design editor/),
     ).toBeInTheDocument();
+    expect(within(baseline).getByText(/147 commits/)).toBeInTheDocument();
+    // The honest disclaimer: the deleted features are named as absent, never
+    // presented as shipped.
+    expect(
+      within(baseline).getByText(/none of its features \(templates, PSD import, i18n\) exist/),
+    ).toBeInTheDocument();
+    // The pre-pivot feature sections are GONE (they advertised deleted
+    // features as this product's history in detail).
+    const { container } = render(<ChangelogPage />);
+    expect(container.textContent ?? "").not.toContain("Added — Templates & evals");
+    expect(container.textContent ?? "").not.toContain("PSD experimental");
+    expect(container.textContent ?? "").not.toContain("i18n scaffold");
+    expect(container.querySelectorAll("h3").length).toBe(0); // no section lists remain
   });
 
   it("is brand-safe: internal codenames are generalised (ADR-0006), no 'documents' domain word", () => {

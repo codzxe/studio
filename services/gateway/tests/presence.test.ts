@@ -1,12 +1,14 @@
-// M7-B — presence over HTTP against live Postgres (BUILD_PLAN §M7 task 2,
-// PRODUCT_ARCHITECTURE.md §11): the heartbeat IS the poll (beat upsert + one
-// round-trip viewers list), TTL stale sweep, self flag, comp/playhead
-// round-trip, the strict no-cursor body scope pin, tenant 404, per-user rate
-// bucket and nonce idempotency (the (project,user) PK upsert).
+// M7-B — presence over HTTP against the live database, either dialect
+// (BUILD_PLAN §M7 task 2, PRODUCT_ARCHITECTURE.md §11): the heartbeat IS the
+// poll (beat upsert + one round-trip viewers list), TTL stale sweep, self
+// flag, comp/playhead round-trip, the strict no-cursor body scope pin, tenant
+// 404, per-user rate bucket and nonce idempotency (the (project,user) PK
+// upsert).
 
+import { and, count, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createDb } from "@studio/db";
+import { createDb, tablesFor } from "@studio/db";
 
 import {
   CookieJar,
@@ -15,6 +17,7 @@ import {
   type RunningTestServer,
   api,
   bootServer,
+  closeDb,
   unique,
   uniqueEmail,
 } from "./helpers.js";
@@ -39,16 +42,26 @@ interface PresenceResponse {
 }
 
 let server: RunningTestServer;
-/** Direct SQL handle (row-count pins + stale-row injection). Eager + lazy:
- * postgres.js connects on first query; when the DB is absent the suite skips. */
-const pg = createDb(DATABASE_URL ?? "postgres://studio:studio@127.0.0.1:5432/studio").$client;
+/**
+ * Raw db handle for row-level pins (row counts, stored values, stale-row
+ * injection). Dialect-aware since W4-GWI: tables resolve through tablesFor()
+ * so the same drizzle builders run on the pg schema or the sqlite twin.
+ * Eager + lazy: pg pools connect on first query; when the DB is absent the
+ * suite skips.
+ */
+const rawDb = createDb(DATABASE_URL ?? "postgres://studio:studio@127.0.0.1:5432/studio");
+const t = tablesFor(rawDb);
 
 beforeAll(async () => {
   server = await bootServer();
 }, 30_000);
 
 afterAll(async () => {
-  await pg.end({ timeout: 5 });
+  try {
+    await closeDb(rawDb);
+  } catch {
+    // already closed
+  }
   await server?.close();
 });
 
@@ -184,26 +197,29 @@ async function list(ws: Workspace, jar: CookieJar, projectId: string): Promise<P
   };
 }
 
-/** Row count for one project (direct SQL — the upsert pin). */
+/** Row count for one project (dialect-aware builders — the upsert pin). */
 async function rowCount(projectId: string): Promise<number> {
-  const rows = (await pg`select count(*)::int as count
-    from presence_heartbeats where project_id = ${projectId}`) as unknown as Array<{
-    count: number;
-  }>;
-  return Number(rows[0]?.count ?? -1);
+  const rows = await rawDb
+    .select({ n: count() })
+    .from(t.presenceHeartbeats)
+    .where(eq(t.presenceHeartbeats.projectId, projectId));
+  return Number(rows[0]?.n ?? -1);
 }
 
 async function storedRow(
   projectId: string,
   userId: string,
 ): Promise<{ compId: string | null; playheadTicks: number | null }> {
-  const rows = (await pg`select comp_id, playhead_ticks::int as playhead_ticks
-    from presence_heartbeats where project_id = ${projectId} and user_id = ${userId}`) as unknown as Array<{
-    comp_id: string | null;
-    playhead_ticks: number | null;
-  }>;
-  const row = rows[0];
-  return { compId: row?.comp_id ?? null, playheadTicks: row?.playhead_ticks ?? null };
+  const [row] = await rawDb
+    .select({
+      compId: t.presenceHeartbeats.compId,
+      playheadTicks: t.presenceHeartbeats.playheadTicks,
+    })
+    .from(t.presenceHeartbeats)
+    .where(
+      and(eq(t.presenceHeartbeats.projectId, projectId), eq(t.presenceHeartbeats.userId, userId)),
+    );
+  return { compId: row?.compId ?? null, playheadTicks: row?.playheadTicks ?? null };
 }
 
 const viewerOf = (viewers: ViewerDto[], userId: string): ViewerDto | undefined =>
@@ -326,9 +342,15 @@ d("presence viewers — self flag, others, stale sweep, GET", () => {
   it("a stale heartbeat is swept out of every list (injected old last_seen_at)", async () => {
     expect(await rowCount(projectId)).toBe(2);
     // Inject a 10-minute-old heartbeat for the peer — far past the 240s TTL.
-    await pg`update presence_heartbeats
-      set last_seen_at = now() - interval '10 minutes'
-      where project_id = ${projectId} and user_id = ${ws.peerId}`;
+    await rawDb
+      .update(t.presenceHeartbeats)
+      .set({ lastSeenAt: new Date(Date.now() - 10 * 60 * 1000) })
+      .where(
+        and(
+          eq(t.presenceHeartbeats.projectId, projectId),
+          eq(t.presenceHeartbeats.userId, ws.peerId),
+        ),
+      );
 
     const ownerView = await beat(ws, ws.ownerJar, projectId);
     expect(ownerView.body.viewers).toHaveLength(1);

@@ -144,16 +144,16 @@ export type CompilePlanResult =
 export type CompilePlanFn = (input: CompilePlanInput) => Promise<CompilePlanResult>;
 
 /**
- * DEFAULT compilePlan: M5-B's SERVER-SIDE plan compiler
- * (../plan-compiler.ts, landed mid-flight) with its default deps (registry +
- * write tools read from contracts at CALL time — with M5-J's registry stub
- * empty, compiles degrade to typed ok:false "unknown_command" until it
- * lands: write tools answer PROPOSAL_INVALID and plan events stay
- * un-enriched; propose-only, never an execution, never a throw).
+ * DEFAULT compilePlan: the SERVER-SIDE plan compiler (../plan-compiler.ts)
+ * with its default deps (registry + write tools read from contracts at CALL
+ * time — both REAL: the curated command registry resolves every allowlisted
+ * id and the write-tools catalog carries args schemas + risk badges, so an
+ * unknown command or invalid proposal degrades to a typed ok:false issue —
+ * propose-only, never an execution, never a throw).
  *
- * The adapter also projects M5-B's richer result (readonly arrays + additive
- * placeholders/warnings fields) onto this module's pinned seam types; if
- * M5-B's file drifts mid-flight, this is the ONE reconcile point.
+ * The adapter also projects the compiler's richer result (readonly arrays +
+ * additive placeholders/warnings fields) onto this module's pinned seam
+ * types; if plan-compiler.ts drifts, this is the ONE reconcile point.
  */
 const defaultCompilePlan: CompilePlanFn = async (input) => {
   const result = compilePlanWithCompiler(input, defaultCompileDeps());

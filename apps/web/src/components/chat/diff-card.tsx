@@ -36,7 +36,11 @@
  * announcing).
  */
 
-import { collectOldPropertyValues, type OldValueRequest, type OldValueResult } from "@/lib/chat/context";
+import {
+  type OldValueRequest,
+  type OldValueResult,
+  collectOldPropertyValues,
+} from "@/lib/chat/context";
 import type { AgentBatchInput, EditorBridge } from "@studio/editor-bridge";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 
@@ -297,8 +301,10 @@ export function derivePlanDiff(
               : command === "layer.newNull"
                 ? "Null layer"
                 : "Adjustment layer";
-        const name = typeof params.name === "string" && params.name !== "" ? params.name : undefined;
-        const text = typeof params.text === "string" && params.text !== "" ? params.text : undefined;
+        const name =
+          typeof params.name === "string" && params.name !== "" ? params.name : undefined;
+        const text =
+          typeof params.text === "string" && params.text !== "" ? params.text : undefined;
         const label = name ?? text ?? "(new layer)";
         rawRowCount += 1;
         putRow(label, `raw:${rawRowCount}`, () => ({
@@ -408,7 +414,9 @@ export function derivePlanDiff(
     groups: [...groups.values()].map((group) => ({
       ref: group.ref,
       label: group.label,
-      rows: group.rowKeys.map((key) => group.byPath.get(key)).filter((row): row is PlanDiffRow => row !== undefined),
+      rows: group.rowKeys
+        .map((key) => group.byPath.get(key))
+        .filter((row): row is PlanDiffRow => row !== undefined),
     })),
     hiddenCount,
   };
@@ -463,7 +471,9 @@ export interface PlanDiffCardProps {
   /** Optional bridge — with it, before-values are READ from the live (pre-apply) editor. */
   readonly bridge?: EditorBridge;
   /** The plan's layer-resolution requests (`$request:` token → display name). */
-  readonly resolutionRequests?: readonly { readonly requestId: string; readonly layerName: string }[] | null;
+  readonly resolutionRequests?:
+    | readonly { readonly requestId: string; readonly layerName: string }[]
+    | null;
 }
 
 /** The (layer, path) reads a diff needs — one per distinct set/keyframe row. */
@@ -489,12 +499,15 @@ function batchKeyOf(batch: AgentBatchInput): string {
   }
 }
 
-export function PlanDiffCard({ batch, bridge, resolutionRequests }: PlanDiffCardProps): ReactElement {
+export function PlanDiffCard({
+  batch,
+  bridge,
+  resolutionRequests,
+}: PlanDiffCardProps): ReactElement {
   const batchKey = useMemo(() => batchKeyOf(batch), [batch]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: batchKey is the content identity — re-deriving on a fresh batch literal with identical content would churn the old-value reads; the key pins the identity (W4-FIX: suppression moved to the line biome reports — it sat on the deps array, where it had no effect)
   const diff = useMemo(
     () => derivePlanDiff(batch, resolutionRequests),
-    // batchKey is the content identity; resolutionRequests ride the same event.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: re-deriving on a fresh batch literal with identical content would churn the old-value reads; the key pins the identity
     [batchKey, resolutionRequests],
   );
 
@@ -553,7 +566,10 @@ export function PlanDiffCard({ batch, bridge, resolutionRequests }: PlanDiffCard
                 const read = readOf(row);
                 const beforeText =
                   row.kind === "set" || row.kind === "keyframe"
-                    ? (read !== undefined && read.known ? formatValue(read.value) : "—")
+                    ? // W4-FIX: optional chain — lint conformance, identical semantics (undefined read → falsy → "—").
+                      read?.known
+                      ? formatValue(read.value)
+                      : "—"
                     : formatValue(row.before);
                 const afterText = row.kind === "keyframe" ? "keyframed" : formatValue(row.after);
                 const keysNote = formatKeys(row);

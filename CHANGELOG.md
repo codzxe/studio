@@ -7,6 +7,24 @@ Dates are ISO 8601 (`YYYY-MM-DD`).
 
 ## [Unreleased]
 
+### Changed
+
+- Product pivot (ADR-0006, 2026-10-21): the product is an agentic
+  motion-graphics SaaS built on the EffectCraft editor, vendored at `editor/`
+  (pinned `9db7f3b2`, v0.13.0, per `editor/UPSTREAM.md`). The editor UI is
+  frozen — the chat is an additive overlay, never a redesign — and the domain
+  language is projects & compositions. The 0.1.0-beta.0 baseline below
+  describes the pre-pivot product and stays for the historical record only:
+  none of it (templates, PSD import, i18n, the `872748fb` engine pin) exists
+  in this product.
+- Post-pivot rebuild (in progress, unreleased): Better Auth workspaces with
+  roles and invites, Drizzle + Postgres, projects/versions behind a
+  single-writer edit lease, comments and presence, share links with show-once
+  tokens, uploads and cloud renders through an append-only credit ledger,
+  Stripe billing, and the agent chat — a curated tool surface routed through
+  the self-hosted model gateway and compiled server-side into atomic
+  `engine.batch` edits. Ships when it ships; no date is promised here.
+
 ### Removed
 
 - Repo purge by user order (2026-10-23): deleted the tracked `archive/` tree (the

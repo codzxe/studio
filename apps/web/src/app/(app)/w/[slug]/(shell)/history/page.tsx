@@ -25,7 +25,9 @@ import { pageMetadata } from "@/lib/seo";
  * The client view owns every list fetch and mutation through
  * `@studio/api-client` same-origin with the workspace header; this route
  * hands over ONE serializable payload: ids, display name, the current
- * version id, the caller's role-derived permissions and an `nowIso` stamp
+ * version id, the caller's role-derived permissions, the caller's user id
+ * (`viewerId` — hub "You" labels) and the project's creator id (`ownerId` —
+ * resolved to a name on the Overview tab), and an `nowIso` stamp
  * (deterministic relative times).
  */
 
@@ -45,6 +47,7 @@ interface ProjectRowWire {
   readonly slug: string;
   readonly deletedAt: string | null;
   readonly currentVersionId: string | null;
+  readonly createdBy: string | null;
 }
 
 /** Bounded slug scan: §7.2 pages are 50 rows; 4 pages per workspace is ample. */
@@ -86,6 +89,12 @@ function parseMemberships(value: unknown): MembershipWire[] {
   return out;
 }
 
+/** The calling user's id from `/v1/me` (hub "You" labels); malformed → null. */
+function parseViewerId(value: unknown): string | null {
+  if (!isRecord(value) || !isRecord(value.user)) return null;
+  return typeof value.user.id === "string" ? value.user.id : null;
+}
+
 function parseProjectRow(value: unknown): ProjectRowWire | null {
   if (!isRecord(value)) return null;
   if (
@@ -101,6 +110,7 @@ function parseProjectRow(value: unknown): ProjectRowWire | null {
     slug: value.slug,
     deletedAt: typeof value.deletedAt === "string" ? value.deletedAt : null,
     currentVersionId: typeof value.currentVersionId === "string" ? value.currentVersionId : null,
+    createdBy: typeof value.createdBy === "string" ? value.createdBy : null,
   };
 }
 
@@ -133,6 +143,7 @@ interface HistoryResolutionProject {
   readonly name: string;
   readonly slug: string;
   readonly currentVersionId: string | null;
+  readonly createdBy: string | null;
 }
 
 type HistoryResolution =
@@ -145,6 +156,7 @@ type HistoryResolution =
         readonly workspaceId: string;
         readonly canEdit: boolean;
         readonly canExport: boolean;
+        readonly viewerId: string | null;
       };
     };
 
@@ -159,6 +171,7 @@ const resolveHistoryProject = cache(
     if (memberships.length === 0) {
       return { status: "no-workspace" };
     }
+    const viewerId = parseViewerId(me);
 
     // ?ws=<id or slug> — the workspace-switcher seam; unknown → 404 (rule 3).
     const scoped =
@@ -188,6 +201,7 @@ const resolveHistoryProject = cache(
                 name: match.name,
                 slug: match.slug,
                 currentVersionId: match.currentVersionId,
+                createdBy: match.createdBy,
               },
               workspaceId: membership.workspaceId,
               // Gateway re-checks every capability (viewer+ reads, editor+
@@ -197,6 +211,7 @@ const resolveHistoryProject = cache(
                 membership.role === "admin" ||
                 membership.role === "editor",
               canExport: membership.role === "owner" || membership.role === "admin",
+              viewerId,
             },
           };
         }
@@ -260,7 +275,7 @@ export default async function HistoryPage({ params, searchParams }: HistoryPageP
     notFound();
   }
 
-  const { project, workspaceId, canEdit, canExport } = resolution.payload;
+  const { project, workspaceId, canEdit, canExport, viewerId } = resolution.payload;
   return (
     <HistoryPageView
       projectId={project.id}
@@ -270,6 +285,8 @@ export default async function HistoryPage({ params, searchParams }: HistoryPageP
       currentVersionId={project.currentVersionId}
       canEdit={canEdit}
       canExport={canExport}
+      viewerId={viewerId}
+      ownerId={project.createdBy}
       nowIso={new Date().toISOString()}
     />
   );
