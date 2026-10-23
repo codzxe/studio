@@ -20,8 +20,8 @@
  * pricing supersedes them there and every surface updates together.
  */
 
-import type { PlanId } from "@studio/contracts";
 import { MICROCREDITS_PER_CREDIT, PLAN_CATALOG, type PaidPlanId } from "@studio/config";
+import type { PlanId } from "@studio/contracts";
 
 import { formatCount } from "./page-format";
 import type { UpgradePlanOption } from "./upgrade-cta";
