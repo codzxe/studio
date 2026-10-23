@@ -59,9 +59,7 @@ const ENTITLEMENT_FIELDS = [
 ] as const;
 
 /** The shell's slice of the billing state: credits + entitlements, or null. */
-function parseShellBilling(
-  value: unknown,
-): {
+function parseShellBilling(value: unknown): {
   readonly credits: { balance: number; reserved: number };
   readonly entitlements: ShellEntitlements;
 } | null {
