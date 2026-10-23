@@ -26,7 +26,7 @@
 # Env overrides: STUDIO_SQLITE_DB (file path), STUDIO_SQLITE_URL (full file: URL)
 #
 # Then run the gateway against it (env validation accepts file: URLs in local):
-#   DATABASE_URL=file:<repo>/.local/studio-dev.db pnpm dev:gateway
+#   DATABASE_URL=file:<repo>/.local/studio-dev.db corepack pnpm dev:gateway
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -103,8 +103,17 @@ bootstrap() {
 # The demo seed is the regular packages/db seed script, pointed at the sqlite
 # URL. It is idempotent by design; a failure is a WARNING, not fatal — the
 # schema is already bootstrapped and the dev server works without demo rows.
+#
+# pnpm resolution (W3-A): this box ships pnpm ONLY through corepack, so a bare
+# `pnpm` is missing from PATH. Prefer a real pnpm if the host has one; fall
+# back to `corepack pnpm` (pinned by the repo's packageManager field).
 seed() {
-  if DATABASE_URL="$DB_URL" pnpm --filter @studio/db seed; then
+  local pnpm_cmd
+  pnpm_cmd="$(command -v pnpm || true)"
+  if [ -z "$pnpm_cmd" ]; then
+    pnpm_cmd="corepack pnpm"
+  fi
+  if DATABASE_URL="$DB_URL" $pnpm_cmd --filter @studio/db seed; then
     log "seed ok (demo user demo@studio.test, demo workspace/project, 1000 credits)"
   else
     log "WARNING: the demo seed failed on sqlite — the schema is bootstrapped and"

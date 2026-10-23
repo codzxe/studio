@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
-import { getDialect, type StudioDb, StudioTx } from "../db.js";
+import { getDialect, type StudioDb, type StudioTx } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
 import {

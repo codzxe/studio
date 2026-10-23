@@ -181,7 +181,10 @@ export async function createSqliteDb(
  */
 function createSqliteDbSync(path: string, bootstrap: boolean): StudioSqliteDb {
   const require = createRequire(import.meta.url);
-  const Database = require("better-sqlite3") as typeof import("better-sqlite3").default;
+  // `typeof import(...)` (NOT `.default`): @types/better-sqlite3 is an
+  // `export = Database` module (const + merged namespace), so the module type
+  // itself IS the DatabaseConstructor — there is no `default` member.
+  const Database = require("better-sqlite3") as typeof import("better-sqlite3");
   const { drizzle: drizzleSqlite } = require("drizzle-orm/better-sqlite3") as typeof import(
     "drizzle-orm/better-sqlite3"
   );
@@ -236,7 +239,7 @@ export function bootstrapSqlite(urlOrDb: string | StudioSqliteDb): void {
       );
     }
     const require = createRequire(import.meta.url);
-    const Database = require("better-sqlite3") as typeof import("better-sqlite3").default;
+    const Database = require("better-sqlite3") as typeof import("better-sqlite3");
     const client = new Database(sqlitePathFromUrl(urlOrDb));
     try {
       applyPragmas(client);

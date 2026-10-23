@@ -12,7 +12,8 @@
  * Modes (EDITOR_CHAT_UX.md §2, DECISIONS.md D-18):
  * - floating: absolutely-positioned box at `layout.x/y/w/h` with a 1px
  *   `--line-subtle` border (Tailwind `border-border` resolves to it),
- *   `--bg-panel` background, `--radius-lg`, one soft elevation
+ *   `--bg-panel` background, `--radius-md` (UI_DESIGN_SYSTEM §9 pins
+ *   radius-md on the chat panel — never radius-lg), one soft elevation
  *   (`--elevation-modal`), a header drag region and an 8px SE resize grip.
  * - sidebar: right rail, 100% height, `width = max(MIN_PANEL.w, layout.w)`,
  *   with an internal width grip on its left edge (drag left = wider).
@@ -240,8 +241,9 @@ export function ChatPanel({
       onKeyDown={onKeyDown}
       className={
         floating
-          ? // Floating: the §2.1 box — one soft elevation + hairline border.
-            "absolute z-[35] flex flex-col overflow-hidden rounded-lg border border-border bg-panel shadow-modal"
+          ? // Floating: the §2.1 box — one soft elevation + hairline border
+            // (§9 letter-spec: radius-md, 10px — not radius-lg).
+            "absolute z-[35] flex flex-col overflow-hidden rounded-md border border-border bg-panel shadow-modal"
           : // Sidebar: the §2.2 right rail — docked flat, 100% height.
             "absolute top-0 right-0 bottom-0 z-[35] flex flex-col overflow-hidden border-l border-border bg-panel"
       }
