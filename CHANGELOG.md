@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Dates are ISO 8601 (`YYYY-MM-DD`).
 
+## [Unreleased]
+
+### Removed
+
+- Repo purge by user order (2026-10-23): deleted the tracked `archive/` tree (the
+  pre-pivot PhotoCraft legacy code — preserved in git history), the `agent-ctx/`
+  subagent handoff files and the regenerating `tool-results/` session scratch;
+  `.gitignore` hardened so none of them can be committed again.
+
 ## [0.1.0-beta.0] — 2026-10-21
 
 First beta baseline of the studio SaaS: an agent-first, template-driven design editor

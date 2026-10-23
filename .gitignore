@@ -73,3 +73,18 @@ packages/contracts/src/**/*.d.ts
 packages/db/src/**/*.js
 packages/db/src/**/*.js.map
 packages/db/src/**/*.d.ts
+
+# repo purge (W1-01, user order 2026-10-23): these trees were deleted; the ignore
+# rules stay so nothing resurrects or re-commits them. Content lives in git
+# history only (`git log --oneline -- archive/`).
+/archive/
+/agent-ctx/
+# session scratch that regenerates constantly — committed once, purged in 59ef2d7,
+# came back; NEVER let it in again
+/tool-results/
+# git-sync.sh flock target — runtime artifact, never commit
+/.studio-git.lock
+# push credential file — never tracked (docs/secrets-policy.md §1: secrets live
+# only in 0600 env files). Untracked by W1-01; history scrub + rotation owed to
+# the platform owner.
+/.github-token

@@ -1,6 +1,0 @@
-{
-  "template": "presentation-quote@1",
-  "note": "evals/templates/presentation-quote@1/assets-note.md",
-  "comment": "No image slots; the only candidate asset (asset_divider_900x120.png) is the wave-divider component's fallback 'if the component registry has not shipped' — it has (evals/components/wave-divider), so no PNG is generated.",
-  "assets": []
-}

@@ -28,9 +28,10 @@
  * - Payment — card-on-file presence derived from the subscription state
  *   (the trial requires a card, BP §M6 task 5); "Manage payment" opens a
  *   `POST /v1/billing/portal` session and redirects.
- * - Invoices — rows today; the client-facing invoice list endpoint does not
- *   exist yet (M6-C's state carries none — see the worklog gap note), so the
- *   page renders what it is given and an honest empty state.
+ * - Invoices — the recorded invoice history via `GET /v1/billing/invoices`
+ *   (live: routes/billing.ts "F-J3"; the RSC route's `loadInvoiceRows` fetches
+ *   one tolerant page — failures degrade to an empty list): this view renders
+ *   the rows it is given and the honest empty state.
  * - Cancel — clear consequences, no dark patterns (§8.8): cancellation is
  *   status-only and completes in the Stripe billing portal (M6-C's shipped
  *   surface — there is no /v1/billing/cancel); the confirm dialog says what
