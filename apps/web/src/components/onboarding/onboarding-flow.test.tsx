@@ -8,7 +8,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type OnboardingPort, OnboardingFlow } from "./onboarding-flow";
+import { OnboardingFlow, type OnboardingPort } from "./onboarding-flow";
 
 const USER = userEvent.setup();
 
@@ -35,8 +35,12 @@ beforeEach(() => {
 });
 
 /** Drives the flow from step 1 to the Start step with a chosen use case. */
-async function advanceToStart(port: OnboardingPort, useCase: string | null) {
-  render(<OnboardingFlow api={port} navigate={vi.fn()} />);
+async function advanceToStart(
+  port: OnboardingPort,
+  useCase: string | null,
+  navigate: (to: string) => void,
+) {
+  render(<OnboardingFlow api={port} navigate={navigate} />);
 
   await USER.type(screen.getByLabelText(/^Workspace name/), "Acme Films!");
   await USER.click(screen.getByRole("button", { name: "Continue" }));
@@ -78,10 +82,7 @@ describe("OnboardingFlow — the §8.3 shell", () => {
     expect(screen.getByLabelText(/^Slug/)).toHaveValue("acme-films");
 
     await USER.click(screen.getByRole("button", { name: "Continue" }));
-    expect(port.createWorkspace).toHaveBeenCalledWith(
-      { name: "Acme Films!", slug: "acme-films" },
-      undefined,
-    );
+    expect(port.createWorkspace).toHaveBeenCalledWith({ name: "Acme Films!", slug: "acme-films" });
 
     // Step 2: use case — segment 1 done, segment 2 current.
     expect(await screen.findByTestId("onboarding-usecase")).toBeInTheDocument();
@@ -118,11 +119,12 @@ describe("OnboardingFlow — the §8.3 shell", () => {
   it("runs the trial start on the created workspace and lands on /w with the trial notice", async () => {
     const port = fakePort();
     const navigate = vi.fn();
-    await advanceToStart(port, "product-film");
+    await advanceToStart(port, "product-film", navigate);
 
     await USER.click(screen.getByRole("button", { name: "Start trial" }));
 
-    expect(port.startTrial).toHaveBeenCalledWith("ws_new", undefined);
+    expect(port.startTrial).toHaveBeenCalledTimes(1);
+    expect(port.startTrial.mock.calls[0]?.[0]).toBe("ws_new");
     const started = await screen.findByTestId("onboarding-trial-started");
     expect(started).toHaveAttribute("data-status", "started");
     expect(started).toHaveTextContent(/days free, until /);
@@ -132,7 +134,7 @@ describe("OnboardingFlow — the §8.3 shell", () => {
   it("exits to /w without starting a trial when 'Create workspace' is chosen", async () => {
     const port = fakePort();
     const navigate = vi.fn();
-    await advanceToStart(port, null);
+    await advanceToStart(port, null, navigate);
 
     await USER.click(screen.getByTestId("onboarding-trial-skip"));
 

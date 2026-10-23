@@ -84,8 +84,8 @@ import {
 } from "./page-format";
 import { BILLING_PLAN_DISPLAY, CURRENT_PLAN_DISPLAY } from "./page-plan-display";
 import { TopUpFlow } from "./topup-flow";
-import { type UsageRendersFetcher, UsageSection } from "./usage-section";
 import { UpgradeCta } from "./upgrade-cta";
+import { type UsageRendersFetcher, UsageSection } from "./usage-section";
 
 // ---------------------------------------------------------------------------
 // The api seam — a narrow port the real ApiClient satisfies structurally

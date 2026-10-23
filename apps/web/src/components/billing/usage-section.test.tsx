@@ -311,16 +311,15 @@ describe("UsageSection — renders table", () => {
   });
 
   it("skeletons the table while the first renders page is in flight", () => {
-    view({ ledger: ledgerSlice([]), renders: rendersFetcher([new Error("never")]) });
-    // First fetch rejects; re-render through retry below. Here: loading arm.
+    const pending = vi.fn().mockImplementation(() => new Promise<Page<RenderJob>>(() => undefined));
+    view({ ledger: ledgerSlice([]), renders: pending });
+    expect(pending).toHaveBeenCalledWith({ limit: 50 });
     expect(screen.getByTestId("usage-renders-loading")).toBeInTheDocument();
+    expect(screen.queryByTestId("usage-renders-table")).not.toBeInTheDocument();
   });
 
   it("surfaces a fetch error with a retry that recovers the table", async () => {
-    const fetcher = rendersFetcher([
-      new Error("The renders service is down"),
-      RENDERS_PAGE,
-    ]);
+    const fetcher = rendersFetcher([new Error("The renders service is down"), RENDERS_PAGE]);
     view({ ledger: ledgerSlice([]), renders: fetcher });
     const error = await screen.findByTestId("usage-renders-error");
     expect(error).toHaveTextContent("The renders service is down");

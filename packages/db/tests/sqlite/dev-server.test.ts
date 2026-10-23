@@ -132,6 +132,16 @@ describe("sqlite dev server (repos + auth + transactions)", { timeout: 30_000 },
     expect(settle.commit?.amount).toBe(-18);
     expect(settle.refund?.amount).toBe(24);
     expect(await repos.ledger.balance(workspaceId)).toBe(82);
+
+    // claim + complete this render NOW so the claimNext test below starts
+    // from an empty queue (claimNext is FIFO over ALL queued rows).
+    const drained = await repos.renders.claimNext("worker-ledger-drain");
+    const claimedRender = drained[0];
+    expect(claimedRender).toBeDefined();
+    if (!claimedRender) throw new Error("claimNext returned no render");
+    await repos.renders.markCompleted(workspaceId, claimedRender.id, {
+      objectKey: "workspaces/x/renders/ledger/output.mp4",
+    });
   });
 
   it("renders: claimNext claims once, then empties (SKIP LOCKED fork)", async () => {

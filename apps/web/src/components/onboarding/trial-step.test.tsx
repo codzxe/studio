@@ -11,7 +11,7 @@ import { ApiError, type ApiErrorInit } from "@studio/api-client";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { type TrialStepProps, TrialStep } from "./trial-step";
+import { TrialStep, type TrialStepProps } from "./trial-step";
 
 const USER = userEvent.setup();
 
@@ -27,14 +27,18 @@ function apiError(init: ApiErrorInit): ApiError {
   return new ApiError(init);
 }
 
-function renderStep(overrides: {
-  startTrial?: TrialStepProps["startTrial"];
-  navigate?: (to: string) => void;
-} = {}) {
-  const startTrial = overrides.startTrial ?? vi.fn().mockResolvedValue({
-    trialStarted: true,
-    trialEnd: TRIAL_END,
-  });
+function renderStep(
+  overrides: {
+    startTrial?: TrialStepProps["startTrial"];
+    navigate?: (to: string) => void;
+  } = {},
+) {
+  const startTrial =
+    overrides.startTrial ??
+    vi.fn().mockResolvedValue({
+      trialStarted: true,
+      trialEnd: TRIAL_END,
+    });
   const navigate = overrides.navigate ?? vi.fn();
   render(
     <TrialStep

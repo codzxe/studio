@@ -67,8 +67,7 @@ export function WorkspaceStep({ createWorkspace, onCreated }: WorkspaceStepProps
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedName = name.trim();
-    const nextNameError =
-      trimmedName.length >= 1 ? null : "Name your workspace — it needs a name.";
+    const nextNameError = trimmedName.length >= 1 ? null : "Name your workspace — it needs a name.";
     const nextSlugError = SLUG_PATTERN.test(slug)
       ? null
       : "Lowercase letters, numbers and hyphens — starting and ending with a letter or number.";
@@ -109,8 +108,7 @@ export function WorkspaceStep({ createWorkspace, onCreated }: WorkspaceStepProps
       <div className="flex flex-col gap-2">
         <h2 className="text-body-l font-medium text-primary">Name your workspace.</h2>
         <p className="text-body-s text-secondary">
-          This is where your projects and compositions live. You can rename it later in
-          settings.
+          This is where your projects and compositions live. You can rename it later in settings.
         </p>
       </div>
 
@@ -137,7 +135,9 @@ export function WorkspaceStep({ createWorkspace, onCreated }: WorkspaceStepProps
           onChange={(event) => onSlugChange(event.target.value)}
           error={slugError}
           helperText={
-            slugEdited ? "You set this slug by hand." : "Derived from the name — edit it if you like."
+            slugEdited
+              ? "You set this slug by hand."
+              : "Derived from the name — edit it if you like."
           }
           required
         />
@@ -146,18 +146,14 @@ export function WorkspaceStep({ createWorkspace, onCreated }: WorkspaceStepProps
           data-testid="onboarding-slug-preview"
           aria-live="polite"
         >
-          {slug === ""
-            ? "Your work will live at /w/…"
-            : `Your work will live at /w/${slug}`}
+          {slug === "" ? "Your work will live at /w/…" : `Your work will live at /w/${slug}`}
         </p>
       </div>
 
       {formError ? (
         <div role="alert" data-testid="onboarding-workspace-error" className="flex flex-col gap-1">
           <p className="text-caption text-danger">{formError.message}</p>
-          {formError.hint ? (
-            <p className="text-caption text-muted">{formError.hint}</p>
-          ) : null}
+          {formError.hint ? <p className="text-caption text-muted">{formError.hint}</p> : null}
           {formError.requestId ? (
             <p className="text-caption text-muted">Request {formError.requestId}</p>
           ) : null}

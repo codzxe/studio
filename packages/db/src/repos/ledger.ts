@@ -1,7 +1,7 @@
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
-import { type Executor, getDialect, type StudioDb, type StudioTx } from "../db.js";
+import { type Executor, type StudioDb, type StudioTx, getDialect } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
 import { deriveIdempotencyKey, outstandingReserve, planSettlement } from "../ledger-math.js";

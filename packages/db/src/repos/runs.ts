@@ -4,14 +4,9 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import type { StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import {
-  type AgentRun,
-  type AgentStep,
-  type RunStatus,
-  type StepStatus,
-} from "../schema.js";
-import { tablesFor } from "../tables.js";
+import type { AgentRun, AgentStep, RunStatus, StepStatus } from "../schema.js";
 import { assertRunTransition, isTerminalRunStatus } from "../statuses.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, isUniqueViolation, requireNonEmpty } from "./shared.js";
 
 /** Runs repository — one agent turn from prompt to applied result (§3.1, §7.4). */

@@ -22,10 +22,10 @@
  * Boundary law (apps/web): `@studio/contracts` is `import type` ONLY.
  */
 
+import { daysUntil, formatDate } from "@/components/billing/page-format";
 import { type CallOptions, isApiError } from "@studio/api-client";
 import type { TrialResponse } from "@studio/contracts";
 import { Button } from "@studio/ui";
-import { daysUntil, formatDate } from "@/components/billing/page-format";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -120,7 +120,11 @@ export function TrialStep({ workspace, startTrial, navigate, nowIso }: TrialStep
   if (status === "started" && trialEnd !== null) {
     const days = daysUntil(trialEnd, now);
     return (
-      <div className="flex flex-col gap-4" data-testid="onboarding-trial-started" data-status="started">
+      <div
+        className="flex flex-col gap-4"
+        data-testid="onboarding-trial-started"
+        data-status="started"
+      >
         <h2 className="text-body-l font-medium text-primary">Trial started.</h2>
         <p className="text-body-s text-secondary">
           {days} {days === 1 ? "day" : "days"} free, until {formatDate(trialEnd)}. Your card
@@ -171,8 +175,8 @@ export function TrialStep({ workspace, startTrial, navigate, nowIso }: TrialStep
                 A payment method is required to start a trial.
               </p>
               <p className="text-caption text-secondary">
-                Add a card in Billing first, then come back — the trial starts once a card is
-                on file and isn&apos;t charged while it runs.
+                Add a card in Billing first, then come back — the trial starts once a card is on
+                file and isn&apos;t charged while it runs.
               </p>
               <p className="text-caption text-secondary">{billingLink()}</p>
             </>
@@ -210,12 +214,7 @@ export function TrialStep({ workspace, startTrial, navigate, nowIso }: TrialStep
       ) : null}
 
       <div className="flex items-center gap-3">
-        <Button
-          type="button"
-          size="lg"
-          loading={status === "starting"}
-          onClick={onStartTrial}
-        >
+        <Button type="button" size="lg" loading={status === "starting"} onClick={onStartTrial}>
           Start trial
         </Button>
         <Button

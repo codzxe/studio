@@ -4,8 +4,8 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type { Options as PostgresOptions } from "postgres";
 
-import * as schema from "./schema.js";
 import * as sqliteSchema from "./schema-sqlite.js";
+import * as schema from "./schema.js";
 import { bootstrapSqliteDatabase } from "./sqlite-bootstrap.js";
 
 /**
@@ -29,10 +29,11 @@ export type Executor = StudioDb | StudioTx;
  * branch — so a production (Postgres) process or bundle never loads it.
  * The twin schema itself is plain drizzle sqlite-core (pure JS, no natives).
  */
-export type StudioSqliteDb =
-  import("drizzle-orm/better-sqlite3").BetterSQLite3Database<typeof sqliteSchema> & {
-    $client: import("better-sqlite3").Database;
-  };
+export type StudioSqliteDb = import("drizzle-orm/better-sqlite3").BetterSQLite3Database<
+  typeof sqliteSchema
+> & {
+  $client: import("better-sqlite3").Database;
+};
 
 /** Either dialect — what `createRepos` accepts and what repos execute on. */
 export type AnyDb = StudioDb | StudioSqliteDb;
@@ -84,6 +85,16 @@ function applyPragmas(client: import("better-sqlite3").Database): void {
   client.pragma("foreign_keys = ON");
   client.pragma("busy_timeout = 5000");
 }
+
+/**
+ * Module types for the two `require()` casts below. @types/better-sqlite3 is
+ * an `export = Database` module (const + merged namespace), so
+ * `typeof import("better-sqlite3")` IS the DatabaseConstructor — there is no
+ * `default` member (TS2694). Keeping the casts on module-level aliases also
+ * sidesteps biome's multi-line `import(…)` trailing-comma formatting (TS1005).
+ */
+type BetterSqlite3Module = typeof import("better-sqlite3");
+type DrizzleSqliteModule = typeof import("drizzle-orm/better-sqlite3");
 
 const SQLITE_TX_DEPTH = new WeakMap<object, number>();
 
@@ -181,13 +192,8 @@ export async function createSqliteDb(
  */
 function createSqliteDbSync(path: string, bootstrap: boolean): StudioSqliteDb {
   const require = createRequire(import.meta.url);
-  // `typeof import(...)` (NOT `.default`): @types/better-sqlite3 is an
-  // `export = Database` module (const + merged namespace), so the module type
-  // itself IS the DatabaseConstructor — there is no `default` member.
-  const Database = require("better-sqlite3") as typeof import("better-sqlite3");
-  const { drizzle: drizzleSqlite } = require("drizzle-orm/better-sqlite3") as typeof import(
-    "drizzle-orm/better-sqlite3"
-  );
+  const Database = require("better-sqlite3") as BetterSqlite3Module;
+  const { drizzle: drizzleSqlite } = require("drizzle-orm/better-sqlite3") as DrizzleSqliteModule;
   const client = new Database(path);
   applyPragmas(client);
   if (bootstrap) bootstrapSqliteDatabase(client);
@@ -239,7 +245,7 @@ export function bootstrapSqlite(urlOrDb: string | StudioSqliteDb): void {
       );
     }
     const require = createRequire(import.meta.url);
-    const Database = require("better-sqlite3") as typeof import("better-sqlite3");
+    const Database = require("better-sqlite3") as BetterSqlite3Module;
     const client = new Database(sqlitePathFromUrl(urlOrDb));
     try {
       applyPragmas(client);

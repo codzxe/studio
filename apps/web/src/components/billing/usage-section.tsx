@@ -33,7 +33,14 @@
  * a fabricated number. The gap is stated in copy, not hidden.
  */
 
-import type { BillingState, LedgerEntry, Page, RenderFormat, RenderJob, RenderStatus } from "@studio/contracts";
+import type {
+  BillingState,
+  LedgerEntry,
+  Page,
+  RenderFormat,
+  RenderJob,
+  RenderStatus,
+} from "@studio/contracts";
 import {
   Badge,
   Button,
@@ -200,7 +207,9 @@ export interface ProjectRenderGroup {
  * `RenderJob` (projects.list is out of the W2-08 read set), so groups are
  * labeled by a bounded short id — the LedgerTable `shortRunId` precedent.
  */
-export function groupRendersByProject(renders: readonly RenderJob[]): readonly ProjectRenderGroup[] {
+export function groupRendersByProject(
+  renders: readonly RenderJob[],
+): readonly ProjectRenderGroup[] {
   const groups: { projectId: string; renders: RenderJob[] }[] = [];
   const byProject = new Map<string, { projectId: string; renders: RenderJob[] }>();
   for (const job of renders) {
@@ -228,7 +237,13 @@ function shortProjectId(projectId: string): string {
  * per surface, the page-format/ledger-table precedent).
  */
 const RENDER_STATUS_META: Readonly<
-  Record<RenderStatus, { readonly label: string; readonly tone: "neutral" | "signal" | "success" | "warning" | "danger" }>
+  Record<
+    RenderStatus,
+    {
+      readonly label: string;
+      readonly tone: "neutral" | "signal" | "success" | "warning" | "danger";
+    }
+  >
 > = {
   queued: { label: "Queued", tone: "warning" },
   running: { label: "Rendering", tone: "signal" },
@@ -372,12 +387,7 @@ export function UsageSection({
         Latest renders
       </h3>
       {rendersState.loading && rendersState.entries.length === 0 ? (
-        <div
-          role="status"
-          aria-label="Loading renders"
-          data-testid="usage-renders-loading"
-          className="mt-2 flex flex-col gap-2"
-        >
+        <div data-testid="usage-renders-loading" className="mt-2 flex flex-col gap-2">
           <Skeleton className="h-4 w-44" />
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-8 w-full max-w-[420px]" />
@@ -405,17 +415,9 @@ export function UsageSection({
           </Button>
         </div>
       ) : rendersState.entries.length === 0 ? (
-        <EmptyState
-          data-testid="usage-renders-empty"
-          title="No renders yet."
-          className="py-8"
-        />
+        <EmptyState data-testid="usage-renders-empty" title="No renders yet." className="py-8" />
       ) : (
-        <Table
-          aria-label="Latest renders"
-          data-testid="usage-renders-table"
-          className="mt-2"
-        >
+        <Table aria-label="Latest renders" data-testid="usage-renders-table" className="mt-2">
           <TableHeader>
             <TableRow>
               <TableHead>Status</TableHead>
@@ -437,12 +439,7 @@ export function UsageSection({
         Latest ledger entries
       </h3>
       {ledger.loading && ledger.entries.length === 0 ? (
-        <div
-          role="status"
-          aria-label="Loading the ledger summary"
-          data-testid="usage-ledger-loading"
-          className="mt-2 flex flex-col gap-2"
-        >
+        <div data-testid="usage-ledger-loading" className="mt-2 flex flex-col gap-2">
           <Skeleton className="h-4 w-56" />
           <Skeleton className="h-4 w-40" />
         </div>
@@ -458,10 +455,7 @@ export function UsageSection({
           >
             <div className="flex items-baseline justify-between gap-4">
               <dt className="text-muted">Committed</dt>
-              <dd
-                className="text-secondary tabular-nums"
-                data-testid="usage-ledger-committed"
-              >
+              <dd className="text-secondary tabular-nums" data-testid="usage-ledger-committed">
                 {formatCredits(summary.committedMicrocredits)} credits
               </dd>
             </div>
@@ -473,8 +467,7 @@ export function UsageSection({
             </div>
           </dl>
           <p className="text-caption text-muted" data-testid="usage-ledger-window">
-            Commits and refunds across the {formatCount(ledger.entries.length)} newest ledger
-            rows.
+            Commits and refunds across the {formatCount(ledger.entries.length)} newest ledger rows.
           </p>
         </div>
       )}

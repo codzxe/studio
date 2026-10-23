@@ -12,6 +12,9 @@
  *   refresh; typed failure surfaces;
  * - the top-up seam (pack → confirm → POST → redirect);
  * - the ledger fetcher (mount page + cursor load-more);
+ * - the usage section (W2-08/W3-H): the Usage card sits between Credits and
+ *   Payment, its credits meter reads the SHARED ledger page, and renders
+ *   fetch through the port's renders read;
  * - read-only members and the tokens-only style law. The api-client port is
  *   faked; jsdom (redirects captured through a location stub).
  */
@@ -23,6 +26,7 @@ import type {
   LedgerEntry,
   Page,
   PortalResponse,
+  RenderJob,
   TopUpResponse,
 } from "@studio/contracts";
 import { render, screen, within } from "@testing-library/react";
@@ -158,6 +162,32 @@ const INVOICES: readonly BillingInvoiceRow[] = [
   },
 ];
 
+/** One `GET /v1/renders` row for the usage-section fixtures (§7.2 wire v2). */
+function usageRenderJob(overrides: Partial<RenderJob> = {}): RenderJob {
+  return {
+    id: "rend_1",
+    projectId: "proj_alpha",
+    compId: "comp_main",
+    versionId: "ver_1",
+    format: "mp4",
+    settings: {},
+    status: "completed",
+    cancelRequested: false,
+    progress: { framesDone: 240, framesTotal: 240, percent: 100 },
+    credits: 14,
+    resultUrl: "https://cdn.test/render.mp4",
+    errorCode: null,
+    error: null,
+    sizeBytes: 13_000_000,
+    createdBy: "user_1",
+    createdAt: "2026-10-20T10:00:00Z",
+    startedAt: "2026-10-20T10:00:05Z",
+    completedAt: "2026-10-20T10:02:00Z",
+    expiresAt: "2026-11-20T10:00:00Z",
+    ...overrides,
+  };
+}
+
 /** The faked billing port (the real ApiClient surface shape + the ledger). */
 function fakePort(
   overrides: {
@@ -166,6 +196,7 @@ function fakePort(
     portal?: Mock;
     state?: Mock;
     ledger?: Mock;
+    renders?: Mock;
   } = {},
 ) {
   return {
@@ -174,6 +205,7 @@ function fakePort(
     portal: overrides.portal ?? vi.fn(),
     state: overrides.state ?? vi.fn(),
     ledger: overrides.ledger ?? vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    renders: overrides.renders ?? vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
   };
 }
 
@@ -565,6 +597,54 @@ describe("BillingPageView — invoices", () => {
     expect(screen.getByTestId("billing-invoices-empty")).toHaveTextContent(
       "Invoices appear here after your first payment.",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Usage section (W2-08/W3-H — UsageMeters finally mounted)
+// ---------------------------------------------------------------------------
+
+describe("BillingPageView — usage section", () => {
+  it("mounts the Usage card between Credits and Payment", () => {
+    const { container } = view(PRO_STATE, fakePort());
+    const credits = container.querySelector('[data-testid="billing-credits"]');
+    const usage = container.querySelector('[data-testid="billing-usage"]');
+    const payment = container.querySelector('[data-testid="billing-payment"]');
+    expect(usage).not.toBeNull();
+    expect(credits).not.toBeNull();
+    expect(payment).not.toBeNull();
+    expect(credits?.compareDocumentPosition(usage as Node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(usage?.compareDocumentPosition(payment as Node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("drives the credits meter from the shared ledger page and labels the window honestly", async () => {
+    const port = fakePort({ ledger: vi.fn().mockResolvedValue(LEDGER_PAGE) });
+    view(PRO_STATE, port);
+    const credits = await screen.findByTestId("usage-meter-credits");
+    // LEDGER_PAGE carries one commit of -18,750,000 µc → 18.75 credits net.
+    expect(credits).toHaveTextContent("18.75 of 2,000.00 credits");
+    expect(credits).toHaveAttribute("data-state", "healthy");
+    expect(screen.getByTestId("usage-ledger-committed")).toHaveTextContent("18.75 credits");
+    // No period start on the wire → the honest fallback label, never "this cycle".
+    expect(screen.getByTestId("usage-ledger-title")).toHaveTextContent("Latest ledger entries");
+  });
+
+  it("fetches renders through the port and renders the per-project table", async () => {
+    const renders = vi.fn().mockResolvedValue({
+      items: [usageRenderJob(), usageRenderJob({ id: "rend_2", projectId: "proj_beta" })],
+      nextCursor: null,
+    });
+    view(PRO_STATE, fakePort({ renders }));
+    await vi.waitFor(() => expect(renders).toHaveBeenCalledWith({ limit: 50 }));
+    const table = await screen.findByTestId("usage-renders-table");
+    expect(within(table).getAllByTestId("usage-renders-group")).toHaveLength(2);
+    expect(within(table).getAllByTestId("usage-render-row")).toHaveLength(2);
+  });
+
+  it("keeps the usage card for read-only members but drops the top-up CTA", () => {
+    view(PRO_STATE, fakePort(), { canManage: false });
+    expect(screen.getByTestId("billing-usage")).toBeInTheDocument();
+    expect(screen.queryByTestId("usage-topup")).not.toBeInTheDocument();
   });
 });
 

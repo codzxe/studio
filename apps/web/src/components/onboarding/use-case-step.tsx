@@ -50,16 +50,13 @@ export function UseCaseStep({ onNext }: UseCaseStepProps) {
       <div className="flex flex-col gap-2">
         <h2 className="text-body-l font-medium text-primary">What are you making?</h2>
         <p className="text-body-s text-secondary">
-          This tunes where you start. It stays on this device — skip it if you&apos;d rather
-          jump straight in.
+          This tunes where you start. It stays on this device — skip it if you&apos;d rather jump
+          straight in.
         </p>
       </div>
 
-      <div
-        role="group"
-        aria-label="Primary use case"
-        className="grid grid-cols-1 gap-2 sm:grid-cols-2"
-      >
+      <fieldset className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <legend className="sr-only">Primary use case</legend>
         {USE_CASES.map((useCase) => {
           const isSelected = useCase.id === selected;
           return (
@@ -81,7 +78,7 @@ export function UseCaseStep({ onNext }: UseCaseStepProps) {
             </button>
           );
         })}
-      </div>
+      </fieldset>
 
       <div className="flex items-center gap-3">
         <Button

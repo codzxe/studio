@@ -1,6 +1,6 @@
-import * as pgSchema from "./schema.js";
+import { type AnyDb, type Executor, getDialect } from "./db.js";
 import * as sqliteSchema from "./schema-sqlite.js";
-import { getDialect, type AnyDb, type Executor } from "./db.js";
+import * as pgSchema from "./schema.js";
 
 /**
  * Dialect-aware table registry (W1-02/W1-03 seam, completed for the sqlite
