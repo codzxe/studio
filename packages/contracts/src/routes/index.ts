@@ -10,6 +10,8 @@ export * from "./common.js";
 export * from "./credits.js";
 export * from "./invites.js";
 export * from "./leases.js";
+export * from "./members.js";
+export * from "./api-keys.js";
 export * from "./me.js";
 export * from "./models.js";
 export * from "./presence.js";

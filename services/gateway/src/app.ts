@@ -18,6 +18,8 @@ import {
 } from "./middleware.js";
 
 import { activityRoutes } from "./routes/activity.js";
+import { apiKeysRoutes } from "./routes/api-keys.js";
+import { membersRoutes } from "./routes/members.js";
 import { applyRoutes } from "./routes/apply.js";
 import { assetsRoutes } from "./routes/assets.js";
 import { billingRoutes } from "./routes/billing.js";
@@ -158,6 +160,8 @@ export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
   app.route("/", shareAuthedRoutes(deps));
   app.route("/", activityRoutes(deps));
   app.route("/", presenceRoutes(deps));
+  app.route("/", membersRoutes(deps));
+  app.route("/", apiKeysRoutes(deps));
   if (deps.local !== null) {
     app.route("/", localStorageRoutes(deps));
   }
