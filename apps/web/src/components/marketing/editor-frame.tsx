@@ -1,12 +1,9 @@
-import { DEMO_FILM } from "@/lib/demo";
-
 /**
- * The editor section frame (§8.1 §4): a full-bleed 16:9 dark frame with an
- * annotated viewport placeholder — construction-grid + safe-margin lines and
- * three labelled callouts. Deliberately NOT a fake screenshot (§16: honest
- * surfaces — no stylised fake editor UI); it reads as a diagram of the real
- * editor's regions. The real capture lands with the beta, same as
- * DEMO_FILM.
+ * The editor section frame (§8.1 §4): a full-bleed 16:9 dark frame holding
+ * the REAL editor capture (`/marketing/editor-frame.png`, 1600×900 from the
+ * live build — W5-02) with three labelled DOM/CSS callouts pinned to the
+ * real regions: compositions left, keyframe timeline bottom, render queue
+ * right (§16: no stylised fake editor UI — this is the actual viewport).
  */
 
 const CALLOUTS = [
@@ -31,15 +28,11 @@ function Callout({ label }: { label: string }) {
 /** Safe-margin construction lines — title safe (10%) and action safe (5%). */
 function SafeMargins() {
   return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-      <div className="absolute inset-[5%] border border-dashed border-subtle" />
-      <div className="absolute inset-[10%] border border-dashed border-subtle/60" />
-      <span className="absolute top-[5.5%] left-[5.5%] font-mono text-hint text-muted">
-        ACTION SAFE
-      </span>
-      <span className="absolute top-[10.5%] right-[10.5%] font-mono text-hint text-muted">
-        TITLE SAFE
-      </span>
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-[5%] border border-dashed border-subtle/40"
+    >
+      <div className="absolute inset-[10%] border border-dashed border-subtle/25" />
     </div>
   );
 }
@@ -50,10 +43,17 @@ export function EditorFrame() {
       <div
         data-testid="editor-frame"
         className="relative aspect-video overflow-hidden rounded-lg border border-border bg-page"
-        role="img"
-        aria-label="Diagram of the editor viewport: compositions on the left, keyframe timeline at the bottom, render queue on the right. A real capture lands here at launch."
       >
-        <div className="editor-grid absolute inset-0" aria-hidden="true" />
+        {/* The real editor — 1600×900 capture from the live build (W5-02). */}
+        {/* eslint-disable-next-line @next/next/no-img-element — static public asset, no optimization needed */}
+        <img
+          src="/marketing/editor-frame.png"
+          alt="The EffectCraft editor viewport: compositions panel on the left, keyframe timeline at the bottom, render queue on the right."
+          width={1600}
+          height={900}
+          className="h-full w-full object-cover"
+          loading="lazy"
+        />
         <SafeMargins />
 
         {/* Slate corner — same honest reel marker as the hero film slot. */}
@@ -82,8 +82,7 @@ export function EditorFrame() {
       <div className="flex flex-col gap-1">
         <p className="text-body-l text-primary">A full compositing editor, unmodified.</p>
         <p className="text-caption text-muted">
-          Timeless timeline. 306 effects. Runs in the browser.
-          {DEMO_FILM.captureOwed ? " Real captures land here at launch." : ""}
+          Timeless timeline. 306 effects. Runs in the browser. Captured from the real build.
         </p>
       </div>
     </div>
