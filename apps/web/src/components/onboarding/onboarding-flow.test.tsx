@@ -123,8 +123,8 @@ describe("OnboardingFlow — the §8.3 shell", () => {
 
     await USER.click(screen.getByRole("button", { name: "Start trial" }));
 
-    expect(port.startTrial).toHaveBeenCalledTimes(1);
-    expect(port.startTrial.mock.calls[0]?.[0]).toBe("ws_new");
+    expect(vi.mocked(port.startTrial)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(port.startTrial).mock.calls[0]?.[0]).toBe("ws_new");
     const started = await screen.findByTestId("onboarding-trial-started");
     expect(started).toHaveAttribute("data-status", "started");
     expect(started).toHaveTextContent(/days free, until /);

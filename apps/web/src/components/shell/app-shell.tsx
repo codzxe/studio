@@ -159,7 +159,9 @@ export function AppShell({ payload, createPort, children }: AppShellProps) {
 
   // The ?ws override (page-authoritative server-side; display-only here).
   const wsMembership = matchMembership(payload.memberships, searchParams.get("ws"));
-  const active = wsMembership ?? defaultMembership;
+  // Normalized: null when there is no membership to show (the layout's
+  // no-membership redirect makes this unreachable in practice).
+  const active: WorkspaceMembership | null = wsMembership ?? defaultMembership ?? null;
 
   // Credits follow the ACTIVE workspace: the server payload when it matches,
   // a client-side refetch when ?ws points elsewhere.
@@ -171,9 +173,10 @@ export function AppShell({ payload, createPort, children }: AppShellProps) {
   }, [payload.credits, payload.entitlements]);
   useEffect(() => {
     if (active === null || active.workspaceId === payload.activeWorkspaceId) return;
+    const workspaceId = active.workspaceId;
     let cancelled = false;
-    const port = createPort?.(active.workspaceId) ?? createShellPort(active.workspaceId);
-    port.billing
+    const refetchPort = createPort?.(workspaceId) ?? createShellPort(workspaceId);
+    refetchPort.billing
       .state()
       .then((state) => {
         if (cancelled) return;
@@ -192,15 +195,6 @@ export function AppShell({ payload, createPort, children }: AppShellProps) {
     };
   }, [active, payload.activeWorkspaceId, createPort]);
 
-  // The active workspace's port (switcher + palette).
-  const port = useMemo(
-    () =>
-      active === null
-        ? null
-        : (createPort?.(active.workspaceId) ?? createShellPort(active.workspaceId)),
-    [active, createPort],
-  );
-
   // ⌘K / Ctrl+K toggles the palette (D-5; shell-only mount — never the editor).
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -215,11 +209,15 @@ export function AppShell({ payload, createPort, children }: AppShellProps) {
 
   const openPalette = useCallback(() => setPaletteOpen(true), []);
 
-  if (defaultMembership === undefined || active === null || port === null) {
+  if (active === null) {
     // Unreachable in practice (the layout redirects no-membership users to
     // /onboarding); rendered defensively, never as a crash.
     return <div className="min-h-svh bg-app">{children}</div>;
   }
+
+  // The active workspace's port (switcher + palette) — after the guard so
+  // every consumer below is non-null.
+  const port = createPort?.(active.workspaceId) ?? createShellPort(active.workspaceId);
 
   return (
     <ShellToastHost>

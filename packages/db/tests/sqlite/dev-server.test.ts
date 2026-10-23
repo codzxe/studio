@@ -84,6 +84,7 @@ describe("sqlite dev server (repos + auth + transactions)", { timeout: 30_000 },
       createdBy: userId,
     });
     const [row] = await db.select().from(t.projects).where(eq(t.projects.id, project.id)).limit(1);
+    if (!row) throw new Error("select did not return the created project");
     expect(row.createdAt).toBeInstanceOf(Date);
     expect(Number.isNaN(row.createdAt.getTime())).toBe(false);
     expect(row.archived).toBe(false); // 0/1 → boolean, never a bare number

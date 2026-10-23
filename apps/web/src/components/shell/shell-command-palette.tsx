@@ -72,8 +72,8 @@ export function ShellCommandPalette({ open, onOpenChange, port }: ShellCommandPa
     };
   }, [open, port]);
 
-  const items = useMemo<readonly CommandItem[]>(() => {
-    const projectItems: readonly CommandItem[] = projects.map((project) => ({
+  const items = useMemo<CommandItem[]>(() => {
+    const projectItems: CommandItem[] = projects.map((project) => ({
       id: `project-${project.id}`,
       group: "projects",
       label: project.name,
