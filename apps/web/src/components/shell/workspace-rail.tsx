@@ -21,17 +21,6 @@
  */
 
 import {
-  type LucideIcon,
-  CreditCard,
-  FolderKanban,
-  LayoutDashboard,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Settings,
-} from "lucide-react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import {
   Button,
   TOOLTIP_DELAY_MS,
   Tooltip,
@@ -39,6 +28,17 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@studio/ui";
+import {
+  CreditCard,
+  FolderKanban,
+  LayoutDashboard,
+  type LucideIcon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+} from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 
 /** D-10: ECUX-literal storage key for the rail collapse state. */
@@ -175,7 +175,11 @@ export function WorkspaceRail({
         <ul className="flex flex-1 flex-col gap-1 px-2 pt-3">
           {RAIL_ITEMS.map((item) => (
             <li key={item.href}>
-              <RailLink item={item} active={isItemActive(pathname, item.href)} collapsed={collapsed} />
+              <RailLink
+                item={item}
+                active={isItemActive(pathname, item.href)}
+                collapsed={collapsed}
+              />
             </li>
           ))}
         </ul>

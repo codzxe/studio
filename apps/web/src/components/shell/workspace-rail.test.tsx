@@ -7,7 +7,7 @@
  * localStorage is spied (jsdom's real store, seeded per test).
  */
 
-import { WorkspaceRail, RAIL_STORAGE_KEY } from "@/components/shell/workspace-rail";
+import { RAIL_STORAGE_KEY, WorkspaceRail } from "@/components/shell/workspace-rail";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";

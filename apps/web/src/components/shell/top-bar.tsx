@@ -23,9 +23,20 @@
  */
 
 import { isApiError } from "@studio/api-client";
-import type { BillingState, Page, Project, SwitchedWorkspace } from "@studio/contracts";
 import { Brand } from "@studio/config";
-import { Avatar, CreditMeter, Menu, MenuContent, MenuItem, MenuItemShortcut, MenuLabel, MenuSeparator, MenuTrigger, SearchInput } from "@studio/ui";
+import type { BillingState, Page, Project, SwitchedWorkspace } from "@studio/contracts";
+import {
+  Avatar,
+  CreditMeter,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuItemShortcut,
+  MenuLabel,
+  MenuSeparator,
+  MenuTrigger,
+  SearchInput,
+} from "@studio/ui";
 import { Check, ChevronsUpDown, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -184,7 +195,12 @@ export function TopBar({
             className="flex h-9 max-w-56 shrink-0 items-center gap-2 rounded-sm border border-border bg-input px-3 text-body-s text-primary transition-colors duration-120 hover:border-border-strong"
           >
             <span className="truncate">{activeMembership.workspace.name}</span>
-            <ChevronsUpDown size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0 text-muted" />
+            <ChevronsUpDown
+              size={16}
+              strokeWidth={1.75}
+              aria-hidden="true"
+              className="shrink-0 text-muted"
+            />
           </button>
         </MenuTrigger>
         <MenuContent align="start" aria-label="Switch workspace">
@@ -246,8 +262,7 @@ export function TopBar({
               aria-label={`Credits balance ${formatShellCredits(credits.balance)} — open billing`}
               className="tabular text-body-s text-primary transition-colors duration-120 hover:text-secondary"
             >
-              {formatShellCredits(credits.balance)}{" "}
-              <span className="text-muted">credits</span>
+              {formatShellCredits(credits.balance)} <span className="text-muted">credits</span>
             </Link>
             {monthlyAllowanceMicrocredits === null ? null : (
               <CreditMeter
