@@ -75,11 +75,20 @@
  * W1-d additive delta (ECUX §6.3, AUD-3 gap 1): the `diff` slot (rendered
  * above the preview slot) + `onViewInTimeline` on the applied card. New
  * testids: plan-diff, plan-view-in-timeline.
+ *
+ * W1-07 additive delta (M5.7b "View in timeline" — the HISTORY half): the
+ * applied card ALSO links to the project's version-history page
+ * (`/w/:slug/history`, BUILD_PLAN §M7 task 4) via the OPTIONAL `timelineHref`
+ * prop — the thread layer derives it from the app-router pathname (the chat
+ * panel only mounts under /w/:slug/*). `onViewInTimeline` stays the IN-EDITOR
+ * reveal (playhead + comp); the link is the timeline PAGE affordance. Absent
+ * prop ⇒ no link (embeds/tests). New testid: plan-history-link.
  */
 
 import type { EditPlan, PlanRisk } from "@studio/contracts";
 import { Badge, Button, Spinner } from "@studio/ui";
 import { ChevronDown, TriangleAlert } from "lucide-react";
+import Link from "next/link";
 import { type ReactElement, type ReactNode, useEffect, useId, useState } from "react";
 import { ChatConfirmDialog } from "./confirm-dialog";
 
@@ -181,6 +190,13 @@ export interface PlanCardProps {
    * affected comp via bridge calls. Absent ⇒ the affordance does not render.
    */
   onViewInTimeline?: () => void;
+  /**
+   * W1-07 (M5.7b): the project's version-history page (`/w/:slug/history`),
+   * token-styled as a link on the APPLIED card. The thread layer derives it
+   * from the pathname; absent (embeds, tests, non-workspace mounts) ⇒ no
+   * link. The applied version lands in this timeline (§9.3).
+   */
+  timelineHref?: string;
   /** Re-apply after undone (or try-again intent wired by the thread layer). */
   onReapply?: () => void;
   /**
@@ -238,6 +254,7 @@ export function PlanCard({
   onCancel,
   onUndo,
   onViewInTimeline,
+  timelineHref,
   onReapply,
   onRetrySave,
   onResolveCandidate,
@@ -498,6 +515,15 @@ export function PlanCard({
               >
                 View in timeline
               </Button>
+            ) : null}
+            {timelineHref !== undefined ? (
+              <Link
+                href={timelineHref}
+                data-testid="plan-history-link"
+                className="text-body-s text-primary underline underline-offset-3 transition-colors duration-120 hover:text-signal"
+              >
+                Version history
+              </Link>
             ) : null}
           </>
         ) : null}

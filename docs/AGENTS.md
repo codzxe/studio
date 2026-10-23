@@ -7,8 +7,9 @@ Where code and instinct disagree, the docs win.
 
 The product is an **agentic motion-graphics SaaS** built around the **EffectCraft**
 editor (MIT OR Apache-2.0), vendored at `editor/` (pin `9db7f3b2`, v0.13.0, per
-`editor/UPSTREAM.md` and ADR-0006). The old PhotoCraft product is **archived** under
-`archive/` — read it only for reference; never import from it.
+`editor/UPSTREAM.md` and ADR-0006). The old PhotoCraft product lived under `archive/`
+until it was **deleted by user order on 2026-10-23** (W1-01) — git history retains
+it (`git log --oneline -- archive/`); never import from it and never restore it.
 
 Doc hierarchy (all under `docs/`): `BUILD_PLAN.md` (execution, milestones M0–M10) →
 `PRODUCT_ARCHITECTURE.md` → `EDITOR_CHAT_UX.md` → `UI_DESIGN_SYSTEM.md` →
@@ -73,8 +74,10 @@ under `apps/web/public/editor/` (it is a build artifact — record size + date i
    UI copy. No user-facing surface may carry the codename; product name comes from
    `@studio/config` brand tokens.
 10. Money: append-only `credit_ledger`; reserve → commit/refund; no negative balance.
-11. No product code imports from `archive/`, `upload/`, `download/`, `tool-results/`,
-    `scripts/` (except via `pnpm` scripts) or from archived legacy packages.
+11. No product code imports from `upload/`, `download/`, `tool-results/`, `scripts/`
+    (except via `pnpm` scripts) or from legacy/archived packages. The old `archive/`
+    tree was deleted by user order on 2026-10-23 (W1-01; git history retains it) —
+    never restore it.
 12. You own ONLY the paths your task lists. Shared/registry files (root configs,
     package.json, tsconfig paths, barrels like `packages/contracts/src/index.ts`)
     only if your task explicitly lists them. Need a change elsewhere? Note it in your

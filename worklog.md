@@ -1678,3 +1678,44 @@ Stage Summary:
 - Files created: 14 test files (packages/ui/src/components/{avatar,card,empty-state,field,frame-line,kbd,menu,popover,select,skeleton,slate,spinner,textarea,tooltip}.test.tsx) + 23 example files (all 23 primitives) + README §5 (additive). No existing file in packages/ui modified (git diff empty on tracked ui files); no component source touched; package.json untouched.
 - Key decisions: examples are typecheck-only docs named *.example.tsx (vitest include cannot match them — verified against vitest.config.ts); a11y floor = unit assertions without axe (devDep not installable per no-install law), full axe pinned as CI-owed in README §5; Select/Tooltip pointer journeys delegated to Playwright e2e with keyboard equivalents pinned in-unit.
 - Blockers/notes for integrator: (1) Field dangling aria-describedby helper reference (see above) — one-line fix owed to a later wave; (2) CI wave must add @axe-core/* devDeps + a Playwright axe sweep over the example galleries (they are now the perfect axe fixture set — every primitive state in one file each); (3) Radix Select click-to-open cannot be covered on-box.
+---
+Task ID: ORCH-W1
+Agent: orchestrator (main agent)
+Task: Fleet relaunch after sandbox reset — user order: finish M9, remove stubs/hardcoded values, add SQLite dev server, delete junk folders, 5 waves × 10 agents.
+
+Work Log:
+- Restored toolchain after sandbox reset: pnpm 9.15.9 (npm i -g), .env (APP_URL/APP_ENV/DATABASE_URL/AUTH_SECRET/MOCK_MODEL=true/LOG_LEVEL), PG17 restore launched in background (scripts/dev-postgres.sh start → .local/pg-restore.log).
+- CRITICAL FIX: previous session's Wave-1 closeout commit be93a10 (members/api-keys routes, diff-card, asset-hardening, 19.7k-line build-artifact purge) was NEVER PUSHED — pushed now (rebased to 7de6666 per remote).
+- Baseline state verified: M0-M8 LANDED; M9 in progress (M9-prep + M9-A + old-W1 wave landed); cargo intact at ~/.cargo/bin; node_modules intact.
+- User-ordered scope for this fleet: (1) delete archive/, tool-results/, agent-ctx/ and other junk; (2) SQLite dev-server support in packages/db (PG stays prod/test); (3) remove stubs/hardcoded values (me.ts:53 plan:"trial", /w/page.tsx stub is Wave-2 dashboard work); (4) complete all remaining M9; (5) 5 waves × 10 agents.
+
+Stage Summary:
+- WAVE-1 (this wave, 10 agents): W1-01 repo-cleaner · W1-02 sqlite-db (packages/db dual dialect) · W1-03 sqlite-wiring (env/scripts/smoke) · W1-04 stub-killer (gateway hardcoded plan) · W1-05 owed-fixes (prompt/field/pins) · W1-06 gate-runner (baseline matrix) · W1-07 wave1-verifier (closeout wiring) · W1-08 m9-scope-auditor (read-only, produces Wave-2 manifest) · W1-09 toolchain-worker (CLI rebuild + un-skip CLI-gated tests) · W1-10 worklog-doctor (fleet memory).
+- Waves 2-5 planned: build M9 surfaces, integration+e2e, hardening+closeout. Manifests to follow from W1-08.
+---
+Task ID: W1-01
+Agent: general-purpose subagent (repo-cleaner)
+Task: Repo junk purge by user order — delete archive/, tool-results/, agent-ctx/; gitignore hardening; docs updated.
+
+Work Log:
+- Mandatory reads: docs/AGENTS.md (law; #11 import ban + #12 ownership), worklog tail (ORCH-W1 wave plan at lines 1682-1694), task spec.
+- Import proof BEFORE deletion (law #11): rg "archive/" over apps/ services/ packages/ *.ts/tsx = **0 matches** (re-verified after deletion: still 0). Same proof for "agent-ctx/" and "tool-results/" in product code: 0 matches. Deleting archive/ could break nothing.
+- git rm -r archive/ — 850 tracked files, 12MB of pre-pivot PhotoCraft legacy code. Content preserved in git history per user order.
+- git rm -r agent-ctx/ — 11 tracked stale M4-wave subagent handoff files (96KB).
+- tool-results/ — had been re-COMMITTED after the 59ef2d7 purge (tracked files confirmed via git ls-files): untracked with git rm -r --cached + rm -rf (2.5MB). Regenerates from tool sessions; now permanently gitignored.
+- Hygiene finds during root scan: .studio-git.lock (0-byte flock target) was TRACKED — untracked, disk copy kept (git-sync keeps flocking it; ignore rule prevents future add -A sweeps). .github-token (41-byte PAT) was TRACKED at repo root — direct docs/secrets-policy.md §1 violation ("secrets… never in the repo, never in git"); untracked with disk copy kept so fleet pushes are unaffected; value never printed. History scrub + token rotation owed to the platform owner (see Stage Summary).
+- .gitignore hardened FIRST (before untracks, so concurrent peer add -A sweeps immediately respect the rules): added /archive/, /agent-ctx/, /tool-results/, /.studio-git.lock/, /.github-token; /effectcraft-upstream/ and .local/ verified already present.
+- Other-junk scan: zero .scratch/, *.tmp, *.bak, *~ anywhere (node_modules/.git/.local/editor/.turbo pruned). NOT touched (outside W1-01 ownership, reported for orchestrator): upload/ (root-owned; 2 tracked user paste files), download/ (1 tracked user docx "Studio项目文档摘要.docx"), skills/ (1070 tracked files, 61MB sandbox tooling).
+- docs/AGENTS.md: product-truth paragraph + hard rule #11 rewritten — archive/ deleted by user order 2026-10-23 (W1-01), git history retains it, never restore/import. Only the archive-reference lines touched.
+- docs/BUILD_PLAN.md: checked — all "archive" mentions (lines 106, 108, 152, 750, 790) are plan HISTORY (M0 archival decisions), none describe archive/ as existing today → no edits per task rule. docs/legacy-inventory.md: does not exist → no action.
+- docs/repo-map.md: had no archive/agent-ctx entries to remove; added a "Deleted 2026-10-03" callout under Top-level directories marking archive/, agent-ctx/, tool-results/ as deleted+gitignored.
+- CHANGELOG.md: added [Unreleased] → Removed entry for the purge (additive; beta.0 section untouched; apps/web changelog page is a hardcoded mirror that renders the page, not the md — changelog.test.tsx verified unaffected).
+- Final proof grep (archive/|agent-ctx/|tool-results/ over *.ts/tsx/*.json, excluding .gitignore/docs): ONLY biome.json:13 stale "archive/**" ignore glob remains — harmless (matches nothing now) and biome.json is a root config outside W1-01 ownership (law #12). Zero product references to any deleted dir.
+- Gates: docs-only + deletions; no TS touched by me, so no typecheck/test delta owed. pnpm exec biome check on docs not applicable (**/*.md ignored by biome.json).
+
+Stage Summary:
+- 888 tracked files deleted / 249,231 lines (staged): archive/ 850 files 12MB · agent-ctx/ 11 files 96KB · tool-results/ 25 tracked scratch files (2.5MB dir purged) · .github-token + .studio-git.lock untracked (disk copies kept — pushes and flock unaffected).
+- Files touched: .gitignore, docs/AGENTS.md (archive lines only), docs/repo-map.md (deletion note), CHANGELOG.md (additive Unreleased entry), worklog.md (this entry).
+- Key decisions: untrack-not-delete for the credential + lock files ( deletion would break fleet pushes / git-sync serialization); .gitignore edited before untracks so concurrent add -A sweeps can never re-capture tool-results/, the lock or the token.
+- Sweep manifest: this git-sync commit carries peers' in-flight M files per the add -A fleet protocol (services/gateway/src/routes/me.ts, src/litellm/prompt.ts, tests/auth-workspace.test.ts, tests/litellm-runner.test.ts, packages/ui/src/components/field.tsx + field.test.tsx, apps/web/src/components/billing/page-billing-view.tsx) + ORCH-W1's uncommitted worklog entry; owners continue on top.
+- Blockers/notes for owners: (1) biome.json:13 "archive/**" ignore glob is stale — config owner may drop it; (2) pnpm-workspace.yaml:5 comment "archive/* is deliberately excluded" is stale — reword when owned; (3) .github-token REMAINS IN GIT HISTORY (41-byte PAT, also embedded in remote URL) — rotation + history scrub owed per secrets policy; (4) upload/download hold user-provided files, skills/ holds 61MB tracked sandbox tooling — orchestrator decision, deliberately not deleted by W1-01; (5) historical docs still describing archive/ as a place (docs/DECISIONS.md:21 D-13 ruling, docs/phases/M0.md:18, docs/phases/M5-SEAMS.md:132, docs/phases/gap/platform.md:169/186/194) — outside W1-01 ownership, left as history.

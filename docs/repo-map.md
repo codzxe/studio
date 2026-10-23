@@ -7,6 +7,11 @@ are §3.1. Statuses cited from `docs/phases/phase-exit-audit.md`.
 
 ## Top-level directories
 
+> **Deleted 2026-10-23 (user order, W1-01):** `archive/` (the pre-pivot PhotoCraft
+> legacy tree — retained in git history only, `git log --oneline -- archive/`),
+> `agent-ctx/` (stale subagent handoff files) and `tool-results/` (session scratch).
+> All three are gitignored; do not recreate or commit them.
+
 ### `apps/` — deployable services
 
 Five Node 22 services, one per §3.1 responsibility, each with its own `Dockerfile`

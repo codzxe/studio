@@ -4,6 +4,8 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { entitlementsFor } from "@studio/config";
+
 import {
   CookieJar,
   HAS_DATABASE,
@@ -13,6 +15,8 @@ import {
   unique,
   uniqueEmail,
 } from "./helpers.js";
+
+const DAY_MS = 86_400_000;
 
 const d = describe.skipIf(!HAS_DATABASE);
 
@@ -113,6 +117,104 @@ d("GET /v1/me (§7.2)", () => {
     expect(membership).toBeDefined();
     expect(membership?.role).toBe("owner");
     expect(typeof body.data.plan.creditsBalance).toBe("number");
+  });
+});
+
+// W1-04 stub purge: GET /v1/me must report the active workspace's REAL
+// subscription row through the same derivation GET /v1/billing/state uses
+// (subscription row → effectivePlan, D-4 → catalog entitlements) — never the
+// old hardcoded `{ plan: "trial", includedCredits: 0, renewsAt: null }`.
+d("GET /v1/me plan summary — real subscription data (W1-04)", () => {
+  interface MePlan {
+    readonly plan: string;
+    readonly creditsBalance: number;
+    readonly includedCredits: number;
+    readonly renewsAt: string | null;
+  }
+
+  async function mePlan(jar: CookieJar): Promise<MePlan> {
+    const response = await api(server.base, "/v1/me", { jar });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: { plan: MePlan } };
+    return body.data.plan;
+  }
+
+  it("trialing subscription row → plan 'trial' with the row's trial window (D-4 state on the Starter row)", async () => {
+    const jar = await signUp();
+    const ws = await createWorkspace(jar, unique("Me Trial WS"));
+    // Exactly what POST /v1/billing/trial writes (D-4): status 'trialing' on
+    // the STARTER row, trialEnd = period end.
+    const trialEnd = new Date(Date.now() + 14 * DAY_MS);
+    await server.deps.repos.subscriptions.upsertState(ws.id, {
+      planId: "starter",
+      status: "trialing",
+      stripeSubscriptionId: null,
+      currentPeriodEnd: trialEnd,
+      trialEnd,
+      cancelAtPeriodEnd: false,
+    });
+
+    const plan = await mePlan(jar);
+    // The trialing row gates as the TRIAL catalog tier (D-4) — derived, and
+    // distinguishable from the old stub via the row's trial window + the
+    // catalog allowance (the stub had renewsAt:null + includedCredits:0).
+    expect(plan.plan).toBe("trial");
+    expect(plan.includedCredits).toBe(entitlementsFor("trial").monthlyCreditAllowance);
+    expect(plan.includedCredits).toBe(50_000_000); // 50 credits, µc (D-12)
+    expect(plan.renewsAt).toBe(trialEnd.toISOString());
+  });
+
+  it("paid subscription row → plan is the PAID plan, not a fabricated 'trial'", async () => {
+    const jar = await signUp();
+    const ws = await createWorkspace(jar, unique("Me Paid WS"));
+    const periodEnd = new Date(Date.now() + 30 * DAY_MS);
+    await server.deps.repos.subscriptions.upsertState(ws.id, {
+      planId: "pro",
+      status: "active",
+      stripeSubscriptionId: "sub_test_pro",
+      currentPeriodEnd: periodEnd,
+      trialEnd: null,
+      cancelAtPeriodEnd: false,
+    });
+    // A real ledger grant so creditsBalance is provably the workspace's own
+    // ledger sum (µc, D-12) for the same row-derived plan.
+    await server.deps.repos.ledger.grant(ws.id, {
+      amount: 3_200_000_000,
+      idempotencyKey: unique("me-grant-pro"),
+    });
+
+    const plan = await mePlan(jar);
+    expect(plan.plan).toBe("pro");
+    expect(plan.includedCredits).toBe(entitlementsFor("pro").monthlyCreditAllowance);
+    expect(plan.includedCredits).toBe(2_000_000_000); // 2,000 credits, µc (D-12)
+    expect(plan.renewsAt).toBe(periodEnd.toISOString());
+    expect(plan.creditsBalance).toBe(3_200_000_000);
+  });
+
+  it("no subscription row → the documented no-row default, agreeing with GET /v1/billing/state", async () => {
+    const jar = await signUp();
+    const ws = await createWorkspace(jar, unique("Me NoRow WS"));
+
+    const plan = await mePlan(jar);
+    // Honest DERIVED default (plan.ts effectivePlan(null)): the most
+    // restrictive trial tier — the same plan GET /v1/billing/state reports,
+    // with the trial catalog allowance (not the old hardcoded 0) and no
+    // fabricated renewal date.
+    expect(plan.plan).toBe("trial");
+    expect(plan.includedCredits).toBe(entitlementsFor("trial").monthlyCreditAllowance);
+    expect(plan.includedCredits).not.toBe(0);
+    expect(plan.renewsAt).toBeNull();
+
+    // Consistency: the ONE billing read reports the same plan for this
+    // workspace — /v1/me never disagrees with /v1/billing/state.
+    const state = await api(server.base, "/v1/billing/state", {
+      jar,
+      headers: { "x-workspace-id": ws.id },
+    });
+    expect(state.status).toBe(200);
+    const stateBody = (await state.json()) as { data: { plan: string; status: string } };
+    expect(stateBody.data.plan).toBe(plan.plan);
+    expect(stateBody.data.status).toBe("none");
   });
 });
 

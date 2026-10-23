@@ -50,8 +50,12 @@ export function Field({
   const helperId = `${id}-helper`;
   const errorId = `${id}-error`;
 
+  // The helper node is unmounted while an error is shown (it renders below
+  // the control), so its id must leave aria-describedby at the same time —
+  // otherwise the control references a node that does not exist (M9-A
+  // dangling-reference finding).
   const describedBy =
-    [helperText ? helperId : null, error ? errorId : null]
+    [helperText && !error ? helperId : null, error ? errorId : null]
       .filter((value): value is string => value !== null)
       .join(" ") || undefined;
 

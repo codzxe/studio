@@ -1,6 +1,0 @@
-{
-  "template": "linkedin-banner@1",
-  "note": "evals/templates/linkedin-banner@1/assets-note.md",
-  "comment": "The note explicitly generates NO PNG ('no raster slots — the demo asset is the demo fill values': name/title text + accent colour, no image slots). Empty assets[] is the explicit, reviewed form of 'no raster assets' — see evals/fixtures/generator/README.md.",
-  "assets": []
-}

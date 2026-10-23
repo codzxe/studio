@@ -14,6 +14,15 @@ function renderField(overrides: Record<string, unknown> = {}) {
   );
   return { container };
 }
+// Full RenderResult (unmount included) for the regression tests below.
+function renderFieldFull(overrides: Record<string, unknown> = {}) {
+  const props = {
+    label: "Workspace name",
+    helperText: "Lowercase, no spaces",
+    ...overrides,
+  } as React.ComponentProps<typeof Field>;
+  return render(<Field {...props}>{(control) => <input type="text" {...control} />}</Field>);
+}
 
 describe("Field (§7.2/§12 — label above, aria wiring, never placeholder-only)", () => {
   it("passes a stable id to the control and labels it via htmlFor", () => {
@@ -53,15 +62,13 @@ describe("Field (§7.2/§12 — label above, aria wiring, never placeholder-only
     expect(input).toHaveAttribute("aria-invalid", "true");
     const error = screen.getByRole("alert");
     expect(error).toHaveTextContent("Name already taken");
-    // The error node is one of the described-by targets (§12).
+    // The error node is the ONLY described-by target: the helper id left
+    // aria-describedby together with the unmounted helper node (M9-A
+    // dangling-reference fix — pinned hard, no longer tolerated).
     const describedBy = input.getAttribute("aria-describedby") ?? "";
-    expect(describedBy.split(" ")).toContain(error.getAttribute("id"));
+    expect(describedBy.split(" ")).toEqual([error.getAttribute("id")]);
     // The visible helper is replaced by the error.
     expect(screen.queryByText("Lowercase, no spaces")).not.toBeInTheDocument();
-    // NOTE (found while writing this suite, reported to worklog): aria-describedby
-    // still references `${id}-helper` even though the helper node is removed when
-    // an error is shown — a dangling reference (minor a11y bug, fix owed to a
-    // later wave; not pinned as correct here, only tolerated).
   });
 
   it("errors carry the danger colour and the alert icon (§7.2)", () => {
@@ -79,5 +86,23 @@ describe("Field (§7.2/§12 — label above, aria wiring, never placeholder-only
     const asterisk = container.querySelector("label span");
     expect(asterisk?.getAttribute("aria-hidden")).toBe("true");
     expect(asterisk?.textContent).toBe("*");
+  });
+
+  it("regression (M9-A dangling-ref fix): error present → aria-describedby holds ONLY the error id; error absent + helper → helper id present", () => {
+    // Error shown (helperText still provided): the helper node is unmounted,
+    // so its id must leave aria-describedby with it — the error id is the
+    // sole remaining target, never a reference to a missing node.
+    const errored = renderFieldFull({ id: "ws-reg", error: "Name already taken" });
+    expect(errored.container.querySelector("input")?.getAttribute("aria-describedby")).toBe(
+      "ws-reg-error",
+    );
+    errored.unmount();
+
+    // No error: the mounted helper is the described-by target again.
+    const helped = renderFieldFull({ id: "ws-reg" });
+    expect(helped.container.querySelector("input")?.getAttribute("aria-describedby")).toBe(
+      "ws-reg-helper",
+    );
+    expect(screen.getByText("Lowercase, no spaces").getAttribute("id")).toBe("ws-reg-helper");
   });
 });
