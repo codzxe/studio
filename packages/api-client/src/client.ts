@@ -80,11 +80,15 @@ import {
   type ProjectVersion,
   QUEUE_RENDER_SCHEMA,
   type QueueRenderRequest,
+  RENDERS_QUERY_SCHEMA,
   REQUEST_ACCESS_SCHEMA,
   RESOLVE_COMMENT_SCHEMA,
   RESTORE_VERSION_SCHEMA,
   RUN_EVENT_REQUEST_SCHEMA,
+  type RenderEstimate,
   type RenderJob,
+  ESTIMATE_RENDER_SCHEMA,
+  type EstimateRenderRequest,
   type RequestAccessRequest,
   type RequestAccessResponse,
   type ResolveCommentRequestInput,
@@ -163,6 +167,7 @@ import {
   PAGE_LEDGER_SCHEMA,
   PAGE_MESSAGES_SCHEMA,
   PAGE_PROJECTS_SCHEMA,
+  PAGE_RENDERS_SCHEMA,
   PAGE_SHARE_COMMENTS_SCHEMA,
   PAGE_SHARE_LINKS_SCHEMA,
   PAGE_THREADS_SCHEMA,
@@ -173,6 +178,7 @@ import {
   PROJECT_MANIFEST_SCHEMA,
   PROJECT_SCHEMA,
   PROJECT_VERSION_SCHEMA,
+  RENDER_ESTIMATE_SCHEMA,
   RENDER_JOB_SCHEMA,
   REQUEST_ACCESS_RESPONSE_SCHEMA,
   RUN_RECORD_SCHEMA,
@@ -263,6 +269,7 @@ export type CommentsQueryInput = z.input<typeof COMMENTS_QUERY_SCHEMA>;
 export type ShareCommentsQueryInput = z.input<typeof SHARE_COMMENTS_QUERY_SCHEMA>;
 export type LedgerQueryInput = z.input<typeof LEDGER_QUERY_SCHEMA>;
 export type ActivityQueryInput = z.input<typeof ACTIVITY_QUERY_SCHEMA>;
+export type RendersQueryInput = z.input<typeof RENDERS_QUERY_SCHEMA>;
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -688,8 +695,33 @@ export interface ApiClient {
     invoices(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<InvoiceRecord>>;
   };
   readonly renders: {
+    /**
+     * POST /v1/renders — queue a render (§7.2 idempotent). Returns the job
+     * with status `queued`, the server-resolved `versionId` snapshot and a
+     * `progress` of 0 (framesTotal when the settings pin it down).
+     */
     create(body: QueueRenderRequest, options?: CallOptions): Promise<RenderJob>;
+    /**
+     * GET /v1/renders — render history, cursor-paginated (§7.2), newest
+     * first. Filter by `projectId` and/or `status`; pass `nextCursor` back
+     * as `cursor` for the next page.
+     */
+    list(query?: RendersQueryInput, options?: CallOptions): Promise<Page<RenderJob>>;
+    /** GET /v1/renders/:id — poll a job: progress, resultUrl once completed. */
     get(id: string, options?: CallOptions): Promise<RenderJob>;
+    /**
+     * POST /v1/renders/:id/cancel — request cancellation (idempotent via the
+     * Idempotency-Key header). Returns the job with `cancelRequested: true`;
+     * terminal jobs come back unchanged (cancel is a no-op there).
+     */
+    cancel(id: string, options?: CallOptions): Promise<RenderJob>;
+    /**
+     * POST /v1/renders/estimate — pre-flight quote for the render dialog:
+     * credits, output seconds and the long-edge pixel size AFTER plan
+     * clamping. `minApplied: true` means a plan minimum replaced the
+     * requested settings. Pure computation: no job, no ledger mutation.
+     */
+    estimate(body: EstimateRenderRequest, options?: CallOptions): Promise<RenderEstimate>;
   };
   readonly comments: {
     list(
@@ -1169,8 +1201,29 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
+      list: async (query, options) =>
+        impl.get(
+          "/renders",
+          queryOf(RENDERS_QUERY_SCHEMA, query),
+          PAGE_RENDERS_SCHEMA,
+          options?.signal,
+        ),
       get: async (id, options) =>
         impl.get(`/renders/${encodeId(id)}`, undefined, RENDER_JOB_SCHEMA, options?.signal),
+      cancel: async (id, options) =>
+        impl.mutate("POST", `/renders/${encodeId(id)}/cancel`, {
+          responseSchema: RENDER_JOB_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      estimate: async (body, options) =>
+        impl.mutate("POST", "/renders/estimate", {
+          body,
+          bodySchema: ESTIMATE_RENDER_SCHEMA,
+          responseSchema: RENDER_ESTIMATE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
     },
     comments: {
       list: async (projectId, query, options) =>

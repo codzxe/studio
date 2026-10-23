@@ -1284,3 +1284,30 @@ Work Log:
 Stage Summary:
 - Workspace fully restored to the pushed M5–M7 state; zero code drift; gates green; M8 can start from a proven base.
 - effectcraft-cli native binary is NOT yet built on this box (next: cargo build --release -p effectcraft-cli in editor/ — incremental across foreground calls).
+---
+Task ID: M8-C
+Agent: general-purpose (M8-C)
+Task: Render wire v2 in @studio/contracts — D-11 status flip (completed, not succeeded), RenderJob v2, estimate/cancel/list schemas + tests.
+
+Work Log:
+- Read AGENTS.md, worklog tail, BUILD_PLAN §M8, DECISIONS D-2/D-11/D-12; copied house shapes from routes/common.ts + siblings (comments.ts query, runs.ts CANCEL_RUN_SCHEMA, billing.ts header-key comments).
+- Rewrote packages/contracts/src/routes/renders.ts (wire v2): RENDER_STATUSES flipped succeeded→completed (D-11) + new RENDER_STATUS_SCHEMA z.enum; RenderJob v2 adds versionId (server-pinned), cancelRequested, progress {framesDone, framesTotal, percent 0..100 int}, errorCode, sizeBytes, expiresAt, startedAt; QUEUE_RENDER_SCHEMA + RENDER_SETTINGS_SCHEMA byte-unchanged; NEW RENDER_ESTIMATE_REQUEST_SCHEMA (strict, NO idempotencyKey — pure read), CANCEL_RENDER_SCHEMA (optional reason, mirrors CANCEL_RUN_SCHEMA; key rides Idempotency-Key header), RENDERS_QUERY_SCHEMA (PAGINATION_QUERY_SCHEMA.extend + optional projectId/status filters → house Page<RenderJob>); NEW RenderProgress + EstimateResult interfaces, RenderQuality type.
+- Added packages/contracts/tests/renders.test.ts — 18 deterministic tests: D-11 pins (enum + list query reject "succeeded"; Record<RenderStatus,true> compile pin), D-2 format union, settings refine, queue strictness (versionId rejected in body), estimate strictness (idempotencyKey rejected), cancel header convention, sibling-identical pagination, RenderJob/EstimateResult/Page compile+runtime pins.
+- Gates serial: contracts typecheck GREEN; contracts test 206/206 GREEN (188 pre-existing + 18 new); biome check --write packages/contracts clean (import order + comment alignment only).
+
+PINNED CONVENTIONS (read before wiring — api-client + M8-G):
+- Estimate route pinned as POST /v1/renders/estimate (settings nests → GET ruled out). PURE READ: M8-G must add it to IDEMPOTENCY_EXCLUDED_PATHS (no Idempotency-Key header required).
+- Cancel: POST /v1/renders/:id/cancel, body CANCEL_RENDER_SCHEMA {reason?}; Idempotency-Key HEADER (8–128, IDEMPOTENCY_KEY_SCHEMA) enforced by the global POST middleware — never in the body.
+- List: GET /v1/renders?projectId&status&limit&cursor; BOTH filters optional (workspace scope from session); response Page<RenderJob>; query object is NON-strict z.object exactly like siblings (comments/invoices/activity).
+- Responses stay readonly interfaces (house convention; task items 3/5 said "interface") — api-client derives its own zod response validators from the types, as it already does.
+- credits stays whole-credit display number|null on the wire (D-12 µc→credits conversion at the gateway route boundary; contracts never see µc).
+
+Flags for later waves (NOT done by M8-C — ownership):
+- M8-G: services/gateway/src/routes/renders.ts:62 maps completed→succeeded — now type-breaks by design; the toJob literal also misses the 7 new required RenderJob fields. DB renders table needs columns for the new fields (concurrent agent was editing packages/db/src/schema.ts in the shared tree — not mine).
+- api-client agent (concurrent): response-schemas.ts RENDER_JOB_SCHEMA + fixtures.ts DEMO_RENDERS still carry "succeeded" + the v1 field set — must be flipped to these pins.
+- runs.ts SERVER_RUN_STATUSES still carries streaming|applying — the RUN half of D-11 remains unimplemented; integrator to assign (my ownership was renders.ts only).
+
+Stage Summary:
+- Files: packages/contracts/src/routes/renders.ts (rewritten), packages/contracts/tests/renders.test.ts (new, 18 tests). Barrel lines already existed; no barrel edit needed.
+- Gates: typecheck GREEN, 206/206 tests GREEN, biome clean.
+- No deviations beyond the documented route pins above; all exported names/shapes exactly as dispatched.

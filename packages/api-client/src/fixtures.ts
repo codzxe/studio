@@ -1174,6 +1174,8 @@ const DEMO_RENDERS: readonly RenderJob[] = [
     id: "rnd_demo_launch_mp4",
     projectId: "prj_demo_launch_film",
     compId: "cmp_demo_launch_main",
+    // The §9.2 snapshot the worker renders (v4 is the current version).
+    versionId: "ver_demo_launch_film_4",
     format: "mp4",
     settings: {
       timeFrom: 0,
@@ -1183,18 +1185,27 @@ const DEMO_RENDERS: readonly RenderJob[] = [
       frameRate: 24,
       quality: "good",
     },
-    status: "succeeded",
+    // D-11: the DB vocabulary — `completed`, never `succeeded`.
+    status: "completed",
+    cancelRequested: false,
+    progress: { framesDone: 720, framesTotal: 720, percent: 100 },
     credits: 14,
     resultUrl: demoUrl("wsp_demo_northlight", "renders", "rnd_demo_launch_mp4.mp4"),
     error: null,
+    errorCode: null,
+    sizeBytes: 48_231_808,
     createdBy: DEMO_USER_ID,
     createdAt: "2026-10-10T09:12:00Z",
+    startedAt: "2026-10-10T09:12:20Z",
     completedAt: "2026-10-10T09:17:41Z",
+    // §9.2 retention: signed result URLs expire with the output (30 days).
+    expiresAt: "2026-11-09T09:17:41Z",
   },
   {
     id: "rnd_demo_social_pngseq",
     projectId: "prj_demo_social_teaser",
     compId: "cmp_demo_social_vertical",
+    versionId: "ver_demo_social_teaser_4",
     format: "png-seq",
     settings: {
       timeFrom: 0,
@@ -1205,12 +1216,18 @@ const DEMO_RENDERS: readonly RenderJob[] = [
       quality: "draft",
     },
     status: "queued",
+    cancelRequested: false,
+    progress: { framesDone: 0, framesTotal: 270, percent: 0 },
     credits: null,
     resultUrl: null,
     error: null,
+    errorCode: null,
+    sizeBytes: null,
     createdBy: DEMO_USER_ID,
     createdAt: "2026-10-14T09:48:30Z",
+    startedAt: null,
     completedAt: null,
+    expiresAt: null,
   },
 ] satisfies readonly RenderJob[];
 
