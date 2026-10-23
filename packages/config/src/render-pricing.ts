@@ -162,21 +162,16 @@ export interface RenderCostInput {
   readonly quality: RenderQualityId;
 }
 
-/**
- * Deterministic render cost in INTEGER microcredits (D-12) — the estimate the
- * UI shows, the amount the gateway reserves at queue time and the amount it
- * commits on completion. One formula, no drift.
- *
- * Order of operations is the module-header contract: validate → integer ms →
- * multiply by every numerator → ONE round-half-up division → minimum-charge
- * clamp. Deterministic for identical inputs; never touches floats for money.
- *
- * Throws a typed `StudioError` (`VALIDATION_FAILED`) for undeclared formats,
- * unknown qualities, non-integer or out-of-range long edges (> 3840 px is
- * illegal input), and durations that are non-positive, above 24 h or finer
- * than a millisecond. Error messages state the rule, never the raw value.
- */
-export function estimateRenderCostUc(input: RenderCostInput): number {
+/** Internal result of the single cost computation (never re-derived twice). */
+interface ComputedRenderCost {
+  /** The exact formula output BEFORE the minimum-charge clamp. */
+  readonly rawUc: number;
+  /** The clamped, chargeable amount — what estimateRenderCostUc returns. */
+  readonly totalUc: number;
+}
+
+/** One shared computation behind both exports — the no-drift guarantee. */
+function computeRenderCost(input: RenderCostInput): ComputedRenderCost {
   const { format, outputSeconds, longEdgePx, quality } = input;
   if (!isRenderFormatDeclared(format)) {
     throw new StudioError("VALIDATION_FAILED", {
@@ -225,7 +220,55 @@ export function estimateRenderCostUc(input: RenderCostInput): number {
   const denominator = 1000 * resolution.den * qualityMultiplier.den;
   // Round-half-up, ONCE, at the end: floor((2N + D) / (2D)).
   const raw = Math.floor((2 * numerator + denominator) / (2 * denominator));
-  return Math.max(raw, RENDER_MIN_CHARGE_UC);
+  return { rawUc: raw, totalUc: Math.max(raw, RENDER_MIN_CHARGE_UC) };
+}
+
+/**
+ * Deterministic render cost in INTEGER microcredits (D-12) — the estimate the
+ * UI shows, the amount the gateway reserves at queue time and the amount it
+ * commits on completion. One formula, no drift.
+ *
+ * Order of operations is the module-header contract: validate → integer ms →
+ * multiply by every numerator → ONE round-half-up division → minimum-charge
+ * clamp. Deterministic for identical inputs; never touches floats for money.
+ *
+ * Throws a typed `StudioError` (`VALIDATION_FAILED`) for undeclared formats,
+ * unknown qualities, non-integer or out-of-range long edges (> 3840 px is
+ * illegal input), and durations that are non-positive, above 24 h or finer
+ * than a millisecond. Error messages state the rule, never the raw value.
+ */
+export function estimateRenderCostUc(input: RenderCostInput): number {
+  return computeRenderCost(input).totalUc;
+}
+
+/**
+ * Breakdown behind {@link estimateRenderCostUc} for the estimate ROUTE
+ * (`POST /v1/renders/estimate` — the M8-C contracts `EstimateResult`):
+ * the same single computation, plus the pre-clamp raw amount so the gateway
+ * can report `minApplied` WITHOUT re-deriving the formula (which would be
+ * the one place drift could creep in). Same typed-error contract.
+ */
+export interface RenderCostDetail {
+  /** The chargeable amount — always `estimateRenderCostUc(input)`. */
+  readonly totalUc: number;
+  /** The exact formula output BEFORE the minimum-charge clamp. */
+  readonly rawUc: number;
+  /** `true` iff the platform minimum charge was applied (raw < minimum). */
+  readonly minApplied: boolean;
+}
+
+/**
+ * The estimate-route breakdown: total, raw pre-clamp amount and the
+ * `minApplied` flag the wire exposes — one computation, no second formula.
+ * Frozen result; same validation errors as {@link estimateRenderCostUc}.
+ */
+export function estimateRenderCostDetailUc(input: RenderCostInput): RenderCostDetail {
+  const { rawUc, totalUc } = computeRenderCost(input);
+  return Object.freeze({
+    totalUc,
+    rawUc,
+    minApplied: rawUc < RENDER_MIN_CHARGE_UC,
+  });
 }
 
 // ───────────────────────────────────────────────────────────────────────────
