@@ -16,7 +16,8 @@ import { tablesFor } from "../src/tables.js";
  *  - demo user demo@studio.test (password documented below)
  *  - demo workspace (Better Auth organization) "Demo Workspace"
  *  - demo project with 3 versions of the empty .ecproj placeholder fixture
- *  - 1,000 granted credits (idempotency key seed:demo:grant:1000)
+ *  - 1,000 granted credits = 1,000,000,000 µc (idempotency key
+ *    seed:demo:grant:1000c — see GRANT_IDEMPOTENCY_KEY)
  *  - a thread with one greeting message
  *
  * Re-running is safe: every step checks for existing rows first, and the
@@ -37,7 +38,20 @@ const PROJECT_ID = "prj_demo";
 const VERSION_IDS = ["ver_demo_1", "ver_demo_2", "ver_demo_3"] as const;
 const THREAD_ID = "thr_demo";
 const MESSAGE_ID = "msg_demo";
-const GRANT_IDEMPOTENCY_KEY = "seed:demo:grant:1000";
+/** µc per credit (D-12: the ledger stores integer microcredits). */
+const MICROCREDITS_PER_CREDIT = 1_000_000;
+/** 1,000 demo credits, in µc — the mock chat run reserves ~2 credits per run. */
+const DEMO_GRANT_CREDITS = 1_000;
+const DEMO_GRANT_MICROCREDITS = DEMO_GRANT_CREDITS * MICROCREDITS_PER_CREDIT;
+/**
+ * Keyed "…:1000c" (credits, not raw µc): the pre-M6-E seed granted `amount:
+ * 1000` when the ledger column was whole credits; M6-E widened the column to
+ * µc and the seed's grant silently became 0.001 credits — every seeded chat
+ * run then failed INSUFFICIENT_CREDITS. The new key re-grants correctly on
+ * databases seeded by the old seed (grants are idempotency-keyed, replays
+ * never re-add).
+ */
+const GRANT_IDEMPOTENCY_KEY = "seed:demo:grant:1000c";
 
 /** Placeholder empty .ecproj fixture bytes (documented; see module docs). */
 const DEMO_ECPROJ = Buffer.from(
@@ -165,7 +179,7 @@ async function main(): Promise<void> {
     // 4 — 1,000 demo credits (idempotent grant via the ledger repo)
     const repos = createRepos(db);
     const grant = await repos.ledger.grant(ORG_ID, {
-      amount: 1000,
+      amount: DEMO_GRANT_MICROCREDITS,
       idempotencyKey: GRANT_IDEMPOTENCY_KEY,
       metadata: { source: "seed" },
     });

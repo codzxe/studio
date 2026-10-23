@@ -769,7 +769,9 @@ export function ProjectsListView({
           onValueChange={(value) => changeFilter(asFilter(value))}
           data-testid="projects-filters"
         >
-          <TabsList variant="pill">
+          {/* §12/§13: the four pill filters wrap at narrow widths instead of
+           * forcing horizontal scroll (the m9-visual 320px gate). */}
+          <TabsList variant="pill" className="flex-wrap">
             {FILTERS.map((entry) => (
               <TabsTrigger
                 key={entry.value}

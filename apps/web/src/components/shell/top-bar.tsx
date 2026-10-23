@@ -192,7 +192,7 @@ export function TopBar({
             type="button"
             data-testid="workspace-switcher"
             aria-label={`Workspace: ${activeMembership.workspace.name}. Switch workspace.`}
-            className="flex h-9 max-w-56 shrink-0 items-center gap-2 rounded-sm border border-border bg-input px-3 text-body-s text-primary transition-colors duration-120 hover:border-border-strong"
+            className="flex h-9 min-w-0 max-w-56 shrink items-center gap-2 rounded-sm border border-border bg-input px-3 text-body-s text-primary transition-colors duration-120 hover:border-border-strong"
           >
             <span className="truncate">{activeMembership.workspace.name}</span>
             <ChevronsUpDown
@@ -262,7 +262,8 @@ export function TopBar({
               aria-label={`Credits balance ${formatShellCredits(credits.balance)} — open billing`}
               className="tabular text-body-s text-primary transition-colors duration-120 hover:text-secondary"
             >
-              {formatShellCredits(credits.balance)} <span className="text-muted">credits</span>
+              {formatShellCredits(credits.balance)}{" "}
+              <span className="text-muted max-md:hidden">credits</span>
             </Link>
             {monthlyAllowanceMicrocredits === null ? null : (
               <CreditMeter

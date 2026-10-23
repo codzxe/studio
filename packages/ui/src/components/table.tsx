@@ -21,7 +21,12 @@ export const Table = forwardRef<HTMLTableElement, TableProps>(function Table(
   ref,
 ) {
   return (
-    <div className="w-full overflow-x-auto">
+    <div className="relative w-full overflow-x-auto">
+      {/* relative: make this wrapper the containing block for absolutely
+       * positioned descendants (sr-only spans, cell-level decorations) —
+       * otherwise they anchor to the initial containing block, ESCAPE this
+       * scroll container's clip, and extend the document's scrollWidth at
+       * narrow viewports (m9-visual §12/§13 gate). */}
       <table
         ref={ref}
         className={cn(

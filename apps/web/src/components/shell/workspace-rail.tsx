@@ -102,7 +102,7 @@ function RailLink({
       data-active={active || undefined}
       data-testid={`rail-${item.label.toLowerCase()}`}
       className={`flex h-9 items-center gap-2.5 rounded-sm pr-3 pl-[10px] text-body-s transition-colors duration-120 ${
-        collapsed ? "justify-center px-0" : ""
+        collapsed ? "justify-center px-0" : "max-md:justify-center max-md:px-0"
       } ${
         active
           ? "border-l-2 border-signal bg-elevated font-medium text-primary"
@@ -113,7 +113,7 @@ function RailLink({
       {collapsed ? (
         <span className="sr-only">{item.label}</span>
       ) : (
-        <span className="truncate">{item.label}</span>
+        <span className="truncate max-md:sr-only">{item.label}</span>
       )}
     </Link>
   );
@@ -169,7 +169,7 @@ export function WorkspaceRail({
         data-testid="workspace-rail"
         data-collapsed={collapsed || undefined}
         className={`sticky top-14 flex h-[calc(100svh-3.5rem)] shrink-0 flex-col border-r border-border bg-app pb-3 transition-[width] duration-180 ${
-          collapsed ? "w-16" : "w-60"
+          collapsed ? "w-16" : "w-60 max-md:w-16"
         }`}
       >
         <ul className="flex flex-1 flex-col gap-1 px-2 pt-3">
@@ -184,6 +184,8 @@ export function WorkspaceRail({
           ))}
         </ul>
         <div className="flex justify-center px-2">
+          {/* Hidden below md: CSS forces the icon rail there (max-md:w-16) —
+           * the toggle would be a visual no-op on narrow viewports. */}
           <Button
             variant="ghost"
             size="iconSm"
@@ -191,6 +193,7 @@ export function WorkspaceRail({
             aria-label={toggleLabel}
             aria-expanded={!collapsed}
             data-testid="rail-toggle"
+            className="max-md:hidden"
           >
             {collapsed ? (
               <PanelLeftOpen size={16} strokeWidth={1.75} aria-hidden="true" />

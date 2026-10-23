@@ -273,8 +273,13 @@ export function ChatPanel({
         </div>
       ) : null}
 
-      {/* Thread (M4-F) — flexible middle; peers own their scroll/virtualization. */}
-      <div data-testid="chat-panel-thread" className="min-h-0 flex-1">
+      {/* Thread (M4-F) — flexible middle; peers own their scroll/virtualization.
+       * flex+flex-col: ChatThread's root is `flex-1 min-h-0` and only fills
+       * this slot if the slot is itself a flex column — as a plain block the
+       * thread sized to its CONTENT (W5-07 e2e: the plan card's controls
+       * rendered UNDER the composer, pointer-intercepted and unclickable, the
+       * newest ~200px of the thread permanently hidden behind it). */}
+      <div data-testid="chat-panel-thread" className="flex min-h-0 flex-1 flex-col">
         {thread}
       </div>
 

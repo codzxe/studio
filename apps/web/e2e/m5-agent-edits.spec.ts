@@ -352,7 +352,7 @@ test.describe("M5 agent edits — plan card journey", () => {
     });
   });
 
-  test("a scripted high-risk plan renders the danger chrome and cannot arm an apply control (the gate is host wiring, not stream data)", async ({
+  test("a scripted high-risk plan renders the danger chrome and keeps Apply gated (stream data alone never arms an apply)", async ({
     page,
   }) => {
     // The high-risk variant needs the scripted-gateway leg: MOCK_MODEL's one
@@ -393,18 +393,25 @@ test.describe("M5 agent edits — plan card journey", () => {
     await expect(page.getByTestId("plan-credits")).toHaveText("≈ 2.25 credits");
 
     // The STRUCTURAL gate (BUILD_PLAN §M5 "high-risk actions always require
-    // confirmation"): the confirm checkbox, the Apply button and the dialog
-    // exist only in host wiring — a stream declaring risk "high" cannot arm
-    // an ungated apply. Until the thread layer passes the callbacks
-    // (M5-G follow-up #1), NONE of these surfaces render.
-    await expect(plan.getByTestId("plan-confirm-checkbox")).toHaveCount(0);
-    await expect(plan.getByTestId("plan-apply")).toHaveCount(0);
-    await expect(plan.getByTestId("plan-actions").getByRole("button")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /apply/i })).toHaveCount(0);
+    // confirmation"), W5-07 truth after the M5-Q thread wiring + K-1 host
+    // applyPorts mount landed: the confirm checkbox, Apply button and action
+    // row DO render now — but the stream declaring risk "high" never ARMS
+    // anything. The checkbox starts UNCHECKED, Apply stays disabled until it
+    // is checked, and no dialog exists without an explicit confirmed click.
+    // (The pre-wiring count-0 assertions below were the stale arm; the
+    // full journey is the next test.)
+    const checkbox = plan.getByTestId("plan-confirm-checkbox");
+    const applyButton = plan.getByTestId("plan-apply");
+    await expect(checkbox).toBeVisible();
+    await expect(checkbox).not.toBeChecked();
+    await expect(applyButton).toBeVisible();
+    await expect(applyButton).toBeDisabled();
+    await expect(plan.getByTestId("plan-actions").getByRole("button")).toHaveCount(1);
     await expect(page.getByTestId("chat-confirm-dialog")).toHaveCount(0);
 
     // The compiled batch rode the wire but executes NOTHING here: the
-    // resolution + engine.batch live behind the (wiring-gated) Apply.
+    // resolution + engine.batch live behind the confirmed Apply (checkbox →
+    // dialog), and neither was triggered.
     expect(toolResultPosts).toBe(0);
   });
 

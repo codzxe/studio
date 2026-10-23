@@ -114,3 +114,4 @@ packages/*/src/**/*.d.ts
 
 # session junk from tool calls — never commit
 /tool-results/
+/.local/
