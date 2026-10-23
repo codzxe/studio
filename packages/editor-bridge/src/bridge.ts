@@ -292,6 +292,26 @@ export function sameOrigin(iframe: HTMLIFrameElement): boolean {
 }
 
 /**
+ * A stable, filesystem-safe asset name (§6.3). The path the editor actually
+ * assigns is what callers must keep — upstream `addFile` basename-es the
+ * request (`editor/apps/effectcraft-web/src/files.rs` `path_for`).
+ *
+ * Exported (additive, M8-F) so the render worker writes hydrated asset files
+ * under EXACTLY the name the browser editor assigned — the `.ecproj` it must
+ * render references that name (docs/phases/m8-cli-spike.md §4). Pure function;
+ * hoisting it from `attachEditorBridge` changes no behavior.
+ */
+export function sanitizeAssetName(name: string): string {
+  const cleaned = name
+    .replace(/[/\\]/g, "-")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[.-]+/, "")
+    .slice(0, 120);
+  return cleaned.length > 0 ? cleaned : "asset";
+}
+
+/**
  * Attach to the editor iframe. Resolves once `window.effectcraft` exists and
  * reports ready (`effectcraftLoad.readyMs`, or an optional `ready()` hook).
  *
@@ -620,21 +640,6 @@ export function attachEditorBridge(
 
     return bridge;
   })();
-
-  /**
-   * A stable, filesystem-safe asset name (§6.3). The path the editor actually
-   * assigns is what callers must keep — upstream `addFile` basename-es the
-   * request (`editor/apps/effectcraft-web/src/files.rs` `path_for`).
-   */
-  function sanitizeAssetName(name: string): string {
-    const cleaned = name
-      .replace(/[/\\]/g, "-")
-      .replace(/[^A-Za-z0-9._-]+/g, "-")
-      .replace(/-{2,}/g, "-")
-      .replace(/^[.-]+/, "")
-      .slice(0, 120);
-    return cleaned.length > 0 ? cleaned : "asset";
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -115,14 +115,19 @@ const IDEMPOTENCY_EXCLUDED_PATHS = [
   /^\/v1\/auth(\/|$)/,
   /^\/v1\/threads\/[^/]+\/chat$/,
   /^\/v1\/webhooks\//,
+  // M8-G (M8-C pin): POST /v1/renders/estimate is a PURE READ — the body has
+  // no idempotencyKey and no hold is taken; the Idempotency-Key header gate
+  // would make every quote need a throwaway key for nothing.
+  /^\/v1\/renders\/estimate$/,
 ];
 
 /**
  * 5. Idempotency for POST /v1 mutations (§7.2): Idempotency-Key (or
  * X-Idempotency-Key) required; replay returns the stored result; a key
  * reused with a different payload is VALIDATION_FAILED. Excluded: better-auth
- * (its own semantics), the SSE chat route (body idempotencyKey) and the
- * Stripe webhook (signature-idempotent).
+ * (its own semantics), the SSE chat route (body idempotencyKey), the Stripe
+ * webhook (signature-idempotent) and the render ESTIMATE read (M8-C pin: a
+ * pure read carries no key anywhere).
  */
 export function idempotencyMiddleware(): MiddlewareHandler<AppBindings> {
   return async (c, next) => {

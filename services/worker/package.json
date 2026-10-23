@@ -1,0 +1,34 @@
+{
+  "name": "@studio/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio render worker: drains the Postgres renders job queue, hydrates the pinned version + assets into a confined temp dir, drives effectcraft-cli (M8 spike contract), uploads the output to the shared storage seam and settles the credit hold (BUILD_PLAN §M8 task 1).",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./cli": "./src/cli.ts",
+    "./storage": "./src/storage.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src tests"
+  },
+  "dependencies": {
+    "@studio/config": "workspace:*",
+    "@studio/contracts": "workspace:*",
+    "@studio/db": "workspace:*",
+    "@studio/editor-bridge": "workspace:*",
+    "@studio/gateway": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

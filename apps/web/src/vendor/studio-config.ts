@@ -11,12 +11,17 @@
  * tsconfig paths instead: app code keeps the single `@studio/config`
  * import idiom, and this file re-exports the exact source module.
  *
- * Scope: apps/web needs the brand tokens only (Brand, brandViolations,
- * assertBrandSafe). Do NOT blindly add `export * from …/env|errors|ids` here:
- * those modules import `node:crypto` and further `.js`-suffixed siblings, so
- * they are server-side anyway (env parsing belongs to the gateway, Wave 3).
+ * Scope: apps/web needs the brand tokens (Brand, brandViolations,
+ * assertBrandSafe) and, since M8, the render-format catalog surface
+ * (RENDER_FORMATS / ENABLED_RENDER_FORMATS / isRenderFormatEnabled and types)
+ * for the Render dialog + history surfaces. plans.ts is dependency-free
+ * (no node:crypto chain), so re-exporting it is web-safe. Do NOT blindly add
+ * `export * from …/env|errors|ids` here: those modules import `node:crypto`
+ * and further `.js`-suffixed siblings, so they are server-side anyway (env
+ * parsing belongs to the gateway, Wave 3).
  *
  * Delete this file (and its tsconfig paths entry) once the package moves to
  * bundler-resolution re-exports or Turbopack ships extensionAlias support.
  */
 export * from "../../../../packages/config/src/brand";
+export * from "../../../../packages/config/src/plans";

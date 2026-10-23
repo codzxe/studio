@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Fleet precedent (packages/editor-bridge/tsconfig.json): the workspace
+    // packages are shipped as SOURCE via pnpm links + exports maps, and
+    // editor-bridge is authored extensionless — Bundler resolution resolves
+    // every @studio/* dep through its package.json exports, like the runtime.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["src", "tests"],
+  "exclude": ["dist", ".local"]
+}

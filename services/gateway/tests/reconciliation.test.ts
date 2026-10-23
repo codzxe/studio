@@ -546,8 +546,18 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 100);
+    // M8-A/M8-G: a render row is pinned to a project version — seed one.
+    const { version } = await server.deps.repos.versions.upload(ws.id, {
+      projectId: fx.projectId,
+      expectedVersionId: null,
+      objectKey: `workspaces/${ws.id}/projects/${fx.projectId}/versions/seed/project.ecproj`,
+      sha256: "seed",
+      sizeBytes: 4,
+      createdBy: ws.userId,
+    });
     await server.deps.repos.renders.create(ws.id, {
       projectId: fx.projectId,
+      versionId: version.id,
       compId: "comp-main",
       format: "mp4",
       credits: 3 * MICRO, // µc dialect — the usage side must match the ledger's
