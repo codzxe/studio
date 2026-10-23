@@ -1,12 +1,12 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
-import { getDialect, type StudioDb } from "../db.js";
+import { type StudioDb, getDialect } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import { type Render, type RenderStatus } from "../schema.js";
-import { tablesFor } from "../tables.js";
+import type { Render, RenderStatus } from "../schema.js";
 import { assertRenderTransition } from "../statuses.js";
+import { tablesFor } from "../tables.js";
 import {
   type WorkspaceId,
   requireNonEmpty,
@@ -197,7 +197,6 @@ function requireValidDate(value: Date, field: string): Date {
   }
   return value;
 }
-
 
 /**
  * Dialect fork (W1-03 sqlite dev server): pg `greatest(a, b)` vs sqlite

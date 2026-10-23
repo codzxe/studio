@@ -24,11 +24,7 @@
  * Boundary law (apps/web): `@studio/contracts` is `import type` ONLY.
  */
 
-import {
-  type ApiClient,
-  type CallOptions,
-  createApiClient,
-} from "@studio/api-client";
+import { type ApiClient, type CallOptions, createApiClient } from "@studio/api-client";
 import type { CreateWorkspaceRequest, TrialResponse, Workspace } from "@studio/contracts";
 import { Card, cn } from "@studio/ui";
 import { useRouter } from "next/navigation";
@@ -87,8 +83,7 @@ export function createOnboardingPort(): OnboardingPort {
 export function asOnboardingPort(client: ApiClient): OnboardingPort {
   return {
     createWorkspace: (body, options) => client.workspaces.create(body, options),
-    startTrial: (workspaceId, options) =>
-      createOnboardingPort().startTrial(workspaceId, options),
+    startTrial: (workspaceId, options) => createOnboardingPort().startTrial(workspaceId, options),
   };
 }
 
@@ -189,10 +184,7 @@ export function OnboardingFlow({ api, navigate }: OnboardingFlowProps) {
   const [workspace, setWorkspace] = useState<CreatedWorkspace | null>(null);
 
   return (
-    <Card
-      data-testid="onboarding-card"
-      className="w-full max-w-md py-8 sm:p-8"
-    >
+    <Card data-testid="onboarding-card" className="w-full max-w-md py-8 sm:p-8">
       <ProgressLine step={step} />
 
       {step === 1 ? (

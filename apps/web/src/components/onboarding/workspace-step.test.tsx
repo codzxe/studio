@@ -66,9 +66,7 @@ describe("WorkspaceStep — submit arms", () => {
 
     await USER.click(screen.getByRole("button", { name: "Continue" }));
 
-    expect(
-      await screen.findByText("Name your workspace — it needs a name."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Name your workspace — it needs a name.")).toBeInTheDocument();
     expect(
       screen.getByText(
         "Lowercase letters, numbers and hyphens — starting and ending with a letter or number.",
@@ -85,35 +83,30 @@ describe("WorkspaceStep — submit arms", () => {
     await USER.type(screen.getByLabelText(/^Workspace name/), "Acme Films!");
     await USER.click(screen.getByRole("button", { name: "Continue" }));
 
-    expect(createWorkspace).toHaveBeenCalledWith(
-      { name: "Acme Films!", slug: "acme-films" },
-      undefined,
-    );
+    expect(createWorkspace).toHaveBeenCalledWith({ name: "Acme Films!", slug: "acme-films" });
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(WORKSPACE));
   });
 
   it("surfaces the typed 409 CONFLICT inline on the slug field", async () => {
-    const createWorkspace = vi
-      .fn()
-      .mockRejectedValue(
-        apiError({
-          status: 409,
-          code: "CONFLICT",
-          message: "That workspace slug is taken.",
-          hint: "Pick a different slug.",
-          requestId: "req_conflict",
-        }),
-      );
+    const createWorkspace = vi.fn().mockRejectedValue(
+      apiError({
+        status: 409,
+        code: "CONFLICT",
+        message: "That workspace slug is taken.",
+        hint: "Pick a different slug.",
+        requestId: "req_conflict",
+      }),
+    );
     const onCreated = vi.fn();
     render(<WorkspaceStep createWorkspace={createWorkspace} onCreated={onCreated} />);
 
     await USER.type(screen.getByLabelText(/^Workspace name/), "Acme Films!");
     await USER.click(screen.getByRole("button", { name: "Continue" }));
 
-    expect(await screen.findByText("That slug is taken. Pick a different one.")).toHaveAttribute(
-      "id",
-      "onboarding-slug-error",
-    );
+    const errorText = await screen.findByText("That slug is taken. Pick a different one.");
+    // Inline ON the slug field: the Field error node + aria-invalid wiring.
+    expect(errorText.closest('[role="alert"]')).toHaveAttribute("id", "onboarding-slug-error");
+    expect(screen.getByLabelText(/^Slug/)).toHaveAttribute("aria-invalid", "true");
     // The typed arm is inline only — no form-level error strip, no advance.
     expect(screen.queryByTestId("onboarding-workspace-error")).not.toBeInTheDocument();
     expect(onCreated).not.toHaveBeenCalled();
@@ -122,17 +115,15 @@ describe("WorkspaceStep — submit arms", () => {
   });
 
   it("renders other typed failures as the bounded §7.3 strip (message + hint + request id)", async () => {
-    const createWorkspace = vi
-      .fn()
-      .mockRejectedValue(
-        apiError({
-          status: 503,
-          code: "SERVICE_UNAVAILABLE",
-          message: "The database is not reachable right now.",
-          hint: "Try again once the database is up.",
-          requestId: "req_down",
-        }),
-      );
+    const createWorkspace = vi.fn().mockRejectedValue(
+      apiError({
+        status: 503,
+        code: "SERVICE_UNAVAILABLE",
+        message: "The database is not reachable right now.",
+        hint: "Try again once the database is up.",
+        requestId: "req_down",
+      }),
+    );
     render(<WorkspaceStep createWorkspace={createWorkspace} onCreated={vi.fn()} />);
 
     await USER.type(screen.getByLabelText(/^Workspace name/), "Acme Films!");

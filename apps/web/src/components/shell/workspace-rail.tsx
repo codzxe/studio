@@ -22,6 +22,8 @@
 
 import {
   type LucideIcon,
+  CreditCard,
+  FolderKanban,
   LayoutDashboard,
   PanelLeftClose,
   PanelLeftOpen,
@@ -29,7 +31,14 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Button, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@studio/ui";
+import {
+  Button,
+  TOOLTIP_DELAY_MS,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@studio/ui";
 import { type ReactNode, useEffect, useState } from "react";
 
 /** D-10: ECUX-literal storage key for the rail collapse state. */
@@ -154,7 +163,7 @@ export function WorkspaceRail({
   const toggleLabel = collapsed ? "Expand sidebar" : "Collapse sidebar";
 
   return (
-    <TooltipProvider delayDuration={250}>
+    <TooltipProvider delayDuration={TOOLTIP_DELAY_MS}>
       <nav
         aria-label="Workspace"
         data-testid="workspace-rail"

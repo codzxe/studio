@@ -80,7 +80,7 @@ describe("onboarding RSC route", () => {
 
     expect(screen.getByTestId("onboarding-flow-stub")).toBeInTheDocument();
     expect(gatewayMock).toHaveBeenCalledTimes(1);
-    expect(gatewayMock).toHaveBeenCalledWith("/v1/me");
+    expect(gatewayMock.mock.calls.map(([path]) => path)).toEqual(["/v1/me"]);
   });
 
   it("redirects an expired session to /sign-in with a next round-trip", async () => {
@@ -115,8 +115,6 @@ describe("onboarding RSC route", () => {
         message: "The database is not reachable right now.",
       }),
     );
-    await expect(OnboardingPage()).rejects.toThrow(
-      "The database is not reachable right now.",
-    );
+    await expect(OnboardingPage()).rejects.toThrow("The database is not reachable right now.");
   });
 });

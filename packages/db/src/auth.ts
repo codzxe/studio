@@ -8,8 +8,8 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { getDialect } from "./db.js";
 import type { StudioDb } from "./db.js";
-import * as schema from "./schema.js";
 import * as sqliteSchema from "./schema-sqlite.js";
+import * as schema from "./schema.js";
 
 /**
  * Better Auth factory — ADR-0003 + PRODUCT_ARCHITECTURE §7.1.

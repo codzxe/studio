@@ -63,9 +63,7 @@ export const user = sqliteTable(
     email: text("email").notNull().unique(),
     emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
     image: text("image"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
     updatedAt: ts("updated_at")
       .notNull()
       .default(sql`(unixepoch('subsec') * 1000)`)
@@ -86,9 +84,7 @@ export const session = sqliteTable(
       .$defaultFn(() => randomUUID()),
     expiresAt: ts("expires_at").notNull(),
     token: text("token").notNull().unique(),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
     updatedAt: ts("updated_at")
       .notNull()
       .default(sql`(unixepoch('subsec') * 1000)`)
@@ -122,9 +118,7 @@ export const account = sqliteTable(
     refreshTokenExpiresAt: ts("refresh_token_expires_at"),
     scope: text("scope"),
     password: text("password"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
     updatedAt: ts("updated_at")
       .notNull()
       .default(sql`(unixepoch('subsec') * 1000)`)
@@ -142,12 +136,8 @@ export const verification = sqliteTable(
     identifier: text("identifier").notNull(),
     value: text("value").notNull(),
     expiresAt: ts("expires_at").notNull(),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
-    updatedAt: ts("updated_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
+    updatedAt: ts("updated_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [index("verification_identifier_idx").on(t.identifier)],
 );
@@ -165,9 +155,7 @@ export const organization = sqliteTable(
     name: text("name").notNull(),
     slug: text("slug").notNull().unique(),
     logo: text("logo"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
     metadata: text("metadata"),
   },
   (t) => [uniqueIndex("organization_slug_uniq").on(t.slug)],
@@ -186,9 +174,7 @@ export const member = sqliteTable(
       .notNull()
       .references((): AnySQLiteColumn => user.id, { onDelete: "cascade" }),
     role: text("role").notNull().default("member"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     index("member_organization_idx").on(t.organizationId),
@@ -212,9 +198,7 @@ export const invitation = sqliteTable(
     inviterId: text("inviter_id")
       .notNull()
       .references((): AnySQLiteColumn => user.id, { onDelete: "cascade" }),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     index("invitation_organization_idx").on(t.organizationId),
@@ -251,12 +235,8 @@ export const apiKey = sqliteTable(
     remaining: integer("remaining"),
     lastRequest: ts("last_request"),
     expiresAt: ts("expires_at"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
-    updatedAt: ts("updated_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
+    updatedAt: ts("updated_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
     permissions: text("permissions"),
     metadata: text("metadata"),
   },
@@ -287,12 +267,8 @@ export const projects = sqliteTable(
     createdBy: text("created_by")
       .notNull()
       .references((): AnySQLiteColumn => user.id),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
-    updatedAt: ts("updated_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
+    updatedAt: ts("updated_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
     deletedAt: ts("deleted_at"),
   },
   (t) => [
@@ -321,9 +297,7 @@ export const projectVersions = sqliteTable(
     createdBy: text("created_by")
       .notNull()
       .references((): AnySQLiteColumn => user.id),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     index("project_versions_project_idx").on(t.projectId, sql`${t.version} desc`),
@@ -370,9 +344,7 @@ export const assets = sqliteTable(
     createdBy: text("created_by")
       .notNull()
       .references((): AnySQLiteColumn => user.id),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     index("assets_workspace_created_idx").on(t.workspaceId, sql`${t.createdAt} desc`),
@@ -398,12 +370,8 @@ export const agentThreads = sqliteTable(
       .notNull()
       .references((): AnySQLiteColumn => user.id),
     title: text("title"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
-    updatedAt: ts("updated_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
+    updatedAt: ts("updated_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [index("agent_threads_project_idx").on(t.projectId, sql`${t.updatedAt} desc`)],
 );
@@ -420,9 +388,7 @@ export const agentMessages = sqliteTable(
     role: text("role").notNull(),
     contentJson: jsonCol("content_json").notNull(),
     runId: text("run_id"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     index("agent_messages_thread_created_idx").on(t.threadId, sql`${t.createdAt} desc`),
@@ -462,9 +428,7 @@ export const agentRuns = sqliteTable(
       onDelete: "set null",
     }),
     errorCode: text("error_code"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
     completedAt: ts("completed_at"),
   },
   (t) => [
@@ -515,9 +479,7 @@ export const creditLedger = sqliteTable(
     renderId: text("render_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     metadata: jsonCol("metadata"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     uniqueIndex("credit_ledger_idempotency_uniq").on(t.idempotencyKey),
@@ -564,21 +526,15 @@ export const renders = sqliteTable(
     createdBy: text("created_by")
       .notNull()
       .references((): AnySQLiteColumn => user.id),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
     completedAt: ts("completed_at"),
   },
   (t) => [
     index("renders_project_created_idx").on(t.projectId, sql`${t.createdAt} desc`),
     index("renders_status_idx").on(t.status),
     index("renders_version_idx").on(t.versionId),
-    index("renders_running_heartbeat_idx")
-      .on(t.heartbeatAt)
-      .where(sql`${t.status} = 'running'`),
-    index("renders_completed_expires_idx")
-      .on(t.expiresAt)
-      .where(sql`${t.status} = 'completed'`),
+    index("renders_running_heartbeat_idx").on(t.heartbeatAt).where(sql`${t.status} = 'running'`),
+    index("renders_completed_expires_idx").on(t.expiresAt).where(sql`${t.status} = 'completed'`),
   ],
 );
 
@@ -606,9 +562,7 @@ export const comments = sqliteTable(
     guestName: text("guest_name"),
     guestEmail: text("guest_email"),
     shareTokenId: text("share_token_id"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     index("comments_project_resolved_idx").on(t.projectId, t.resolvedAt),
@@ -638,9 +592,7 @@ export const auditLog = sqliteTable(
     targetId: text("target_id"),
     metadata: jsonCol("metadata"),
     ip: text("ip"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     index("audit_log_workspace_created_idx").on(t.workspaceId, sql`${t.createdAt} desc`),
@@ -663,9 +615,7 @@ export const stripeCustomers = sqliteTable(
       .references((): AnySQLiteColumn => organization.id, { onDelete: "cascade" }),
     stripeCustomerId: text("stripe_customer_id").notNull(),
     cardFingerprint: text("card_fingerprint"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     uniqueIndex("stripe_customers_organization_uniq").on(t.organizationId),
@@ -687,7 +637,9 @@ export const subscriptions = sqliteTable(
     stripeSubscriptionId: text("stripe_subscription_id"),
     currentPeriodEnd: ts("current_period_end"),
     trialEnd: ts("trial_end"),
-    cancelAtPeriodEnd: integer("cancel_at_period_end", { mode: "boolean" }).notNull().default(false),
+    cancelAtPeriodEnd: integer("cancel_at_period_end", { mode: "boolean" })
+      .notNull()
+      .default(false),
     graceEnd: ts("grace_end"),
     updatedAt: ts("updated_at")
       .notNull()
@@ -717,9 +669,7 @@ export const invoices = sqliteTable(
     periodEnd: ts("period_end"),
     hostedUrl: text("hosted_url"),
     pdfUrl: text("pdf_url"),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     uniqueIndex("invoices_workspace_stripe_uniq").on(t.organizationId, t.stripeInvoiceId),
@@ -748,9 +698,7 @@ export const webhookEvents = sqliteTable(
     eventId: text("event_id").notNull(),
     eventType: text("event_type"),
     payloadJson: jsonCol("payload_json"),
-    processedAt: ts("processed_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    processedAt: ts("processed_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [uniqueIndex("webhook_events_provider_event_uniq").on(t.provider, t.eventId)],
 );
@@ -775,9 +723,7 @@ export const shareTokens = sqliteTable(
     createdBy: text("created_by")
       .notNull()
       .references((): AnySQLiteColumn => user.id),
-    createdAt: ts("created_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     uniqueIndex("share_tokens_token_hash_uniq").on(t.tokenHash),
@@ -797,9 +743,7 @@ export const presenceHeartbeats = sqliteTable(
     displayName: text("display_name").notNull(),
     compId: text("comp_id"),
     playheadTicks: integer("playhead_ticks"),
-    lastSeenAt: ts("last_seen_at")
-      .notNull()
-      .default(sql`(unixepoch('subsec') * 1000)`),
+    lastSeenAt: ts("last_seen_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [primaryKey({ columns: [t.projectId, t.userId] })],
 );

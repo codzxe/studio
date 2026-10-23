@@ -4,9 +4,9 @@ import { z } from "zod";
 
 import { createAuth } from "../src/auth.js";
 import { createDb, getDialect, isSqliteUrl } from "../src/db.js";
-import { tablesFor } from "../src/tables.js";
 import { migrateDatabase } from "../src/migrate.js";
 import { createRepos } from "../src/repos/index.js";
+import { tablesFor } from "../src/tables.js";
 
 /**
  * Idempotent demo seed — run with `pnpm --filter @studio/db seed`
@@ -108,10 +108,7 @@ async function main(): Promise<void> {
       .insert(t.organization)
       .values({ id: ORG_ID, name: "Demo Workspace", slug: "demo-workspace" })
       .onConflictDoNothing({ target: t.organization.id });
-    const memberRows = await db
-      .select()
-      .from(t.member)
-      .where(eq(t.member.organizationId, ORG_ID));
+    const memberRows = await db.select().from(t.member).where(eq(t.member.organizationId, ORG_ID));
     const membership = memberRows.find((m) => m.userId === demoUser.id);
     if (!membership) {
       await db.insert(t.member).values({

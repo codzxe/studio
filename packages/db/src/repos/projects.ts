@@ -1,14 +1,10 @@
 import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
-import { getDialect, type StudioDb, type StudioTx } from "../db.js";
+import { type StudioDb, type StudioTx, getDialect } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import {
-  type Asset,
-  type Project,
-  type ProjectVersion,
-} from "../schema.js";
+import type { Asset, Project, ProjectVersion } from "../schema.js";
 import { ensureUniqueSlug, slugify } from "../slug.js";
 import { tablesFor } from "../tables.js";
 import { type WorkspaceId, isUniqueViolation } from "./shared.js";
@@ -101,8 +97,7 @@ export async function lockProject(
     .select()
     .from(projects)
     .where(and(eq(projects.id, projectId), eq(projects.workspaceId, workspaceId)));
-  const [project] =
-    getDialect(tx) === "sqlite" ? await baseQuery : await baseQuery.for("update");
+  const [project] = getDialect(tx) === "sqlite" ? await baseQuery : await baseQuery.for("update");
   if (!project) throw DbError.notFound("project");
   return project;
 }

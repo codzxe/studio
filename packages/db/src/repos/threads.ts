@@ -4,10 +4,7 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import type { Executor, StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import {
-  type AgentMessage,
-  type AgentThread,
-} from "../schema.js";
+import type { AgentMessage, AgentThread } from "../schema.js";
 import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty } from "./shared.js";
 

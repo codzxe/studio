@@ -3,12 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import {
-  type PlanId,
-  type StripeCustomer,
-  type Subscription,
-  type SubscriptionStatus,
-} from "../schema.js";
+import type { PlanId, StripeCustomer, Subscription, SubscriptionStatus } from "../schema.js";
 import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty } from "./shared.js";
 
