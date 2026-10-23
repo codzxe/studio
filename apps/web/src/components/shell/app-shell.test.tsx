@@ -200,7 +200,9 @@ describe("AppShell — ?ws display refinement", () => {
 
     // The switcher shows the ?ws workspace; its state arrives via the port.
     expect(screen.getByTestId("workspace-switcher")).toHaveTextContent("Second Studio");
-    expect(await screen.findByText("0.50 credits")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId("topbar-credits")).toHaveTextContent("0.50 credits");
+    });
     expect(builtFor).toContain("ws_second");
 
     // The rail still renders the same four destinations.
