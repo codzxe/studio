@@ -1,0 +1,656 @@
+     1→// @studio/gateway — /v1/renders (§7.2, §9.1): the M8 render API v2.
+     2→//
+     3→// ROUTE MAP (wire v2, M8-C contracts):
+     4→//   POST /v1/renders             queue — editor; QUEUE_RENDER_SCHEMA (the
+     5→//                               idempotencyKey rides the BODY as first
+     6→//                               shipped, replays ride the Idempotency-Key
+     7→//                               HEADER per the global §7.2 middleware) → 201
+     8→//                               RenderJob
+     9→//   POST /v1/renders/estimate    pure read — viewer; RENDER_ESTIMATE_REQUEST_
+    10→//                               SCHEMA; IDEMPOTENCY_EXCLUDED (no key anywhere)
+    11→//                               → EstimateResult
+    12→//   GET  /v1/renders             history — viewer; RENDERS_QUERY_SCHEMA
+    13→//                               (projectId?/status? + house pagination) →
+    14→//                               Page<RenderJob>
+    15→//   GET  /v1/renders/:id         one job — viewer → RenderJob
+    16→//   POST /v1/renders/:id/cancel  cooperative cancel — editor; CANCEL_RENDER_
+    17→//                               SCHEMA (optional reason); Idempotency-Key
+    18→//                               HEADER → RenderJob (repo CONFLICT on terminal)
+    19→//
+    20→// THE QUEUE IS THE TABLE (D-25 rationale, as adopted by M8-A): the renders
+    21→// table itself is the job queue — a worker process polls Postgres via
+    22→// `repos.renders.claimNext` (`SELECT … FOR UPDATE SKIP LOCKED`), so there is
+    23→// NO enqueue RPC and NO Valkey/BullMQ dependency on this box. The v1
+    24→// Noop RenderWorker seam is REMOVED: a queued row is the entire handoff, and
+    25→// the concurrent worker wave (M8-F) claims/heartbeats/settles rows through
+    26→// the M8-A repo surface directly.
+    27→//
+    28→// RENDERS DO NOT TAKE THE EDIT LEASE (DECISIONS D-23, pinned here as ruled):
+    29→// the lease gates MUTATIONS only (project PATCH, version upload, agent
+    30→// apply/undo). A render is a READ of the PINNED, IMMUTABLE version
+    31→// (§9.3) captured at queue time — it can never conflict with an edit, so
+    32→// another member holding the lease does not block rendering. No
+    33→// requireLeaseForMutation call in this file, by design.
+    34→//
+    35→// CREDITS (D-12 + D-20 + the M8-B "one formula" rule): the cost is computed
+    36→// SERVER-SIDE from the pinned version's actual comp metadata via
+    37→// @studio/config's estimateRenderCostUc — the SAME integer µc is the ESTIMATE
+    38→// the UI shows, the RESERVE this route holds, and the COMMIT the worker
+    39→// settles on completion (credits are charged only for completed renders —
+    40→// BP §M8 exit criteria; the worker refunds on cancel/fail). Money crosses
+    41→// the wire ONLY as the D-12 whole-credit display number.
+    42→//
+    43→// The renders.credits COLUMN dialect (pinned, see the queue handler): the row
+    44→// stores the integer µc cost, NOT a display number — the repo validates
+    45→// `credits` as a non-negative integer (a 0.25-credit minimum-charge render
+    46→// cannot be stored as a display number at all), and the landed reconciliation
+    47→// core (src/reconciliation.ts, M6-I) sums renders.credits against LEDGER µc
+    48→// with the test pinning "µc dialect — the usage side must match the ledger's".
+    49→// toJob converts µc → the 2-decimal display at this route boundary.
+    50→
+    51→import { Hono } from "hono";
+    52→
+    53→import {
+    54→  CANCEL_RENDER_SCHEMA,
+    55→  type EstimateResult,
+    56→  QUEUE_RENDER_SCHEMA,
+    57→  RENDERS_QUERY_SCHEMA,
+    58→  RENDER_ESTIMATE_REQUEST_SCHEMA,
+    59→  RENDER_FORMATS,
+    60→  type RenderJob,
+    61→} from "@studio/contracts";
+    62→
+    63→import {
+    64→  type RenderQualityId,
+    65→  StudioError,
+    66→  entitlementsFor,
+    67→  estimateRenderCostDetailUc,
+    68→  isRenderFormatEnabled,
+    69→  renderMinutesRemaining,
+    70→  renderOutputSeconds,
+    71→} from "@studio/config";
+    72→
+    73→import type { Project, Render } from "@studio/db";
+    74→
+    75→import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
+    76→import { microcreditsToDisplayCredits } from "../credits-display.js";
+    77→import { GatewayError } from "../errors.js";
+    78→import { ok, page, pathParam } from "../http.js";
+    79→import { requireAuth, requireWorkspace } from "../middleware.js";
+    80→import { resolvePlan } from "../plan.js";
+    81→import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
+    82→import { renderKey } from "../storage.js";
+    83→import { audit } from "./projects.js";
+    84→
+    85→// ---------------------------------------------------------------------------
+    86→// Comp metadata — parsed from the PINNED version's .ecproj bytes (§9.2)
+    87→// ---------------------------------------------------------------------------
+    88→
+    89→/**
+    90→ * EffectCraft's exact media time: durations serialize as integer TICKS at
+    91→ * 254_016_000_000/s (editor/crates/time — the rate divides evenly into every
+    92→ * broadcast frame rate). Verified against a real browser-saved .ecproj.
+    93→ */
+    94→const EC_TICKS_PER_SECOND = 254_016_000_000;
+    95→
+    96→/** The pieces of a composition the estimator needs (spike §4/§7 shapes). */
+    97→interface CompMeta {
+    98→  readonly durationSeconds: number;
+    99→  readonly width: number;
+   100→  readonly height: number;
+   101→  readonly frameRate: number;
+   102→}
+   103→
+   104→function asRecord(value: unknown): Record<string, unknown> | null {
+   105→  return typeof value === "object" && value !== null && !Array.isArray(value)
+   106→    ? (value as Record<string, unknown>)
+   107→    : null;
+   108→}
+   109→
+   110→function positiveInt(value: unknown): number | null {
+   111→  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+   112→}
+   113→
+   114→function positiveNumber(value: unknown): number | null {
+   115→  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+   116→}
+   117→
+   118→/** The real editor wire shape: items{"<id>": {id, name, kind:{type:"Comp",…}}}. */
+   119→function compFromItems(items: unknown, compId: string): CompMeta | null {
+   120→  const map = asRecord(items);
+   121→  if (map === null) return null;
+   122→  for (const raw of Object.values(map)) {
+   123→    const item = asRecord(raw);
+   124→    if (item === null) continue;
+   125→    // The contract compId is the editor comp id OR its display name — match
+   126→    // either (tolerant by design; ids serialize as numbers in .ecproj).
+   127→    const idMatches = item.id !== undefined && String(item.id) === compId;
+   128→    const nameMatches = typeof item.name === "string" && item.name === compId;
+   129→    if (!idMatches && !nameMatches) continue;
+   130→    const kind = asRecord(item.kind);
+   131→    if (kind === null) continue;
+   132→    // serde tag is the VARIANT name ("Comp"); "Composition" is accepted for
+   133→    // tolerance (it is the editor's DISPLAY name for the same kind).
+   134→    if (kind.type !== "Comp" && kind.type !== "Composition") continue;
+   135→    const width = positiveInt(kind.width);
+   136→    const height = positiveInt(kind.height);
+   137→    const duration = positiveNumber(kind.duration);
+   138→    const rate = asRecord(kind.frame_rate) ?? asRecord(kind.frameRate);
+   139→    const fps =
+   140→      rate !== null && positiveNumber(rate.num) !== null
+   141→        ? Number(rate.num) / (positiveNumber(rate.den) ?? 1)
+   142→        : positiveNumber(kind.frameRate);
+   143→    if (width === null || height === null || duration === null || fps === null) continue;
+   144→    return { durationSeconds: duration / EC_TICKS_PER_SECOND, width, height, frameRate: fps };
+   145→  }
+   146→  return null;
+   147→}
+   148→
+   149→/**
+   150→ * Tolerance fallback for the synthetic/legacy `compositions: []` shape used by
+   151→ * older fixtures: durations/fps in SECONDS/Hz, ids/names as strings.
+   152→ */
+   153→function compFromCompositions(root: Record<string, unknown>, compId: string): CompMeta | null {
+   154→  if (!Array.isArray(root.compositions)) return null;
+   155→  for (const raw of root.compositions) {
+   156→    const comp = asRecord(raw);
+   157→    if (comp === null) continue;
+   158→    const idMatches = comp.id !== undefined && String(comp.id) === compId;
+   159→    const nameMatches = typeof comp.name === "string" && comp.name === compId;
+   160→    if (!idMatches && !nameMatches) continue;
+   161→    const width = positiveInt(comp.width);
+   162→    const height = positiveInt(comp.height);
+   163→    const duration = positiveNumber(comp.durationSeconds) ?? positiveNumber(comp.duration);
+   164→    const fps = positiveNumber(comp.frameRate);
+   165→    if (width === null || height === null || duration === null || fps === null) continue;
+   166→    return { durationSeconds: duration, width, height, frameRate: fps };
+   167→  }
+   168→  return null;
+   169→}
+   170→
+   171→/** Locate the requested comp inside a parsed .ecproj, or null. */
+   172→function findComp(ecproj: unknown, compId: string): CompMeta | null {
+   173→  const root = asRecord(ecproj);
+   174→  if (root === null) return null;
+   175→  return compFromItems(root.items, compId) ?? compFromCompositions(root, compId);
+   176→}
+   177→
+   178→// ---------------------------------------------------------------------------
+   179→// The shared queue/estimate computation (one derivation, no drift)
+   180→// ---------------------------------------------------------------------------
+   181→
+   182→/** Normalized view of a render request the queue and the estimate share. */
+   183→interface RenderQuote {
+   184→  readonly project: Project;
+   185→  /** The pinned version — ALWAYS the project head, never client-supplied. */
+   186→  readonly versionId: string;
+   187→  readonly outputSeconds: number;
+   188→  readonly longEdgePx: number;
+   189→  readonly quality: RenderQualityId;
+   190→  /**
+   191→   * The settings stored on the row: the client's settings plus the server's
+   192→   * materialized effective frameRate (settings.frameRate ?? the comp's —
+   193→   * renderSecondsUsed reads it for the monthly-minutes accounting) and the
+   194→   * range clamped to the comp timeline (price == stored == rendered).
+   195→   */
+   196→  readonly storedSettings: Record<string, unknown>;
+   197→}
+   198→
+   199→/**
+   200→ * Resolve a queue/estimate request against the project's PINNED version: load
+   201→ * the project (tenant-scoped — cross-tenant ids are 404s), read the head
+   202→ * version's .ecproj bytes from storage, and derive duration/size/fps/quality
+   203→ * from the actual comp metadata. Shared by BOTH routes so the estimate and
+   204→ * the reserve can never disagree.
+   205→ */
+   206→async function resolveRenderQuote(
+   207→  deps: GatewayDeps,
+   208→  workspaceId: string,
+   209→  requestId: string,
+   210→  input: { readonly projectId: string; readonly compId: string },
+   211→  settings: {
+   212→    readonly timeFrom?: number;
+   213→    readonly timeTo?: number;
+   214→    readonly width?: number;
+   215→    readonly height?: number;
+   216→    readonly frameRate?: number;
+   217→    readonly quality?: RenderQualityId;
+   218→  },
+   219→): Promise<RenderQuote> {
+   220→  const project = await deps.repos.projects.get(workspaceId, input.projectId);
+   221→  if (project.currentVersionId === null) {
+   222→    // A project with no versions has nothing renderable (§9.3).
+   223→    throw new StudioError("RENDER_PROJECT_INVALID", {
+   224→      message: "This project can't be rendered as-is.",
+   225→      hint: "Save a version of the project first, then render.",
+   226→      requestId,
+   227→    });
+   228→  }
+   229→  const versionId = project.currentVersionId; // SERVER-pinned, §9.3
+   230→  const version = await deps.repos.versions.get(workspaceId, project.id, versionId);
+   231→
+   232→  const bytes = await deps.storage.read(version.objectKey);
+   233→  if (bytes === null) {
+   234→    // The version bytes are missing from storage — an infrastructure fault,
+   235→    // never the client's project. (LocalFS serves reads; the S3 driver's
+   236→    // read() is a documented null — S3 estimate/queue pricing needs a
+   237→    // signed-URL fetch seam, flagged to the worker wave.)
+   238→    throw new StudioError("RENDER_INTERNAL", { requestId });
+   239→  }
+   240→  let ecproj: unknown;
+   241→  try {
+   242→    ecproj = JSON.parse(bytes.toString("utf8")) as unknown;
+   243→  } catch {
+   244→    // The stored snapshot is not valid JSON — the project cannot be rendered
+   245→    // as-is (the upload only ever verified its sha256, not its schema).
+   246→    throw new StudioError("RENDER_PROJECT_INVALID", {
+   247→      message: "This project can't be rendered as-is.",
+   248→      hint: "Re-save the project from the editor and try again.",
+   249→      requestId,
+   250→    });
+   251→  }
+   252→  const comp = findComp(ecproj, input.compId);
+   253→  if (comp === null) {
+   254→    throw new StudioError("RENDER_PROJECT_INVALID", {
+   255→      message: "This project can't be rendered as-is.",
+   256→      hint: "The requested composition is not in this version of the project.",
+   257→      requestId,
+   258→    });
+   259→  }
+   260→
+   261→  // Effective output size: settings override the comp's native size one axis
+   262→  // at a time; the long edge is what the pricing tiers (and the plan cap) use.
+   263→  const width = settings.width ?? comp.width;
+   264→  const height = settings.height ?? comp.height;
+   265→  const longEdgePx = Math.max(width, height);
+   266→
+   267→  // Effective frame rate for the ROW (the monthly-minutes accounting reads
+   268→  // settingsJson.frameRate — materializing the comp's native fps keeps the
+   269→  // usage sum honest when the client omits one).
+   270→  const frameRate = settings.frameRate ?? comp.frameRate;
+   271→
+   272→  // Range: the comp timeline is the bound — an out-point beyond the duration
+   273→  // is clamped so the priced range, the STORED range and the worker's range
+   274→  // are the same seconds. An in-point at/past the duration is refused by
+   275→  // renderOutputSeconds (empty range) as VALIDATION_FAILED.
+   276→  const clampedTo =
+   277→    settings.timeTo !== undefined ? Math.min(settings.timeTo, comp.durationSeconds) : undefined;
+   278→  const outputSeconds = renderOutputSeconds({
+   279→    durationSeconds: comp.durationSeconds,
+   280→    timeFrom: settings.timeFrom,
+   281→    timeTo: clampedTo,
+   282→  });
+   283→
+   284→  return {
+   285→    project,
+   286→    versionId,
+   287→    outputSeconds,
+   288→    longEdgePx,
+   289→    quality: settings.quality ?? "good",
+   290→    storedSettings: {
+   291→      ...settings,
+   292→      frameRate,
+   293→      ...(clampedTo !== undefined ? { timeTo: clampedTo } : {}),
+   294→    },
+   295→  };
+   296→}
+   297→
+   298→// ---------------------------------------------------------------------------
+   299→// The monthly render-minutes window (the billing convention, cited)
+   300→// ---------------------------------------------------------------------------
+   301→
+   302→/**
+   303→ * The render-minutes billing window starts at the FIRST INSTANT of the
+   304→ * current UTC month. CONVENTION CITATION (M8-G): no gateway billing surface
+   305→ * computes a period START — GET /v1/billing/state reports only
+   306→ * `currentPeriodEnd` (the Stripe anchor), the credits reconciliation window
+   307→ * takes EXPLICIT caller-supplied bounds, and the subscriptions row persists
+   308→ * `currentPeriodEnd` only — there is no stored period start, and trial
+   309→ * workspaces (no subscription row at all) gate on the trial catalog tier
+   310→ * through resolvePlan. The catalog says "render minutes per billing month",
+   311→ * so the derivable, workspace-uniform window is the UTC calendar month.
+   312→ * If a later billing wave anchors windows to the Stripe period, swap this
+   313→ * ONE helper (and the renderSecondsUsed call site) — nothing else changes.
+   314→ */
+   315→function utcMonthStart(now: Date): Date {
+   316→  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+   317→}
+   318→
+   319→// ---------------------------------------------------------------------------
+   320→// The routes
+   321→// ---------------------------------------------------------------------------
+   322→
+   323→export function rendersRoutes(deps: GatewayDeps): Hono<AppBindings> {
+   324→  const app = new Hono<AppBindings>();
+   325→  app.use("/v1/renders/*", requireAuth());
+   326→
+   327→  const toJob = async (render: Render): Promise<RenderJob> => {
+   328→    let resultUrl: string | null = null;
+   329→    // Signed download ONLY while the artifact exists: completed + objectKey
+   330→    // present. Retention-expired rows have objectKey cleared (M8-A
+   331→    // markOutputExpired) → resultUrl null, the row stays as history.
+   332→    if (render.status === "completed" && render.objectKey !== null) {
+   333→      const signed = await deps.storage.getSignedUrl(render.objectKey, SIGNED_URL_TTL_SECONDS, {
+   334→        method: "GET",
+   335→      });
+   336→      resultUrl = signed.url;
+   337→    }
+   338→    // D-11: the DB status vocabulary IS the wire vocabulary — completed, not
+   339→    // "succeeded"; the v1 completed→succeeded mapping is gone.
+   340→    const framesDone = render.framesDone;
+   341→    const framesTotal = render.framesTotal;
+   342→    const percent =
+   343→      framesTotal > 0 ? Math.min(100, Math.floor((framesDone * 100) / framesTotal)) : 0;
+   344→    return {
+   345→      id: render.id,
+   346→      projectId: render.projectId,
+   347→      compId: render.compId,
+   348→      versionId: render.versionId,
+   349→      format: (RENDER_FORMATS as readonly string[]).includes(render.format)
+   350→        ? (render.format as RenderJob["format"])
+   351→        : "mp4", // unreachable: the queue only admits declared formats
+   352→      settings: (render.settingsJson as Record<string, unknown> | null) ?? {},
+   353→      status: render.status as RenderJob["status"],
+   354→      cancelRequested: render.cancelRequested,
+   355→      progress: { framesDone, framesTotal, percent },
+   356→      // renders.credits is INTEGER µc (see the module header) → the D-12
+   357→      // 2-decimal display number at this boundary; null until priced.
+   358→      credits: render.credits > 0 ? microcreditsToDisplayCredits(render.credits) : null,
+   359→      resultUrl,
+   360→      errorCode: render.errorCode,
+   361→      error: render.error,
+   362→      sizeBytes: render.sizeBytes,
+   363→      createdBy: render.createdBy,
+   364→      createdAt: render.createdAt.toISOString(),
+   365→      startedAt: render.startedAt !== null ? render.startedAt.toISOString() : null,
+   366→      completedAt: render.completedAt !== null ? render.completedAt.toISOString() : null,
+   367→      expiresAt: render.expiresAt !== null ? render.expiresAt.toISOString() : null,
+   368→    };
+   369→  };
+   370→
+   371→  // ── POST /v1/renders — queue (editor) ─────────────────────────────────────
+   372→  app.post("/v1/renders", requireWorkspace("editor"), async (c: AppContext): Promise<Response> => {
+   373→    const requestId = c.get("requestId");
+   374→    const workspace = c.get("workspace");
+   375→
+   376→    const parsed = QUEUE_RENDER_SCHEMA.safeParse(await c.req.json().catch(() => null));
+   377→    if (!parsed.success) {
+   378→      throw new StudioError("VALIDATION_FAILED", { requestId });
+   379→    }
+   380→    const request = parsed.data;
+   381→
+   382→    // The comp metadata comes from the PINNED version — priced BEFORE any
+   383→    // gate so every entitlement check sees the real output (and so the
+   384→    // estimate route, which reuses this derivation, agrees exactly).
+   385→    const quote = await resolveRenderQuote(
+   386→      deps,
+   387→      workspace.id,
+   388→      requestId,
+   389→      request,
+   390→      request.settings,
+   391→    );
+   392→
+   393→    // Entitlement gates, in order — each a typed StudioError (plan comes from
+   394→    // the workspace's subscription row via the resolvePlan seam; entitlements
+   395→    // from the catalog, never inlined).
+   396→    const plan = await resolvePlan(workspace.id);
+   397→    const entitlements = entitlementsFor(plan);
+   398→
+   399→    // (a) D-2: only MP4 + PNG sequence are enabled in v1; the other declared
+   400→    // formats stay priced but refused at queue time.
+   401→    if (!isRenderFormatEnabled(request.format)) {
+   402→      throw new StudioError("RENDER_UNSUPPORTED_FORMAT", { requestId });
+   403→    }
+   404→
+   405→    // (b) The resolution cap. PINNED MAPPING (M8-G): the config catalog
+   406→    // documents RENDER_QUOTA_EXCEEDED (429) as the MONTHLY-MINUTES gate only
+   407→    // ("workspace out of render minutes this cycle", M8-B) — it says nothing
+   408→    // about a resolution cap, and the cap is validation-shaped (fix the
+   409→    // request, not the plan), so it maps to VALIDATION_FAILED. Status pinned
+   410→    // at 422 (Unprocessable Content): the payload is schema-valid but
+   411→    // semantically over the plan's maxRenderLongEdgePx, and the house's 400
+   412→    // stays reserved for boundary/schema failures. The row below overrides
+   413→    // the STATUS_BY_CODE 400 for this one gate only.
+   414→    if (quote.longEdgePx > entitlements.maxRenderLongEdgePx) {
+   415→      throw new GatewayError(
+   416→        "VALIDATION_FAILED",
+   417→        "That render size is larger than your plan allows.",
+   418→        {
+   419→          status: 422,
+   420→          hint: `Renders are capped at a ${entitlements.maxRenderLongEdgePx}px long edge on this plan. Lower the resolution or upgrade.`,
+   421→          requestId,
+   422→        },
+   423→      );
+   424→    }
+   425→
+   426→    // (c) Concurrency: queued + running rows against maxConcurrentRenders.
+   427→    const active = await deps.repos.renders.countActive(workspace.id);
+   428→    if (active >= entitlements.maxConcurrentRenders) {
+   429→      throw new StudioError("RENDER_CONCURRENCY_LIMIT", { requestId });
+   430→    }
+   431→
+   432→    // (d) Monthly render minutes: Σ completed output seconds this billing
+   433→    // month (renderSecondsUsed — the honest fallback is 0 for rows without a
+   434→    // usable frameRate) against renderMinutesPerMonth, via the catalog helper
+   435→    // so the threshold can never drift. The requested render must FIT the
+   436→    // remaining minutes: renders are charged per output second and no partial
+   437→    // policy is documented, so a job whose full output exceeds the remainder
+   438→    // is refused up-front (a fully-used quota is the remaining === 0 case).
+   439→    const windowStart = utcMonthStart(new Date());
+   440→    const secondsUsed = await deps.repos.renders.renderSecondsUsed(workspace.id, windowStart);
+   441→    const remainingMinutes = renderMinutesRemaining(plan, secondsUsed / 60);
+   442→    if (quote.outputSeconds > remainingMinutes * 60) {
+   443→      throw new StudioError("RENDER_QUOTA_EXCEEDED", { requestId });
+   444→    }
+   445→
+   446→    // (e) Credits: the ONE formula's µc — the exact hold this route takes and
+   447→    // the worker later settles. §8.8: refuse on a balance that cannot cover
+   448→    // the hold BEFORE any row exists (INSUFFICIENT_CREDITS 402, no ledger row).
+   449→    const detail = estimateRenderCostDetailUc({
+   450→      format: request.format,
+   451→      outputSeconds: quote.outputSeconds,
+   452→      longEdgePx: quote.longEdgePx,
+   453→      quality: quote.quality,
+   454→    });
+   455→    const balance = await deps.repos.ledger.balance(workspace.id);
+   456→    if (balance < detail.totalUc) {
+   457→      throw new StudioError("INSUFFICIENT_CREDITS", { requestId });
+   458→    }
+   459→
+   460→    // (f)+(g) Create the row FIRST — it is the idempotency anchor and the
+   461→    // ledger scope needs its id. versionId is the SERVER-pinned project head
+   462→    // (never client-supplied — the body schema rejects a versionId outright);
+   463→    // objectKey is pre-created at queue time with the `{renderId}` placeholder
+   464→    // so the worker never guesses §9.2 layout (repos/renders.ts resolves it
+   465→    // against the generated id); credits stores the integer µc cost (the
+   466→    // column dialect — module header), so the wire display and the ledger
+   467→    // hold below are the same number.
+   468→    const objectKey = renderKey(
+   469→      workspace.id,
+   470→      quote.project.id,
+   471→      "{renderId}",
+   472→      request.format === "png-seq" ? "zip" : "mp4",
+   473→    );
+   474→    const render = await deps.repos.renders.create(workspace.id, {
+   475→      projectId: quote.project.id,
+   476→      versionId: quote.versionId,
+   477→      compId: request.compId,
+   478→      format: request.format,
+   479→      settingsJson: quote.storedSettings,
+   480→      credits: detail.totalUc,
+   481→      createdBy: c.get("auth").user.id,
+   482→      objectKey,
+   483→    });
+   484→
+   485→    // (h) Hold the credits, scoped to the render. A refusal (the balance can
+   486→    // dip between the precheck and the hold — a rare race) must never orphan
+   487→    // the queued row for a worker to claim an UNPAID job: terminal-fail it
+   488→    // with error_code RENDER_INTERNAL and surface the original typed error
+   489→    // (402 INSUFFICIENT_CREDITS / 500) to the caller.
+   490→    try {
+   491→      await deps.repos.ledger.reserve(workspace.id, {
+   492→        renderId: render.id,
+   493→        amount: detail.totalUc,
+   494→        idempotencyKey: `render:reserve:${render.id}`,
+   495→        metadata: {
+   496→          versionId: quote.versionId,
+   497→          format: request.format,
+   498→          outputSeconds: quote.outputSeconds,
+   499→          longEdgePx: quote.longEdgePx,
+   500→          quality: quote.quality,
+   501→        },
+   502→      });
+   503→    } catch (error) {
+   504→      // NOTE (M8-G finding): the RENDER status machine (packages/db
+   505→      // statuses.ts, M8-A) has no queued→failed carve-out — unlike the RUN
+   506→      // machine's F-J5 row — so markFailed on the fresh queued row would
+   507→      // CONFLICT. The legal path to the same terminal state is the two-step
+   508→      // queued→running→failed below (the intermediate running is unobservable
+   509→      // — this single request terminal-fails before any claim or stale sweep
+   510→      // can see it; claimNext only takes queued rows). Follow-up for the db
+   511→      // owner: add "failed" to RENDER_TRANSITIONS.queued and simplify this to
+   512→      // one markFailed call.
+   513→      try {
+   514→        await deps.repos.renders.markRunning(workspace.id, render.id);
+   515→        await deps.repos.renders.markFailed(workspace.id, render.id, {
+   516→          error: "Could not hold the credits for this render.",
+   517→          errorCode: "RENDER_INTERNAL",
+   518→        });
+   519→      } catch (cleanupError) {
+   520→        deps.logger.error("render_reserve_cleanup_failed", {
+   521→          requestId,
+   522→          renderId: render.id,
+   523→          detail: cleanupError instanceof Error ? cleanupError.message : "unknown",
+   524→        });
+   525→      }
+   526→      throw error;
+   527→    }
+   528→
+   529→    await audit(deps, c, workspace.id, "render.queued", quote.project.id, {
+   530→      // The audit TARGET is the project (the activity feed resolves
+   531→      // project-targeted rows by targetId — a render id would never match);
+   532→      // the render rides metadata.
+   533→      renderId: render.id,
+   534→      versionId: quote.versionId,
+   535→      format: request.format,
+   536→      objectKey: render.objectKey,
+   537→      outputSeconds: quote.outputSeconds,
+   538→      longEdgePx: quote.longEdgePx,
+   539→    });
+   540→
+   541→    return ok(c, await toJob(render), 201);
+   542→  });
+   543→
+   544→  // ── POST /v1/renders/estimate — a PURE read (viewer) ──────────────────────
+   545→  //
+   546→  // IDEMPOTENCY_EXCLUDED (middleware.ts): no Idempotency-Key header, no body
+   547→  // key, NO side effects — no row, no ledger hold, no gate that writes. The
+   548→  // numbers are derived by the SAME shared computation as the queue route, so
+   549→  // the quote the dialog shows is exactly what the queue reserves (the M8-B
+   550→  // one-formula identity; pinned by tests).
+   551→  app.post(
+   552→    "/v1/renders/estimate",
+   553→    requireWorkspace("viewer"),
+   554→    async (c: AppContext): Promise<Response> => {
+   555→      const requestId = c.get("requestId");
+   556→      const workspace = c.get("workspace");
+   557→
+   558→      const parsed = RENDER_ESTIMATE_REQUEST_SCHEMA.safeParse(await c.req.json().catch(() => null));
+   559→      if (!parsed.success) {
+   560→        throw new StudioError("VALIDATION_FAILED", { requestId });
+   561→      }
+   562→      const request = parsed.data;
+   563→
+   564→      const quote = await resolveRenderQuote(
+   565→        deps,
+   566→        workspace.id,
+   567→        requestId,
+   568→        request,
+   569→        request.settings,
+   570→      );
+   571→      // Pricing covers every DECLARED format (D-2 reserved formats stay
+   572→      // priced for completeness); the queue refuses the disabled ones.
+   573→      const detail = estimateRenderCostDetailUc({
+   574→        format: request.format,
+   575→        outputSeconds: quote.outputSeconds,
+   576→        longEdgePx: quote.longEdgePx,
+   577→        quality: quote.quality,
+   578→      });
+   579→
+   580→      const body: EstimateResult = {
+   581→        // D-12 display number — µc never crosses the wire.
+   582→        credits: microcreditsToDisplayCredits(detail.totalUc),
+   583→        outputSeconds: quote.outputSeconds,
+   584→        longEdgePx: quote.longEdgePx,
+   585→        format: request.format,
+   586→        quality: quote.quality,
+   587→        minApplied: detail.minApplied,
+   588→      };
+   589→      return ok(c, body);
+   590→    },
+   591→  );
+   592→
+   593→  // ── GET /v1/renders — history (viewer) ────────────────────────────────────
+   594→  app.get("/v1/renders", requireWorkspace("viewer"), async (c: AppContext): Promise<Response> => {
+   595→    const parsed = RENDERS_QUERY_SCHEMA.safeParse({
+   596→      cursor: c.req.query("cursor"),
+   597→      limit: c.req.query("limit"),
+   598→      projectId: c.req.query("projectId") ?? undefined,
+   599→      status: c.req.query("status") ?? undefined,
+   600→    });
+   601→    if (!parsed.success) {
+   602→      throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
+   603→        status: 400,
+   604→        hint: "Check the filters (projectId, status) and the pagination parameters.",
+   605→        requestId: c.get("requestId"),
+   606→      });
+   607→    }
+   608→    const result = await deps.repos.renders.list(c.get("workspace").id, {
+   609→      projectId: parsed.data.projectId,
+   610→      status: parsed.data.status,
+   611→      cursor: parsed.data.cursor ?? null,
+   612→      limit: parsed.data.limit,
+   613→    });
+   614→    const jobs = await Promise.all(result.items.map(toJob));
+   615→    return page(c, jobs, result.nextCursor);
+   616→  });
+   617→
+   618→  // ── GET /v1/renders/:id — one job (viewer) ─────────────────────────────────
+   619→  app.get(
+   620→    "/v1/renders/:id",
+   621→    requireWorkspace("viewer"),
+   622→    async (c: AppContext): Promise<Response> => {
+   623→      const render = await deps.repos.renders.get(c.get("workspace").id, pathParam(c, "id"));
+   624→      return ok(c, await toJob(render));
+   625→    },
+   626→  );
+   627→
+   628→  // ── POST /v1/renders/:id/cancel — cooperative cancel (editor) ─────────────
+   629→  //
+   630→  // The repo only RAISES the cancel_requested flag: a queued row keeps its
+   631→  // status and is skipped at claim time; a running row is observed by its
+   632→  // worker (M8-F), which terminal-transitions it and refunds the reserve.
+   633→  // Terminal rows → the repo's typed CONFLICT (409). The Idempotency-Key
+   634→  // HEADER is enforced by the global POST middleware; the body is an optional
+   635→  // human-safe reason.
+   636→  app.post(
+   637→    "/v1/renders/:id/cancel",
+   638→    requireWorkspace("editor"),
+   639→    async (c: AppContext): Promise<Response> => {
+   640→      const workspace = c.get("workspace");
+   641→      const parsed = CANCEL_RENDER_SCHEMA.safeParse(await c.req.json().catch(() => ({})));
+   642→      if (!parsed.success) {
+   643→        throw new StudioError("VALIDATION_FAILED", { requestId: c.get("requestId") });
+   644→      }
+   645→      const render = await deps.repos.renders.requestCancel(workspace.id, pathParam(c, "id"));
+   646→      await audit(deps, c, workspace.id, "render.cancel_requested", render.projectId, {
+   647→        renderId: render.id,
+   648→        reason: parsed.data.reason ?? null,
+   649→      });
+   650→      return ok(c, await toJob(render));
+   651→    },
+   652→  );
+   653→
+   654→  return app;
+   655→}
+   656→

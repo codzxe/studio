@@ -1,0 +1,648 @@
+     1→     1→import { randomUUID } from "node:crypto";
+     2→     2→import { afterAll, beforeAll, describe, expect, it } from "vitest";
+     3→     3→
+     4→     4→import { eq } from "drizzle-orm";
+     5→     5→import { type StudioDb, createDb } from "../../src/db.js";
+     6→     6→import { DbError } from "../../src/errors-lite.js";
+     7→     7→import { migrateDatabase } from "../../src/migrate.js";
+     8→     8→import { type Repos, createRepos } from "../../src/repos/index.js";
+     9→     9→import * as schema from "../../src/schema.js";
+    10→    10→
+    11→    11→/**
+    12→    12→ * M8-A integration tests — the renders table as a Postgres-backed JOB QUEUE.
+    13→    13→ * Auto-run only when DATABASE_URL is a postgres URL (same gate as the other
+    14→    14→ * integration suites):
+    15→    15→ *   `DATABASE_URL=postgres://… pnpm --filter @studio/db test`
+    16→    16→ *
+    17→    17→ * Determinism (why the beforeAll sweep exists): claimNext / requeueStale /
+    18→    18→ * listExpiredOutputs are trusted-internal GLOBAL operations, and aborted
+    19→    19→ * earlier runs may have left queued/running/expired debris. The sweep
+    20→    20→ * (1) fails-or-requeues stale running rows, (2) drains the queue, and
+    21→    21→ * (3) purges expired outputs — the exact production recovery/retention
+    22→    22→ * flows — so every exact-count assert below sees only this suite's rows.
+    23→    23→ */
+    24→    24→
+    25→    25→const pgUrl = process.env.DATABASE_URL ?? "";
+    26→    26→const hasDb = /^postgres(ql)?:/.test(pgUrl);
+    27→    27→
+    28→    28→/** ms to sleep between inserts so FIFO ordering by created_at is guaranteed. */
+    29→    29→const ORDER_TICK_MS = 3;
+    30→    30→
+    31→    31→describe.skipIf(!hasDb)("renders job queue (integration)", { timeout: 30_000 }, () => {
+    32→    32→  let db: StudioDb;
+    33→    33→  let repos: Repos;
+    34→    34→  const wsA = `ws_rqa_${randomUUID().slice(0, 8)}`;
+    35→    35→  const wsB = `ws_rqb_${randomUUID().slice(0, 8)}`;
+    36→    36→  const userId = `usr_test_${randomUUID().slice(0, 8)}`;
+    37→    37→
+    38→    38→  async function makePinnedProject(
+    39→    39→    workspaceId: string,
+    40→    40→    name: string,
+    41→    41→  ): Promise<{ projectId: string; versionId: string }> {
+    42→    42→    const project = await repos.projects.create(workspaceId, { name, createdBy: userId });
+    43→    43→    const { version } = await repos.versions.upload(workspaceId, {
+    44→    44→      projectId: project.id,
+    45→    45→      expectedVersionId: null,
+    46→    46→      objectKey: `workspaces/${workspaceId}/projects/${project.id}/versions/v1/project.ecproj`,
+    47→    47→      sha256: randomUUID().replaceAll("-", "").slice(0, 8),
+    48→    48→      sizeBytes: 8,
+    49→    49→      createdBy: userId,
+    50→    50→    });
+    51→    51→    return { projectId: project.id, versionId: version.id };
+    52→    52→  }
+    53→    53→
+    54→    54→  interface QueueOptions {
+    55→    55→    readonly settingsJson?: unknown;
+    56→    56→  }
+    57→    57→
+    58→    58→  async function queueRender(
+    59→    59→    workspaceId: string,
+    60→    60→    pinned: { projectId: string; versionId: string },
+    61→    61→    options?: QueueOptions,
+    62→    62→  ) {
+    63→    63→    const render = await repos.renders.create(workspaceId, {
+    64→    64→      projectId: pinned.projectId,
+    65→    65→      versionId: pinned.versionId,
+    66→    66→      compId: "comp_main",
+    67→    67→      format: "mp4",
+    68→    68→      settingsJson: options?.settingsJson,
+    69→    69→      createdBy: userId,
+    70→    70→    });
+    71→    71→    await new Promise((resolve) => setTimeout(resolve, ORDER_TICK_MS));
+    72→    72→    return render;
+    73→    73→  }
+    74→    74→
+    75→    75→  beforeAll(async () => {
+    76→    76→    const url = process.env.DATABASE_URL as string;
+    77→    77→    db = createDb(url);
+    78→    78→    await migrateDatabase(db);
+    79→    79→    repos = createRepos(db);
+    80→    80→    await db
+    81→    81→      .insert(schema.organization)
+    82→    82→      .values([
+    83→    83→        { id: wsA, name: "QA", slug: wsA },
+    84→    84→        { id: wsB, name: "QB", slug: wsB },
+    85→    85→      ])
+    86→    86→      .onConflictDoNothing();
+    87→    87→    await db
+    88→    88→      .insert(schema.user)
+    89→    89→      .values({ id: userId, name: "T", email: `${userId}@studio.test`, emailVerified: true })
+    90→    90→      .onConflictDoNothing();
+    91→    91→
+    92→    92→    // Determinism sweep (see file docblock): global queue hygiene. Any
+    93→    93→    // debris is from PREVIOUS runs (serial files clean up after themselves),
+    94→    94→    // so a 1s staleness window + full drain + output purge is enough to make
+    95→    95→    // every exact-count assert below see only this suite's rows.
+    96→    96→    await repos.renders.requeueStale(1, 1);
+    97→    97→    for (let i = 0; i < 50; i++) {
+    98→    98→      const batch = await repos.renders.claimNext("suite-drain", { limit: 25 });
+    99→    99→      if (batch.length === 0) break;
+   100→   100→    }
+   101→   101→    const expired = await repos.renders.listExpiredOutputs(new Date(Date.now() + 86_400_000));
+   102→   102→    for (const row of expired) {
+   103→   103→      await repos.renders.markOutputExpired(row.workspaceId, row.id);
+   104→   104→    }
+   105→   105→  });
+   106→   106→
+   107→   107→  afterAll(async () => {
+   108→   108→    await db?.$client.end({ timeout: 5 });
+   109→   109→  });
+   110→   110→
+   111→   111→  it("create pins a version of the same project; foreign/absent versions are typed 404s", async () => {
+   112→   112→    const pinned = await makePinnedProject(wsA, "Pinned");
+   113→   113→    const otherProject = await makePinnedProject(wsA, "Other Project");
+   114→   114→    const tenantB = await makePinnedProject(wsB, "Tenant B");
+   115→   115→
+   116→   116→    const render = await repos.renders.create(wsA, {
+   117→   117→      projectId: pinned.projectId,
+   118→   118→      versionId: pinned.versionId,
+   119→   119→      compId: "comp_main",
+   120→   120→      format: "mp4",
+   121→   121→      createdBy: userId,
+   122→   122→    });
+   123→   123→    expect(render.versionId).toBe(pinned.versionId);
+   124→   124→    expect(render.status).toBe("queued");
+   125→   125→    expect(render.attempts).toBe(0);
+   126→   126→    expect(render.framesDone).toBe(0);
+   127→   127→    expect(render.framesTotal).toBe(0);
+   128→   128→    expect(render.cancelRequested).toBe(false);
+   129→   129→    expect(render.startedAt).toBeNull();
+   130→   130→    expect(render.heartbeatAt).toBeNull();
+   131→   131→    expect(render.expiresAt).toBeNull();
+   132→   132→    expect(render.sizeBytes).toBeNull();
+   133→   133→
+   134→   134→    // version of ANOTHER project in the same workspace → 404 (never 403).
+   135→   135→    await expect(
+   136→   136→      repos.renders.create(wsA, {
+   137→   137→        projectId: pinned.projectId,
+   138→   138→        versionId: otherProject.versionId,
+   139→   139→        compId: "comp_main",
+   140→   140→        format: "mp4",
+   141→   141→        createdBy: userId,
+   142→   142→      }),
+   143→   143→    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+   144→   144→
+   145→   145→    // cross-tenant version → 404 (§12.1)
+   146→   146→    await expect(
+   147→   147→      repos.renders.create(wsA, {
+   148→   148→        projectId: pinned.projectId,
+   149→   149→        versionId: tenantB.versionId,
+   150→   150→        compId: "comp_main",
+   151→   151→        format: "mp4",
+   152→   152→        createdBy: userId,
+   153→   153→      }),
+   154→   154→    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+   155→   155→
+   156→   156→    // unknown version → 404
+   157→   157→    await expect(
+   158→   158→      repos.renders.create(wsA, {
+   159→   159→        projectId: pinned.projectId,
+   160→   160→        versionId: "ver_missing",
+   161→   161→        compId: "comp_main",
+   162→   162→        format: "mp4",
+   163→   163→        createdBy: userId,
+   164→   164→      }),
+   165→   165→    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+   166→   166→
+   167→   167→    // empty versionId → typed validation, not a bare throw
+   168→   168→    await expect(
+   169→   169→      repos.renders.create(wsA, {
+   170→   170→        projectId: pinned.projectId,
+   171→   171→        versionId: "  ",
+   172→   172→        compId: "comp_main",
+   173→   173→        format: "mp4",
+   174→   174→        createdBy: userId,
+   175→   175→      }),
+   176→   176→    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+   177→   177→
+   178→   178→    // keep the queue clean for the FIFO test below: finish this render.
+   179→   179→    await repos.renders.markRunning(wsA, render.id);
+   180→   180→    await repos.renders.markCompleted(wsA, render.id, { objectKey: "k/a.mp4" });
+   181→   181→  });
+   182→   182→
+   183→   183→  it("create persists the route-precreated §9.2 objectKey (M8-G)", async () => {
+   184→   184→    const pinned = await makePinnedProject(wsA, "Keyed");
+   185→   185→    // The gateway route cannot know the row id before create() assigns it, so
+   186→   186→    // it hands create() the key with the `{renderId}` placeholder — the repo
+   187→   187→    // stamps the fresh id (RenderCreateInput.objectKey contract).
+   188→   188→    const render = await repos.renders.create(wsA, {
+   189→   189→      projectId: pinned.projectId,
+   190→   190→      versionId: pinned.versionId,
+   191→   191→      compId: "comp_main",
+   192→   192→      format: "mp4",
+   193→   193→      createdBy: userId,
+   194→   194→      objectKey: `workspaces/${wsA}/projects/${pinned.projectId}/renders/{renderId}/output.mp4`,
+   195→   195→    });
+   196→   196→    expect(render.objectKey).toBe(
+   197→   197→      `workspaces/${wsA}/projects/${pinned.projectId}/renders/${render.id}/output.mp4`,
+   198→   198→    );
+   199→   199→
+   200→   200→    // absent → NULL (M8-A callers unaffected)
+   201→   201→    const bare = await repos.renders.create(wsA, {
+   202→   202→      projectId: pinned.projectId,
+   203→   203→      versionId: pinned.versionId,
+   204→   204→      compId: "comp_main",
+   205→   205→      format: "png-seq",
+   206→   206→      createdBy: userId,
+   207→   207→    });
+   208→   208→    expect(bare.objectKey).toBeNull();
+   209→   209→
+   210→   210→    // keep the queue clean for the other tests
+   211→   211→    await repos.renders.markRunning(wsA, render.id);
+   212→   212→    await repos.renders.markCompleted(wsA, render.id, { objectKey: render.objectKey ?? "k/a.mp4" });
+   213→   213→    await repos.renders.markRunning(wsA, bare.id);
+   214→   214→    await repos.renders.markCompleted(wsA, bare.id, { objectKey: "k/a.zip" });
+   215→   215→  });
+   216→   216→
+   217→   217→  it("claimNext claims FIFO, flips to running, and carries the resolved workspaceId", async () => {
+   218→   218→    const pinned = await makePinnedProject(wsA, "FIFO");
+   219→   219→    const first = await queueRender(wsA, pinned);
+   220→   220→    const second = await queueRender(wsA, pinned);
+   221→   221→
+   222→   222→    const claimed = await repos.renders.claimNext("worker-a", { limit: 10 });
+   223→   223→    const ids = claimed.map((row) => row.id);
+   224→   224→    expect(ids).toContain(first.id);
+   225→   225→    expect(ids).toContain(second.id);
+   226→   226→    // FIFO: the earlier created_at claims first.
+   227→   227→    expect(ids.indexOf(first.id)).toBeLessThan(ids.indexOf(second.id));
+   228→   228→
+   229→   229→    const mine = claimed.find((row) => row.id === first.id);
+   230→   230→    expect(mine?.status).toBe("running");
+   231→   231→    expect(mine?.workspaceId).toBe(wsA); // resolved per-row for later calls
+   232→   232→    expect(mine?.attempts).toBe(1);
+   233→   233→    expect(mine?.startedAt).not.toBeNull();
+   234→   234→    expect(mine?.heartbeatAt).not.toBeNull();
+   235→   235→
+   236→   236→    const row = await repos.renders.get(wsA, first.id);
+   237→   237→    expect(row.status).toBe("running");
+   238→   238→    expect(row.attempts).toBe(1);
+   239→   239→    expect(row.startedAt).not.toBeNull();
+   240→   240→
+   241→   241→    // empty queue → no claims
+   242→   242→    const again = await repos.renders.claimNext("worker-a", { limit: 10 });
+   243→   243→    expect(again.map((r) => r.id)).not.toContain(first.id);
+   244→   244→    expect(again.map((r) => r.id)).not.toContain(second.id);
+   245→   245→
+   246→   246→    // default limit is a single row (added a third queued row above? no — use two fresh)
+   247→   247→    const third = await queueRender(wsA, pinned);
+   248→   248→    const single = await repos.renders.claimNext("worker-a");
+   249→   249→    expect(single.length).toBe(1);
+   250→   250→    expect(single[0]?.id).toBe(third.id);
+   251→   251→
+   252→   252→    // leave nothing queued behind
+   253→   253→    for (const r of [first, second, third]) {
+   254→   254→      await repos.renders.markCompleted(wsA, r.id, { objectKey: `k/${r.id}.mp4` });
+   255→   255→    }
+   256→   256→  });
+   257→   257→
+   258→   258→  it("claimNext under two concurrent claims: SKIP LOCKED never double-claims", async () => {
+   259→   259→    const pinned = await makePinnedProject(wsA, "Skip Locked");
+   260→   260→    const created = [
+   261→   261→      await queueRender(wsA, pinned),
+   262→   262→      await queueRender(wsA, pinned),
+   263→   263→      await queueRender(wsA, pinned),
+   264→   264→      await queueRender(wsA, pinned),
+   265→   265→    ];
+   266→   266→
+   267→   267→    const [batchA, batchB] = await Promise.all([
+   268→   268→      repos.renders.claimNext("worker-a", { limit: 2 }),
+   269→   269→      repos.renders.claimNext("worker-b", { limit: 2 }),
+   270→   270→    ]);
+   271→   271→
+   272→   272→    const idsA = batchA.map((row) => row.id);
+   273→   273→    const idsB = batchB.map((row) => row.id);
+   274→   274→    // every row claimed exactly once — no double claim under SKIP LOCKED
+   275→   275→    const claimedIds = [...idsA, ...idsB];
+   276→   276→    expect(claimedIds.length).toBe(4);
+   277→   277→    expect(new Set(claimedIds).size).toBe(4);
+   278→   278→    for (const render of created) {
+   279→   279→      expect(claimedIds).toContain(render.id);
+   280→   280→    }
+   281→   281→    expect(idsA.filter((id) => idsB.includes(id))).toEqual([]);
+   282→   282→    // each row is now running with one attempt
+   283→   283→    for (const render of created) {
+   284→   284→      const row = await repos.renders.get(wsA, render.id);
+   285→   285→      expect(row.status).toBe("running");
+   286→   286→      expect(row.attempts).toBe(1);
+   287→   287→    }
+   288→   288→    // leave nothing running behind
+   289→   289→    for (const render of created) {
+   290→   290→      await repos.renders.markFailed(wsA, render.id, { error: "test teardown" });
+   291→   291→    }
+   292→   292→  });
+   293→   293→
+   294→   294→  it("requestCancel: queued rows stay queued and are skipped at claim time; idempotent", async () => {
+   295→   295→    const pinned = await makePinnedProject(wsA, "Cooperative Cancel");
+   296→   296→    const cancelled = await queueRender(wsA, pinned);
+   297→   297→    const healthy = await queueRender(wsA, pinned);
+   298→   298→
+   299→   299→    const flagged = await repos.renders.requestCancel(wsA, cancelled.id);
+   300→   300→    expect(flagged.status).toBe("queued"); // stays queued; worker cancels at claim
+   301→   301→    expect(flagged.cancelRequested).toBe(true);
+   302→   302→
+   303→   303→    const flaggedAgain = await repos.renders.requestCancel(wsA, cancelled.id);
+   304→   304→    expect(flaggedAgain.cancelRequested).toBe(true); // idempotent
+   305→   305→
+   306→   306→    const claimed = await repos.renders.claimNext("worker-a", { limit: 10 });
+   307→   307→    const claimedIds = claimed.map((row) => row.id);
+   308→   308→    expect(claimedIds).toContain(healthy.id);
+   309→   309→    expect(claimedIds).not.toContain(cancelled.id);
+   310→   310→
+   311→   311→    const stillQueued = await repos.renders.get(wsA, cancelled.id);
+   312→   312→    expect(stillQueued.status).toBe("queued");
+   313→   313→    expect(stillQueued.cancelRequested).toBe(true);
+   314→   314→
+   315→   315→    // running cancel: flag is observed by the worker, which terminal-transitions
+   316→   316→    const flaggedRunning = await repos.renders.requestCancel(wsA, healthy.id);
+   317→   317→    expect(flaggedRunning.status).toBe("running");
+   318→   318→    expect(flaggedRunning.cancelRequested).toBe(true);
+   319→   319→    const terminal = await repos.renders.markCancelled(wsA, healthy.id);
+   320→   320→    expect(terminal.status).toBe("cancelled");
+   321→   321→
+   322→   322→    // terminal rows refuse a cancel request (typed CONFLICT)
+   323→   323→    await expect(repos.renders.requestCancel(wsA, healthy.id)).rejects.toMatchObject({
+   324→   324→      code: "CONFLICT",
+   325→   325→    });
+   326→   326→  });
+   327→   327→
+   328→   328→  it("heartbeat: idempotent pings, monotonic frames, running-only", async () => {
+   329→   329→    const pinned = await makePinnedProject(wsA, "Heartbeat");
+   330→   330→    const render = await queueRender(wsA, pinned);
+   331→   331→    const claimed = (await repos.renders.claimNext("worker-a"))[0];
+   332→   332→    if (!claimed) throw new Error("expected a claim");
+   333→   333→    expect(claimed.id).toBe(render.id);
+   334→   334→
+   335→   335→    const first = await repos.renders.heartbeat(wsA, render.id, {
+   336→   336→      framesDone: 10,
+   337→   337→      framesTotal: 30,
+   338→   338→    });
+   339→   339→    expect(first.framesDone).toBe(10);
+   340→   340→    expect(first.framesTotal).toBe(30);
+   341→   341→    expect(first.heartbeatAt).not.toBeNull();
+   342→   342→
+   343→   343→    // a late/duplicate ping can never rewind progress
+   344→   344→    const rewound = await repos.renders.heartbeat(wsA, render.id, { framesDone: 5 });
+   345→   345→    expect(rewound.framesDone).toBe(10);
+   346→   346→    const advanced = await repos.renders.heartbeat(wsA, render.id, {
+   347→   347→      framesDone: 12,
+   348→   348→      framesTotal: 60,
+   349→   349→    });
+   350→   350→    expect(advanced.framesDone).toBe(12);
+   351→   351→    expect(advanced.framesTotal).toBe(60);
+   352→   352→    const repeated = await repos.renders.heartbeat(wsA, render.id, {
+   353→   353→      framesDone: 12,
+   354→   354→      framesTotal: 60,
+   355→   355→    });
+   356→   356→    expect(repeated.framesDone).toBe(12);
+   357→   357→    expect(repeated.framesTotal).toBe(60);
+   358→   358→
+   359→   359→    // non-running rows refuse heartbeats (typed CONFLICT)
+   360→   360→    await repos.renders.markCompleted(wsA, render.id, { objectKey: "k/hb.mp4" });
+   361→   361→    await expect(repos.renders.heartbeat(wsA, render.id, { framesDone: 20 })).rejects.toMatchObject(
+   362→   362→      { code: "CONFLICT" },
+   363→   363→    );
+   364→   364→  });
+   365→   365→
+   366→   366→  it("requeueStale: fresh heartbeats untouched; stale requeues under maxAttempts, fails at max", async () => {
+   367→   367→    const pinned = await makePinnedProject(wsA, "Requeue");
+   368→   368→    const render = await queueRender(wsA, pinned);
+   369→   369→    const claimed = (await repos.renders.claimNext("worker-a"))[0];
+   370→   370→    if (!claimed) throw new Error("expected a claim");
+   371→   371→    expect(claimed.id).toBe(render.id);
+   372→   372→    expect(claimed.attempts).toBe(1);
+   373→   373→
+   374→   374→    // fresh heartbeat → nothing is stale
+   375→   375→    expect(await repos.renders.requeueStale(3600, 2)).toBe(0);
+   376→   376→
+   377→   377→    // simulate a crashed worker: heartbeat outside the window
+   378→   378→    await db
+   379→   379→      .update(schema.renders)
+   380→   380→      .set({ heartbeatAt: new Date(Date.now() - 7_200_000) })
+   381→   381→      .where(eq(schema.renders.id, render.id));
+   382→   382→
+   383→   383→    expect(await repos.renders.requeueStale(3600, 2)).toBe(1);
+   384→   384→    const requeued = await repos.renders.get(wsA, render.id);
+   385→   385→    expect(requeued.status).toBe("queued"); // the sanctioned running→queued edge
+   386→   386→    expect(requeued.attempts).toBe(1); // attempts survive; incremented on claim
+   387→   387→    expect(requeued.cancelRequested).toBe(false);
+   388→   388→    expect(requeued.startedAt).toBeNull();
+   389→   389→    expect(requeued.heartbeatAt).toBeNull();
+   390→   390→
+   391→   391→    // a canceled-mid-crash row is requeued with the flag cleared
+   392→   392→    const reclaimed = (await repos.renders.claimNext("worker-b"))[0];
+   393→   393→    if (!reclaimed) throw new Error("expected a re-claim");
+   394→   394→    expect(reclaimed.id).toBe(render.id);
+   395→   395→    expect(reclaimed.attempts).toBe(2);
+   396→   396→    await db
+   397→   397→      .update(schema.renders)
+   398→   398→      .set({ heartbeatAt: new Date(Date.now() - 7_200_000) })
+   399→   399→      .where(eq(schema.renders.id, render.id));
+   400→   400→
+   401→   401→    // attempts (2) >= maxAttempts (2) → honest terminal failure
+   402→   402→    expect(await repos.renders.requeueStale(3600, 2)).toBe(1);
+   403→   403→    const failed = await repos.renders.get(wsA, render.id);
+   404→   404→    expect(failed.status).toBe("failed");
+   405→   405→    expect(failed.error).toBe("worker lost mid-render");
+   406→   406→    expect(failed.errorCode).toBe("RENDER_INTERNAL");
+   407→   407→    expect(failed.completedAt).not.toBeNull();
+   408→   408→
+   409→   409→    // running rows with a NULL heartbeat count as stale (pre-M8 rows)
+   410→   410→    const legacy = await queueRender(wsA, pinned);
+   411→   411→    await db
+   412→   412→      .update(schema.renders)
+   413→   413→      .set({ status: "running", attempts: 1, heartbeatAt: null, startedAt: new Date() })
+   414→   414→      .where(eq(schema.renders.id, legacy.id));
+   415→   415→    expect(await repos.renders.requeueStale(3600, 5)).toBe(1);
+   416→   416→    const legacyRow = await repos.renders.get(wsA, legacy.id);
+   417→   417→    expect(legacyRow.status).toBe("queued");
+   418→   418→    expect(legacyRow.attempts).toBe(1);
+   419→   419→
+   420→   420→    // teardown: claim and fail the legacy row so nothing lingers
+   421→   421→    const legacyClaim = (await repos.renders.claimNext("worker-c"))[0];
+   422→   422→    if (!legacyClaim) throw new Error("expected a legacy claim");
+   423→   423→    await repos.renders.markFailed(wsA, legacyClaim.id, {
+   424→   424→      error: "teardown",
+   425→   425→      errorCode: "RENDER_TIMEOUT",
+   426→   426→    });
+   427→   427→  });
+   428→   428→
+   429→   429→  it("markFailed persists the optional machine-readable errorCode", async () => {
+   430→   430→    const pinned = await makePinnedProject(wsA, "Error Codes");
+   431→   431→    const render = await queueRender(wsA, pinned);
+   432→   432→    await repos.renders.markRunning(wsA, render.id);
+   433→   433→    const failed = await repos.renders.markFailed(wsA, render.id, {
+   434→   434→      error: "encoder exploded",
+   435→   435→      errorCode: "RENDER_TIMEOUT",
+   436→   436→    });
+   437→   437→    expect(failed.status).toBe("failed");
+   438→   438→    expect(failed.error).toBe("encoder exploded");
+   439→   439→    expect(failed.errorCode).toBe("RENDER_TIMEOUT");
+   440→   440→
+   441→   441→    const bare = await queueRender(wsA, pinned);
+   442→   442→    await repos.renders.markRunning(wsA, bare.id);
+   443→   443→    const failedBare = await repos.renders.markFailed(wsA, bare.id, { error: "no code" });
+   444→   444→    expect(failedBare.errorCode).toBeNull();
+   445→   445→  });
+   446→   446→
+   447→   447→  it("expire/purge lifecycle: listExpiredOutputs → markOutputExpired keeps history", async () => {
+   448→   448→    const pinned = await makePinnedProject(wsA, "Expiry");
+   449→   449→    const expiredOne = await queueRender(wsA, pinned);
+   450→   450→    const kept = await queueRender(wsA, pinned);
+   451→   451→    const neverExpires = await queueRender(wsA, pinned);
+   452→   452→
+   453→   453→    await repos.renders.markRunning(wsA, expiredOne.id);
+   454→   454→    const done = await repos.renders.markCompleted(wsA, expiredOne.id, {
+   455→   455→      objectKey: "k/expired.mp4",
+   456→   456→      sizeBytes: 1234,
+   457→   457→      expiresAt: new Date(Date.now() - 1_000), // already expired
+   458→   458→    });
+   459→   459→    expect(done.sizeBytes).toBe(1234);
+   460→   460→    expect(done.expiresAt).not.toBeNull();
+   461→   461→
+   462→   462→    await repos.renders.markRunning(wsA, kept.id);
+   463→   463→    await repos.renders.markCompleted(wsA, kept.id, {
+   464→   464→      objectKey: "k/kept.mp4",
+   465→   465→      sizeBytes: 50,
+   466→   466→      expiresAt: new Date(Date.now() + 86_400_000), // a day from now
+   467→   467→    });
+   468→   468→
+   469→   469→    await repos.renders.markRunning(wsA, neverExpires.id);
+   470→   470→    await repos.renders.markCompleted(wsA, neverExpires.id, { objectKey: "k/no-expiry.mp4" });
+   471→   471→
+   472→   472→    const expired = await repos.renders.listExpiredOutputs(new Date());
+   473→   473→    expect(expired.map((row) => row.id)).toEqual([expiredOne.id]);
+   474→   474→    expect(expired[0]?.workspaceId).toBe(wsA); // per-row scope for the sweeper
+   475→   475→    expect(expired[0]?.objectKey).toBe("k/expired.mp4");
+   476→   476→
+   477→   477→    const purged = await repos.renders.markOutputExpired(wsA, expiredOne.id);
+   478→   478→    expect(purged.status).toBe("completed"); // row stays as history…
+   479→   479→    expect(purged.objectKey).toBeNull(); // …but the output is gone
+   480→   480→    expect(purged.expiresAt).toBeNull();
+   481→   481→    expect(purged.sizeBytes).toBeNull();
+   482→   482→
+   483→   483→    // idempotent, and the sweep no longer sees it
+   484→   484→    const purgedAgain = await repos.renders.markOutputExpired(wsA, expiredOne.id);
+   485→   485→    expect(purgedAgain.objectKey).toBeNull();
+   486→   486→    expect(await repos.renders.listExpiredOutputs(new Date())).toEqual([]);
+   487→   487→
+   488→   488→    // non-completed rows refuse the purge
+   489→   489→    const queued = await queueRender(wsA, pinned);
+   490→   490→    await expect(repos.renders.markOutputExpired(wsA, queued.id)).rejects.toMatchObject({
+   491→   491→      code: "CONFLICT",
+   492→   492→    });
+   493→   493→    await repos.renders.markCancelled(wsA, queued.id);
+   494→   494→  });
+   495→   495→
+   496→   496→  it("countActive: queued + running per workspace", async () => {
+   497→   497→    const wsCount = `ws_cnt_${randomUUID().slice(0, 8)}`;
+   498→   498→    await db
+   499→   499→      .insert(schema.organization)
+   500→   500→      .values({ id: wsCount, name: "Count", slug: wsCount })
+   501→   501→      .onConflictDoNothing();
+   502→   502→    const pinned = await makePinnedProject(wsCount, "Concurrent");
+   503→   503→
+   504→   504→    const r1 = await queueRender(wsCount, pinned);
+   505→   505→    await queueRender(wsCount, pinned);
+   506→   506→    await queueRender(wsCount, pinned);
+   507→   507→
+   508→   508→    expect(await repos.renders.countActive(wsCount)).toBe(3);
+   509→   509→
+   510→   510→    const claimed = (await repos.renders.claimNext("worker-a"))[0];
+   511→   511→    if (!claimed) throw new Error("expected a claim");
+   512→   512→    expect(claimed.id).toBe(r1.id);
+   513→   513→    expect(await repos.renders.countActive(wsCount)).toBe(3); // running still counts
+   514→   514→
+   515→   515→    await repos.renders.markCompleted(wsCount, r1.id, { objectKey: "k/one.mp4" });
+   516→   516→    expect(await repos.renders.countActive(wsCount)).toBe(2);
+   517→   517→
+   518→   518→    // leave nothing queued behind: drain wsCount's two survivors
+   519→   519→    const survivors = await repos.renders.claimNext("worker-a", { limit: 2 });
+   520→   520→    expect(survivors.map((row) => row.workspaceId)).toEqual([wsCount, wsCount]);
+   521→   521→    for (const row of survivors) {
+   522→   522→      await repos.renders.markCompleted(wsCount, row.id, { objectKey: `k/${row.id}.mp4` });
+   523→   523→    }
+   524→   524→    expect(await repos.renders.countActive(wsCount)).toBe(0);
+   525→   525→
+   526→   526→    // tenant isolation: another workspace sees nothing
+   527→   527→    expect(await repos.renders.countActive(wsB)).toBe(0);
+   528→   528→  });
+   529→   529→
+   530→   530→  it("renderSecondsUsed: Σ frames_total/frameRate over completed renders, honest 0 fallback", async () => {
+   531→   531→    const wsUsage = `ws_usg_${randomUUID().slice(0, 8)}`;
+   532→   532→    await db
+   533→   533→      .insert(schema.organization)
+   534→   534→      .values({ id: wsUsage, name: "Usage", slug: wsUsage })
+   535→   535→      .onConflictDoNothing();
+   536→   536→    const pinned = await makePinnedProject(wsUsage, "Quota");
+   537→   537→
+   538→   538→    const short = await queueRender(wsUsage, pinned, { settingsJson: { frameRate: 30 } });
+   539→   539→    const long = await queueRender(wsUsage, pinned, { settingsJson: { frameRate: 30 } });
+   540→   540→    const noFps = await queueRender(wsUsage, pinned, {}); // no frameRate → 0
+   541→   541→    const doomed = await queueRender(wsUsage, pinned, { settingsJson: { frameRate: 30 } });
+   542→   542→
+   543→   543→    const claimed = await repos.renders.claimNext("worker-a", { limit: 4 });
+   544→   544→    expect(claimed.length).toBe(4);
+   545→   545→    await repos.renders.heartbeat(wsUsage, short.id, { framesDone: 30, framesTotal: 30 });
+   546→   546→    await repos.renders.heartbeat(wsUsage, long.id, { framesDone: 60, framesTotal: 60 });
+   547→   547→    await repos.renders.heartbeat(wsUsage, noFps.id, { framesDone: 30, framesTotal: 30 });
+   548→   548→    await repos.renders.markCompleted(wsUsage, short.id, { objectKey: "k/s.mp4" });
+   549→   549→    await repos.renders.markCompleted(wsUsage, long.id, { objectKey: "k/l.mp4" });
+   550→   550→    await repos.renders.markCompleted(wsUsage, noFps.id, { objectKey: "k/n.mp4" });
+   551→   551→    await repos.renders.markFailed(wsUsage, doomed.id, { error: "not counted" });
+   552→   552→
+   553→   553→    const since = new Date(Date.now() - 60_000);
+   554→   554→    // 30/30 + 60/30 = 3 seconds; the failed row and the frameRate-less row
+   555→   555→    // contribute nothing (documented fallback — never a guess).
+   556→   556→    expect(await repos.renders.renderSecondsUsed(wsUsage, since)).toBe(3);
+   557→   557→    // `since` in the future → nothing counts yet
+   558→   558→    expect(await repos.renders.renderSecondsUsed(wsUsage, new Date(Date.now() + 60_000))).toBe(0);
+   559→   559→    // other workspaces see nothing
+   560→   560→    expect(await repos.renders.renderSecondsUsed(wsB, since)).toBe(0);
+   561→   561→  });
+   562→   562→
+   563→   563→  it("render-scoped ledger: holds settle per render; run XOR render enforced at the repo layer", async () => {
+   564→   564→    const wsLedger = `ws_led_${randomUUID().slice(0, 8)}`;
+   565→   565→    await db
+   566→   566→      .insert(schema.organization)
+   567→   567→      .values({ id: wsLedger, name: "Led", slug: wsLedger })
+   568→   568→      .onConflictDoNothing();
+   569→   569→    const pinned = await makePinnedProject(wsLedger, "Ledger Scope");
+   570→   570→    const render = await repos.renders.create(wsLedger, {
+   571→   571→      projectId: pinned.projectId,
+   572→   572→      versionId: pinned.versionId,
+   573→   573→      compId: "comp_main",
+   574→   574→      format: "mp4",
+   575→   575→      createdBy: userId,
+   576→   576→    });
+   577→   577→
+   578→   578→    const grant = await repos.ledger.grant(wsLedger, {
+   579→   579→      amount: 1_000_000, // 1 credit in µc (D-12: integer microcredits only)
+   580→   580→      idempotencyKey: `m8a:grant:${render.id}`,
+   581→   581→    });
+   582→   582→    expect(grant.entry.renderId).toBeNull(); // unscoped grants stay unscoped
+   583→   583→
+   584→   584→    const held = await repos.ledger.reserve(wsLedger, {
+   585→   585→      renderId: render.id, // render-scoped hold — no runId
+   586→   586→      amount: 500,
+   587→   587→      idempotencyKey: `m8a:reserve:${render.id}`,
+   588→   588→    });
+   589→   589→    expect(held.entry.renderId).toBe(render.id);
+   590→   590→    expect(held.entry.runId).toBeNull();
+   591→   591→    expect(held.replayed).toBe(false);
+   592→   592→
+   593→   593→    // a ledger row may be scoped to a run OR a render — never both
+   594→   594→    await expect(
+   595→   595→      repos.ledger.reserve(wsLedger, {
+   596→   596→        runId: "run_x",
+   597→   597→        renderId: render.id,
+   598→   598→        amount: 10,
+   599→   599→        idempotencyKey: `m8a:xor:${render.id}`,
+   600→   600→      }),
+   601→   601→    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+   602→   602→    // …and hold operations require exactly one producer
+   603→   603→    await expect(
+   604→   604→      repos.ledger.reserve(wsLedger, {
+   605→   605→        amount: 10,
+   606→   606→        idempotencyKey: `m8a:noscope:${render.id}`,
+   607→   607→      }),
+   608→   608→    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+   609→   609→
+   610→   610→    // settle commits the actual cost and releases the full hold (D-20)
+   611→   611→    const settled = await repos.ledger.settle(wsLedger, {
+   612→   612→      renderId: render.id,
+   613→   613→      actualCost: 300,
+   614→   614→      idempotencyKey: `m8a:settle:${render.id}`,
+   615→   615→    });
+   616→   616→    expect(settled.commit?.renderId).toBe(render.id);
+   617→   617→    expect(settled.commit?.amount).toBe(-300);
+   618→   618→    expect(settled.refund?.amount).toBe(500);
+   619→   619→    expect(settled.replayed).toBe(false);
+   620→   620→
+   621→   621→    // nothing left to refund for this render
+   622→   622→    const refunded = await repos.ledger.refundAll(wsLedger, {
+   623→   623→      renderId: render.id,
+   624→   624→      idempotencyKey: `m8a:refund-all:${render.id}`,
+   625→   625→    });
+   626→   626→    expect(refunded.entry).toBeNull();
+   627→   627→    expect(refunded.refunded).toBe(0);
+   628→   628→
+   629→   629→    // net: −300 µc for the render
+   630→   630→    expect(await repos.ledger.balance(wsLedger)).toBe(1_000_000 - 300);
+   631→   631→
+   632→   632→    // list filters render-scoped entries
+   633→   633→    const entries = await repos.ledger.list(wsLedger, { renderId: render.id, limit: 10 });
+   634→   634→    expect(entries.items.length).toBe(3); // reserve + commit + refund
+   635→   635→    expect(entries.items.every((entry) => entry.renderId === render.id)).toBe(true);
+   636→   636→
+   637→   637→    // run-scoped holds still work unchanged (key unique per run — the ledger
+   638→   638→    // idempotency table is GLOBAL)
+   639→   639→    const runHeld = await repos.ledger.reserve(wsLedger, {
+   640→   640→      runId: "run_x",
+   641→   641→      amount: 100,
+   642→   642→      idempotencyKey: `m8a:reserve:run_x:${wsLedger}`,
+   643→   643→    });
+   644→   644→    expect(runHeld.entry.runId).toBe("run_x");
+   645→   645→    expect(runHeld.entry.renderId).toBeNull();
+   646→   646→  });
+   647→   647→});
+   648→   648→

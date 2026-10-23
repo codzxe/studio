@@ -19,7 +19,7 @@
 // exits 0 (spike §4), so CLI success alone proves nothing; this pre-validation
 // is the guarantee that a completed render actually used real footage.
 
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Asset, Page, Repos } from "@studio/db";
@@ -220,7 +220,21 @@ export async function hydrateJob(args: HydrateArgs): Promise<HydratedJob> {
   const root = scratchRoot(args.repoRoot);
   await mkdir(root, { recursive: true });
   const workdir = await mkdtemp(join(root, `${args.row.id}-`));
+  try {
+    return await hydrateInto(args, workdir);
+  } catch (error) {
+    // The confined dir is disposable (pipeline.ts rm's it on success paths;
+    // runJob never sees it on THIS typed-throw path). A failing hydration
+    // must never leak it — every failed job would otherwise strand a dir
+    // under .local/render-jobs until the disk fills (found by the M8-K
+    // integration suite: missing-asset + malformed jobs leaked).
+    await rm(workdir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
 
+/** The hydration steps, inside an already-created confined workdir. */
+async function hydrateInto(args: HydrateArgs, workdir: string): Promise<HydratedJob> {
   // 1. The pinned project version (§9.3 — immutable, content-addressed).
   const projectBytes = await readObjectBytes(args.storage, args.version.objectKey);
   if (projectBytes === null) {
