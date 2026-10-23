@@ -50,6 +50,15 @@ matching note: Playwright glob patterns anchor at the end of the full URL
 with a regex; the query-less routes use exact-path globs, and the estimate
 route registers last (the most recently registered match wins).
 
+`m9-visual.spec.ts` + `m9-axe.spec.ts` are the §M9 task-7 companions (the
+M9.7 visual-QA harness): the §13 viewport sweep (320→1920) with screenshot
+SMOKES — not baselines —, the no-horizontal-scroll gates at 320/390, the
+200% zoom (deviceScaleFactor 2) and reduced-motion arms, an LCP/CLS
+recording, and the guarded axe sweeps over the public marketing + auth
+routes. They add NO new boot steps and NO new baselines: same recipe, same
+env, same ports — plus ONE CI-owned devDep for axe (§11c). The
+editor-unchanged baselines stay in chat/m5, untouched by the M9 wave.
+
 It is **not runnable on the build-fleet box**: that box has no browsers and
 no dev servers (docs/AGENTS.md), which is why `@playwright/test` is not a
 devDependency there. `apps/web/tsconfig.json` therefore **excludes** `e2e/`
@@ -489,3 +498,102 @@ Notes:
 - The guest-comment and request-access posts in the spec write REAL rows
   (a `comments` row with `share_token_id`, a `share.request_access` audit
   row) — expected, harmless, and swept away with a fresh DB.
+
+---
+
+## 11. M9 visual QA (`m9-visual.spec.ts` + `m9-axe.spec.ts`)
+
+The §M9 task-7 harness (BUILD_PLAN): the viewport sweep with screenshot
+smokes, the no-horizontal-scroll gates, 200% zoom, reduced motion, axe, and
+an LCP/CLS recording. The **editor-diff-vs-upstream** bullet is deliberately
+NOT here — its pixel baselines are the `editor-unchanged-*` shots in
+`chat.spec.ts` / `m5-agent-edits.spec.ts`, which remain the ONLY pixel
+baselines in the suite and are not touched by the M9 wave.
+
+### 11a. What runs
+
+| Spec | Tests | What it proves |
+|---|---|---|
+| `m9-visual.spec.ts` | 22 | 8 marketing + 2 auth + 4 authed pages each swept at 320/390/768/1024/1280/1440/1920 (document answers < 400, surface testid renders, §13 primary action visible, full-page screenshot smoke at every width; hard no-horizontal-scroll gate at 320 + 390); a reduced-motion arm (3 pages × 390/1280: matchMedia took, theme.css §6.2 override collapses the frame-line animation, layout invariants hold); a 200% zoom spot-check (deviceScaleFactor 2 at 390 + 768); a landing LCP/CLS smoke (§11e) |
+| `m9-axe.spec.ts` | 10 (skipped until §11c) | axe sweeps over the 10 public routes — zero WCAG 2.x A/AA violations, full JSON report attached per test |
+
+Run just the M9 wave: `pnpm --filter @studio/web exec playwright test m9-`.
+
+### 11b. The runner recipe — same boot, zero new env
+
+Everything in §4/§5 applies unchanged: the same ports (3100 edge / 3000 web /
+8787 gateway — `E2E_EDGE_PORT` / `E2E_WEB_PORT` / `E2E_GATEWAY_PORT`
+overrides) and the same env set (`APP_URL`, `NEXT_PUBLIC_APP_URL`,
+`APP_ENV=local`, `MOCK_MODEL=true`, `DATABASE_URL`, `AUTH_SECRET`,
+`GATEWAY_INTERNAL_URL`). What each half needs on top:
+
+| Half | Needs |
+|---|---|
+| marketing + auth sweeps, 200% zoom, reduced-motion, LCP/CLS, axe | nothing extra — no sign-in, no seed, no fixtures (`/status` probes the gateway health endpoint through the edge, which the standard boot provides) |
+| authed sweep (`/w`, `/w/projects`, `/w/billing`, `/w/settings/members`) | §2's seed (sign in as `demo@studio.test` through the real `/sign-in` form — the m7 recipe's `signIn` helper). The §3 `.ecproj` staging and §10 share fixture are NOT needed: no editor, no share page |
+
+**Wave-pending routes (honest note).** The authed sweep is written against
+the route contract: `/w` (W2-03 §8.4 dashboard), `/w/projects` (W2-04 §8.5),
+`/w/settings/members` (W2-06 §8.9) land with the W2/W3 wave; `/w/billing`
+is live today (`billing-view`, plus W2-01's URL-preserving `(shell)` move
+and W2-08's additive usage section). Running the suite BEFORE those siblings
+land reds exactly those three tests with 404s — the documented mid-wave
+state, not a harness bug.
+
+**First-run expectation — the 320px gate.** The no-horizontal-scroll gate at
+320/390 encodes §12/§13, not a guess about the current chrome: on-box px
+math suggests the marketing header's CTA pair (`Sign in` + `Start trial`)
+may overflow 320px. If CI confirms, the fix belongs in the app chrome
+(`site-header.tsx` — wrap the CTAs or use §13's sticky bottom bar), NEVER in
+the gate. The same ruling applies to the authed shell pages at 320
+(§12: "no horizontal scroll at 320px for the shell").
+
+### 11c. The axe install contract (CI-owned — packages/ui/README.md §5)
+
+```sh
+pnpm --filter @studio/web add -D @axe-core/playwright
+```
+
+- The spec loads the package through a **runtime import guard**: absent →
+  every axe test SKIPS with the install command as its printed reason (a
+  logged, visible skip — never a silent green, never a red). On the build
+  box that is the permanent state (the no-install law); CI installs once and
+  the sweep goes live with zero other changes.
+- The gate is **zero violations** on `wcag2a/wcag2aa/wcag21a/wcag21aa`. The
+  full JSON report is attached per test (`axe-report-<page>`) so a red names
+  the exact rules and nodes.
+- First-run policy: an environmental rule (dev-only chrome — the Next dev
+  overlay `<nextjs-portal>` is the one sanctioned exclusion) gets an entry
+  in `AXE_DISABLED_RULES` with a comment; the tag set is never weakened.
+- Scope per the W2-10 manifest: the REAL marketing + auth routes. The
+  `@studio/ui` example galleries are not routes (packages/ui README §5) —
+  the primitives are exercised in situ through the pages that compose them;
+  the component-level floor stays the unit suite's a11y assertions.
+
+### 11d. Screenshot smokes, not baselines (the runner-GPU caveat)
+
+`m9-visual` writes one full-page PNG per page × viewport into the run's
+output dir (`e2e/.results/…`, via `testInfo.outputPath` — run artifacts,
+never committed) and asserts existence + a non-blank byte floor (≥ 10 KiB).
+They are NOT pixel baselines: the same runner-GPU caveat that governs the
+editor WebGL baselines (§First run) applies to every rendered pixel —
+antialiasing and font rasterization differ per runner image — so only the
+editor-unchanged masks (chat/m5) are pinned against committed images, and
+this harness deliberately does not add to them.
+
+### 11e. LCP/CLS smoke — the CI-owned honest note
+
+The last `m9-visual` test reads the landing's
+`performance.getEntriesByType("largest-contentful-paint" |
+"layout-shift")` through an inline, guarded helper in the spec:
+
+- **CLS is a hard gate** (`< 0.1`, the §M9 exit criterion): layout shift is
+  geometry — stable in `next dev`, so it gates honestly here.
+- **LCP is recorded, not production-gated**: the number is annotated onto
+  the test and held only under a 15 s pathological ceiling. §16.2's
+  "LCP < 2.5s on a throttled profile" is a production-build measurement; a
+  warm dev-server number is not that measurement, and pretending otherwise
+  would be a fake green. The production budget run is CI's perf job
+  (BUILD_PLAN §M10 task 3).
+- **Guarded**: a runner that buffers no LCP entry SKIPS that half with the
+  reason printed — absence is a skip, never a red.
