@@ -54,6 +54,10 @@ export RENDER_WORKER_ENABLED=false
 export OTEL_EXPORTER_OTLP_ENDPOINT=""
 # the gateway binds process.env.PORT (services/gateway/src/index.ts:44)
 export PORT="$GATEWAY_PORT"
+# the web app's SSR dials the gateway at GATEWAY_INTERNAL_URL (default
+# 127.0.0.1:8787 — apps/web/src/lib/gateway.ts:32); without this the editor
+# route's server-side session check gets ECONNREFUSED and 500s.
+export GATEWAY_INTERNAL_URL="http://127.0.0.1:${GATEWAY_PORT}"
 # ports for the edge's inline node payload (read via process.env at boot)
 export GATEWAY_PORT_="$GATEWAY_PORT" WEB_PORT_="$WEB_PORT" EDGE_PORT_="$EDGE_PORT"
 
@@ -179,7 +183,9 @@ if [ "${WARMUP_ONLY:-0}" = "1" ]; then
 fi
 
 # ── the captures ──────────────────────────────────────────────────────────
-CAPTURE_BASE_URL="http://127.0.0.1:${EDGE_PORT}" node scripts/captures/capture.mjs
+# CAPTURE_SCRIPT overrides the capture body (diagnostics probes) while
+# keeping this runner's boot/env/teardown harness.
+CAPTURE_BASE_URL="http://127.0.0.1:${EDGE_PORT}" node "${CAPTURE_SCRIPT:-scripts/captures/capture.mjs}"
 CAPTURE_RC=$?
 echo "[runner] capture.mjs exit=$CAPTURE_RC"
 

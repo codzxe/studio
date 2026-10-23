@@ -39,9 +39,13 @@ const marks = { contextStart: 0, typingStart: 0, sentAt: 0, streamDoneAt: 0, mot
 
 const browser = await chromium.launch({
   // /dev/shm is 64MB on this box — Chromium's default shm usage crashes the
-  // renderer ("Page crashed") without this flag. --disable-gpu avoids the
-  // headless GL path (the wasm canvas renders via software WebGL).
-  args: ["--disable-dev-shm-usage", "--disable-gpu"],
+  // renderer without this flag. NOTE: NO --disable-gpu — the W2-09 editor
+  // capability gate probes navigator.gpu / canvas.getContext("webgl2")
+  // BEFORE mounting the editor host, and --disable-gpu kills SwiftShader's
+  // software WebGL2 in headless chromium → UnsupportedGpuState → the editor
+  // never mounts (the t=15:02 probe pinned exactly that). Default headless
+  // chromium (the e2e config's launch) renders WebGL2 via SwiftShader.
+  args: ["--disable-dev-shm-usage"],
 });
 const context = await browser.newContext({
   viewport: { width: 1920, height: 1080 },
