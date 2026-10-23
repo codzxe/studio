@@ -67,10 +67,10 @@
  */
 
 import type { ChatController } from "@/lib/chat/chat-controller";
-import { applicablePlanFromRuntime } from "@/lib/chat/run-state";
-import type { AgentBatch, ChatUiMessage, PlanRuntime, RunPhase } from "@/lib/chat/types";
 import { firstAffectedTimeTicks, ticksToSeconds } from "@/lib/chat/preview";
-import type { EditPlan } from "@studio/contracts";
+import { applicablePlanFromRuntime } from "@/lib/chat/run-state";
+import type { ChatUiMessage, PlanRuntime, RunPhase } from "@/lib/chat/types";
+import type { AgentBatch, EditPlan } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { type ReactElement, type ReactNode, useEffect, useRef } from "react";
 import { PlanDiffCard } from "./diff-card";

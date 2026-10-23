@@ -44,6 +44,7 @@ import type {
   RenderJob,
   RunRecord,
   StudioStreamEvent,
+  SwitchedWorkspace,
   Thread,
   Workspace,
 } from "@studio/contracts";
@@ -1985,3 +1986,85 @@ export function validateMembersFixtures(): string[] {
   void MEMBER_SCHEMA; // item-level schema exercised via PAGE_MEMBERS_SCHEMA
   return issues;
 }
+
+// ---------------------------------------------------------------------------
+// W1-b additions — workspace API keys (§7.1 "scoped, hashed, revocable";
+// BUILD_PLAN §M1 tasks 1+2). APPEND-ONLY below the W3-b marker: the wire
+// shapes live in @studio/contracts routes/api-keys.ts and the api-client
+// response validators (API_KEY_SCHEMA / CREATED_API_KEY_SCHEMA /
+// REVOKED_API_KEY_SCHEMA); these rows are plain demo data typed locally (same
+// W3-b precedent) so this file gains no new imports. The created row carries
+// the SHOW-ONCE demo secret — `sk_test_`-shaped and obviously fake.
+// ---------------------------------------------------------------------------
+
+/** §7.1 v1 wire scope vocabulary (mirror of contracts API_KEY_SCOPES). */
+export type FixtureApiKeyScope =
+  | "projects:read"
+  | "projects:write"
+  | "renders:queue"
+  | "chat:run"
+  | "billing:read"
+  | "*";
+
+/** A workspace API key as GET /v1/workspaces/:id/api-keys lists it — never key material. */
+export interface FixtureApiKeyRow {
+  readonly id: string;
+  readonly name: string;
+  readonly scopes: readonly FixtureApiKeyScope[];
+  readonly createdAt: string;
+  readonly expiresAt: string | null;
+  readonly lastUsedAt: string | null;
+  readonly enabled: boolean;
+}
+
+/** The POST /v1/workspaces/:id/api-keys response — plaintext key exactly once. */
+export interface FixtureApiKeyCreatedRow extends FixtureApiKeyRow {
+  readonly startsAt: string;
+  readonly key: string;
+}
+
+export const API_KEYS_FIXTURES = {
+  /** Workspace-key list rows for the Northlight Motion settings surface. */
+  rows: [
+    {
+      id: "key_demo_ci_v1",
+      name: "CI render trigger",
+      scopes: ["projects:read", "renders:queue"],
+      createdAt: "2026-09-12T10:02:00Z",
+      expiresAt: "2026-12-11T10:02:00Z",
+      lastUsedAt: "2026-10-20T22:40:00Z",
+      enabled: true,
+    },
+    {
+      id: "key_demo_metrics_v1",
+      name: "Usage metrics pull",
+      scopes: ["billing:read", "projects:read"],
+      createdAt: "2026-08-03T14:20:00Z",
+      expiresAt: null,
+      lastUsedAt: null,
+      enabled: true,
+    },
+    {
+      id: "key_demo_old_pipeline",
+      name: "Retired pipeline key",
+      scopes: ["*"],
+      createdAt: "2026-06-01T08:00:00Z",
+      expiresAt: "2026-07-01T08:00:00Z",
+      lastUsedAt: "2026-06-30T19:12:00Z",
+      enabled: false,
+    },
+  ] as readonly FixtureApiKeyRow[],
+
+  /** A freshly minted key — the ONLY surface where the secret appears. */
+  created: {
+    id: "key_demo_new_1",
+    name: "Deploy script",
+    scopes: ["projects:read", "renders:queue"],
+    createdAt: "2026-10-22T09:15:00Z",
+    startsAt: "2026-10-22T09:15:00Z",
+    expiresAt: "2027-01-20T09:15:00Z",
+    lastUsedAt: null,
+    enabled: true,
+    key: "sk_test_demo_4f8e2b6c1d9a7e35f0a2c8d4b6e1f3a5",
+  } as FixtureApiKeyCreatedRow,
+} as const;

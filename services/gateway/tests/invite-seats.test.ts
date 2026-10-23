@@ -65,7 +65,13 @@ interface FakeInvitationRow {
 class SeatCountingAuth extends FakeGatewayAuth {
   readonly invitations: FakeInvitationRow[] = [];
 
-  override handler = async (request: Request): Promise<Response> => {
+  // The parent fake's handler contract is `() => Promise<Response>` (it is
+  // never called with the request), so the override keeps the parameter
+  // OPTIONAL to stay assignable — and answers the bare call like the base.
+  override handler = async (request?: Request): Promise<Response> => {
+    if (request === undefined) {
+      return new Response('{"ok":true}', { status: 200 });
+    }
     const url = new URL(request.url);
     if (url.pathname === "/v1/auth/organization/list-invitations") {
       const organizationId = url.searchParams.get("organizationId") ?? "";

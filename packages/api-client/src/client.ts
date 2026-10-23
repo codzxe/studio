@@ -1366,6 +1366,32 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           signal: options?.signal,
         }),
     },
+    apiKeys: {
+      // W1-b (§7.1 scoped, hashed, revocable): mint/list/revoke workspace
+      // API keys. `key` exists ONLY on the create response (show-once);
+      // list/revoke shapes never carry key material.
+      create: async (workspaceId, body, options) =>
+        impl.mutate("POST", `/workspaces/${encodeId(workspaceId)}/api-keys`, {
+          body,
+          bodySchema: CREATE_API_KEY_SCHEMA,
+          responseSchema: CREATED_API_KEY_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      list: async (workspaceId, query, options) =>
+        impl.get(
+          `/workspaces/${encodeId(workspaceId)}/api-keys`,
+          paginated(query),
+          PAGE_API_KEYS_SCHEMA,
+          options?.signal,
+        ),
+      revoke: async (workspaceId, keyId, options) =>
+        impl.mutate("DELETE", `/workspaces/${encodeId(workspaceId)}/api-keys/${encodeId(keyId)}`, {
+          responseSchema: REVOKED_API_KEY_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+    },
     comments: {
       list: async (projectId, query, options) =>
         impl.get(

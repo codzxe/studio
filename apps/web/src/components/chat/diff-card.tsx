@@ -387,7 +387,7 @@ export function derivePlanDiff(
         // "Other change" row on the layers it addresses (or the project).
         const refs = layerRefsOf(params);
         rawRowCount += 1;
-        const makeRow = (): PlanDiffRow => ({
+        const makeRow = (): Omit<PlanDiffRow, "key"> => ({
           kind: "generic",
           path: "Other change",
           after: compactParams(params),
