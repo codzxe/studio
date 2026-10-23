@@ -25,6 +25,14 @@
  *   a first subscription answers a hosted Checkout `url` (redirect).
  * - LedgerTable — the append-only credit log via `GET /v1/credits/ledger`,
  *   cursor-paginated through the kit's `useLedgerPages` hook.
+ * - UsageSection (W2-08/W3-H) — the §8.8 "Usage" card: the M6-G
+ *   UsageMeters kit is finally mounted (credits used vs the monthly
+ *   allowance from the SHARED ledger page — one fetch, two surfaces), the
+ *   per-project "Latest renders" table via `GET /v1/renders`, and the
+ *   commit/refund ledger summary. Windows are labeled "latest" — the wire
+ *   carries `currentPeriodEnd` only, no period start, so no "this cycle"
+ *   claim is made; there is no storage-usage read (per-plan storageBytes is
+ *   enforced at upload), so no storage number is fabricated.
  * - Payment — card-on-file presence derived from the subscription state
  *   (the trial requires a card, BP §M6 task 5); "Manage payment" opens a
  *   `POST /v1/billing/portal` session and redirects.
@@ -76,6 +84,7 @@ import {
 } from "./page-format";
 import { BILLING_PLAN_DISPLAY, CURRENT_PLAN_DISPLAY } from "./page-plan-display";
 import { TopUpFlow } from "./topup-flow";
+import { type UsageRendersFetcher, UsageSection } from "./usage-section";
 import { UpgradeCta } from "./upgrade-cta";
 
 // ---------------------------------------------------------------------------
@@ -97,12 +106,14 @@ export interface BillingPort {
   readonly state: (options?: CallOptions) => Promise<BillingState>;
   /** GET /v1/credits/ledger — the append-only credit log (cursor pages). */
   readonly ledger: LedgerPageFetcher;
+  /** GET /v1/renders — render history, newest first (§7.2; the Usage card). */
+  readonly renders: UsageRendersFetcher;
 }
 
 /**
  * Compile-time pin (and tiny adapter): the production `ApiClient["billing"]`
- * plus `credits.ledger` satisfies {@link BillingPort} — the page never
- * hand-rolls a call.
+ * plus `credits.ledger` + `renders.list` satisfies {@link BillingPort} — the
+ * page never hand-rolls a call.
  */
 export function asBillingPort(client: ApiClient): BillingPort {
   return {
@@ -111,6 +122,7 @@ export function asBillingPort(client: ApiClient): BillingPort {
     portal: client.billing.portal,
     state: client.billing.state,
     ledger: (query) => client.credits.ledger(query),
+    renders: (query) => client.renders.list(query),
   };
 }
 
@@ -512,6 +524,23 @@ export function BillingPageView({
             Only workspace admins can manage billing.
           </p>
         )}
+
+        {/* ── Usage (W2-08/W3-H: meters + latest renders + ledger summary) ─ */}
+        <UsageSection
+          state={state}
+          seatsUsed={seatsUsed}
+          ledger={{ entries: ledger.entries, loading: ledger.loading, error: ledger.error }}
+          renders={port.renders}
+          onTopUp={
+            canManage
+              ? () => {
+                  document
+                    .querySelector<HTMLElement>('[data-testid="topup-flow"]')
+                    ?.scrollIntoView();
+                }
+              : undefined
+          }
+        />
 
         {/* ── Payment ──────────────────────────────────────────────────── */}
         <Card data-testid="billing-payment">

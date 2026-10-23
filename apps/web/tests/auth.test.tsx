@@ -1,7 +1,7 @@
 import { ForgotPasswordForm } from "@/components/auth/forgot-password-form";
 import { SignInForm } from "@/components/auth/sign-in-form";
 import { SignUpForm } from "@/components/auth/sign-up-form";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,8 +12,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * not the network.
  */
 
-const { requestPasswordReset } = vi.hoisted(() => ({
+const { requestPasswordReset, pushMock } = vi.hoisted(() => ({
   requestPasswordReset: vi.fn(),
+  pushMock: vi.fn(),
+}));
+
+// Re-mock next/navigation ahead of the setup mock: the router's push target
+// is a pinned expectation (W2-02 — sign-up retargets /onboarding).
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: pushMock,
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    prefetch: vi.fn(),
+  }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/",
 }));
 
 vi.mock("@/lib/auth-client", () => ({
@@ -104,6 +120,19 @@ describe("sign-up form", () => {
     expect(await screen.findByText("Enter a valid email address.")).toBeInTheDocument();
     expect(screen.getByText("Tell us your name — two characters or more.")).toBeInTheDocument();
     expect(screen.getByText("Password must be at least 8 characters.")).toBeInTheDocument();
+  });
+
+  it("sends a fresh account to /onboarding, not /w (W2-02 retarget)", async () => {
+    const user = userEvent.setup();
+    render(<SignUpForm />);
+    await user.type(screen.getByLabelText(/^Name/), "Alex Jordan");
+    await user.type(screen.getByLabelText(/^Email/), "alex@example.com");
+    await user.type(screen.getByLabelText(/^Password/), "correct-horse-battery");
+    await user.click(screen.getByTestId("sign-up-terms"));
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/onboarding"));
+    expect(pushMock).not.toHaveBeenCalledWith("/w");
   });
 });
 

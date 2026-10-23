@@ -93,6 +93,10 @@ describe("ChatPanel — floating shell", () => {
     expect(panel.style.width).toBe("400px");
     expect(panel.style.height).toBe("500px");
 
+    // §9 letter-spec (W2-09): the panel pins radius-md (10px) — never radius-lg.
+    expect(panel).toHaveClass("rounded-md");
+    expect(panel).not.toHaveClass("rounded-lg");
+
     // Slots: peers' nodes land in the shell's regions.
     expect(screen.getByTestId("stub-header")).toHaveTextContent("HDR");
     expect(screen.getByTestId("stub-strip")).toHaveTextContent("STRIP");

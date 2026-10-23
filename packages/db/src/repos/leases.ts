@@ -12,7 +12,8 @@ import {
   nextHolderOf,
   queueRequestDecision,
 } from "../lease-logic.js";
-import { type ProjectLease, projectLeases, projects } from "../schema.js";
+import type { ProjectLease } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty } from "./shared.js";
 
 /**
@@ -140,6 +141,7 @@ async function assertProjectInWorkspace(
   workspaceId: WorkspaceId,
   projectId: string,
 ): Promise<void> {
+  const { projects } = tablesFor(db);
   const rows = await db
     .select({ id: projects.id })
     .from(projects)
@@ -149,6 +151,7 @@ async function assertProjectInWorkspace(
 }
 
 async function currentLease(db: StudioDb, projectId: string): Promise<ProjectLease | null> {
+  const { projectLeases } = tablesFor(db);
   const [row] = await db
     .select()
     .from(projectLeases)
@@ -158,6 +161,8 @@ async function currentLease(db: StudioDb, projectId: string): Promise<ProjectLea
 }
 
 export function createLeasesRepo(db: StudioDb): LeasesRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { projectLeases, projects } = tablesFor(db);
   return {
     async acquire(workspaceId, projectId, input) {
       requireNonEmpty(input.userId, "userId");

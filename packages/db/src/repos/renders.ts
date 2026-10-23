@@ -4,7 +4,8 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import { getDialect, type StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import { type Render, type RenderStatus, projectVersions, projects, renders } from "../schema.js";
+import { type Render, type RenderStatus } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { assertRenderTransition } from "../statuses.js";
 import {
   type WorkspaceId,
@@ -214,6 +215,8 @@ function countStarInt(db: StudioDb) {
 }
 
 export function createRendersRepo(db: StudioDb): RendersRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { projectVersions, projects, renders } = tablesFor(db);
   async function requireRender(workspaceId: WorkspaceId, renderId: string): Promise<Render> {
     const [row] = await db
       .select({ render: renders })

@@ -4,7 +4,8 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import type { StudioDb, StudioTx } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import { type Project, type ProjectVersion, projectVersions, projects, user } from "../schema.js";
+import type { Project, ProjectVersion } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import {
   type VersionTimelineRow,
   assertExpectedVersion,
@@ -117,6 +118,7 @@ interface InsertVersionArgs {
 }
 
 async function insertVersion(tx: StudioTx, args: InsertVersionArgs): Promise<ProjectVersion> {
+  const { projectVersions } = tablesFor(tx);
   const [version] = await tx
     .insert(projectVersions)
     .values({ id: createId("ver"), ...args })
@@ -130,6 +132,7 @@ async function advanceCurrentVersion(
   projectId: string,
   versionId: string,
 ): Promise<Project> {
+  const { projects } = tablesFor(tx);
   const [project] = await tx
     .update(projects)
     .set({ currentVersionId: versionId, updatedAt: new Date() })
@@ -140,6 +143,8 @@ async function advanceCurrentVersion(
 }
 
 export function createVersionsRepo(db: StudioDb): VersionsRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { projectVersions, projects, user } = tablesFor(db);
   return {
     async upload(workspaceId, input) {
       requireNonEmpty(input.projectId, "projectId");

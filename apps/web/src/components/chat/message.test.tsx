@@ -36,6 +36,9 @@ describe("ChatMessageView — roles (ECUX §3.3: no avatars)", () => {
     expect(message.innerHTML).toContain("bg-elevated");
     expect(message.innerHTML).toContain("max-w-[72ch]");
     expect(message.innerHTML).toContain("rounded-[var(--chat-message-radius)]");
+    // §9 letter-spec (W2-09): surface + radius ONLY — no border-subtle hairline.
+    expect(message.innerHTML).not.toContain("border-subtle");
+    expect(message.innerHTML).not.toContain("border border");
     // NO avatars anywhere.
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });

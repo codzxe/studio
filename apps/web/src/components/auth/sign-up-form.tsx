@@ -66,7 +66,7 @@ export function SignUpForm() {
           setSubmitting(false);
           return;
         }
-        router.push("/w");
+        router.push("/onboarding");
         router.refresh();
       })
       .catch(() => {

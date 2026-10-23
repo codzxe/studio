@@ -2,7 +2,7 @@ import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
 import { getDialect, type StudioDb } from "../db.js";
-import { apiKey as apiKeyTable } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import type { WorkspaceId } from "./shared.js";
 
 /**
@@ -62,23 +62,11 @@ export interface ApiKeysRepo {
  * (the twin keeps metadata as plain TEXT in both dialects).
  */
 function inWorkspace(db: StudioDb, workspaceId: WorkspaceId) {
+  const { apiKey } = tablesFor(db);
   return getDialect(db) === "sqlite"
-    ? sql`json_extract(${apiKeyTable.metadata}, '$.workspaceId') = ${workspaceId}`
-    : sql`(${apiKeyTable.metadata})::jsonb ->> 'workspaceId' = ${workspaceId}`;
+    ? sql`json_extract(${apiKey.metadata}, '$.workspaceId') = ${workspaceId}`
+    : sql`(${apiKey.metadata})::jsonb ->> 'workspaceId' = ${workspaceId}`;
 }
-
-const RECORD_COLUMNS = {
-  id: apiKeyTable.id,
-  referenceId: apiKeyTable.referenceId,
-  name: apiKeyTable.name,
-  permissions: apiKeyTable.permissions,
-  metadata: apiKeyTable.metadata,
-  enabled: apiKeyTable.enabled,
-  createdAt: apiKeyTable.createdAt,
-  updatedAt: apiKeyTable.updatedAt,
-  expiresAt: apiKeyTable.expiresAt,
-  lastRequest: apiKeyTable.lastRequest,
-} as const;
 
 /** The better-auth `enabled` column is nullable (default true) — a never-flipped key IS enabled. */
 function toRecord(row: {
@@ -97,6 +85,20 @@ function toRecord(row: {
 }
 
 export function createApiKeysRepo(db: StudioDb): ApiKeysRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const apiKeyTable = tablesFor(db).apiKey;
+  const RECORD_COLUMNS = {
+    id: apiKeyTable.id,
+    referenceId: apiKeyTable.referenceId,
+    name: apiKeyTable.name,
+    permissions: apiKeyTable.permissions,
+    metadata: apiKeyTable.metadata,
+    enabled: apiKeyTable.enabled,
+    createdAt: apiKeyTable.createdAt,
+    updatedAt: apiKeyTable.updatedAt,
+    expiresAt: apiKeyTable.expiresAt,
+    lastRequest: apiKeyTable.lastRequest,
+  } as const;
   return {
     async list(workspaceId, options) {
       const limit = clampLimit(options?.limit);

@@ -19,7 +19,7 @@ import type { ChatUiState } from "@/lib/chat/types";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatComposer } from "./composer";
+import { ChatComposer, autoGrowCapPx } from "./composer";
 import type { ChatComposerProps } from "./composer";
 
 afterEach(() => {
@@ -573,6 +573,48 @@ describe("ChatComposer — auto-grow", () => {
     fireEvent.keyDown(textarea, { key: "Enter" });
     expect(harness.onSend).toHaveBeenCalledTimes(1);
     expect(textarea).toHaveAttribute("rows", "1"); // cleared draft → one row
+  });
+
+  it("carries the §9 96–160px envelope tokens on the composer box (W2-09)", () => {
+    renderComposer();
+    // The min/max ride the design-system tokens (tokens.css:140-141) — jsdom
+    // has no layout, so the CLASSES are the testable truth here (the computed
+    // clamp path no-ops in jsdom; see the unit test below).
+    const textarea = box();
+    expect(textarea).toHaveClass("min-h-[var(--chat-composer-min-h)]");
+    expect(textarea).toHaveClass("max-h-[var(--chat-composer-max-h)]");
+  });
+
+  it("autoGrowCapPx clamps the §3.4 rows cap inside the §9 envelope (unit; jsdom no-op documented)", () => {
+    // Real-browser shape: 21px line-height, 16px vertical padding → the 6-row
+    // cap would be 142px, inside the 160px envelope.
+    expect(autoGrowCapPx(21, 16, 160)).toBe(142);
+    // A roomier font (28px) would push the rows cap to 184px — clamped to the
+    // --chat-composer-max-h token (160px).
+    expect(autoGrowCapPx(28, 16, 160)).toBe(160);
+    // Padding that is unavailable (NaN — no computed style) is treated as 0.
+    expect(autoGrowCapPx(25, Number.NaN, 160)).toBe(150);
+    // Envelope unresolved (NaN / non-positive — jsdom's computed max-height is
+    // empty): the §3.4 rows cap stands alone (the token class still caps the
+    // box via CSS; this is exactly the jsdom no-op path).
+    expect(autoGrowCapPx(21, 16, Number.NaN)).toBe(142);
+    expect(autoGrowCapPx(21, 16, 0)).toBe(142);
+    // No line-height at all (jsdom: getComputedStyle().lineHeight === "") →
+    // null: the mount effect must NOT write an inline max-height.
+    expect(autoGrowCapPx(Number.NaN, 16, 160)).toBeNull();
+    expect(autoGrowCapPx(0, 16, 160)).toBeNull();
+  });
+
+  it("jsdom no-op: no computed line-height → no inline max-height written (token classes carry the envelope)", () => {
+    renderComposer();
+    const textarea = box();
+    // jsdom reports no computed line-height, so the mount effect returns the
+    // null cap and leaves the inline style untouched — the §9 envelope rides
+    // the min-h/max-h token classes asserted above.
+    expect(textarea.style.maxHeight).toBe("");
+    // The token classes are present regardless of the no-op.
+    expect(textarea).toHaveClass("min-h-[var(--chat-composer-min-h)]");
+    expect(textarea).toHaveClass("max-h-[var(--chat-composer-max-h)]");
   });
 });
 

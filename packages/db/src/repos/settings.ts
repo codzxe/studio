@@ -2,7 +2,8 @@ import { eq } from "drizzle-orm";
 
 import type { StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
-import { type UserSettings, user, userSettings } from "../schema.js";
+import type { UserSettings } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { requireNonEmpty } from "./shared.js";
 
 /**
@@ -23,6 +24,8 @@ export interface SettingsRepo {
 }
 
 export function createSettingsRepo(db: StudioDb): SettingsRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { user, userSettings } = tablesFor(db);
   return {
     async getUserAutoApply(userId) {
       requireNonEmpty(userId, "userId");

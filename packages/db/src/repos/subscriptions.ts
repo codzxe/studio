@@ -8,10 +8,8 @@ import {
   type StripeCustomer,
   type Subscription,
   type SubscriptionStatus,
-  organization,
-  stripeCustomers,
-  subscriptions,
 } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty } from "./shared.js";
 
 /**
@@ -130,6 +128,7 @@ function requireSubscriptionStatus(value: SubscriptionStatus): SubscriptionStatu
 
 /** Unknown workspace = NOT_FOUND (never leak whether the id shape is valid). */
 async function requireOrganization(db: StudioDb, workspaceId: WorkspaceId): Promise<void> {
+  const { organization } = tablesFor(db);
   const [row] = await db
     .select({ id: organization.id })
     .from(organization)
@@ -139,6 +138,8 @@ async function requireOrganization(db: StudioDb, workspaceId: WorkspaceId): Prom
 }
 
 export function createSubscriptionsRepo(db: StudioDb): SubscriptionsRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { organization, stripeCustomers, subscriptions } = tablesFor(db);
   return {
     async getByOrganization(workspaceId) {
       const [row] = await db

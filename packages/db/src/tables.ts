@@ -1,6 +1,6 @@
 import * as pgSchema from "./schema.js";
 import * as sqliteSchema from "./schema-sqlite.js";
-import { getDialect, type AnyDb } from "./db.js";
+import { getDialect, type AnyDb, type Executor } from "./db.js";
 
 /**
  * Dialect-aware table registry (W1-02/W1-03 seam, completed for the sqlite
@@ -27,7 +27,11 @@ type TableBundle = typeof pgSchema;
 /**
  * The schema module matching the handle's runtime dialect: the sqlite twin on
  * a sqlite dev handle, the canonical pg schema on Postgres.
+ *
+ * Accepts a db handle OR a transaction handle (`Executor`) — every repo
+ * helper that runs inside `db.transaction(cb)` resolves its tables from the
+ * `tx` it receives (W3-A).
  */
-export function tablesFor(db: AnyDb): TableBundle {
+export function tablesFor(db: AnyDb | Executor): TableBundle {
   return getDialect(db) === "sqlite" ? (sqliteSchema as unknown as TableBundle) : pgSchema;
 }

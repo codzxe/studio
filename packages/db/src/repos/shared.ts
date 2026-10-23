@@ -7,17 +7,21 @@ export type WorkspaceId = string;
 export type { Page };
 
 /**
- * Postgres unique-violation (SQLSTATE 23505) — mapped to typed CONFLICT upstream.
+ * Unique-violation check — mapped to typed CONFLICT upstream.
  *
  * Walks the `.cause` chain because drizzle wraps the postgres.js PostgresError
  * (`Failed query …`) in its own error type: the 23505 code lives on the WRAPPED
  * cause, so a shallow `.code` check misses every unique violation raised through
  * a drizzle insert (M6-D finding; the real wrap is pinned by the integration
  * suites — e.g. a duplicate addStep insert).
+ *
+ * W3-A (sqlite dev server): better-sqlite3 raises SqliteError with the extended
+ * code `SQLITE_CONSTRAINT_UNIQUE` — the dev-dialect twin of SQLSTATE 23505.
  */
 export function isUniqueViolation(error: unknown): boolean {
   for (let e = error; e !== null && typeof e === "object"; ) {
-    if ((e as { code?: unknown }).code === "23505") return true;
+    const code = (e as { code?: unknown }).code;
+    if (code === "23505" || code === "SQLITE_CONSTRAINT_UNIQUE") return true;
     e = (e as { cause?: unknown }).cause;
   }
   return false;

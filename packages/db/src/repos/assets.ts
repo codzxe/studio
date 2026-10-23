@@ -4,7 +4,8 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import type { StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import { type Asset, assets, projects } from "../schema.js";
+import type { Asset } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty, requireNonNegativeInt } from "./shared.js";
 
 /** Assets repository — workspace library + optional project scope (§9.1, §9.2). */
@@ -67,6 +68,8 @@ export interface AssetsRepo {
 }
 
 export function createAssetsRepo(db: StudioDb): AssetsRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { assets, projects } = tablesFor(db);
   return {
     async create(workspaceId, input) {
       const name = requireNonEmpty(input.name, "name");
