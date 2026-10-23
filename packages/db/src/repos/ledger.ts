@@ -1,7 +1,7 @@
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
-import type { Executor, StudioDb, StudioTx } from "../db.js";
+import { type Executor, getDialect, type StudioDb, type StudioTx } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
 import { deriveIdempotencyKey, outstandingReserve, planSettlement } from "../ledger-math.js";
@@ -237,7 +237,12 @@ function withWorkspaceLock<T>(
   fn: (tx: StudioTx) => Promise<T>,
 ): Promise<T> {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`);
+    // Postgres: cross-connection writer serialization. SQLite dev server:
+    // better-sqlite3 is ONE serialized connection — writers are serialized by
+    // construction, so the advisory lock is skipped (it does not exist there).
+    if (getDialect(db) === "postgres") {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`);
+    }
     return fn(tx);
   });
 }

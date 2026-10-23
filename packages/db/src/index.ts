@@ -18,7 +18,22 @@ export * from "./statuses.js";
 export * from "./cursor.js";
 export * from "./slug.js";
 export { createId } from "./ids.js";
-export { createDb, type StudioDb, type StudioTx, type Executor } from "./db.js";
+export {
+  createDb,
+  createSqliteDb,
+  isSqliteUrl,
+  getDialect,
+  sqlitePathFromUrl,
+  bootstrapSqlite,
+  type StudioDb,
+  type StudioTx,
+  type Executor,
+  type StudioSqliteDb,
+  type AnyDb,
+  type Dialect,
+} from "./db.js";
+export { bootstrapSqliteDatabase, SQLITE_BOOTSTRAP_STATEMENTS } from "./sqlite-bootstrap.js";
+export { tablesFor } from "./tables.js";
 export { createAuth, type Auth, type AuthEnv, type AuthHandler } from "./auth.js";
 export { createRepos, type Repos } from "./repos/index.js";
 // W1-b (§M1 tasks 1+2): the apiKeys repo row type the gateway route consumes.

@@ -85,6 +85,69 @@ function applyPragmas(client: import("better-sqlite3").Database): void {
   client.pragma("busy_timeout = 5000");
 }
 
+const SQLITE_TX_DEPTH = new WeakMap<object, number>();
+
+/**
+ * Make the drizzle better-sqlite3 handle's `transaction()` ASYNC-CALLBACK
+ * capable (W1-03 dev-server completion).
+ *
+ * WHY: drizzle's better-sqlite3 session delegates `db.transaction(cb)` to
+ * better-sqlite3's `client.transaction(cb)`, which REJECTS promise-returning
+ * callbacks ("Transaction function cannot return a promise") — but every
+ * repo writes `db.transaction(async (tx) => …)`. Instead of rewriting every
+ * repo, the sqlite factories swap the method for an explicit
+ * BEGIN/COMMIT/ROLLBACK driver with SAVEPOINT nesting:
+ *   - top level  : BEGIN … COMMIT / ROLLBACK
+ *   - nested call: SAVEPOINT sp_N … RELEASE / ROLLBACK TO (mirrors the pg
+ *     driver's savepoint nesting semantics)
+ * The callback receives the SAME handle (better-sqlite3 is one serialized
+ * connection — statements issued while the explicit transaction is open
+ * participate in it), which is what repo code already expects from `tx`.
+ */
+function makeSqliteTransactionAsyncAware(handle: StudioSqliteDb): StudioSqliteDb {
+  const client = handle.$client;
+  type TxCallback = (tx: never) => unknown;
+  handle.transaction = ((callback: TxCallback, _config?: unknown) => {
+    const depth = SQLITE_TX_DEPTH.get(client) ?? 0;
+    const savepoint = `studio_sp_${depth}`;
+    if (depth === 0) client.exec("BEGIN");
+    else client.exec(`SAVEPOINT ${savepoint}`);
+    SQLITE_TX_DEPTH.set(client, depth + 1);
+    let result: unknown;
+    try {
+      result = callback(handle as unknown as never);
+      const done = (value: unknown) => {
+        SQLITE_TX_DEPTH.set(client, depth);
+        if (depth === 0) client.exec("COMMIT");
+        else client.exec(`RELEASE SAVEPOINT ${savepoint}`);
+        return value;
+      };
+      const fail = (error: unknown) => {
+        SQLITE_TX_DEPTH.set(client, depth);
+        try {
+          if (depth === 0) client.exec("ROLLBACK");
+          else client.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        } catch {
+          /* connection already aborted — surface the original error */
+        }
+        throw error;
+      };
+      if (result instanceof Promise) return result.then(done, fail);
+      return done(result);
+    } catch (error) {
+      SQLITE_TX_DEPTH.set(client, depth);
+      try {
+        if (depth === 0) client.exec("ROLLBACK");
+        else client.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+      } catch {
+        /* surface the original error */
+      }
+      throw error;
+    }
+  }) as StudioSqliteDb["transaction"];
+  return handle;
+}
+
 /**
  * Open a sqlite dev database (better-sqlite3 + drizzle over the twin schema)
  * with pragmas applied and the schema bootstrapped (idempotent CREATE TABLE
@@ -105,7 +168,9 @@ export async function createSqliteDb(
   const client = new Database(path);
   applyPragmas(client);
   if (options?.bootstrap !== false) bootstrapSqliteDatabase(client);
-  return drizzleSqlite(client, { schema: sqliteSchema });
+  return makeSqliteTransactionAsyncAware(
+    drizzleSqlite(client, { schema: sqliteSchema }) as StudioSqliteDb,
+  );
 }
 
 /**
@@ -123,7 +188,9 @@ function createSqliteDbSync(path: string, bootstrap: boolean): StudioSqliteDb {
   const client = new Database(path);
   applyPragmas(client);
   if (bootstrap) bootstrapSqliteDatabase(client);
-  return drizzleSqlite(client, { schema: sqliteSchema });
+  return makeSqliteTransactionAsyncAware(
+    drizzleSqlite(client, { schema: sqliteSchema }) as StudioSqliteDb,
+  );
 }
 
 /**
@@ -148,4 +215,36 @@ export function createDb(databaseUrl: string, options?: PostgresOptions<never>):
   }
   const client = postgres(databaseUrl, { max: 10, ...options });
   return drizzle(client, { schema });
+}
+
+/**
+ * Bootstrap a sqlite dev database from EITHER a dev URL (`file:…`/`sqlite:…`)
+ * or an already-open sqlite handle. Idempotent (CREATE TABLE IF NOT EXISTS —
+ * see ./sqlite-bootstrap.ts). This is the seam `scripts/dev-sqlite.sh start`
+ * consumes; it exists so the dev script never touches the better-sqlite3
+ * client type directly.
+ *
+ * URL form: opens a fresh connection, bootstraps, and closes it again —
+ * intended for one-shot CLI bootstrapping, not app runtime (app runtime
+ * bootstraps via `createDb`/`createSqliteDb` on open).
+ */
+export function bootstrapSqlite(urlOrDb: string | StudioSqliteDb): void {
+  if (typeof urlOrDb === "string") {
+    if (!isSqliteUrl(urlOrDb)) {
+      throw new TypeError(
+        `bootstrapSqlite: not a sqlite dev URL (expected file:… or sqlite:…, got ${urlOrDb.slice(0, 40)})`,
+      );
+    }
+    const require = createRequire(import.meta.url);
+    const Database = require("better-sqlite3") as typeof import("better-sqlite3").default;
+    const client = new Database(sqlitePathFromUrl(urlOrDb));
+    try {
+      applyPragmas(client);
+      bootstrapSqliteDatabase(client);
+    } finally {
+      client.close();
+    }
+    return;
+  }
+  bootstrapSqliteDatabase(urlOrDb.$client);
 }

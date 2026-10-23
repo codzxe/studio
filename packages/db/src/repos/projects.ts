@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
-import type { StudioDb, StudioTx } from "../db.js";
+import { getDialect, type StudioDb, StudioTx } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
 import {
@@ -94,11 +94,14 @@ export async function lockProject(
   workspaceId: WorkspaceId,
   projectId: string,
 ): Promise<Project> {
-  const [project] = await tx
+  // SQLite dev server: one serialized connection — the row lock is dropped
+  // (the surrounding transaction is already exclusive); pg keeps FOR UPDATE.
+  const baseQuery = tx
     .select()
     .from(projects)
-    .where(and(eq(projects.id, projectId), eq(projects.workspaceId, workspaceId)))
-    .for("update");
+    .where(and(eq(projects.id, projectId), eq(projects.workspaceId, workspaceId)));
+  const [project] =
+    getDialect(tx) === "sqlite" ? await baseQuery : await baseQuery.for("update");
   if (!project) throw DbError.notFound("project");
   return project;
 }
