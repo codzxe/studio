@@ -14,6 +14,9 @@
  *    server put on the plan event (`estimatedCredits` prop), never client
  *    credit math;
  *  * numbered steps (title + tool id) behind a disclosure toggle;
+ *  * the OPTIONAL `diff` slot (W1-d's PlanDiffCard injects through the thread
+ *    layer — never imported here; ownership law #12) — the §6.3 semantic
+ *    per-property old → new rows, rendered above the preview slot;
  *  * the OPTIONAL `preview` slot (M5-H's PlanPreview injects through the
  *    thread layer — never imported here; ownership law #12);
  *  * a status-driven action row (see PLAN_CARD_STATUSES).
@@ -24,7 +27,11 @@
  *    the checkbox + the ChatConfirmDialog before `onApply` fires.
  *  * "applying"   → spinner; no actions.
  *  * "applied"    → "Applied — one undo step" (+ "Version N" when the layer
- *    passes one) and Undo (`onUndo`).
+ *    passes one) and Undo (`onUndo`), plus the ECUX §6.3 "View in timeline"
+ *    affordance (`onViewInTimeline`, W1-d): the thread layer's callback
+ *    seeks the editor playhead to the plan's first affected time and
+ *    activates the affected comp — bridge calls only (the editor UI itself
+ *    is frozen, law #7; this card stays a pure view).
  *  * "undone"     → Re-apply (`onReapply`), gated on the base-version state:
  *    `reapplyDrifted` disables it and explains why (BP M5.5).
  *  * "failed"     → "nothing changed" copy + the outcome's message; a quiet
@@ -64,6 +71,10 @@
  * callback — the thread layer maps apply outcomes reason "save-failed" (and
  * "save-conflict", without onRetrySave) to it. New testids: plan-save-failed,
  * plan-save-failed-detail, plan-retry-save.
+ *
+ * W1-d additive delta (ECUX §6.3, AUD-3 gap 1): the `diff` slot (rendered
+ * above the preview slot) + `onViewInTimeline` on the applied card. New
+ * testids: plan-diff, plan-view-in-timeline.
  */
 
 import type { EditPlan, PlanRisk } from "@studio/contracts";
@@ -145,10 +156,16 @@ export interface PlanCardProps {
   /** Applied-state version label (§7.4) — renders as "Version <label>". */
   versionLabel?: string;
   /**
-   * Preview slot (M5-H PlanPreview via the thread layer — never imported
-   * here). Rendered above the action row when present.
+   *   Preview slot (M5-H PlanPreview via the thread layer — never imported
+   *   here). Rendered above the action row when present.
    */
   preview?: ReactNode;
+  /**
+   *   Diff slot (W1-d PlanDiffCard via the thread layer — never imported
+   *   here): the §6.3 semantic per-property old → new rows. Rendered above
+   *   the preview slot when present (rows first, then the thumbnail strip).
+   */
+  diff?: ReactNode;
   /**
    * Fired when the user confirms an apply: directly for low/medium risk;
    * for high risk only after the confirm checkbox AND the confirm dialog.
@@ -158,6 +175,12 @@ export interface PlanCardProps {
   onCancel?: () => void;
   /** "Undo this run" (§7.2 — one edit.undo reverts the whole batch). */
   onUndo?: () => void;
+  /**
+   * "View in timeline" (§6.3, applied card): the thread layer's callback —
+   * seeks the playhead to the plan's first affected time + activates the
+   * affected comp via bridge calls. Absent ⇒ the affordance does not render.
+   */
+  onViewInTimeline?: () => void;
   /** Re-apply after undone (or try-again intent wired by the thread layer). */
   onReapply?: () => void;
   /**
@@ -210,9 +233,11 @@ export function PlanCard({
   reapplyDrifted = false,
   versionLabel,
   preview,
+  diff,
   onApply,
   onCancel,
   onUndo,
+  onViewInTimeline,
   onReapply,
   onRetrySave,
   onResolveCandidate,
@@ -383,6 +408,11 @@ export function PlanCard({
       <p data-testid="plan-credits" className="mt-2 text-caption text-secondary">
         ≈ {credits} credits
       </p>
+      {diff !== undefined && diff !== null ? (
+        <div data-testid="plan-diff" className="mt-3 border-t border-subtle pt-2">
+          {diff}
+        </div>
+      ) : null}
       {preview !== undefined && preview !== null ? (
         <div data-testid="plan-preview" className="mt-3 border-t border-subtle pt-2">
           {preview}
@@ -457,6 +487,16 @@ export function PlanCard({
             {onUndo !== undefined ? (
               <Button variant="secondary" size="sm" data-testid="plan-undo" onClick={onUndo}>
                 Undo
+              </Button>
+            ) : null}
+            {onViewInTimeline !== undefined ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="plan-view-in-timeline"
+                onClick={onViewInTimeline}
+              >
+                View in timeline
               </Button>
             ) : null}
           </>

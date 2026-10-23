@@ -3,6 +3,7 @@
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { PasswordField } from "@/components/auth/password-field";
 import { authClient } from "@/lib/auth-client";
+import { useOnlineStatus } from "@/lib/use-online-status";
 import { Brand } from "@studio/config";
 import { Button, Input } from "@studio/ui";
 import Link from "next/link";
@@ -19,6 +20,10 @@ export function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/w";
+  // M9-H: /reset-password sends the user here with ?reset=1 after a
+  // successful password change — surfaced as an inline success note.
+  const passwordReset = searchParams.get("reset") === "1";
+  const online = useOnlineStatus();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -37,6 +42,12 @@ export function SignInForm() {
     setPasswordError(nextPasswordError);
     setFormError(null);
     if (nextEmailError || nextPasswordError) {
+      return;
+    }
+
+    // Offline gate (M9-H, §8.11): don't fire a sign-in the browser can't send.
+    if (!online) {
+      setFormError("You're offline. Reconnect and sign in once you're back online.");
       return;
     }
 
@@ -64,6 +75,14 @@ export function SignInForm() {
 
   return (
     <div className="flex flex-col gap-8" data-testid="sign-in-form">
+      {passwordReset ? (
+        <output
+          data-testid="sign-in-reset-note"
+          className="block rounded-md border border-border bg-panel px-4 py-3 text-body-s text-success"
+        >
+          Password updated. Sign in with your new password.
+        </output>
+      ) : null}
       <h1 className="font-display text-display-m text-balance text-primary">
         Sign in to {Brand.productName}.
       </h1>

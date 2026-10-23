@@ -15,6 +15,8 @@
 import {
   type AcceptedInvite,
   type ActivityEntry,
+  API_KEY_SCOPE_SCHEMA,
+  type ApiKey,
   type ApplyResponse,
   type Asset,
   type AuditExport,
@@ -25,6 +27,7 @@ import {
   type CheckoutResponse,
   type Comment,
   type CreateAssetResponse,
+  type CreatedApiKey,
   type CreditsSummary,
   EDIT_PLAN_SCHEMA,
   type EstimateResult,
@@ -40,8 +43,12 @@ import {
   MODEL_ID_SCHEMA,
   type ManifestAsset,
   type MeResponse,
+  type Member,
+  type MemberRemoved,
   type Membership,
   type ModelsResponse,
+  type OwnershipTransferred,
+  PATCH_MEMBER_ROLE_SCHEMA,
   PLAN_ID_SCHEMA,
   type Page,
   type PlanSummary,
@@ -55,6 +62,7 @@ import {
   ROLE_SCHEMA,
   type RenderJob,
   type RequestAccessResponse,
+  type RevokedApiKey,
   type RunRecord,
   type RunStepRecord,
   type ShareComment,
@@ -65,6 +73,7 @@ import {
   type ShareManifest,
   type SignedUrl,
   type SignedUrlResponse,
+  type SwitchedWorkspace,
   TOP_UP_PACK_ID_SCHEMA,
   type Thread,
   type ThreadMessage,
@@ -771,3 +780,69 @@ export const SHARE_LINK_REVOKED_SCHEMA = z.object({
 
 export const PAGE_SHARE_LINKS_SCHEMA = pageSchema(SHARE_LINK_VIEW_SCHEMA);
 export const PAGE_SHARE_COMMENTS_SCHEMA = pageSchema(SHARE_COMMENT_SCHEMA);
+
+// ---------------------------------------------------------------------------
+// Members (W1-a — gateway routes/members.ts): list / role change / removal /
+// transfer / switch. Mirrors the @studio/contracts member interfaces.
+// ---------------------------------------------------------------------------
+
+export const MEMBER_SCHEMA = z.object({
+  id: idSchema,
+  name: z.string().nullable(),
+  email: z.string().nullable(),
+  role: ROLE_SCHEMA,
+  status: z.enum(["active"]),
+  lastActiveAt: isoSchema.nullable(),
+  isCurrentUser: z.boolean(),
+}) satisfies z.ZodType<Member>;
+
+export const MEMBER_REMOVED_SCHEMA = z.object({
+  id: idSchema,
+  removed: z.literal(true),
+}) satisfies z.ZodType<MemberRemoved>;
+
+export const OWNERSHIP_TRANSFERRED_SCHEMA = z.object({
+  workspaceId: idSchema,
+  ownerId: idSchema,
+  previousOwnerId: idSchema,
+}) satisfies z.ZodType<OwnershipTransferred>;
+
+export const SWITCHED_WORKSPACE_SCHEMA = z.object({
+  workspaceId: idSchema,
+  name: z.string(),
+  slug: z.string(),
+}) satisfies z.ZodType<SwitchedWorkspace>;
+
+export const PAGE_MEMBERS_SCHEMA = pageSchema(MEMBER_SCHEMA);
+
+// ---------------------------------------------------------------------------
+// W1-b — workspace API keys (§7.1 scoped, hashed, revocable; contracts
+// routes/api-keys.ts). The list shape NEVER carries key material; only the
+// CREATE response does, exactly once (`key`).
+// ---------------------------------------------------------------------------
+
+/** A workspace API key row as the settings surface lists it. */
+export const API_KEY_SCHEMA = z.object({
+  id: idSchema,
+  name: z.string(),
+  scopes: z.array(API_KEY_SCOPE_SCHEMA),
+  createdAt: isoSchema,
+  expiresAt: isoSchema.nullable(),
+  lastUsedAt: isoSchema.nullable(),
+  enabled: z.boolean(),
+}) satisfies z.ZodType<ApiKey>;
+
+/** Create response — `key` is the one-time plaintext secret. */
+export const CREATED_API_KEY_SCHEMA = API_KEY_SCHEMA.extend({
+  startsAt: isoSchema,
+  key: z.string().min(1),
+}) satisfies z.ZodType<CreatedApiKey>;
+
+/** Revoke response — idempotent: the same row for a repeat DELETE. */
+export const REVOKED_API_KEY_SCHEMA = z.object({
+  id: idSchema,
+  revokedAt: isoSchema,
+  enabled: z.literal(false),
+}) satisfies z.ZodType<RevokedApiKey>;
+
+export const PAGE_API_KEYS_SCHEMA = pageSchema(API_KEY_SCHEMA);

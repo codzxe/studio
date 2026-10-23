@@ -282,6 +282,10 @@ export const projects = pgTable(
     slug: text("slug").notNull(),
     description: text("description"),
     thumbnailUrl: text("thumbnail_url"),
+    // W1-c (§9.1 archived): PATCH-able lifecycle flag, orthogonal to the
+    // deleted_at soft delete. Archived projects stay readable (GET/manifest)
+    // and are excluded from the default list view.
+    archived: boolean("archived").notNull().default(false),
     currentVersionId: text("current_version_id"),
     createdBy: text("created_by")
       .notNull()

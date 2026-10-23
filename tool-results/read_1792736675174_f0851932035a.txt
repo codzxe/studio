@@ -1,0 +1,716 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * BillingPageView — the /w/billing client root (BUILD_PLAN §M6 task 4;
+     5→ * UI_DESIGN_SYSTEM §8.8 "Billing" + §14 microcopy).
+     6→ *
+     7→ * The RSC route (`app/(app)/w/billing/page.tsx`) resolves the workspace and
+     8→ * fetches the ONE billing read (`GET /v1/billing/state`) through the gateway
+     9→ * seam, then hands this component a serializable initial state. Everything
+    10→ * interactive lives here, COMPOSING the billing kit (M6-G, "binding for
+    11→ * M6-F"):
+    12→ *
+    13→ * - Plan card — catalog display name/price (`page-plan-display.ts`: the
+    14→ *   local D-4 pin — see the gap note there), subscription status incl.
+    15→ *   trialing/grace with days remaining, seats, models, storage and
+    16→ *   render-minute entitlements (always from the billing STATE — never pinned).
+    17→ * - LowCreditBanner — warning/urgent banner from the RAW µc numbers (D-12).
+    18→ * - Credits card — balance and reserves in RAW microcredits, converted to
+    19→ *   credits at this boundary (D-12), plus the monthly allowance.
+    20→ * - TopUpFlow — pack picker → confirm → `POST /v1/billing/topup` → redirect
+    21→ *   to the hosted session (prices live in Stripe, never on the wire).
+    22→ * - UpgradeCta — the D-4 pricing strip (exactly starter/pro/studio);
+    23→ *   checkout through `POST /v1/billing/checkout`: an immediate server-side
+    24→ *   switch answers `planChanged: true` (the page refreshes state in place),
+    25→ *   a first subscription answers a hosted Checkout `url` (redirect).
+    26→ * - LedgerTable — the append-only credit log via `GET /v1/credits/ledger`,
+    27→ *   cursor-paginated through the kit's `useLedgerPages` hook.
+    28→ * - Payment — card-on-file presence derived from the subscription state
+    29→ *   (the trial requires a card, BP §M6 task 5); "Manage payment" opens a
+    30→ *   `POST /v1/billing/portal` session and redirects.
+    31→ * - Invoices — rows today; the client-facing invoice list endpoint does not
+    32→ *   exist yet (M6-C's state carries none — see the worklog gap note), so the
+    33→ *   page renders what it is given and an honest empty state.
+    34→ * - Cancel — clear consequences, no dark patterns (§8.8): cancellation is
+    35→ *   status-only and completes in the Stripe billing portal (M6-C's shipped
+    36→ *   surface — there is no /v1/billing/cancel); the confirm dialog says what
+    37→ *   stays (everything — work is never deleted, BP §M6 task 2).
+    38→ *
+    39→ * Boundary law (apps/web): `@studio/contracts` is `import type` ONLY.
+    40→ * Action failures land in ONE typed banner (`billing-error`) with the §7.3
+    41→ * message + hint + request id (§14); the composed flows surface their own
+    42→ * bounded error states.
+    43→ */
+    44→
+    45→import { type ApiClient, type CallOptions, createApiClient, isApiError } from "@studio/api-client";
+    46→import type {
+    47→  BillingState,
+    48→  CheckoutRequest,
+    49→  CheckoutResponse,
+    50→  PortalRequest,
+    51→  PortalResponse,
+    52→  TopUpRequest,
+    53→  TopUpResponse,
+    54→} from "@studio/contracts";
+    55→import {
+    56→  Badge,
+    57→  Button,
+    58→  Card,
+    59→  CardDescription,
+    60→  CardHeader,
+    61→  CardTitle,
+    62→  ConfirmDialog,
+    63→} from "@studio/ui";
+    64→import { useMemo, useState } from "react";
+    65→
+    66→import { type LedgerPageFetcher, LedgerTable, useLedgerPages } from "./ledger-table";
+    67→import { LowCreditBanner } from "./low-credit-banner";
+    68→import {
+    69→  daysUntil,
+    70→  formatCount,
+    71→  formatCredits,
+    72→  formatDate,
+    73→  formatMonthlyPrice,
+    74→  formatStorage,
+    75→} from "./page-format";
+    76→import { BILLING_PLAN_DISPLAY, CURRENT_PLAN_DISPLAY } from "./page-plan-display";
+    77→import { TopUpFlow } from "./topup-flow";
+    78→import { UpgradeCta } from "./upgrade-cta";
+    79→
+    80→// ---------------------------------------------------------------------------
+    81→// The api seam — a narrow port the real ApiClient satisfies structurally
+    82→// ---------------------------------------------------------------------------
+    83→
+    84→/**
+    85→ * The billing surface `@studio/api-client` exposes. Production builds it from
+    86→ * `createApiClient` (same-origin `/v1` + `x-workspace-id`); tests fake it.
+    87→ */
+    88→export interface BillingPort {
+    89→  /** POST /v1/billing/checkout — subscribe/switch to a paid plan (D-4). */
+    90→  readonly checkout: (body: CheckoutRequest, options?: CallOptions) => Promise<CheckoutResponse>;
+    91→  /** POST /v1/billing/topup — one-time-payment credit pack. */
+    92→  readonly topup: (body: TopUpRequest, options?: CallOptions) => Promise<TopUpResponse>;
+    93→  /** POST /v1/billing/portal — Stripe customer portal session. */
+    94→  readonly portal: (body?: PortalRequest, options?: CallOptions) => Promise<PortalResponse>;
+    95→  /** GET /v1/billing/state — the ONE billing read (refreshes after switches). */
+    96→  readonly state: (options?: CallOptions) => Promise<BillingState>;
+    97→  /** GET /v1/credits/ledger — the append-only credit log (cursor pages). */
+    98→  readonly ledger: LedgerPageFetcher;
+    99→}
+   100→
+   101→/**
+   102→ * Compile-time pin (and tiny adapter): the production `ApiClient["billing"]`
+   103→ * plus `credits.ledger` satisfies {@link BillingPort} — the page never
+   104→ * hand-rolls a call.
+   105→ */
+   106→export function asBillingPort(client: ApiClient): BillingPort {
+   107→  return {
+   108→    checkout: client.billing.checkout,
+   109→    topup: client.billing.topup,
+   110→    portal: client.billing.portal,
+   111→    state: client.billing.state,
+   112→    ledger: (query) => client.credits.ledger(query),
+   113→  };
+   114→}
+   115→
+   116→/** Same-origin API root (Caddy fronts `/v1` in production — README §Env). */
+   117→const API_BASE_URL = "/v1";
+   118→
+   119→/** Builds the production port for one workspace page load. */
+   120→function createDefaultBillingPort(workspaceId: string): BillingPort {
+   121→  return asBillingPort(
+   122→    createApiClient({ baseUrl: API_BASE_URL, headers: { "x-workspace-id": workspaceId } }),
+   123→  );
+   124→}
+   125→
+   126→// ---------------------------------------------------------------------------
+   127→// Props
+   128→// ---------------------------------------------------------------------------
+   129→
+   130→/**
+   131→ * One invoice row as the page renders it. MIRROR of M6-D's `invoices` table
+   132→ * columns (stripe_invoice_id, amount_cents, currency, status, hosted_url,
+   133→ * pdf_url) — the client-facing list endpoint is a noted gap; the RSC page
+   134→ * passes `[]` until it lands.
+   135→ */
+   136→export interface BillingInvoiceRow {
+   137→  readonly id: string;
+   138→  readonly date: string;
+   139→  readonly amountCents: number;
+   140→  readonly currency: string;
+   141→  readonly status: "draft" | "open" | "paid" | "void" | "uncollectible";
+   142→  readonly hostedUrl: string | null;
+   143→  readonly pdfUrl: string | null;
+   144→}
+   145→
+   146→export interface BillingPageViewProps {
+   147→  readonly workspaceId: string;
+   148→  readonly workspaceName: string;
+   149→  /** The server-fetched `GET /v1/billing/state` payload (the ONE read). */
+   150→  readonly initialState: BillingState;
+   151→  /** Invoice rows (empty until the list endpoint exists — the worklog gap). */
+   152→  readonly invoices: readonly BillingInvoiceRow[];
+   153→  /**
+   154→   * Seats in use, when a member-count read exists (gap: the state endpoint
+   155→   * carries the seat LIMIT only). Absent → the card shows the limit alone.
+   156→   */
+   157→  readonly seatsUsed?: number;
+   158→  /** ISO instant stamped by the RSC — day counts render identically everywhere. */
+   159→  readonly nowIso: string;
+   160→  /** Owners/admins (`manageBilling`) see management actions; others read. */
+   161→  readonly canManage?: boolean;
+   162→  /** Injectable port (tests). Production leaves it undefined. */
+   163→  readonly api?: BillingPort;
+   164→}
+   165→
+   166→// ---------------------------------------------------------------------------
+   167→// Typed action errors (§7.3 surface: message + hint + request id)
+   168→// ---------------------------------------------------------------------------
+   169→
+   170→interface BillingActionError {
+   171→  readonly message: string;
+   172→  readonly hint?: string;
+   173→  readonly requestId?: string;
+   174→}
+   175→
+   176→function toActionError(error: unknown): BillingActionError {
+   177→  if (isApiError(error)) {
+   178→    return { message: error.message, hint: error.hint, requestId: error.requestId };
+   179→  }
+   180→  return { message: "Something went wrong on our side.", hint: "Try again in a moment." };
+   181→}
+   182→
+   183→// ---------------------------------------------------------------------------
+   184→// Status presentation (§8.8 plan card; days remaining for trialing/grace)
+   185→// ---------------------------------------------------------------------------
+   186→
+   187→const LIVE_STATUSES = new Set(["trialing", "active", "past_due", "grace"]);
+   188→
+   189→type BadgeVariant = "neutral" | "success" | "warning" | "danger" | "ice";
+   190→
+   191→interface StatusView {
+   192→  readonly badge: BadgeVariant;
+   193→  readonly label: string;
+   194→  readonly line: string;
+   195→}
+   196→
+   197→function dayWord(count: number): string {
+   198→  return `${formatCount(count)} ${count === 1 ? "day" : "days"} left`;
+   199→}
+   200→
+   201→function statusView(state: BillingState, now: Date): StatusView {
+   202→  switch (state.status) {
+   203→    case "trialing":
+   204→      return {
+   205→        badge: "ice",
+   206→        label: "Trial",
+   207→        line:
+   208→          state.trialEnd === null
+   209→            ? "Your trial is running."
+   210→            : `Ends ${formatDate(state.trialEnd)} — ${dayWord(daysUntil(state.trialEnd, now))}.`,
+   211→      };
+   212→    case "active":
+   213→      return state.cancelAtPeriodEnd
+   214→        ? {
+   215→            badge: "warning",
+   216→            label: "Active",
+   217→            line: `Renewal is cancelled — your plan ends ${formatDate(state.currentPeriodEnd)}.`,
+   218→          }
+   219→        : {
+   220→            badge: "success",
+   221→            label: "Active",
+   222→            line: `Renews ${formatDate(state.currentPeriodEnd)}.`,
+   223→          };
+   224→    case "past_due":
+   225→      return {
+   226→        badge: "danger",
+   227→        label: "Past due",
+   228→        line: "The card on file was declined — update your payment to keep creating.",
+   229→      };
+   230→    case "grace":
+   231→      return {
+   232→        badge: "warning",
+   233→        label: "Grace period",
+   234→        line:
+   235→          state.graceEnd === null
+   236→            ? "Update your payment to keep creating."
+   237→            : `Grace period ends ${formatDate(state.graceEnd)} — ${dayWord(daysUntil(state.graceEnd, now))} to update payment.`,
+   238→      };
+   239→    case "canceled":
+   240→      return {
+   241→        badge: "danger",
+   242→        label: "Cancelled",
+   243→        line: "Choose a plan below to subscribe again. Your work is never deleted.",
+   244→      };
+   245→    case "incomplete":
+   246→      return {
+   247→        badge: "warning",
+   248→        label: "Payment incomplete",
+   249→        line: "Finish payment to activate your subscription.",
+   250→      };
+   251→    case "none":
+   252→      return {
+   253→        badge: "neutral",
+   254→        label: "No subscription",
+   255→        line: "Choose a plan below to start creating.",
+   256→      };
+   257→    default:
+   258→      // Wire drift: an unknown status never breaks the page.
+   259→      return {
+   260→        badge: "neutral",
+   261→        label: "Status unavailable",
+   262→        line: "Refresh to see the latest billing status.",
+   263→      };
+   264→  }
+   265→}
+   266→
+   267→// ---------------------------------------------------------------------------
+   268→// The view
+   269→// ---------------------------------------------------------------------------
+   270→
+   271→export function BillingPageView({
+   272→  workspaceId,
+   273→  workspaceName,
+   274→  initialState,
+   275→  invoices,
+   276→  seatsUsed,
+   277→  nowIso,
+   278→  canManage = true,
+   279→  api,
+   280→}: BillingPageViewProps) {
+   281→  const port = useMemo(() => api ?? createDefaultBillingPort(workspaceId), [api, workspaceId]);
+   282→  const [state, setState] = useState<BillingState>(initialState);
+   283→  const [busy, setBusy] = useState<string | null>(null);
+   284→  const [actionError, setActionError] = useState<BillingActionError | null>(null);
+   285→  const [cancelOpen, setCancelOpen] = useState(false);
+   286→  const now = useMemo(() => new Date(nowIso), [nowIso]);
+   287→
+   288→  const isLive = LIVE_STATUSES.has(state.status);
+   289→  const current = CURRENT_PLAN_DISPLAY[state.plan] ?? { name: state.plan, priceCents: null };
+   290→  const priceLine =
+   291→    current.priceCents === null
+   292→      ? "Included during the trial"
+   293→      : formatMonthlyPrice(current.priceCents);
+   294→
+   295→  const ledger = useLedgerPages(port.ledger);
+   296→
+   297→  async function refresh(): Promise<void> {
+   298→    if (busy !== null) return;
+   299→    setBusy("refresh");
+   300→    setActionError(null);
+   301→    try {
+   302→      setState(await port.state());
+   303→    } catch (error) {
+   304→      setActionError(toActionError(error));
+   305→    } finally {
+   306→      setBusy(null);
+   307→    }
+   308→  }
+   309→
+   310→  /** Portal sessions: payment management, downgrades and cancellation. */
+   311→  async function openPortal(intent: string): Promise<void> {
+   312→    if (busy !== null) return;
+   313→    setBusy(`portal:${intent}`);
+   314→    setActionError(null);
+   315→    try {
+   316→      const session = await port.portal({
+   317→        returnUrl: `${window.location.origin}/w/billing`,
+   318→      });
+   319→      window.location.assign(session.url);
+   320→    } catch (error) {
+   321→      setActionError(toActionError(error));
+   322→    } finally {
+   323→      setBusy(null);
+   324→    }
+   325→  }
+   326→
+   327→  const status = statusView(state, now);
+   328→  const seatsLine =
+   329→    seatsUsed === undefined
+   330→      ? `Up to ${formatCount(state.entitlements.seats)} seats`
+   331→      : `${formatCount(seatsUsed)} of ${formatCount(state.entitlements.seats)} seats used`;
+   332→
+   333→  return (
+   334→    <main id="main" data-testid="billing-view" className="min-h-svh bg-app px-5 py-10">
+   335→      <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-6">
+   336→        <header className="flex flex-wrap items-end justify-between gap-4">
+   337→          <div className="flex flex-col gap-1">
+   338→            <h1 className="text-title-l font-medium text-primary">Billing</h1>
+   339→            <p className="text-body-s text-muted">
+   340→              Plan, credits and invoices for {workspaceName}.
+   341→            </p>
+   342→          </div>
+   343→          <div className="flex items-center gap-2">
+   344→            <Button
+   345→              variant="ghost"
+   346→              size="sm"
+   347→              loading={busy === "refresh"}
+   348→              disabled={busy !== null && busy !== "refresh"}
+   349→              onClick={() => {
+   350→                void refresh();
+   351→              }}
+   352→              data-testid="billing-refresh"
+   353→            >
+   354→              Refresh
+   355→            </Button>
+   356→            <a
+   357→              href="/w"
+   358→              className="text-body-s text-secondary underline underline-offset-3 hover:text-primary"
+   359→            >
+   360→              Back to workspace
+   361→            </a>
+   362→          </div>
+   363→        </header>
+   364→
+   365→        {/* §8.8 low-credit banner (RAW µc; never an auto-charge). */}
+   366→        <LowCreditBanner
+   367→          balanceMicrocredits={state.credits.balance}
+   368→          allowanceMicrocredits={state.entitlements.monthlyCreditAllowance}
+   369→          onTopUp={
+   370→            canManage
+   371→              ? () => {
+   372→                  document
+   373→                    .querySelector<HTMLElement>('[data-testid="topup-flow"]')
+   374→                    ?.scrollIntoView();
+   375→                }
+   376→              : undefined
+   377→          }
+   378→        />
+   379→
+   380→        {actionError !== null && (
+   381→          <div
+   382→            role="alert"
+   383→            data-testid="billing-error"
+   384→            className="flex flex-col gap-1 rounded-sm border border-danger/30 bg-danger/10 p-4 text-body-s"
+   385→          >
+   386→            <span className="font-medium text-primary">{actionError.message}</span>
+   387→            {actionError.hint !== undefined && (
+   388→              <span className="text-secondary">{actionError.hint}</span>
+   389→            )}
+   390→            {actionError.requestId !== undefined && (
+   391→              <span className="text-caption text-muted">Request id {actionError.requestId}</span>
+   392→            )}
+   393→          </div>
+   394→        )}
+   395→
+   396→        {/* ── Plan ────────────────────────────────────────────────────── */}
+   397→        <Card data-testid="billing-plan">
+   398→          <CardHeader>
+   399→            <div className="flex flex-wrap items-center justify-between gap-3">
+   400→              <div className="flex flex-col gap-1.5">
+   401→                <CardTitle data-testid="billing-plan-name">{current.name}</CardTitle>
+   402→                <CardDescription>Current plan</CardDescription>
+   403→              </div>
+   404→              <div className="flex flex-col items-end gap-1.5">
+   405→                <Badge variant={status.badge} data-testid="billing-plan-status">
+   406→                  {status.label}
+   407→                </Badge>
+   408→                <span className="text-body-s text-muted" data-testid="billing-plan-price">
+   409→                  {priceLine}
+   410→                </span>
+   411→              </div>
+   412→            </div>
+   413→          </CardHeader>
+   414→          <p className="text-body-s text-secondary" data-testid="billing-plan-status-line">
+   415→            {status.line}
+   416→          </p>
+   417→          <dl
+   418→            className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2 text-body-s sm:grid-cols-2"
+   419→            data-testid="billing-plan-entitlements"
+   420→          >
+   421→            <div className="flex items-baseline justify-between gap-4">
+   422→              <dt className="text-muted">Seats</dt>
+   423→              <dd className="text-secondary tabular-nums" data-testid="billing-seats">
+   424→                {seatsLine}
+   425→              </dd>
+   426→            </div>
+   427→            <div className="flex items-baseline justify-between gap-4">
+   428→              <dt className="text-muted">Models</dt>
+   429→              <dd className="text-secondary">{state.entitlements.models.join(", ")}</dd>
+   430→            </div>
+   431→            <div className="flex items-baseline justify-between gap-4">
+   432→              <dt className="text-muted">Projects</dt>
+   433→              <dd className="text-secondary tabular-nums">
+   434→                Up to {formatCount(state.entitlements.maxProjects)}
+   435→              </dd>
+   436→            </div>
+   437→            <div className="flex items-baseline justify-between gap-4">
+   438→              <dt className="text-muted">Storage</dt>
+   439→              <dd className="text-secondary tabular-nums">
+   440→                {formatStorage(state.entitlements.storageBytes)}
+   441→              </dd>
+   442→            </div>
+   443→            <div className="flex items-baseline justify-between gap-4">
+   444→              <dt className="text-muted">Render minutes</dt>
+   445→              <dd className="text-secondary tabular-nums">
+   446→                {formatCount(state.entitlements.renderMinutesPerMonth)} / month
+   447→              </dd>
+   448→            </div>
+   449→          </dl>
+   450→        </Card>
+   451→
+   452→        {/* ── Credits ─────────────────────────────────────────────────── */}
+   453→        <Card data-testid="billing-credits">
+   454→          <CardHeader>
+   455→            <CardTitle>Credits</CardTitle>
+   456→            <CardDescription>
+   457→              Balance and allowance in credits; reserves are held by running jobs.
+   458→            </CardDescription>
+   459→          </CardHeader>
+   460→          <dl className="grid grid-cols-1 gap-x-8 gap-y-2 text-body-s sm:grid-cols-3">
+   461→            <div className="flex items-baseline justify-between gap-4">
+   462→              <dt className="text-muted">Balance</dt>
+   463→              <dd
+   464→                className="font-medium text-primary tabular-nums"
+   465→                data-testid="billing-credit-balance"
+   466→              >
+   467→                {formatCredits(state.credits.balance)} credits
+   468→              </dd>
+   469→            </div>
+   470→            <div className="flex items-baseline justify-between gap-4">
+   471→              <dt className="text-muted">Held by running jobs</dt>
+   472→              <dd className="text-secondary tabular-nums" data-testid="billing-credit-reserved">
+   473→                {formatCredits(state.credits.reserved)} credits
+   474→              </dd>
+   475→            </div>
+   476→            <div className="flex items-baseline justify-between gap-4">
+   477→              <dt className="text-muted">Included each month</dt>
+   478→              <dd className="text-secondary tabular-nums" data-testid="billing-credit-allowance">
+   479→                {formatCredits(state.entitlements.monthlyCreditAllowance)} credits
+   480→              </dd>
+   481→            </div>
+   482→          </dl>
+   483→        </Card>
+   484→
+   485→        {/* ── Top-up (M6-G kit: packs from the billing state) ──────────── */}
+   486→        {canManage && (
+   487→          <TopUpFlow
+   488→            packs={state.topUpPacks}
+   489→            startTopUp={(packId, options) =>
+   490→              port.topup({ packId }, { idempotencyKey: options.idempotencyKey })
+   491→            }
+   492→          />
+   493→        )}
+   494→
+   495→        {/* ── Change plan (M6-G kit; D-4: exactly starter/pro/studio) ───── */}
+   496→        {canManage && (
+   497→          <UpgradeCta
+   498→            plans={BILLING_PLAN_DISPLAY}
+   499→            currentPlan={state.plan}
+   500→            startCheckout={(planId, options) =>
+   501→              port.checkout({ planId }, { idempotencyKey: options.idempotencyKey })
+   502→            }
+   503→            onPlanChanged={() => {
+   504→              void refresh();
+   505→            }}
+   506→            title="Change plan"
+   507→          />
+   508→        )}
+   509→        {!canManage && (
+   510→          <p className="text-body-s text-muted" data-testid="billing-read-only">
+   511→            Only workspace admins can manage billing.
+   512→          </p>
+   513→        )}
+   514→
+   515→        {/* ── Payment ──────────────────────────────────────────────────── */}
+   516→        <Card data-testid="billing-payment">
+   517→          <CardHeader>
+   518→            <CardTitle>Payment</CardTitle>
+   519→            <CardDescription>
+   520→              Cards and receipts are managed in the secure billing portal.
+   521→            </CardDescription>
+   522→          </CardHeader>
+   523→          <div className="flex flex-wrap items-center justify-between gap-3">
+   524→            <p className="text-body-s text-secondary" data-testid="billing-payment-state">
+   525→              {state.status === "none"
+   526→                ? "No payment method on file yet."
+   527→                : state.status === "past_due" || state.status === "grace"
+   528→                  ? "The card on file was declined."
+   529→                  : "A payment method is on file."}
+   530→            </p>
+   531→            {canManage && (
+   532→              <Button
+   533→                variant="secondary"
+   534→                size="sm"
+   535→                loading={busy === "portal:manage"}
+   536→                disabled={busy !== null && busy !== "portal:manage"}
+   537→                onClick={() => {
+   538→                  void openPortal("manage");
+   539→                }}
+   540→                data-testid="billing-manage-payment"
+   541→              >
+   542→                Manage payment
+   543→              </Button>
+   544→            )}
+   545→          </div>
+   546→        </Card>
+   547→
+   548→        {/* ── Invoices ────────────────────────────────────────────────── */}
+   549→        <Card data-testid="billing-invoices">
+   550→          <CardHeader>
+   551→            <CardTitle>Invoices</CardTitle>
+   552→            <CardDescription>Every payment you make shows up here.</CardDescription>
+   553→          </CardHeader>
+   554→          <InvoiceTable invoices={invoices} />
+   555→        </Card>
+   556→
+   557→        {/* ── Credit ledger (M6-G kit; the append-only log) ────────────── */}
+   558→        <Card data-testid="billing-ledger">
+   559→          <CardHeader>
+   560→            <CardTitle>Credit ledger</CardTitle>
+   561→            <CardDescription>
+   562→              Every credit grant, reserve, spend and refund — append-only.
+   563→            </CardDescription>
+   564→          </CardHeader>
+   565→          <LedgerTable
+   566→            entries={ledger.entries}
+   567→            nextCursor={ledger.nextCursor}
+   568→            loading={ledger.loading}
+   569→            error={ledger.error}
+   570→            onLoadMore={ledger.loadMore}
+   571→            onRetry={ledger.retry}
+   572→          />
+   573→        </Card>
+   574→
+   575→        {/* ── Cancel ──────────────────────────────────────────────────── */}
+   576→        {canManage && isLive && !state.cancelAtPeriodEnd && (
+   577→          <Card data-testid="billing-cancel">
+   578→            <CardHeader>
+   579→              <CardTitle>Cancel subscription</CardTitle>
+   580→              <CardDescription>
+   581→                Cancellation keeps your plan until the period ends and never deletes work.
+   582→              </CardDescription>
+   583→            </CardHeader>
+   584→            <Button
+   585→              variant="danger"
+   586→              size="sm"
+   587→              loading={busy === "portal:cancel"}
+   588→              disabled={busy !== null && busy !== "portal:cancel"}
+   589→              onClick={() => {
+   590→                setCancelOpen(true);
+   591→              }}
+   592→              data-testid="billing-cancel-button"
+   593→            >
+   594→              Cancel subscription
+   595→            </Button>
+   596→            <ConfirmDialog
+   597→              open={cancelOpen}
+   598→              onOpenChange={setCancelOpen}
+   599→              title="Cancel your subscription?"
+   600→              description={
+   601→                <>
+   602→                  Your plan stays active until {formatDate(state.currentPeriodEnd)}. Your projects,
+   603→                  compositions and versions are never deleted. You will confirm the cancellation in
+   604→                  the secure billing portal.
+   605→                </>
+   606→              }
+   607→              confirmLabel="Continue in the billing portal"
+   608→              busy={busy === "portal:cancel"}
+   609→              onConfirm={() => {
+   610→                setCancelOpen(false);
+   611→                void openPortal("cancel");
+   612→              }}
+   613→            />
+   614→          </Card>
+   615→        )}
+   616→        {canManage && isLive && state.cancelAtPeriodEnd && (
+   617→          <Card data-testid="billing-cancel">
+   618→            <CardHeader>
+   619→              <CardTitle>Renewal cancelled</CardTitle>
+   620→              <CardDescription>
+   621→                Your plan ends {formatDate(state.currentPeriodEnd)} and will not renew.
+   622→              </CardDescription>
+   623→            </CardHeader>
+   624→            <Button
+   625→              variant="secondary"
+   626→              size="sm"
+   627→              loading={busy === "portal:resume"}
+   628→              disabled={busy !== null && busy !== "portal:resume"}
+   629→              onClick={() => {
+   630→                void openPortal("resume");
+   631→              }}
+   632→              data-testid="billing-cancel-manage"
+   633→            >
+   634→              Manage renewal in the billing portal
+   635→            </Button>
+   636→          </Card>
+   637→        )}
+   638→      </div>
+   639→    </main>
+   640→  );
+   641→}
+   642→
+   643→// ---------------------------------------------------------------------------
+   644→// Invoice table (rows today; the list endpoint is the worklog gap)
+   645→// ---------------------------------------------------------------------------
+   646→
+   647→const INVOICE_BADGE: Readonly<Record<BillingInvoiceRow["status"], BadgeVariant>> = {
+   648→  draft: "neutral",
+   649→  open: "ice",
+   650→  paid: "success",
+   651→  void: "neutral",
+   652→  uncollectible: "danger",
+   653→};
+   654→
+   655→function formatInvoiceAmount(amountCents: number, currency: string): string {
+   656→  if (!Number.isFinite(amountCents) || amountCents < 0 || currency === "") return "—";
+   657→  try {
+   658→    return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(
+   659→      amountCents / 100,
+   660→    );
+   661→  } catch {
+   662→    return "—";
+   663→  }
+   664→}
+   665→
+   666→function InvoiceTable({ invoices }: { invoices: readonly BillingInvoiceRow[] }) {
+   667→  if (invoices.length === 0) {
+   668→    return (
+   669→      <p className="text-body-s text-muted" data-testid="billing-invoices-empty">
+   670→        Invoices appear here after your first payment.
+   671→      </p>
+   672→    );
+   673→  }
+   674→  return (
+   675→    <ul className="flex flex-col divide-y divide-border" data-testid="billing-invoice-list">
+   676→      {invoices.map((invoice) => (
+   677→        <li
+   678→          key={invoice.id}
+   679→          data-testid="billing-invoice-row"
+   680→          className="flex flex-wrap items-center justify-between gap-3 py-3"
+   681→        >
+   682→          <span className="text-body-s text-secondary tabular-nums">
+   683→            {formatDate(invoice.date)}
+   684→          </span>
+   685→          <span className="text-body-s font-medium text-primary tabular-nums">
+   686→            {formatInvoiceAmount(invoice.amountCents, invoice.currency)}
+   687→          </span>
+   688→          <Badge variant={INVOICE_BADGE[invoice.status]} data-testid="billing-invoice-status">
+   689→            {invoice.status}
+   690→          </Badge>
+   691→          <span className="flex items-center gap-3">
+   692→            {invoice.hostedUrl !== null && (
+   693→              <a
+   694→                href={invoice.hostedUrl}
+   695→                className="text-body-s text-secondary underline underline-offset-3 hover:text-primary"
+   696→                data-testid="billing-invoice-view"
+   697→              >
+   698→                View
+   699→              </a>
+   700→            )}
+   701→            {invoice.pdfUrl !== null && (
+   702→              <a
+   703→                href={invoice.pdfUrl}
+   704→                className="text-body-s text-secondary underline underline-offset-3 hover:text-primary"
+   705→                data-testid="billing-invoice-pdf"
+   706→              >
+   707→                PDF
+   708→              </a>
+   709→            )}
+   710→          </span>
+   711→        </li>
+   712→      ))}
+   713→    </ul>
+   714→  );
+   715→}
+   716→

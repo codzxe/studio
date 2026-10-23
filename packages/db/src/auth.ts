@@ -6,7 +6,6 @@ import { role } from "better-auth/plugins/access";
 import { defaultRoles } from "better-auth/plugins/organization/access";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-
 import type { StudioDb } from "./db.js";
 import * as schema from "./schema.js";
 
@@ -52,6 +51,27 @@ function defaultSecureCookies(appUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * W1-b Bearer extraction for the apiKey plugin. Verified against the installed
+ * @better-auth/api-key 1.7.12: there is NO `bearer`/`enableBearer` option — the
+ * plugin reads keys from `x-api-key` (configurable via `apiKeyHeaders`) or a
+ * `customAPIKeyGetter`. Studio keys ride `Authorization: Bearer <key>` ONLY,
+ * so the getter below is the one sanctioned hook: it returns null for every
+ * other shape (cookie requests included), which keeps the plugin's session
+ * hook entirely off the cookie path.
+ */
+function bearerApiKeyFromContext(ctx: {
+  readonly headers?: Headers | null;
+  readonly request?: { readonly headers?: Headers | null } | null;
+}): string | null {
+  const raw = ctx.request?.headers?.get("authorization") ?? ctx.headers?.get("authorization");
+  if (raw === null || raw === "") return null;
+  const trimmed = raw.trim();
+  if (!/^bearer\s+/i.test(trimmed)) return null;
+  const key = trimmed.replace(/^bearer\s+/i, "").trim();
+  return key === "" ? null : key;
 }
 
 export function createAuth(env: AuthEnv): Auth {
@@ -119,7 +139,40 @@ export function createAuth(env: AuthEnv): Auth {
           viewer: role({}),
         },
       }),
-      apiKey(),
+      // W1-b (BUILD_PLAN §M1 tasks 1+2, AUD-1 gap #2): workspace API keys.
+      // Plugin facts verified against installed @better-auth/api-key 1.7.12:
+      //  - `references` stays "user" (the plugin default): the session-mock
+      //    hook (below) is USER-referenced-only — it throws for organization
+      //    references — so keys act as their minting user (PAT model) through
+      //    the existing gateway session/workspace middleware chain.
+      //  - `enableMetadata: true`: the workspace binding rides key metadata
+      //    (`{workspaceId, createdBy}`) — the plugin REJECTS metadata when the
+      //    option is absent.
+      //  - `enableSessionForAPIKeys: true` + the Bearer-only getter above: a
+      //    valid `Authorization: Bearer <key>` mints a session for the key's
+      //    user on better-auth's own endpoints (`/get-session` short-circuits),
+      //    which is what the gateway's requireAuth → auth.api.getSession path
+      //    consumes. The plugin warns this grants session powers to keys —
+      //    accepted for v1 (§7.1 PAT model): keys are hashed at rest, revocable
+      //    (verify hard-fails `enabled: false`) and workspace-bound; cookie
+      //    sessions remain the only way to reach /v1/auth/* mutations.
+      //  - Per-key rate limiting is left OFF at mint time (the route passes
+      //    the plugin's server-only `rateLimitEnabled: false`): the plugin's
+      //    default is 10 requests/day/key, which would starve legitimate
+      //    automation, and the gateway already applies §7.3 per-IP route-class
+      //    token buckets to Bearer requests. `lastUsedAt` tracking still
+      //    works (the skip path updates `lastRequest` on every verify).
+      apiKey({
+        enableMetadata: true,
+        enableSessionForAPIKeys: true,
+        customAPIKeyGetter: (ctx) =>
+          bearerApiKeyFromContext(
+            ctx as unknown as {
+              readonly headers?: Headers | null;
+              readonly request?: { readonly headers?: Headers | null } | null;
+            },
+          ),
+      }),
       admin(),
     ],
   }) as unknown as Auth;

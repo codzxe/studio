@@ -1,3 +1,4 @@
+import { AuthOfflineNotice } from "@/components/auth/auth-offline-notice";
 import { Brand } from "@studio/config";
 import { FrameLine } from "@studio/ui";
 import Link from "next/link";
@@ -7,12 +8,16 @@ import Link from "next/link";
  * panel on ink-0 (bg-page) with a frame line, a serif pull-quote and a tiny
  * caption. Below lg the panel collapses to a 16:9 banner above the form
  * (flex-col-reverse — the form stays first in DOM/reading order).
+ *
+ * M9-H: AuthOfflineNotice adds the §8.11 offline state to every auth page —
+ * it renders null while online, so the visual layout is unchanged.
  */
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-svh flex-col-reverse lg:grid lg:grid-cols-[55fr_45fr]">
       <main id="main" className="flex flex-1 flex-col bg-app px-5 py-10 sm:px-8 lg:px-16 lg:py-12">
         <div className="mx-auto flex w-full max-w-[480px] flex-1 flex-col justify-center gap-12 py-10">
+          <AuthOfflineNotice />
           {children}
         </div>
         <p className="mx-auto w-full max-w-[480px] text-caption text-muted">

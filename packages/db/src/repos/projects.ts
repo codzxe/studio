@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
 import type { StudioDb, StudioTx } from "../db.js";
@@ -32,12 +32,20 @@ export interface ProjectPatchInput {
   readonly name?: string;
   readonly description?: string;
   readonly thumbnailUrl?: string;
+  /** W1-c (§9.1): lifecycle toggle — orthogonal to the deletedAt soft delete. */
+  readonly archived?: boolean;
 }
 
 export interface ProjectListOptions {
   readonly limit?: number;
   readonly cursor?: string | null;
   readonly includeDeleted?: boolean;
+  /**
+   * W1-c (§9.1): default (false/omitted) EXCLUDES archived projects;
+   * true returns ONLY archived ones. Soft-deleted rows stay excluded
+   * unless `includeDeleted` is set.
+   */
+  readonly archivedOnly?: boolean;
 }
 
 export interface AssetManifestEntry {
@@ -70,6 +78,14 @@ export interface ProjectsRepo {
   patch(workspaceId: WorkspaceId, projectId: string, input: ProjectPatchInput): Promise<Project>;
   softDelete(workspaceId: WorkspaceId, projectId: string): Promise<Project>;
   manifest(workspaceId: WorkspaceId, projectId: string): Promise<ProjectManifest>;
+  /**
+   * W1-c (§M2.5 maxProjects quota): live (non-soft-deleted) project count
+   * for a workspace. Archived rows COUNT — archiving hides a project from
+   * the default list but its bytes stay in storage, so it keeps consuming
+   * the plan's project allowance; only the deleted_at recovery window
+   * releases a slot.
+   */
+  countActive(workspaceId: WorkspaceId): Promise<number>;
 }
 
 /** Lock a project row in a transaction (single-writer / version-advance path). */
@@ -140,6 +156,9 @@ export function createProjectsRepo(db: StudioDb): ProjectsRepo {
           and(
             eq(projects.workspaceId, workspaceId),
             options?.includeDeleted ? undefined : isNull(projects.deletedAt),
+            // W1-c: archived filter (§9.1) — default view hides archived rows;
+            // archivedOnly flips to the archived-only view.
+            options?.archivedOnly ? eq(projects.archived, true) : eq(projects.archived, false),
             cursor
               ? or(
                   lt(projects.updatedAt, new Date(cursor.t)),
@@ -186,6 +205,9 @@ export function createProjectsRepo(db: StudioDb): ProjectsRepo {
       }
       if (input.description !== undefined) values.description = input.description;
       if (input.thumbnailUrl !== undefined) values.thumbnailUrl = input.thumbnailUrl;
+      // W1-c (§9.1): archived is a lifecycle toggle, not a deletion — the row
+      // keeps its versions, leases and audit trail and stays readable by id.
+      if (input.archived !== undefined) values.archived = input.archived;
 
       const [project] = await db
         .update(projects)
@@ -217,6 +239,14 @@ export function createProjectsRepo(db: StudioDb): ProjectsRepo {
         .returning();
       if (!project) throw DbError.notFound("project");
       return project;
+    },
+
+    async countActive(workspaceId) {
+      const [row] = await db
+        .select({ count: sql<string>`count(*)` })
+        .from(projects)
+        .where(and(eq(projects.workspaceId, workspaceId), isNull(projects.deletedAt)));
+      return Number(row?.count ?? 0);
     },
 
     async manifest(workspaceId, projectId) {

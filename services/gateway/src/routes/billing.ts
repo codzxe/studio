@@ -238,6 +238,91 @@ function planRank(planId: string): number {
   return index === -1 ? -1 : index;
 }
 
+// ───────────────────────────────────────────────────────────────────────
+// Seat counting (M6 enforcement; W1-e) — shared by the checkout pre-check
+// below and the invites route (the sibling gate, AUD-3 gap 3a)
+// ───────────────────────────────────────────────────────────────────────
+
+/**
+ * NON-EXPIRED PENDING invites for one workspace — the half-open seat
+ * reservations an admin created but nobody accepted yet (better-auth
+ * `invitation` rows; accepted/rejected/canceled/expired rows never count).
+ *
+ * SEAM NOTE: the typed GatewayAuth surface (auth.ts) exposes only
+ * inviteMember/acceptInvitation — there is no listInvitations member, and
+ * auth.ts is outside this wave's ownership (law #12). The count therefore
+ * rides the seam's RAW `handler` member — the exact better-auth HTTP
+ * surface app.ts mounts at `/v1/auth/*`, called in-process with the
+ * caller's forwarded session headers (GET /organization/list-invitations,
+ * membership-checked by the org plugin itself). The response is parsed
+ * defensively: anything that is not a JSON array of invitation-shaped rows
+ * counts as ZERO pending — fail-open, never a crash (the members count
+ * alone still enforces the hard floor; the gateway logs a warn). When a
+ * typed listInvitations seam member lands on GatewayAuth, this function
+ * body is the only cleanup (noted in the W1-e worklog).
+ */
+export async function countPendingInvites(
+  deps: GatewayDeps,
+  headers: Headers,
+  organizationId: string,
+): Promise<number> {
+  const base = deps.env.app.url.replace(/\/+$/, "");
+  const url = `${base}/v1/auth/organization/list-invitations?organizationId=${encodeURIComponent(
+    organizationId,
+  )}`;
+  const forwarded = new Headers();
+  // Session + origin only — better-auth needs nothing else on a GET; the
+  // wrapping POST's content-length/content-type must not lie about a body.
+  for (const name of ["cookie", "authorization", "origin"]) {
+    const value = headers.get(name);
+    if (value !== null) forwarded.set(name, value);
+  }
+  let response: Response;
+  try {
+    response = await deps.auth.handler(new Request(url, { method: "GET", headers: forwarded }));
+  } catch (error) {
+    deps.logger.warn("seat_count_auth_unavailable", {
+      organizationId,
+      detail: error instanceof Error ? error.message : "unknown",
+    });
+    return 0;
+  }
+  if (!response.ok) {
+    deps.logger.warn("seat_count_auth_rejected", { organizationId, status: response.status });
+    return 0;
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    deps.logger.warn("seat_count_auth_malformed", { organizationId });
+    return 0;
+  }
+  if (!Array.isArray(body)) {
+    // The stub auth handler answers {"ok":true} — no invitation list, so
+    // stub-mode tests exercise the members side of the gate only (the
+    // DB-gated suite proves the real better-auth pending count).
+    return 0;
+  }
+  const now = Date.now();
+  let pending = 0;
+  for (const entry of body) {
+    if (!isRecord(entry) || entry.status !== "pending") continue;
+    const expiresAt = entry.expiresAt;
+    const expiry =
+      typeof expiresAt === "string" || typeof expiresAt === "number" || expiresAt instanceof Date
+        ? new Date(expiresAt).getTime()
+        : Number.NaN;
+    // An absent/unparseable expiry counts as unexpired (conservative: the
+    // gate refuses MORE invites, never fewer); an expired pending row freed
+    // its seat (better-auth keeps the row but refuses the accept).
+    if (Number.isNaN(expiry) || expiry > now) {
+      pending += 1;
+    }
+  }
+  return pending;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Webhook state mapping (§M6 task 2 lifecycle)
 // ───────────────────────────────────────────────────────────────────────────
@@ -502,15 +587,21 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
       // Server-side entitlement pre-checks (§M6 task 1): the target plan must
       // fit the CURRENT workspace shape — checked here, never trusted to the
-      // client (the seats gate on invites is the sibling enforcement).
+      // client. Sibling enforcement lives on the invites route
+      // (routes/invites.ts: members + pending invites vs the paid plan's
+      // seats → 429 SEATS_EXCEEDED); this checkout arm guards the
+      // CONVERSION itself and counts pending invites too, so a seat queued
+      // behind an unaccepted invite can never land on a plan too small for
+      // members + pending combined.
       const entitlements = entitlementsFor(planId);
-      if (workspace.members.length > entitlements.seats) {
+      const pendingInvites = await countPendingInvites(deps, c.req.raw.headers, workspace.id);
+      if (workspace.members.length + pendingInvites > entitlements.seats) {
         throw new GatewayError(
           "VALIDATION_FAILED",
           "This workspace has more members than that plan allows.",
           {
             status: 400,
-            hint: "Remove members before switching to a smaller plan.",
+            hint: "Remove members (or pending invites) before switching to a smaller plan.",
             requestId: c.get("requestId"),
           },
         );

@@ -31,6 +31,7 @@ import {
   COMMENTS_QUERY_SCHEMA,
   COMMENT_REPLY_SCHEMA,
   CREATE_ASSET_SCHEMA,
+  CREATE_API_KEY_SCHEMA,
   CREATE_COMMENT_SCHEMA,
   CREATE_PROJECT_SCHEMA,
   CREATE_SHARE_COMMENT_SCHEMA,
@@ -61,17 +62,24 @@ import {
   type InviteMemberRequest,
   type InvoiceRecord,
   type IssueShareLinkRequest,
+  type ApiKey,
+  type CreatedApiKey,
   LEDGER_QUERY_SCHEMA,
   type LedgerEntry,
   type MeResponse,
+  type Member,
+  type MemberRemoved,
   type ModelsResponse,
+  type OwnershipTransferred,
   PAGINATION_QUERY_SCHEMA,
+  PATCH_MEMBER_ROLE_SCHEMA,
   PATCH_PROJECT_SCHEMA,
   PATCH_WORKSPACE_SCHEMA,
   PORTAL_SCHEMA,
   PRESENCE_BEAT_SCHEMA,
   PRESENCE_VIEWERS_SCHEMA,
   type Page,
+  type PatchMemberRoleRequest,
   type PatchProjectRequest,
   type PatchWorkspaceRequest,
   type PortalRequest,
@@ -93,6 +101,7 @@ import {
   type RenderJob,
   type RequestAccessRequest,
   type RequestAccessResponse,
+  type RevokedApiKey,
   type ResolveCommentRequestInput,
   type RestoreVersionRequest,
   type RunEventRequest,
@@ -108,12 +117,15 @@ import {
   type ShareLinkView,
   type ShareManifest,
   type SignedUrlResponse,
+  type SwitchedWorkspace,
   TOPUP_SCHEMA,
+  TRANSFER_OWNERSHIP_SCHEMA,
   TRIAL_REQUEST_SCHEMA,
   type Thread,
   type ThreadMessage,
   type TopUpRequest,
   type TopUpResponse,
+  type TransferOwnershipRequest,
   type TrialRequest,
   type TrialResponse,
   UNDO_REQUEST_SCHEMA,
@@ -148,6 +160,7 @@ import {
   COMMENT_SCHEMA,
   CREATE_ASSET_RESPONSE_SCHEMA,
   CREDITS_SUMMARY_SCHEMA,
+  CREATED_API_KEY_SCHEMA,
   ESTIMATE_RESULT_SCHEMA,
   INVITE_SCHEMA,
   LEASE_ACQUIRE_RESPONSE_SCHEMA,
@@ -156,6 +169,8 @@ import {
   LEASE_REQUEST_RESPONSE_SCHEMA,
   LEASE_STATE_RESPONSE_SCHEMA,
   LEDGER_ENTRY_SCHEMA,
+  MEMBER_REMOVED_SCHEMA,
+  MEMBER_SCHEMA,
   type LeaseAcquireResponse,
   type LeaseReleaseResponse,
   type LeaseRequestCancelledResponse,
@@ -163,11 +178,14 @@ import {
   type LeaseStateResponse,
   ME_RESPONSE_SCHEMA,
   MODELS_RESPONSE_SCHEMA,
+  OWNERSHIP_TRANSFERRED_SCHEMA,
   PAGE_ACTIVITY_SCHEMA,
+  PAGE_API_KEYS_SCHEMA,
   PAGE_ASSETS_SCHEMA,
   PAGE_COMMENTS_SCHEMA,
   PAGE_INVOICES_SCHEMA,
   PAGE_LEDGER_SCHEMA,
+  PAGE_MEMBERS_SCHEMA,
   PAGE_MESSAGES_SCHEMA,
   PAGE_PROJECTS_SCHEMA,
   PAGE_RENDERS_SCHEMA,
@@ -181,6 +199,8 @@ import {
   PROJECT_MANIFEST_SCHEMA,
   PROJECT_SCHEMA,
   PROJECT_VERSION_SCHEMA,
+  API_KEY_SCHEMA,
+  REVOKED_API_KEY_SCHEMA,
   RENDER_JOB_SCHEMA,
   REQUEST_ACCESS_RESPONSE_SCHEMA,
   RUN_RECORD_SCHEMA,
@@ -191,6 +211,7 @@ import {
   SHARE_LINK_VIEW_SCHEMA,
   SHARE_MANIFEST_SCHEMA,
   SIGNED_URL_RESPONSE_SCHEMA,
+  SWITCHED_WORKSPACE_SCHEMA,
   THREAD_MESSAGE_SCHEMA,
   THREAD_SCHEMA,
   TRIAL_RESPONSE_SCHEMA,
@@ -522,6 +543,42 @@ export interface ApiClient {
     create(workspaceId: string, body: InviteMemberRequest, options?: CallOptions): Promise<Invite>;
     accept(token: string, options?: CallOptions): Promise<AcceptedInvite>;
   };
+  readonly members: {
+    /** GET /v1/workspaces/:id/members — the workspace roster, cursor-paged. */
+    list(
+      workspaceId: string,
+      query?: PaginationQueryInput,
+      options?: CallOptions,
+    ): Promise<Page<Member>>;
+    /**
+     * PATCH /v1/workspaces/:id/members/:memberId — change a member's role
+     * (admin+; owner-target changes are owner-only; the last owner can't be
+     * demoted — transfer ownership first).
+     */
+    changeRole(
+      workspaceId: string,
+      memberId: string,
+      body: PatchMemberRoleRequest,
+      options?: CallOptions,
+    ): Promise<Member>;
+    /**
+     * DELETE /v1/workspaces/:id/members/:memberId — remove a member
+     * (admin+; self-removal is allowed for any member except the last owner).
+     */
+    remove(workspaceId: string, memberId: string, options?: CallOptions): Promise<MemberRemoved>;
+    /**
+     * POST /v1/workspaces/:id/transfer-ownership — owner only; the previous
+     * owner becomes admin. Idempotent-safe on retry after a partial failure.
+     */
+    transferOwnership(
+      workspaceId: string,
+      body: TransferOwnershipRequest,
+      options?: CallOptions,
+    ): Promise<OwnershipTransferred>;
+    /** POST /v1/workspaces/:id/switch — set the caller's active workspace
+     * (session-scoped; GET /v1/me reflects it via the active org's ledger). */
+    switchWorkspace(workspaceId: string, options?: CallOptions): Promise<SwitchedWorkspace>;
+  };
   readonly projects: {
     list(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<Project>>;
     create(body: CreateProjectRequest, options?: CallOptions): Promise<Project>;
@@ -727,6 +784,35 @@ export interface ApiClient {
      */
     estimate(body: RenderEstimateRequest, options?: CallOptions): Promise<EstimateResult>;
   };
+  readonly apiKeys: {
+    /**
+     * POST /v1/workspaces/:id/api-keys — mint a workspace API key
+     * (owner/admin). The response carries the plaintext `key` EXACTLY ONCE
+     * (§7.1: hashed at rest, revocable) — persist it immediately, there is
+     * no way to read it back.
+     */
+    create(
+      workspaceId: string,
+      body: CreateApiKeyRequest,
+      options?: CallOptions,
+    ): Promise<CreatedApiKey>;
+    /**
+     * GET /v1/workspaces/:id/api-keys — the workspace's keys,
+     * cursor-paginated, NEVER key material. `lastUsedAt` stays null until
+     * the key first authenticates a Bearer request.
+     */
+    list(
+      workspaceId: string,
+      query?: PaginationQueryInput,
+      options?: CallOptions,
+    ): Promise<Page<ApiKey>>;
+    /**
+     * DELETE /v1/workspaces/:id/api-keys/:keyId — revoke (owner/admin).
+     * Idempotent; a revoked key fails every later Bearer authentication with
+     * 401.
+     */
+    revoke(workspaceId: string, keyId: string, options?: CallOptions): Promise<RevokedApiKey>;
+  };
   readonly comments: {
     list(
       projectId: string,
@@ -928,6 +1014,51 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       accept: async (token, options) =>
         impl.mutate("POST", `/invites/${encodeId(token)}/accept`, {
           responseSchema: ACCEPTED_INVITE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+    },
+    members: {
+      list: async (workspaceId, query, options) =>
+        impl.get(
+          `/workspaces/${encodeId(workspaceId)}/members`,
+          paginated(query),
+          PAGE_MEMBERS_SCHEMA,
+          options?.signal,
+        ),
+      changeRole: async (workspaceId, memberId, body, options) =>
+        impl.mutate(
+          "PATCH",
+          `/workspaces/${encodeId(workspaceId)}/members/${encodeId(memberId)}`,
+          {
+            body,
+            bodySchema: PATCH_MEMBER_ROLE_SCHEMA,
+            responseSchema: MEMBER_SCHEMA,
+            idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+            signal: options?.signal,
+          },
+        ),
+      remove: async (workspaceId, memberId, options) =>
+        impl.mutate(
+          "DELETE",
+          `/workspaces/${encodeId(workspaceId)}/members/${encodeId(memberId)}`,
+          {
+            responseSchema: MEMBER_REMOVED_SCHEMA,
+            idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+            signal: options?.signal,
+          },
+        ),
+      transferOwnership: async (workspaceId, body, options) =>
+        impl.mutate("POST", `/workspaces/${encodeId(workspaceId)}/transfer-ownership`, {
+          body,
+          bodySchema: TRANSFER_OWNERSHIP_SCHEMA,
+          responseSchema: OWNERSHIP_TRANSFERRED_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      switchWorkspace: async (workspaceId, options) =>
+        impl.mutate("POST", `/workspaces/${encodeId(workspaceId)}/switch`, {
+          responseSchema: SWITCHED_WORKSPACE_SCHEMA,
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),

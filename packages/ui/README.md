@@ -133,3 +133,35 @@ pnpm --filter @studio/ui test        # vitest (jsdom + @testing-library/react)
 pnpm --filter @studio/ui exec tsc --noEmit
 pnpm --filter @studio/ui lint        # biome
 ```
+
+## 5. Component examples & accessibility coverage (M9-A)
+
+**Examples.** Every one of the 23 primitives ships a Storybook-style example
+gallery beside its source: `src/components/<name>.example.tsx`. Each is a
+single-file, default-exported showcase rendering canonical usage of every
+variant / size / state in a token-styled wrapper — documentation-as-code: a
+developer reads one file to see every state. Examples are typecheck-only
+docs: the package tsconfig picks up all `.tsx` (so they must typecheck
+clean) while the vitest include pattern (`src/**/*.test.{ts,tsx}`) never
+matches them, so they do not run as tests. They are not exported from the
+package entry (`src/index.ts`) and never ship to the app.
+
+**Accessibility floor (what is covered here, honestly).** The spec
+(`docs/UI_DESIGN_SYSTEM.md` §7) says "Every component has a Storybook-style
+example and an axe test." Full **axe-core scans are CI-owed**: the
+`@axe-core/*` devDependency is **not installable on this build box** (the
+no-install environment law, `docs/AGENTS.md` — dependencies are pinned and
+installing is forbidden), so the on-box floor is unit-level a11y assertions
+in each `<name>.test.tsx`: semantic roles, `aria-*` wiring
+(`aria-describedby` / `aria-invalid` / `aria-required` / `aria-expanded` /
+`aria-selected` / `aria-disabled`), accessible names (labels above controls,
+icon-only buttons carrying `aria-label`), keyboard journeys (arrows, Home /
+End, Enter, Escape), focus behaviour, disabled states, and `data-state`
+attributes (§15). A **Playwright + axe pass is specced for the CI wave**
+(§16.4 "Axe clean") and must run against these components before M10.
+
+Two jsdom limitations are covered by the app's Playwright e2e instead of
+the unit suite: Radix Select's pointer-capture open path (keyboard open is
+pinned in `select.test.tsx`) and Radix Tooltip's pointerleave close (Escape
+close is pinned in `tooltip.test.tsx`).
+

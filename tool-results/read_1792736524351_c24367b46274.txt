@@ -1,0 +1,1231 @@
+     1→// @studio/gateway — billing (§7.2, §10.3): Stripe Checkout (subscription +
+     2→// top-up), the customer portal, the ONE billing-state read the UI consumes,
+     3→// the card-required trial start, and the signature-verified webhook.
+     4→//
+     5→// M6 (BUILD_PLAN §M6 tasks 2-3+5) on the landed seams — the M6-B StripeSeam
+     6→// (typed StripeSeamResult boundary, injectable in tests via tests/helpers/
+     7→// fake-stripe.ts) and the M6-D billing repos (subscriptions.transitionStatus
+     8→// guarded updates, invoices.record idempotent, webhookEvents.seenOrRecord
+     9→// durable dedup). Binding rulings encoded here:
+    10→//  - D-4: trial is a subscription STATE on the Starter row, never a checkout
+    11→//    target — the checkout schema union IS the pricing-page display list.
+    12→//  - D-12: every ledger amount is integer MICROcredits; pack metadata carries
+    13→//    µc and the webhook grants exactly that integer.
+    14→//  - Law #4: POST /v1/billing/* mutations are idempotent through the
+    15→//    Idempotency-Key middleware (§7.2 — the client attaches the header); the
+    16→//    webhook carries its own event ids, deduped DURABLE FIRST
+    17→//    (webhookEvents.seenOrRecord) layered BEFORE the seam's in-memory
+    18→//    seenEvent.
+    19→//  - BP §M6 task 2: lifecycle webhooks only ever write SUBSCRIPTION state —
+    20→//    cancellation is status-only; projects, versions and ledger rows are
+    21→//    never touched from the webhook.
+    22→//  - BP §M6 task 5 abuse rules on POST /v1/billing/trial: one trial per
+    23→//    workspace (any prior subscription row), one trial per card (fingerprint,
+    24→//    cross-workspace), no trials for disposable email domains (frozen default
+    25→//    blocklist + STRIPE_BLOCKED_TRIAL_DOMAINS — see the note below), and a
+    26→//    payment method is REQUIRED (the workspace's Stripe customer must carry a
+    27→//    registered card fingerprint; the fake harness models the fingerprint via
+    28→//    checkout metadata, real Stripe enforces the card at Checkout).
+    29→
+    30→import { Hono } from "hono";
+    31→
+    32→import {
+    33→  type BillingState,
+    34→  CHECKOUT_SCHEMA,
+    35→  type CheckoutResponse,
+    36→  INVOICES_QUERY_SCHEMA,
+    37→  type InvoiceRecord,
+    38→  PORTAL_SCHEMA,
+    39→  type PortalResponse,
+    40→  TOPUP_SCHEMA,
+    41→  TOP_UP_PACKS,
+    42→  TRIAL_REQUEST_SCHEMA,
+    43→  type TopUpPackId,
+    44→  type TrialResponse,
+    45→} from "@studio/contracts";
+    46→
+    47→import {
+    48→  PLAN_CATALOG,
+    49→  PRICING_PAGE_PLANS,
+    50→  type PaidPlanId,
+    51→  type PlanId,
+    52→  type StripePriceIdLookup,
+    53→  type StudioEnv,
+    54→  StudioError,
+    55→  creditsToMicrocredits,
+    56→  entitlementsFor,
+    57→  isPlausiblePlanId,
+    58→  stripePriceIdFor,
+    59→} from "@studio/config";
+    60→
+    61→import { type Repos, type SubscriptionStatus, can, isDbError } from "@studio/db";
+    62→
+    63→import type {
+    64→  AppBindings,
+    65→  AppContext,
+    66→  GatewayDeps,
+    67→  StripeEventLike,
+    68→  StripeSeam,
+    69→  WorkspaceContext,
+    70→} from "../context.js";
+    71→import { GatewayError } from "../errors.js";
+    72→import { ok, page } from "../http.js";
+    73→import { requireAuth, requireWorkspace } from "../middleware.js";
+    74→import { effectivePlan, installSubscriptionReader } from "../plan.js";
+    75→import { outstandingReserveForWorkspace } from "./credits.js";
+    76→
+    77→/**
+    78→ * The transition-input shape, DERIVED from the repo's pinned signature
+    79→ * (M6-D keeps repo input types off the package root — the documented M5-D
+    80→ * deep-import note; deriving from Parameters keeps this drift-proof).
+    81→ */
+    82→type SubscriptionTransitionInput = Parameters<Repos["subscriptions"]["transitionStatus"]>[1];
+    83→
+    84→// ───────────────────────────────────────────────────────────────────────────
+    85→// Constants
+    86→// ───────────────────────────────────────────────────────────────────────────
+    87→
+    88→/**
+    89→ * credit_ledger.amount is a drizzle `integer` (int32) today; M6-A flagged the
+    90→ * Studio monthly allowance (10B µc) as over-range until the column moves to
+    91→ * bigint. Webhook grants parsed from external metadata are range-checked
+    92→ * against this ceiling — a hostile amount is audited-ignored, never a 500
+    93→ * that would make Stripe retry the poison forever.
+    94→ */
+    95→const MAX_LEDGER_AMOUNT = 2_147_483_647;
+    96→
+    97→/**
+    98→ * Past-due dunning window (§M6 task 2 "grace period"). The M6-B fake harness
+    99→ * cancels a failing subscription at currentPeriodEnd + 30d — the same
+   100→ * boundary, so `graceEnd` lines up with the harness's deterministic clock.
+   101→ */
+   102→const GRACE_PERIOD_DAYS = 30;
+   103→
+   104→const DAY_MS = 86_400_000;
+   105→
+   106→/**
+   107→ * Frozen default disposable-domain blocklist (BP §M6 task 5). Deployment
+   108→ * additions come from STRIPE_BLOCKED_TRIAL_DOMAINS, read from process.env
+   109→ * DIRECTLY with validation (the var is intentionally NOT added to the shared
+   110→ * env schema — env.ts is outside this task's ownership, law #12); the env var
+   111→ * EXTENDS the frozen list, never bypasses it.
+   112→ */
+   113→const DEFAULT_BLOCKED_TRIAL_DOMAINS: readonly string[] = Object.freeze([
+   114→  "mailinator.com",
+   115→  "10minutemail.com",
+   116→  "guerrillamail.com",
+   117→  "temp-mail.org",
+   118→  "tempmail.email",
+   119→  "yopmail.com",
+   120→  "throwawaymail.com",
+   121→  "sharklasers.com",
+   122→  "getnada.com",
+   123→  "dispostable.com",
+   124→  "maildrop.cc",
+   125→  "trashmail.com",
+   126→]);
+   127→
+   128→/** Validated deployment extension of the trial-domain blocklist. */
+   129→function blockedTrialDomains(envValue: string | undefined): ReadonlySet<string> {
+   130→  const blocked = new Set<string>(DEFAULT_BLOCKED_TRIAL_DOMAINS);
+   131→  if (typeof envValue !== "string" || envValue.trim().length === 0) return blocked;
+   132→  for (const raw of envValue.split(",")) {
+   133→    const domain = raw.trim().toLowerCase();
+   134→    // Strict domain grammar; anything else is ignored, never a crash.
+   135→    if (/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)) {
+   136→      blocked.add(domain);
+   137→    }
+   138→  }
+   139→  return blocked;
+   140→}
+   141→
+   142→/** The part after the last "@", lowercased — null when absent/degenerate. */
+   143→function emailDomain(email: string): string | null {
+   144→  const at = email.lastIndexOf("@");
+   145→  if (at <= 0 || at === email.length - 1) return null;
+   146→  return email.slice(at + 1).toLowerCase();
+   147→}
+   148→
+   149→// ───────────────────────────────────────────────────────────────────────────
+   150→// Top-up packs (BP §M6 task 2) — the wire catalog is TOP_UP_PACKS in
+   151→// @studio/contracts; this map adds each pack's STRIPE_PRICE_IDS env key.
+   152→// BUSINESS-PENDING: pack volumes (100/500/2000) are the M6 pick; the prices
+   153→// live in Stripe, never in this repo.
+   154→// ───────────────────────────────────────────────────────────────────────────
+   155→
+   156→interface CreditPackDescriptor {
+   157→  readonly packId: TopUpPackId;
+   158→  /** Whole display credits; µc at the ledger via creditsToMicrocredits (D-12). */
+   159→  readonly credits: number;
+   160→  /** Key into the STRIPE_PRICE_IDS env map (env.ts documents the JSON shape). */
+   161→  readonly stripePriceKey: string;
+   162→}
+   163→
+   164→const PACK_PRICE_KEYS: Readonly<Record<TopUpPackId, string>> = Object.freeze({
+   165→  credits100: "pack:credits100",
+   166→  credits500: "pack:credits500",
+   167→  credits2000: "pack:credits2000",
+   168→});
+   169→
+   170→/** Resolves a wire pack id to its full descriptor (single source: contracts). */
+   171→function packDescriptor(packId: string): CreditPackDescriptor | null {
+   172→  const pack = TOP_UP_PACKS.find((entry) => entry.packId === packId);
+   173→  if (pack === undefined) return null;
+   174→  return {
+   175→    packId: pack.packId,
+   176→    credits: pack.credits,
+   177→    stripePriceKey: PACK_PRICE_KEYS[pack.packId],
+   178→  };
+   179→}
+   180→
+   181→// ───────────────────────────────────────────────────────────────────────────
+   182→// Small helpers
+   183→// ───────────────────────────────────────────────────────────────────────────
+   184→
+   185→/** Stub boots wire fake repos without the billing tables; absence degrades to
+   186→ * typed empty behavior — never a crash (the M5-O structural-guard precedent). */
+   187→function subscriptionsRepo(repos: Repos): Repos["subscriptions"] | null {
+   188→  const candidate = (repos as Repos & { subscriptions?: Repos["subscriptions"] }).subscriptions;
+   189→  if (candidate === undefined || typeof candidate.getByOrganization !== "function") return null;
+   190→  return candidate;
+   191→}
+   192→
+   193→function invoicesRepo(repos: Repos): Repos["invoices"] | null {
+   194→  const candidate = (repos as Repos & { invoices?: Repos["invoices"] }).invoices;
+   195→  if (candidate === undefined || typeof candidate.record !== "function") return null;
+   196→  return candidate;
+   197→}
+   198→
+   199→function webhookEventsRepo(repos: Repos): Repos["webhookEvents"] | null {
+   200→  const candidate = (repos as Repos & { webhookEvents?: Repos["webhookEvents"] }).webhookEvents;
+   201→  if (candidate === undefined || typeof candidate.seenOrRecord !== "function") return null;
+   202→  return candidate;
+   203→}
+   204→
+   205→function nonEmptyString(value: unknown): string | null {
+   206→  return typeof value === "string" && value.length > 0 ? value : null;
+   207→}
+   208→
+   209→/** Unix seconds → Date; null for absent/non-positive values. */
+   210→function toDate(seconds: number | null | undefined): Date | null {
+   211→  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return null;
+   212→  return new Date(seconds * 1000);
+   213→}
+   214→
+   215→function toIso(value: Date | null | undefined): string | null {
+   216→  return value === null || value === undefined ? null : value.toISOString();
+   217→}
+   218→
+   219→function isRecord(value: unknown): value is Record<string, unknown> {
+   220→  return typeof value === "object" && value !== null;
+   221→}
+   222→
+   223→/** The old pre-M6 seam kept the customer id in the better-auth org metadata —
+   224→ * adopted into the durable repo row on first touch (read-only migration). */
+   225→function parseOrgMetadata(raw: unknown): Record<string, unknown> {
+   226→  if (typeof raw !== "string" || raw.length === 0) return {};
+   227→  try {
+   228→    const parsed = JSON.parse(raw) as unknown;
+   229→    return isRecord(parsed) ? parsed : {};
+   230→  } catch {
+   231→    return {};
+   232→  }
+   233→}
+   234→
+   235→/** Plan rank for the downgrade rule: trial < starter < pro < studio. */
+   236→function planRank(planId: string): number {
+   237→  const index = (PRICING_PAGE_PLANS as readonly string[]).indexOf(planId);
+   238→  return index === -1 ? -1 : index;
+   239→}
+   240→
+   241→// ───────────────────────────────────────────────────────────────────────────
+   242→// Webhook state mapping (§M6 task 2 lifecycle)
+   243→// ───────────────────────────────────────────────────────────────────────────
+   244→
+   245→/** Stripe subscription status → the persisted SubscriptionStatus (D-4: unpaid
+   246→ * dunning continues as `grace`; unknown statuses never grant entitlements). */
+   247→function mapStripeStatus(status: string): SubscriptionStatus {
+   248→  switch (status) {
+   249→    case "trialing":
+   250→      return "trialing";
+   251→    case "active":
+   252→      return "active";
+   253→    case "past_due":
+   254→    case "unpaid":
+   255→      return "grace";
+   256→    case "incomplete":
+   257→      return "incomplete";
+   258→    default:
+   259→      // canceled | incomplete_expired | paused | unknown — terminal, never grants.
+   260→      return "canceled";
+   261→  }
+   262→}
+   263→
+   264→/**
+   265→ * Runtime-narrowed subscription view of an event object. StripeEventLike is
+   266→ * deliberately minimal (the seam's structural contract), so the period/price
+   267→ * fields are validated HERE before use (law #2: webhook input is external).
+   268→ */
+   269→interface SubscriptionEventView {
+   270→  readonly customer: string | null;
+   271→  readonly status: string;
+   272→  readonly trialEnd: number | null;
+   273→  readonly cancelAtPeriodEnd: boolean;
+   274→  readonly currentPeriodEnd: number | null;
+   275→  readonly priceId: string | null;
+   276→}
+   277→
+   278→function priceIdOf(value: unknown): string | null {
+   279→  if (typeof value === "string") return value;
+   280→  if (isRecord(value)) return nonEmptyString(value.id);
+   281→  return null;
+   282→}
+   283→
+   284→function subscriptionViewOf(
+   285→  object: StripeEventLike["data"]["object"],
+   286→): SubscriptionEventView | null {
+   287→  const record = object as unknown as Record<string, unknown>;
+   288→  if (!isRecord(record)) return null;
+   289→  const status = nonEmptyString(record.status);
+   290→  if (status === null) return null;
+   291→  let currentPeriodEnd: number | null = null;
+   292→  let priceId: string | null = null;
+   293→  const items = record.items;
+   294→  if (isRecord(items) && Array.isArray(items.data) && items.data.length > 0) {
+   295→    const item = items.data[0];
+   296→    if (isRecord(item)) {
+   297→      const periodEnd = item.current_period_end;
+   298→      if (typeof periodEnd === "number" && Number.isFinite(periodEnd)) {
+   299→        currentPeriodEnd = periodEnd;
+   300→      }
+   301→      priceId = priceIdOf(item.price);
+   302→    }
+   303→  }
+   304→  const trialEnd = record.trial_end;
+   305→  return {
+   306→    customer: nonEmptyString(record.customer),
+   307→    status,
+   308→    trialEnd: typeof trialEnd === "number" && Number.isFinite(trialEnd) ? trialEnd : null,
+   309→    cancelAtPeriodEnd: record.cancel_at_period_end === true,
+   310→    currentPeriodEnd,
+   311→    priceId,
+   312→  };
+   313→}
+   314→
+   315→/** Reverse price map (env.stripe.priceIds): price id → the paid plan it sells. */
+   316→function planIdFromPrice(env: StudioEnv, priceId: string | null): PaidPlanId | null {
+   317→  if (priceId === null) return null;
+   318→  for (const plan of PRICING_PAGE_PLANS) {
+   319→    if (env.stripe.priceIds[plan] === priceId) return plan;
+   320→  }
+   321→  return null;
+   322→}
+   323→
+   324→/** Workspace attribution for webhook objects: the checkout-stamped metadata. */
+   325→function organizationIdOf(object: StripeEventLike["data"]["object"]): string | null {
+   326→  return nonEmptyString(object.metadata?.organizationId);
+   327→}
+   328→
+   329→/** Plan id from event metadata, narrowed to the catalog union (M6-A helper). */
+   330→function planIdFromMetadata(object: StripeEventLike["data"]["object"]): PlanId | null {
+   331→  const raw = object.metadata?.planId;
+   332→  return typeof raw === "string" && isPlausiblePlanId(raw) ? raw : null;
+   333→}
+   334→
+   335→/** Per-event webhook outcome carried on the 200 body (audited, never a 5xx). */
+   336→interface WebhookOutcome {
+   337→  readonly handled?: string;
+   338→  readonly ignored?: string;
+   339→}
+   340→
+   341→/** Maps a typed seam failure ({ok:false, code, reason}) to the nearest wire
+   342→ * code (law #1: the seam's reason is human-safe; it stays server-side in cause). */
+   343→function seamFailure(
+   344→  c: AppContext,
+   345→  failure: { readonly code: string; readonly reason: string },
+   346→): GatewayError {
+   347→  const requestId = c.get("requestId");
+   348→  const options = { requestId, cause: failure };
+   349→  switch (failure.code) {
+   350→    case "not_configured":
+   351→      return new GatewayError(
+   352→        "BILLING_NOT_CONFIGURED",
+   353→        "Billing is not configured in this environment.",
+   354→        { status: 400, ...options },
+   355→      );
+   356→    case "not_found":
+   357→      return new GatewayError("NOT_FOUND", "That billing object was not found.", {
+   358→        status: 404,
+   359→        ...options,
+   360→      });
+   361→    case "invalid_request":
+   362→      return new GatewayError("VALIDATION_FAILED", "The billing provider rejected that request.", {
+   363→        status: 400,
+   364→        ...options,
+   365→      });
+   366→    default:
+   367→      return new GatewayError(
+   368→        "SERVICE_UNAVAILABLE",
+   369→        "The billing provider is unavailable right now.",
+   370→        { status: 503, retryable: true, ...options },
+   371→      );
+   372→  }
+   373→}
+   374→
+   375→// ───────────────────────────────────────────────────────────────────────────
+   376→// The route factory
+   377→// ───────────────────────────────────────────────────────────────────────────
+   378→
+   379→export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
+   380→  const app = new Hono<AppBindings>();
+   381→  app.use("/v1/billing/*", requireAuth());
+   382→
+   383→  // resolvePlan seam wiring (plan.ts): the subscription-row reader is
+   384→  // installed at construction time — every request runs after buildApp, so
+   385→  // models/chat/credits routes read the REAL plan through resolvePlan.
+   386→  const subscriptions = subscriptionsRepo(deps.repos);
+   387→  installSubscriptionReader(
+   388→    subscriptions === null
+   389→      ? undefined
+   390→      : (workspaceId: string) => subscriptions.getByOrganization(workspaceId),
+   391→  );
+   392→
+   393→  function requireStripe(c: AppContext): NonNullable<GatewayDeps["stripe"]> {
+   394→    if (deps.stripe === null || deps.env.stripe.secretKey === undefined) {
+   395→      throw new StudioError("VALIDATION_FAILED", {
+   396→        hint: "billing not configured in this environment",
+   397→        requestId: c.get("requestId"),
+   398→      });
+   399→    }
+   400→    return deps.stripe;
+   401→  }
+   402→
+   403→  function requireBillingRole(c: AppContext): WorkspaceContext {
+   404→    const workspace = c.get("workspace");
+   405→    if (!can(workspace.role, "manageBilling")) {
+   406→      throw new StudioError("FORBIDDEN", { requestId: c.get("requestId") });
+   407→    }
+   408→    return workspace;
+   409→  }
+   410→
+   411→  function appBase(): string {
+   412→    return deps.env.app.url.replace(/\/+$/, "");
+   413→  }
+   414→
+   415→  /**
+   416→   * Resolves the workspace's Stripe customer id (the durable repo row first,
+   417→   * legacy org-metadata adoption, else creates the customer). The repo row is
+   418→   * the source of truth for customer → workspace billing state.
+   419→   */
+   420→  async function ensureWorkspaceCustomer(
+   421→    c: AppContext,
+   422→    workspace: WorkspaceContext,
+   423→    stripe: StripeSeam,
+   424→  ): Promise<string> {
+   425→    if (subscriptions !== null) {
+   426→      const existing = await subscriptions.findStripeCustomer(workspace.id);
+   427→      if (existing !== null && existing.stripeCustomerId !== "") {
+   428→        return existing.stripeCustomerId;
+   429→      }
+   430→    }
+   431→    const legacy = parseOrgMetadata(workspace.organization.metadata).stripeCustomerId;
+   432→    if (typeof legacy === "string" && legacy !== "") {
+   433→      if (subscriptions !== null) {
+   434→        await subscriptions.ensureStripeCustomer(workspace.id, { stripeCustomerId: legacy });
+   435→      }
+   436→      return legacy;
+   437→    }
+   438→    const customer = await stripe.createCustomer({
+   439→      email: c.get("auth").user.email,
+   440→      metadata: { organizationId: workspace.id },
+   441→    });
+   442→    if (subscriptions !== null) {
+   443→      await subscriptions.ensureStripeCustomer(workspace.id, { stripeCustomerId: customer.id });
+   444→    }
+   445→    return customer.id;
+   446→  }
+   447→
+   448→  /**
+   449→   * Price-id lookup through the M6-A helper (typed problem vocabulary).
+   450→   * StudioEnv parses STRIPE_PRICE_IDS into a record at boot; the helper
+   451→   * consumes the raw JSON value, so the parsed map is re-serialized here —
+   452→   * values are env-validated strings, the round-trip is exact.
+   453→   */
+   454→  function planPriceId(planId: string): StripePriceIdLookup {
+   455→    return stripePriceIdFor(planId, JSON.stringify(deps.env.stripe.priceIds));
+   456→  }
+   457→
+   458→  function requirePlanPriceId(c: AppContext, planId: string): string {
+   459→    const lookup = planPriceId(planId);
+   460→    if (lookup.ok) return lookup.priceId;
+   461→    switch (lookup.problem.kind) {
+   462→      case "plan-without-price":
+   463→        throw new GatewayError(
+   464→          "VALIDATION_FAILED",
+   465→          "That plan has no price configured in this environment.",
+   466→          {
+   467→            status: 400,
+   468→            hint: "The STRIPE_PRICE_IDS map has no price for that plan.",
+   469→            requestId: c.get("requestId"),
+   470→          },
+   471→        );
+   472→      case "unknown-plan":
+   473→      case "plan-not-purchasable":
+   474→        // Unreachable behind CHECKOUT_SCHEMA (D-4: trial is never a checkout
+   475→        // target) — kept fail-closed anyway.
+   476→        throw new GatewayError("VALIDATION_FAILED", "That plan is not available for checkout.", {
+   477→          status: 400,
+   478→          requestId: c.get("requestId"),
+   479→        });
+   480→      default:
+   481→        throw new GatewayError(
+   482→          "BILLING_NOT_CONFIGURED",
+   483→          "Billing is not configured in this environment.",
+   484→          { status: 400, requestId: c.get("requestId"), cause: lookup.problem },
+   485→        );
+   486→    }
+   487→  }
+   488→
+   489→  // ── POST /v1/billing/checkout — plan subscription / plan change ──────────
+   490→
+   491→  app.post(
+   492→    "/v1/billing/checkout",
+   493→    requireWorkspace("admin"),
+   494→    async (c: AppContext): Promise<Response> => {
+   495→      const workspace = requireBillingRole(c);
+   496→      const stripe = requireStripe(c);
+   497→      const parsed = CHECKOUT_SCHEMA.safeParse(await c.req.json().catch(() => null));
+   498→      if (!parsed.success) {
+   499→        throw new StudioError("VALIDATION_FAILED", { requestId: c.get("requestId") });
+   500→      }
+   501→      const planId = parsed.data.planId;
+   502→
+   503→      // Server-side entitlement pre-checks (§M6 task 1): the target plan must
+   504→      // fit the CURRENT workspace shape — checked here, never trusted to the
+   505→      // client (the seats gate on invites is the sibling enforcement).
+   506→      const entitlements = entitlementsFor(planId);
+   507→      if (workspace.members.length > entitlements.seats) {
+   508→        throw new GatewayError(
+   509→          "VALIDATION_FAILED",
+   510→          "This workspace has more members than that plan allows.",
+   511→          {
+   512→            status: 400,
+   513→            hint: "Remove members before switching to a smaller plan.",
+   514→            requestId: c.get("requestId"),
+   515→          },
+   516→        );
+   517→      }
+   518→
+   519→      const priceId = requirePlanPriceId(c, planId);
+   520→      const row =
+   521→        subscriptions !== null ? await subscriptions.getByOrganization(workspace.id) : null;
+   522→
+   523→      if (row !== null && row.status !== "canceled") {
+   524→        // A live subscription: Checkout sessions always create NEW
+   525→        // subscriptions, so a plan change goes through subscriptions.update.
+   526→        // DOWNGRADES ARE NEVER INSTANT (§M6 task 2): a smaller plan is
+   527→        // scheduled at period end from the customer portal (Stripe's native
+   528→        // semantics) — current entitlements stay until the period ends.
+   529→        if (planRank(planId) < planRank(row.planId)) {
+   530→          throw new GatewayError(
+   531→            "VALIDATION_FAILED",
+   532→            "Downgrades take effect at the end of the current billing period.",
+   533→            {
+   534→              status: 400,
+   535→              hint: "Use the billing portal to schedule a downgrade; your current features stay until the period ends.",
+   536→              requestId: c.get("requestId"),
+   537→            },
+   538→          );
+   539→        }
+   540→        const customerId = await ensureWorkspaceCustomer(c, workspace, stripe);
+   541→        const updated = await stripe.updateSubscription(customerId, { planPriceKey: priceId });
+   542→        if (!updated.ok) {
+   543→          throw seamFailure(c, updated);
+   544→        }
+   545→        // Same-plan/upgrade swaps only ever GROW entitlements, so pin the row
+   546→        // immediately; the ensuing customer.subscription.updated webhook
+   547→        // re-pins idempotently through the guarded transition.
+   548→        if (subscriptions !== null) {
+   549→          await subscriptions.upsertState(workspace.id, {
+   550→            planId,
+   551→            status: mapStripeStatus(updated.data.status),
+   552→            stripeSubscriptionId: updated.data.subscriptionId,
+   553→            currentPeriodEnd: toDate(updated.data.currentPeriodEnd),
+   554→            trialEnd: toDate(updated.data.trialEnd ?? null),
+   555→            cancelAtPeriodEnd: updated.data.cancelAtPeriodEnd,
+   556→          });
+   557→        }
+   558→        const body: CheckoutResponse = { sessionId: "", url: "", planChanged: true };
+   559→        return ok(c, body);
+   560→      }
+   561→
+   562→      // No live subscription (never subscribed, or canceled): hosted Checkout.
+   563→      const customerId = await ensureWorkspaceCustomer(c, workspace, stripe);
+   564→      const session = await stripe.checkout({
+   565→        mode: "subscription",
+   566→        priceId,
+   567→        customerId,
+   568→        customerEmail: c.get("auth").user.email,
+   569→        successUrl: `${appBase()}/billing?checkout=success`,
+   570→        cancelUrl: `${appBase()}/billing?checkout=cancelled`,
+   571→        metadata: {
+   572→          organizationId: workspace.id,
+   573→          kind: "subscription",
+   574→          planId,
+   575→        },
+   576→      });
+   577→      const body: CheckoutResponse = { sessionId: session.id, url: session.url };
+   578→      return ok(c, body, 201);
+   579→    },
+   580→  );
+   581→
+   582→  // ── POST /v1/billing/topup — one-time-payment credit pack ─────────────────
+   583→
+   584→  app.post(
+   585→    "/v1/billing/topup",
+   586→    requireWorkspace("admin"),
+   587→    async (c: AppContext): Promise<Response> => {
+   588→      const workspace = requireBillingRole(c);
+   589→      const stripe = requireStripe(c);
+   590→      const parsed = TOPUP_SCHEMA.safeParse(await c.req.json().catch(() => null));
+   591→      if (!parsed.success) {
+   592→        throw new StudioError("VALIDATION_FAILED", { requestId: c.get("requestId") });
+   593→      }
+   594→      const pack = packDescriptor(parsed.data.packId);
+   595→      if (pack === null) {
+   596→        throw new StudioError("VALIDATION_FAILED", { requestId: c.get("requestId") });
+   597→      }
+   598→      const priceId = deps.env.stripe.priceIds[pack.stripePriceKey];
+   599→      if (typeof priceId !== "string" || priceId === "") {
+   600→        throw new GatewayError(
+   601→          "VALIDATION_FAILED",
+   602→          "That credit pack is not available in this environment.",
+   603→          {
+   604→            status: 400,
+   605→            hint: "The STRIPE_PRICE_IDS map has no price for the pack.",
+   606→            requestId: c.get("requestId"),
+   607→          },
+   608→        );
+   609→      }
+   610→
+   611→      // D-12: pack credits convert to integer microcredits ONCE, here — the
+   612→      // checkout metadata carries µc and the webhook grants exactly that.
+   613→      const microcredits = creditsToMicrocredits(pack.credits);
+   614→      const customerId = await ensureWorkspaceCustomer(c, workspace, stripe);
+   615→      // M6-B seam: topUpCheckout takes the resolved Stripe PRICE id directly.
+   616→      const session = await stripe.topUpCheckout({
+   617→        packId: priceId,
+   618→        quantity: 1,
+   619→        customerId,
+   620→        customerEmail: c.get("auth").user.email,
+   621→        successUrl: `${appBase()}/billing?checkout=success`,
+   622→        cancelUrl: `${appBase()}/billing?checkout=cancelled`,
+   623→        metadata: {
+   624→          organizationId: workspace.id,
+   625→          kind: "topup",
+   626→          packId: pack.packId,
+   627→          microcredits: String(microcredits),
+   628→        },
+   629→      });
+   630→      if (!session.ok) {
+   631→        throw seamFailure(c, session);
+   632→      }
+   633→      const body: CheckoutResponse = { sessionId: session.data.id, url: session.data.url };
+   634→      return ok(c, body, 201);
+   635→    },
+   636→  );
+   637→
+   638→  // ── POST /v1/billing/portal — Stripe customer portal session ─────────────
+   639→
+   640→  app.post(
+   641→    "/v1/billing/portal",
+   642→    requireWorkspace("admin"),
+   643→    async (c: AppContext): Promise<Response> => {
+   644→      const workspace = requireBillingRole(c);
+   645→      const stripe = requireStripe(c);
+   646→      const parsed = PORTAL_SCHEMA.safeParse(await c.req.json().catch(() => ({})));
+   647→      if (!parsed.success) {
+   648→        throw new StudioError("VALIDATION_FAILED", { requestId: c.get("requestId") });
+   649→      }
+   650→      const customerId = await ensureWorkspaceCustomer(c, workspace, stripe);
+   651→      const session = await stripe.portal({
+   652→        customerId,
+   653→        returnUrl: parsed.data.returnUrl ?? `${appBase()}/billing`,
+   654→      });
+   655→      const body: PortalResponse = { url: session.url };
+   656→      return ok(c, body);
+   657→    },
+   658→  );
+   659→
+   660→  // ── GET /v1/billing/state — the ONE billing read the UI consumes ────────
+   661→
+   662→  app.get(
+   663→    "/v1/billing/state",
+   664→    requireWorkspace("viewer"),
+   665→    async (c: AppContext): Promise<Response> => {
+   666→      const workspaceId = c.get("workspace").id;
+   667→      const row =
+   668→        subscriptions !== null ? await subscriptions.getByOrganization(workspaceId) : null;
+   669→      // D-4: the EFFECTIVE plan (a trialing row gates as the trial catalog
+   670→      // tier); entitlements always come from the catalog, never hardcoded.
+   671→      const plan = effectivePlan(row);
+   672→      const catalogEntitlements = entitlementsFor(plan);
+   673→      const balance = await deps.repos.ledger.balance(workspaceId);
+   674→      const reserved = await outstandingReserveForWorkspace(deps, workspaceId);
+   675→
+   676→      const body: BillingState = {
+   677→        plan,
+   678→        status: row?.status ?? "none",
+   679→        currentPeriodEnd: toIso(row?.currentPeriodEnd ?? null),
+   680→        trialEnd: toIso(row?.trialEnd ?? null),
+   681→        cancelAtPeriodEnd: row?.cancelAtPeriodEnd ?? false,
+   682→        graceEnd: toIso(row?.graceEnd ?? null),
+   683→        entitlements: {
+   684→          seats: catalogEntitlements.seats,
+   685→          models: [...catalogEntitlements.models],
+   686→          maxProjects: catalogEntitlements.maxProjects,
+   687→          storageBytes: catalogEntitlements.storageBytes,
+   688→          renderMinutesPerMonth: catalogEntitlements.renderMinutesPerMonth,
+   689→          monthlyCreditAllowance: catalogEntitlements.monthlyCreditAllowance,
+   690→        },
+   691→        // Raw ledger numbers in µc — the same units as GET /v1/credits (D-12).
+   692→        credits: { balance, reserved },
+   693→        topUpPacks: TOP_UP_PACKS.map((pack) => ({ packId: pack.packId, credits: pack.credits })),
+   694→      };
+   695→      return ok(c, body);
+   696→    },
+   697→  );
+   698→
+   699→  // ── GET /v1/billing/invoices — the recorded invoice history (F-J3) ─────
+   700→  //
+   701→  // The §M6 wire read for the invoices the webhook persists (invoice.paid /
+   702→  // invoice.voided → repos.invoices.record, M6-D): newest-first,
+   703→  // cursor-paginated, workspace-scoped (law #3 — cross-tenant rows are never
+   704→  // visible, a stranger's list is simply empty). `viewer` is the member floor:
+   705→  // every workspace member can read their billing history; no money moves on
+   706→  // a GET. `amountCents` is MONEY in Stripe minor units, never credits (D-12
+   707→  // keeps the credit ledger in its own µc domain).
+   708→  app.get(
+   709→    "/v1/billing/invoices",
+   710→    requireWorkspace("viewer"),
+   711→    async (c: AppContext): Promise<Response> => {
+   712→      const parsed = INVOICES_QUERY_SCHEMA.safeParse({
+   713→        cursor: c.req.query("cursor"),
+   714→        limit: c.req.query("limit"),
+   715→      });
+   716→      if (!parsed.success) {
+   717→        throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
+   718→          status: 400,
+   719→          hint: "Check the pagination parameters.",
+   720→          requestId: c.get("requestId"),
+   721→        });
+   722→      }
+   723→      const invoices = invoicesRepo(deps.repos);
+   724→      if (invoices === null) {
+   725→        throw new GatewayError("SERVICE_UNAVAILABLE", "The database is not reachable right now.", {
+   726→          status: 503,
+   727→          retryable: true,
+   728→          hint: "Invoice history needs billing persistence. Try again once the database is up.",
+   729→          requestId: c.get("requestId"),
+   730→        });
+   731→      }
+   732→      const result = await invoices.list(c.get("workspace").id, {
+   733→        cursor: parsed.data.cursor ?? null,
+   734→        limit: parsed.data.limit,
+   735→      });
+   736→      const rows: InvoiceRecord[] = result.items.map((invoice) => ({
+   737→        id: invoice.id,
+   738→        stripeInvoiceId: invoice.stripeInvoiceId,
+   739→        amountCents: invoice.amountCents,
+   740→        currency: invoice.currency,
+   741→        status: invoice.status,
+   742→        periodStart: toIso(invoice.periodStart),
+   743→        periodEnd: toIso(invoice.periodEnd),
+   744→        hostedUrl: invoice.hostedUrl,
+   745→        pdfUrl: invoice.pdfUrl,
+   746→        createdAt: invoice.createdAt.toISOString(),
+   747→      }));
+   748→      return page(c, rows, result.nextCursor);
+   749→    },
+   750→  );
+   751→
+   752→  // ── POST /v1/billing/trial — card-required trial start (§M6 task 5) ─────
+   753→
+   754→  app.post(
+   755→    "/v1/billing/trial",
+   756→    requireWorkspace("admin"),
+   757→    async (c: AppContext): Promise<Response> => {
+   758→      const workspace = requireBillingRole(c);
+   759→      const parsed = TRIAL_REQUEST_SCHEMA.safeParse(await c.req.json().catch(() => ({})));
+   760→      if (!parsed.success) {
+   761→        throw new StudioError("VALIDATION_FAILED", { requestId: c.get("requestId") });
+   762→      }
+   763→      if (subscriptions === null) {
+   764→        throw new GatewayError("SERVICE_UNAVAILABLE", "The database is not reachable right now.", {
+   765→          status: 503,
+   766→          retryable: true,
+   767→          hint: "Trial state needs billing persistence. Try again once the database is up.",
+   768→          requestId: c.get("requestId"),
+   769→        });
+   770→      }
+   771→      const workspaceId = workspace.id;
+   772→      const requestId = c.get("requestId");
+   773→
+   774→      // (1) One trial per workspace: ANY prior subscription row — including a
+   775→      // canceled one — means the workspace already spent its trial.
+   776→      const existing = await subscriptions.getByOrganization(workspaceId);
+   777→      if (existing !== null) {
+   778→        throw new GatewayError("CONFLICT", "This workspace already has a billing history.", {
+   779→          status: 409,
+   780→          hint: "Trials are limited to one per workspace. Choose a plan instead.",
+   781→          requestId,
+   782→        });
+   783→      }
+   784→
+   785→      // (2) Card required (§M6 exit criteria): the workspace's Stripe customer
+   786→      // must carry a registered payment-method fingerprint. The fake harness
+   787→      // models the fingerprint via checkout metadata; real Stripe enforces the
+   788→      // card at Checkout and the fingerprint lands here through the webhook.
+   789→      const customer = await subscriptions.findStripeCustomer(workspaceId);
+   790→      const fingerprint = nonEmptyString(customer?.cardFingerprint);
+   791→      if (customer === null || fingerprint === null) {
+   792→        throw new GatewayError(
+   793→          "VALIDATION_FAILED",
+   794→          "A payment method is required to start a trial.",
+   795→          {
+   796→            status: 400,
+   797→            hint: "Add a card first. The trial starts immediately and is not charged for its duration.",
+   798→            requestId,
+   799→          },
+   800→        );
+   801→      }
+   802→
+   803→      // (3) One trial per card — cross-workspace by design (M6-D repo).
+   804→      const usedBy = await subscriptions.cardFingerprintUsed(fingerprint);
+   805→      if (usedBy !== null && usedBy.organizationId !== workspaceId) {
+   806→        throw new GatewayError("FORBIDDEN", "That payment method already started a trial.", {
+   807→          status: 403,
+   808→          hint: "Trials are limited to one per payment method.",
+   809→          requestId,
+   810→        });
+   811→      }
+   812→
+   813→      // (4) Disposable-domain blocklist (frozen defaults + validated env
+   814→      // extension). A degenerate email fails closed.
+   815→      const domain = emailDomain(c.get("auth").user.email);
+   816→      if (
+   817→        domain === null ||
+   818→        blockedTrialDomains(process.env.STRIPE_BLOCKED_TRIAL_DOMAINS).has(domain)
+   819→      ) {
+   820→        throw new GatewayError(
+   821→          "VALIDATION_FAILED",
+   822→          "A trial can't be started for that email address.",
+   823→          {
+   824→            status: 400,
+   825→            hint: "Use a permanent email address to start a trial.",
+   826→            requestId,
+   827→          },
+   828→        );
+   829→      }
+   830→
+   831→      // D-4: the trial state lives on the STARTER row, trialEnd from the
+   832→      // M6-A catalog. The card is never charged by this route.
+   833→      const trialDays = PLAN_CATALOG.trial.trialDays ?? 14;
+   834→      const trialEnd = new Date(Date.now() + trialDays * DAY_MS);
+   835→      await subscriptions.upsertState(workspaceId, {
+   836→        planId: "starter",
+   837→        status: "trialing",
+   838→        stripeSubscriptionId: null,
+   839→        currentPeriodEnd: trialEnd,
+   840→        trialEnd,
+   841→        cancelAtPeriodEnd: false,
+   842→      });
+   843→      const body: TrialResponse = { trialStarted: true, trialEnd: trialEnd.toISOString() };
+   844→      return ok(c, body, 201);
+   845→    },
+   846→  );
+   847→
+   848→  // ── POST /v1/webhooks/stripe — signature + durable idempotency + switch ──
+   849→  //
+   850→  // Excluded from the Idempotency-Key middleware (events carry their own ids).
+   851→  // Law #4 layering: the M6-D webhookEvents repo (durable, restart-safe,
+   852→  // race-arbitrated by the UNIQUE index) guards FIRST; the seam's in-memory
+   853→  // seenEvent set layers after it as the fast path.
+   854→
+   855→  app.post("/v1/webhooks/stripe", async (c: AppContext): Promise<Response> => {
+   856→    const stripe = deps.stripe;
+   857→    if (stripe === null) {
+   858→      throw new StudioError("VALIDATION_FAILED", {
+   859→        hint: "billing not configured in this environment",
+   860→        requestId: c.get("requestId"),
+   861→      });
+   862→    }
+   863→    const payload = Buffer.from(await c.req.arrayBuffer());
+   864→    const verified = stripe.verifyWebhook(payload, c.req.header("stripe-signature") ?? null);
+   865→    if (!verified.ok) {
+   866→      throw new GatewayError("VALIDATION_FAILED", "Webhook signature verification failed.", {
+   867→        status: 400,
+   868→        requestId: c.get("requestId"),
+   869→        cause: verified.reason,
+   870→      });
+   871→    }
+   872→    const event = verified.event;
+   873→
+   874→    const webhookEvents = webhookEventsRepo(deps.repos);
+   875→    if (webhookEvents !== null) {
+   876→      const durable = await webhookEvents.seenOrRecord("stripe", event.id, {
+   877→        type: event.type,
+   878→        payload: event,
+   879→      });
+   880→      if (durable.seen) {
+   881→        return ok(c, { received: true, duplicate: true });
+   882→      }
+   883→    }
+   884→    if (stripe.seenEvent(event.id)) {
+   885→      return ok(c, { received: true, duplicate: true });
+   886→    }
+   887→
+   888→    const outcome = await handleStripeEvent(stripe, event);
+   889→    return ok(c, { received: true, ...outcome });
+   890→  });
+   891→
+   892→  // ── the typed event switch (§M6 task 2 lifecycle) ─────────────────────────
+   893→
+   894→  /**
+   895→   * Guarded transition wrapper (law #4: never double-apply). The repo's
+   896→   * UPDATE re-checks `status IN from` — the racing/stale delivery loses with
+   897→   * a typed CONFLICT, reported here as "guarded", never an error: a stale
+   898→   * webhook is still a DELIVERED webhook (Stripe must see 2xx, not a retry loop).
+   899→   */
+   900→  async function guardedTransition(
+   901→    organizationId: string,
+   902→    input: SubscriptionTransitionInput,
+   903→  ): Promise<boolean> {
+   904→    if (subscriptions === null) return false;
+   905→    try {
+   906→      await subscriptions.transitionStatus(organizationId, input);
+   907→      return true;
+   908→    } catch (error) {
+   909→      if (isDbError(error) && (error.code === "CONFLICT" || error.code === "NOT_FOUND")) {
+   910→        return false;
+   911→      }
+   912→      throw error;
+   913→    }
+   914→  }
+   915→
+   916→  /** Ledger grant for a top-up from external µc metadata (D-12 + int32 ceiling). */
+   917→  async function grantTopUp(
+   918→    organizationId: string,
+   919→    event: StripeEventLike,
+   920→    metadata: Record<string, string> | null | undefined,
+   921→    idempotencyKey: string,
+   922→  ): Promise<boolean> {
+   923→    const raw = metadata?.microcredits;
+   924→    if (typeof raw !== "string" || raw === "") return false;
+   925→    const microcredits = Number.parseInt(raw, 10);
+   926→    if (!Number.isInteger(microcredits) || microcredits <= 0 || microcredits > MAX_LEDGER_AMOUNT) {
+   927→      // Hostile/overflowing amounts are audited-ignored — never a poison retry.
+   928→      return false;
+   929→    }
+   930→    await deps.repos.ledger.grant(organizationId, {
+   931→      amount: microcredits,
+   932→      idempotencyKey,
+   933→      metadata: {
+   934→        stripeEventId: event.id,
+   935→        kind: "topup",
+   936→        packId: metadata?.packId ?? null,
+   937→      },
+   938→    });
+   939→    return true;
+   940→  }
+   941→
+   942→  /** Records a Stripe customer + card fingerprint from a verified event. */
+   943→  async function recordCustomer(
+   944→    organizationId: string,
+   945→    object: StripeEventLike["data"]["object"],
+   946→  ): Promise<void> {
+   947→    const customerId = nonEmptyString(object.customer);
+   948→    if (subscriptions === null || customerId === null) return;
+   949→    const fingerprint = nonEmptyString(object.metadata?.cardFingerprint);
+   950→    await subscriptions.ensureStripeCustomer(organizationId, {
+   951→      stripeCustomerId: customerId,
+   952→      ...(fingerprint !== null ? { cardFingerprint: fingerprint } : {}),
+   953→    });
+   954→  }
+   955→
+   956→  /** Minimal event objects: resync the current view from the provider. */
+   957→  async function resyncView(
+   958→    stripe: StripeSeam,
+   959→    customer: string,
+   960→  ): Promise<SubscriptionEventView | null> {
+   961→    const snapshot = await stripe.subscription(customer);
+   962→    if (!snapshot.ok) return null;
+   963→    return {
+   964→      customer,
+   965→      status: snapshot.data.status,
+   966→      trialEnd: snapshot.data.trialEnd ?? null,
+   967→      cancelAtPeriodEnd: snapshot.data.cancelAtPeriodEnd,
+   968→      currentPeriodEnd: snapshot.data.currentPeriodEnd,
+   969→      priceId: snapshot.data.priceId,
+   970→    };
+   971→  }
+   972→
+   973→  async function handleCheckoutCompleted(
+   974→    stripe: StripeSeam,
+   975→    event: StripeEventLike,
+   976→  ): Promise<WebhookOutcome> {
+   977→    const object = event.data.object;
+   978→    const organizationId = organizationIdOf(object);
+   979→    if (organizationId === null) return { ignored: "unattributed" };
+   980→
+   981→    // Customer + payment-method bookkeeping (§M6 task 5): the repo is the
+   982→    // durable customer mapping; cardFingerprint metadata is the fake's card
+   983→    // model (real Stripe attaches the fingerprint with the payment method).
+   984→    await recordCustomer(organizationId, object);
+   985→
+   986→    const kind = object.metadata?.kind ?? null;
+   987→    if (kind === "topup") {
+   988→      const granted = await grantTopUp(
+   989→        organizationId,
+   990→        event,
+   991→        object.metadata,
+   992→        `stripe:${event.id}`,
+   993→      );
+   994→      return granted ? { handled: "topup.granted" } : { ignored: "topup.amount-invalid" };
+   995→    }
+   996→    if (kind !== "subscription") {
+   997→      return { ignored: "unknown-kind" };
+   998→    }
+   999→
+  1000→    // The session object carries no period data — resync the canonical
+  1001→    // snapshot from the provider (D-4: the trial status rides on the sub).
+  1002→    const customer = nonEmptyString(object.customer);
+  1003→    if (customer === null) return { ignored: "no-customer" };
+  1004→    const snapshot = await stripe.subscription(customer);
+  1005→    if (!snapshot.ok) return { ignored: "subscription-unavailable" };
+  1006→    const planId = planIdFromMetadata(object) ?? planIdFromPrice(deps.env, snapshot.data.priceId);
+  1007→    if (planId === null) return { ignored: "unknown-plan" };
+  1008→    if (subscriptions !== null) {
+  1009→      // First row (or resubscription): upsert is race-proof on the unique
+  1010→      // organization_id — concurrent completions converge on one row.
+  1011→      await subscriptions.upsertState(organizationId, {
+  1012→        planId,
+  1013→        status: mapStripeStatus(snapshot.data.status),
+  1014→        stripeSubscriptionId: snapshot.data.subscriptionId,
+  1015→        currentPeriodEnd: toDate(snapshot.data.currentPeriodEnd),
+  1016→        trialEnd: toDate(snapshot.data.trialEnd ?? null),
+  1017→        cancelAtPeriodEnd: snapshot.data.cancelAtPeriodEnd,
+  1018→      });
+  1019→    }
+  1020→    return { handled: "subscription.synced" };
+  1021→  }
+  1022→
+  1023→  /**
+  1024→   * Shared guarded-transition driver for subscription lifecycle events
+  1025→   * (customer.subscription.updated/deleted). The event's object is the
+  1026→   * HISTORICAL truth (webhooks replay history); minimal objects resync from
+  1027→   * the provider.
+  1028→   */
+  1029→  async function applySubscriptionTransition(
+  1030→    stripe: StripeSeam,
+  1031→    event: StripeEventLike,
+  1032→    forcedTarget?: SubscriptionStatus,
+  1033→  ): Promise<WebhookOutcome> {
+  1034→    const object = event.data.object;
+  1035→    const organizationId = organizationIdOf(object);
+  1036→    if (organizationId === null) return { ignored: "unattributed" };
+  1037→    if (subscriptions === null) return { ignored: "no-persistence" };
+  1038→
+  1039→    let view = subscriptionViewOf(object);
+  1040→    if (view === null || view.currentPeriodEnd === null) {
+  1041→      const customer = view?.customer ?? nonEmptyString(object.customer);
+  1042→      if (customer !== null) {
+  1043→        view = await resyncView(stripe, customer);
+  1044→      }
+  1045→    }
+  1046→    if (view === null) return { ignored: "unparsable" };
+  1047→    const target = forcedTarget ?? mapStripeStatus(view.status);
+  1048→
+  1049→    const row = await subscriptions.getByOrganization(organizationId);
+  1050→    if (row === null) {
+  1051→      // A subscription event for a workspace we never tracked: attribution
+  1052→      // exists (metadata) but there is no state to transition — audited.
+  1053→      return { ignored: "no-subscription" };
+  1054→    }
+  1055→
+  1056→    // From-lists (the guarded state machine; heals land via invoice.paid):
+  1057→    //  active   ← trialing | active | incomplete   (trial conversion, renewal)
+  1058→    //  grace    ← active | grace | past_due | incomplete (past-due dunning)
+  1059→    //  canceled ← any live state (BP §M6.2: status only — NO work deletion)
+  1060→    //  trialing ← trialing | incomplete (idempotent re-pin)
+  1061→    //  incomplete ← trialing | active | incomplete
+  1062→    //  past_due ← grace (legacy rows only; Stripe past_due maps to grace)
+  1063→    const FROM_LISTS: Record<SubscriptionStatus, readonly SubscriptionStatus[]> = {
+  1064→      active: ["trialing", "active", "incomplete"],
+  1065→      grace: ["active", "grace", "past_due", "incomplete"],
+  1066→      canceled: ["trialing", "active", "grace", "past_due", "incomplete"],
+  1067→      trialing: ["trialing", "incomplete"],
+  1068→      incomplete: ["trialing", "active", "incomplete"],
+  1069→      past_due: ["grace"],
+  1070→    };
+  1071→    const from = FROM_LISTS[target];
+  1072→    if (!from.includes(row.status)) {
+  1073→      return { ignored: "transition-guarded" };
+  1074→    }
+  1075→
+  1076→    const periodEndMs = view.currentPeriodEnd !== null ? view.currentPeriodEnd * 1000 : null;
+  1077→    // Never move the period BACKWARDS (an out-of-order renewal must not
+  1078→    // regress the row), and never write a null over a known period.
+  1079→    const periodAdvances =
+  1080→      periodEndMs !== null &&
+  1081→      (row.currentPeriodEnd === null || periodEndMs >= row.currentPeriodEnd.getTime());
+  1082→
+  1083→    // Plan pinning (§M6 task 2 "never instant feature loss"): the event's new
+  1084→    // price only becomes the row's plan when it is an UPGRADE (features grow)
+  1085→    // or the period actually advanced (the change took effect). A downgrade
+  1086→    // scheduled at period end keeps the row's plan until then.
+  1087→    const targetPlan = planIdFromPrice(deps.env, view.priceId) ?? planIdFromMetadata(object);
+  1088→    const planId =
+  1089→      targetPlan !== null &&
+  1090→      target !== "canceled" &&
+  1091→      (planRank(targetPlan) > planRank(row.planId) || periodAdvances)
+  1092→        ? targetPlan
+  1093→        : null;
+  1094→
+  1095→    const graceEnd =
+  1096→      target === "grace"
+  1097→        ? periodEndMs !== null
+  1098→          ? new Date(periodEndMs + GRACE_PERIOD_DAYS * DAY_MS)
+  1099→          : undefined
+  1100→        : target === "active" || target === "canceled"
+  1101→          ? null
+  1102→          : undefined;
+  1103→    const applied = await guardedTransition(organizationId, {
+  1104→      from,
+  1105→      to: target,
+  1106→      ...(planId !== null ? { planId } : {}),
+  1107→      ...(periodAdvances ? { currentPeriodEnd: new Date(periodEndMs) } : {}),
+  1108→      ...(view.trialEnd !== null ? { trialEnd: new Date(view.trialEnd * 1000) } : {}),
+  1109→      ...(graceEnd !== undefined ? { graceEnd } : {}),
+  1110→      cancelAtPeriodEnd: view.cancelAtPeriodEnd,
+  1111→    });
+  1112→    return applied ? { handled: `subscription.${target}` } : { ignored: "transition-guarded" };
+  1113→  }
+  1114→
+  1115→  async function handleSubscriptionUpdated(
+  1116→    stripe: StripeSeam,
+  1117→    event: StripeEventLike,
+  1118→  ): Promise<WebhookOutcome> {
+  1119→    return applySubscriptionTransition(stripe, event);
+  1120→  }
+  1121→
+  1122→  async function handleSubscriptionDeleted(
+  1123→    stripe: StripeSeam,
+  1124→    event: StripeEventLike,
+  1125→  ): Promise<WebhookOutcome> {
+  1126→    // BP §M6.2: cancellation writes STATUS ONLY. Projects, versions and
+  1127→    // ledger rows are never touched by the webhook — no work deletion, ever.
+  1128→    return applySubscriptionTransition(stripe, event, "canceled");
+  1129→  }
+  1130→
+  1131→  async function handleInvoice(event: StripeEventLike): Promise<WebhookOutcome> {
+  1132→    const object = event.data.object;
+  1133→    const organizationId = organizationIdOf(object);
+  1134→    if (organizationId === null) return { ignored: "unattributed" };
+  1135→    const invoices = invoicesRepo(deps.repos);
+  1136→    if (invoices === null) return { ignored: "no-persistence" };
+  1137→
+  1138→    const record = object as unknown as Record<string, unknown>;
+  1139→    const invoiceId = nonEmptyString(record.id);
+  1140→    if (invoiceId === null) return { ignored: "invoice-unparsable" };
+  1141→    const amountRaw = record.amount_paid ?? record.amount_due;
+  1142→    const amountCents =
+  1143→      typeof amountRaw === "number" && Number.isFinite(amountRaw) && amountRaw >= 0
+  1144→        ? Math.round(amountRaw)
+  1145→        : 0;
+  1146→    const currencyRaw = nonEmptyString(record.currency);
+  1147→    const periodStart = toDate(
+  1148→      typeof record.period_start === "number" ? record.period_start : null,
+  1149→    );
+  1150→    const periodEnd = toDate(typeof record.period_end === "number" ? record.period_end : null);
+  1151→
+  1152→    const status = event.type === "invoice.paid" ? ("paid" as const) : ("void" as const);
+  1153→    try {
+  1154→      await invoices.record(organizationId, {
+  1155→        stripeInvoiceId: invoiceId,
+  1156→        amountCents,
+  1157→        currency: currencyRaw ?? "usd",
+  1158→        status,
+  1159→        periodStart,
+  1160→        periodEnd,
+  1161→        hostedUrl: nonEmptyString(record.hosted_invoice_url),
+  1162→        pdfUrl: nonEmptyString(record.invoice_pdf),
+  1163→      });
+  1164→    } catch (error) {
+  1165→      if (isDbError(error) && (error.code === "VALIDATION_FAILED" || error.code === "CONFLICT")) {
+  1166→        // A foreign/malformed invoice is audited-ignored — never a retry loop.
+  1167→        return { ignored: "invoice-invalid" };
+  1168→      }
+  1169→      throw error;
+  1170→    }
+  1171→
+  1172→    if (status !== "paid") {
+  1173→      return { handled: "invoice.voided" };
+  1174→    }
+  1175→
+  1176→    // Top-up grants invoiced outside Checkout (§M6 task 2): keyed on the
+  1177→    // INVOICE id, so re-deliveries under fresh event ids cannot double-grant.
+  1178→    let handled = "invoice.paid";
+  1179→    if (object.metadata?.kind === "topup") {
+  1180→      const granted = await grantTopUp(
+  1181→        organizationId,
+  1182→        event,
+  1183→        object.metadata,
+  1184→        `stripe:invoice:${invoiceId}:topup`,
+  1185→      );
+  1186→      if (granted) handled = "invoice.topup-granted";
+  1187→    }
+  1188→
+  1189→    // Dunning heal (§M6 task 2 trial/renewal lifecycle): a PAID invoice while
+  1190→    // the row sits in the grace window returns the subscription to active.
+  1191→    if (subscriptions !== null) {
+  1192→      const row = await subscriptions.getByOrganization(organizationId);
+  1193→      if (row !== null && (row.status === "grace" || row.status === "past_due")) {
+  1194→        const healed = await guardedTransition(organizationId, {
+  1195→          from: ["grace", "past_due"],
+  1196→          to: "active",
+  1197→          ...(periodEnd !== null ? { currentPeriodEnd: periodEnd } : {}),
+  1198→          graceEnd: null,
+  1199→        });
+  1200→        if (healed) handled = "invoice.paid-healed";
+  1201→      }
+  1202→    }
+  1203→    return { handled };
+  1204→  }
+  1205→
+  1206→  async function handleStripeEvent(
+  1207→    stripe: StripeSeam,
+  1208→    event: StripeEventLike,
+  1209→  ): Promise<WebhookOutcome> {
+  1210→    switch (event.type) {
+  1211→      case "checkout.session.completed":
+  1212→        return handleCheckoutCompleted(stripe, event);
+  1213→      case "customer.subscription.updated":
+  1214→        return handleSubscriptionUpdated(stripe, event);
+  1215→      case "customer.subscription.deleted":
+  1216→        return handleSubscriptionDeleted(stripe, event);
+  1217→      case "invoice.paid":
+  1218→      case "invoice.voided":
+  1219→        return handleInvoice(event);
+  1220→      default:
+  1221→        // Unknown event types are 200 + audited-ignored: Stripe retries on
+  1222→        // non-2xx, so an unhandled type must NEVER be a 500.
+  1223→        return { ignored: "unhandled-type" };
+  1224→    }
+  1225→  }
+  1226→
+  1227→  return app;
+  1228→}
+  1229→
+  1230→export type { StripeEventLike };
+  1231→

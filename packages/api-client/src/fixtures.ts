@@ -34,6 +34,9 @@ import type {
   Invite,
   LedgerEntry,
   MeResponse,
+  Member,
+  MemberRemoved,
+  OwnershipTransferred,
   Page,
   Project,
   ProjectManifest,
@@ -55,15 +58,20 @@ import {
   INVITE_SCHEMA,
   LEASE_ACQUIRE_RESPONSE_SCHEMA,
   LEDGER_ENTRY_SCHEMA,
+  MEMBER_REMOVED_SCHEMA,
+  MEMBER_SCHEMA,
+  OWNERSHIP_TRANSFERRED_SCHEMA,
   type LeaseAcquireResponse,
   type MANIFEST_ASSET_SCHEMA,
   ME_RESPONSE_SCHEMA,
   PAGE_ACTIVITY_SCHEMA,
+  PAGE_MEMBERS_SCHEMA,
   PROJECT_MANIFEST_SCHEMA,
   PROJECT_SCHEMA,
   PROJECT_VERSION_SCHEMA,
   RENDER_JOB_SCHEMA,
   RUN_RECORD_SCHEMA,
+  SWITCHED_WORKSPACE_SCHEMA,
   THREAD_MESSAGE_SCHEMA,
   THREAD_SCHEMA,
   WORKSPACE_SCHEMA,
@@ -1878,3 +1886,102 @@ export const SETTINGS_FIXTURES = {
     trial: null as null | { readonly daysLeft: number; readonly endsAt: string },
   },
 } as const;
+
+// ---------------------------------------------------------------------------
+// W1-a additions — member-management surfaces (gateway routes/members.ts).
+// APPEND-ONLY per the parallel-wave contract (see the W3-b marker above).
+// The rows mirror @studio/contracts routes/members.ts — Page<Member>,
+// MemberRemoved, OwnershipTransferred, SwitchedWorkspace — so the M9
+// workspace switcher and the settings members table can be built/demoed
+// before wiring to the live routes. The roster reuses the Northlight demo
+// identities; `isCurrentUser` is relative to the demo user (Maya). Invited
+// users are NOT members on this surface (they live on the invites surface).
+// ---------------------------------------------------------------------------
+
+/** Northlight's demo roster as GET /v1/workspaces/:id/members returns it. */
+const DEMO_MEMBERS: readonly Member[] = [
+  {
+    id: "usr_demo_maya",
+    name: "Maya Okafor",
+    email: "maya@northlight.example",
+    role: "owner",
+    status: "active",
+    lastActiveAt: "2026-10-21T09:41:00Z",
+    isCurrentUser: true,
+  },
+  {
+    id: "usr_demo_jonas",
+    name: "Jonas Beck",
+    email: "jonas@northlight.example",
+    role: "admin",
+    status: "active",
+    lastActiveAt: "2026-10-21T07:12:00Z",
+    isCurrentUser: false,
+  },
+  {
+    id: "usr_demo_rive",
+    name: "Rive Kowalski",
+    email: "rive@northlight.example",
+    role: "editor",
+    status: "active",
+    lastActiveAt: "2026-10-14T16:03:00Z",
+    isCurrentUser: false,
+  },
+];
+
+const DEMO_MEMBERS_PAGE: Page<Member> = {
+  items: DEMO_MEMBERS,
+  nextCursor: null,
+};
+
+const DEMO_MEMBER_REMOVED: MemberRemoved = {
+  id: "usr_demo_jonas",
+  removed: true,
+};
+
+/** Maya hands Northlight Motion to Jonas; she stays on as admin. */
+const DEMO_OWNERSHIP_TRANSFERRED: OwnershipTransferred = {
+  workspaceId: "wsp_demo_northlight",
+  ownerId: "usr_demo_jonas",
+  previousOwnerId: "usr_demo_maya",
+};
+
+/** The demo user switches her active workspace to Halo Pictures. */
+const DEMO_SWITCHED_WORKSPACE: SwitchedWorkspace = {
+  workspaceId: "wsp_demo_halo",
+  name: WORKSPACE_HALO.name,
+  slug: WORKSPACE_HALO.slug,
+};
+
+/** W1-a demo rows for the member-management client surface. */
+export const MEMBERS_FIXTURES = {
+  membersPage: DEMO_MEMBERS_PAGE,
+  removed: DEMO_MEMBER_REMOVED,
+  ownershipTransferred: DEMO_OWNERSHIP_TRANSFERRED,
+  switchedWorkspace: DEMO_SWITCHED_WORKSPACE,
+} as const;
+
+/**
+ * Validates the W1-a member fixtures against the api-client response schemas
+ * (the contracts-interface mirrors) — same contract as validateFixtures(),
+ * scoped to this block. Returns the issue list; empty means wire-valid.
+ */
+export function validateMembersFixtures(): string[] {
+  const issues: string[] = [];
+  check("membersPage", PAGE_MEMBERS_SCHEMA, MEMBERS_FIXTURES.membersPage, issues);
+  check("members.removed", MEMBER_REMOVED_SCHEMA, MEMBERS_FIXTURES.removed, issues);
+  check(
+    "members.ownershipTransferred",
+    OWNERSHIP_TRANSFERRED_SCHEMA,
+    MEMBERS_FIXTURES.ownershipTransferred,
+    issues,
+  );
+  check(
+    "members.switchedWorkspace",
+    SWITCHED_WORKSPACE_SCHEMA,
+    MEMBERS_FIXTURES.switchedWorkspace,
+    issues,
+  );
+  void MEMBER_SCHEMA; // item-level schema exercised via PAGE_MEMBERS_SCHEMA
+  return issues;
+}
