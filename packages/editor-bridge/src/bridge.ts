@@ -312,6 +312,24 @@ export function sanitizeAssetName(name: string): string {
 }
 
 /**
+ * Realm-safe `Uint8Array` check for values minted INSIDE the editor iframe.
+ *
+ * The iframe (§6.1) is same-origin but a SEPARATE JS realm, and
+ * `wasm-bindgen`'s `readFile` (editor/apps/effectcraft-web/src/api.rs
+ * `read_file`) returns a `Uint8Array` constructed from the IFRAME's
+ * intrinsics. The host page's `v instanceof Uint8Array` is therefore `false`
+ * even when the bytes are real — which made the M3.4/M5 save path
+ * (`saveToBrowser` → `readFile` → uploadVersion) misreport a file the editor
+ * had JUST written as "no file at …", so agent applies never uploaded a
+ * version. `Object.prototype.toString` reads the [[TypedArrayName]] internal
+ * slot, so it identifies typed arrays across realms — and still rejects
+ * `undefined` (upstream's "not in the table"), plain objects and `DataView`.
+ */
+function isUint8Array(value: unknown): value is Uint8Array {
+  return Object.prototype.toString.call(value) === "[object Uint8Array]";
+}
+
+/**
  * Attach to the editor iframe. Resolves once `window.effectcraft` exists and
  * reports ready (`effectcraftLoad.readyMs`, or an optional `ready()` hook).
  *
@@ -592,7 +610,7 @@ export function attachEditorBridge(
 
       readFile(path: string): Promise<Uint8Array> {
         return call("readFile", (ec) => ec.readFile(path)).then((v) => {
-          if (!(v instanceof Uint8Array)) {
+          if (!isUint8Array(v)) {
             const bridgeErr = new BridgeError(
               "EDITOR_CALL_FAILED",
               `readFile: no file at ${JSON.stringify(path)}`,
@@ -706,6 +724,14 @@ function matchShortcut(e: KeyboardEvent): EditorShortcutName | undefined {
  * shortcut. `Cmd/Ctrl+Enter` (send/apply) and `Esc` (close popover) forward
  * too — the editor is not asked to know about the chat.
  *
+ * The listener runs in the CAPTURE phase (W2-B8/W3-C1-run3): the wasm editor
+ * (egui/winit) installs its own keydown listeners inside the iframe and may
+ * `stopPropagation()` chat-owned combos on the way up, starving a
+ * bubble-phase window listener — the exact "Ctrl+L is a dead key inside the
+ * editor" signature. Capture runs top-down (window FIRST), so the chat
+ * combos reach the parent before the editor can swallow them; every other
+ * key falls through untouched and the editor sees it as usual.
+ *
  * A handler that returns `false` explicitly declines the event (nothing is
  * prevented, the editor sees it as usual); anything else — `undefined` or
  * `true` — marks it handled for the parent and the native event gets
@@ -746,8 +772,8 @@ export function forwardShortcut(iframe: HTMLIFrameElement, handlers: ShortcutHan
       e.stopPropagation();
     }
   };
-  w.addEventListener("keydown", onKeyDown);
+  w.addEventListener("keydown", onKeyDown, { capture: true });
   return () => {
-    w.removeEventListener("keydown", onKeyDown);
+    w.removeEventListener("keydown", onKeyDown, { capture: true });
   };
 }

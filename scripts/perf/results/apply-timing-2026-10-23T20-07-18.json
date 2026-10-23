@@ -1,0 +1,54 @@
+{
+  "kind": "apply-timing",
+  "startedAt": "2026-10-23T20:07:18.526Z",
+  "baseUrl": "http://localhost:3000",
+  "editorPath": "/w/demo-project/editor",
+  "runs": 1,
+  "samples": [
+    {
+      "runId": "run_perf_apply_1_1792786073729",
+      "ok": false,
+      "error": "TimeoutError: page.waitForFunction: Timeout 30000ms exceeded.",
+      "cardAtTimeout": {
+        "status": "failed",
+        "text": "✦Plan · Restyle the Background solid with a Multiply blendHigh riskStyleHigh risk — requires confirmation before it runs.1 step1.Set the Background blend mode to Multiplystudio.set_propertiesAffected layersBackground·Blend mode Multiply≈ 2.25 credits!The edit didn’t apply — nothing changed.run not found"
+      },
+      "mutations": [
+        {
+          "offsetMs": 2058,
+          "method": "POST",
+          "url": "/v1/projects/prj_demo/versions",
+          "status": 201
+        },
+        {
+          "offsetMs": 2662,
+          "method": "POST",
+          "url": "/v1/runs/run_perf_apply_1_1792786073729/apply",
+          "status": 404
+        }
+      ],
+      "pageErrors": [
+        "console.error: Failed to load resource: the server responded with a status of 404 (Not Found)"
+      ]
+    }
+  ],
+  "summary": {
+    "confirmToApplied": {
+      "n": 0,
+      "min": null,
+      "p50": null,
+      "p75": null,
+      "max": null,
+      "samples": []
+    },
+    "confirmToVersionSaved": {
+      "n": 0,
+      "note": "no version upload landed in any run"
+    },
+    "budget": {
+      "row": "Apply (engine.batch, ≤20 steps)",
+      "p75Ms": 300
+    },
+    "note": "confirm→applied INCLUDES engine.batch + card state machinery + version upload + applyRun report (an upper bound for the engine.batch-only budget); next dev + tsx gateway, sandbox shared CPU, loopback; scripted SSE plan (m5 fixture) so the model wire never contaminates the timing"
+  }
+}

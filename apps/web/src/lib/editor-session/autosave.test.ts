@@ -7,7 +7,9 @@ import { createHash } from "node:crypto";
  * drain under parallel-worker CPU contention.
  */
 import { setTimeout as realSleep } from "node:timers/promises";
-import type { EditorBridge } from "@studio/editor-bridge";
+import vm from "node:vm";
+import { type EditorBridge, attachEditorBridge } from "@studio/editor-bridge";
+import type { EffectcraftGlobal, EffectcraftWindow } from "@studio/editor-bridge";
 import { type FakeEditor, attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -385,5 +387,88 @@ describe("createAutosaveController", () => {
     expect(first).toBeInstanceOf(EditorSessionError);
     expect(first.code).toBe("no-project-open");
     expect(h.fakeClient.calls.uploads).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-realm editor bytes (W3-C1 regression)
+// ---------------------------------------------------------------------------
+
+describe("createAutosaveController — cross-realm editor bytes (W3-C1)", () => {
+  /**
+   * The REAL editor iframe is same-origin but a SEPARATE JS realm, and
+   * wasm-bindgen's `readFile` (editor/apps/effectcraft-web/src/api.rs) mints
+   * its `Uint8Array` from the IFRAME's intrinsics — so a host-page
+   * `instanceof Uint8Array` is `false` for real editor bytes. The old bridge
+   * guard read exactly that as "no file at …", so an agent apply applied in
+   * the engine but never uploaded a version (the m5 high-risk journey bug:
+   * engine batch OK, saveToBrowser OK, readFile misreported). A `node:vm`
+   * context is a genuine second realm and reproduces the cross-realm
+   * instanceof failure exactly; the save path here runs through the REAL
+   * `attachEditorBridge` readFile wrapper, not the fake editor.
+   */
+  it("uploads a version when readFile returns bytes minted in the editor iframe's realm", async () => {
+    const foreignBytes = vm.runInNewContext(
+      "new Uint8Array([123, 34, 115, 99, 104, 101, 109, 97, 34, 58, 32, 49, 125])",
+    ) as Uint8Array;
+    // The regression's precondition: a host-realm instanceof CANNOT see
+    // these bytes — the save path must never depend on it.
+    expect(foreignBytes instanceof Uint8Array).toBe(false);
+    expect(foreignBytes).toHaveLength(13);
+
+    const summary = {
+      path: "/demo-project.ecproj",
+      dirty: true,
+      items: [],
+      activeComp: null,
+      selectedLayers: [],
+      undo: [],
+    };
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const w = iframe.contentWindow as EffectcraftWindow;
+    w.effectcraft = {
+      request: () => Promise.resolve({}),
+      execute: (command: string) =>
+        command === "project.summary" ? Promise.resolve(summary) : Promise.resolve({}),
+      commands: () => Promise.resolve([]),
+      inspect: () => Promise.resolve({}),
+      screenshot: () => Promise.resolve({}),
+      renderFrame: () => Promise.resolve({}),
+      files: () => [],
+      readFile: () => foreignBytes,
+      addFile: () => Promise.resolve("/stub"),
+      info: () => ({ version: "0.13.0-stub" }),
+      saveToBrowser: () =>
+        Promise.resolve({ path: "/demo-project.ecproj", bytes: foreignBytes.byteLength }),
+      listStored: () => Promise.resolve({}),
+      removeStored: () => true,
+      flush: () => Promise.resolve(),
+      workerFrameCheck: () => Promise.resolve({}),
+    } as unknown as EffectcraftGlobal;
+    w.effectcraftLoad = { wasmMs: 1, readyMs: 2 };
+    const bridge = await attachEditorBridge(iframe);
+
+    const fakeClient = createFakeEditorSessionClient();
+    const controller = createAutosaveController({
+      bridge,
+      client: fakeClient.client,
+      projectId: PROJECT_ID,
+      baseVersion: fakeBaseVersion,
+    });
+    try {
+      const outcome = await controller.saveNow("agent-apply");
+      expect(outcome.saved).toBe(true);
+      // the upload carried the iframe-realm bytes, hashed + counted intact
+      expect(fakeClient.calls.uploads).toHaveLength(1);
+      expect(fakeClient.calls.uploads[0]?.input.sha256).toBe(shaOf(foreignBytes));
+      expect(fakeClient.calls.uploads[0]?.input.bytes.byteLength).toBe(13);
+      expect(outcome.version?.sha256).toBe(shaOf(foreignBytes));
+      expect(controller.dirty).toBe(false);
+    } finally {
+      controller.dispose();
+      bridge.dispose();
+      iframe.remove();
+    }
   });
 });

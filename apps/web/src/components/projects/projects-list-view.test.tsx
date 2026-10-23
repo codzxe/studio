@@ -9,6 +9,14 @@
  * empty-search state + clear filters, and the per-row → /w/[slug]/history
  * link. next/navigation is mocked (hoisted, the app-shell test pattern);
  * the port is faked (the fakePort house pattern — no network).
+ *
+ * W3-C6: the PRODUCTION port's direct `client.projects.list` binding (the
+ * seam the retired `loadProjectsPage` server action used to serve) is pinned
+ * here too — `createProjectsListPort` against a stubbed global fetch (the
+ * actions.test.ts suite migrated in): archived/cursor/limit reach the
+ * same-origin `/v1` URL, `x-workspace-id` rides the headers, and every
+ * failure — wire §7.3 Err envelopes AND malformed-page validation — lands
+ * in the typed `ok: false` arm, never a throw.
  */
 
 import { ApiError } from "@studio/api-client";
@@ -21,6 +29,7 @@ import {
   type ProjectsListPort,
   ProjectsListView,
   type ProjectsListViewProps,
+  createProjectsListPort,
 } from "./projects-list-view";
 import type { ProjectsListRow } from "./projects-wire";
 
@@ -584,9 +593,169 @@ describe("ProjectsListView — links and empty states", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The production port — the direct `client.projects.list` binding (W3-C6)
+// ---------------------------------------------------------------------------
+
+/** Same-origin API root the port's api-client is built with. */
+const V1 = "/v1";
+
+interface RecordedFetch {
+  readonly input: string;
+  readonly init: RequestInit | undefined;
+}
+
+const fetchCalls: RecordedFetch[] = [];
+
+function stubFetch(handler: (input: string, init?: RequestInit) => Promise<Response>): void {
+  fetchCalls.length = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      fetchCalls.push({ input: url, init });
+      return handler(url, init);
+    }),
+  );
+}
+
+/** §7.3 Ok envelope around one `GET /v1/projects` page payload. */
+function okPage(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify({ data }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/** §7.3 Err envelope (the wire failure arm). */
+function errEnvelope(
+  status: number,
+  body: { code: string; message: string; hint?: string; retryable?: boolean },
+): Response {
+  return new Response(
+    JSON.stringify({
+      error: {
+        code: body.code,
+        message: body.message,
+        hint: body.hint,
+        retryable: body.retryable ?? false,
+        requestId: "req_test_0000000000000000000000",
+      },
+    }),
+    { status, headers: { "content-type": "application/json" } },
+  );
+}
+
+/** One schema-valid §7.2 `Project` row (the api-client validates the page). */
+function wireProject(id: string, name: string, archived = false) {
+  return {
+    id,
+    workspaceId: "ws_first",
+    name,
+    slug: name.toLowerCase().replace(/\s+/g, "-"),
+    thumbnailUrl: null,
+    archived,
+    currentVersionId: null,
+    createdBy: ME,
+    createdAt: "2026-10-01T09:00:00Z",
+    updatedAt: "2026-10-20T09:00:00Z",
+    deletedAt: null,
+  };
+}
+
+describe("createProjectsListPort — the direct api-client binding (W3-C6)", () => {
+  it("serves the archived window through client.projects.list (same-origin /v1 + workspace header)", async () => {
+    stubFetch(() =>
+      Promise.resolve(
+        okPage({ items: [wireProject("prj_old", "Archived cut", true)], nextCursor: null }),
+      ),
+    );
+    const port = createProjectsListPort("ws_first");
+    const result = await port.list({ archived: true });
+
+    // The retired workaround's whole point: `archived=true` must reach the wire.
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0]?.input).toBe(`${V1}/projects?limit=50&archived=true`);
+    const headers = new Headers(fetchCalls[0]?.init?.headers);
+    expect(headers.get("x-workspace-id")).toBe("ws_first");
+    // Session forwarding is the browser default: a same-origin fetch sends
+    // the better-auth session cookie unless credentials is "omit" — pin that
+    // the direct binding never opts out (the mutations' auth path).
+    expect(fetchCalls[0]?.init?.credentials ?? "same-origin").not.toBe("omit");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]?.id).toBe("prj_old");
+      expect(result.items[0]?.archived).toBe(true);
+      expect(result.nextCursor).toBeNull();
+    }
+  });
+
+  it("keeps cursor continuations window-consistent (cursor + archived + limit)", async () => {
+    stubFetch(() => Promise.resolve(okPage({ items: [], nextCursor: "cur_3" })));
+    const port = createProjectsListPort("ws_first");
+    const result = await port.list({ archived: true, cursor: "cur_2", limit: 25 });
+
+    expect(fetchCalls[0]?.input).toBe(`${V1}/projects?cursor=cur_2&limit=25&archived=true`);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.nextCursor).toBe("cur_3");
+  });
+
+  it("defaults to the unarchived window (limit 50, no archived param)", async () => {
+    stubFetch(() => Promise.resolve(okPage({ items: [], nextCursor: null })));
+    const port = createProjectsListPort("ws_first");
+    await port.list({});
+
+    expect(fetchCalls[0]?.input).toBe(`${V1}/projects?limit=50`);
+  });
+
+  it("maps a §7.3 Err envelope into the typed error arm (never throws)", async () => {
+    stubFetch(() =>
+      Promise.resolve(
+        errEnvelope(404, {
+          code: "WORKSPACE_NOT_FOUND",
+          message: "Not found.",
+          hint: "Check the link, or refresh the list.",
+        }),
+      ),
+    );
+    const port = createProjectsListPort("ws_gone");
+    const result = await port.list({});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe("Not found.");
+      expect(result.error.hint).toBe("Check the link, or refresh the list.");
+      expect(result.error.requestId).toBe("req_test_0000000000000000000000");
+    }
+  });
+
+  it("degrades a malformed page to the honest typed failure — rows are never silently skipped", async () => {
+    // One row the §7.2 schema rejects → the api-client's strict
+    // PAGE_PROJECTS_SCHEMA fails the whole page (MALFORMED_RESPONSE, unlike
+    // the RSC route's row-skipping parseProjectsPage); the port surfaces the
+    // typed error arm instead of silently dropping the row from the window.
+    stubFetch(() =>
+      Promise.resolve(okPage({ items: [{ id: "prj_broken", name: 42 }], nextCursor: null })),
+    );
+    const port = createProjectsListPort("ws_first");
+    const result = await port.list({});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toBe("The server returned a malformed response.");
+      expect(result.error.hint).toBe("Try again in a moment.");
+      expect(result.error.requestId).toBeDefined();
+    }
+  });
+});
+
 afterEach(() => {
   // The debounce test installs fake timers; a timeout inside its try block
   // would otherwise leak them into every later test.
   vi.useRealTimers();
+  // The port tests stub global fetch (no network) — never leak into the rest.
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
 });

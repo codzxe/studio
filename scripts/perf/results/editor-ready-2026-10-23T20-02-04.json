@@ -1,0 +1,207 @@
+{
+  "kind": "editor-ready",
+  "startedAt": "2026-10-23T20:02:04.127Z",
+  "baseUrl": "http://localhost:3000",
+  "editorPath": "/w/demo-project/editor",
+  "cold": [
+    {
+      "label": "cold-1",
+      "ok": true,
+      "openSinceNavStartMs": 8576,
+      "wallMs": 8584,
+      "domContentLoadedMs": 532,
+      "loadEventMs": 1211,
+      "wasm": [],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 65.8,
+      "errors": []
+    },
+    {
+      "label": "cold-2",
+      "ok": true,
+      "openSinceNavStartMs": 8230.3,
+      "wallMs": 8232,
+      "domContentLoadedMs": 405,
+      "loadEventMs": 1110,
+      "wasm": [],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 66.4,
+      "errors": []
+    },
+    {
+      "label": "cold-3",
+      "ok": true,
+      "openSinceNavStartMs": 8019.4,
+      "wallMs": 8021,
+      "domContentLoadedMs": 286,
+      "loadEventMs": 1134,
+      "wasm": [],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 66.3,
+      "errors": []
+    },
+    {
+      "label": "cold-4",
+      "ok": true,
+      "openSinceNavStartMs": 7922.4,
+      "wallMs": 7925,
+      "domContentLoadedMs": 333,
+      "loadEventMs": 1191,
+      "wasm": [],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 66.7,
+      "errors": []
+    },
+    {
+      "label": "cold-5",
+      "ok": true,
+      "openSinceNavStartMs": 7766.8,
+      "wallMs": 7769,
+      "domContentLoadedMs": 281,
+      "loadEventMs": 1179,
+      "wasm": [],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 66,
+      "errors": []
+    }
+  ],
+  "warm": [
+    {
+      "label": "warm-1",
+      "ok": true,
+      "openSinceNavStartMs": 3937.6,
+      "wallMs": 3940,
+      "domContentLoadedMs": 2295,
+      "loadEventMs": 2393,
+      "wasm": [],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 68.9,
+      "errors": [
+        "console.error: [W3C1-DIAG] saveOnce(before-close) start proactiveDirty=false editorDirty=false currentVersion={\"id\":\"ver_demo_3\",\"label\":\"another placeholder edit\",\"sha256\":\"93ad0a55154a6da01f20721e735d1541842b09d708a2219ebe05af73b79c97b9\",\"sizeBytes\":49}"
+      ]
+    },
+    {
+      "label": "warm-2",
+      "ok": true,
+      "openSinceNavStartMs": 2450,
+      "wallMs": 2473,
+      "domContentLoadedMs": 641,
+      "loadEventMs": 1026,
+      "wasm": [],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 69,
+      "errors": [
+        "console.error: [W3C1-DIAG] saveOnce(before-close) start proactiveDirty=false editorDirty=false currentVersion={\"id\":\"ver_demo_3\",\"label\":\"another placeholder edit\",\"sha256\":\"93ad0a55154a6da01f20721e735d1541842b09d708a2219ebe05af73b79c97b9\",\"sizeBytes\":49}"
+      ]
+    },
+    {
+      "label": "warm-3",
+      "ok": true,
+      "openSinceNavStartMs": 2803.1,
+      "wallMs": 2807,
+      "domContentLoadedMs": 972,
+      "loadEventMs": 1273,
+      "wasm": [],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 69.2,
+      "errors": [
+        "console.error: [W3C1-DIAG] saveOnce(before-close) start proactiveDirty=false editorDirty=false currentVersion={\"id\":\"ver_demo_3\",\"label\":\"another placeholder edit\",\"sha256\":\"93ad0a55154a6da01f20721e735d1541842b09d708a2219ebe05af73b79c97b9\",\"sizeBytes\":49}"
+      ]
+    },
+    {
+      "label": "warm-4",
+      "ok": true,
+      "openSinceNavStartMs": 2268.1,
+      "wallMs": 2270,
+      "domContentLoadedMs": 665,
+      "loadEventMs": 908,
+      "wasm": [],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 69.4,
+      "errors": [
+        "console.error: [W3C1-DIAG] saveOnce(before-close) start proactiveDirty=false editorDirty=false currentVersion={\"id\":\"ver_demo_3\",\"label\":\"another placeholder edit\",\"sha256\":\"93ad0a55154a6da01f20721e735d1541842b09d708a2219ebe05af73b79c97b9\",\"sizeBytes\":49}"
+      ]
+    },
+    {
+      "label": "warm-5",
+      "ok": true,
+      "openSinceNavStartMs": 2829.4,
+      "wallMs": 2835,
+      "domContentLoadedMs": 578,
+      "loadEventMs": 1007,
+      "wasm": [],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 69.5,
+      "errors": [
+        "console.error: [W3C1-DIAG] saveOnce(before-close) start proactiveDirty=false editorDirty=false currentVersion={\"id\":\"ver_demo_3\",\"label\":\"another placeholder edit\",\"sha256\":\"93ad0a55154a6da01f20721e735d1541842b09d708a2219ebe05af73b79c97b9\",\"sizeBytes\":49}"
+      ]
+    }
+  ],
+  "summary": {
+    "cold": {
+      "n": 5,
+      "min": 7766.8,
+      "p50": 8019.4,
+      "p75": 8230.3,
+      "p95": 8576,
+      "max": 8576,
+      "samples": [
+        7766.8,
+        7922.4,
+        8019.4,
+        8230.3,
+        8576
+      ]
+    },
+    "warm": {
+      "n": 5,
+      "min": 2268.1,
+      "p50": 2803.1,
+      "p75": 2829.4,
+      "p95": 3937.6,
+      "max": 3937.6,
+      "samples": [
+        2268.1,
+        2450,
+        2803.1,
+        2829.4,
+        3937.6
+      ]
+    },
+    "budget": {
+      "warmMs": 6000,
+      "coldMs": 12000
+    },
+    "note": "cold = fresh browser context (empty HTTP cache), warm dev server; warm = same-session reload. next dev (not a production build); sandbox shared CPU; headless software GL."
+  }
+}

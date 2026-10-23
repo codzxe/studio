@@ -212,24 +212,57 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("ChatPanelSlot — D-5 shortcut binding (editor route only)", () => {
-  it("publishes Cmd/Ctrl+K and Cmd/Ctrl+I from the PARENT document onto the bus", () => {
+  it("publishes Cmd/Ctrl+K, Cmd/Ctrl+I and Cmd/Ctrl+L from the PARENT document onto the bus", () => {
     const bus = createChatShortcutBus();
     const { api } = makeApi({ bus });
     mountSlot(api);
 
     let k: KeyboardEvent | undefined;
     let i: KeyboardEvent | undefined;
+    let l: KeyboardEvent | undefined;
     act(() => {
       k = pressWindowKey({ key: "k", metaKey: true });
       i = pressWindowKey({ key: "i", ctrlKey: true });
+      l = pressWindowKey({ key: "l", metaKey: true });
     });
 
     expect(k?.defaultPrevented).toBe(true);
     expect(i?.defaultPrevented).toBe(true);
-    expect(bus.recent().map((event) => event.shortcut)).toEqual(["inlineEdit", "agent"]);
+    expect(l?.defaultPrevented).toBe(true);
+    expect(bus.recent().map((event) => event.shortcut)).toEqual([
+      "inlineEdit",
+      "agent",
+      "toggleChat",
+    ]);
     // The published shortcut opened the surfaces it owns (same-bus wiring).
     expect(screen.getByTestId("chat-inline-edit")).toBeInTheDocument();
     expect(screen.getByTestId("chat-agent-mode")).toBeInTheDocument();
+  });
+
+  it("Cmd/Ctrl+L cycles the §9.1 layout modes host-side (the wasm bridge stays silent for `l`)", () => {
+    const bus = createChatShortcutBus();
+    const { api } = makeApi({ bus });
+    mountSlot(api, "floating");
+
+    // floating → sidebar → collapsed → floating — the same deterministic
+    // nextLayoutAction mapping the iframe-side toggleChat publish rides.
+    act(() => {
+      pressWindowKey({ key: "l", ctrlKey: true });
+    });
+    expect(screen.getByTestId("chat-slot")).toHaveAttribute("data-chat-mode", "sidebar");
+    act(() => {
+      pressWindowKey({ key: "l", ctrlKey: true });
+    });
+    expect(screen.getByTestId("chat-slot")).toHaveAttribute("data-chat-mode", "collapsed");
+    act(() => {
+      pressWindowKey({ key: "L", metaKey: true });
+    });
+    expect(screen.getByTestId("chat-slot")).toHaveAttribute("data-chat-mode", "floating");
+    expect(bus.recent().map((event) => event.shortcut)).toEqual([
+      "toggleChat",
+      "toggleChat",
+      "toggleChat",
+    ]);
   });
 
   it("ignores Shift/Alt combos, bare keys and repeats", () => {
@@ -240,7 +273,9 @@ describe("ChatPanelSlot — D-5 shortcut binding (editor route only)", () => {
     act(() => {
       pressWindowKey({ key: "k", metaKey: true, shiftKey: true });
       pressWindowKey({ key: "i", metaKey: true, altKey: true });
+      pressWindowKey({ key: "l", metaKey: true, shiftKey: true });
       pressWindowKey({ key: "k" });
+      pressWindowKey({ key: "l" });
       pressWindowKey({ key: "j", metaKey: true });
       pressWindowKey({ key: "k", metaKey: true, repeat: true });
     });

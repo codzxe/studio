@@ -219,6 +219,46 @@ async function installScriptedRun(
   });
 }
 
+/**
+ * The scripted-gateway leg's REPORT half (W3-C1): `POST /v1/runs/:id/apply`
+ * + `POST /v1/runs/:id/undo` for the SCRIPTED run, answered with §7.3-exact
+ * Ok envelopes (the api-client unwraps `{data}` and validates it against
+ * APPLY_RESPONSE_SCHEMA / UNDO_RESPONSE_SCHEMA — response-schemas.ts).
+ *
+ * Why the report legs are scripted when nothing else on the apply path is:
+ * the run ROW is created server-side by the chat POST this spec intercepts
+ * (routes/chat.ts `runs.create`), so the run id never exists in the gateway
+ * DB and the real apply/undo routes would honestly 404 RUN_NOT_FOUND — a
+ * scripted-stream artifact, not an app bug. Everything the journey actually
+ * proves stays REAL: the resolve → patch → ONE atomic engine.batch →
+ * `saveNow("agent-apply")` chain, and the VERSION UPLOAD leg
+ * (`POST /v1/projects/:id/versions` hits the real gateway — the W2-B8
+ * triage's "zero version POSTs" symptom is this very leg), plus the local
+ * `edit.undo` and the reapply-drift gate. The gateway's own apply/undo
+ * semantics (ledger settle, lineage, lease guard) are covered by its suite
+ * (services/gateway/tests), not by this browser journey.
+ */
+async function installScriptedApplyReport(page: Page): Promise<void> {
+  await page.route("**/v1/runs/*/apply", async (route) => {
+    const body = route.request().postDataJSON() as { versionId?: string };
+    await route.fulfill({
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+      // Echo the run's uploaded version id (the gateway echoes it too).
+      body: JSON.stringify({
+        data: { applied: true, versionId: body.versionId ?? "", creditsCommitted: 2.25 },
+      }),
+    });
+  });
+  await page.route("**/v1/runs/*/undo", async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ data: { undone: true } }),
+    });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // The scripted high-risk plan (§8.6 EDIT_PLAN_SCHEMA-exact; M5 wire shape)
 // ---------------------------------------------------------------------------
@@ -249,9 +289,20 @@ const HIGH_RISK_PLAN: Record<string, unknown> = {
       batch: {
         label: "Agent: blend Background",
         steps: [
+          // Two steps so the batch ALWAYS changes content: the engine
+          // records NO undo step for a no-op set (Session::edit's
+          // same-content branch), and every journey run ADVANCES the project
+          // head to the Multiply version — a single Multiply step would be a
+          // silent no-op on re-runs and the Undo leg would die with "nothing
+          // to undo". Normal-then-Multiply changes content from EITHER head
+          // state and lands on Multiply both times (deterministic content).
           {
             command: "layer.setBlendMode",
-            params: { layers: "$request:req_bg", mode: "Multiply" },
+            params: { layers: ["$request:req_bg"], mode: "Normal" },
+          },
+          {
+            command: "layer.setBlendMode",
+            params: { layers: ["$request:req_bg"], mode: "Multiply" },
           },
         ],
       },
@@ -259,12 +310,26 @@ const HIGH_RISK_PLAN: Record<string, unknown> = {
   ],
 };
 
-/** The §8.5-compiled engine payload the client's ApplyController executes. */
+/**
+ * The §8.5-compiled engine payload the client's ApplyController executes.
+ *
+ * W3-C1 shape notes:
+ * - `layers` is an ARRAY (the engine's layer-list params — `layers_p` —
+ *   only read arrays; a SCALAR `layers` value is silently ignored and the
+ *   command falls back to the UI selection, which is empty for an agent
+ *   batch ⇒ a no-op apply with NO undo step — the "nothing to undo"
+ *   failure this journey first hit). The `$request:` token inside the array
+ *   resolves to the layer id and `patchPlaceholders` walks arrays too, so
+ *   the patched payload is `{layers: [<id>], mode}` — the registry shape.
+ * - The Normal→Multiply pair makes the batch change content from EITHER
+ *   head state (see the display-plan comment above): re-runnable journey.
+ */
 const HIGH_RISK_COMPILED_BATCH: Record<string, unknown> = {
   label: "Agent: blend Background",
   atomic: true,
   steps: [
-    { command: "layer.setBlendMode", params: { layers: "$request:req_bg", mode: "Multiply" } },
+    { command: "layer.setBlendMode", params: { layers: ["$request:req_bg"], mode: "Normal" } },
+    { command: "layer.setBlendMode", params: { layers: ["$request:req_bg"], mode: "Multiply" } },
   ],
 };
 
@@ -497,6 +562,10 @@ test.describe("M5 agent edits — plan card journey", () => {
     page,
   }) => {
     await installScriptedRun(page, highRiskRunEvents());
+    // The run row only exists client-side (the chat POST is scripted), so the
+    // apply/undo REPORT legs are scripted too — see the helper's header for
+    // the split of real vs scripted legs on the apply path.
+    await installScriptedApplyReport(page);
 
     const composer = page.getByLabel("Message the agent");
     await composer.click();

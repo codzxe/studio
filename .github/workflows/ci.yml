@@ -160,16 +160,8 @@ jobs:
     name: "licence gate: check:licenses"
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Currently RED on main's tree (verified on-box: exit 1, 17 violations — 16
-    # of which reproduce on a fresh checkout): 9 undeclared deps
-    # (@better-auth/api-key, @playwright/test, 5 × @radix-ui/*,
-    # @types/better-sqlite3, better-sqlite3 — need licenses.overrides.json rows)
-    # plus 7 font binaries that ARE git-tracked under editor/assets/fonts/
-    # (spec §1.5 rule 9 bans committed fonts). The 17th (.env) is dev-box-only —
-    # untracked, absent from a fresh checkout. Manifest/fonts fixes sit outside
-    # .github/** ownership, so the gate stays VISIBLE but non-blocking until the
-    # owner clears it — REMOVE continue-on-error once it exits 0 on main.
-    continue-on-error: true
+    # Licence gate is GREEN on main since W3-C4 cleared the manifest/fonts
+    # violations (17 → 0 on a fresh checkout); blocking again as intended.
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

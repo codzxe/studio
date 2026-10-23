@@ -1,0 +1,11 @@
+{
+  "name": "@studio/evals",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Golden agent-prompt corpus + §7.2 scoring harness (BUILD_PLAN §7.2). Standalone vitest project — NOT a pnpm workspace package (see pnpm-workspace.yaml globs), zero dependencies of its own; vitest + typescript resolve from the repo root.",
+  "scripts": {
+    "test": "vitest run",
+    "test:live": "EVALS_LIVE=1 vitest run"
+  }
+}

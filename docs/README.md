@@ -1,8 +1,8 @@
 # Studio product documentation
 
 Status: **accepted direction, in execution** · 2026-10-24 · M0–M9 landed —
-per-milestone evidence in [`phases/`](phases/) (`M0.md`–`M8.md`; M9's evidence
-file still owed) — M10 (hardening, private beta, release) open. See
+per-milestone evidence in [`phases/`](phases/) (`M0.md`–`M9.md`) — M10
+(hardening, private beta, release) open. See
 [`BUILD_PLAN.md`](BUILD_PLAN.md).
 
 Studio is a multi-tenant, agentic **motion-graphics SaaS** built on the open-source
@@ -45,7 +45,7 @@ PhotoCraft-specific editor sections are superseded by ADR 0006 and the docs abov
 `docs/phases/acceptance-matrix.md` are the pre-pivot PhotoCraft era's exit-audit
 docs — kept for the audit trail and marked **historical** at the top; nothing in
 them describes the current product (current milestone evidence lives in
-`docs/phases/M0.md`–`M8.md`). New work starts from this folder, not from the
+`docs/phases/M0.md`–`M9.md`). New work starts from this folder, not from the
 old vendor pin.
 
 ## Codename

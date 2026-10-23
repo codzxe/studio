@@ -60,6 +60,23 @@ const nodenextLoader = new URL(
 ).pathname;
 
 const nextConfig: NextConfig = {
+  // Dev cross-origin allowlist (Next 16 blockCrossSiteDEV; W2-B8 finding):
+  // dev serves `/_next/*` chunks + the HMR socket ONLY to allowlisted
+  // origins, so any proxy or loopback-IP access that is not literally
+  // `localhost` is treated as cross-origin and the client bootstrap is
+  // silently blocked (pages render SSR HTML but never hydrate). The
+  // playwright.config.ts webServer edge (http://127.0.0.1:3100 → next dev
+  // :3000) and direct `http://127.0.0.1:<port>` browsing both hit this.
+  //
+  // Matcher semantics (next/dist server/lib/router-utils/block-cross-site-dev
+  // + app-render/csrf-protection `isCsrfOriginAllowed`): entries match the
+  // request's origin HOSTNAME only — no scheme, no port, wildcards for
+  // subdomains. `localhost` and `**.localhost` are already allowed by
+  // default, so the one entry below covers 127.0.0.1 on ANY port (the edge's
+  // 3100, a direct 3000, whatever the fleet picks). Dev-only: the check
+  // exists solely inside the dev server; `next build` ignores this key.
+  allowedDevOrigins: ["127.0.0.1"],
+
   turbopack: {
     rules: {
       "*.ts": {

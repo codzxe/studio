@@ -1,0 +1,247 @@
+{
+  "kind": "apply-timing",
+  "startedAt": "2026-10-23T20:03:47.222Z",
+  "baseUrl": "http://localhost:3000",
+  "editorPath": "/w/demo-project/editor",
+  "runs": 3,
+  "samples": [
+    {
+      "runId": "run_perf_apply_1_1792785851303",
+      "ok": false,
+      "error": "TimeoutError: page.waitForFunction: Timeout 30000ms exceeded.",
+      "mutations": [
+        {
+          "offsetMs": 1065,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 1836,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 1960,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 2232,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 2672,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 2830,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 19646,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 19857,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 20094,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 20307,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 20460,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "runId": "run_perf_apply_2_1792785893885",
+      "ok": false,
+      "error": "TimeoutError: page.waitForFunction: Timeout 30000ms exceeded.",
+      "mutations": [
+        {
+          "offsetMs": 596,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 927,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 1183,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 1192,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 1310,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 1866,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 27702,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 28165,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 28506,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 28897,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 29292,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "runId": "run_perf_apply_3_1792785931780",
+      "ok": false,
+      "error": "TimeoutError: page.waitForFunction: Timeout 30000ms exceeded.",
+      "mutations": [
+        {
+          "offsetMs": 1659,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 2071,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 2344,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 2377,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 3100,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 3673,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 25296,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 25663,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 25740,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 26102,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        },
+        {
+          "offsetMs": 26295,
+          "method": "POST",
+          "url": "/__nextjs_original-stack-frames",
+          "status": 200
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "confirmToApplied": {
+      "n": 0,
+      "min": null,
+      "p50": null,
+      "p75": null,
+      "max": null,
+      "samples": []
+    },
+    "confirmToVersionSaved": {
+      "n": 0,
+      "note": "no version upload landed in any run"
+    },
+    "budget": {
+      "row": "Apply (engine.batch, ≤20 steps)",
+      "p75Ms": 300
+    },
+    "note": "confirm→applied INCLUDES engine.batch + card state machinery + version upload + applyRun report (an upper bound for the engine.batch-only budget); next dev + tsx gateway, sandbox shared CPU, loopback; scripted SSE plan (m5 fixture) so the model wire never contaminates the timing"
+  }
+}

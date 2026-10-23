@@ -10,8 +10,8 @@
  * - Grid/table toggle (default grid) — `?view=`.
  * - Filters All / Mine / Shared / Archived — `?filter=`. Archived switches to
  *   the archived-only window via the real API `archived:true` param (W1-c)
- *   through the `loadProjectsPage` server action; Mine/Shared filter the
- *   loaded window client-side by `createdBy === me.user.id`.
+ *   through the port's direct `client.projects.list` binding; Mine/Shared
+ *   filter the loaded window client-side by `createdBy === me.user.id`.
  * - Sort Updated / Created / Name — client-side (the wire has no sort param).
  * - Debounced search (250ms) over the LOADED pages — `?q=`. HONEST LIMIT:
  *   PROJECTS_QUERY_SCHEMA carries only `archived` + pagination (no server
@@ -58,7 +58,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 
-import { loadProjectsPage } from "@/app/(app)/w/(shell)/projects/actions";
 import { formatTimeAgo } from "@/components/activity/activity-feed";
 import { BulkActionsBar } from "./bulk-actions-bar";
 import { ProjectTile } from "./project-tile";
@@ -100,7 +99,7 @@ function asViewMode(value: string | null): ProjectsViewMode {
 }
 
 // ---------------------------------------------------------------------------
-// The api seam — a narrow port the real client + server action satisfy
+// The api seam — a narrow port the real `@studio/api-client` satisfies
 // ---------------------------------------------------------------------------
 
 /** List query — mirrors PROJECTS_QUERY_SCHEMA (cursor/limit/archived). */
@@ -111,11 +110,11 @@ export interface ProjectsListQuery {
 }
 
 /**
- * The projects surface the browser needs. Production builds `list` from the
- * `loadProjectsPage` server action (the `archived` param + window-consistent
- * cursors — see actions.ts for why `client.projects.list` cannot carry them
- * yet) and the mutations from `@studio/api-client` (same-origin `/v1` +
- * `x-workspace-id`); tests fake it.
+ * The projects surface the browser needs. Production builds EVERY member
+ * from `@studio/api-client` (same-origin `/v1` + `x-workspace-id` — W3-C6
+ * retired the `loadProjectsPage` server action; the browser's same-origin
+ * fetch carries the better-auth session cookie the gateway's auth middleware
+ * reads, the same auth path the mutations always used); tests fake it.
  */
 export interface ProjectsListPort {
   readonly list: (query: ProjectsListQuery) => Promise<ProjectsPageResult>;
@@ -145,6 +144,57 @@ export function asProjectsMutationPort(
   };
 }
 
+/**
+ * One `GET /v1/projects` page through the DIRECT `client.projects.list` seam
+ * (W3-C6 — the retired `loadProjectsPage` server action indirection): since
+ * W2-B3 the client routes the query through PROJECTS_QUERY_SCHEMA, so the
+ * W1-c `archived` param (§9.1) and window-consistent cursors reach the wire.
+ * Returns the typed ok/err envelope (law #1) — never throws.
+ *
+ * Resilience trade-off (deliberate, differs from the RSC route's tolerant
+ * `parseProjectsPage`): the api-client's strict PAGE_PROJECTS_SCHEMA fails
+ * the WHOLE page when a single row is malformed. That rejection is caught
+ * here and surfaced as the honest typed `ok: false` arm (§7.3 message +
+ * hint + request id) — a malformed row is never silently skipped out of a
+ * browser window, and never crashes the page either.
+ */
+async function listProjectsPage(
+  client: ApiClient,
+  query: ProjectsListQuery,
+): Promise<ProjectsPageResult> {
+  try {
+    const page = await client.projects.list({
+      cursor: query.cursor,
+      limit: query.limit ?? PROJECTS_PAGE_LIMIT,
+      archived: query.archived,
+    });
+    // `Project` (contracts §7.2) satisfies ProjectsListRow structurally — the
+    // same pin asProjectsMutationPort documents.
+    return { ok: true, items: page.items, nextCursor: page.nextCursor };
+  } catch (error) {
+    if (isApiError(error)) {
+      // §7.3-safe fields only (ApiError surfaces envelope message/hint +
+      // request id; client-local codes — e.g. MALFORMED_RESPONSE on a bad
+      // page — carry generic safe strings).
+      return {
+        ok: false,
+        error: {
+          message: error.message,
+          hint: error.hint,
+          requestId: error.requestId,
+        },
+      };
+    }
+    return {
+      ok: false,
+      error: {
+        message: "The projects list could not be loaded.",
+        hint: "Try again in a moment.",
+      },
+    };
+  }
+}
+
 /** Builds the production port for one workspace page load. */
 export function createProjectsListPort(workspaceId: string): ProjectsListPort {
   const client: ApiClient = createApiClient({
@@ -152,7 +202,7 @@ export function createProjectsListPort(workspaceId: string): ProjectsListPort {
     headers: { "x-workspace-id": workspaceId },
   });
   return {
-    list: (query) => loadProjectsPage(workspaceId, query),
+    list: (query) => listProjectsPage(client, query),
     ...asProjectsMutationPort(client),
   };
 }

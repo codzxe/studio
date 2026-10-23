@@ -57,8 +57,8 @@ import { audit, planEntitlements } from "./projects.js";
 // @studio/storage is a declared dependency of @studio/gateway (W4-KILL, audit
 // REPLACE-6 — the old relative ../../packages/storage/src/validate.js vendor
 // seam ran a stale committed tsc snapshot at runtime); validate.ts is pure
-// zero-dependency byte parsing (node:crypto only) with 39 tests, imported
-// through its "./validate" package subpath export.
+// zero-dependency byte parsing (node:crypto only; see the Vitest suite in
+// packages/storage/tests), imported through its "./validate" subpath export.
 import { DEFAULT_MAX_UPLOAD_MEGAPIXELS, dimensions, sniffMime } from "@studio/storage/validate";
 
 /**

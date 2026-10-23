@@ -1,6 +1,6 @@
 > **HISTORICAL — pre-pivot (PhotoCraft era).** Superseded by ADR-0006 and the
 > EffectCraft build plan. Kept for audit trail; nothing here describes the
-> current product. Current milestone evidence: `docs/phases/M0.md`–`M8.md`.
+> current product. Current milestone evidence: `docs/phases/M0.md`–`M9.md`.
 
 # Acceptance Matrix — §20 beta gate — FINAL (W10-J, 2026-10-21)
 

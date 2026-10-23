@@ -10,5 +10,16 @@
       "style": { "noNonNullAssertion": "error" }
     }
   },
-  "files": { "ignore": ["**/dist/**", "**/.next/**", "**/node_modules/**", "**/*.md", "**/fixtures/**", "archive/**", "editor/**", "**/target/**"] }
+  "files": {
+    "ignore": [
+      "**/dist/**",
+      "**/.next/**",
+      "**/node_modules/**",
+      "**/*.md",
+      "**/fixtures/**",
+      "editor/**",
+      "**/target/**",
+      "skills/**"
+    ]
+  }
 }

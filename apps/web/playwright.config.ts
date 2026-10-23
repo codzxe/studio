@@ -46,6 +46,11 @@ const GATEWAY_PORT = Number.parseInt(process.env.E2E_GATEWAY_PORT ?? "8787", 10)
  * with zero extra files/dependencies. Requirements it satisfies:
  * - SSE: upstream chunks are piped the moment they arrive (no buffering);
  * - hop-by-hop: the upstream Host is rewritten, status+headers pass through;
+ * - WebSockets: the `upgrade` event is a raw TCP tunnel to `next dev` —
+ *   Turbopack's HMR socket (W3-C2 root cause: no upgrade handler ⇒ the WS
+ *   dies at the edge ⇒ Next 16.4 dev never hydrates through :3100). SSE and
+ *   the HMR WS are the only upgraded connections, and both belong to the
+ *   web/gateway HTTP ports, so a blind bidirectional pipe is safe here;
  * - readiness: until an upstream is listening the edge answers 502, which
  *   keeps Playwright's webServer poll waiting (it wants 2xx from `url`).
  *
@@ -53,8 +58,9 @@ const GATEWAY_PORT = Number.parseInt(process.env.E2E_GATEWAY_PORT ?? "8787", 10)
  */
 const EDGE_PROXY_JS = [
   'const http = require("http");',
+  'const net = require("net");',
   `const targets = { api: ${GATEWAY_PORT}, web: ${WEB_PORT} };`,
-  "http.createServer((req, res) => {",
+  "const server = http.createServer((req, res) => {",
   '  const port = req.url.startsWith("/v1") ? targets.api : targets.web;',
   '  const upstream = http.request({ host: "127.0.0.1", port, method: req.method, path: req.url,',
   '    headers: { ...req.headers, host: "127.0.0.1:" + port } }, (up) => {',
@@ -66,7 +72,23 @@ const EDGE_PROXY_JS = [
   '    res.end("e2e edge: upstream not reachable yet");',
   "  });",
   "  req.pipe(upstream);",
-  `}).listen(${EDGE_PORT}, "127.0.0.1", () => console.log("e2e edge on ${EDGE_PORT}"));`,
+  "});",
+  "server.on(\"upgrade\", (req, socket, head) => {",
+  '  const up = net.connect(targets.web, "127.0.0.1", () => {',
+  "    up.write([",
+  "      `${req.method} ${req.url} HTTP/1.1`,",
+  "      ...Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`),",
+  '      "",',
+  '      ""',
+  '    ].join("\\r\\n"));',
+  "    if (head?.length) up.write(head);",
+  "    up.pipe(socket);",
+  "    socket.pipe(up);",
+  "  });",
+  '  up.on("error", () => socket.destroy());',
+  '  socket.on("error", () => up.destroy());',
+  "});",
+  `server.listen(${EDGE_PORT}, "127.0.0.1", () => console.log("e2e edge on ${EDGE_PORT}"));`,
 ].join("\n");
 
 /** One webServer, three supervised processes (see the module header). */

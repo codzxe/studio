@@ -25,9 +25,7 @@
       "@studio/contracts": ["../../packages/contracts/src/index.ts"],
       "@studio/ui": ["../../packages/ui/src/index.ts"],
       "@studio/editor-bridge": ["../../packages/editor-bridge/src/index.ts"],
-      "@studio/db": ["../../packages/db/src/index.ts"],
-
-      "@studio/storage": ["../../packages/storage/src/index.ts"]
+      "@studio/db": ["../../packages/db/src/index.ts"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],

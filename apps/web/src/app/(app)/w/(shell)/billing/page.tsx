@@ -3,6 +3,7 @@ import { EmptyState } from "@studio/ui";
 import { notFound, redirect } from "next/navigation";
 
 import { type BillingInvoiceRow, BillingPageView } from "@/components/billing/page-billing-view";
+import { TOP_UP_PACKS } from "@/components/billing/top-up-packs";
 import { gatewayCall, isGatewayHttpError } from "@/lib/gateway";
 import { pageMetadata } from "@/lib/seo";
 
@@ -56,8 +57,14 @@ const BILLING_PAGE_STATUSES = [
 /** Wire plan ids (contracts PLAN_ID union — trial is a state, D-4). */
 const BILLING_PAGE_PLANS = ["trial", "starter", "pro", "studio"] as const;
 
-/** Wire top-up pack ids (contracts TOP_UP_PACK_IDS). */
-const BILLING_PAGE_PACK_IDS = ["credits100", "credits500", "credits2000"] as const;
+/**
+ * Wire top-up pack ids — pinned ONCE for all of apps/web in
+ * `components/billing/top-up-packs.ts` (the W2-B2 handoff; the marketing
+ * pricing page and TopUpFlow import the same catalog). Never re-pin locally.
+ */
+const BILLING_PAGE_PACK_IDS: readonly (typeof TOP_UP_PACKS)[number]["packId"][] = TOP_UP_PACKS.map(
+  (pack) => pack.packId,
+);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

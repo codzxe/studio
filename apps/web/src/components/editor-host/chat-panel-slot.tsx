@@ -30,9 +30,12 @@
  *   error card (newest failed tool card — human copy only, law #1) render
  *   above the composer while they are the thread's newest activity.
  * - **Host-side shortcut listener (D-5)**: the bridge seam forwards
- *   `Cmd/Ctrl+K/I` from INSIDE the iframe; the slot additionally publishes
- *   the same two from the PARENT document onto the SAME bus so the shortcuts
- *   work wherever focus sits. It binds ONLY here — the slot mounts only on
+ *   `Cmd/Ctrl+L/K/I` from INSIDE the iframe; the slot additionally publishes
+ *   the same three from the PARENT document onto the SAME bus so the shortcuts
+ *   work wherever focus sits — including `Cmd/Ctrl+L`, whose iframe-side
+ *   forwarding never fires (the wasm editor→host bridge stays silent for the
+ *   layout cycle, W2-B8/W3-C2), so the HOST owns the `toggleChat` publish.
+ *   It binds ONLY here — the slot mounts only on
  *   the editor route, so everywhere else `Cmd/Ctrl+K` stays the command
  *   palette (D-5).
  *
@@ -292,20 +295,33 @@ export function ChatPanelSlot({
   );
 
   // -- host-side shortcut publishing (D-5) ------------------------------------
-  // The bridge seam (use-editor-session) forwards Cmd/Ctrl+K/I from INSIDE
+  // The bridge seam (use-editor-session) forwards Cmd/Ctrl+L/K/I from INSIDE
   // the iframe; keypresses on the parent document never cross that seam, so
   // the slot publishes them onto the SAME bus itself. Bound ONLY here: the
   // slot mounts only inside the editor host, keeping every other route's
   // Cmd/Ctrl+K free for the command palette (D-5).
+  //
+  // `l` is HOST-owned in practice (W2-B8/W3-C2): the wasm iframe→host bridge
+  // stays silent for the layout cycle, so without this arm `Cmd/Ctrl+L` is a
+  // dead key. Publishing `toggleChat` rides the exact same bus→layout path
+  // the iframe arm would (`nextLayoutAction` → §9.1 three-mode cycle), so the
+  // two arms can never diverge — and can never double-fire: iframe keydowns
+  // never reach the PARENT window, so exactly one arm answers per keypress.
+  // A bare `l` (or Shift/Alt combos) never matches — typing in the composer
+  // or any other host input is untouched, and keydowns INSIDE the editor
+  // iframe never propagate here at all.
   const shortcutBus = api.shortcutBus;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.defaultPrevented || event.repeat) return;
       if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey) return;
       const key = event.key.toLowerCase();
-      if (key !== "k" && key !== "i") return;
+      if (key !== "k" && key !== "i" && key !== "l") return;
       event.preventDefault();
-      shortcutBus.publish(key === "k" ? "inlineEdit" : "agent", event.key);
+      shortcutBus.publish(
+        key === "k" ? "inlineEdit" : key === "i" ? "agent" : "toggleChat",
+        event.key,
+      );
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

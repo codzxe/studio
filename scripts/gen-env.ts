@@ -7,7 +7,7 @@
 // and secret flag (renderEnvExample), then applies the LOCAL dev defaults and
 // extra notes from W2-e:
 //   * loopback hosts on 127.0.0.1 (dev-postgres.sh / dev-valkey.sh / xtask web)
-//   * S3_ENDPOINT blank → the @studio/storage filesystem driver (no MinIO needed)
+//   * S3_ENDPOINT blank → the gateway's filesystem driver (no MinIO needed)
 //   * AUTH_SECRET documented as instructions (openssl), never a real literal
 //
 // Run it via scripts/gen-env.sh (resolves tsx via pnpm exec or pnpm dlx).
@@ -27,7 +27,7 @@ const LOCAL_DEFAULTS: Readonly<Record<string, string>> = {
   DATABASE_URL: "postgres://studio:studio@127.0.0.1:5432/studio",
   // Valkey 8 started by `scripts/dev-valkey.sh start` — optional (see note below).
   VALKEY_URL: "redis://127.0.0.1:6379",
-  // Blank = @studio/storage filesystem driver: local dev needs no MinIO.
+  // Blank = the gateway's filesystem driver: local dev needs no MinIO.
   S3_ENDPOINT: "",
   // LiteLLM in a Python venv or infra/compose service, on loopback.
   LITELLM_BASE_URL: "http://127.0.0.1:4000",
@@ -49,7 +49,7 @@ const EXTRA_NOTES: Readonly<Record<string, readonly string[]>> = {
     "# To disable locally, set it blank (VALKEY_URL=) or comment the line out.",
   ],
   S3_ENDPOINT: [
-    "# Local default: BLANK → the @studio/storage filesystem driver stores objects",
+    "# Local default: BLANK → the gateway's filesystem driver stores objects",
     "# under the repo (`.local/storage/`) — no MinIO needed for local dev.",
     "# Real object storage: set a MinIO/S3/R2 endpoint, e.g. http://127.0.0.1:9000",
     "# (compose: the `minio` service) and fill S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY.",

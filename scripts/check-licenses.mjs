@@ -5,8 +5,9 @@
 // 8–9 (licensing + attribution). AGENTS.md "Forbidden": no AGPL/SSPL/BUSL/RSALv2/
 // Elastic-license deps, no font files committed, no secrets in the repo.
 //
-// Zero-dependency script (node:fs/node:path/node:url only) — it runs offline and
-// never queries the npm registry. Wired as `pnpm check:licenses` (root package.json).
+// Zero-dependency script (node stdlib only: fs/path/url + child_process for one
+// `git ls-files` call) — it runs offline and never queries the npm registry.
+// Wired as `pnpm check:licenses` (root package.json).
 //
 // What it enforces:
 //   1. Every external dependency of root + apps/*/ + packages/*/package.json is
@@ -19,8 +20,11 @@
 //               GPL/LGPL (copyleft: internal unmodified utilities only, §16.0),
 //               UNLICENSED/PROPRIETARY, anything not explicitly allowed.
 //   3. No font binaries are committed (*.ttf/*.otf/*.ttc/*.woff/*.woff2 — fonts come
-//      from CRAFT_FONTS_DIR, §1.5 rule 9) and no .env secret files exist
-//      (.env.example/.env.sample templates are allowed).
+//      from CRAFT_FONTS_DIR, §1.5 rule 9) and no .env secret files are committed
+//      (.env.example/.env.sample templates are allowed). The scan walks the git
+//      index — i.e. what WOULD be committed — not the working tree: build-time
+//      font files under editor/assets/fonts/ and a developer's local .env live
+//      on disk untracked by design (W3-C4 fix, see listCommittedFiles()).
 //
 // Exit codes: 0 = pass; 1 = any DENY, any UNKNOWN/undeclared dependency, any
 // forbidden file. Entries with status "TODO-verify" warn but pass — they are
@@ -34,6 +38,7 @@
 //   2. If it ships to users, add an ATTRIBUTION.md row in the same change (§1.5
 //      rule 9) and make sure its license text exists under LICENSES/.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -231,6 +236,28 @@ function isEnvSecretFile(name) {
   return false;
 }
 
+// Files that would be committed: the git index is the source of truth for §1.5
+// rule 9 / AGENTS.md "Forbidden" (font binaries, .env secrets — the checks below
+// and their error messages all say "committed"). The pre-W3-C4 implementation
+// walked the whole working tree, which false-positived on legitimate UNTRACKED
+// local files: the editor build's font binaries under editor/assets/fonts/
+// (required on disk by crates/text/src/fonts.rs include_bytes!, supplied by
+// CRAFT_FONTS_DIR) and a dev-box .env. Falls back to the working-tree walk only
+// when git is unavailable (e.g. an exported tree without .git), preserving the
+// old behavior there.
+function listCommittedFiles() {
+  try {
+    const out = execFileSync("git", ["-C", repoRoot, "ls-files", "-z"], { maxBuffer: 64 * 1024 * 1024 });
+    return out
+      .toString("utf8")
+      .split("\0")
+      .filter(Boolean)
+      .map((f) => join(repoRoot, f));
+  } catch {
+    return [...walk(repoRoot)];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Manifest (licenses.overrides.json)
 // ---------------------------------------------------------------------------
@@ -393,7 +420,7 @@ if (entries) {
 // 3) No committed font binaries, no .env secrets (AGENTS.md Forbidden, §1.5 rule 9).
 let fontsFound = 0;
 let envFilesFound = 0;
-for (const path of walk(repoRoot)) {
+for (const path of listCommittedFiles()) {
   if (FONT_EXTS.has(extname(path).toLowerCase())) {
     fontsFound += 1;
     errors.push(
@@ -436,5 +463,5 @@ if (errors.length > 0) {
   out("(+ ATTRIBUTION.md row and LICENSES/ text if it ships), or remove the dependency/file.");
   process.exitCode = 1;
 } else {
-  out(`PASS — ${counts.ok} declared dependencies allowed, 0 font binaries, 0 .env files.`);
+  out(`PASS — ${counts.ok} declared dependencies allowed, 0 font binaries committed, 0 .env files committed.`);
 }

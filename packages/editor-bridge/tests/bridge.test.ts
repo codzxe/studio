@@ -536,6 +536,47 @@ describe("forwardShortcut", () => {
     expect(seen).toEqual(["L"]);
     iframe.remove();
   });
+
+  // W2-B8/W3-C1-run3 regression: the wasm editor (egui/winit) runs its own
+  // keydown listeners INSIDE the iframe and may stopPropagation() chat-owned
+  // combos on the way up — a BUBBLE-phase window listener starves (the
+  // "Ctrl+L is a dead key while the editor has focus" e2e signature). The
+  // bridge must listen in the CAPTURE phase: window-first means the chat
+  // combos reach the parent before the editor can swallow them.
+  it("still forwards when a listener inside the editor stops propagation first", async () => {
+    const iframe = makeIframe();
+    const seen: string[] = [];
+    forwardShortcut(iframe, {
+      toggleChat: (event) => {
+        seen.push("L");
+        event.preventDefault();
+      },
+    });
+    const w = editorWindow(iframe);
+
+    // The editor's own arm: a document-level keydown listener that claims the
+    // key (stopPropagation) — exactly what starves a bubble-phase listener.
+    const editorArm = (e: KeyboardEvent): void => {
+      e.stopPropagation();
+    };
+    w.document.addEventListener("keydown", editorArm);
+
+    // jsdom's unloaded iframe document has no root element to host a target,
+    // so the keydown targets the DOCUMENT itself — still a node BELOW the
+    // window on the propagation path, so capture-on-window fires first.
+    const event = new KeyboardEvent("keydown", {
+      key: "l",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    w.document.dispatchEvent(event);
+
+    expect(seen).toEqual(["L"]);
+    expect(event.defaultPrevented).toBe(true);
+    w.document.removeEventListener("keydown", editorArm);
+    iframe.remove();
+  });
 });
 
 // ---------------------------------------------------------------------------

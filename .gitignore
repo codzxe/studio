@@ -50,10 +50,12 @@ editor/rustc-*.json
 # portable local services (native dev without Docker)
 .local/
 
-# Vendored EffectCraft bundles SIL OFL 1.1 fonts (upstream assets, with .attribution files).
-# Required at build time by crates/text/src/fonts.rs include_bytes! — see D-17, editor/UPSTREAM.md
-!editor/assets/fonts/
-!editor/assets/fonts/**
+# Fonts are NEVER committed (spec §1.5 rule 9, AGENTS.md, ADR-0001): binaries are
+# consumed at build time from the pinned craft-fonts clone via CRAFT_FONTS_DIR.
+# W3-C4 untracked the vendored bundle (7 .ttf + .attribution + OFL texts) — physical
+# files stay on disk for editor builds (crates/text/src/fonts.rs include_bytes!),
+# so ignore the whole directory; the old negation below re-included it into git.
+editor/assets/fonts/
 
 # local reference clone for editor patch/pin work — never tracked (phantom
 # submodule removed W5-hygiene: fresh clones get editor/ only, which is the
