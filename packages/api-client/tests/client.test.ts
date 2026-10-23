@@ -537,6 +537,16 @@ describe("createApiClient — surface map", () => {
       }),
     );
     await ignore(recorder.renders.get("rnd_1"));
+    await ignore(paginated.renders.list());
+    await ignore(recorder.renders.cancel("rnd_1"));
+    await ignore(
+      recorder.renders.estimate({
+        projectId: "p1",
+        compId: "cmp_1",
+        format: "mp4",
+        settings: { width: 1920, height: 1080 },
+      }),
+    );
     await ignore(paginated.comments.list("p1"));
     await ignore(paginated.comments.listThreadedComments("p1"));
     await ignore(recorder.comments.create("p1", { compId: "cmp_1", body: "note" }));
@@ -579,6 +589,9 @@ describe("createApiClient — surface map", () => {
       "/billing/invoices",
       "/renders",
       "/renders/rnd_1",
+      "/renders",
+      "/renders/rnd_1/cancel",
+      "/renders/estimate",
       "/projects/p1/comments",
       "/projects/p1/comments",
       "/projects/p1/comments",

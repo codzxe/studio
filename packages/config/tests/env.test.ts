@@ -111,6 +111,15 @@ describe("env: valid parse", () => {
     expect(env.agent.batchTimeoutMs).toBe(60000);
     expect(env.lease.heartbeatMs).toBe(120000);
     expect(env.lease.ttlMs).toBe(300000);
+    expect(env.render).toEqual({
+      cliPath: undefined,
+      workerEnabled: true,
+      workerConcurrency: 2,
+      jobTimeoutSeconds: 1800,
+      maxAttempts: 2,
+      heartbeatStaleSeconds: 120,
+      pollIntervalMs: 1000,
+    });
   });
 
   it("honours explicit values over defaults and parses production", () => {
@@ -307,6 +316,110 @@ describe("env: fail-fast on invalid vars", () => {
   });
 });
 
+describe("env: render worker variables (M8)", () => {
+  it("honours explicit values over the defaults", () => {
+    const env = parseEnv({
+      ...localFixture,
+      EFFECTCRAFT_CLI_PATH: "/opt/builds/effectcraft-cli",
+      RENDER_WORKER_ENABLED: "false",
+      RENDER_WORKER_CONCURRENCY: "8",
+      RENDER_JOB_TIMEOUT_SECONDS: "900",
+      RENDER_MAX_ATTEMPTS: "5",
+      RENDER_HEARTBEAT_STALE_SECONDS: "30",
+      RENDER_POLL_INTERVAL_MS: "250",
+    });
+    expect(env.render).toEqual({
+      cliPath: "/opt/builds/effectcraft-cli",
+      workerEnabled: false,
+      workerConcurrency: 8,
+      jobTimeoutSeconds: 900,
+      maxAttempts: 5,
+      heartbeatStaleSeconds: 30,
+      pollIntervalMs: 250,
+    });
+  });
+
+  it("accepts the documented boolean spellings for RENDER_WORKER_ENABLED", () => {
+    for (const raw of ["true", "1", "yes", "on", "TRUE", "True"]) {
+      expect(parseEnv({ ...localFixture, RENDER_WORKER_ENABLED: raw }).render.workerEnabled).toBe(
+        true,
+      );
+    }
+    for (const raw of ["false", "0", "no", "off", "FALSE"]) {
+      expect(parseEnv({ ...localFixture, RENDER_WORKER_ENABLED: raw }).render.workerEnabled).toBe(
+        false,
+      );
+    }
+  });
+
+  it("EFFECTCRAFT_CLI_PATH is optional; blank or whitespace counts as unset", () => {
+    expect(parseEnv(localFixture).render.cliPath).toBeUndefined();
+    expect(parseEnv({ ...localFixture, EFFECTCRAFT_CLI_PATH: "" }).render.cliPath).toBeUndefined();
+    expect(
+      parseEnv({ ...localFixture, EFFECTCRAFT_CLI_PATH: "   " }).render.cliPath,
+    ).toBeUndefined();
+    expect(
+      parseEnv({ ...localFixture, EFFECTCRAFT_CLI_PATH: "./bins/effectcraft-cli" }).render.cliPath,
+    ).toBe("./bins/effectcraft-cli");
+  });
+
+  it("rejects non-boolean RENDER_WORKER_ENABLED without echoing the value", () => {
+    const fatal = expectFatal({ ...localFixture, RENDER_WORKER_ENABLED: "maybe" });
+    expect(fatal.problems.map((problem) => problem.name)).toEqual(["RENDER_WORKER_ENABLED"]);
+    expect(fatal.problems[0]?.reason).toContain("boolean");
+    expect(fatal.message).not.toContain("maybe");
+  });
+
+  it("every positive-int render var rejects zero, negatives, floats and words", () => {
+    const positiveIntVars = [
+      "RENDER_WORKER_CONCURRENCY",
+      "RENDER_JOB_TIMEOUT_SECONDS",
+      "RENDER_MAX_ATTEMPTS",
+      "RENDER_HEARTBEAT_STALE_SECONDS",
+      "RENDER_POLL_INTERVAL_MS",
+    ] as const;
+    for (const name of positiveIntVars) {
+      for (const bad of ["0", "-1"]) {
+        const fatal = expectFatal({ ...localFixture, [name]: bad });
+        expect(fatal.problems.map((problem) => problem.name)).toEqual([name]);
+        expect(fatal.problems[0]?.reason).toContain("at least 1");
+      }
+      for (const bad of ["1.5", "two"]) {
+        const fatal = expectFatal({ ...localFixture, [name]: bad });
+        expect(fatal.problems.map((problem) => problem.name)).toEqual([name]);
+        expect(fatal.problems[0]?.reason).toContain("whole number");
+        expect(fatal.message).not.toContain(bad); // the value is never echoed
+      }
+      // Blank values count as unset — the documented default applies.
+      for (const blank of ["", "   "]) {
+        expect(parseEnv({ ...localFixture, [name]: blank })).toBeDefined();
+      }
+      expect(parseEnv({ ...localFixture, [name]: "1" })).toBeDefined();
+    }
+  });
+
+  it("collects several invalid render variables at once", () => {
+    const fatal = expectFatal({
+      ...localFixture,
+      RENDER_WORKER_ENABLED: "perhaps",
+      RENDER_WORKER_CONCURRENCY: "two",
+      RENDER_POLL_INTERVAL_MS: "-1000",
+    });
+    expect(fatal.problems.map((problem) => problem.name)).toEqual([
+      "RENDER_WORKER_ENABLED",
+      "RENDER_WORKER_CONCURRENCY",
+      "RENDER_POLL_INTERVAL_MS",
+    ]);
+  });
+
+  it("production accepts the render group (no extra requirements)", () => {
+    // The render vars carry no staging/production cross-checks — defaults apply.
+    const env = parseEnv(productionFixture);
+    expect(env.render.workerEnabled).toBe(true);
+    expect(env.render.workerConcurrency).toBe(2);
+  });
+});
+
 describe("env: cross-field rules", () => {
   it("STRIPE_SECRET_KEY is required outside local", () => {
     const staging: EnvSource = { ...localFixture, APP_ENV: "staging" };
@@ -406,7 +519,20 @@ describe("env: metadata and .env.example generator", () => {
     ]) {
       expect(SECRET_ENV_VARS).toContain(name);
     }
-    for (const name of ["APP_URL", "APP_ENV", "S3_BUCKET", "STRIPE_PRICE_IDS", "LOG_LEVEL"]) {
+    for (const name of [
+      "APP_URL",
+      "APP_ENV",
+      "S3_BUCKET",
+      "STRIPE_PRICE_IDS",
+      "LOG_LEVEL",
+      "EFFECTCRAFT_CLI_PATH",
+      "RENDER_WORKER_ENABLED",
+      "RENDER_WORKER_CONCURRENCY",
+      "RENDER_JOB_TIMEOUT_SECONDS",
+      "RENDER_MAX_ATTEMPTS",
+      "RENDER_HEARTBEAT_STALE_SECONDS",
+      "RENDER_POLL_INTERVAL_MS",
+    ]) {
       expect(SECRET_ENV_VARS).not.toContain(name);
     }
   });
@@ -421,6 +547,22 @@ describe("env: metadata and .env.example generator", () => {
     expect(text).toContain("EDITOR_PUBLIC_PATH=/editor");
     expect(text).toContain("AGENT_BATCH_MAX_BYTES=2097152");
     expect(text).toContain('Rejected when APP_ENV is "production"');
+    // The M8 render rows, with their defaults and the CLI resolution order.
+    expect(text).toContain("EFFECTCRAFT_CLI_PATH=");
+    expect(text).toContain("# EFFECTCRAFT_CLI_PATH — ");
+    expect(text).toContain("RENDER_WORKER_ENABLED=true");
+    expect(text).toContain("RENDER_WORKER_CONCURRENCY=2");
+    expect(text).toContain("RENDER_JOB_TIMEOUT_SECONDS=1800");
+    expect(text).toContain("RENDER_MAX_ATTEMPTS=2");
+    expect(text).toContain("RENDER_HEARTBEAT_STALE_SECONDS=120");
+    expect(text).toContain("RENDER_POLL_INTERVAL_MS=1000");
+    // The render group renders between lease and obs.
+    const leaseAt = text.indexOf("# ── lease ──");
+    const renderAt = text.indexOf("# ── render ──");
+    const obsAt = text.indexOf("# ── obs ──");
+    expect(leaseAt).toBeGreaterThan(-1);
+    expect(renderAt).toBeGreaterThan(leaseAt);
+    expect(obsAt).toBeGreaterThan(renderAt);
     // Placeholder-free guarantee: no fixture secret ever appears.
     expect(text).not.toContain("sk_live_redacted_fixture");
   });

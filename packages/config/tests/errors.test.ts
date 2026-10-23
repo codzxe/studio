@@ -28,6 +28,15 @@ const EXPECTED_CODES: readonly string[] = [
   "EDITOR_DISCONNECTED",
   "RENDER_TIMEOUT",
   "RENDER_FAILED",
+  "RENDER_UNSUPPORTED_FORMAT",
+  "RENDER_QUOTA_EXCEEDED",
+  "RENDER_CLI_MISSING",
+  "RENDER_CLI_FAILED",
+  "RENDER_CANCELLED",
+  "RENDER_PROJECT_INVALID",
+  "RENDER_ASSET_MISSING",
+  "RENDER_CONCURRENCY_LIMIT",
+  "RENDER_INTERNAL",
   "ASSET_TOO_LARGE",
   "ASSET_REJECTED",
   "QUOTA_EXCEEDED",
@@ -67,6 +76,38 @@ describe("errors: catalog", () => {
     expect(ERROR_CATALOG.EDITOR_DISCONNECTED.retryable).toBe(true);
     expect(ERROR_CATALOG.RENDER_TIMEOUT.retryable).toBe(true);
     expect(ERROR_CATALOG.INTERNAL.retryable).toBe(true);
+  });
+
+  it("the M8 render family maps to the house HTTP shapes (4xx client vs 5xx server)", () => {
+    // 4xx client-shaped refusals (415/429/409/400) are NOT retryable as-is.
+    expect(ERROR_CATALOG.RENDER_UNSUPPORTED_FORMAT.retryable).toBe(false); // 415, D-2 gate
+    expect(ERROR_CATALOG.RENDER_QUOTA_EXCEEDED.retryable).toBe(false); // 429, cycle reset
+    expect(ERROR_CATALOG.RENDER_CONCURRENCY_LIMIT.retryable).toBe(true); // 429, slot frees
+    expect(ERROR_CATALOG.RENDER_CANCELLED.retryable).toBe(false); // 409, mirrors RUN_CANCELLED
+    expect(ERROR_CATALOG.RENDER_PROJECT_INVALID.retryable).toBe(false); // 400, bad input
+    expect(ERROR_CATALOG.RENDER_ASSET_MISSING.retryable).toBe(false); // 400, bad input
+    // 5xx server-shaped failures follow RENDER_FAILED/INTERNAL: retryable.
+    expect(ERROR_CATALOG.RENDER_CLI_FAILED.retryable).toBe(true); // 500, transient exit
+    expect(ERROR_CATALOG.RENDER_INTERNAL.retryable).toBe(true); // 500, mirrors INTERNAL
+    // The one deliberate exception: a MISSING CLI binary needs operator
+    // action — retrying cannot fix it.
+    expect(ERROR_CATALOG.RENDER_CLI_MISSING.retryable).toBe(false); // 500, ops action
+  });
+
+  it("the quota code is spelled EXCEEDED — the CONCEEDED typo trap stays out", () => {
+    expect(ERROR_CODES).toContain("RENDER_QUOTA_EXCEEDED");
+    expect(ERROR_CODES).not.toContain("RENDER_QUOTA_CONCEEDED");
+    expect(ERROR_CODE_SCHEMA.safeParse("RENDER_QUOTA_CONCEEDED").success).toBe(false);
+  });
+
+  it("render catalog entries render a typed envelope with safe copy", () => {
+    const error = new StudioError("RENDER_UNSUPPORTED_FORMAT");
+    const envelope = error.toEnvelope();
+    expect(envelope.error.code).toBe("RENDER_UNSUPPORTED_FORMAT");
+    expect(envelope.error.message).toBe("This render format isn't available yet.");
+    expect(envelope.error.hint).toContain("MP4");
+    expect(envelope.error.retryable).toBe(false);
+    expect(envelope.error.requestId).toMatch(/^req_[0-9a-f]{32}$/);
   });
 
   it("ERROR_CODE_SCHEMA accepts every catalog code and rejects anything else", () => {

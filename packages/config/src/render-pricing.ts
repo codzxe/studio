@@ -115,13 +115,12 @@ export const RENDER_RESOLUTION_TIERS: readonly RenderResolutionTier[] = deepFree
 ] as const satisfies readonly RenderResolutionTier[]);
 
 /** Quality multipliers: draft 0.6× (3/5), good 1× (1/1), best 1.4× (7/5). */
-export const RENDER_QUALITY_MULTIPLIERS: Readonly<
-  Record<RenderQualityId, RenderMultiplier>
-> = deepFreeze({
-  draft: { num: 3, den: 5 },
-  good: { num: 1, den: 1 },
-  best: { num: 7, den: 5 },
-} as const satisfies Readonly<Record<RenderQualityId, RenderMultiplier>>);
+export const RENDER_QUALITY_MULTIPLIERS: Readonly<Record<RenderQualityId, RenderMultiplier>> =
+  deepFreeze({
+    draft: { num: 3, den: 5 },
+    good: { num: 1, den: 1 },
+    best: { num: 7, den: 5 },
+  } as const satisfies Readonly<Record<RenderQualityId, RenderMultiplier>>);
 
 // ───────────────────────────────────────────────────────────────────────────
 // Bounds and the minimum charge

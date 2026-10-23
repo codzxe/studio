@@ -266,12 +266,23 @@ describe.skipIf(!hasDb)("repos (integration)", { timeout: 30_000 }, () => {
       code: "CONFLICT",
     });
 
+    // M8-A: renders are pinned to a version (§9.3) — upload one first.
+    const pinnedVersion = await repos.versions.upload(wsA, {
+      projectId: project.id,
+      expectedVersionId: null,
+      objectKey: `workspaces/${wsA}/projects/${project.id}/versions/v1/project.ecproj`,
+      sha256: "ab",
+      sizeBytes: 8,
+      createdBy: userId,
+    });
     const render = await repos.renders.create(wsA, {
       projectId: project.id,
+      versionId: pinnedVersion.version.id,
       compId: "comp_main",
       format: "mp4",
       createdBy: userId,
     });
+    expect(render.versionId).toBe(pinnedVersion.version.id);
     await repos.renders.markRunning(wsA, render.id);
     const done = await repos.renders.markCompleted(wsA, render.id, {
       objectKey: "workspaces/x/renders/r/output.mp4",

@@ -27,6 +27,7 @@ import {
   type CreateAssetResponse,
   type CreditsSummary,
   EDIT_PLAN_SCHEMA,
+  type EstimateResult,
   ID_SCHEMA,
   INVOICE_STATUS_SCHEMA,
   ISO8601_SCHEMA,
@@ -50,9 +51,8 @@ import {
   type ProjectVersion,
   RENDER_FORMAT_SCHEMA,
   RENDER_QUALITY_SCHEMA,
-  RENDER_STATUSES,
+  RENDER_STATUS_SCHEMA,
   ROLE_SCHEMA,
-  type RenderEstimate,
   type RenderJob,
   type RequestAccessResponse,
   type RunRecord,
@@ -545,9 +545,10 @@ export const INVOICE_SCHEMA = z.object({
 // ---------------------------------------------------------------------------
 //
 // D-11 pin: the render status vocabulary is the DB's — `completed`, NEVER
-// `succeeded` (the pre-D-11 wire name). The validator imports RENDER_STATUSES
-// from contracts so a vocabulary change fails typecheck HERE before any
-// runtime drift can ship.
+// `succeeded` (the pre-D-11 wire name, gone as of wire v2). The validator
+// uses contracts RENDER_STATUS_SCHEMA so a vocabulary change fails typecheck
+// HERE before any runtime drift can ship. versionId is non-null: the server
+// pins the project's currentVersionId at queue time (clients never send one).
 
 export const RENDER_JOB_SCHEMA = z.object({
   id: idSchema,
@@ -557,14 +558,15 @@ export const RENDER_JOB_SCHEMA = z.object({
   versionId: idSchema,
   format: RENDER_FORMAT_SCHEMA,
   settings: z.record(z.string(), z.unknown()),
-  status: z.enum(RENDER_STATUSES),
+  status: RENDER_STATUS_SCHEMA,
   /** `true` once POST /cancel is accepted; the worker honors it at the next frame boundary. */
   cancelRequested: z.boolean(),
   /** Frame progress (0/0/0 while queued; framesTotal from settings or the comp). */
   progress: z.object({
     framesDone: z.number().int().nonnegative(),
     framesTotal: z.number().int().nonnegative(),
-    percent: z.number().min(0).max(100),
+    /** Integer 0..100, computed server-side — the UI never re-derives it. */
+    percent: z.number().int().min(0).max(100),
   }),
   credits: z.number().nonnegative().nullable(),
   resultUrl: z.string().nullable(),
@@ -582,9 +584,13 @@ export const RENDER_JOB_SCHEMA = z.object({
   expiresAt: isoSchema.nullable(),
 }) satisfies z.ZodType<RenderJob>;
 
-/** `POST /v1/renders/estimate` — pre-flight quote (no mutation, no ledger). */
-export const RENDER_ESTIMATE_SCHEMA = z.object({
-  /** Credits the queue call would reserve (µc, D-12). */
+/**
+ * `POST /v1/renders/estimate` → EstimateResult — the queue-dialog numbers
+ * before committing. A PURE READ per contracts: no job, no ledger mutation,
+ * no idempotency key on the wire.
+ */
+export const ESTIMATE_RESULT_SCHEMA = z.object({
+  /** Whole-credit DISPLAY estimate (D-12: µc never crosses the wire). */
   credits: z.number().nonnegative(),
   /** Output duration in seconds (settings range or the comp length). */
   outputSeconds: z.number().nonnegative(),
@@ -592,11 +598,11 @@ export const RENDER_ESTIMATE_SCHEMA = z.object({
   longEdgePx: z.number().int().positive(),
   /** The applied format (echoed; a future worker may downshift). */
   format: RENDER_FORMAT_SCHEMA,
-  /** The applied quality (draft | good | best). */
+  /** The applied quality after defaults (draft | good | best). */
   quality: RENDER_QUALITY_SCHEMA,
-  /** `true` when a plan minimum was applied instead of the requested settings. */
+  /** `true` when the platform minimum charge was applied (raw estimate below it). */
   minApplied: z.boolean(),
-}) satisfies z.ZodType<RenderEstimate>;
+}) satisfies z.ZodType<EstimateResult>;
 
 // ---------------------------------------------------------------------------
 // Comments / activity

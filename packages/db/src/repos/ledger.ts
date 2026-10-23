@@ -29,38 +29,51 @@ import { type WorkspaceId, requireNonEmpty } from "./shared.js";
  * Sign conventions (see schema.ts Section 7): grant +N, adjust ±N,
  * reserve −N, commit −M, refund +R. On success a run nets −actual_cost;
  * on failure/cancel it nets 0 (full refund) — §8.8.
+ *
+ * Producer scope (M8-A): an entry is scoped to a RUN (`runId`) or a RENDER
+ * (`renderId`) — never both. The XOR is enforced HERE (repo layer), not in
+ * the DB: a CHECK over two nullable columns would be the only schema-level
+ * option, and run-scoped rows legitimately leave render_id NULL (and vice
+ * versa). `grant`/`adjust` may also be unscoped (top-ups have no producer);
+ * hold operations (reserve/commit/refund/settle/refundAll) require exactly
+ * one producer scope.
  */
+
+/** M8-A: producer scope of a ledger entry — run XOR render (repo-enforced). */
+export interface LedgerScope {
+  readonly runId?: string | null;
+  readonly renderId?: string | null;
+}
+
 export interface GrantInput {
   readonly amount: number;
   readonly idempotencyKey: string;
   readonly runId?: string | null;
+  /** M8-A: render-scoped grant (XOR with runId). */
+  readonly renderId?: string | null;
   readonly metadata?: unknown;
 }
 
-export interface ReserveInput {
-  readonly runId: string;
+export interface ReserveInput extends LedgerScope {
   /** The hold size — use computeReserveAmount() upstream (§8.8). */
   readonly amount: number;
   readonly idempotencyKey: string;
   readonly metadata?: unknown;
 }
 
-export interface CommitInput {
-  readonly runId: string;
+export interface CommitInput extends LedgerScope {
   readonly amount: number;
   readonly idempotencyKey: string;
   readonly metadata?: unknown;
 }
 
-export interface RefundInput {
-  readonly runId: string;
+export interface RefundInput extends LedgerScope {
   readonly amount: number;
   readonly idempotencyKey: string;
   readonly metadata?: unknown;
 }
 
-export interface SettleInput {
-  readonly runId: string;
+export interface SettleInput extends LedgerScope {
   readonly actualCost: number;
   readonly idempotencyKey: string;
   readonly metadata?: unknown;
@@ -70,6 +83,8 @@ export interface AdjustInput {
   readonly amount: number; // may be negative (clawback / correction)
   readonly idempotencyKey: string;
   readonly runId?: string | null;
+  /** M8-A: render-scoped adjustment (XOR with runId). */
+  readonly renderId?: string | null;
   readonly metadata?: unknown;
   readonly allowNegativeBalance?: boolean;
 }
@@ -95,6 +110,8 @@ export interface LedgerListOptions {
   readonly cursor?: string | null;
   readonly kind?: LedgerKind;
   readonly runId?: string;
+  /** M8-A: filter render-scoped entries (render history credits). */
+  readonly renderId?: string;
 }
 
 export interface LedgerRepo {
@@ -104,10 +121,10 @@ export interface LedgerRepo {
   refund(workspaceId: WorkspaceId, input: RefundInput): Promise<LedgerResult>;
   /** Atomic success path: commit actual + refund remainder of the hold. */
   settle(workspaceId: WorkspaceId, input: SettleInput): Promise<SettleResult>;
-  /** Failure/cancel path: refund the run's full outstanding hold. */
+  /** Failure/cancel path: refund the producer's full outstanding hold. */
   refundAll(
     workspaceId: WorkspaceId,
-    input: { runId: string; idempotencyKey: string; metadata?: unknown },
+    input: LedgerScope & { idempotencyKey: string; metadata?: unknown },
   ): Promise<RefundAllResult>;
   adjust(workspaceId: WorkspaceId, input: AdjustInput): Promise<LedgerResult>;
   balance(workspaceId: WorkspaceId): Promise<number>;
@@ -126,16 +143,52 @@ async function balanceUnderLock(exec: Executor, workspaceId: WorkspaceId): Promi
   return Number(row?.total ?? 0);
 }
 
-async function runOutstanding(
+/** Outstanding (un-consumed) hold of ONE producer scope — its run OR its render. */
+async function scopeOutstanding(
   exec: Executor,
   workspaceId: WorkspaceId,
-  runId: string,
+  scope: NormalizedScope,
 ): Promise<number> {
+  const filter =
+    scope.runId !== null
+      ? eq(creditLedger.runId, scope.runId)
+      : eq(creditLedger.renderId, scope.renderId);
   const rows = await exec
     .select({ kind: creditLedger.kind, amount: creditLedger.amount })
     .from(creditLedger)
-    .where(and(eq(creditLedger.workspaceId, workspaceId), eq(creditLedger.runId, runId)));
+    .where(and(eq(creditLedger.workspaceId, workspaceId), filter));
   return outstandingReserve(rows);
+}
+
+/** Exactly one producer — the discriminated result of scope normalization. */
+export type NormalizedScope =
+  | { readonly runId: string; readonly renderId: null }
+  | { readonly runId: null; readonly renderId: string };
+
+type OptionalNormalizedScope = NormalizedScope | { readonly runId: null; readonly renderId: null };
+
+/**
+ * M8-A scope normalization — a ledger entry is scoped to at most ONE
+ * producer (run XOR render); unscoped is legal (top-up grants, adjustments).
+ */
+function optionalScope(scope: LedgerScope): OptionalNormalizedScope {
+  const runId = scope.runId?.trim() || null;
+  const renderId = scope.renderId?.trim() || null;
+  if (runId !== null && renderId !== null) {
+    throw DbError.validation("A ledger entry is scoped to exactly one of runId or renderId");
+  }
+  if (runId !== null) return { runId, renderId: null };
+  if (renderId !== null) return { runId: null, renderId };
+  return { runId: null, renderId: null };
+}
+
+/** Scope for hold operations — exactly ONE producer required. */
+function requireScope(scope: LedgerScope): NormalizedScope {
+  const normalized = optionalScope(scope);
+  if (normalized.runId === null && normalized.renderId === null) {
+    throw DbError.validation("A hold requires a producer scope: pass runId or renderId");
+  }
+  return normalized;
 }
 
 async function findExisting(exec: Executor, idempotencyKey: string): Promise<LedgerEntry | null> {
@@ -153,6 +206,7 @@ interface AppendArgs {
   readonly amount: number;
   readonly balanceAfter: number;
   readonly runId?: string | null;
+  readonly renderId?: string | null;
   readonly idempotencyKey: string;
   readonly metadata?: unknown;
 }
@@ -167,6 +221,7 @@ async function appendEntry(exec: Executor, args: AppendArgs): Promise<LedgerEntr
       amount: args.amount,
       balanceAfter: args.balanceAfter,
       runId: args.runId ?? null,
+      renderId: args.renderId ?? null,
       idempotencyKey: args.idempotencyKey,
       metadata: args.metadata,
     })
@@ -194,6 +249,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
       if (!Number.isInteger(input.amount) || input.amount < 1) {
         throw DbError.validation("grant amount must be a positive integer");
       }
+      const scope = optionalScope(input); // M8-A: run XOR render, or unscoped
       return withWorkspaceLock(db, workspaceId, async (tx) => {
         const existing = await findExisting(tx, input.idempotencyKey);
         if (existing) {
@@ -208,7 +264,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
           kind: "grant",
           amount: input.amount,
           balanceAfter: balance + input.amount,
-          runId: input.runId,
+          ...scope,
           idempotencyKey: input.idempotencyKey,
           metadata: input.metadata,
         });
@@ -217,7 +273,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
     },
 
     async reserve(workspaceId, input) {
-      requireNonEmpty(input.runId, "runId");
+      const scope = requireScope(input); // M8-A: exactly one producer
       requireNonEmpty(input.idempotencyKey, "idempotencyKey");
       if (!Number.isInteger(input.amount) || input.amount < 1) {
         throw DbError.validation("reserve amount must be a positive integer (≥ 1, §8.8)");
@@ -232,7 +288,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
         }
         const balance = await balanceUnderLock(tx, workspaceId);
         if (balance < input.amount) {
-          // §8.8: never start a run on insufficient credits.
+          // §8.8: never start a run/render on insufficient credits.
           throw DbError.insufficientCredits({ required: input.amount, available: balance });
         }
         const entry = await appendEntry(tx, {
@@ -240,7 +296,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
           kind: "reserve",
           amount: -input.amount,
           balanceAfter: balance - input.amount,
-          runId: input.runId,
+          ...scope,
           idempotencyKey: input.idempotencyKey,
           metadata: input.metadata,
         });
@@ -249,7 +305,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
     },
 
     async commit(workspaceId, input) {
-      requireNonEmpty(input.runId, "runId");
+      const scope = requireScope(input); // M8-A: exactly one producer
       requireNonEmpty(input.idempotencyKey, "idempotencyKey");
       if (!Number.isInteger(input.amount) || input.amount < 0) {
         throw DbError.validation("commit amount must be a non-negative integer");
@@ -262,10 +318,10 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
           }
           return { entry: existing, replayed: true };
         }
-        const outstanding = await runOutstanding(tx, workspaceId, input.runId);
+        const outstanding = await scopeOutstanding(tx, workspaceId, scope);
         if (input.amount > outstanding) {
           throw DbError.validation(
-            `commit (${input.amount}) exceeds the run's outstanding reserve (${outstanding})`,
+            `commit (${input.amount}) exceeds the scope's outstanding reserve (${outstanding})`,
             "Use ledger.settle() or adjust the reserve first.",
           );
         }
@@ -275,7 +331,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
           kind: "commit",
           amount: -input.amount,
           balanceAfter: balance - input.amount,
-          runId: input.runId,
+          ...scope,
           idempotencyKey: input.idempotencyKey,
           metadata: input.metadata,
         });
@@ -284,7 +340,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
     },
 
     async refund(workspaceId, input) {
-      requireNonEmpty(input.runId, "runId");
+      const scope = requireScope(input); // M8-A: exactly one producer
       requireNonEmpty(input.idempotencyKey, "idempotencyKey");
       if (!Number.isInteger(input.amount) || input.amount < 1) {
         throw DbError.validation("refund amount must be a positive integer");
@@ -297,10 +353,10 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
           }
           return { entry: existing, replayed: true };
         }
-        const outstanding = await runOutstanding(tx, workspaceId, input.runId);
+        const outstanding = await scopeOutstanding(tx, workspaceId, scope);
         if (input.amount > outstanding) {
           throw DbError.validation(
-            `refund (${input.amount}) exceeds the run's outstanding reserve (${outstanding})`,
+            `refund (${input.amount}) exceeds the scope's outstanding reserve (${outstanding})`,
           );
         }
         const balance = await balanceUnderLock(tx, workspaceId);
@@ -309,7 +365,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
           kind: "refund",
           amount: input.amount,
           balanceAfter: balance + input.amount,
-          runId: input.runId,
+          ...scope,
           idempotencyKey: input.idempotencyKey,
           metadata: input.metadata,
         });
@@ -318,7 +374,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
     },
 
     async settle(workspaceId, input) {
-      requireNonEmpty(input.runId, "runId");
+      const scope = requireScope(input); // M8-A: exactly one producer
       requireNonEmpty(input.idempotencyKey, "idempotencyKey");
       if (!Number.isInteger(input.actualCost) || input.actualCost < 0) {
         throw DbError.validation("actualCost must be a non-negative integer");
@@ -329,7 +385,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
         const existingCommit = await findExisting(tx, commitKey);
         if (existingCommit) return { commit: existingCommit, refund: null, replayed: true };
 
-        const outstanding = await runOutstanding(tx, workspaceId, input.runId);
+        const outstanding = await scopeOutstanding(tx, workspaceId, scope);
         const plan = planSettlement(outstanding, input.actualCost);
         const balance = await balanceUnderLock(tx, workspaceId);
 
@@ -341,7 +397,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
             kind: "commit",
             amount: -plan.commit,
             balanceAfter: balance - plan.commit,
-            runId: input.runId,
+            ...scope,
             idempotencyKey: commitKey,
             metadata: input.metadata,
           });
@@ -352,7 +408,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
             kind: "refund",
             amount: plan.refund,
             balanceAfter: balance - plan.commit + plan.refund,
-            runId: input.runId,
+            ...scope,
             idempotencyKey: refundKey,
             metadata: input.metadata,
           });
@@ -362,14 +418,14 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
     },
 
     async refundAll(workspaceId, input) {
-      requireNonEmpty(input.runId, "runId");
+      const scope = requireScope(input); // M8-A: exactly one producer
       requireNonEmpty(input.idempotencyKey, "idempotencyKey");
       return withWorkspaceLock(db, workspaceId, async (tx) => {
         const existing = await findExisting(tx, input.idempotencyKey);
         if (existing) {
           return { entry: existing, refunded: existing.amount, replayed: true };
         }
-        const outstanding = await runOutstanding(tx, workspaceId, input.runId);
+        const outstanding = await scopeOutstanding(tx, workspaceId, scope);
         if (outstanding === 0) return { entry: null, refunded: 0 };
         const balance = await balanceUnderLock(tx, workspaceId);
         const entry = await appendEntry(tx, {
@@ -377,7 +433,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
           kind: "refund",
           amount: outstanding,
           balanceAfter: balance + outstanding,
-          runId: input.runId,
+          ...scope,
           idempotencyKey: input.idempotencyKey,
           metadata: input.metadata,
         });
@@ -390,6 +446,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
       if (!Number.isInteger(input.amount) || input.amount === 0) {
         throw DbError.validation("adjust amount must be a non-zero integer");
       }
+      const scope = optionalScope(input); // M8-A: run XOR render, or unscoped
       return withWorkspaceLock(db, workspaceId, async (tx) => {
         const existing = await findExisting(tx, input.idempotencyKey);
         if (existing) {
@@ -410,7 +467,7 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
           kind: "adjust",
           amount: input.amount,
           balanceAfter: after,
-          runId: input.runId,
+          ...scope,
           idempotencyKey: input.idempotencyKey,
           metadata: input.metadata,
         });
@@ -435,6 +492,9 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
             eq(creditLedger.workspaceId, workspaceId),
             options?.kind === undefined ? undefined : eq(creditLedger.kind, options.kind),
             options?.runId === undefined ? undefined : eq(creditLedger.runId, options.runId),
+            options?.renderId === undefined
+              ? undefined
+              : eq(creditLedger.renderId, options.renderId),
             cursor
               ? or(
                   lt(creditLedger.createdAt, new Date(cursor.t)),
