@@ -121,7 +121,7 @@ PIDS+=($!)
 setsid bash -c 'cd services/gateway && exec corepack pnpm dev' >"$LOGS/gateway.log" 2>&1 &
 PIDS+=($!)
 
-setsid bash -c "cd apps/web && exec corepack pnpm dev -- -p $WEB_PORT" >"$LOGS/web.log" 2>&1 &
+setsid bash -c "cd apps/web && exec corepack pnpm exec next dev -p $WEB_PORT" >"$LOGS/web.log" 2>&1 &
 PIDS+=($!)
 
 wait_http() {
@@ -158,14 +158,25 @@ if curl -sf -c "$JAR" -o /dev/null --max-time 60 \
   -H "origin: http://127.0.0.1:${EDGE_PORT}" \
   -X POST "http://127.0.0.1:${EDGE_PORT}/v1/auth/sign-in/email" \
   -d '{"email":"demo@studio.test","password":"demo-password-12345"}'; then
-  curl -sf -b "$JAR" -o /dev/null --max-time 240 \
-    "http://127.0.0.1:${EDGE_PORT}${EDITOR_PATH}" \
-    && echo "[runner] editor route compiled (authenticated warmup)" \
-    || echo "[runner] WARN: editor warmup failed (first compile happens in-session)"
+  ED_CODE=$(curl -s -o "$LOGS/warm-editor.html" -w "%{http_code}" -b "$JAR" --max-time 420 \
+    "http://127.0.0.1:${EDGE_PORT}${EDITOR_PATH}")
+  if [ "$ED_CODE" = "200" ]; then
+    echo "[runner] editor route compiled (authenticated warmup, 200)"
+  else
+    echo "[runner] WARN: editor warmup http=$ED_CODE (first compile happens in-session)"
+  fi
 else
   echo "[runner] WARN: warmup sign-in failed (first compile happens in-session)"
 fi
 rm -f "$JAR"
+
+# WARMUP_ONLY=1: boot + compile everything (the .next cache persists on disk
+# across invocations), then exit — a pre-flight that makes the real single-
+# invocation run fast enough to fit the 600s tool-call deadline.
+if [ "${WARMUP_ONLY:-0}" = "1" ]; then
+  echo "[runner] warmup-only mode — exiting (stack torn down via trap)"
+  exit 0
+fi
 
 # ── the captures ──────────────────────────────────────────────────────────
 CAPTURE_BASE_URL="http://127.0.0.1:${EDGE_PORT}" node scripts/captures/capture.mjs
@@ -181,10 +192,12 @@ if compgen -G "$RAW/*.webm" >/dev/null; then
   if [ "$CAPTURE_RC" = "0" ]; then
     # Deterministic tail trim: the interaction sequence is scripted to be the
     # video's final ~10s (stream settle → Space → slow timeline scrub).
+    # 1280×720 VP9 (§11 web constraints; encodes fast enough on 2 CPUs and
+    # keeps the committed asset well under the 1.5MB budget).
     ffmpeg -hide_banner -loglevel error -y \
       -sseof -8.4 -i "$RAWVIDEOD" -t 8 \
-      -an -c:v libvpx-vp9 -b:v 0 -crf 36 -deadline good -cpu-used 4 -row-mt 1 \
-      -pix_fmt yuv420p "$OUT/demo-loop.webm" \
+      -an -c:v libvpx-vp9 -b:v 0 -crf 36 -deadline good -cpu-used 5 -row-mt 1 \
+      -vf "scale=1280:720" -pix_fmt yuv420p "$OUT/demo-loop.webm" \
       && echo "[runner] demo-loop.webm encoded"
     # Poster: a real frame of the final loop (~1.5s in: answered chat + live
     # editor), scaled to 1280×720 webp (hero LCP-friendly).

@@ -72,7 +72,7 @@ export function MarketingLink({
 }: {
   href: string;
   children: React.ReactNode;
-  /** External links (placeholder domains, mailto) open in a new tab. */
+  /** External links (currently mailto contacts) open in a new tab. */
   external?: boolean;
 }) {
   const className =
