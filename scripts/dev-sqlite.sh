@@ -7,13 +7,13 @@
 #
 # Maintains a SQLite file at <repo>/.local/studio-dev.db (gitignored under
 # .local/) through the dual-dialect @studio/db seam (createDb file:/sqlite:
-# dialect switch + isSqliteUrl + bootstrapSqlite — task W1-02 owns packages/db):
+# dialect switch + isSqliteUrl + bootstrapSqlite + tablesFor — task W1-02/W3-A):
 #   * `start` bootstraps the control-plane schema and runs the demo seed
 #     (packages/db/scripts/seed.ts via DATABASE_URL), both idempotently —
 #     re-running start is always safe.
-#   * The seed is best-effort: if @studio/db's seed/createAuth path is not
-#     sqlite-aware yet, start still succeeds with the schema in place and
-#     prints a warning (tracked in the W1-03 worklog entry).
+#   * The seed is sqlite-aware end-to-end since W3-A (tablesFor twin tables,
+#     dialect-aware teardown); a failure is still a WARNING, not fatal — the
+#     schema is bootstrapped and the dev server works without demo rows.
 #
 # Only Node built-ins are used on the client side: node:sqlite (DatabaseSync,
 # Node >= 22.5) reads/inspects the file — no sqlite3 CLI, no native npm module.
@@ -117,8 +117,8 @@ seed() {
     log "seed ok (demo user demo@studio.test, demo workspace/project, 1000 credits)"
   else
     log "WARNING: the demo seed failed on sqlite — the schema is bootstrapped and"
-    log "the dev server works without demo data. If @studio/db's seed/createAuth"
-    log "path is not sqlite-aware yet this is expected (W1-02/W1-03 worklog)."
+    log "the dev server works without demo data (see the seed output above for"
+    log "the failing step; the seed is sqlite-aware since W3-A, so this is a bug)."
   fi
 }
 

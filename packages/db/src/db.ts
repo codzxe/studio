@@ -114,9 +114,21 @@ const SQLITE_TX_DEPTH = new WeakMap<object, number>();
  * The callback receives the SAME handle (better-sqlite3 is one serialized
  * connection — statements issued while the explicit transaction is open
  * participate in it), which is what repo code already expects from `tx`.
+ *
+ * ALSO installs `execute()` — the pg-flavored statement API the gateway's
+ * health probe (and other pg-era call sites) uses: `db.execute(sql…)`.
+ * drizzle's sqlite core exposes `.run()` for the same job, so the alias
+ * keeps the signature-preserving seam honest (a sqlite handle answers every
+ * call the pg handle answered, W3-A).
  */
 function makeSqliteTransactionAsyncAware(handle: StudioSqliteDb): StudioSqliteDb {
   const client = handle.$client;
+  if (typeof (handle as { execute?: unknown }).execute !== "function") {
+    const run = handle.run.bind(handle);
+    (handle as unknown as { execute: (query: Parameters<typeof run>[0]) => unknown }).execute = (
+      query,
+    ) => run(query);
+  }
   type TxCallback = (tx: never) => unknown;
   handle.transaction = ((callback: TxCallback, _config?: unknown) => {
     const depth = SQLITE_TX_DEPTH.get(client) ?? 0;
