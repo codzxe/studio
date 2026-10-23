@@ -20,6 +20,7 @@
  * action buttons, @studio/ui Button/Menu/Tooltip/StatusDot primitives.
  */
 
+import { RenderRegion } from "@/components/render/render-region";
 import type { RunPhase } from "@/lib/chat/types";
 import {
   Button,
@@ -61,6 +62,13 @@ export interface ChatHeaderProps {
   onNewChat(): void;
   onResetPosition(): void;
   onShortcuts(): void;
+  /**
+   * M8-I render entry (additive, D-18 rules): the self-sufficient render
+   * region — the "Render…" button + history toggle, plus the dialog/drawer
+   * it mounts. DEFAULT: mounted (the production editor surface). Pass
+   * `null` to hide it (tests/legacy mounts); pass a node to swap it.
+   */
+  render?: ReactNode;
 }
 
 /** §3.1 status dot tones: dim / live-pulse / ok / error (never colour-only — the title is the label). */
@@ -126,6 +134,10 @@ export function ChatHeader(props: ChatHeaderProps): ReactElement {
         activeModelId={props.activeModelId}
         onPick={props.onModelPick}
       />
+
+      {/* M8-I: the render entry — self-sufficient region (own scope resolution
+          + live comp via the chat layer's bridge). Absent on legacy mounts. */}
+      {props.render === null ? null : props.render === undefined ? <RenderRegion /> : props.render}
 
       {/* Spacer: context + actions hug the right edge (§3.1 anatomy). */}
       <div aria-hidden="true" className="min-w-0 flex-1" />

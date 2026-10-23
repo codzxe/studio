@@ -45,6 +45,7 @@ import { useCallback, useState } from "react";
 import type { ReactElement } from "react";
 
 import { ActivityFeed } from "@/components/activity/activity-feed";
+import { RendersHubPanel, type RendersHubPort } from "@/components/renders-hub/renders-panel";
 import { VersionTimeline } from "@/components/versions/version-timeline";
 
 // ---------------------------------------------------------------------------
@@ -180,6 +181,12 @@ export interface HistoryPageViewProps {
   readonly nowIso: string;
   /** Injectable port (tests). Production leaves it undefined. */
   readonly api?: HistoryPort;
+  /**
+   * Renders tab port (§M8 task 2 — the project-hub renders surface).
+   * Injectable for tests; production leaves it undefined and the panel
+   * builds its own same-origin client.
+   */
+  readonly rendersApi?: RendersHubPort;
   /** URL opener seam for the current-version download (tests spy it). */
   readonly openUrl?: (url: string) => void;
 }
@@ -198,6 +205,7 @@ export function HistoryPageView({
   canExport,
   nowIso,
   api,
+  rendersApi,
   openUrl,
 }: HistoryPageViewProps): ReactElement {
   const port = api ?? createHistoryPort(workspaceId, projectId);
@@ -285,6 +293,9 @@ export function HistoryPageView({
             <TabsTrigger value="versions" data-testid="history-tab-versions">
               Versions
             </TabsTrigger>
+            <TabsTrigger value="renders" data-testid="history-tab-renders">
+              Renders
+            </TabsTrigger>
             <TabsTrigger value="activity" data-testid="history-tab-activity">
               Activity
             </TabsTrigger>
@@ -321,6 +332,17 @@ export function HistoryPageView({
                 {downloadError}
               </p>
             ) : null}
+          </TabsContent>
+
+          <TabsContent value="renders" className="mt-4" data-testid="history-panel-renders">
+            <RendersHubPanel
+              projectId={projectId}
+              workspaceId={workspaceId}
+              canQueue={canEdit}
+              nowIso={nowIso}
+              editorHref={`/w/${encodeURIComponent(slug)}/editor`}
+              api={rendersApi}
+            />
           </TabsContent>
 
           <TabsContent value="activity" className="mt-4" data-testid="history-panel-activity">

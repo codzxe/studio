@@ -180,6 +180,40 @@ describe.skipIf(!hasDb)("renders job queue (integration)", { timeout: 30_000 }, 
     await repos.renders.markCompleted(wsA, render.id, { objectKey: "k/a.mp4" });
   });
 
+  it("create persists the route-precreated §9.2 objectKey (M8-G)", async () => {
+    const pinned = await makePinnedProject(wsA, "Keyed");
+    // The gateway route cannot know the row id before create() assigns it, so
+    // it hands create() the key with the `{renderId}` placeholder — the repo
+    // stamps the fresh id (RenderCreateInput.objectKey contract).
+    const render = await repos.renders.create(wsA, {
+      projectId: pinned.projectId,
+      versionId: pinned.versionId,
+      compId: "comp_main",
+      format: "mp4",
+      createdBy: userId,
+      objectKey: `workspaces/${wsA}/projects/${pinned.projectId}/renders/{renderId}/output.mp4`,
+    });
+    expect(render.objectKey).toBe(
+      `workspaces/${wsA}/projects/${pinned.projectId}/renders/${render.id}/output.mp4`,
+    );
+
+    // absent → NULL (M8-A callers unaffected)
+    const bare = await repos.renders.create(wsA, {
+      projectId: pinned.projectId,
+      versionId: pinned.versionId,
+      compId: "comp_main",
+      format: "png-seq",
+      createdBy: userId,
+    });
+    expect(bare.objectKey).toBeNull();
+
+    // keep the queue clean for the other tests
+    await repos.renders.markRunning(wsA, render.id);
+    await repos.renders.markCompleted(wsA, render.id, { objectKey: render.objectKey ?? "k/a.mp4" });
+    await repos.renders.markRunning(wsA, bare.id);
+    await repos.renders.markCompleted(wsA, bare.id, { objectKey: "k/a.zip" });
+  });
+
   it("claimNext claims FIFO, flips to running, and carries the resolved workspaceId", async () => {
     const pinned = await makePinnedProject(wsA, "FIFO");
     const first = await queueRender(wsA, pinned);

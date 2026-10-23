@@ -11,6 +11,7 @@ export {
   editorLoadState,
   forwardShortcut,
   sameOrigin,
+  sanitizeAssetName,
   type AttachOptions,
   type EditorLoadState,
   type EditorLoadStatus,

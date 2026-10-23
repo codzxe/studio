@@ -50,6 +50,29 @@ export interface RenderCreateInput {
   readonly settingsJson?: unknown;
   readonly credits?: number;
   readonly createdBy: string;
+  /**
+   * M8-G (additive): the §9.2 output key, pre-created by the gateway route at
+   * QUEUE time so the worker never guesses key layout — it reads `objectKey`
+   * off the row it claimed (renderKey(ws, pid, rid, ext) in the gateway's
+   * storage.ts). The row id is generated INSIDE create(), so the route cannot
+   * know it up front: pass the key with the literal `{renderId}` placeholder
+   * in the id segment and create() resolves it against the fresh id. A string
+   * WITHOUT the placeholder is stored verbatim (for callers that already own
+   * the id); absent → NULL (M8-A callers and internal rows are unaffected).
+   */
+  readonly objectKey?: string;
+}
+
+/** The placeholder token create() substitutes with the freshly generated id. */
+const RENDER_ID_PLACEHOLDER = "{renderId}";
+
+/** Resolves the route-precreated §9.2 key against the generated row id. */
+function resolveObjectKey(template: string | undefined, renderId: string): string | null {
+  if (template === undefined) return null;
+  const key = requireNonEmpty(template, "objectKey");
+  return key.includes(RENDER_ID_PLACEHOLDER)
+    ? key.replaceAll(RENDER_ID_PLACEHOLDER, renderId)
+    : key;
 }
 
 export interface RenderListOptions {
@@ -227,10 +250,13 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
         .limit(1);
       if (!version) throw DbError.notFound("version");
 
+      // The id is generated here so the M8-G objectKey template can resolve
+      // against it (see RenderCreateInput.objectKey).
+      const renderId = createId("rdr");
       const [render] = await db
         .insert(renders)
         .values({
-          id: createId("rdr"),
+          id: renderId,
           projectId: project.id,
           versionId: version.id,
           compId,
@@ -239,6 +265,9 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
           status: "queued",
           credits: input.credits ?? 0,
           createdBy: input.createdBy,
+          // M8-G: the route-precreated §9.2 output key (queue-time, so the
+          // worker never guesses layout); NULL when the caller omits it.
+          objectKey: resolveObjectKey(input.objectKey, renderId),
           // Job-queue defaults come from the DB (migration 0005):
           // attempts=0, frames_done=0, frames_total=0, cancel_requested=false.
         })

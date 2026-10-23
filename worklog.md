@@ -1388,3 +1388,20 @@ Work Log:
 Stage Summary:
 - The native render path is PROVEN end-to-end on this box: real binary, real project, real pixels, timing inside target. No editor source changes needed for M8 — the upstream CLI render surface is sufficient as-is.
 - The worker wave codes against docs/phases/m8-cli-spike.md sections 2-5 exactly.
+---
+Task ID: M8-waveB-closeout
+Agent: main-orchestrator (orphan-recovery integrator)
+Task: Wave B (M8-F worker, M8-G gateway v2, M8-I editor dialog, M8-J hub panel) — all four dispatches orphaned at the ADAPTER (context deadline exceeded at dispatch time) yet all four ran server-side; recovered from disk, gated, fixed, landed.
+
+Work Log:
+- All 4 agents delivered code+tests on disk but died before their git-sync/worklog (adapter dispatch failures; worklog M5-M7 documented the same pattern). Integrator assessed git status, found every deliverable structurally complete.
+- M8-F services/worker: full package (cli/hydrate/pipeline/sweeps/zip/storage/cost/deps/errors/logger/index, 57 unit tests) + additive editor-bridge sanitizeAssetName export. MISSING: the CLI-gated integration suite (dirs created, never written — owned as integrator tail below).
+- M8-G gateway renders v2: routes/renders.ts rewrite (queue+entitlements+reserve+estimate+cancel+list+get v2), errors.ts 9 code rows, middleware estimate exclusion, noop worker seam removed, renders.test.ts (33 tests), ONE granted db addition (RenderCreateInput.objectKey honored in repo create).
+- M8-I components/render/** (dialog, history drawer, options, status, region, resolve-project, types, comp) + chat header additive Render button.
+- M8-J components/renders-hub/** (panel + queue card + tests) + history-view additive mount.
+- Integrator fixes: 3 TS strict noUncheckedIndexedAccess test errors (zip/cost/hydrate), web vendor shim extended with config plans re-export (RENDER_FORMATS resolution — plans.ts is dependency-free, web-safe), drawer formatCreditsDisplay import path (render-status → render-options), 3 a11y fieldset/progressbar/exhaustive-deps lints (M7 house pattern), zip test cd-size math (the zip itself was correct; eocdAt - offset), cost tests re-pinned above the min charge + ms-quantized seconds per the M8-B contract (raw 100_100 < 250_000 min was masked by the clamp; decoy-range shape preserved).
+- Gates at close (serial, DATABASE_URL exported): worker 57/57, gateway 726/726, web 1062/1062, db 204/204, editor-bridge 70/70; typecheck 0 errors across all touched packages; biome clean on every touched dir.
+
+Stage Summary:
+- The M8 API surface is COMPLETE end-to-end on the wire: queue→claim→hydrate→render→settle→download, estimate/reserve identity (single µc formula), D-11 vocabulary everywhere, retention/requeue sweeps, png-seq zip artifact rule.
+- Owed for M8 closeout: (1) worker CLI-gated integration suite (golden/cancel/timeout/crash-recovery/missing-asset/malformed), (2) gateway render E2E journey with the REAL worker + REAL CLI (queue→progress→download→ledger), (3) Playwright render spec (CI-owed), (4) docs closeout (DECISIONS D-25 queue ruling + D-26 render-credits ruling + D-27 status-flip record, docs/phases/M8.md, BUILD_PLAN status), (5) final full-repo gates.

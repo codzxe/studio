@@ -35,6 +35,23 @@ const STATUS_BY_CODE: Record<string, number> = {
   RUN_BATCH_ROLLED_BACK: 500,
   RUN_CANCELLED: 409,
   EDITOR_DISCONNECTED: 503,
+  // M8-G rows — the 9 new render codes (M8-B catalog doc comments are the
+  // intended-status authority; see @studio/config/src/errors.ts):
+  //   415 declared-but-disabled format (D-2 gate) · 429 monthly render minutes
+  //   · 429 workspace concurrency cap · 409 user-cancelled render · 400 the
+  //   project snapshot failed render validation · 400 a needed asset is gone
+  //   · 500 the CLI binary is missing · 500 the CLI exited non-zero · 500 the
+  //   render pipeline failed unexpectedly. RENDER_TIMEOUT/RENDER_FAILED (the
+  //   two pre-existing render codes) stay at 504/500 above.
+  RENDER_UNSUPPORTED_FORMAT: 415,
+  RENDER_QUOTA_EXCEEDED: 429,
+  RENDER_CONCURRENCY_LIMIT: 429,
+  RENDER_CANCELLED: 409,
+  RENDER_PROJECT_INVALID: 400,
+  RENDER_ASSET_MISSING: 400,
+  RENDER_CLI_MISSING: 500,
+  RENDER_CLI_FAILED: 500,
+  RENDER_INTERNAL: 500,
   RENDER_TIMEOUT: 504,
   RENDER_FAILED: 500,
   ASSET_TOO_LARGE: 413,
