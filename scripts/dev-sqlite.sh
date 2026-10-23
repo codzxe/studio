@@ -27,6 +27,9 @@
 #
 # Then run the gateway against it (env validation accepts file: URLs in local):
 #   DATABASE_URL=file:<repo>/.local/studio-dev.db corepack pnpm dev:gateway
+# W5-01: to boot the FULL stack (gateway :8787 + web :3000) with the minimal
+# local env set, use scripts/dev-stack.sh start|stop — it sources this script's
+# DB and exports every required var (see its header for the exact recipe).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
