@@ -1,0 +1,429 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - button "Open Next.js Dev Tools" [ref=e8] [cursor=pointer]:
+    - img [ref=e9]
+  - alert [ref=e12]: Members
+  - generic [ref=e13]:
+    - banner [ref=e14]:
+      - link "Studio — dashboard" [ref=e15] [cursor=pointer]:
+        - /url: /w
+        - generic [ref=e17]: Studio
+      - 'button "Workspace: Demo Workspace. Switch workspace." [ref=e18]':
+        - generic [ref=e19]: Demo Workspace
+        - img [ref=e20]
+      - generic [ref=e23]:
+        - generic [ref=e25]:
+          - img
+          - searchbox "Search projects and commands" [ref=e26]
+          - generic:
+            - generic: ⌘K
+        - generic [ref=e27]:
+          - link "Credits balance 0.00 — open billing" [ref=e28] [cursor=pointer]:
+            - /url: /w/billing
+            - text: 0.00 credits
+          - generic [ref=e29]:
+            - meter "Credits used this cycle" [ref=e30]
+            - generic [ref=e32]: 1,000 credits
+            - generic [ref=e33]:
+              - img [ref=e34]
+              - generic [ref=e36]: Low
+        - button "Account menu" [ref=e37]:
+          - img "Demo User" [ref=e38]:
+            - generic [ref=e39]: DU
+    - generic [ref=e40]:
+      - navigation "Workspace" [ref=e41]:
+        - list [ref=e42]:
+          - listitem [ref=e43]:
+            - link "Dashboard" [ref=e44] [cursor=pointer]:
+              - /url: /w
+              - img [ref=e45]
+              - generic [ref=e50]: Dashboard
+          - listitem [ref=e51]:
+            - link "Projects" [ref=e52] [cursor=pointer]:
+              - /url: /w/projects
+              - img [ref=e53]
+              - generic [ref=e55]: Projects
+          - listitem [ref=e56]:
+            - link "Billing" [ref=e57] [cursor=pointer]:
+              - /url: /w/billing
+              - img [ref=e58]
+              - generic [ref=e60]: Billing
+          - listitem [ref=e61]:
+            - link "Settings" [ref=e62] [cursor=pointer]:
+              - /url: /w/settings
+              - img [ref=e63]
+              - generic [ref=e66]: Settings
+        - button "Collapse sidebar" [expanded] [ref=e68]:
+          - img [ref=e69]
+      - main [ref=e73]:
+        - generic [ref=e74]:
+          - paragraph [ref=e75]: Settings
+          - generic [ref=e76]:
+            - navigation "Settings" [ref=e77]:
+              - list [ref=e78]:
+                - listitem [ref=e79]:
+                  - link "General" [ref=e80] [cursor=pointer]:
+                    - /url: /w/settings
+                - listitem [ref=e81]:
+                  - link "Members" [ref=e82] [cursor=pointer]:
+                    - /url: /w/settings/members
+                - listitem [ref=e83]:
+                  - link "API keys" [ref=e84] [cursor=pointer]:
+                    - /url: /w/settings/api-keys
+                - listitem [ref=e85]:
+                  - link "Models" [ref=e86] [cursor=pointer]:
+                    - /url: /w/settings/models
+                - listitem [ref=e87]:
+                  - link "Audit" [ref=e88] [cursor=pointer]:
+                    - /url: /w/settings/audit
+                - listitem [ref=e89]:
+                  - link "Licences" [ref=e90] [cursor=pointer]:
+                    - /url: /w/settings/licences
+                - listitem [ref=e91]
+                - listitem [ref=e92]:
+                  - link "Billing" [ref=e93] [cursor=pointer]:
+                    - /url: /w/billing
+            - generic [ref=e95]:
+              - generic [ref=e96]:
+                - generic [ref=e97]:
+                  - generic [ref=e98]:
+                    - heading "Members" [level=1] [ref=e99]
+                    - paragraph [ref=e100]: 1 of 1 seat used in Demo Workspace.
+                  - button "Invite member" [ref=e101]
+                - table [ref=e104]:
+                  - rowgroup [ref=e105]:
+                    - row "Member Role Status Last active Actions" [ref=e106]:
+                      - columnheader "Member" [ref=e107]
+                      - columnheader "Role" [ref=e108]
+                      - columnheader "Status" [ref=e109]
+                      - columnheader "Last active" [ref=e110]
+                      - columnheader "Actions" [ref=e111]:
+                        - generic [ref=e112]: Actions
+                  - rowgroup [ref=e113]:
+                    - row "Demo User Demo User You demo@studio.test Active — Leave" [ref=e114]:
+                      - cell "Demo User Demo User You demo@studio.test" [ref=e115]:
+                        - generic [ref=e116]:
+                          - img "Demo User" [ref=e117]:
+                            - generic [ref=e118]: DU
+                          - generic [ref=e119]:
+                            - generic [ref=e120]:
+                              - generic [ref=e121]: Demo User
+                              - generic [ref=e122]: You
+                            - generic [ref=e123]: demo@studio.test
+                      - cell [ref=e124]:
+                        - combobox "Role for Demo User" [ref=e126]:
+                          - generic: Owner
+                          - img [ref=e127]
+                      - cell "Active" [ref=e129]:
+                        - generic [ref=e130]: Active
+                      - cell "—" [ref=e131]
+                      - cell "Leave" [ref=e132]:
+                        - button "Leave" [ref=e133]
+                - paragraph [ref=e134]: Last-active stamps aren't recorded yet — the column fills in when per-member activity tracking ships. Pending invitations also count toward the seat limit (a pending invite holds its seat reserved).
+                - generic [ref=e136]:
+                  - heading "Inviting" [level=3] [ref=e137]
+                  - paragraph [ref=e138]: Invitations expire if they aren't accepted. Admins can invite as viewer, editor or admin — new owners are made by transferring ownership, never by invite.
+              - generic [ref=e139]:
+                - generic [ref=e140]:
+                  - heading "Roles" [level=3] [ref=e141]
+                  - paragraph [ref=e142]: What each role can do in this workspace. Roles are cumulative — every role includes the one below it. The server re-checks every action on every request, so these limits hold even where the interface hides a button.
+                - list [ref=e143]:
+                  - listitem [ref=e144]:
+                    - generic [ref=e145]: owner
+                    - generic [ref=e146]: Full control — everything an admin does, plus deleting the workspace and transferring ownership.
+                  - listitem [ref=e147]:
+                    - generic [ref=e148]: admin
+                    - generic [ref=e149]: "Runs the workspace: invites and removes members, manages billing, API keys and settings."
+                  - listitem [ref=e150]:
+                    - generic [ref=e151]: editor
+                    - generic [ref=e152]: "Makes the work: creates projects, runs the agent, uploads assets and renders."
+                  - listitem [ref=e153]:
+                    - generic [ref=e154]: viewer
+                    - generic [ref=e155]: "Follows along: reads projects, comments, and opens the editor read-only."
+                - table [ref=e157]:
+                  - rowgroup [ref=e158]:
+                    - row "Capability viewer editor admin owner" [ref=e159]:
+                      - columnheader "Capability" [ref=e160]
+                      - columnheader "viewer" [ref=e161]
+                      - columnheader "editor" [ref=e162]
+                      - columnheader "admin" [ref=e163]
+                      - columnheader "owner" [ref=e164]
+                  - rowgroup [ref=e165]:
+                    - row "Read projects, assets and versions Allowed Allowed Allowed Allowed" [ref=e166]:
+                      - cell "Read projects, assets and versions" [ref=e167]
+                      - cell "Allowed" [ref=e168]:
+                        - generic [ref=e169]:
+                          - img [ref=e170]
+                          - generic [ref=e172]: Allowed
+                      - cell "Allowed" [ref=e173]:
+                        - generic [ref=e174]:
+                          - img [ref=e175]
+                          - generic [ref=e177]: Allowed
+                      - cell "Allowed" [ref=e178]:
+                        - generic [ref=e179]:
+                          - img [ref=e180]
+                          - generic [ref=e182]: Allowed
+                      - cell "Allowed" [ref=e183]:
+                        - generic [ref=e184]:
+                          - img [ref=e185]
+                          - generic [ref=e187]: Allowed
+                    - row "Comment on projects Allowed Allowed Allowed Allowed" [ref=e188]:
+                      - cell "Comment on projects" [ref=e189]
+                      - cell "Allowed" [ref=e190]:
+                        - generic [ref=e191]:
+                          - img [ref=e192]
+                          - generic [ref=e194]: Allowed
+                      - cell "Allowed" [ref=e195]:
+                        - generic [ref=e196]:
+                          - img [ref=e197]
+                          - generic [ref=e199]: Allowed
+                      - cell "Allowed" [ref=e200]:
+                        - generic [ref=e201]:
+                          - img [ref=e202]
+                          - generic [ref=e204]: Allowed
+                      - cell "Allowed" [ref=e205]:
+                        - generic [ref=e206]:
+                          - img [ref=e207]
+                          - generic [ref=e209]: Allowed
+                    - row "Open the editor (read-only without a lease) Allowed Allowed Allowed Allowed" [ref=e210]:
+                      - cell "Open the editor (read-only without a lease)" [ref=e211]
+                      - cell "Allowed" [ref=e212]:
+                        - generic [ref=e213]:
+                          - img [ref=e214]
+                          - generic [ref=e216]: Allowed
+                      - cell "Allowed" [ref=e217]:
+                        - generic [ref=e218]:
+                          - img [ref=e219]
+                          - generic [ref=e221]: Allowed
+                      - cell "Allowed" [ref=e222]:
+                        - generic [ref=e223]:
+                          - img [ref=e224]
+                          - generic [ref=e226]: Allowed
+                      - cell "Allowed" [ref=e227]:
+                        - generic [ref=e228]:
+                          - img [ref=e229]
+                          - generic [ref=e231]: Allowed
+                    - row "Create and edit projects Not allowed Allowed Allowed Allowed" [ref=e232]:
+                      - cell "Create and edit projects" [ref=e233]
+                      - cell "Not allowed" [ref=e234]:
+                        - generic [ref=e235]:
+                          - generic [ref=e236]: —
+                          - generic [ref=e237]: Not allowed
+                      - cell "Allowed" [ref=e238]:
+                        - generic [ref=e239]:
+                          - img [ref=e240]
+                          - generic [ref=e242]: Allowed
+                      - cell "Allowed" [ref=e243]:
+                        - generic [ref=e244]:
+                          - img [ref=e245]
+                          - generic [ref=e247]: Allowed
+                      - cell "Allowed" [ref=e248]:
+                        - generic [ref=e249]:
+                          - img [ref=e250]
+                          - generic [ref=e252]: Allowed
+                    - row "Take the edit lease Not allowed Allowed Allowed Allowed" [ref=e253]:
+                      - cell "Take the edit lease" [ref=e254]
+                      - cell "Not allowed" [ref=e255]:
+                        - generic [ref=e256]:
+                          - generic [ref=e257]: —
+                          - generic [ref=e258]: Not allowed
+                      - cell "Allowed" [ref=e259]:
+                        - generic [ref=e260]:
+                          - img [ref=e261]
+                          - generic [ref=e263]: Allowed
+                      - cell "Allowed" [ref=e264]:
+                        - generic [ref=e265]:
+                          - img [ref=e266]
+                          - generic [ref=e268]: Allowed
+                      - cell "Allowed" [ref=e269]:
+                        - generic [ref=e270]:
+                          - img [ref=e271]
+                          - generic [ref=e273]: Allowed
+                    - row "Run the agent and manual commands Not allowed Allowed Allowed Allowed" [ref=e274]:
+                      - cell "Run the agent and manual commands" [ref=e275]
+                      - cell "Not allowed" [ref=e276]:
+                        - generic [ref=e277]:
+                          - generic [ref=e278]: —
+                          - generic [ref=e279]: Not allowed
+                      - cell "Allowed" [ref=e280]:
+                        - generic [ref=e281]:
+                          - img [ref=e282]
+                          - generic [ref=e284]: Allowed
+                      - cell "Allowed" [ref=e285]:
+                        - generic [ref=e286]:
+                          - img [ref=e287]
+                          - generic [ref=e289]: Allowed
+                      - cell "Allowed" [ref=e290]:
+                        - generic [ref=e291]:
+                          - img [ref=e292]
+                          - generic [ref=e294]: Allowed
+                    - row "Upload assets Not allowed Allowed Allowed Allowed" [ref=e295]:
+                      - cell "Upload assets" [ref=e296]
+                      - cell "Not allowed" [ref=e297]:
+                        - generic [ref=e298]:
+                          - generic [ref=e299]: —
+                          - generic [ref=e300]: Not allowed
+                      - cell "Allowed" [ref=e301]:
+                        - generic [ref=e302]:
+                          - img [ref=e303]
+                          - generic [ref=e305]: Allowed
+                      - cell "Allowed" [ref=e306]:
+                        - generic [ref=e307]:
+                          - img [ref=e308]
+                          - generic [ref=e310]: Allowed
+                      - cell "Allowed" [ref=e311]:
+                        - generic [ref=e312]:
+                          - img [ref=e313]
+                          - generic [ref=e315]: Allowed
+                    - row "Create renders and exports Not allowed Allowed Allowed Allowed" [ref=e316]:
+                      - cell "Create renders and exports" [ref=e317]
+                      - cell "Not allowed" [ref=e318]:
+                        - generic [ref=e319]:
+                          - generic [ref=e320]: —
+                          - generic [ref=e321]: Not allowed
+                      - cell "Allowed" [ref=e322]:
+                        - generic [ref=e323]:
+                          - img [ref=e324]
+                          - generic [ref=e326]: Allowed
+                      - cell "Allowed" [ref=e327]:
+                        - generic [ref=e328]:
+                          - img [ref=e329]
+                          - generic [ref=e331]: Allowed
+                      - cell "Allowed" [ref=e332]:
+                        - generic [ref=e333]:
+                          - img [ref=e334]
+                          - generic [ref=e336]: Allowed
+                    - row "Invite members Not allowed Not allowed Allowed Allowed" [ref=e337]:
+                      - cell "Invite members" [ref=e338]
+                      - cell "Not allowed" [ref=e339]:
+                        - generic [ref=e340]:
+                          - generic [ref=e341]: —
+                          - generic [ref=e342]: Not allowed
+                      - cell "Not allowed" [ref=e343]:
+                        - generic [ref=e344]:
+                          - generic [ref=e345]: —
+                          - generic [ref=e346]: Not allowed
+                      - cell "Allowed" [ref=e347]:
+                        - generic [ref=e348]:
+                          - img [ref=e349]
+                          - generic [ref=e351]: Allowed
+                      - cell "Allowed" [ref=e352]:
+                        - generic [ref=e353]:
+                          - img [ref=e354]
+                          - generic [ref=e356]: Allowed
+                    - row "Remove members Not allowed Not allowed Allowed Allowed" [ref=e357]:
+                      - cell "Remove members" [ref=e358]
+                      - cell "Not allowed" [ref=e359]:
+                        - generic [ref=e360]:
+                          - generic [ref=e361]: —
+                          - generic [ref=e362]: Not allowed
+                      - cell "Not allowed" [ref=e363]:
+                        - generic [ref=e364]:
+                          - generic [ref=e365]: —
+                          - generic [ref=e366]: Not allowed
+                      - cell "Allowed" [ref=e367]:
+                        - generic [ref=e368]:
+                          - img [ref=e369]
+                          - generic [ref=e371]: Allowed
+                      - cell "Allowed" [ref=e372]:
+                        - generic [ref=e373]:
+                          - img [ref=e374]
+                          - generic [ref=e376]: Allowed
+                    - row "Manage billing and plans Not allowed Not allowed Allowed Allowed" [ref=e377]:
+                      - cell "Manage billing and plans" [ref=e378]
+                      - cell "Not allowed" [ref=e379]:
+                        - generic [ref=e380]:
+                          - generic [ref=e381]: —
+                          - generic [ref=e382]: Not allowed
+                      - cell "Not allowed" [ref=e383]:
+                        - generic [ref=e384]:
+                          - generic [ref=e385]: —
+                          - generic [ref=e386]: Not allowed
+                      - cell "Allowed" [ref=e387]:
+                        - generic [ref=e388]:
+                          - img [ref=e389]
+                          - generic [ref=e391]: Allowed
+                      - cell "Allowed" [ref=e392]:
+                        - generic [ref=e393]:
+                          - img [ref=e394]
+                          - generic [ref=e396]: Allowed
+                    - row "Create and revoke API keys Not allowed Not allowed Allowed Allowed" [ref=e397]:
+                      - cell "Create and revoke API keys" [ref=e398]
+                      - cell "Not allowed" [ref=e399]:
+                        - generic [ref=e400]:
+                          - generic [ref=e401]: —
+                          - generic [ref=e402]: Not allowed
+                      - cell "Not allowed" [ref=e403]:
+                        - generic [ref=e404]:
+                          - generic [ref=e405]: —
+                          - generic [ref=e406]: Not allowed
+                      - cell "Allowed" [ref=e407]:
+                        - generic [ref=e408]:
+                          - img [ref=e409]
+                          - generic [ref=e411]: Allowed
+                      - cell "Allowed" [ref=e412]:
+                        - generic [ref=e413]:
+                          - img [ref=e414]
+                          - generic [ref=e416]: Allowed
+                    - row "Change workspace settings Not allowed Not allowed Allowed Allowed" [ref=e417]:
+                      - cell "Change workspace settings" [ref=e418]
+                      - cell "Not allowed" [ref=e419]:
+                        - generic [ref=e420]:
+                          - generic [ref=e421]: —
+                          - generic [ref=e422]: Not allowed
+                      - cell "Not allowed" [ref=e423]:
+                        - generic [ref=e424]:
+                          - generic [ref=e425]: —
+                          - generic [ref=e426]: Not allowed
+                      - cell "Allowed" [ref=e427]:
+                        - generic [ref=e428]:
+                          - img [ref=e429]
+                          - generic [ref=e431]: Allowed
+                      - cell "Allowed" [ref=e432]:
+                        - generic [ref=e433]:
+                          - img [ref=e434]
+                          - generic [ref=e436]: Allowed
+                    - row "Delete the workspace Not allowed Not allowed Not allowed Allowed" [ref=e437]:
+                      - cell "Delete the workspace" [ref=e438]
+                      - cell "Not allowed" [ref=e439]:
+                        - generic [ref=e440]:
+                          - generic [ref=e441]: —
+                          - generic [ref=e442]: Not allowed
+                      - cell "Not allowed" [ref=e443]:
+                        - generic [ref=e444]:
+                          - generic [ref=e445]: —
+                          - generic [ref=e446]: Not allowed
+                      - cell "Not allowed" [ref=e447]:
+                        - generic [ref=e448]:
+                          - generic [ref=e449]: —
+                          - generic [ref=e450]: Not allowed
+                      - cell "Allowed" [ref=e451]:
+                        - generic [ref=e452]:
+                          - img [ref=e453]
+                          - generic [ref=e455]: Allowed
+                    - row "Transfer ownership Not allowed Not allowed Not allowed Allowed" [ref=e456]:
+                      - cell "Transfer ownership" [ref=e457]
+                      - cell "Not allowed" [ref=e458]:
+                        - generic [ref=e459]:
+                          - generic [ref=e460]: —
+                          - generic [ref=e461]: Not allowed
+                      - cell "Not allowed" [ref=e462]:
+                        - generic [ref=e463]:
+                          - generic [ref=e464]: —
+                          - generic [ref=e465]: Not allowed
+                      - cell "Not allowed" [ref=e466]:
+                        - generic [ref=e467]:
+                          - generic [ref=e468]: —
+                          - generic [ref=e469]: Not allowed
+                      - cell "Allowed" [ref=e470]:
+                        - generic [ref=e471]:
+                          - img [ref=e472]
+                          - generic [ref=e474]: Allowed
+                - paragraph [ref=e475]: Sourced from the same role matrix the gateway enforces — one source of truth, no invented rows.
+  - region "Notifications (F8)":
+    - list
+```
