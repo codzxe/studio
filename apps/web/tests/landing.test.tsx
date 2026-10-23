@@ -66,6 +66,9 @@ describe("landing page", () => {
       "href",
       "#film",
     );
+    // W5-03: the anchor must RESOLVE — the film-slot wrapper carries
+    // id="film" (a dead in-page anchor is the dead-link class this sweep kills).
+    expect(document.getElementById("film")).not.toBeNull();
     expect(
       within(hero).getByText("Card required · Cancel anytime · No free tier"),
     ).toBeInTheDocument();

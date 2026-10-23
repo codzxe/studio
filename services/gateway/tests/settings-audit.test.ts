@@ -138,7 +138,7 @@ async function patchSettings(
   return { status: response.status, body: parsed.data, code: parsed.error?.code };
 }
 
-d.describe("GET/PATCH /v1/me/settings (W3-G2)", () => {
+d("GET/PATCH /v1/me/settings (W3-G2)", () => {
   it("401s without a session (GET and PATCH)", async () => {
     const got = await getSettings(null);
     expect(got.status).toBe(401);
@@ -237,7 +237,7 @@ async function listAudit(
   };
 }
 
-d.describe("GET /v1/workspaces/:id/audit (W3-G2)", () => {
+d("GET /v1/workspaces/:id/audit (W3-G2)", () => {
   it("401s without a session", async () => {
     const jar = await signUp();
     const ws = await createWorkspace(jar, unique("Audit WS"));
@@ -271,7 +271,10 @@ d.describe("GET /v1/workspaces/:id/audit (W3-G2)", () => {
     // Newest-first ordering.
     const times = page.items.map((row) => Date.parse(row.createdAt));
     for (let i = 1; i < times.length; i += 1) {
-      expect(times[i - 1]).toBeGreaterThanOrEqual(times[i]);
+      const later = times[i - 1];
+      const earlier = times[i];
+      if (later === undefined || earlier === undefined) throw new Error("bad times");
+      expect(later).toBeGreaterThanOrEqual(earlier);
     }
 
     // The actor join: the workspace.created row names its founder.

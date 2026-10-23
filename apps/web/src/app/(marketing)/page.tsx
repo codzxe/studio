@@ -177,7 +177,10 @@ export default function LandingPage() {
             </a>
           </div>
           <p className="text-caption text-muted">Card required · Cancel anytime · No free tier</p>
-          <div className="mt-6 w-full">
+          {/* W5-03: id="film" — the hero "Watch the 90s film" anchor resolves
+              here (a dead in-page anchor is the dead-link class the stub
+              sweep kills; the slot itself is W5-02's capture-owed slate). */}
+          <div id="film" className="mt-6 w-full">
             <FilmSlot />
           </div>
         </div>

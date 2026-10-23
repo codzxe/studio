@@ -644,6 +644,7 @@ describe("createApiClient — settings + workspace audit (W3-G2)", () => {
     const result = await client.settings.update({ autoApplyEnabled: true });
     expect(result.autoApplyEnabled).toBe(true);
     const call = calls[0];
+    if (call === undefined) throw new Error("no recorded call");
     expect(call.input.replace(BASE, "")).toBe("/me/settings");
     expect(call.init?.method).toBe("PATCH");
     expect(call.init?.body).toBe('{"autoApplyEnabled":true}');

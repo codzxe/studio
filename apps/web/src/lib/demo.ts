@@ -1,22 +1,19 @@
 import { Brand } from "@studio/config";
 
 /**
- * The hero demo film slot — the ONE marketing asset that is still owed from
- * the real build (§16: no fake screenshots, no invented metrics, no fake
- * customer logos — so nothing stands in for the capture).
- *
- * `DEMO_FILM` is the single switch a later wave flips: point `poster`/`src`
- * at a real 16:9 capture (muted, looped ≤ 8s per §11, or the 90s film with a
- * poster + play control), drop the placeholder styling in
- * `src/components/marketing/film-slot.tsx`, and every claim below stays true
- * because there are none — only the honest description.
+ * The hero demo film — a REAL capture from the live build (W5-02): an
+ * eight-second muted loop of the editor opening the seeded project, the
+ * agent's plan exchange and a timeline scrub, plus a poster frame from the
+ * same capture. Per §11: VP9, muted, looped ≤ 8s, poster, `playsinline`,
+ * pause control. The 90-second launch film (§12 transcript) is still a
+ * launch-time asset — the honest caption below describes what is here.
  */
 export const DEMO_FILM = {
-  /** In-page anchor for the hero's "Watch the 90s film" CTA. */
+  /** In-page anchor for the hero's "Watch the demo" CTA. */
   anchorId: "film",
   /** Honest runtime label — shown as timecode next to the slot. */
-  runtimeLabel: "00:01:30",
-  caption: `A 90-second tour of the ${Brand.productName.toLowerCase()} editor and its agent, captured from the real build.`,
-  /** True until the real capture is wired up (see film-slot.tsx). */
-  captureOwed: true,
+  runtimeLabel: "00:00:08",
+  caption: `An eight-second loop of the ${Brand.productName.toLowerCase()} editor and its agent, captured from the real build.`,
+  /** False since W5-02: demo-loop.webm + poster are real captures. */
+  captureOwed: false,
 } as const;
