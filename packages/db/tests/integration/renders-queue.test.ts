@@ -324,9 +324,9 @@ describe.skipIf(!hasDb)("renders job queue (integration)", { timeout: 30_000 }, 
 
     // non-running rows refuse heartbeats (typed CONFLICT)
     await repos.renders.markCompleted(wsA, render.id, { objectKey: "k/hb.mp4" });
-    await expect(
-      repos.renders.heartbeat(wsA, render.id, { framesDone: 20 }),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(repos.renders.heartbeat(wsA, render.id, { framesDone: 20 })).rejects.toMatchObject(
+      { code: "CONFLICT" },
+    );
   });
 
   it("requeueStale: fresh heartbeats untouched; stale requeues under maxAttempts, fails at max", async () => {
@@ -481,6 +481,14 @@ describe.skipIf(!hasDb)("renders job queue (integration)", { timeout: 30_000 }, 
     await repos.renders.markCompleted(wsCount, r1.id, { objectKey: "k/one.mp4" });
     expect(await repos.renders.countActive(wsCount)).toBe(2);
 
+    // leave nothing queued behind: drain wsCount's two survivors
+    const survivors = await repos.renders.claimNext("worker-a", { limit: 2 });
+    expect(survivors.map((row) => row.workspaceId)).toEqual([wsCount, wsCount]);
+    for (const row of survivors) {
+      await repos.renders.markCompleted(wsCount, row.id, { objectKey: `k/${row.id}.mp4` });
+    }
+    expect(await repos.renders.countActive(wsCount)).toBe(0);
+
     // tenant isolation: another workspace sees nothing
     expect(await repos.renders.countActive(wsB)).toBe(0);
   });
@@ -592,11 +600,12 @@ describe.skipIf(!hasDb)("renders job queue (integration)", { timeout: 30_000 }, 
     expect(entries.items.length).toBe(3); // reserve + commit + refund
     expect(entries.items.every((entry) => entry.renderId === render.id)).toBe(true);
 
-    // run-scoped holds still work unchanged
+    // run-scoped holds still work unchanged (key unique per run — the ledger
+    // idempotency table is GLOBAL)
     const runHeld = await repos.ledger.reserve(wsLedger, {
       runId: "run_x",
       amount: 100,
-      idempotencyKey: `m8a:reserve:run_x`,
+      idempotencyKey: `m8a:reserve:run_x:${wsLedger}`,
     });
     expect(runHeld.entry.runId).toBe("run_x");
     expect(runHeld.entry.renderId).toBeNull();

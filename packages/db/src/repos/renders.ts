@@ -223,9 +223,7 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
       const [version] = await db
         .select({ id: projectVersions.id })
         .from(projectVersions)
-        .where(
-          and(eq(projectVersions.id, versionId), eq(projectVersions.projectId, project.id)),
-        )
+        .where(and(eq(projectVersions.id, versionId), eq(projectVersions.projectId, project.id)))
         .limit(1);
       if (!version) throw DbError.notFound("version");
 
@@ -321,7 +319,9 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
       // does not persist a claimer id — liveness is heartbeat-scoped.
       requireNonEmpty(workerId, "workerId");
       const limit =
-        options?.limit === undefined ? 1 : Math.min(requirePositiveInt(options.limit, "limit"), MAX_CLAIM_LIMIT);
+        options?.limit === undefined
+          ? 1
+          : Math.min(requirePositiveInt(options.limit, "limit"), MAX_CLAIM_LIMIT);
 
       return db.transaction(async (tx) => {
         // SELECT … FOR UPDATE SKIP LOCKED: concurrent workers never block each
@@ -412,16 +412,14 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
 
     async requestCancel(workspaceId, renderId) {
       const render = await requireRender(workspaceId, renderId);
-      if (render.cancelRequested) return render; // idempotent
       if (render.status !== "queued" && render.status !== "running") {
         throw DbError.conflict(`Cannot cancel a ${render.status} render`);
       }
+      if (render.cancelRequested) return render; // idempotent while still cancelable
       const [updated] = await db
         .update(renders)
         .set({ cancelRequested: true })
-        .where(
-          and(eq(renders.id, render.id), inArray(renders.status, ["queued", "running"])),
-        )
+        .where(and(eq(renders.id, render.id), inArray(renders.status, ["queued", "running"])))
         .returning();
       if (!updated) throw DbError.conflict("Render state changed concurrently");
       return updated;
