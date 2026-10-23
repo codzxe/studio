@@ -20,6 +20,11 @@
 // - D-2  v1 render formats are MP4 (H.264) + PNG sequence only; ProRes,
 //        GIF and WAV stay declared but disabled.
 //
+// M8 RENDER LIMITS live here next to the other entitlements (concurrency,
+// resolution cap, retention); the PRICING formula (estimate = reserve =
+// commit, integer µc per D-12) lives in render-pricing.ts — the seam the
+// gateway/worker waves code against.
+//
 // MONEY NOTE (ledger capacity): the Studio allowance is 10,000,000,000 µc,
 // which EXCEEDS a signed 32-bit integer (max 2,147,483,647 µc ≈ 2,147
 // credits). `credit_ledger.amount` is currently drizzle `integer` (int32) —

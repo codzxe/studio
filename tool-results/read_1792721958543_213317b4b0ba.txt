@@ -1,0 +1,1377 @@
+     1→// @studio/api-client — typed fetch client for the §7.2 control plane.
+     2→//
+     3→// Every call: unwrap the §7.3 envelope (Ok → data, Err → typed ApiError),
+     4→// runtime-validate the response data with the matching Zod schema (strip
+     5→// unknown keys by default), validate request bodies client-side with the
+     6→// contracts schemas before sending, send `Idempotency-Key` on every mutation
+     7→// (§7.2: "mutations require Idempotency-Key or derive one from a client
+     8→// UUID"), support AbortSignal everywhere, and retry idempotent-safe GETs with
+     9→// exponential backoff (250/500/1000 ms) on network errors, 429 and retryable
+    10→// 5xx responses.
+    11→//
+    12→// Framework-agnostic: browser fetch, node fetch (>=22) and test doubles all
+    13→// fit `FetchLike`. The SSE chat stream lives in ./sse.ts (it must stream, not
+    14→// buffer); `chat.stream` delegates there.
+    15→
+    16→import {
+    17→  ACQUIRE_LEASE_SCHEMA,
+    18→  ACTIVITY_QUERY_SCHEMA,
+    19→  APPLY_REQUEST_SCHEMA,
+    20→  type AcceptedInvite,
+    21→  type AcquireLeaseRequest,
+    22→  type ActivityEntry,
+    23→  type ApplyRequest,
+    24→  type ApplyResponse,
+    25→  type Asset,
+    26→  type AuditExport,
+    27→  type BillingState,
+    28→  CANCEL_RUN_SCHEMA,
+    29→  CHECKOUT_SCHEMA,
+    30→  COMMENTS_QUERY_SCHEMA,
+    31→  COMMENT_REPLY_SCHEMA,
+    32→  CREATE_ASSET_SCHEMA,
+    33→  CREATE_COMMENT_SCHEMA,
+    34→  CREATE_PROJECT_SCHEMA,
+    35→  CREATE_SHARE_COMMENT_SCHEMA,
+    36→  CREATE_THREAD_SCHEMA,
+    37→  CREATE_WORKSPACE_SCHEMA,
+    38→  type CancelRunRequest,
+    39→  type ChatRequest,
+    40→  type CheckoutRequest,
+    41→  type CheckoutResponse,
+    42→  type Comment,
+    43→  type CommentReplyRequest,
+    44→  type CreateAssetRequest,
+    45→  type CreateAssetResponse,
+    46→  type CreateCommentRequest,
+    47→  type CreateProjectRequest,
+    48→  type CreateShareCommentRequest,
+    49→  type CreateThreadRequest,
+    50→  type CreateWorkspaceRequest,
+    51→  type CreditsSummary,
+    52→  type Err,
+    53→  IDEMPOTENCY_KEY_SCHEMA,
+    54→  INVITE_MEMBER_SCHEMA,
+    55→  INVOICES_QUERY_SCHEMA,
+    56→  ISSUE_SHARE_LINK_SCHEMA,
+    57→  type Invite,
+    58→  type InviteMemberRequest,
+    59→  type InvoiceRecord,
+    60→  type IssueShareLinkRequest,
+    61→  LEDGER_QUERY_SCHEMA,
+    62→  type LedgerEntry,
+    63→  type MeResponse,
+    64→  type ModelsResponse,
+    65→  PAGINATION_QUERY_SCHEMA,
+    66→  PATCH_PROJECT_SCHEMA,
+    67→  PATCH_WORKSPACE_SCHEMA,
+    68→  PORTAL_SCHEMA,
+    69→  PRESENCE_BEAT_SCHEMA,
+    70→  PRESENCE_VIEWERS_SCHEMA,
+    71→  type Page,
+    72→  type PatchProjectRequest,
+    73→  type PatchWorkspaceRequest,
+    74→  type PortalRequest,
+    75→  type PortalResponse,
+    76→  type PresenceBeatRequest,
+    77→  type PresenceViewersResponse,
+    78→  type Project,
+    79→  type ProjectManifest,
+    80→  type ProjectVersion,
+    81→  QUEUE_RENDER_SCHEMA,
+    82→  type QueueRenderRequest,
+    83→  REQUEST_ACCESS_SCHEMA,
+    84→  RESOLVE_COMMENT_SCHEMA,
+    85→  RESTORE_VERSION_SCHEMA,
+    86→  RUN_EVENT_REQUEST_SCHEMA,
+    87→  type RenderJob,
+    88→  type RequestAccessRequest,
+    89→  type RequestAccessResponse,
+    90→  type ResolveCommentRequestInput,
+    91→  type RestoreVersionRequest,
+    92→  type RunEventRequest,
+    93→  type RunRecord,
+    94→  SET_VERSION_LABEL_SCHEMA,
+    95→  SHARE_COMMENTS_QUERY_SCHEMA,
+    96→  SHARE_PASSWORD_HEADER,
+    97→  type SetVersionLabelRequest,
+    98→  type ShareComment,
+    99→  type ShareInfo,
+   100→  type ShareLinkIssued,
+   101→  type ShareLinkRevoked,
+   102→  type ShareLinkView,
+   103→  type ShareManifest,
+   104→  type SignedUrlResponse,
+   105→  TOPUP_SCHEMA,
+   106→  TRIAL_REQUEST_SCHEMA,
+   107→  type Thread,
+   108→  type ThreadMessage,
+   109→  type TopUpRequest,
+   110→  type TopUpResponse,
+   111→  type TrialRequest,
+   112→  type TrialResponse,
+   113→  UNDO_REQUEST_SCHEMA,
+   114→  UPLOAD_VERSION_SCHEMA,
+   115→  type UndoRequest,
+   116→  type UndoResponse,
+   117→  type VersionDiffSummary,
+   118→  type VersionTimelineEntry,
+   119→  type Workspace,
+   120→  isErr,
+   121→  isOk,
+   122→} from "@studio/contracts";
+   123→import type { z } from "zod";
+   124→
+   125→import {
+   126→  ApiError,
+   127→  fromResponse,
+   128→  invalidRequestError,
+   129→  isApiError,
+   130→  malformedResponseError,
+   131→  networkError,
+   132→  uploadFailedError,
+   133→} from "./api-error";
+   134→import {
+   135→  ACCEPTED_INVITE_SCHEMA,
+   136→  ACTIVITY_ENTRY_SCHEMA,
+   137→  APPLY_RESPONSE_SCHEMA,
+   138→  ASSET_SCHEMA,
+   139→  AUDIT_EXPORT_SCHEMA,
+   140→  BILLING_STATE_SCHEMA,
+   141→  CHECKOUT_RESPONSE_SCHEMA,
+   142→  COMMENT_SCHEMA,
+   143→  CREATE_ASSET_RESPONSE_SCHEMA,
+   144→  CREDITS_SUMMARY_SCHEMA,
+   145→  INVITE_SCHEMA,
+   146→  LEASE_ACQUIRE_RESPONSE_SCHEMA,
+   147→  LEASE_RELEASE_RESPONSE_SCHEMA,
+   148→  LEASE_REQUEST_CANCELLED_RESPONSE_SCHEMA,
+   149→  LEASE_REQUEST_RESPONSE_SCHEMA,
+   150→  LEASE_STATE_RESPONSE_SCHEMA,
+   151→  LEDGER_ENTRY_SCHEMA,
+   152→  type LeaseAcquireResponse,
+   153→  type LeaseReleaseResponse,
+   154→  type LeaseRequestCancelledResponse,
+   155→  type LeaseRequestResponse,
+   156→  type LeaseStateResponse,
+   157→  ME_RESPONSE_SCHEMA,
+   158→  MODELS_RESPONSE_SCHEMA,
+   159→  PAGE_ACTIVITY_SCHEMA,
+   160→  PAGE_ASSETS_SCHEMA,
+   161→  PAGE_COMMENTS_SCHEMA,
+   162→  PAGE_INVOICES_SCHEMA,
+   163→  PAGE_LEDGER_SCHEMA,
+   164→  PAGE_MESSAGES_SCHEMA,
+   165→  PAGE_PROJECTS_SCHEMA,
+   166→  PAGE_SHARE_COMMENTS_SCHEMA,
+   167→  PAGE_SHARE_LINKS_SCHEMA,
+   168→  PAGE_THREADS_SCHEMA,
+   169→  PAGE_VERSIONS_SCHEMA,
+   170→  PAGE_VERSION_TIMELINE_SCHEMA,
+   171→  PAGE_WORKSPACES_SCHEMA,
+   172→  PORTAL_RESPONSE_SCHEMA,
+   173→  PROJECT_MANIFEST_SCHEMA,
+   174→  PROJECT_SCHEMA,
+   175→  PROJECT_VERSION_SCHEMA,
+   176→  RENDER_JOB_SCHEMA,
+   177→  REQUEST_ACCESS_RESPONSE_SCHEMA,
+   178→  RUN_RECORD_SCHEMA,
+   179→  SHARE_COMMENT_SCHEMA,
+   180→  SHARE_INFO_SCHEMA,
+   181→  SHARE_LINK_ISSUED_SCHEMA,
+   182→  SHARE_LINK_REVOKED_SCHEMA,
+   183→  SHARE_LINK_VIEW_SCHEMA,
+   184→  SHARE_MANIFEST_SCHEMA,
+   185→  SIGNED_URL_RESPONSE_SCHEMA,
+   186→  THREAD_MESSAGE_SCHEMA,
+   187→  THREAD_SCHEMA,
+   188→  TRIAL_RESPONSE_SCHEMA,
+   189→  UNDO_RESPONSE_SCHEMA,
+   190→  UPLOAD_VERSION_RESPONSE_SCHEMA,
+   191→  type UploadVersionResponse,
+   192→  VERSION_DIFF_SUMMARY_SCHEMA,
+   193→  WORKSPACE_SCHEMA,
+   194→} from "./response-schemas";
+   195→import {
+   196→  type ChatStreamController,
+   197→  type ChatStreamHandlers,
+   198→  type ChatStreamReconnectConfig,
+   199→  streamChat,
+   200→} from "./sse";
+   201→import { isAbortError, sleepWithAbort } from "./utils";
+   202→
+   203→// The §8.2/§10.1 wire type of `models.list()` — re-exported from the public
+   204→// surface (the package barrel re-exports this module) so model-picker
+   205→// consumers don't need a separate @studio/contracts import for it.
+   206→export type { ModelsResponse };
+   207→
+   208→// ---------------------------------------------------------------------------
+   209→// Options and shapes
+   210→// ---------------------------------------------------------------------------
+   211→
+   212→/** Anything that behaves like `fetch` (browser, node >=22, test doubles). */
+   213→export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+   214→
+   215→/** Factory for mutation idempotency keys (§7.2). Default: `crypto.randomUUID()`. */
+   216→export type IdempotencyKeyFactory = () => string;
+   217→
+   218→/** Per-call options: cancellation + explicit idempotency key for mutations. */
+   219→export interface CallOptions {
+   220→  readonly signal?: AbortSignal;
+   221→  /** §7.2 idempotency key; auto-generated when omitted. */
+   222→  readonly idempotencyKey?: string;
+   223→}
+   224→
+   225→/**
+   226→ * Share-surface call options: everything in CallOptions plus the optional
+   227→ * password that protected share tokens require (`x-share-password` header —
+   228→ * never a query parameter, so it stays out of logs and referrers).
+   229→ */
+   230→export interface ShareCallOptions extends CallOptions {
+   231→  readonly password?: string;
+   232→}
+   233→
+   234→export interface ApiClientOptions {
+   235→  /**
+   236→   * API root INCLUDING the version segment. Default `"/v1"` (same-origin,
+   237→   * browser). Node/test callers pass an absolute origin, e.g.
+   238→   * `http://127.0.0.1:8787/v1`.
+   239→   */
+   240→  readonly baseUrl?: string;
+   241→  /** `fetch` implementation; defaults to the global. */
+   242→  readonly fetch?: FetchLike;
+   243→  /** Extra headers merged into every request (e.g. `Authorization` for API keys). */
+   244→  readonly headers?: Readonly<Record<string, string>>;
+   245→  /** Idempotency-key factory for mutations. */
+   246→  readonly idempotencyKey?: IdempotencyKeyFactory;
+   247→  /** Sleep seam for the retry backoff (tests inject zero-delay sleeps). */
+   248→  readonly sleep?: (ms: number) => Promise<void>;
+   249→  /** GET retry backoff, initial attempt + one retry per entry. Default 250/500/1000 ms. */
+   250→  readonly retry?: { readonly delaysMs?: readonly number[] };
+   251→}
+   252→
+   253→/** Default GET backoff (task spec): 250 ms → 500 ms → 1000 ms, then give up. */
+   254→export const RETRY_DELAYS_MS: readonly number[] = [250, 500, 1000];
+   255→
+   256→const DEFAULT_BASE_URL = "/v1";
+   257→
+   258→// Query-parameter shapes use the contracts schemas' INPUT types: defaulted
+   259→// fields (e.g. `limit: 50`) stay optional for callers, while parse() still
+   260→// applies the defaults before the request goes out.
+   261→export type PaginationQueryInput = z.input<typeof PAGINATION_QUERY_SCHEMA>;
+   262→export type CommentsQueryInput = z.input<typeof COMMENTS_QUERY_SCHEMA>;
+   263→export type ShareCommentsQueryInput = z.input<typeof SHARE_COMMENTS_QUERY_SCHEMA>;
+   264→export type LedgerQueryInput = z.input<typeof LEDGER_QUERY_SCHEMA>;
+   265→export type ActivityQueryInput = z.input<typeof ACTIVITY_QUERY_SCHEMA>;
+   266→
+   267→// ---------------------------------------------------------------------------
+   268→// Small helpers
+   269→// ---------------------------------------------------------------------------
+   270→
+   271→function defaultSleep(ms: number): Promise<void> {
+   272→  if (ms <= 0) return Promise.resolve();
+   273→  return new Promise((resolve) => {
+   274→    setTimeout(resolve, ms);
+   275→  });
+   276→}
+   277→
+   278→/** Serialized query string; `undefined`/`null` values are skipped. */
+   279→export function buildQuery(
+   280→  params: Record<string, string | number | boolean | null | undefined>,
+   281→): string {
+   282→  const search = new URLSearchParams();
+   283→  for (const [key, value] of Object.entries(params)) {
+   284→    if (value === undefined || value === null) continue;
+   285→    search.set(key, String(value));
+   286→  }
+   287→  const text = search.toString();
+   288→  return text === "" ? "" : `?${text}`;
+   289→}
+   290→
+   291→interface RequestPlan<T> {
+   292→  readonly method: "GET" | "POST" | "PATCH" | "DELETE";
+   293→  readonly path: string;
+   294→  readonly query?: Record<string, string | number | boolean | undefined>;
+   295→  readonly body?: unknown;
+   296→  /** Runtime schema for the unwrapped `data` (strip unknown by default). */
+   297→  readonly responseSchema?: z.ZodType<T>;
+   298→  readonly idempotencyKey?: string;
+   299→  readonly signal?: AbortSignal;
+   300→  /** Extra request headers (e.g. the share password gate header). */
+   301→  readonly headers?: Record<string, string>;
+   302→}
+   303→
+   304→// ---------------------------------------------------------------------------
+   305→// Client implementation
+   306→// ---------------------------------------------------------------------------
+   307→
+   308→interface ClientInternals {
+   309→  readonly baseUrl: string;
+   310→  readonly fetchImpl: FetchLike;
+   311→  readonly extraHeaders: Record<string, string>;
+   312→  readonly newKey: IdempotencyKeyFactory;
+   313→  readonly sleep: (ms: number) => Promise<void>;
+   314→  readonly retryDelays: readonly number[];
+   315→}
+   316→
+   317→function encodeId(id: string): string {
+   318→  return encodeURIComponent(id);
+   319→}
+   320→
+   321→class ApiClientImpl {
+   322→  constructor(readonly core: ClientInternals) {}
+   323→
+   324→  /**
+   325→   * One HTTP call: envelope unwrap, response validation, GET retry with
+   326→   * backoff. Never surfaces raw response text — errors are typed ApiErrors.
+   327→   */
+   328→  async request<T>(plan: RequestPlan<T>): Promise<T> {
+   329→    const url = `${this.core.baseUrl}${plan.path}${plan.query ? buildQuery(plan.query) : ""}`;
+   330→
+   331→    let attempt = 0;
+   332→    for (;;) {
+   333→      let status = 0;
+   334→      let statusText = "";
+   335→      let text = "";
+   336→      try {
+   337→        const init = this.buildInit(plan);
+   338→        const response = await this.core.fetchImpl(url, init);
+   339→        status = response.status;
+   340→        statusText = response.statusText;
+   341→        text = await response.text();
+   342→      } catch (error) {
+   343→        if (isAbortError(error) || plan.signal?.aborted) throw error;
+   344→        const netError = networkError(error);
+   345→        if (!this.shouldRetry(plan, netError, attempt)) throw netError;
+   346→        await this.backoff(plan, attempt);
+   347→        attempt += 1;
+   348→        continue;
+   349→      }
+   350→
+   351→      if (status < 200 || status > 299) {
+   352→        const apiError = await fromResponse({
+   353→          status,
+   354→          statusText,
+   355→          text: async () => text,
+   356→        });
+   357→        if (!this.shouldRetry(plan, apiError, attempt)) throw apiError;
+   358→        await this.backoff(plan, attempt);
+   359→        attempt += 1;
+   360→        continue;
+   361→      }
+   362→
+   363→      return this.unwrapOk<T>(status, text, plan);
+   364→    }
+   365→  }
+   366→
+   367→  private buildInit(plan: RequestPlan<unknown>): RequestInit {
+   368→    const headers = new Headers(this.core.extraHeaders);
+   369→    headers.set("Accept", "application/json");
+   370→    if (plan.body !== undefined) headers.set("Content-Type", "application/json");
+   371→    if (plan.idempotencyKey !== undefined) headers.set("Idempotency-Key", plan.idempotencyKey);
+   372→    if (plan.headers !== undefined) {
+   373→      for (const [name, value] of Object.entries(plan.headers)) headers.set(name, value);
+   374→    }
+   375→    const init: RequestInit = {
+   376→      method: plan.method,
+   377→      headers,
+   378→      signal: plan.signal,
+   379→    };
+   380→    if (plan.body !== undefined) init.body = JSON.stringify(plan.body);
+   381→    return init;
+   382→  }
+   383→
+   384→  /** Only idempotent-safe GETs retry, and only when the failure is retryable. */
+   385→  private shouldRetry(plan: RequestPlan<unknown>, error: ApiError, attempt: number): boolean {
+   386→    if (plan.method !== "GET") return false;
+   387→    if (attempt >= this.core.retryDelays.length) return false;
+   388→    if (error.status === 0) return true; // network error before any response
+   389→    if (error.status === 408 || error.status === 429 || error.status >= 500) {
+   390→      return error.retryable;
+   391→    }
+   392→    return false;
+   393→  }
+   394→
+   395→  private backoff(plan: RequestPlan<unknown>, attempt: number): Promise<void> {
+   396→    const delay = this.core.retryDelays[attempt] ?? 0;
+   397→    return sleepWithAbort(this.core.sleep, delay, plan.signal);
+   398→  }
+   399→
+   400→  /** 2xx handling: empty body → `null`; otherwise a §7.3 Ok envelope is required. */
+   401→  private unwrapOk<T>(status: number, text: string, plan: RequestPlan<T>): T {
+   402→    if (text === "") {
+   403→      if (plan.responseSchema === undefined) return null as T;
+   404→      throw malformedResponseError(status);
+   405→    }
+   406→    let json: unknown;
+   407→    try {
+   408→      json = JSON.parse(text);
+   409→    } catch {
+   410→      throw malformedResponseError(status);
+   411→    }
+   412→    if (isErr(json)) {
+   413→      const error: Err["error"] = json.error;
+   414→      // A 2xx status with an Err body is still the §7.3 failure arm.
+   415→      throw new ApiError({
+   416→        code: error.code,
+   417→        message: error.message,
+   418→        hint: error.hint,
+   419→        retryable: error.retryable,
+   420→        requestId: error.requestId,
+   421→        status,
+   422→        cause: json,
+   423→      });
+   424→    }
+   425→    if (!isOk(json)) throw malformedResponseError(status);
+   426→    const data = json.data;
+   427→    if (plan.responseSchema === undefined) return data as T;
+   428→    try {
+   429→      return plan.responseSchema.parse(data);
+   430→    } catch (error) {
+   431→      throw malformedResponseError(status, error);
+   432→    }
+   433→  }
+   434→
+   435→  /** Client-side §7.2 request validation — fails fast, never sends. */
+   436→  validateBody<T>(schema: z.ZodType<T>, body: unknown, path: string): T {
+   437→    try {
+   438→      return schema.parse(body);
+   439→    } catch (error) {
+   440→      if (isApiError(error)) throw error;
+   441→      throw invalidRequestError(
+   442→        Object.assign(new Error(`invalid body for ${path}`), { cause: error }),
+   443→      );
+   444→    }
+   445→  }
+   446→
+   447→  autoKey(): string {
+   448→    return this.core.newKey();
+   449→  }
+   450→
+   451→  // -- GETs don't send Idempotency-Key; mutations always do (auto when absent).
+   452→  async get<T>(
+   453→    path: string,
+   454→    query: Record<string, string | number | boolean | undefined> | undefined,
+   455→    schema: z.ZodType<T>,
+   456→    signal?: AbortSignal,
+   457→    headers?: Record<string, string>,
+   458→  ): Promise<T> {
+   459→    return this.request<T>({
+   460→      method: "GET",
+   461→      path,
+   462→      query,
+   463→      responseSchema: schema,
+   464→      signal,
+   465→      headers,
+   466→    });
+   467→  }
+   468→
+   469→  async mutate<T>(
+   470→    method: "POST" | "PATCH" | "DELETE",
+   471→    path: string,
+   472→    plan: {
+   473→      body?: unknown;
+   474→      bodySchema?: z.ZodType<unknown>;
+   475→      responseSchema?: z.ZodType<T>;
+   476→      idempotencyKey?: string;
+   477→      signal?: AbortSignal;
+   478→      headers?: Record<string, string>;
+   479→    },
+   480→  ): Promise<T> {
+   481→    const body =
+   482→      plan.bodySchema !== undefined
+   483→        ? this.validateBody(plan.bodySchema, plan.body, path)
+   484→        : plan.body;
+   485→    return this.request<T>({
+   486→      method,
+   487→      path,
+   488→      body,
+   489→      responseSchema: plan.responseSchema,
+   490→      idempotencyKey: plan.idempotencyKey ?? this.autoKey(),
+   491→      signal: plan.signal,
+   492→      headers: plan.headers,
+   493→    });
+   494→  }
+   495→}
+   496→
+   497→// ---------------------------------------------------------------------------
+   498→// Public client surface
+   499→// ---------------------------------------------------------------------------
+   500→
+   501→/** Typed, namespaced client for the §7.2 API surface. */
+   502→export interface ApiClient {
+   503→  readonly me: {
+   504→    /** GET /v1/me — user + memberships + plan summary. */
+   505→    get(options?: CallOptions): Promise<MeResponse>;
+   506→  };
+   507→  readonly workspaces: {
+   508→    list(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<Workspace>>;
+   509→    create(body: CreateWorkspaceRequest, options?: CallOptions): Promise<Workspace>;
+   510→    patch(id: string, body: PatchWorkspaceRequest, options?: CallOptions): Promise<Workspace>;
+   511→  };
+   512→  readonly invites: {
+   513→    create(workspaceId: string, body: InviteMemberRequest, options?: CallOptions): Promise<Invite>;
+   514→    accept(token: string, options?: CallOptions): Promise<AcceptedInvite>;
+   515→  };
+   516→  readonly projects: {
+   517→    list(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<Project>>;
+   518→    create(body: CreateProjectRequest, options?: CallOptions): Promise<Project>;
+   519→    get(id: string, options?: CallOptions): Promise<Project>;
+   520→    patch(id: string, body: PatchProjectRequest, options?: CallOptions): Promise<Project>;
+   521→    /** Soft delete (§9.1 `deleted_at`); returns `null`. */
+   522→    delete(id: string, options?: CallOptions): Promise<null>;
+   523→    manifest(id: string, options?: CallOptions): Promise<ProjectManifest>;
+   524→  };
+   525→  readonly versions: {
+   526→    /** GET /v1/projects/:id/versions — the §M7.4 timeline (author name, agent-run presence, sha256 prefix). */
+   527→    list(
+   528→      projectId: string,
+   529→      query?: PaginationQueryInput,
+   530→      options?: CallOptions,
+   531→    ): Promise<Page<VersionTimelineEntry>>;
+   532→    /**
+   533→     * Two-phase immutable snapshot upload (§9.2/§9.3): POST the JSON
+   534→     * descriptor (sha256 + baseVersionId; a stale base returns 409
+   535→     * PROJECT_VERSION_CONFLICT), then PUT the bytes to the signed URL the
+   536→     * response carries. The idempotency key makes the whole operation
+   537→     * retryable without duplicating the version.
+   538→     */
+   539→    upload(
+   540→      projectId: string,
+   541→      input: {
+   542→        readonly baseVersionId: string;
+   543→        readonly sha256: string;
+   544→        readonly label?: string;
+   545→        readonly agentRunId?: string;
+   546→        readonly bytes: Blob | Uint8Array;
+   547→      },
+   548→      options?: CallOptions,
+   549→    ): Promise<ProjectVersion>;
+   550→    /**
+   551→     * POST /v1/projects/:id/versions/:versionId/restore — restores as a NEW
+   552→     * version (§9.3; history is never rewritten). Confirm-with-confirmation:
+   553→     * `body.confirmLabel` is REQUIRED — a bare restore is refused client-side
+   554→     * and server-side. The idempotency key makes an accidental double-POST a
+   555→     * replay instead of a second restore.
+   556→     */
+   557→    restore(
+   558→      projectId: string,
+   559→      versionId: string,
+   560→      body: RestoreVersionRequest,
+   561→      options?: CallOptions,
+   562→    ): Promise<ProjectVersion>;
+   563→    /**
+   564→     * POST /v1/projects/:id/versions/:versionId/label — labels are the ONLY
+   565→     * mutable field of a version row (§9.3 label metadata; D-24 candidate).
+   566→     */
+   567→    label(
+   568→      projectId: string,
+   569→      versionId: string,
+   570→      body: SetVersionLabelRequest,
+   571→      options?: CallOptions,
+   572→    ): Promise<ProjectVersion>;
+   573→    /**
+   574→     * GET /v1/projects/:id/versions/:versionId/diff — structural summary vs
+   575→     * the parent (size delta, authorship change, time gap); no deep content
+   576→     * diff in v1.
+   577→     */
+   578→    diff(projectId: string, versionId: string, options?: CallOptions): Promise<VersionDiffSummary>;
+   579→  };
+   580→  readonly leases: {
+   581→    /**
+   582→     * POST /v1/projects/:id/lease — acquire or renew (same body, §11).
+   583→     * Answers with the acquire outcome: `acquired: false` + `readOnly: true`
+   584→     * means another editor holds the lease (§9.3). Heartbeat = re-acquire
+   585→     * with the same `sessionId` while the tab is open.
+   586→     */
+   587→    acquire(
+   588→      projectId: string,
+   589→      body: AcquireLeaseRequest,
+   590→      options?: CallOptions,
+   591→    ): Promise<LeaseAcquireResponse>;
+   592→    /**
+   593→     * DELETE /v1/projects/:id/lease — release. When a queue exists, the
+   594→     * response carries the §M7 takeover election: the OLDEST queued
+   595→     * requester as `nextHolder` (their UI lets them acquire instantly).
+   596→     */
+   597→    release(projectId: string, options?: CallOptions): Promise<LeaseReleaseResponse>;
+   598→    /**
+   599→     * GET /v1/projects/:id/lease-state — the "Alex is editing" banner data
+   600→     * (§M7 task 3): active holder, pending queue, the caller's standing and
+   601→     * whether a `POST /lease` right now would win. Poll this for the banner.
+   602→     */
+   603→    leaseState(projectId: string, options?: CallOptions): Promise<LeaseStateResponse>;
+   604→    /**
+   605→     * POST /v1/projects/:id/lease-request — join the edit queue. Dedupes per
+   606→     * user (re-requests keep the original position); a full queue is a typed
+   607→     * QUOTA_EXCEEDED error (cap 20).
+   608→     */
+   609→    requestLease(projectId: string, options?: CallOptions): Promise<LeaseRequestResponse>;
+   610→    /** DELETE /v1/projects/:id/lease-request — leave the edit queue. */
+   611→    cancelLeaseRequest(
+   612→      projectId: string,
+   613→      options?: CallOptions,
+   614→    ): Promise<LeaseRequestCancelledResponse>;
+   615→  };
+   616→  readonly assets: {
+   617→    list(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<Asset>>;
+   618→    /** POST /v1/assets — descriptor only; PUT the bytes to `upload.url`. */
+   619→    createDescriptor(body: CreateAssetRequest, options?: CallOptions): Promise<CreateAssetResponse>;
+   620→    /** GET /v1/assets/:id/url — short-lived signed download URL. */
+   621→    getUrl(id: string, options?: CallOptions): Promise<SignedUrlResponse>;
+   622→  };
+   623→  readonly threads: {
+   624→    list(
+   625→      projectId: string,
+   626→      query?: PaginationQueryInput,
+   627→      options?: CallOptions,
+   628→    ): Promise<Page<Thread>>;
+   629→    create(projectId: string, body?: CreateThreadRequest, options?: CallOptions): Promise<Thread>;
+   630→    messages(
+   631→      threadId: string,
+   632→      query?: PaginationQueryInput,
+   633→      options?: CallOptions,
+   634→    ): Promise<Page<ThreadMessage>>;
+   635→  };
+   636→  readonly chat: {
+   637→    /** POST /v1/threads/:id/chat — AI SDK UI stream + §7.4 data parts. See ./sse.ts. */
+   638→    stream(
+   639→      threadId: string,
+   640→      body: ChatRequest,
+   641→      handlers?: ChatStreamHandlers & {
+   642→        readonly signal?: AbortSignal;
+   643→        readonly reconnect?: ChatStreamReconnectConfig;
+   644→      },
+   645→    ): ChatStreamController;
+   646→  };
+   647→  readonly runs: {
+   648→    get(runId: string, options?: CallOptions): Promise<RunRecord>;
+   649→    /** POST /v1/runs/:id/cancel; the response body is not part of the contracts. */
+   650→    cancel(runId: string, body?: CancelRunRequest, options?: CallOptions): Promise<null>;
+   651→    /** POST /v1/runs/:id/events — client tool result / apply result (§8.7). */
+   652→    postEvent(runId: string, body: RunEventRequest, options?: CallOptions): Promise<null>;
+   653→    /**
+   654→     * POST /v1/runs/:id/apply — record an applied plan (§8.7): commits the
+   655→     * plan credits (§8.8/D-20). Replays (same idempotency key, or the same
+   656→     * batch + version with a fresh key) return the original outcome.
+   657→     */
+   658→    applyRun(runId: string, body: ApplyRequest, options?: CallOptions): Promise<ApplyResponse>;
+   659→    /**
+   660→     * POST /v1/runs/:id/undo — undo an applied run as ONE step (§8.7);
+   661→     * free after a committed apply (no ledger mutation).
+   662→     */
+   663→    undoRun(runId: string, body: UndoRequest, options?: CallOptions): Promise<UndoResponse>;
+   664→  };
+   665→  readonly models: {
+   666→    /** GET /v1/models — workspace plan + the models selectable on it (§8.2). */
+   667→    list(options?: CallOptions): Promise<ModelsResponse>;
+   668→  };
+   669→  readonly credits: {
+   670→    get(options?: CallOptions): Promise<CreditsSummary>;
+   671→    ledger(query?: LedgerQueryInput, options?: CallOptions): Promise<Page<LedgerEntry>>;
+   672→  };
+   673→  readonly billing: {
+   674→    /** POST /v1/billing/checkout — subscribe to a paid plan (D-4: trial is never a checkout target). */
+   675→    checkout(body: CheckoutRequest, options?: CallOptions): Promise<CheckoutResponse>;
+   676→    /** POST /v1/billing/topup — buy a credit pack (one-time payment). */
+   677→    topup(body: TopUpRequest, options?: CallOptions): Promise<TopUpResponse>;
+   678→    /** POST /v1/billing/portal — Stripe customer portal session. */
+   679→    portal(body?: PortalRequest, options?: CallOptions): Promise<PortalResponse>;
+   680→    /** GET /v1/billing/state — the ONE billing read the UI consumes (plan,
+   681→     * subscription status incl. grace/trialing, entitlements, credits). */
+   682→    state(options?: CallOptions): Promise<BillingState>;
+   683→    /** POST /v1/billing/trial — start the card-required 14-day trial. */
+   684→    startTrial(body?: TrialRequest, options?: CallOptions): Promise<TrialResponse>;
+   685→    /** GET /v1/billing/invoices — the workspace's recorded Stripe invoices
+   686→     * (F-J3), newest-first, cursor-paginated. `amountCents` is money in
+   687→     * Stripe minor units, never credits. */
+   688→    invoices(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<InvoiceRecord>>;
+   689→  };
+   690→  readonly renders: {
+   691→    create(body: QueueRenderRequest, options?: CallOptions): Promise<RenderJob>;
+   692→    get(id: string, options?: CallOptions): Promise<RenderJob>;
+   693→  };
+   694→  readonly comments: {
+   695→    list(
+   696→      projectId: string,
+   697→      query?: CommentsQueryInput,
+   698→      options?: CallOptions,
+   699→    ): Promise<Page<Comment>>;
+   700→    /** GET /v1/projects/:id/comments — the flat threaded list (D-15: compId
+   701→     * filters server-side; rows carry parentCommentId for tree building). */
+   702→    listThreadedComments(
+   703→      projectId: string,
+   704→      query?: CommentsQueryInput,
+   705→      options?: CallOptions,
+   706→    ): Promise<Page<Comment>>;
+   707→    create(projectId: string, body: CreateCommentRequest, options?: CallOptions): Promise<Comment>;
+   708→    /** POST /v1/comments/:id/replies — reply; the server inherits the
+   709→     * parent's anchor and caps depth at 3. */
+   710→    replyComment(
+   711→      commentId: string,
+   712→      body: CommentReplyRequest,
+   713→      options?: CallOptions,
+   714→    ): Promise<Comment>;
+   715→    /** POST /v1/comments/:id/resolve — idempotent resolve; `resolved: false`
+   716→     * reopens the thread (empty body resolves). */
+   717→    resolveComment(
+   718→      commentId: string,
+   719→      body?: ResolveCommentRequestInput,
+   720→      options?: CallOptions,
+   721→    ): Promise<Comment>;
+   722→  };
+   723→  readonly activity: {
+   724→    list(
+   725→      projectId: string,
+   726→      query?: ActivityQueryInput,
+   727→      options?: CallOptions,
+   728→    ): Promise<Page<ActivityEntry>>;
+   729→    /**
+   730→     * GET /v1/projects/:id/audit-export — admin-only, bounded JSON export of
+   731→     * the raw audit rows (ids/emails are compliance DATA here, never UI copy).
+   732→     * Served as a Content-Disposition attachment; the client returns the
+   733→     * parsed payload so hosts can also save it as a file.
+   734→     */
+   735→    auditExport(projectId: string, options?: CallOptions): Promise<AuditExport>;
+   736→  };
+   737→  readonly presence: {
+   738→    /**
+   739→     * POST /v1/projects/:id/presence — upsert my heartbeat and get the
+   740→     * active viewers in ONE round-trip (the heartbeat IS the poll; no SSE
+   741→     * in v1). Cadence for the editor SPA (see gateway routes/presence.ts
+   742→     * for the full recipe): beat every LEASE_HEARTBEAT_MS (120s) while the
+   743→     * tab is visible, pause while hidden, beat immediately on visible.
+   744→     * No cursor/mouse data — the body is strict-schema'd server-side.
+   745→     */
+   746→    beatPresence(
+   747→      projectId: string,
+   748→      body?: PresenceBeatRequest,
+   749→      options?: CallOptions,
+   750→    ): Promise<PresenceViewersResponse>;
+   751→    /**
+   752→     * GET /v1/projects/:id/presence — the active viewers list (no write:
+   753→     * does NOT refresh your own heartbeat; for read-only surfaces or a
+   754→     * hidden tab that still wants to render the list).
+   755→     */
+   756→    listPresence(projectId: string, options?: CallOptions): Promise<PresenceViewersResponse>;
+   757→  };
+   758→  readonly share: {
+   759→    /**
+   760→     * PUBLIC — GET /v1/share/:token. Share metadata for the /s/:token page
+   761→     * (project name, expiry, hasPassword) — never project content. No
+   762→     * session needed: the token IS the capability.
+   763→     */
+   764→    getInfo(token: string, options?: ShareCallOptions): Promise<ShareInfo>;
+   765→    /**
+   766→     * PUBLIC — GET /v1/share/:token/manifest. The web player's read surface
+   767→     * (signed URLs, no internal ids). Pass `password` for protected tokens.
+   768→     */
+   769→    getManifest(token: string, options?: ShareCallOptions): Promise<ShareManifest>;
+   770→    /** PUBLIC — GET /v1/share/:token/comments (D-15: compId filters server-side). */
+   771→    listComments(
+   772→      token: string,
+   773→      query?: ShareCommentsQueryInput,
+   774→      options?: ShareCallOptions,
+   775→    ): Promise<Page<ShareComment>>;
+   776→    /**
+   777→     * PUBLIC — POST /v1/share/:token/comments. Guest comment (name + email
+   778→     * + anchor + body); per-IP rate-limited server-side (429 RATE_LIMITED).
+   779→     */
+   780→    createComment(
+   781→      token: string,
+   782→      body: CreateShareCommentRequest,
+   783→      options?: ShareCallOptions,
+   784→    ): Promise<ShareComment>;
+   785→    /** PUBLIC — POST /v1/share/:token/request-access. Typed ok; the
+   786→     * workspace sees the request in its activity feed (v1 notification). */
+   787→    requestAccess(
+   788→      token: string,
+   789→      body: RequestAccessRequest,
+   790→      options?: ShareCallOptions,
+   791→    ): Promise<RequestAccessResponse>;
+   792→    /**
+   793→     * AUTHED — POST /v1/projects/:id/share-links (editor role). Mints a
+   794→     * token and returns it ONCE: persist the /s/:token URL immediately —
+   795→     * it can never be re-fetched (only sha256(token) is stored).
+   796→     */
+   797→    issueLink(
+   798→      projectId: string,
+   799→      body?: IssueShareLinkRequest,
+   800→      options?: CallOptions,
+   801→    ): Promise<ShareLinkIssued>;
+   802→    /** AUTHED — GET /v1/projects/:id/share-links. Active links, NO token material. */
+   803→    listLinks(projectId: string, options?: CallOptions): Promise<Page<ShareLinkView>>;
+   804→    /** AUTHED — DELETE /v1/share/:id. Revoke (creator or admin); idempotent. */
+   805→    revokeLink(id: string, options?: CallOptions): Promise<ShareLinkRevoked>;
+   806→  };
+   807→}
+   808→
+   809→/**
+   810→ * Builds the typed API client. `baseUrl` includes the version segment
+   811→ * (default `"/v1"` for same-origin browser use). All mutation methods send
+   812→ * `Idempotency-Key` (§7.2) — pass your own per logical operation, or let the
+   813→ * client derive one.
+   814→ */
+   815→export function createApiClient(options: ApiClientOptions = {}): ApiClient {
+   816→  const core: ClientInternals = {
+   817→    baseUrl: (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, ""),
+   818→    fetchImpl: options.fetch ?? ((input, init) => fetch(input, init)),
+   819→    extraHeaders: { ...(options.headers ?? {}) },
+   820→    newKey: options.idempotencyKey ?? (() => crypto.randomUUID()),
+   821→    sleep: options.sleep ?? defaultSleep,
+   822→    retryDelays: options.retry?.delaysMs ?? RETRY_DELAYS_MS,
+   823→  };
+   824→  const impl = new ApiClientImpl(core);
+   825→
+   826→  const mutationKey = (options: CallOptions | undefined): string | undefined => {
+   827→    const explicit = options?.idempotencyKey;
+   828→    if (explicit !== undefined) {
+   829→      // §7.2: client-generated, ≥8 chars (contracts IDEMPOTENCY_KEY_SCHEMA).
+   830→      return impl.validateBody(IDEMPOTENCY_KEY_SCHEMA, explicit, "Idempotency-Key");
+   831→    }
+   832→    return undefined;
+   833→  };
+   834→
+   835→  const queryOf = (
+   836→    schema: z.ZodType<unknown>,
+   837→    query: unknown,
+   838→  ): Record<string, string | number | boolean | undefined> => {
+   839→    const parsed = impl.validateBody(schema, query ?? {}, "list query");
+   840→    const out: Record<string, string | number | boolean | undefined> = {};
+   841→    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+   842→      out[k] = v as string | number | boolean | undefined;
+   843→    }
+   844→    return out;
+   845→  };
+   846→  const paginated = (query: unknown): Record<string, string | number | boolean | undefined> =>
+   847→    queryOf(PAGINATION_QUERY_SCHEMA, query);
+   848→
+   849→  // Share password → x-share-password header (never the query string, so
+   850→  // logs/referrers never capture it). Undefined for open tokens.
+   851→  const passwordHeaders = (options?: ShareCallOptions): Record<string, string> | undefined =>
+   852→    options?.password === undefined ? undefined : { [SHARE_PASSWORD_HEADER]: options.password };
+   853→
+   854→  const client: ApiClient = {
+   855→    // Every namespace method is `async` so client-side validation failures
+   856→    // (query schemas, explicit idempotency keys, bodies) surface as rejections
+   857→    // of the returned promise instead of synchronous throws — callers await.
+   858→    // `chat.stream` is the one synchronous member: it returns the live
+   859→    // controller immediately and throws client-side for an invalid body.
+   860→    me: {
+   861→      get: async (options) => impl.get("/me", undefined, ME_RESPONSE_SCHEMA, options?.signal),
+   862→    },
+   863→    workspaces: {
+   864→      list: async (query, options) =>
+   865→        impl.get("/workspaces", paginated(query), PAGE_WORKSPACES_SCHEMA, options?.signal),
+   866→      create: async (body, options) =>
+   867→        impl.mutate("POST", "/workspaces", {
+   868→          body,
+   869→          bodySchema: CREATE_WORKSPACE_SCHEMA,
+   870→          responseSchema: WORKSPACE_SCHEMA,
+   871→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   872→          signal: options?.signal,
+   873→        }),
+   874→      patch: async (id, body, options) =>
+   875→        impl.mutate("PATCH", `/workspaces/${encodeId(id)}`, {
+   876→          body,
+   877→          bodySchema: PATCH_WORKSPACE_SCHEMA,
+   878→          responseSchema: WORKSPACE_SCHEMA,
+   879→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   880→          signal: options?.signal,
+   881→        }),
+   882→    },
+   883→    invites: {
+   884→      create: async (workspaceId, body, options) =>
+   885→        impl.mutate("POST", `/workspaces/${encodeId(workspaceId)}/invites`, {
+   886→          body,
+   887→          bodySchema: INVITE_MEMBER_SCHEMA,
+   888→          responseSchema: INVITE_SCHEMA,
+   889→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   890→          signal: options?.signal,
+   891→        }),
+   892→      accept: async (token, options) =>
+   893→        impl.mutate("POST", `/invites/${encodeId(token)}/accept`, {
+   894→          responseSchema: ACCEPTED_INVITE_SCHEMA,
+   895→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   896→          signal: options?.signal,
+   897→        }),
+   898→    },
+   899→    projects: {
+   900→      list: async (query, options) =>
+   901→        impl.get("/projects", paginated(query), PAGE_PROJECTS_SCHEMA, options?.signal),
+   902→      create: async (body, options) =>
+   903→        impl.mutate("POST", "/projects", {
+   904→          body,
+   905→          bodySchema: CREATE_PROJECT_SCHEMA,
+   906→          responseSchema: PROJECT_SCHEMA,
+   907→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   908→          signal: options?.signal,
+   909→        }),
+   910→      get: async (id, options) =>
+   911→        impl.get(`/projects/${encodeId(id)}`, undefined, PROJECT_SCHEMA, options?.signal),
+   912→      patch: async (id, body, options) =>
+   913→        impl.mutate("PATCH", `/projects/${encodeId(id)}`, {
+   914→          body,
+   915→          bodySchema: PATCH_PROJECT_SCHEMA,
+   916→          responseSchema: PROJECT_SCHEMA,
+   917→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   918→          signal: options?.signal,
+   919→        }),
+   920→      delete: async (id, options) =>
+   921→        impl.mutate("DELETE", `/projects/${encodeId(id)}`, {
+   922→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   923→          signal: options?.signal,
+   924→        }),
+   925→      manifest: async (id, options) =>
+   926→        impl.get(
+   927→          `/projects/${encodeId(id)}/manifest`,
+   928→          undefined,
+   929→          PROJECT_MANIFEST_SCHEMA,
+   930→          options?.signal,
+   931→        ),
+   932→    },
+   933→    versions: {
+   934→      list: async (projectId, query, options) =>
+   935→        impl.get(
+   936→          `/projects/${encodeId(projectId)}/versions`,
+   937→          paginated(query),
+   938→          PAGE_VERSION_TIMELINE_SCHEMA,
+   939→          options?.signal,
+   940→        ),
+   941→      upload: async (projectId, input, options) => uploadVersion(impl, projectId, input, options),
+   942→      restore: async (projectId, versionId, body, options) =>
+   943→        impl.mutate(
+   944→          "POST",
+   945→          `/projects/${encodeId(projectId)}/versions/${encodeId(versionId)}/restore`,
+   946→          {
+   947→            body,
+   948→            bodySchema: RESTORE_VERSION_SCHEMA,
+   949→            responseSchema: PROJECT_VERSION_SCHEMA,
+   950→            idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   951→            signal: options?.signal,
+   952→          },
+   953→        ),
+   954→      label: async (projectId, versionId, body, options) =>
+   955→        impl.mutate(
+   956→          "POST",
+   957→          `/projects/${encodeId(projectId)}/versions/${encodeId(versionId)}/label`,
+   958→          {
+   959→            body,
+   960→            bodySchema: SET_VERSION_LABEL_SCHEMA,
+   961→            responseSchema: PROJECT_VERSION_SCHEMA,
+   962→            idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   963→            signal: options?.signal,
+   964→          },
+   965→        ),
+   966→      diff: async (projectId, versionId, options) =>
+   967→        impl.get(
+   968→          `/projects/${encodeId(projectId)}/versions/${encodeId(versionId)}/diff`,
+   969→          undefined,
+   970→          VERSION_DIFF_SUMMARY_SCHEMA,
+   971→          options?.signal,
+   972→        ),
+   973→    },
+   974→    leases: {
+   975→      acquire: async (projectId, body, options) =>
+   976→        impl.mutate("POST", `/projects/${encodeId(projectId)}/lease`, {
+   977→          body,
+   978→          bodySchema: ACQUIRE_LEASE_SCHEMA,
+   979→          responseSchema: LEASE_ACQUIRE_RESPONSE_SCHEMA,
+   980→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   981→          signal: options?.signal,
+   982→        }),
+   983→      release: async (projectId, options) =>
+   984→        impl.mutate("DELETE", `/projects/${encodeId(projectId)}/lease`, {
+   985→          responseSchema: LEASE_RELEASE_RESPONSE_SCHEMA,
+   986→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+   987→          signal: options?.signal,
+   988→        }),
+   989→      leaseState: async (projectId, options) =>
+   990→        impl.get(
+   991→          `/projects/${encodeId(projectId)}/lease-state`,
+   992→          undefined,
+   993→          LEASE_STATE_RESPONSE_SCHEMA,
+   994→          options?.signal,
+   995→        ),
+   996→      requestLease: async (projectId, options) =>
+   997→        impl.mutate("POST", `/projects/${encodeId(projectId)}/lease-request`, {
+   998→          responseSchema: LEASE_REQUEST_RESPONSE_SCHEMA,
+   999→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1000→          signal: options?.signal,
+  1001→        }),
+  1002→      cancelLeaseRequest: async (projectId, options) =>
+  1003→        impl.mutate("DELETE", `/projects/${encodeId(projectId)}/lease-request`, {
+  1004→          responseSchema: LEASE_REQUEST_CANCELLED_RESPONSE_SCHEMA,
+  1005→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1006→          signal: options?.signal,
+  1007→        }),
+  1008→    },
+  1009→    assets: {
+  1010→      list: async (query, options) =>
+  1011→        impl.get("/assets", paginated(query), PAGE_ASSETS_SCHEMA, options?.signal),
+  1012→      createDescriptor: async (body, options) =>
+  1013→        impl.mutate("POST", "/assets", {
+  1014→          body,
+  1015→          bodySchema: CREATE_ASSET_SCHEMA,
+  1016→          responseSchema: CREATE_ASSET_RESPONSE_SCHEMA,
+  1017→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1018→          signal: options?.signal,
+  1019→        }),
+  1020→      getUrl: async (id, options) =>
+  1021→        impl.get(
+  1022→          `/assets/${encodeId(id)}/url`,
+  1023→          undefined,
+  1024→          SIGNED_URL_RESPONSE_SCHEMA,
+  1025→          options?.signal,
+  1026→        ),
+  1027→    },
+  1028→    threads: {
+  1029→      list: async (projectId, query, options) =>
+  1030→        impl.get(
+  1031→          `/projects/${encodeId(projectId)}/threads`,
+  1032→          paginated(query),
+  1033→          PAGE_THREADS_SCHEMA,
+  1034→          options?.signal,
+  1035→        ),
+  1036→      create: async (projectId, body, options) =>
+  1037→        impl.mutate("POST", `/projects/${encodeId(projectId)}/threads`, {
+  1038→          body: body ?? {},
+  1039→          bodySchema: CREATE_THREAD_SCHEMA,
+  1040→          responseSchema: THREAD_SCHEMA,
+  1041→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1042→          signal: options?.signal,
+  1043→        }),
+  1044→      messages: async (threadId, query, options) =>
+  1045→        impl.get(
+  1046→          `/threads/${encodeId(threadId)}/messages`,
+  1047→          paginated(query),
+  1048→          PAGE_MESSAGES_SCHEMA,
+  1049→          options?.signal,
+  1050→        ),
+  1051→    },
+  1052→    chat: {
+  1053→      stream: (threadId, body, handlers) =>
+  1054→        streamChat({
+  1055→          threadId,
+  1056→          body,
+  1057→          baseUrl: core.baseUrl,
+  1058→          fetchImpl: core.fetchImpl,
+  1059→          sleep: core.sleep,
+  1060→          extraHeaders: core.extraHeaders,
+  1061→          idempotencyKeyFactory: core.newKey,
+  1062→          signal: handlers?.signal,
+  1063→          reconnect: handlers?.reconnect,
+  1064→          onEvent: handlers?.onEvent,
+  1065→          onError: handlers?.onError,
+  1066→          onReconnect: handlers?.onReconnect,
+  1067→          onPause: handlers?.onPause,
+  1068→          onDone: handlers?.onDone,
+  1069→        }),
+  1070→    },
+  1071→    runs: {
+  1072→      get: async (runId, options) =>
+  1073→        impl.get(`/runs/${encodeId(runId)}`, undefined, RUN_RECORD_SCHEMA, options?.signal),
+  1074→      cancel: async (runId, body, options) =>
+  1075→        impl.mutate("POST", `/runs/${encodeId(runId)}/cancel`, {
+  1076→          body: body ?? {},
+  1077→          bodySchema: CANCEL_RUN_SCHEMA,
+  1078→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1079→          signal: options?.signal,
+  1080→        }),
+  1081→      postEvent: async (runId, body, options) =>
+  1082→        impl.mutate("POST", `/runs/${encodeId(runId)}/events`, {
+  1083→          body,
+  1084→          bodySchema: RUN_EVENT_REQUEST_SCHEMA,
+  1085→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1086→          signal: options?.signal,
+  1087→        }),
+  1088→      applyRun: async (runId, body, options) =>
+  1089→        impl.mutate("POST", `/runs/${encodeId(runId)}/apply`, {
+  1090→          body,
+  1091→          bodySchema: APPLY_REQUEST_SCHEMA,
+  1092→          responseSchema: APPLY_RESPONSE_SCHEMA,
+  1093→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1094→          signal: options?.signal,
+  1095→        }),
+  1096→      undoRun: async (runId, body, options) =>
+  1097→        impl.mutate("POST", `/runs/${encodeId(runId)}/undo`, {
+  1098→          body,
+  1099→          bodySchema: UNDO_REQUEST_SCHEMA,
+  1100→          responseSchema: UNDO_RESPONSE_SCHEMA,
+  1101→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1102→          signal: options?.signal,
+  1103→        }),
+  1104→    },
+  1105→    models: {
+  1106→      list: async (options) =>
+  1107→        impl.get("/models", undefined, MODELS_RESPONSE_SCHEMA, options?.signal),
+  1108→    },
+  1109→    credits: {
+  1110→      get: async (options) =>
+  1111→        impl.get("/credits", undefined, CREDITS_SUMMARY_SCHEMA, options?.signal),
+  1112→      ledger: async (query, options) =>
+  1113→        impl.get(
+  1114→          "/credits/ledger",
+  1115→          queryOf(LEDGER_QUERY_SCHEMA, query),
+  1116→          PAGE_LEDGER_SCHEMA,
+  1117→          options?.signal,
+  1118→        ),
+  1119→    },
+  1120→    billing: {
+  1121→      checkout: async (body, options) =>
+  1122→        impl.mutate("POST", "/billing/checkout", {
+  1123→          body,
+  1124→          bodySchema: CHECKOUT_SCHEMA,
+  1125→          responseSchema: CHECKOUT_RESPONSE_SCHEMA,
+  1126→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1127→          signal: options?.signal,
+  1128→        }),
+  1129→      topup: async (body, options) =>
+  1130→        impl.mutate("POST", "/billing/topup", {
+  1131→          body,
+  1132→          bodySchema: TOPUP_SCHEMA,
+  1133→          responseSchema: CHECKOUT_RESPONSE_SCHEMA,
+  1134→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1135→          signal: options?.signal,
+  1136→        }),
+  1137→      portal: async (body, options) =>
+  1138→        impl.mutate("POST", "/billing/portal", {
+  1139→          body: body ?? {},
+  1140→          bodySchema: PORTAL_SCHEMA,
+  1141→          responseSchema: PORTAL_RESPONSE_SCHEMA,
+  1142→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1143→          signal: options?.signal,
+  1144→        }),
+  1145→      state: async (options) =>
+  1146→        impl.get("/billing/state", undefined, BILLING_STATE_SCHEMA, options?.signal),
+  1147→      startTrial: async (body, options) =>
+  1148→        impl.mutate("POST", "/billing/trial", {
+  1149→          body: body ?? {},
+  1150→          bodySchema: TRIAL_REQUEST_SCHEMA,
+  1151→          responseSchema: TRIAL_RESPONSE_SCHEMA,
+  1152→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1153→          signal: options?.signal,
+  1154→        }),
+  1155→      invoices: async (query, options) =>
+  1156→        impl.get(
+  1157→          "/billing/invoices",
+  1158→          queryOf(INVOICES_QUERY_SCHEMA, query),
+  1159→          PAGE_INVOICES_SCHEMA,
+  1160→          options?.signal,
+  1161→        ),
+  1162→    },
+  1163→    renders: {
+  1164→      create: async (body, options) =>
+  1165→        impl.mutate("POST", "/renders", {
+  1166→          body,
+  1167→          bodySchema: QUEUE_RENDER_SCHEMA,
+  1168→          responseSchema: RENDER_JOB_SCHEMA,
+  1169→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1170→          signal: options?.signal,
+  1171→        }),
+  1172→      get: async (id, options) =>
+  1173→        impl.get(`/renders/${encodeId(id)}`, undefined, RENDER_JOB_SCHEMA, options?.signal),
+  1174→    },
+  1175→    comments: {
+  1176→      list: async (projectId, query, options) =>
+  1177→        impl.get(
+  1178→          `/projects/${encodeId(projectId)}/comments`,
+  1179→          queryOf(COMMENTS_QUERY_SCHEMA, query),
+  1180→          PAGE_COMMENTS_SCHEMA,
+  1181→          options?.signal,
+  1182→        ),
+  1183→      listThreadedComments: async (projectId, query, options) =>
+  1184→        impl.get(
+  1185→          `/projects/${encodeId(projectId)}/comments`,
+  1186→          queryOf(COMMENTS_QUERY_SCHEMA, query),
+  1187→          PAGE_COMMENTS_SCHEMA,
+  1188→          options?.signal,
+  1189→        ),
+  1190→      create: async (projectId, body, options) =>
+  1191→        impl.mutate("POST", `/projects/${encodeId(projectId)}/comments`, {
+  1192→          body,
+  1193→          bodySchema: CREATE_COMMENT_SCHEMA,
+  1194→          responseSchema: COMMENT_SCHEMA,
+  1195→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1196→          signal: options?.signal,
+  1197→        }),
+  1198→      replyComment: async (commentId, body, options) =>
+  1199→        impl.mutate("POST", `/comments/${encodeId(commentId)}/replies`, {
+  1200→          body,
+  1201→          bodySchema: COMMENT_REPLY_SCHEMA,
+  1202→          responseSchema: COMMENT_SCHEMA,
+  1203→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1204→          signal: options?.signal,
+  1205→        }),
+  1206→      resolveComment: async (commentId, body, options) =>
+  1207→        impl.mutate("POST", `/comments/${encodeId(commentId)}/resolve`, {
+  1208→          body: body ?? {},
+  1209→          bodySchema: RESOLVE_COMMENT_SCHEMA,
+  1210→          responseSchema: COMMENT_SCHEMA,
+  1211→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1212→          signal: options?.signal,
+  1213→        }),
+  1214→    },
+  1215→    activity: {
+  1216→      list: async (projectId, query, options) =>
+  1217→        impl.get(
+  1218→          `/projects/${encodeId(projectId)}/activity`,
+  1219→          queryOf(ACTIVITY_QUERY_SCHEMA, query),
+  1220→          PAGE_ACTIVITY_SCHEMA,
+  1221→          options?.signal,
+  1222→        ),
+  1223→      auditExport: async (projectId, options) =>
+  1224→        impl.get(
+  1225→          `/projects/${encodeId(projectId)}/audit-export`,
+  1226→          undefined,
+  1227→          AUDIT_EXPORT_SCHEMA,
+  1228→          options?.signal,
+  1229→        ),
+  1230→    },
+  1231→    presence: {
+  1232→      // Response validation reuses the contracts Zod schemas directly —
+  1233→      // presence response SHAPES are pinned there (PRESENCE_VIEWERS_SCHEMA),
+  1234→      // so there is nothing to mirror in ./response-schemas.ts.
+  1235→      beatPresence: async (projectId, body, options) =>
+  1236→        impl.mutate("POST", `/projects/${encodeId(projectId)}/presence`, {
+  1237→          body: body ?? {},
+  1238→          bodySchema: PRESENCE_BEAT_SCHEMA,
+  1239→          responseSchema: PRESENCE_VIEWERS_SCHEMA,
+  1240→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1241→          signal: options?.signal,
+  1242→        }),
+  1243→      listPresence: async (projectId, options) =>
+  1244→        impl.get(
+  1245→          `/projects/${encodeId(projectId)}/presence`,
+  1246→          undefined,
+  1247→          PRESENCE_VIEWERS_SCHEMA,
+  1248→          options?.signal,
+  1249→        ),
+  1250→    },
+  1251→    share: {
+  1252→      getInfo: async (token, options) =>
+  1253→        impl.get(
+  1254→          `/share/${encodeId(token)}`,
+  1255→          undefined,
+  1256→          SHARE_INFO_SCHEMA,
+  1257→          options?.signal,
+  1258→          passwordHeaders(options),
+  1259→        ),
+  1260→      getManifest: async (token, options) =>
+  1261→        impl.get(
+  1262→          `/share/${encodeId(token)}/manifest`,
+  1263→          undefined,
+  1264→          SHARE_MANIFEST_SCHEMA,
+  1265→          options?.signal,
+  1266→          passwordHeaders(options),
+  1267→        ),
+  1268→      listComments: async (token, query, options) =>
+  1269→        impl.get(
+  1270→          `/share/${encodeId(token)}/comments`,
+  1271→          queryOf(SHARE_COMMENTS_QUERY_SCHEMA, query),
+  1272→          PAGE_SHARE_COMMENTS_SCHEMA,
+  1273→          options?.signal,
+  1274→          passwordHeaders(options),
+  1275→        ),
+  1276→      createComment: async (token, body, options) =>
+  1277→        impl.mutate("POST", `/share/${encodeId(token)}/comments`, {
+  1278→          body,
+  1279→          bodySchema: CREATE_SHARE_COMMENT_SCHEMA,
+  1280→          responseSchema: SHARE_COMMENT_SCHEMA,
+  1281→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1282→          signal: options?.signal,
+  1283→          headers: passwordHeaders(options),
+  1284→        }),
+  1285→      requestAccess: async (token, body, options) =>
+  1286→        impl.mutate("POST", `/share/${encodeId(token)}/request-access`, {
+  1287→          body,
+  1288→          bodySchema: REQUEST_ACCESS_SCHEMA,
+  1289→          responseSchema: REQUEST_ACCESS_RESPONSE_SCHEMA,
+  1290→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1291→          signal: options?.signal,
+  1292→          headers: passwordHeaders(options),
+  1293→        }),
+  1294→      issueLink: async (projectId, body, options) =>
+  1295→        impl.mutate("POST", `/projects/${encodeId(projectId)}/share-links`, {
+  1296→          body: body ?? {},
+  1297→          bodySchema: ISSUE_SHARE_LINK_SCHEMA,
+  1298→          responseSchema: SHARE_LINK_ISSUED_SCHEMA,
+  1299→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1300→          signal: options?.signal,
+  1301→        }),
+  1302→      listLinks: async (projectId, options) =>
+  1303→        impl.get(
+  1304→          `/projects/${encodeId(projectId)}/share-links`,
+  1305→          undefined,
+  1306→          PAGE_SHARE_LINKS_SCHEMA,
+  1307→          options?.signal,
+  1308→        ),
+  1309→      revokeLink: async (id, options) =>
+  1310→        impl.mutate("DELETE", `/share/${encodeId(id)}`, {
+  1311→          responseSchema: SHARE_LINK_REVOKED_SCHEMA,
+  1312→          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+  1313→          signal: options?.signal,
+  1314→        }),
+  1315→    },
+  1316→  };
+  1317→  return Object.freeze(client);
+  1318→}
+  1319→
+  1320→/** Two-phase version upload (§9.2/§9.3): descriptor POST + signed-URL byte PUT. */
+  1321→async function uploadVersion(
+  1322→  impl: ApiClientImpl,
+  1323→  projectId: string,
+  1324→  input: {
+  1325→    readonly baseVersionId: string;
+  1326→    readonly sha256: string;
+  1327→    readonly label?: string;
+  1328→    readonly agentRunId?: string;
+  1329→    readonly bytes: Blob | Uint8Array;
+  1330→  },
+  1331→  options: CallOptions | undefined,
+  1332→): Promise<ProjectVersion> {
+  1333→  const { bytes } = input;
+  1334→  if (!(bytes instanceof Blob) && !(bytes instanceof Uint8Array)) {
+  1335→    throw invalidRequestError(new Error("bytes must be a Blob or Uint8Array"));
+  1336→  }
+  1337→  const sizeBytes = bytes instanceof Blob ? bytes.size : bytes.byteLength;
+  1338→  const descriptor = impl.validateBody(
+  1339→    UPLOAD_VERSION_SCHEMA,
+  1340→    {
+  1341→      baseVersionId: input.baseVersionId,
+  1342→      sha256: input.sha256,
+  1343→      label: input.label,
+  1344→      agentRunId: input.agentRunId,
+  1345→      sizeBytes,
+  1346→    },
+  1347→    "upload version descriptor",
+  1348→  );
+  1349→
+  1350→  const response = await impl.mutate<UploadVersionResponse>(
+  1351→    "POST",
+  1352→    `/projects/${encodeId(projectId)}/versions`,
+  1353→    {
+  1354→      body: descriptor,
+  1355→      responseSchema: UPLOAD_VERSION_RESPONSE_SCHEMA,
+  1356→      idempotencyKey: options?.idempotencyKey ?? impl.autoKey(),
+  1357→      signal: options?.signal,
+  1358→    },
+  1359→  );
+  1360→
+  1361→  // Phase two: bytes go straight to object storage via the signed URL — the
+  1362→  // storage response is NOT a §7.3 envelope, so only the status is checked.
+  1363→  const { url, headers } = response.upload;
+  1364→  const put = await impl.core.fetchImpl(url, {
+  1365→    method: "PUT",
+  1366→    headers: { ...headers },
+  1367→    // TS 5.7's DOM BodyInit doesn't accept Uint8Array<ArrayBufferLike>
+  1368→    // (SharedArrayBuffer edge); runtime fetch (browser + undici) does.
+  1369→    body: bytes instanceof Blob ? bytes : (bytes as unknown as BodyInit),
+  1370→    signal: options?.signal,
+  1371→  });
+  1372→  if (!put.ok) {
+  1373→    throw uploadFailedError(put.status);
+  1374→  }
+  1375→  return response.version;
+  1376→}
+  1377→

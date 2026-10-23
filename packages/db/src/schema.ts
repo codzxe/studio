@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   bigint,
@@ -499,6 +499,11 @@ export const agentSteps = pgTable(
 //   commit  −M   actual cost at settle time (bounded by the run's hold)
 //   refund  +R   release of an unspent hold (full refund on failure/cancel)
 // balance = SUM(amount); writers serialize per workspace via pg_advisory_xact_lock.
+//
+// M8-A: entries may be scoped to a RUN (`run_id`) or a RENDER (`render_id`),
+// never both — XOR is enforced in repos/ledger.ts, not here (a CHECK over
+// two nullable columns would block the run-scoped rows that legitimately
+// leave render_id NULL). run_id stays run-scoped; render_id is render-scoped.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type LedgerKind = "grant" | "reserve" | "commit" | "refund" | "adjust";
@@ -516,6 +521,8 @@ export const creditLedger = pgTable(
     amount: bigint("amount", { mode: "number" }).notNull(), // signed µc — int64 (M6-E; int32 overflowed at Studio scale)
     balanceAfter: bigint("balance_after", { mode: "number" }).notNull(), // running SUM — int64 (widened with amount, migration 0003)
     runId: text("run_id"),
+    /** M8-A: render-scoped linkage (XOR with runId; enforced in repos/ledger.ts). */
+    renderId: text("render_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     metadata: jsonb("metadata"),
     createdAt: ts("created_at").notNull().defaultNow(),
@@ -524,11 +531,28 @@ export const creditLedger = pgTable(
     uniqueIndex("credit_ledger_idempotency_uniq").on(t.idempotencyKey),
     index("credit_ledger_workspace_created_idx").on(t.workspaceId, t.createdAt.desc()),
     index("credit_ledger_run_idx").on(t.runId),
+    index("credit_ledger_render_idx").on(t.renderId),
   ],
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Section 8 — Renders (§9.1) — queued→running→completed|failed|cancelled
+// Section 8 — Renders (§9.1) — queued→running→completed|failed|cancelled,
+// with running→queued as the M8-A crash-recovery requeue (repos/renders.ts
+// `requeueStale` is the ONLY sanctioned caller — guarded by attempts +
+// heartbeat age, never a public transition).
+//
+// M8-A: this table is the Postgres-backed JOB QUEUE. Workers claim rows with
+// SELECT … FOR UPDATE SKIP LOCKED (`claimNext`), renew `heartbeat_at` as they
+// progress, and a sweep requeues/fails rows whose heartbeat went stale.
+// - `version_id` (NOT NULL): the immutable snapshot a render is pinned to —
+//   a queued render never renders "whatever is current later" (§9.3). The FK
+//   is ON DELETE CASCADE: SET NULL is impossible on a NOT NULL column and a
+//   cascading project delete must never trip over cross-reference ordering
+//   (same reasoning as the agent_runs FK block above; versions are never
+//   deleted standalone in v1, so the cascade is unreachable from user space).
+// - partial indexes: `running` rows by heartbeat (requeue sweep input) and
+//   `completed` rows by expiry (retention sweep input) stay small no matter
+//   how large the history grows.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type RenderStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -542,13 +566,29 @@ export const renders = pgTable(
     projectId: text("project_id")
       .notNull()
       .references((): AnyPgColumn => projects.id, { onDelete: "cascade" }),
+    /** M8-A: the project_versions.id this render is pinned to (§9.3). */
+    versionId: text("version_id")
+      .notNull()
+      .references((): AnyPgColumn => projectVersions.id, { onDelete: "cascade" }),
     compId: text("comp_id").notNull(),
     format: text("format").notNull(),
     settingsJson: jsonb("settings_json"),
     status: text("status").$type<RenderStatus>().notNull().default("queued"),
     objectKey: text("object_key"),
     error: text("error"),
+    /** M8-A: machine-readable failure code (e.g. RENDER_INTERNAL); the
+     *  `error` text stays human-facing — both are set together on failure. */
+    errorCode: text("error_code"),
     credits: integer("credits").notNull().default(0),
+    // M8-A job-queue columns (DB defaults keep pre-M8 insert paths working).
+    attempts: integer("attempts").notNull().default(0),
+    heartbeatAt: ts("heartbeat_at"),
+    framesDone: integer("frames_done").notNull().default(0),
+    framesTotal: integer("frames_total").notNull().default(0),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    startedAt: ts("started_at"),
+    expiresAt: ts("expires_at"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
     createdBy: text("created_by")
       .notNull()
       .references((): AnyPgColumn => user.id),
@@ -558,6 +598,15 @@ export const renders = pgTable(
   (t) => [
     index("renders_project_created_idx").on(t.projectId, t.createdAt.desc()),
     index("renders_status_idx").on(t.status),
+    index("renders_version_idx").on(t.versionId),
+    // Requeue sweep input: stale running rows, by heartbeat age.
+    index("renders_running_heartbeat_idx")
+      .on(t.heartbeatAt)
+      .where(sql`${t.status} = 'running'`),
+    // Retention sweep input: completed rows still holding an output.
+    index("renders_completed_expires_idx")
+      .on(t.expiresAt)
+      .where(sql`${t.status} = 'completed'`),
   ],
 );
 
@@ -1025,6 +1074,10 @@ export const creditLedgerRelations = relations(creditLedger, ({ one }) => ({
 
 export const rendersRelations = relations(renders, ({ one }) => ({
   project: one(projects, { fields: [renders.projectId], references: [projects.id] }),
+  version: one(projectVersions, {
+    fields: [renders.versionId],
+    references: [projectVersions.id],
+  }),
   creator: one(user, { fields: [renders.createdBy], references: [user.id] }),
 }));
 

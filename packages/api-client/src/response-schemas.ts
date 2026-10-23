@@ -49,7 +49,10 @@ import {
   type ProjectManifest,
   type ProjectVersion,
   RENDER_FORMAT_SCHEMA,
+  RENDER_QUALITY_SCHEMA,
+  RENDER_STATUSES,
   ROLE_SCHEMA,
+  type RenderEstimate,
   type RenderJob,
   type RequestAccessResponse,
   type RunRecord,
@@ -538,23 +541,62 @@ export const INVOICE_SCHEMA = z.object({
 }) satisfies z.ZodType<InvoiceRecord>;
 
 // ---------------------------------------------------------------------------
-// Renders
+// Renders (§7.2 render queue v2 — D-11, BUILD_PLAN §M8 task 2)
 // ---------------------------------------------------------------------------
+//
+// D-11 pin: the render status vocabulary is the DB's — `completed`, NEVER
+// `succeeded` (the pre-D-11 wire name). The validator imports RENDER_STATUSES
+// from contracts so a vocabulary change fails typecheck HERE before any
+// runtime drift can ship.
 
 export const RENDER_JOB_SCHEMA = z.object({
   id: idSchema,
   projectId: idSchema,
   compId: idSchema,
+  /** The immutable §9.2 version snapshot the job renders (server-resolved at queue time). */
+  versionId: idSchema,
   format: RENDER_FORMAT_SCHEMA,
   settings: z.record(z.string(), z.unknown()),
-  status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
+  status: z.enum(RENDER_STATUSES),
+  /** `true` once POST /cancel is accepted; the worker honors it at the next frame boundary. */
+  cancelRequested: z.boolean(),
+  /** Frame progress (0/0/0 while queued; framesTotal from settings or the comp). */
+  progress: z.object({
+    framesDone: z.number().int().nonnegative(),
+    framesTotal: z.number().int().nonnegative(),
+    percent: z.number().min(0).max(100),
+  }),
   credits: z.number().nonnegative().nullable(),
   resultUrl: z.string().nullable(),
   error: z.string().nullable(),
+  /** Machine-readable failure code (RENDER_* from config errors); null unless failed. */
+  errorCode: z.string().nullable(),
+  /** Output size in bytes; null until the output lands in object storage. */
+  sizeBytes: z.number().int().nonnegative().nullable(),
   createdBy: idSchema,
   createdAt: isoSchema,
+  /** Null while queued (set when the worker marks the job running). */
+  startedAt: isoSchema.nullable(),
   completedAt: isoSchema.nullable(),
+  /** Signed result URL expiry (§9.2 retention); null until the output exists. */
+  expiresAt: isoSchema.nullable(),
 }) satisfies z.ZodType<RenderJob>;
+
+/** `POST /v1/renders/estimate` — pre-flight quote (no mutation, no ledger). */
+export const RENDER_ESTIMATE_SCHEMA = z.object({
+  /** Credits the queue call would reserve (µc, D-12). */
+  credits: z.number().nonnegative(),
+  /** Output duration in seconds (settings range or the comp length). */
+  outputSeconds: z.number().nonnegative(),
+  /** Long-edge pixel size AFTER plan clamping (the number the UI shows). */
+  longEdgePx: z.number().int().positive(),
+  /** The applied format (echoed; a future worker may downshift). */
+  format: RENDER_FORMAT_SCHEMA,
+  /** The applied quality (draft | good | best). */
+  quality: RENDER_QUALITY_SCHEMA,
+  /** `true` when a plan minimum was applied instead of the requested settings. */
+  minApplied: z.boolean(),
+}) satisfies z.ZodType<RenderEstimate>;
 
 // ---------------------------------------------------------------------------
 // Comments / activity
@@ -637,6 +679,7 @@ export const PAGE_LEDGER_SCHEMA = pageSchema(LEDGER_ENTRY_SCHEMA);
 export const PAGE_INVOICES_SCHEMA = pageSchema(INVOICE_SCHEMA);
 export const PAGE_COMMENTS_SCHEMA = pageSchema(COMMENT_SCHEMA);
 export const PAGE_ACTIVITY_SCHEMA = pageSchema(ACTIVITY_ENTRY_SCHEMA);
+export const PAGE_RENDERS_SCHEMA = pageSchema(RENDER_JOB_SCHEMA);
 
 // ---------------------------------------------------------------------------
 // Share links (M7-E; BUILD_PLAN §M7 task 5) — public + member surfaces
