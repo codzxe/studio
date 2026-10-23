@@ -25,6 +25,11 @@
 // commit, integer µc per D-12) lives in render-pricing.ts — the seam the
 // gateway/worker waves code against.
 //
+// M8 RENDER LIMITS live here next to the other entitlements (concurrency,
+// resolution cap, retention); the PRICING formula (estimate = reserve =
+// commit, integer µc per D-12) lives in render-pricing.ts — the seam the
+// gateway/worker waves code against.
+//
 // MONEY NOTE (ledger capacity): the Studio allowance is 10,000,000,000 µc,
 // which EXCEEDS a signed 32-bit integer (max 2,147,483,647 µc ≈ 2,147
 // credits). `credit_ledger.amount` is currently drizzle `integer` (int32) —
@@ -165,6 +170,12 @@ export interface PlanDescriptor {
   readonly storageBytes: number;
   /** Cloud render minutes per billing month. */
   readonly renderMinutesPerMonth: number;
+  /** Simultaneous queued/running renders per workspace (M8). */
+  readonly maxConcurrentRenders: number;
+  /** Long-edge px cap a plan may request (≤ 3840, the pricing ceiling). */
+  readonly maxRenderLongEdgePx: number;
+  /** Days finished render outputs are retained and downloadable (M8). */
+  readonly renderRetentionDays: number;
   /**
    * Monthly credit allowance in INTEGER microcredits (D-12).
    * Round M6 numbers: 50 / 500 / 2,000 / 10,000 credits.
@@ -193,6 +204,9 @@ export interface Entitlements {
   readonly maxProjects: number;
   readonly storageBytes: number;
   readonly renderMinutesPerMonth: number;
+  readonly maxConcurrentRenders: number;
+  readonly maxRenderLongEdgePx: number;
+  readonly renderRetentionDays: number;
   readonly monthlyCreditAllowance: number;
 }
 
@@ -208,6 +222,9 @@ const RAW_PLAN_CATALOG = {
     maxProjects: 3,
     storageBytes: 1 * GIB,
     renderMinutesPerMonth: 5,
+    maxConcurrentRenders: 1,
+    maxRenderLongEdgePx: 1920,
+    renderRetentionDays: 3,
     monthlyCreditAllowance: 50 * MICROCREDITS_PER_CREDIT,
     trialDays: 14,
     monthlyPriceCents: 0,
@@ -221,6 +238,9 @@ const RAW_PLAN_CATALOG = {
     maxProjects: 10,
     storageBytes: 20 * GIB,
     renderMinutesPerMonth: 60,
+    maxConcurrentRenders: 1,
+    maxRenderLongEdgePx: 1920,
+    renderRetentionDays: 7,
     monthlyCreditAllowance: 500 * MICROCREDITS_PER_CREDIT,
     trialDays: null,
     monthlyPriceCents: 1200, // BUSINESS-PENDING: $12/mo placeholder
@@ -234,6 +254,9 @@ const RAW_PLAN_CATALOG = {
     maxProjects: 50,
     storageBytes: 200 * GIB,
     renderMinutesPerMonth: 600,
+    maxConcurrentRenders: 3,
+    maxRenderLongEdgePx: 3840,
+    renderRetentionDays: 30,
     monthlyCreditAllowance: 2000 * MICROCREDITS_PER_CREDIT,
     trialDays: null,
     monthlyPriceCents: 3900, // BUSINESS-PENDING: $39/mo placeholder
@@ -247,6 +270,9 @@ const RAW_PLAN_CATALOG = {
     maxProjects: 200,
     storageBytes: 1 * TIB,
     renderMinutesPerMonth: 3000,
+    maxConcurrentRenders: 8,
+    maxRenderLongEdgePx: 3840,
+    renderRetentionDays: 90,
     // 10,000 credits = 10,000,000,000 µc — EXCEEDS int32; see MONEY NOTE in
     // the module header: credit_ledger.amount needs bigint before this
     // allowance is written as a single grant row.
@@ -299,8 +325,31 @@ export function entitlementsFor(id: string): Entitlements {
     maxProjects: plan.maxProjects,
     storageBytes: plan.storageBytes,
     renderMinutesPerMonth: plan.renderMinutesPerMonth,
+    maxConcurrentRenders: plan.maxConcurrentRenders,
+    maxRenderLongEdgePx: plan.maxRenderLongEdgePx,
+    renderRetentionDays: plan.renderRetentionDays,
     monthlyCreditAllowance: plan.monthlyCreditAllowance,
   });
+}
+
+/**
+ * Remaining cloud-render minutes this billing month for a plan, clamped at
+ * zero — the pure arithmetic half of the `renderMinutesPerMonth` gate. The
+ * GATEWAY owns enforcement (it tracks each workspace's billed minutes and
+ * refuses new renders at zero); this helper exists so the refusal threshold
+ * and the UI's "minutes left" readout can never drift from the catalog.
+ * Unknown plan ids throw the same typed error as {@link getPlan}; negative
+ * or non-finite usage throws `VALIDATION_FAILED`.
+ */
+export function renderMinutesRemaining(planId: string, minutesUsedThisMonth: number): number {
+  const plan = getPlan(planId);
+  if (!Number.isFinite(minutesUsedThisMonth) || minutesUsedThisMonth < 0) {
+    throw new StudioError("VALIDATION_FAILED", {
+      message: "Render minutes used must be a non-negative number.",
+      hint: "Pass the workspace's billed render minutes for the current cycle.",
+    });
+  }
+  return Math.max(0, plan.renderMinutesPerMonth - minutesUsedThisMonth);
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   PLAUSIBLE_PLAN_IDS,
   PRICING_PAGE_PLANS,
   RENDER_FORMATS,
+  RENDER_MAX_LONG_EDGE_PX,
   StudioError,
   creditsToMicrocredits,
   entitlementsFor,
@@ -17,6 +18,7 @@ import {
   maxModelTier,
   microcreditsToCredits,
   parseStripePriceIds,
+  renderMinutesRemaining,
   stripePriceIdFor,
 } from "../src/index.js";
 import type { PlanDescriptor, PlanId } from "../src/index.js";
@@ -40,6 +42,9 @@ const EVERY_FIELD: readonly (keyof PlanDescriptor)[] = [
   "maxProjects",
   "storageBytes",
   "renderMinutesPerMonth",
+  "maxConcurrentRenders",
+  "maxRenderLongEdgePx",
+  "renderRetentionDays",
   "monthlyCreditAllowance",
   "trialDays",
   "monthlyPriceCents",
@@ -67,6 +72,9 @@ describe("plans: catalog completeness", () => {
       expect(Number.isInteger(plan.maxProjects)).toBe(true);
       expect(Number.isInteger(plan.storageBytes)).toBe(true);
       expect(Number.isInteger(plan.renderMinutesPerMonth)).toBe(true);
+      expect(Number.isInteger(plan.maxConcurrentRenders)).toBe(true);
+      expect(Number.isInteger(plan.maxRenderLongEdgePx)).toBe(true);
+      expect(Number.isInteger(plan.renderRetentionDays)).toBe(true);
       expect(Number.isInteger(plan.monthlyPriceCents)).toBe(true);
       expect(plan.trialDays === null || Number.isInteger(plan.trialDays)).toBe(true);
     }
@@ -79,6 +87,9 @@ describe("plans: catalog completeness", () => {
       maxProjects: 3,
       storageBytes: 1024 ** 3,
       renderMinutesPerMonth: 5,
+      maxConcurrentRenders: 1,
+      maxRenderLongEdgePx: 1920,
+      renderRetentionDays: 3,
       monthlyCreditAllowance: 50_000_000,
       trialDays: 14,
       monthlyPriceCents: 0,
@@ -90,6 +101,9 @@ describe("plans: catalog completeness", () => {
       maxProjects: 10,
       storageBytes: 20 * 1024 ** 3,
       renderMinutesPerMonth: 60,
+      maxConcurrentRenders: 1,
+      maxRenderLongEdgePx: 1920,
+      renderRetentionDays: 7,
       monthlyCreditAllowance: 500_000_000,
       trialDays: null,
       monthlyPriceCents: 1200,
@@ -101,6 +115,9 @@ describe("plans: catalog completeness", () => {
       maxProjects: 50,
       storageBytes: 200 * 1024 ** 3,
       renderMinutesPerMonth: 600,
+      maxConcurrentRenders: 3,
+      maxRenderLongEdgePx: 3840,
+      renderRetentionDays: 30,
       monthlyCreditAllowance: 2_000_000_000,
       trialDays: null,
       monthlyPriceCents: 3900,
@@ -112,6 +129,9 @@ describe("plans: catalog completeness", () => {
       maxProjects: 200,
       storageBytes: 1024 ** 4,
       renderMinutesPerMonth: 3000,
+      maxConcurrentRenders: 8,
+      maxRenderLongEdgePx: 3840,
+      renderRetentionDays: 90,
       monthlyCreditAllowance: 10_000_000_000,
       trialDays: null,
       monthlyPriceCents: 9900,
@@ -131,6 +151,9 @@ describe("plans: catalog completeness", () => {
         "maxProjects",
         "storageBytes",
         "renderMinutesPerMonth",
+        "maxConcurrentRenders",
+        "maxRenderLongEdgePx",
+        "renderRetentionDays",
         "monthlyCreditAllowance",
       ] as const) {
         expect(PLAN_CATALOG[higher][field]).toBeGreaterThanOrEqual(PLAN_CATALOG[lower][field]);
@@ -269,7 +292,7 @@ describe("plans: µc integers everywhere (D-12)", () => {
 });
 
 describe("plans: entitlements and immutability", () => {
-  it("entitlementsFor returns the frozen six-field bundle with catalog values", () => {
+  it("entitlementsFor returns the frozen nine-field bundle with catalog values", () => {
     const ent = entitlementsFor("starter");
     expect(ent).toEqual({
       seats: 2,
@@ -277,6 +300,9 @@ describe("plans: entitlements and immutability", () => {
       maxProjects: 10,
       storageBytes: 20 * 1024 ** 3,
       renderMinutesPerMonth: 60,
+      maxConcurrentRenders: 1,
+      maxRenderLongEdgePx: 1920,
+      renderRetentionDays: 7,
       monthlyCreditAllowance: 500_000_000,
     });
     expect(Object.isFrozen(ent)).toBe(true);
@@ -418,6 +444,61 @@ describe("plans: Stripe price-id map parsing", () => {
     if (!lookup.ok) {
       expect(lookup.problem.message).not.toContain("definitely-not-json");
     }
+  });
+});
+
+describe("plans: render limits per plan (M8)", () => {
+  it("encodes the M8 limit table: concurrency, resolution cap, retention", () => {
+    expect(PLAN_CATALOG.trial).toMatchObject({
+      maxConcurrentRenders: 1,
+      maxRenderLongEdgePx: 1920,
+      renderRetentionDays: 3,
+    });
+    expect(PLAN_CATALOG.starter).toMatchObject({
+      maxConcurrentRenders: 1,
+      maxRenderLongEdgePx: 1920,
+      renderRetentionDays: 7,
+    });
+    expect(PLAN_CATALOG.pro).toMatchObject({
+      maxConcurrentRenders: 3,
+      maxRenderLongEdgePx: 3840,
+      renderRetentionDays: 30,
+    });
+    expect(PLAN_CATALOG.studio).toMatchObject({
+      maxConcurrentRenders: 8,
+      maxRenderLongEdgePx: 3840,
+      renderRetentionDays: 90,
+    });
+    // And they flow into the entitlement bundle servers enforce with.
+    expect(entitlementsFor("studio").maxConcurrentRenders).toBe(8);
+    expect(entitlementsFor("pro").maxRenderLongEdgePx).toBe(3840);
+    expect(entitlementsFor("trial").renderRetentionDays).toBe(3);
+  });
+
+  it("every plan's resolution cap sits inside the pricing ceiling (3840)", () => {
+    for (const id of EXPECTED_TIERS) {
+      expect(PLAN_CATALOG[id].maxRenderLongEdgePx).toBeLessThanOrEqual(RENDER_MAX_LONG_EDGE_PX);
+    }
+    // Trial/starter cap at 1080p-class; pro/studio reach the 4K tier.
+    for (const id of ["trial", "starter"] as const) {
+      expect(PLAN_CATALOG[id].maxRenderLongEdgePx).toBe(1920);
+    }
+    for (const id of ["pro", "studio"] as const) {
+      expect(PLAN_CATALOG[id].maxRenderLongEdgePx).toBe(3840);
+    }
+  });
+
+  it("renderMinutesRemaining carries the monthly gate arithmetic, clamped at zero", () => {
+    expect(renderMinutesRemaining("trial", 0)).toBe(5);
+    expect(renderMinutesRemaining("trial", 4)).toBe(1);
+    expect(renderMinutesRemaining("trial", 5)).toBe(0); // exactly exhausted
+    expect(renderMinutesRemaining("trial", 6)).toBe(0); // clamped, never negative
+    expect(renderMinutesRemaining("starter", 12.5)).toBe(47.5); // fractional usage ok
+    expect(renderMinutesRemaining("studio", 2999.9)).toBeCloseTo(0.1, 10);
+    for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => renderMinutesRemaining("trial", bad), `${bad}`).toThrow(StudioError);
+    }
+    expect(() => renderMinutesRemaining("enterprise", 0)).toThrow(StudioError);
   });
 });
 

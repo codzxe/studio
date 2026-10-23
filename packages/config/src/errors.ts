@@ -96,6 +96,63 @@ export const ERROR_CATALOG = {
     hint: "Check the composition for unsupported features, then retry.",
     retryable: true,
   },
+  /**
+   * 415 — declared-but-disabled render format refused at queue time (D-2
+   * gate; client-shaped like ASSET_REJECTED). ProRes/GIF/WAV stay reserved.
+   */
+  RENDER_UNSUPPORTED_FORMAT: {
+    message: "This render format isn't available yet.",
+    hint: "Choose MP4 or PNG sequence for now.",
+    retryable: false,
+  },
+  /** 429 — workspace out of render minutes this cycle (mirrors QUOTA_EXCEEDED). */
+  RENDER_QUOTA_EXCEEDED: {
+    message: "This workspace used all its render minutes.",
+    hint: "The quota resets with your billing cycle, or you can upgrade now.",
+    retryable: false,
+  },
+  /** 500 — worker cannot find the effectcraft-cli binary (operator action needed). */
+  RENDER_CLI_MISSING: {
+    message: "The rendering tool isn't available right now.",
+    hint: "We're on it. You were not charged for this render.",
+    retryable: false,
+  },
+  /** 500 — effectcraft-cli ran but exited non-zero; safe to retry (mirrors RENDER_FAILED). */
+  RENDER_CLI_FAILED: {
+    message: "The render worker couldn't finish this job.",
+    hint: "Retry the render, or contact support if it keeps failing. You were not charged.",
+    retryable: true,
+  },
+  /** 409 — user cancelled the render; the credit reserve is released (mirrors RUN_CANCELLED). */
+  RENDER_CANCELLED: {
+    message: "The render was cancelled.",
+    hint: "Nothing was rendered. Reserved credits were refunded.",
+    retryable: false,
+  },
+  /** 400 — project snapshot failed render validation; client-shaped (mirrors RUN_INVALID_COMMAND). */
+  RENDER_PROJECT_INVALID: {
+    message: "This project can't be rendered as-is.",
+    hint: "The composition didn't pass render validation. Fix the reported problem and try again.",
+    retryable: false,
+  },
+  /** 400 — the render input references an asset that is no longer available. */
+  RENDER_ASSET_MISSING: {
+    message: "A media asset this render needs is missing.",
+    hint: "Re-upload or relink the missing asset, then render again.",
+    retryable: false,
+  },
+  /** 429 — workspace already runs its maxConcurrentRenders (mirrors RATE_LIMITED). */
+  RENDER_CONCURRENCY_LIMIT: {
+    message: "Too many renders are already running.",
+    hint: "Wait for one to finish, then try again.",
+    retryable: true,
+  },
+  /** 500 — unexpected render-pipeline failure; details never leak (mirrors INTERNAL). */
+  RENDER_INTERNAL: {
+    message: "Something went wrong during rendering.",
+    hint: "We're on it. Try again in a moment.",
+    retryable: true,
+  },
   /** Upload above the plan/size cap (ASSET_MAX_BYTES). */
   ASSET_TOO_LARGE: {
     message: "This file is larger than your plan allows.",

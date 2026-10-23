@@ -30,8 +30,17 @@ export type {
   PlanLifecycleStatus,
 } from "./runs.js";
 export type { LedgerRepo } from "./ledger.js";
+export type { LedgerScope } from "./ledger.js";
 export type { CommentsRepo } from "./comments.js";
 export type { RendersRepo } from "./renders.js";
+// M8-A job-queue surface (additive; the worker wave codes against these).
+export type {
+  ScopedRender,
+  RenderHeartbeatInput,
+  RenderCompleteResult,
+  RenderFailResult,
+  RenderClaimOptions,
+} from "./renders.js";
 export type { AuditRepo } from "./audit.js";
 export type {
   SubscriptionsRepo,

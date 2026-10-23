@@ -29,6 +29,7 @@ export type EnvGroupName =
   | "editor"
   | "agent"
   | "lease"
+  | "render"
   | "obs";
 
 /** Metadata for one env var — drives error messages and the .env.example generator. */
@@ -60,6 +61,7 @@ const GROUP_ORDER: readonly EnvGroupName[] = [
   "editor",
   "agent",
   "lease",
+  "render",
   "obs",
 ];
 
@@ -140,7 +142,8 @@ export const ENV_VAR_SPECS: readonly EnvVarMeta[] = [
   },
   {
     name: "S3_REGION",
-    purpose: "Object-storage region ('auto' for MinIO/R2). Optional in local with the filesystem driver.",
+    purpose:
+      "Object-storage region ('auto' for MinIO/R2). Optional in local with the filesystem driver.",
     group: "storage",
     required: false,
     secret: false,
@@ -384,6 +387,76 @@ export const ENV_VAR_SPECS: readonly EnvVarMeta[] = [
     hasDefault: true,
     example: "300000",
   },
+  // ── render (M8 worker — BUILD_PLAN §2.3 feature-flag family) ─────────────
+  {
+    name: "EFFECTCRAFT_CLI_PATH",
+    purpose:
+      "Absolute path to the effectcraft-cli binary the render worker spawns. Resolution order: this value, else <repo>/editor/target/release/effectcraft-cli if present, else a PATH lookup.",
+    group: "render",
+    required: false,
+    secret: false,
+    hasDefault: false,
+    example: "",
+    condition:
+      "Optional and never a secret — blank resolves to the repo-local release build, then PATH.",
+  },
+  {
+    name: "RENDER_WORKER_ENABLED",
+    purpose:
+      "Feature flag for the M8 render worker: when false, no render jobs are dequeued (queued jobs persist).",
+    group: "render",
+    required: false,
+    secret: false,
+    hasDefault: true,
+    example: "true",
+  },
+  {
+    name: "RENDER_WORKER_CONCURRENCY",
+    purpose: "Simultaneous render jobs one worker process runs (per instance).",
+    group: "render",
+    required: false,
+    secret: false,
+    hasDefault: true,
+    example: "2",
+  },
+  {
+    name: "RENDER_JOB_TIMEOUT_SECONDS",
+    purpose:
+      "Hard timeout for one render job, in seconds; a job that exceeds it fails with RENDER_TIMEOUT.",
+    group: "render",
+    required: false,
+    secret: false,
+    hasDefault: true,
+    example: "1800",
+  },
+  {
+    name: "RENDER_MAX_ATTEMPTS",
+    purpose: "Maximum attempts (initial run plus retries) for one render job before it fails.",
+    group: "render",
+    required: false,
+    secret: false,
+    hasDefault: true,
+    example: "2",
+  },
+  {
+    name: "RENDER_HEARTBEAT_STALE_SECONDS",
+    purpose:
+      "A running render job whose heartbeat is older than this many seconds is considered crashed and is reclaimed for retry.",
+    group: "render",
+    required: false,
+    secret: false,
+    hasDefault: true,
+    example: "120",
+  },
+  {
+    name: "RENDER_POLL_INTERVAL_MS",
+    purpose: "How often an idle render worker polls the job queue, in milliseconds.",
+    group: "render",
+    required: false,
+    secret: false,
+    hasDefault: true,
+    example: "1000",
+  },
   // ── obs ───────────────────────────────────────────────────────────────────
   {
     name: "OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -560,6 +633,14 @@ export const envSchema = z.object({
   // lease
   LEASE_HEARTBEAT_MS: wholeNumber(1).default(120_000),
   LEASE_TTL_MS: wholeNumber(1).default(300_000),
+  // render (M8 worker)
+  EFFECTCRAFT_CLI_PATH: z.string().min(1).optional(),
+  RENDER_WORKER_ENABLED: envBool.default(true),
+  RENDER_WORKER_CONCURRENCY: wholeNumber(1).default(2),
+  RENDER_JOB_TIMEOUT_SECONDS: wholeNumber(1).default(1800),
+  RENDER_MAX_ATTEMPTS: wholeNumber(1).default(2),
+  RENDER_HEARTBEAT_STALE_SECONDS: wholeNumber(1).default(120),
+  RENDER_POLL_INTERVAL_MS: wholeNumber(1).default(1000),
   // obs
   OTEL_EXPORTER_OTLP_ENDPOINT: httpUrl.optional(),
 });
@@ -623,6 +704,17 @@ export interface StudioEnv {
   readonly lease: {
     readonly heartbeatMs: number;
     readonly ttlMs: number;
+  };
+  readonly render: {
+    /** Absolute effectcraft-cli path; undefined → repo-local build, then PATH. */
+    readonly cliPath: string | undefined;
+    /** Feature flag — false keeps jobs queued without dequeuing them. */
+    readonly workerEnabled: boolean;
+    readonly workerConcurrency: number;
+    readonly jobTimeoutSeconds: number;
+    readonly maxAttempts: number;
+    readonly heartbeatStaleSeconds: number;
+    readonly pollIntervalMs: number;
   };
   readonly obs: {
     readonly otelEndpoint: string | undefined;
@@ -844,6 +936,15 @@ function groupEnv(flat: FlatEnv): StudioEnv {
     lease: {
       heartbeatMs: flat.LEASE_HEARTBEAT_MS,
       ttlMs: flat.LEASE_TTL_MS,
+    },
+    render: {
+      cliPath: flat.EFFECTCRAFT_CLI_PATH,
+      workerEnabled: flat.RENDER_WORKER_ENABLED,
+      workerConcurrency: flat.RENDER_WORKER_CONCURRENCY,
+      jobTimeoutSeconds: flat.RENDER_JOB_TIMEOUT_SECONDS,
+      maxAttempts: flat.RENDER_MAX_ATTEMPTS,
+      heartbeatStaleSeconds: flat.RENDER_HEARTBEAT_STALE_SECONDS,
+      pollIntervalMs: flat.RENDER_POLL_INTERVAL_MS,
     },
     obs: { otelEndpoint: flat.OTEL_EXPORTER_OTLP_ENDPOINT },
   });

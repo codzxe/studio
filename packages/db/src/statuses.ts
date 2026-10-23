@@ -21,7 +21,12 @@ const RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
 
 const RENDER_TRANSITIONS: Record<RenderStatus, readonly RenderStatus[]> = {
   queued: ["running", "cancelled"],
-  running: ["completed", "failed", "cancelled"],
+  // M8-A: running → queued is the crash-recovery REQUEUE — legal ONLY from
+  // `RendersRepo.requeueStale`, which guards it with (attempts < maxAttempts)
+  // and a stale heartbeat_at. It is NEVER a public transition: no route or
+  // run-of-the-mill repo method may walk a render back to queued, and every
+  // other caller gets the typed CONFLICT below as usual.
+  running: ["completed", "failed", "cancelled", "queued"],
   completed: [],
   failed: [],
   cancelled: [],

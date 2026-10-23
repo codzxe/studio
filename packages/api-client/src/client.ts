@@ -25,6 +25,7 @@ import {
   type Asset,
   type AuditExport,
   type BillingState,
+  CANCEL_RENDER_SCHEMA,
   CANCEL_RUN_SCHEMA,
   CHECKOUT_SCHEMA,
   COMMENTS_QUERY_SCHEMA,
@@ -35,6 +36,7 @@ import {
   CREATE_SHARE_COMMENT_SCHEMA,
   CREATE_THREAD_SCHEMA,
   CREATE_WORKSPACE_SCHEMA,
+  type CancelRenderRequest,
   type CancelRunRequest,
   type ChatRequest,
   type CheckoutRequest,
@@ -50,6 +52,7 @@ import {
   type CreateWorkspaceRequest,
   type CreditsSummary,
   type Err,
+  type EstimateResult,
   IDEMPOTENCY_KEY_SCHEMA,
   INVITE_MEMBER_SCHEMA,
   INVOICES_QUERY_SCHEMA,
@@ -81,14 +84,13 @@ import {
   QUEUE_RENDER_SCHEMA,
   type QueueRenderRequest,
   RENDERS_QUERY_SCHEMA,
+  RENDER_ESTIMATE_REQUEST_SCHEMA,
   REQUEST_ACCESS_SCHEMA,
   RESOLVE_COMMENT_SCHEMA,
   RESTORE_VERSION_SCHEMA,
   RUN_EVENT_REQUEST_SCHEMA,
-  type RenderEstimate,
+  type RenderEstimateRequest,
   type RenderJob,
-  ESTIMATE_RENDER_SCHEMA,
-  type EstimateRenderRequest,
   type RequestAccessRequest,
   type RequestAccessResponse,
   type ResolveCommentRequestInput,
@@ -146,6 +148,7 @@ import {
   COMMENT_SCHEMA,
   CREATE_ASSET_RESPONSE_SCHEMA,
   CREDITS_SUMMARY_SCHEMA,
+  ESTIMATE_RESULT_SCHEMA,
   INVITE_SCHEMA,
   LEASE_ACQUIRE_RESPONSE_SCHEMA,
   LEASE_RELEASE_RESPONSE_SCHEMA,
@@ -178,7 +181,6 @@ import {
   PROJECT_MANIFEST_SCHEMA,
   PROJECT_SCHEMA,
   PROJECT_VERSION_SCHEMA,
-  RENDER_ESTIMATE_SCHEMA,
   RENDER_JOB_SCHEMA,
   REQUEST_ACCESS_RESPONSE_SCHEMA,
   RUN_RECORD_SCHEMA,
@@ -711,17 +713,19 @@ export interface ApiClient {
     get(id: string, options?: CallOptions): Promise<RenderJob>;
     /**
      * POST /v1/renders/:id/cancel — request cancellation (idempotent via the
-     * Idempotency-Key header). Returns the job with `cancelRequested: true`;
-     * terminal jobs come back unchanged (cancel is a no-op there).
+     * Idempotency-Key header; an optional `reason` rides the body). Returns
+     * the job with `cancelRequested: true`; terminal jobs come back
+     * unchanged (cancel is a no-op there).
      */
-    cancel(id: string, options?: CallOptions): Promise<RenderJob>;
+    cancel(id: string, body?: CancelRenderRequest, options?: CallOptions): Promise<RenderJob>;
     /**
      * POST /v1/renders/estimate — pre-flight quote for the render dialog:
      * credits, output seconds and the long-edge pixel size AFTER plan
-     * clamping. `minApplied: true` means a plan minimum replaced the
-     * requested settings. Pure computation: no job, no ledger mutation.
+     * clamping. `minApplied: true` means the platform minimum charge was
+     * applied. A PURE READ per contracts: no idempotency key is sent unless
+     * the caller passes one explicitly.
      */
-    estimate(body: EstimateRenderRequest, options?: CallOptions): Promise<RenderEstimate>;
+    estimate(body: RenderEstimateRequest, options?: CallOptions): Promise<EstimateResult>;
   };
   readonly comments: {
     list(
@@ -1210,18 +1214,24 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         ),
       get: async (id, options) =>
         impl.get(`/renders/${encodeId(id)}`, undefined, RENDER_JOB_SCHEMA, options?.signal),
-      cancel: async (id, options) =>
+      cancel: async (id, body, options) =>
         impl.mutate("POST", `/renders/${encodeId(id)}/cancel`, {
+          body: body ?? {},
+          bodySchema: CANCEL_RENDER_SCHEMA,
           responseSchema: RENDER_JOB_SCHEMA,
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
       estimate: async (body, options) =>
-        impl.mutate("POST", "/renders/estimate", {
-          body,
-          bodySchema: ESTIMATE_RENDER_SCHEMA,
-          responseSchema: RENDER_ESTIMATE_SCHEMA,
-          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+        // A PURE READ (contracts: no idempotency key anywhere — the gateway
+        // exempts the route from the §7.2 header gate), so no auto key:
+        // an explicit caller key is honored, an absent one means no header.
+        impl.request<EstimateResult>({
+          method: "POST",
+          path: "/renders/estimate",
+          body: impl.validateBody(RENDER_ESTIMATE_REQUEST_SCHEMA, body, "/renders/estimate"),
+          responseSchema: ESTIMATE_RESULT_SCHEMA,
+          idempotencyKey: mutationKey(options),
           signal: options?.signal,
         }),
     },
