@@ -1,14 +1,22 @@
 import { expect, test } from "@playwright/test";
 
-test("debug sign-in → editor journey", async ({ page }) => {
-  const consoleErrors: string[] = [];
-  page.on("console", (msg) => {
-    if (msg.type() === "error") consoleErrors.push(msg.text().slice(0, 300));
-  });
-  page.on("response", (res) => {
-    if (res.url().includes("/v1/") && res.status() >= 400) {
-      consoleErrors.push(`HTTP ${res.status()} ${res.url().slice(0, 160)}`);
+test("debug sign-in → editor journey (deep)", async ({ page }) => {
+  const events: string[] = [];
+  page.on("response", async (res) => {
+    const url = res.url();
+    if (url.includes("/v1/auth/sign-in") || url.includes("/v1/me")) {
+      let setCookie = "";
+      try {
+        setCookie = JSON.stringify(res.headers()["set-cookie"] ?? null).slice(0, 200);
+      } catch {}
+      events.push(`HTTP ${res.status()} ${url.slice(0, 120)} set-cookie=${setCookie}`);
     }
+    if (url.includes("_rsc") && res.status() >= 300) {
+      events.push(`RSC ${res.status()} ${url.slice(0, 120)} location=${res.headers()["location"] ?? ""}`);
+    }
+  });
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) events.push(`nav → ${frame.url()}`);
   });
 
   await page.goto(`/sign-in?next=${encodeURIComponent("/w/demo-project/editor")}`);
@@ -16,11 +24,16 @@ test("debug sign-in → editor journey", async ({ page }) => {
   await page.locator("#sign-in-password").fill("demo-password-12345");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
-  await page.waitForTimeout(8000);
-  console.log("URL after sign-in+8s:", page.url());
-  const alert = page.locator("p[role=alert]");
-  console.log("formError:", (await alert.count()) > 0 ? await alert.first().textContent() : "(none)");
-  console.log("console/network errors:", JSON.stringify(consoleErrors.slice(0, 10), null, 1));
-  console.log("editor-host count:", await page.getByTestId("editor-host").count());
-  console.log("body snippet:", (await page.locator("body").innerText()).slice(0, 400).replace(/\n+/g, " | "));
+  await page.waitForTimeout(6000);
+  const cookies = await page.context().cookies();
+  console.log("cookies:", JSON.stringify(cookies.map((c) => `${c.name}(${c.value.length}ch,domain=${c.domain},path=${c.path})`)));
+  console.log("EVENTS:", JSON.stringify(events, null, 1));
+  console.log("URL now:", page.url());
+  console.log("editor-host:", await page.getByTestId("editor-host").count());
+  // probe /v1/me from the browser with the live cookie jar
+  const me = await page.evaluate(async () => {
+    const res = await fetch("/v1/me", { credentials: "include" });
+    return `${res.status} ${(await res.text()).slice(0, 200)}`;
+  });
+  console.log("browser /v1/me probe:", me);
 });
