@@ -27,7 +27,8 @@ on every documented ambiguity — read it before "deciding" anything.
   `studio`, db `studio`) via `scripts/dev-postgres.sh`. When a command needs the DB,
   export `DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio` — the shell may
   carry a STALE `DATABASE_URL=file:...custom.db`; always set it explicitly in your
-  command.
+  command. PG-free alternative for dev-server work: the SQLite dev database (next
+  section).
 - Valkey optional: `bash scripts/dev-valkey.sh start` (127.0.0.1:6379). Everything
   degrades gracefully without it.
 - Dependencies are **installed**. Do NOT run `pnpm install`. Do NOT run dev servers or
@@ -35,6 +36,85 @@ on every documented ambiguity — read it before "deciding" anything.
   always `pnpm turbo run <task> --concurrency=1`.
 - `.env` (root) is populated for local runs (MOCK_MODEL=true, AUTH_SECRET set). Never
   commit it; never print secret values.
+
+## SQLite dev database (dual dialect)
+
+Local dev runs on a **throwaway SQLite file** — zero Postgres, zero Docker
+(seam landed W1-02/W1-03, completed W3-A; `scripts/dev-stack.sh` boots the real
+stack on it). Postgres stays the canonical production dialect. Practical dev
+loop: `docs/DEVELOPMENT.md`.
+
+**Scope note (read before citing the plan):** `docs/BUILD_PLAN.md` assumes
+Postgres throughout (§ "Postgres, Valkey, MinIO native installs", "Better Auth
+with Drizzle/Postgres"). The SQLite dev twin is an **addition on top of the
+plan** (user order "add sqlite for dev server", W1-02) — a dev-server
+convenience only, never a production dialect. The seam is verified
+end-to-end: W1-A1 (seed smoke — user/org/project/versions/ledger/thread rows
+land with integer-ms timestamps, idempotent re-run), W1-A2 + W5-01 (gateway
+boots healthy on sqlite: `/health` 200, email sign-in 200, projects 200,
+`/v1/me` with credits balance 200, full authed page set 200), W5-10 (M8
+render pipeline runs live on the dialect —
+`services/worker/scripts/sqlite-pipeline-smoke.ts`).
+
+- **URL pattern**: `DATABASE_URL="file:/home/z/my-project/.local/<name>.db"`
+  (also `sqlite:…`; `file::memory:` = in-memory). Default file
+  `.local/studio-dev.db`, created + seeded idempotently by
+  `corepack pnpm dev:sqlite` (`scripts/dev-sqlite.sh start`; also `reset`,
+  `status`, `dump-schema`; overrides `STUDIO_SQLITE_DB` / `STUDIO_SQLITE_URL`).
+- `file:`/`sqlite:` URLs are accepted **only when `APP_ENV=local`** — env
+  validation rejects them in staging/production (packages/config ENV_VAR_SPECS).
+
+### Twin schema rule (BINDING for every schema change)
+
+`packages/db/src/schema-sqlite.ts` mirrors `packages/db/src/schema.ts`. Every
+`schema.ts` change MUST be mirrored in `schema-sqlite.ts`: same table names,
+same column names, same indexes/FKs — only column types and default
+expressions differ (`pg now()` → sqlite `(unixepoch('subsec') * 1000)`,
+integer-millisecond timestamps). Type mapping: pg `timestamp` →
+`integer` timestamp-ms, `jsonb` → `text` json, `boolean` → `integer` 0/1.
+Order: pg twin FIRST, then regenerate the sqlite twin + the bootstrap DDL
+(`packages/db/src/sqlite-bootstrap.ts`, drizzle-kit over the sqlite twin).
+Never feed a migration from the twin and never run the pg migration folder
+against it — dev sqlite databases are THROWAWAY (delete the file to rebuild;
+`pnpm dev:sqlite:reset`). The PG-free sqlite suite
+(`packages/db/tests/sqlite/`) exercises the real repos and fails on drift.
+
+### Dialect rules for shared (repo) code
+
+- Resolve tables through **`tablesFor(db)`** (`packages/db/src/tables.ts`) in
+  any code that INSERTs/UPDATEs. A query built from a pg table carries pg
+  defaults (`now()` — "no such function" on sqlite) and pg mappers (ISO
+  strings into integer-ms columns); selects happen to work, writes corrupt.
+  Inside a transaction, resolve from the `tx` handle you are given.
+- Fork pg-specific SQL behind **`getDialect(exec) === "sqlite"`** (never off
+  the static type — a sqlite handle flows through pg-typed signatures):
+  drop `FOR UPDATE` / `SKIP LOCKED` (one serialized connection), skip
+  advisory locks, `greatest()` → `max()`, `count(*)::int` → `count(*)`,
+  `now()` → `unixepoch('subsec') * 1000`; unique violations arrive as
+  `SQLITE_CONSTRAINT_UNIQUE` and must map onto the same typed CONFLICT path
+  as pg 23505.
+- `await db.transaction(async (tx) => …)` is **safe on the sqlite handle**:
+  the factory swaps in an explicit BEGIN/COMMIT/ROLLBACK driver with
+  SAVEPOINT nesting (`makeSqliteTransactionAsyncAware`,
+  `packages/db/src/db.ts`); the callback receives the same handle. A
+  pg-flavored `execute()` alias is installed as well.
+- **Better Auth on sqlite** (`packages/db/src/auth.ts`): the drizzleAdapter
+  gets `provider: "sqlite"`, `transaction: false` (the raw better-sqlite3
+  driver rejects async callbacks) and the TWIN tables.
+- `better-sqlite3` is a dev-only dependency, loaded lazily (dynamic
+  `import()` / `createRequire`) — production (Postgres) bundles never include
+  the native module.
+
+### When to use which dialect
+
+- **SQLite** (`file:…`): PG-free dev-server work (gateway + web + worker),
+  hosts without Docker/Postgres, and the gateway test suite — it runs green
+  on either dialect (`DATABASE_URL=file:/home/z/my-project/.local/studio-dev.db
+  MOCK_MODEL=true corepack pnpm --filter @studio/gateway test`).
+- **Postgres**: the `packages/db` DB-gated integration suite (advisory locks,
+  SKIP LOCKED, jsonb predicates run live there and skip without Postgres),
+  migration verification (`pnpm db:generate` / `db:migrate` target pg only),
+  and staging/production parity. Start it with `corepack pnpm dev:pg`.
 
 ## Editor strategy on this box (critical)
 
