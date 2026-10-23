@@ -1267,3 +1267,20 @@ Stage Summary:
 - M7 LANDED: collaboration v1 — comments (threaded/guest), presence, lease UX (queue/election/enforcement per D-23), versions/activity (§9.3 restore, labels, feed, audit export), public share/review; every exit criterion journey-proven.
 - Fleet stats: 31 agent dispatches across 5 waves (M5 wave-1 ×10, wave-2 ×11, M6-UI ×5, M7-backend ×5, M7-UI/µc ×5, wave-5 ×2) + integrator sessions; 15 delivered full reports, ~14 orphaned-but-complete (dispatch timeouts; work recovered from disk + gated by the integrator), 2 failed-clean. Known tails recorded per evidence file (Playwright CI runs, p75 measurements, BUSINESS-PENDING pricing, LitELLM spend seam dormant).
 - NEXT: M8 (renders + export worker) per BUILD_PLAN.
+---
+Task ID: W6-restore
+Agent: main-orchestrator
+Task: Sandbox reset recovery — restore the full M0–M7 workspace, toolchain and gates before M8.
+
+Work Log:
+- The build box was RESET between sessions (fresh filesystem, only the two upload pastes survived). Verified codzxe/studio on GitHub still holds everything (M5–M7 closeout at 96bbcab, tree clean).
+- Restored the repo by clone into /home/z/my-project (the upload/ tmpfs mount cannot be moved — repo copied around it; tracked upload pastes + download/ intact).
+- Re-persisted the GitHub token per the M4-8 protocol: ~/.secrets/github-token + ~/.git-credentials (0600) + credential.helper store; global user Z User <z@container>.
+- Rebuilt the toolchain the sandbox reset removed: pnpm 9.15.9 (npm -g), portable PostgreSQL 17.5 (scripts/dev-postgres.sh start — theseus binaries, sha256-verified, running at 127.0.0.1:5432, db studio seeded via pnpm db:seed: demo user, org_demo, prj_demo, ver_demo_3, 1000 credits), Rust stable 1.99.1 via rustup (minimal profile). node 24 + ffmpeg already present.
+- Created .env from .env.example (chmod 600, MOCK_MODEL=true, fresh AUTH_SECRET).
+- NOTE for the fleet: background processes (nohup/setsid &) are KILLED between tool calls on this box — run long installs/builds in FOREGROUND bash calls (cargo resumes from target/ across calls).
+- Baseline gates after restore: pnpm turbo run typecheck --concurrency=1 → 9/9 packages clean; full test suite → gateway 693, web 1013, db 190 (190 incl. DB-gated when DATABASE_URL exported; turbo filters env — run --filter @studio/db test directly), contracts 188, api-client 129, config 104, ui 52, editor-bridge 70, storage 283 — ALL GREEN, matching the M5–M7 closeout exactly.
+
+Stage Summary:
+- Workspace fully restored to the pushed M5–M7 state; zero code drift; gates green; M8 can start from a proven base.
+- effectcraft-cli native binary is NOT yet built on this box (next: cargo build --release -p effectcraft-cli in editor/ — incremental across foreground calls).
