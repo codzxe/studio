@@ -259,9 +259,7 @@ async function fetchMembers(
       cause: "members surface missing on the auth response",
     });
   }
-  return members
-    .map(parseRawMember)
-    .filter((row): row is RawMember => row !== null);
+  return members.map(parseRawMember).filter((row): row is RawMember => row !== null);
 }
 
 function findMemberByUserId(rows: readonly RawMember[], userId: string): RawMember | null {
@@ -347,8 +345,7 @@ export function membersRoutes(deps: GatewayDeps): Hono<AppBindings> {
         const cursorMs = Date.parse(cursor.t);
         start = rows.findIndex(
           (row) =>
-            row.createdAtMs > cursorMs ||
-            (row.createdAtMs === cursorMs && row.rowId > cursor.id),
+            row.createdAtMs > cursorMs || (row.createdAtMs === cursorMs && row.rowId > cursor.id),
         );
         if (start === -1) start = rows.length;
       }

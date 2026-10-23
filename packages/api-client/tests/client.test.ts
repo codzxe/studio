@@ -249,6 +249,8 @@ describe("createApiClient — request bodies", () => {
           name: "n",
           slug: "s",
           thumbnailUrl: null,
+          // W1-c (§9.1 lifecycle): `archived` is a required wire field now.
+          archived: false,
           currentVersionId: null,
           createdBy: "u",
           createdAt: "2026-01-01T00:00:00Z",

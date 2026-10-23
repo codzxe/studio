@@ -13,9 +13,9 @@
 // contracts wherever they exist (ids, slugs, roles, enums, ISO-8601, EditPlan).
 
 import {
+  API_KEY_SCOPE_SCHEMA,
   type AcceptedInvite,
   type ActivityEntry,
-  API_KEY_SCOPE_SCHEMA,
   type ApiKey,
   type ApplyResponse,
   type Asset,
@@ -79,6 +79,7 @@ import {
   type ThreadMessage,
   type TrialResponse,
   type UndoResponse,
+  type VerifyAssetResponse,
   type VersionDiffSummary,
   type VersionTimelineEntry,
   WORKSPACE_SLUG_SCHEMA,
@@ -163,6 +164,8 @@ export const PROJECT_SCHEMA = z.object({
   name: z.string(),
   slug: z.string(),
   thumbnailUrl: z.string().nullable(),
+  // W1-c (§9.1 lifecycle): archived ≠ deleted — rows stay readable.
+  archived: z.boolean(),
   currentVersionId: nullableId,
   createdBy: idSchema,
   createdAt: isoSchema,
@@ -362,13 +365,24 @@ export const ASSET_SCHEMA = z.object({
 
 export const CREATE_ASSET_RESPONSE_SCHEMA = z.object({
   asset: ASSET_SCHEMA,
-  upload: z.object({
-    url: z.string(),
-    method: z.literal("PUT"),
-    expiresAt: isoSchema,
-    headers: z.record(z.string(), z.string()),
-  }),
+  // W1-c dedupe: `null` means the workspace already holds this sha256 —
+  // there are no bytes to PUT (duplicate hit on an existing row).
+  upload: z
+    .object({
+      url: z.string(),
+      method: z.literal("PUT"),
+      expiresAt: isoSchema,
+      headers: z.record(z.string(), z.string()),
+    })
+    .nullable(),
+  duplicate: z.boolean().optional(),
 }) satisfies z.ZodType<CreateAssetResponse>;
+
+/** `POST /v1/assets/:id/complete` (W1-c verify step). */
+export const VERIFY_ASSET_RESPONSE_SCHEMA = z.object({
+  asset: ASSET_SCHEMA,
+  duplicate: z.boolean(),
+}) satisfies z.ZodType<VerifyAssetResponse>;
 
 export const SIGNED_URL_RESPONSE_SCHEMA = z.object({
   url: z.string(),

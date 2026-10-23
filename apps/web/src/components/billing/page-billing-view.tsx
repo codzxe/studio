@@ -130,8 +130,8 @@ function createDefaultBillingPort(workspaceId: string): BillingPort {
 /**
  * One invoice row as the page renders it. MIRROR of M6-D's `invoices` table
  * columns (stripe_invoice_id, amount_cents, currency, status, hosted_url,
- * pdf_url) — the client-facing list endpoint is a noted gap; the RSC page
- * passes `[]` until it lands.
+ * pdf_url). W1-e tail: the RSC page now reads the REAL
+ * `GET /v1/billing/invoices` (tolerant — failures degrade to an empty list).
  */
 export interface BillingInvoiceRow {
   readonly id: string;
@@ -148,7 +148,7 @@ export interface BillingPageViewProps {
   readonly workspaceName: string;
   /** The server-fetched `GET /v1/billing/state` payload (the ONE read). */
   readonly initialState: BillingState;
-  /** Invoice rows (empty until the list endpoint exists — the worklog gap). */
+  /** Invoice rows (the real `/v1/billing/invoices` history, W1-e tail). */
   readonly invoices: readonly BillingInvoiceRow[];
   /**
    * Seats in use, when a member-count read exists (gap: the state endpoint

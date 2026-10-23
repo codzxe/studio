@@ -10,6 +10,9 @@
 
 import { Hono } from "hono";
 
+// The plan catalog lives in @studio/config (§M2.5/M6.1): per-plan maxProjects
+// and storageBytes are the INNER quota gates behind the flat env caps.
+import { type Entitlements, entitlementsFor } from "@studio/config";
 import {
   CREATE_PROJECT_SCHEMA,
   type ManifestAsset,
@@ -18,9 +21,6 @@ import {
   type Project as ProjectDto,
   type ProjectManifest,
 } from "@studio/contracts";
-// The plan catalog lives in @studio/config (§M2.5/M6.1): per-plan maxProjects
-// and storageBytes are the INNER quota gates behind the flat env caps.
-import { type Entitlements, entitlementsFor } from "@studio/config";
 
 import type { Project } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
@@ -303,15 +303,11 @@ async function assertProjectQuota(
     deps.repos.projects.countActive(workspaceId),
   ]);
   if (liveProjects >= entitlements.maxProjects) {
-    throw new GatewayError(
-      "QUOTA_EXCEEDED",
-      "You've reached your plan's project limit.",
-      {
-        status: 429,
-        hint: "Upgrade your plan to create more projects, or delete one you no longer need.",
-        requestId,
-      },
-    );
+    throw new GatewayError("QUOTA_EXCEEDED", "You've reached your plan's project limit.", {
+      status: 429,
+      hint: "Upgrade your plan to create more projects, or delete one you no longer need.",
+      requestId,
+    });
   }
 }
 

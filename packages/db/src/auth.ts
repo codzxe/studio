@@ -67,7 +67,7 @@ function bearerApiKeyFromContext(ctx: {
   readonly request?: { readonly headers?: Headers | null } | null;
 }): string | null {
   const raw = ctx.request?.headers?.get("authorization") ?? ctx.headers?.get("authorization");
-  if (raw === null || raw === "") return null;
+  if (raw === null || raw === undefined || raw === "") return null;
   const trimmed = raw.trim();
   if (!/^bearer\s+/i.test(trimmed)) return null;
   const key = trimmed.replace(/^bearer\s+/i, "").trim();

@@ -406,6 +406,58 @@ export class FakeGatewayAuth implements GatewayAuth {
     };
   }
 
+  // ── W1-b fakes (GatewayAuth api-key seam): mint/show-once/revoke ──────────
+  private readonly apiKeysMut: {
+    id: string;
+    name: string | null;
+    workspaceId: string;
+    referenceId: string;
+    enabled: boolean;
+    createdAt: string;
+    expiresAt: string | null;
+  }[] = [];
+  /** Readable by tests: every revokeApiKey(keyId, referenceId) call. */
+  readonly revokeLog: readonly { keyId: string; referenceId: string }[] = [];
+  private readonly revokeLogMut: { keyId: string; referenceId: string }[] = [];
+
+  async createWorkspaceApiKey(input: {
+    userId: string;
+    workspaceId: string;
+    name: string;
+    expiresInSeconds: number | null;
+  }) {
+    const id = `fake_apikey_${this.apiKeysMut.length + 1}`;
+    const createdAt = new Date().toISOString();
+    const expiresAt =
+      input.expiresInSeconds === null
+        ? null
+        : new Date(Date.now() + input.expiresInSeconds * 1000).toISOString();
+    this.apiKeysMut.push({
+      id,
+      name: input.name,
+      workspaceId: input.workspaceId,
+      referenceId: input.userId,
+      enabled: true,
+      createdAt,
+      expiresAt,
+    });
+    return {
+      id,
+      name: input.name,
+      createdAt,
+      expiresAt,
+      enabled: true,
+      start: "studio_fake_",
+      key: `studio_fake_${id}_showonce`,
+    };
+  }
+
+  async revokeApiKey(keyId: string, referenceId: string) {
+    this.revokeLogMut.push({ keyId, referenceId });
+    const key = this.apiKeysMut.find((entry) => entry.id === keyId);
+    if (key) key.enabled = false;
+  }
+
   async checkSlug(_headers: Headers, slug: string) {
     const taken =
       this.slugTaken.has(slug) || [...this.orgs.values()].some((org) => org.slug === slug);
@@ -476,6 +528,15 @@ export function fakeRepos(auth: FakeGatewayAuth): { repos: Repos; calls: RepoCal
         const row = projects.get(projectId);
         if (row === undefined || row.deletedAt !== null) throw new Error("project not found");
         return row;
+      },
+      // W1-c (gate-required additive fake): the maxProjects quota gate on
+      // POST /v1/projects calls countActive; the stub suite's create tests
+      // need it to keep passing (a workspace with 0 live projects never 429s).
+      countActive(workspaceId: string) {
+        record("projects.countActive");
+        return [...projects.values()].filter(
+          (p) => p.workspaceId === workspaceId && p.deletedAt === null,
+        ).length;
       },
       manifest(_workspaceId: string, projectId: string) {
         record("projects.manifest");

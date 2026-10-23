@@ -2,7 +2,7 @@ import type { BillingState } from "@studio/contracts";
 import { EmptyState } from "@studio/ui";
 import { notFound, redirect } from "next/navigation";
 
-import { BillingPageView } from "@/components/billing/page-billing-view";
+import { type BillingInvoiceRow, BillingPageView } from "@/components/billing/page-billing-view";
 import { gatewayCall, isGatewayHttpError } from "@/lib/gateway";
 import { pageMetadata } from "@/lib/seo";
 
@@ -196,6 +196,8 @@ type BillingResolution =
         readonly workspaceName: string;
         readonly canManage: boolean;
         readonly state: BillingState;
+        /** Recorded Stripe invoice rows (W1-e tail; tolerant load). */
+        readonly invoices: readonly BillingInvoiceRow[];
       };
     };
 
@@ -244,8 +246,57 @@ async function loadBillingPage(ws: string | undefined): Promise<BillingResolutio
       workspaceName: membership.workspace.name,
       canManage: membership.role === "owner" || membership.role === "admin",
       state: parsed,
+      // W1-e tail (M9 recovery): the REAL `GET /v1/billing/invoices` read
+      // (M6-D's recorded history). Invoices are secondary history — a
+      // failure here degrades to an empty list, never a broken page.
+      invoices: await loadInvoiceRows(membership.workspaceId),
     },
   };
+}
+
+/**
+ * One `GET /v1/billing/invoices` page → view rows. Tolerant by design:
+ * malformed/unavailable history renders as an empty table (the ledger link
+ * remains the source of truth for every money movement).
+ */
+async function loadInvoiceRows(workspaceId: string): Promise<readonly BillingInvoiceRow[]> {
+  try {
+    const page = await gatewayCall<unknown>("/v1/billing/invoices?limit=25", {
+      workspaceId,
+    });
+    const items =
+      typeof page === "object" &&
+      page !== null &&
+      Array.isArray((page as { items?: unknown }).items)
+        ? ((page as { items: unknown[] }).items ?? [])
+        : [];
+    const rows: BillingInvoiceRow[] = [];
+    for (const item of items) {
+      if (typeof item !== "object" || item === null) continue;
+      const row = item as Record<string, unknown>;
+      if (
+        typeof row.id !== "string" ||
+        typeof row.amountCents !== "number" ||
+        typeof row.currency !== "string" ||
+        typeof row.status !== "string" ||
+        typeof row.createdAt !== "string"
+      ) {
+        continue;
+      }
+      rows.push({
+        id: row.id,
+        date: row.createdAt,
+        amountCents: row.amountCents,
+        currency: row.currency,
+        status: row.status as BillingInvoiceRow["status"],
+        hostedUrl: typeof row.hostedUrl === "string" ? row.hostedUrl : null,
+        pdfUrl: typeof row.pdfUrl === "string" ? row.pdfUrl : null,
+      });
+    }
+    return rows;
+  } catch {
+    return [];
+  }
 }
 
 export default async function BillingPage({ searchParams }: BillingPageProps) {
@@ -285,14 +336,14 @@ export default async function BillingPage({ searchParams }: BillingPageProps) {
     );
   }
 
-  const { workspaceId, workspaceName, canManage, state } = resolution.payload;
+  const { workspaceId, workspaceName, canManage, state, invoices } = resolution.payload;
   return (
     <BillingPageView
       workspaceId={workspaceId}
       workspaceName={workspaceName}
       canManage={canManage}
       initialState={state}
-      invoices={[]}
+      invoices={invoices}
       nowIso={new Date().toISOString()}
     />
   );

@@ -326,11 +326,11 @@ test.describe("M5 agent edits — plan card journey", () => {
     await expect(page.getByTestId("plan-affected")).toContainText("Rename to Subtitle");
     await expect(page.getByTestId("plan-credits")).toHaveText("≈ 1.5 credits");
 
-    // The M5-H PlanPreview is NOT mounted by the thread layer yet (M5-G
-    // follow-up #1): the preview slot renders only when the host passes it.
-    // Assert the card renders WITHOUT it — flip to the before/after pane
-    // assertions (plan-preview-panel/-frames) when the thread wires M5-H.
-    await expect(page.getByTestId("plan-preview")).toHaveCount(0);
+    // W1-d flip (AUD-3 gap 2): message.tsx now mounts M5-H's PlanPreview for
+    // every proposed low/med-risk plan (the preview self-guards unsafe
+    // batches) — assert the pane is PRESENT, the pre-M5-H count-0 arm is
+    // stale history.
+    await expect(page.getByTestId("plan-preview")).toHaveCount(1);
 
     // The M4 "Apply arrives with M5" note is GONE — apply is real (M5-G).
     await expect(page.getByTestId("plan-note")).toHaveCount(0);
