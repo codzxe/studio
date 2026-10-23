@@ -111,3 +111,6 @@ packages/*/src/**/*.d.ts
 /upload/
 /download/
 /bun.lock
+
+# session junk from tool calls — never commit
+/tool-results/

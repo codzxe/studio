@@ -22,15 +22,25 @@
  * Boundary law (apps/web): `@studio/contracts` is `import type` ONLY.
  */
 
-import { daysUntil, formatDate } from "@/components/billing/page-format";
+import { daysUntil, formatDate, formatMonthlyPrice } from "@/components/billing/page-format";
 import { type CallOptions, isApiError } from "@studio/api-client";
 import type { TrialResponse } from "@studio/contracts";
+import { PLAN_CATALOG } from "@studio/config";
 import { Button } from "@studio/ui";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-/** The D-4 trial copy, verbatim (UI_DESIGN_SYSTEM §8.2). */
-const TRIAL_COPY = "14 days free, then $29/mo. Card required today. Cancel anytime.";
+/**
+ * The D-4 trial copy (UI_DESIGN_SYSTEM §8.2) — sentence shape VERBATIM, but
+ * both NUMBERS derive from PLAN_CATALOG (W5-PRICE): the trial is a state on
+ * the Starter row (D-4), so the "then" price is Starter's monthly price, and
+ * the free length is the trial row's trialDays. Same derivation as the
+ * /pricing TrialBlock — the stale "$29" placeholder (pre-pivot pricing that
+ * contradicted the catalog) can never come back.
+ */
+const TRIAL_COPY = `${PLAN_CATALOG.trial.trialDays} days free, then ${formatMonthlyPrice(
+  PLAN_CATALOG.starter.monthlyPriceCents,
+)}. Card required today. Cancel anytime.`;
 
 /** A small billing-link builder so every arm that needs one uses the same label. */
 function billingLink() {

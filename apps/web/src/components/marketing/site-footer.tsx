@@ -4,9 +4,11 @@ import Link from "next/link";
 /**
  * SiteFooter — §8.1 §11: product / resources / legal / licences / status /
  * changelog columns, signal dot + wordmark, honest footer copy. M9-E: the
- * pricing, FAQ, changelog and status links point at the REAL in-app routes;
- * documentation remains a placeholder domain token (Brand token — resolves
- * at launch), which the honest footer note still covers.
+ * pricing, FAQ, changelog and status links point at the REAL in-app routes.
+ * W5-LINK: the "Documentation" external link is GONE — the docs host is a
+ * Brand placeholder token (`docs.studio.example.com` resolves nowhere), and
+ * M9 has no dead links; it returns when the docs site ships. The footer note
+ * still covers the remaining launch-time tokens (contact addresses).
  */
 
 const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
@@ -23,7 +25,6 @@ const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
   {
     title: "Resources",
     links: [
-      { label: "Documentation", href: `https://${Brand.domains.docs}` },
       { label: "Support", href: `mailto:${Brand.contact.support}` },
       { label: "Status", href: "/status" },
     ],

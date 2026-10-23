@@ -554,7 +554,8 @@ describe("hub tab composition (W2-05, §8.6)", () => {
     }
     const triggers = order.map((tab) => screen.getByTestId(`history-tab-${tab}`));
     for (let index = 1; index < triggers.length; index++) {
-      expect(triggers[index - 1].compareDocumentPosition(triggers[index])).toBe(
+      const previous = triggers[index - 1] as HTMLElement;
+      expect(previous.compareDocumentPosition(triggers[index] as HTMLElement)).toBe(
         Node.DOCUMENT_POSITION_FOLLOWING,
       );
     }

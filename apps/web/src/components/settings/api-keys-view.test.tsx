@@ -121,12 +121,18 @@ describe("ApiKeysView — list", () => {
     expect(rows[0]).toHaveTextContent("Oct 1, 2026");
     expect(rows[0]).toHaveTextContent("Oct 1, 2027");
     // null-honest: the key has never authenticated — say so, never a fake date.
-    expect(within(rows[0]).getByTestId("api-key-never-used")).toHaveTextContent("Never used");
-    expect(within(rows[0]).getByTestId("api-key-status")).toHaveTextContent("Active");
+    expect(within(rows[0] as HTMLElement).getByTestId("api-key-never-used")).toHaveTextContent(
+      "Never used",
+    );
+    expect(within(rows[0] as HTMLElement).getByTestId("api-key-status")).toHaveTextContent(
+      "Active",
+    );
 
     expect(rows[1]).toHaveTextContent("Never");
     expect(rows[1]).toHaveTextContent("Oct 20, 2026");
-    expect(within(rows[1]).getByTestId("api-key-status")).toHaveTextContent("Revoked");
+    expect(within(rows[1] as HTMLElement).getByTestId("api-key-status")).toHaveTextContent(
+      "Revoked",
+    );
 
     expect(port.listApiKeys).toHaveBeenCalledWith("ws_first", { limit: 50 });
   });

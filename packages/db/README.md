@@ -32,7 +32,8 @@ locally with zero infrastructure.
   classification (`SQLSTATE 23505` and `SQLITE_CONSTRAINT_UNIQUE` both map to
   the typed CONFLICT path) all fork on the runtime dialect.
 - `@studio/config` accepts `file:`/`sqlite:` URLs **only** when
-  `APP_ENV=local`; production env parsing rejects them.
+  `APP_ENV=local`; staging and production parsing both reject them (any
+  non-local env requires a PostgreSQL URL).
 
 ## 2. Dev workflow (PG-free)
 
@@ -103,7 +104,8 @@ it that way: never import `better-sqlite3` at module top level.
 - `tests/*.test.ts` -- pure units (schema shapes, permissions, ledger math,
   version/lease logic). No database needed.
 - `tests/integration/` -- real-Postgres suites; they gate on `DATABASE_URL`
-  being a postgres URL and skip (with the reason in the suite name) otherwise.
+  being a postgres URL (unset or a `file:`/`sqlite:` URL skips) — each
+  suite's header documents the gate.
 - `tests/sqlite/` -- the PG-free dev-server suite: real repos, real
   better-auth sign-up, ledger/lease/render-queue semantics and transaction
   nesting, all against a temp sqlite file.

@@ -197,12 +197,22 @@ describe("AuditLogView — rows", () => {
 
     const rows = await screen.findAllByTestId("audit-row");
     expect(rows).toHaveLength(2);
-    expect(within(rows[0]).getByTestId("audit-row-actor")).toHaveTextContent("Alex");
-    expect(within(rows[0]).getByTestId("audit-row-action")).toHaveTextContent("run.applied");
-    expect(within(rows[0]).getByTestId("audit-row-target-type")).toHaveTextContent("project");
-    expect(within(rows[0]).getByTestId("audit-row-time")).toHaveTextContent("Oct 21, 2026, 09:30");
-    expect(within(rows[1]).getByTestId("audit-row-actor")).toHaveTextContent("A member");
-    expect(within(rows[1]).queryByTestId("audit-row-target-type")).not.toBeInTheDocument();
+    expect(within(rows[0] as HTMLElement).getByTestId("audit-row-actor")).toHaveTextContent("Alex");
+    expect(within(rows[0] as HTMLElement).getByTestId("audit-row-action")).toHaveTextContent(
+      "run.applied",
+    );
+    expect(within(rows[0] as HTMLElement).getByTestId("audit-row-target-type")).toHaveTextContent(
+      "project",
+    );
+    expect(within(rows[0] as HTMLElement).getByTestId("audit-row-time")).toHaveTextContent(
+      "Oct 21, 2026, 09:30",
+    );
+    expect(within(rows[1] as HTMLElement).getByTestId("audit-row-actor")).toHaveTextContent(
+      "A member",
+    );
+    expect(
+      within(rows[1] as HTMLElement).queryByTestId("audit-row-target-type"),
+    ).not.toBeInTheDocument();
 
     expect(port.listAudit).toHaveBeenCalledWith("ws_first", { limit: 25 });
   });

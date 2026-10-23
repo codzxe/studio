@@ -149,7 +149,7 @@ describe("HubRightRail lease status", () => {
     // each — only the lease polls.
     await waitFor(
       () => {
-        expect(port.leaseState.mock.calls.length).toBeGreaterThanOrEqual(3);
+        expect(vi.mocked(port.leaseState).mock.calls.length).toBeGreaterThanOrEqual(3);
       },
       { timeout: 2000 },
     );
@@ -172,7 +172,7 @@ describe("HubRightRail lease status", () => {
       expect(screen.getByTestId("hub-rail-lease-held")).toHaveTextContent("Sam is editing");
     });
     await waitFor(() => {
-      expect(port.leaseState.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(vi.mocked(port.leaseState).mock.calls.length).toBeGreaterThanOrEqual(2);
     });
     expect(screen.getByTestId("hub-rail-lease-held")).toHaveTextContent("Sam is editing");
   });

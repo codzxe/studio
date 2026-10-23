@@ -8,9 +8,11 @@
  */
 
 import { ApiError, type ApiErrorInit } from "@studio/api-client";
+import { PLAN_CATALOG } from "@studio/config";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { formatMonthlyPrice } from "../billing/page-format";
 import { TrialStep, type TrialStepProps } from "./trial-step";
 
 const USER = userEvent.setup();
@@ -26,6 +28,11 @@ const TRIAL_END = "2026-11-04T12:00:00.000Z";
 function apiError(init: ApiErrorInit): ApiError {
   return new ApiError(init);
 }
+
+/** The expected D-4 sentence, derived from PLAN_CATALOG exactly like the component (W5-PRICE) — a price change moves both together. */
+const TRIAL_COPY = `${PLAN_CATALOG.trial.trialDays} days free, then ${formatMonthlyPrice(
+  PLAN_CATALOG.starter.monthlyPriceCents,
+)}. Card required today. Cancel anytime.`;
 
 function renderStep(
   overrides: {
@@ -55,9 +62,7 @@ describe("TrialStep — the Start view (§8.3, D-4)", () => {
   it("states the D-4 trial copy verbatim with one primary action", () => {
     renderStep();
 
-    expect(screen.getByTestId("onboarding-trial-copy")).toHaveTextContent(
-      "14 days free, then $29/mo. Card required today. Cancel anytime.",
-    );
+    expect(screen.getByTestId("onboarding-trial-copy")).toHaveTextContent(TRIAL_COPY);
     expect(screen.getByText("Acme Films")).toBeInTheDocument();
     expect(screen.getByText("/w/acme-films")).toBeInTheDocument();
   });
