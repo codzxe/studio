@@ -16,7 +16,9 @@
  * `@axe-core/playwright` is NOT a devDependency on the build box (the
  * no-install law, docs/AGENTS.md — the same ruling that keeps
  * `@playwright/test` off it, mirrored from packages/ui/README.md §5). This
- * file therefore loads it through a RUNTIME import guard:
+ * file therefore loads it through a RUNTIME import guard, re-checked at the
+ * top of every test (no top-level await — the loader stays compatible with
+ * every Playwright transform target):
  *
  *   - absent  → every test below SKIPS with the install command as its
  *               printed reason (a logged, visible skip — never a silent
@@ -100,24 +102,38 @@ type AxeBuilderInstance = {
 };
 type AxeBuilderCtor = new (options: { page: Page }) => AxeBuilderInstance;
 
-let AxeBuilder: AxeBuilderCtor | null = null;
-try {
-  ({ AxeBuilder } = (await import("@axe-core/playwright")) as {
-    AxeBuilder: AxeBuilderCtor;
-  });
-} catch (error) {
-  // biome-ignore lint/suspicious/noConsole: the absent-devDep skip reason must stay visible in the run log
-  console.warn(
-    `[m9-axe] @axe-core/playwright is not installed on this box (${
-      error instanceof Error ? error.message : String(error)
-    }) — the a11y sweeps below will SKIP. CI installs it per e2e/README.md §11c: pnpm --filter @studio/web add -D @axe-core/playwright (packages/ui/README.md §5 contract).`,
-  );
-}
+/** The skip reason every axe test carries when the devDep is absent. */
+const AXE_ABSENT_SKIP_REASON =
+  "@axe-core/playwright is not installed — CI-owned devDep; install with `pnpm --filter @studio/web add -D @axe-core/playwright` (e2e/README.md §11c, packages/ui/README.md §5)";
 
-test.skip(
-  AxeBuilder === null,
-  "@axe-core/playwright is not installed — CI-owned devDep; install with `pnpm --filter @studio/web add -D @axe-core/playwright` (e2e/README.md §11c, packages/ui/README.md §5)",
-);
+/** One log line for the whole run, not one per skipped test. */
+let warnedAxeAbsent = false;
+
+/**
+ * The runtime loader (the "try import" half of the §5 guard): absent → null
+ * (plus a single logged warning naming the install command); present → the
+ * constructor. Called at the top of every test — the ES module cache makes
+ * every load after the first free.
+ */
+async function loadAxeBuilder(): Promise<AxeBuilderCtor | null> {
+  try {
+    const mod = (await import("@axe-core/playwright")) as {
+      AxeBuilder: AxeBuilderCtor;
+    };
+    return mod.AxeBuilder;
+  } catch (error) {
+    if (!warnedAxeAbsent) {
+      warnedAxeAbsent = true;
+      // biome-ignore lint/suspicious/noConsole: the absent-devDep skip reason must stay visible in the run log
+      console.warn(
+        `[m9-axe] @axe-core/playwright is not installed on this box (${
+          error instanceof Error ? error.message : String(error)
+        }) — the a11y sweeps will SKIP with the install reason. CI installs it per e2e/README.md §11c: pnpm --filter @studio/web add -D @axe-core/playwright (packages/ui/README.md §5 contract).`,
+      );
+    }
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // The sweep configuration (one place to tune — never weaken the tags)
@@ -156,17 +172,19 @@ const AXE_PAGES: readonly { id: string; path: string; surface: string }[] = [
 test.describe("M9 axe — WCAG A/AA sweeps over the public routes", () => {
   for (const entry of AXE_PAGES) {
     test(`${entry.path} is axe-clean (WCAG 2.x A/AA)`, async ({ page }, testInfo) => {
-      // The guard above skips the whole file when the builder is absent;
-      // this throw keeps the pairing explicit if that invariant ever breaks.
-      if (AxeBuilder === null) {
-        throw new Error("unreachable: the suite is skipped when @axe-core/playwright is absent");
+      // The §5 guard: an absent devDep is a VISIBLE skip with the install
+      // command as the reason — never a silent green, never a red.
+      const Builder = await loadAxeBuilder();
+      test.skip(Builder === null, AXE_ABSENT_SKIP_REASON);
+      if (Builder === null) {
+        throw new Error("unreachable: test.skip above already aborted the absent case");
       }
 
       await page.goto(entry.path);
       // Paint must be complete before the scan (axe reads computed styles).
       await expect(page.getByTestId(entry.surface)).toBeVisible();
 
-      const results = await new AxeBuilder({ page })
+      const results = await new Builder({ page })
         .withTags(AXE_TAGS)
         .disableRules(AXE_DISABLED_RULES)
         .exclude(AXE_EXCLUDED_SELECTOR)

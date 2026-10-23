@@ -39,18 +39,19 @@ vi.mock("@/lib/auth-client", () => ({
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const MEMBERSHIPS: readonly WorkspaceMembership[] = [
-  {
-    workspaceId: "ws_first",
-    role: "owner",
-    workspace: { id: "ws_first", name: "First Films", slug: "first-films" },
-  },
-  {
-    workspaceId: "ws_second",
-    role: "viewer",
-    workspace: { id: "ws_second", name: "Second Studio", slug: "second-studio" },
-  },
-];
+const FIRST: WorkspaceMembership = {
+  workspaceId: "ws_first",
+  role: "owner",
+  workspace: { id: "ws_first", name: "First Films", slug: "first-films" },
+};
+
+const SECOND: WorkspaceMembership = {
+  workspaceId: "ws_second",
+  role: "viewer",
+  workspace: { id: "ws_second", name: "Second Studio", slug: "second-studio" },
+};
+
+const MEMBERSHIPS: readonly WorkspaceMembership[] = [FIRST, SECOND];
 
 const CREDITS = { balance: 12_345_678, reserved: 250_000 };
 const ALLOWANCE = 20_000_000;
@@ -76,14 +77,14 @@ function view(
     readonly port?: ShellPort;
   } = {},
 ) {
+  const memberships = overrides.memberships ?? MEMBERSHIPS;
+  const active = overrides.activeMembership ?? memberships[0] ?? FIRST;
   return render(
     <TopBar
       email="alex@example.com"
       userName="Alex Jordan"
-      memberships={overrides.memberships ?? MEMBERSHIPS}
-      activeMembership={
-        overrides.activeMembership ?? (overrides.memberships ?? MEMBERSHIPS)[0]
-      }
+      memberships={memberships}
+      activeMembership={active}
       credits={overrides.credits === undefined ? CREDITS : overrides.credits}
       monthlyAllowanceMicrocredits={
         overrides.monthlyAllowanceMicrocredits === undefined
@@ -130,14 +131,15 @@ describe("TopBar — chrome", () => {
     expect(fallback).toHaveTextContent("Billing");
   });
 
-  it("renders the search trigger that opens the palette (⌘K hint stays)", () => {
+  it("renders the search trigger that opens the palette (⌘K hint stays)", async () => {
+    const user = userEvent.setup();
     const onOpenPalette = vi.fn();
     render(
       <TopBar
         email="alex@example.com"
         userName="Alex Jordan"
         memberships={MEMBERSHIPS}
-        activeMembership={MEMBERSHIPS[0]}
+        activeMembership={FIRST}
         credits={CREDITS}
         monthlyAllowanceMicrocredits={ALLOWANCE}
         onOpenPalette={onOpenPalette}

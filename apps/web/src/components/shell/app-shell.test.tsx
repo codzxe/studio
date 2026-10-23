@@ -12,7 +12,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceMembership } from "@/lib/workspace-membership";
-import { AppShell, type ShellPayload, type ShellPort } from "./app-shell";
+import { AppShell, type ShellPayload } from "./app-shell";
+import type { ShellPort } from "./top-bar";
 
 const { routerPush, pathname, searchParams } = vi.hoisted(() => ({
   routerPush: vi.fn(),
