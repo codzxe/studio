@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createAuth } from "../../src/auth.js";
@@ -221,6 +221,14 @@ describe("sqlite dev server (repos + auth + transactions)", { timeout: 30_000 },
       .where(eq(t.shareTokens.tokenHash, hashOf("revoked-token")));
     listed = await repos.shareTokens.list(workspaceId, project.id);
     expect(listed.length).toBe(0);
+  });
+
+  it("pg-flavored db.execute(sql) works on the sqlite handle (health-probe seam)", async () => {
+    // The gateway's dbHealth writes `db.execute(sql`select 1`)` — a pg-dialect
+    // API. The sqlite seam aliases it to drizzle-sqlite's .run() so the
+    // signature-preserving handle answers every pg call (W3-A).
+    const result = await db.execute(sql`select 1 as one`);
+    expect(result).toBeDefined();
   });
 
   it("transaction rollback: an insert that throws leaves no row", async () => {

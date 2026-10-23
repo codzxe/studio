@@ -572,13 +572,15 @@ test.describe("M9 visual — landing perf smoke (LCP/CLS)", () => {
         "no largest-contentful-paint entry buffered on this runner — the LCP half is CI-owned (e2e/README.md §11e)",
       );
     }
-    expect(
-      vitals.lcpMs,
-      `landing LCP must at least paint inside the ${LCP_SMOKE_CEILING_MS}ms smoke ceiling (the 2.5s §16.2 budget is a throttled production measurement — README §11e)`,
-    ).toBeLessThanOrEqual(LCP_SMOKE_CEILING_MS);
+    // Record the reading onto the test BEFORE the smoke ceiling (diagnostics
+    // first: the value stays visible on the run even when the gate fails).
     testInfo.annotations.push({
       type: "lcp-ms",
       description: `dev-mode LCP ${Math.round(vitals.lcpMs ?? -1)}ms (recorded, not budget-gated; CLS ${vitals.cls})`,
     });
+    expect(
+      vitals.lcpMs,
+      `landing LCP must at least paint inside the ${LCP_SMOKE_CEILING_MS}ms smoke ceiling (the 2.5s §16.2 budget is a throttled production measurement — README §11e)`,
+    ).toBeLessThanOrEqual(LCP_SMOKE_CEILING_MS);
   });
 });
