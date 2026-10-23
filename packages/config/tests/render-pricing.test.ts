@@ -269,6 +269,37 @@ describe("render pricing: the pinned matrix (integer µc, D-12)", () => {
   it("a full-day output is the cap and still exact integer µc", () => {
     expect(cost({ outputSeconds: 86_400 })).toBe(8_640_000_000); // 8,640 credits
   });
+
+  it("estimateRenderCostDetailUc exposes the pre-clamp raw + minApplied (M8-C seam)", () => {
+    const detail = (input: {
+      format?: string;
+      outputSeconds: number;
+      longEdgePx?: number;
+      quality?: string;
+    }) =>
+      estimateRenderCostDetailUc({
+        format: (input.format ?? "mp4") as RenderCostInput["format"],
+        outputSeconds: input.outputSeconds,
+        longEdgePx: input.longEdgePx ?? 1920,
+        quality: (input.quality ?? "good") as RenderCostInput["quality"],
+      });
+    // Below the minimum: raw preserved, minApplied true, total floored.
+    const clamped = detail({ format: "wav", outputSeconds: 24 });
+    expect(clamped).toEqual({ totalUc: 250_000, rawUc: 240_000, minApplied: true });
+    expect(Object.isFrozen(clamped)).toBe(true);
+    // Exactly at the minimum: no clamp applied.
+    expect(detail({ format: "wav", outputSeconds: 25 })).toEqual({
+      totalUc: 250_000,
+      rawUc: 250_000,
+      minApplied: false,
+    });
+    // A normal render: total === raw === estimateRenderCostUc, never clamped.
+    const normal = detail({ outputSeconds: 10, quality: "best" });
+    expect(normal).toEqual({ totalUc: 1_400_000, rawUc: 1_400_000, minApplied: false });
+    expect(normal.totalUc).toBe(cost({ outputSeconds: 10, quality: "best" }));
+    // Identical validation contract as the scalar estimator.
+    expect(() => detail({ outputSeconds: 10, longEdgePx: 3841 })).toThrow(StudioError);
+  });
 });
 
 describe("render pricing: illegal inputs are refused with typed errors", () => {
