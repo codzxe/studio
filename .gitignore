@@ -59,3 +59,17 @@ editor/rustc-*.json
 # submodule removed W5-hygiene: fresh clones get editor/ only, which is the
 # self-contained vendored source per D-17)
 /effectcraft-upstream/
+
+# Stale tsc-emit artifacts (M9 recovery): these packages ship TS source only
+# (`main: ./src/index.ts`); committed .js/.js.map/.d.ts shadow the .ts at
+# runtime via tsx's explicit ".js" resolution and caused the W1 countActive
+# 500s. Never commit compiled output for source-only packages.
+packages/config/src/**/*.js
+packages/config/src/**/*.js.map
+packages/config/src/**/*.d.ts
+packages/contracts/src/**/*.js
+packages/contracts/src/**/*.js.map
+packages/contracts/src/**/*.d.ts
+packages/db/src/**/*.js
+packages/db/src/**/*.js.map
+packages/db/src/**/*.d.ts

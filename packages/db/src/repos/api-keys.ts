@@ -3,7 +3,7 @@ import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
 import type { StudioDb } from "../db.js";
 import { apiKey as apiKeyTable } from "../schema.js";
-import { type WorkspaceId } from "./shared.js";
+import type { WorkspaceId } from "./shared.js";
 
 /**
  * API-keys repository (BUILD_PLAN §M1 tasks 1+2, AUD-1 gap #2) — READ-ONLY.
@@ -35,6 +35,7 @@ export interface ApiKeyRecord {
   readonly permissions: string | null;
   /** Raw metadata JSON (`{workspaceId, createdBy}`), nullable. */
   readonly metadata: string | null;
+  /** Schema truth: the better-auth column is `boolean | null` (default true); normalized to `true` in `toRecord` — a never-flipped key IS enabled. */
   readonly enabled: boolean;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -73,30 +74,48 @@ const RECORD_COLUMNS = {
   lastRequest: apiKeyTable.lastRequest,
 } as const;
 
+/** The better-auth `enabled` column is nullable (default true) — a never-flipped key IS enabled. */
+function toRecord(row: {
+  id: string;
+  referenceId: string;
+  name: string | null;
+  permissions: string | null;
+  metadata: string | null;
+  enabled: boolean | null;
+  createdAt: Date;
+  updatedAt: Date;
+  expiresAt: Date | null;
+  lastRequest: Date | null;
+}): ApiKeyRecord {
+  return { ...row, enabled: row.enabled ?? true };
+}
+
 export function createApiKeysRepo(db: StudioDb): ApiKeysRepo {
   return {
     async list(workspaceId, options) {
       const limit = clampLimit(options?.limit);
       const cursor = decodeCursor(options?.cursor ?? null);
-      const rows = await db
-        .select(RECORD_COLUMNS)
-        .from(apiKeyTable)
-        .where(
-          and(
-            inWorkspace(workspaceId),
-            cursor
-              ? or(
-                  lt(apiKeyTable.createdAt, new Date(cursor.t)),
-                  and(
-                    eq(apiKeyTable.createdAt, new Date(cursor.t)),
-                    lt(apiKeyTable.id, cursor.id),
-                  ),
-                )
-              : undefined,
-          ),
-        )
-        .orderBy(desc(apiKeyTable.createdAt), desc(apiKeyTable.id))
-        .limit(limit + 1);
+      const rows = (
+        await db
+          .select(RECORD_COLUMNS)
+          .from(apiKeyTable)
+          .where(
+            and(
+              inWorkspace(workspaceId),
+              cursor
+                ? or(
+                    lt(apiKeyTable.createdAt, new Date(cursor.t)),
+                    and(
+                      eq(apiKeyTable.createdAt, new Date(cursor.t)),
+                      lt(apiKeyTable.id, cursor.id),
+                    ),
+                  )
+                : undefined,
+            ),
+          )
+          .orderBy(desc(apiKeyTable.createdAt), desc(apiKeyTable.id))
+          .limit(limit + 1)
+      ).map(toRecord);
 
       const items = rows.slice(0, limit);
       const last = items.at(-1);
@@ -114,7 +133,7 @@ export function createApiKeysRepo(db: StudioDb): ApiKeysRepo {
         .from(apiKeyTable)
         .where(and(eq(apiKeyTable.id, keyId), inWorkspace(workspaceId)))
         .limit(1);
-      return row ?? null;
+      return row === undefined ? null : toRecord(row);
     },
   };
 }

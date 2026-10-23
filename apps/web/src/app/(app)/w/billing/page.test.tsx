@@ -108,6 +108,26 @@ describe("billing RSC route", () => {
         expect(init?.workspaceId).toBe("ws_first");
         return Promise.resolve(BILLING_STATE);
       }
+      if (path === "/v1/billing/invoices?limit=25") {
+        // W1-e tail: the REAL invoice history read (newest-first page).
+        return Promise.resolve({
+          items: [
+            {
+              id: "inv_row_1",
+              stripeInvoiceId: "in_test1",
+              amountCents: 2900,
+              currency: "usd",
+              status: "paid",
+              periodStart: null,
+              periodEnd: null,
+              hostedUrl: "https://billing.example/in_test1",
+              pdfUrl: null,
+              createdAt: "2026-10-01T00:00:00Z",
+            },
+          ],
+          nextCursor: null,
+        });
+      }
       throw new Error(`unexpected gateway path: ${path}`);
     });
     const page = await renderPage();
@@ -115,7 +135,7 @@ describe("billing RSC route", () => {
 
     expect(screen.getByTestId("billing-view-stub")).toBeInTheDocument();
     const calls = gatewayMock.mock.calls.map(([path]) => path);
-    expect(calls).toEqual(["/v1/me", "/v1/billing/state"]);
+    expect(calls).toEqual(["/v1/me", "/v1/billing/state", "/v1/billing/invoices?limit=25"]);
     expect(lastViewProps).not.toBeNull();
     const props = lastViewProps as BillingPageViewProps;
     expect(props.workspaceId).toBe("ws_first");
@@ -123,7 +143,17 @@ describe("billing RSC route", () => {
     expect(props.canManage).toBe(true);
     expect(props.initialState.plan).toBe("pro");
     expect(props.initialState.credits.balance).toBe(12_345_678);
-    expect(props.invoices).toEqual([]);
+    expect(props.invoices).toEqual([
+      {
+        id: "inv_row_1",
+        date: "2026-10-01T00:00:00Z",
+        amountCents: 2900,
+        currency: "usd",
+        status: "paid",
+        hostedUrl: "https://billing.example/in_test1",
+        pdfUrl: null,
+      },
+    ]);
     expect(Number.isNaN(Date.parse(props.nowIso))).toBe(false);
   });
 
@@ -133,6 +163,9 @@ describe("billing RSC route", () => {
       if (path === "/v1/billing/state") {
         expect(init?.workspaceId).toBe("ws_second");
         return Promise.resolve(BILLING_STATE);
+      }
+      if (path === "/v1/billing/invoices?limit=25") {
+        return Promise.resolve({ items: [], nextCursor: null });
       }
       throw new Error(`unexpected gateway path: ${path}`);
     });

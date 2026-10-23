@@ -21,4 +21,6 @@ export { createId } from "./ids.js";
 export { createDb, type StudioDb, type StudioTx, type Executor } from "./db.js";
 export { createAuth, type Auth, type AuthEnv, type AuthHandler } from "./auth.js";
 export { createRepos, type Repos } from "./repos/index.js";
+// W1-b (§M1 tasks 1+2): the apiKeys repo row type the gateway route consumes.
+export type { ApiKeysRepo, ApiKeyRecord, ApiKeysListOptions } from "./repos/index.js";
 export { migrateDatabase, DEFAULT_MIGRATIONS_FOLDER } from "./migrate.js";

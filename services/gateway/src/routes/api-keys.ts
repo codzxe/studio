@@ -23,16 +23,16 @@
 
 import { Hono } from "hono";
 
-import type { ApiKeyRecord } from "@studio/db";
 import {
   API_KEYS_QUERY_SCHEMA,
   type ApiKey,
-  apiKeyStatementsToScopes,
-  apiKeyScopesToStatements,
   CREATE_API_KEY_SCHEMA,
   type CreatedApiKey,
   type RevokedApiKey,
+  apiKeyScopesToStatements,
+  apiKeyStatementsToScopes,
 } from "@studio/contracts";
+import type { ApiKeyRecord } from "@studio/db";
 
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";

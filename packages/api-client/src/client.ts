@@ -20,6 +20,7 @@ import {
   type AcceptedInvite,
   type AcquireLeaseRequest,
   type ActivityEntry,
+  type ApiKey,
   type ApplyRequest,
   type ApplyResponse,
   type Asset,
@@ -30,8 +31,8 @@ import {
   CHECKOUT_SCHEMA,
   COMMENTS_QUERY_SCHEMA,
   COMMENT_REPLY_SCHEMA,
-  CREATE_ASSET_SCHEMA,
   CREATE_API_KEY_SCHEMA,
+  CREATE_ASSET_SCHEMA,
   CREATE_COMMENT_SCHEMA,
   CREATE_PROJECT_SCHEMA,
   CREATE_SHARE_COMMENT_SCHEMA,
@@ -44,6 +45,7 @@ import {
   type CheckoutResponse,
   type Comment,
   type CommentReplyRequest,
+  type CreateApiKeyRequest,
   type CreateAssetRequest,
   type CreateAssetResponse,
   type CreateCommentRequest,
@@ -51,6 +53,7 @@ import {
   type CreateShareCommentRequest,
   type CreateThreadRequest,
   type CreateWorkspaceRequest,
+  type CreatedApiKey,
   type CreditsSummary,
   type Err,
   type EstimateResult,
@@ -62,8 +65,6 @@ import {
   type InviteMemberRequest,
   type InvoiceRecord,
   type IssueShareLinkRequest,
-  type ApiKey,
-  type CreatedApiKey,
   LEDGER_QUERY_SCHEMA,
   type LedgerEntry,
   type MeResponse,
@@ -78,6 +79,7 @@ import {
   PORTAL_SCHEMA,
   PRESENCE_BEAT_SCHEMA,
   PRESENCE_VIEWERS_SCHEMA,
+  type PROJECTS_QUERY_SCHEMA,
   type Page,
   type PatchMemberRoleRequest,
   type PatchProjectRequest,
@@ -101,9 +103,9 @@ import {
   type RenderJob,
   type RequestAccessRequest,
   type RequestAccessResponse,
-  type RevokedApiKey,
   type ResolveCommentRequestInput,
   type RestoreVersionRequest,
+  type RevokedApiKey,
   type RunEventRequest,
   type RunRecord,
   SET_VERSION_LABEL_SCHEMA,
@@ -132,6 +134,7 @@ import {
   UPLOAD_VERSION_SCHEMA,
   type UndoRequest,
   type UndoResponse,
+  type VerifyAssetResponse,
   type VersionDiffSummary,
   type VersionTimelineEntry,
   type Workspace,
@@ -152,15 +155,16 @@ import {
 import {
   ACCEPTED_INVITE_SCHEMA,
   ACTIVITY_ENTRY_SCHEMA,
+  API_KEY_SCHEMA,
   APPLY_RESPONSE_SCHEMA,
   ASSET_SCHEMA,
   AUDIT_EXPORT_SCHEMA,
   BILLING_STATE_SCHEMA,
   CHECKOUT_RESPONSE_SCHEMA,
   COMMENT_SCHEMA,
+  CREATED_API_KEY_SCHEMA,
   CREATE_ASSET_RESPONSE_SCHEMA,
   CREDITS_SUMMARY_SCHEMA,
-  CREATED_API_KEY_SCHEMA,
   ESTIMATE_RESULT_SCHEMA,
   INVITE_SCHEMA,
   LEASE_ACQUIRE_RESPONSE_SCHEMA,
@@ -169,13 +173,13 @@ import {
   LEASE_REQUEST_RESPONSE_SCHEMA,
   LEASE_STATE_RESPONSE_SCHEMA,
   LEDGER_ENTRY_SCHEMA,
-  MEMBER_REMOVED_SCHEMA,
-  MEMBER_SCHEMA,
   type LeaseAcquireResponse,
   type LeaseReleaseResponse,
   type LeaseRequestCancelledResponse,
   type LeaseRequestResponse,
   type LeaseStateResponse,
+  MEMBER_REMOVED_SCHEMA,
+  MEMBER_SCHEMA,
   ME_RESPONSE_SCHEMA,
   MODELS_RESPONSE_SCHEMA,
   OWNERSHIP_TRANSFERRED_SCHEMA,
@@ -199,10 +203,9 @@ import {
   PROJECT_MANIFEST_SCHEMA,
   PROJECT_SCHEMA,
   PROJECT_VERSION_SCHEMA,
-  API_KEY_SCHEMA,
-  REVOKED_API_KEY_SCHEMA,
   RENDER_JOB_SCHEMA,
   REQUEST_ACCESS_RESPONSE_SCHEMA,
+  REVOKED_API_KEY_SCHEMA,
   RUN_RECORD_SCHEMA,
   SHARE_COMMENT_SCHEMA,
   SHARE_INFO_SCHEMA,
@@ -218,6 +221,7 @@ import {
   UNDO_RESPONSE_SCHEMA,
   UPLOAD_VERSION_RESPONSE_SCHEMA,
   type UploadVersionResponse,
+  VERIFY_ASSET_RESPONSE_SCHEMA,
   VERSION_DIFF_SUMMARY_SCHEMA,
   WORKSPACE_SCHEMA,
 } from "./response-schemas";
@@ -293,6 +297,8 @@ export type ShareCommentsQueryInput = z.input<typeof SHARE_COMMENTS_QUERY_SCHEMA
 export type LedgerQueryInput = z.input<typeof LEDGER_QUERY_SCHEMA>;
 export type ActivityQueryInput = z.input<typeof ACTIVITY_QUERY_SCHEMA>;
 export type RendersQueryInput = z.input<typeof RENDERS_QUERY_SCHEMA>;
+/** W1-c (§9.1): projects list + the archived filter (true → archived only). */
+export type ProjectsQueryInput = z.input<typeof PROJECTS_QUERY_SCHEMA>;
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -580,13 +586,19 @@ export interface ApiClient {
     switchWorkspace(workspaceId: string, options?: CallOptions): Promise<SwitchedWorkspace>;
   };
   readonly projects: {
-    list(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<Project>>;
+    list(query?: ProjectsQueryInput, options?: CallOptions): Promise<Page<Project>>;
     create(body: CreateProjectRequest, options?: CallOptions): Promise<Project>;
     get(id: string, options?: CallOptions): Promise<Project>;
     patch(id: string, body: PatchProjectRequest, options?: CallOptions): Promise<Project>;
     /** Soft delete (§9.1 `deleted_at`); returns `null`. */
     delete(id: string, options?: CallOptions): Promise<null>;
     manifest(id: string, options?: CallOptions): Promise<ProjectManifest>;
+    /**
+     * POST /v1/projects/:id/duplicate (W1-c, §9.1) — copies the project and
+     * its current version snapshot as "<name> (copy)". Idempotent via the
+     * mutation key; respects the plan's maxProjects cap (429 QUOTA_EXCEEDED).
+     */
+    duplicate(id: string, options?: CallOptions): Promise<Project>;
   };
   readonly versions: {
     /** GET /v1/projects/:id/versions — the §M7.4 timeline (author name, agent-run presence, sha256 prefix). */
@@ -681,8 +693,35 @@ export interface ApiClient {
   };
   readonly assets: {
     list(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<Asset>>;
-    /** POST /v1/assets — descriptor only; PUT the bytes to `upload.url`. */
+    /** POST /v1/assets — descriptor only; PUT the bytes to `upload.url`.
+     * A dedupe hit returns `upload: null` + `duplicate: true` — nothing to
+     * PUT, the workspace already holds these bytes. */
     createDescriptor(body: CreateAssetRequest, options?: CallOptions): Promise<CreateAssetResponse>;
+    /**
+     * POST /v1/assets/:id/complete (W1-c verify step) — called after the
+     * PUT finishes: the gateway magic-byte-sniffs the object head and
+     * back-fills image dimensions. Mismatches surface as 415
+     * ASSET_TYPE_MISMATCH with the upload rejected.
+     */
+    complete(id: string, options?: CallOptions): Promise<VerifyAssetResponse>;
+    /**
+     * The full two-phase upload in one call (W1-c): descriptor → PUT the
+     * bytes to the signed URL → verify (complete). A dedupe hit skips the
+     * PUT and the verify call and returns the existing row with
+     * `duplicate: true`.
+     */
+    upload(
+      input: {
+        readonly projectId?: string;
+        readonly name: string;
+        readonly mime: string;
+        readonly bytes: Blob | Uint8Array;
+        readonly width?: number;
+        readonly height?: number;
+        readonly durationTicks?: number;
+      },
+      options?: CallOptions,
+    ): Promise<VerifyAssetResponse>;
     /** GET /v1/assets/:id/url — short-lived signed download URL. */
     getUrl(id: string, options?: CallOptions): Promise<SignedUrlResponse>;
   };
@@ -1027,17 +1066,13 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           options?.signal,
         ),
       changeRole: async (workspaceId, memberId, body, options) =>
-        impl.mutate(
-          "PATCH",
-          `/workspaces/${encodeId(workspaceId)}/members/${encodeId(memberId)}`,
-          {
-            body,
-            bodySchema: PATCH_MEMBER_ROLE_SCHEMA,
-            responseSchema: MEMBER_SCHEMA,
-            idempotencyKey: mutationKey(options) ?? impl.autoKey(),
-            signal: options?.signal,
-          },
-        ),
+        impl.mutate("PATCH", `/workspaces/${encodeId(workspaceId)}/members/${encodeId(memberId)}`, {
+          body,
+          bodySchema: PATCH_MEMBER_ROLE_SCHEMA,
+          responseSchema: MEMBER_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
       remove: async (workspaceId, memberId, options) =>
         impl.mutate(
           "DELETE",
@@ -1096,6 +1131,13 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           PROJECT_MANIFEST_SCHEMA,
           options?.signal,
         ),
+      duplicate: async (id, options) =>
+        impl.mutate("POST", `/projects/${encodeId(id)}/duplicate`, {
+          body: {},
+          responseSchema: PROJECT_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
     },
     versions: {
       list: async (projectId, query, options) =>
@@ -1191,6 +1233,58 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           SIGNED_URL_RESPONSE_SCHEMA,
           options?.signal,
         ),
+      complete: async (id, options) =>
+        impl.mutate("POST", `/assets/${encodeId(id)}/complete`, {
+          body: {},
+          responseSchema: VERIFY_ASSET_RESPONSE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+      upload: async (input, options) => {
+        const descriptor = await impl.mutate("POST", "/assets", {
+          body: {
+            projectId: input.projectId,
+            name: input.name,
+            mime: input.mime,
+            sizeBytes: input.bytes instanceof Blob ? input.bytes.size : input.bytes.byteLength,
+            width: input.width,
+            height: input.height,
+            durationTicks: input.durationTicks,
+          },
+          responseSchema: CREATE_ASSET_RESPONSE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        });
+        if (descriptor.duplicate === true && descriptor.upload === null) {
+          return { asset: descriptor.asset, duplicate: true };
+        }
+        if (descriptor.upload === null) {
+          throw new ApiError({
+            code: "ASSET_UPLOAD_TARGET_MISSING",
+            message: "The upload target is missing.",
+            status: 0,
+            hint: "Retry the upload from the descriptor step.",
+            retryable: true,
+          });
+        }
+        const { url, headers } = descriptor.upload;
+        const put = await core.fetchImpl(url, {
+          method: "PUT",
+          headers: { ...headers },
+          // TS 5.7 DOM BodyInit quirk — same as uploadVersion bytes.
+          body: input.bytes instanceof Blob ? input.bytes : (input.bytes as unknown as BodyInit),
+          signal: options?.signal,
+        });
+        if (!put.ok) {
+          throw uploadFailedError(put.status);
+        }
+        return impl.mutate("POST", `/assets/${encodeId(descriptor.asset.id)}/complete`, {
+          body: {},
+          responseSchema: VERIFY_ASSET_RESPONSE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        });
+      },
     },
     threads: {
       list: async (projectId, query, options) =>
