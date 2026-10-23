@@ -8,11 +8,9 @@ import {
   type Asset,
   type Project,
   type ProjectVersion,
-  assets,
-  projectVersions,
-  projects,
 } from "../schema.js";
 import { ensureUniqueSlug, slugify } from "../slug.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, isUniqueViolation } from "./shared.js";
 
 /**
@@ -94,6 +92,9 @@ export async function lockProject(
   workspaceId: WorkspaceId,
   projectId: string,
 ): Promise<Project> {
+  // Dialect-aware tables: the pg table's defaults/mappers never run on a
+  // sqlite dev handle (tables.ts seam).
+  const { projects } = tablesFor(tx);
   // SQLite dev server: one serialized connection — the row lock is dropped
   // (the surrounding transaction is already exclusive); pg keeps FOR UPDATE.
   const baseQuery = tx
@@ -107,6 +108,10 @@ export async function lockProject(
 }
 
 export function createProjectsRepo(db: StudioDb): ProjectsRepo {
+  // Dialect-aware tables (W3-A): on a sqlite dev handle these are the twin
+  // tables (integer-ms timestamps, 0/1 booleans) — the pg table's now()
+  // defaults and Date→ISO mappers are unrunnable there.
+  const { projects, projectVersions, assets } = tablesFor(db);
   return {
     async create(workspaceId, input) {
       const name = input.name.trim();

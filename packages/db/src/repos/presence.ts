@@ -2,7 +2,7 @@ import { and, asc, eq, isNull, lt } from "drizzle-orm";
 
 import type { StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
-import { presenceHeartbeats, projects, user } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty, requirePositiveInt } from "./shared.js";
 
 /**
@@ -90,6 +90,8 @@ function ttlMsOf(value: number | null | undefined): number {
 }
 
 export function createPresenceRepo(db: StudioDb): PresenceRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { presenceHeartbeats, projects, user } = tablesFor(db);
   async function assertProject(workspaceId: WorkspaceId, projectId: string): Promise<string> {
     const id = requireNonEmpty(projectId, "projectId");
     const [project] = await db

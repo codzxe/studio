@@ -3,7 +3,8 @@ import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { getDialect, type StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import { type ShareToken, projects, shareTokens, user } from "../schema.js";
+import type { ShareToken } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty, requirePositiveInt } from "./shared.js";
 
 /**
@@ -88,6 +89,9 @@ export interface ShareTokensRepo {
 
 /** Active filter: not revoked AND (no expiry OR expiry in the future). */
 function activeFilter(db: StudioDb) {
+  // Dialect-aware tables (W3-A, tables.ts seam) — the column objects must
+  // come from the handle's dialect for correct timestamp mapping.
+  const { shareTokens } = tablesFor(db);
   return and(
     isNull(shareTokens.revokedAt),
     or(
@@ -102,6 +106,8 @@ function activeFilter(db: StudioDb) {
 }
 
 export function createShareTokensRepo(db: StudioDb): ShareTokensRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { projects, shareTokens, user } = tablesFor(db);
   return {
     async issue(workspaceId, input) {
       const tokenHash = requireNonEmpty(input.tokenHash, "tokenHash").toLowerCase();
@@ -283,13 +289,16 @@ export function createShareTokensRepo(db: StudioDb): ShareTokensRepo {
 }
 
 /**
- * Local wrapper-walking 23505 check (same as the shared helper in
+ * Local wrapper-walking unique-violation check (same as the shared helper in
  * repos/shared.ts; kept local so this repo compiles standalone for peers who
  * consume it before the barrel — identical behavior, M6-D precedent).
  */
 function isWrappedUniqueViolation(error: unknown): boolean {
   for (let e = error; e !== null && typeof e === "object"; ) {
-    if ((e as { code?: unknown }).code === "23505") return true;
+    const code = (e as { code?: unknown }).code;
+    // 23505 = Postgres SQLSTATE; SQLITE_CONSTRAINT_UNIQUE = better-sqlite3
+    // dev-dialect twin of the same condition (W3-A).
+    if (code === "23505" || code === "SQLITE_CONSTRAINT_UNIQUE") return true;
     e = (e as { cause?: unknown }).cause;
   }
   return false;

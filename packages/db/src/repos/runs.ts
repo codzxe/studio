@@ -9,13 +9,8 @@ import {
   type AgentStep,
   type RunStatus,
   type StepStatus,
-  agentRuns,
-  agentSteps,
-  agentThreads,
-  projectVersions,
-  projects,
-  user,
 } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { assertRunTransition, isTerminalRunStatus } from "../statuses.js";
 import { type WorkspaceId, isUniqueViolation, requireNonEmpty } from "./shared.js";
 
@@ -147,6 +142,8 @@ export function toPlanState(
 }
 
 export function createRunsRepo(db: StudioDb): RunsRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { agentRuns, agentSteps, agentThreads, projectVersions, projects, user } = tablesFor(db);
   async function requireRun(workspaceId: WorkspaceId, runId: string): Promise<AgentRun> {
     const [row] = await db
       .select({ run: agentRuns })

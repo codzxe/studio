@@ -4,7 +4,8 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import type { StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import { type Comment, comments, projects } from "../schema.js";
+import type { Comment } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty } from "./shared.js";
 
 /**
@@ -128,6 +129,8 @@ function requireGuestEmail(raw: string): string {
 }
 
 export function createCommentsRepo(db: StudioDb): CommentsRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { comments, projects } = tablesFor(db);
   return {
     async create(workspaceId, input) {
       const body = requireNonEmpty(input.body, "body");

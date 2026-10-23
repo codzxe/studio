@@ -3,6 +3,7 @@ import { EmptyState } from "@studio/ui";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 
+import { EditorCapabilityGate } from "@/components/editor-host/capability-gate";
 import { EditorHost } from "@/components/editor-host/editor-host";
 import type { EditorHostPayload } from "@/components/editor-host/types";
 import { gatewayCall, isGatewayHttpError } from "@/lib/gateway";
@@ -236,7 +237,15 @@ export default async function EditorPage({ params }: EditorPageProps) {
 
   return (
     <>
-      <EditorHost payload={resolution.payload} />
+      {/*
+        W2-09 §8.7 capability gate: the editor canvas needs WebGPU/WebGL2 —
+        unsupported browsers get the full-page UnsupportedGpuState + the
+        static-preview offer (the project's history page) instead of a broken
+        canvas, and <1024px viewports get the dismissible §13 desktop note.
+      */}
+      <EditorCapabilityGate slug={slug}>
+        <EditorHost payload={resolution.payload} />
+      </EditorCapabilityGate>
       {/*
         M7-F COMMENTS SLOT REGION — the comments UI mount (BUILD_PLAN §M7 task 1).
         The editor-host files are M7-G's this wave, so the region mounts here,

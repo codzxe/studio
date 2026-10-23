@@ -4,7 +4,8 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import type { StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import { type Invoice, type InvoiceStatus, invoices, organization } from "../schema.js";
+import type { Invoice, InvoiceStatus } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty, requireNonNegativeInt } from "./shared.js";
 
 /**
@@ -77,18 +78,22 @@ function requireCurrency(value: string): string {
 }
 
 /**
- * Postgres unique-violation (SQLSTATE 23505) — walks the cause chain because
- * drizzle wraps the PostgresError (`Failed query …`) in its own error type.
+ * Unique-violation check (pg SQLSTATE 23505; sqlite dev dialect:
+ * SQLITE_CONSTRAINT_UNIQUE — W3-A) — walks the cause chain because drizzle
+ * wraps the driver error in its own error type.
  */
 function isUniqueViolation(error: unknown): boolean {
   for (let e = error; e !== null && typeof e === "object"; ) {
-    if ((e as { code?: unknown }).code === "23505") return true;
+    const code = (e as { code?: unknown }).code;
+    if (code === "23505" || code === "SQLITE_CONSTRAINT_UNIQUE") return true;
     e = (e as { cause?: unknown }).cause;
   }
   return false;
 }
 
 export function createInvoicesRepo(db: StudioDb): InvoicesRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { invoices, organization } = tablesFor(db);
   async function findByStripeInvoiceId(stripeInvoiceId: string): Promise<Invoice | null> {
     const [row] = await db
       .select()

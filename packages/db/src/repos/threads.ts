@@ -7,10 +7,8 @@ import { createId } from "../ids.js";
 import {
   type AgentMessage,
   type AgentThread,
-  agentMessages,
-  agentThreads,
-  projects,
 } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty } from "./shared.js";
 
 /** Threads repository — chat conversations attached to a project (§3.1). */
@@ -51,6 +49,8 @@ export interface ThreadsRepo {
 }
 
 export function createThreadsRepo(db: StudioDb): ThreadsRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { agentMessages, agentThreads, projects } = tablesFor(db);
   async function requireThread(
     exec: Executor,
     workspaceId: WorkspaceId,

@@ -119,8 +119,8 @@ export function EditorCapabilityGate({
           className="fixed bottom-4 left-4 z-40 flex max-w-[68ch] items-start gap-3 rounded-md border border-border bg-panel px-4 py-3 shadow-pop"
         >
           <p className="text-caption text-secondary">
-            The editor is best on a desktop screen. You can keep working — panels may be
-            cramped on this size.
+            The editor is best on a desktop screen. You can keep working — panels may be cramped on
+            this size.
           </p>
           <button
             type="button"

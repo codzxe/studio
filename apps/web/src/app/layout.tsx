@@ -46,6 +46,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  // Law #8 documented exception: Viewport metadata compiles to the <meta name="theme-color">
+  // tag, which cannot hold a CSS var — this hex IS the ink-0 token value; keep in sync.
   themeColor: "#070809", // ink-0 — dark is the only theme in v1 (§17)
 };
 

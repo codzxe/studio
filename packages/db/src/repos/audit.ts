@@ -4,7 +4,8 @@ import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js"
 import type { StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
-import { type AuditLogEntry, auditLog, projectVersions, projects, user } from "../schema.js";
+import type { AuditLogEntry } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty } from "./shared.js";
 
 /**
@@ -78,6 +79,8 @@ export interface AuditRepo {
 }
 
 export function createAuditRepo(db: StudioDb): AuditRepo {
+  // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
+  const { auditLog, projectVersions, projects, user } = tablesFor(db);
   return {
     async append(workspaceId, input) {
       const action = requireNonEmpty(input.action, "action");

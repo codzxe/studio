@@ -165,9 +165,7 @@ export function autoGrowCapPx(
   envelopeMaxPx: number,
 ): number | null {
   if (!Number.isFinite(lineHeightPx) || lineHeightPx <= 0) return null;
-  const rowsCap = Math.ceil(
-    MAX_ROWS * lineHeightPx + (Number.isFinite(padYPx) ? padYPx : 0),
-  );
+  const rowsCap = Math.ceil(MAX_ROWS * lineHeightPx + (Number.isFinite(padYPx) ? padYPx : 0));
   if (!Number.isFinite(envelopeMaxPx) || envelopeMaxPx <= 0) return rowsCap;
   return Math.min(rowsCap, envelopeMaxPx);
 }

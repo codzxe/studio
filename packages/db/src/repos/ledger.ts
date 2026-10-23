@@ -5,7 +5,8 @@ import { type Executor, getDialect, type StudioDb, type StudioTx } from "../db.j
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
 import { deriveIdempotencyKey, outstandingReserve, planSettlement } from "../ledger-math.js";
-import { type LedgerEntry, type LedgerKind, creditLedger } from "../schema.js";
+import type { LedgerEntry, LedgerKind } from "../schema.js";
+import { tablesFor } from "../tables.js";
 import { type WorkspaceId, requireNonEmpty } from "./shared.js";
 
 /**
@@ -136,6 +137,9 @@ export interface LedgerRepo {
 }
 
 async function balanceUnderLock(exec: Executor, workspaceId: WorkspaceId): Promise<number> {
+  // Dialect-aware tables (W3-A): the pg table carries now() defaults that
+  // sqlite cannot execute; every repo resolves its tables per handle.
+  const { creditLedger } = tablesFor(exec);
   const [row] = await exec
     .select({ total: sql<string>`coalesce(sum(${creditLedger.amount}), 0)` })
     .from(creditLedger)
@@ -149,6 +153,7 @@ async function scopeOutstanding(
   workspaceId: WorkspaceId,
   scope: NormalizedScope,
 ): Promise<number> {
+  const { creditLedger } = tablesFor(exec);
   const filter =
     scope.runId !== null
       ? eq(creditLedger.runId, scope.runId)
@@ -192,6 +197,7 @@ function requireScope(scope: LedgerScope): NormalizedScope {
 }
 
 async function findExisting(exec: Executor, idempotencyKey: string): Promise<LedgerEntry | null> {
+  const { creditLedger } = tablesFor(exec);
   const [row] = await exec
     .select()
     .from(creditLedger)
@@ -212,6 +218,7 @@ interface AppendArgs {
 }
 
 async function appendEntry(exec: Executor, args: AppendArgs): Promise<LedgerEntry> {
+  const { creditLedger } = tablesFor(exec);
   const [entry] = await exec
     .insert(creditLedger)
     .values({
@@ -248,6 +255,7 @@ function withWorkspaceLock<T>(
 }
 
 export function createLedgerRepo(db: StudioDb): LedgerRepo {
+  const { creditLedger } = tablesFor(db);
   return {
     async grant(workspaceId, input) {
       requireNonEmpty(input.idempotencyKey, "idempotencyKey");
