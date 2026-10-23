@@ -1,0 +1,126 @@
+// @studio/contracts — render queue (PRODUCT_ARCHITECTURE.md §7.2, §9.1 `renders`).
+//
+// M8 wire v2 (BUILD_PLAN §M8 task 2; DECISIONS D-2/D-11/D-12):
+//  - Statuses are the DB vocabulary (D-11 — DB wins): queued | running |
+//    completed | failed | cancelled. "succeeded" is GONE from the wire as of
+//    v2; the gateway's legacy completed→succeeded mapping is removed in the
+//    M8-G route-flip wave.
+//  - All five §7.2 formats stay DECLARED (D-2): mp4 | prores | png-seq | gif
+//    | wav. Enforcement is downstream — worker/gateway reject the disabled
+//    formats with a typed error until they are enabled.
+//  - Credits are whole-credit DISPLAY numbers (D-12): the ledger stores
+//    integer microcredits and the gateway converts µc→credits at the route
+//    boundary; contracts never see µc.
+//  - The SERVER pins the version: queueing captures the project's
+//    currentVersionId into RenderJob.versionId — clients never send one.
+//
+// Routes (§7.2). Requests carry Zod schemas (house rule: strictObject);
+// responses are the house readonly interfaces the api-client derives its
+// response validators from:
+//   POST /v1/renders             QUEUE_RENDER_SCHEMA (idempotencyKey in the
+//                                body, as first shipped) → RenderJob
+//   POST /v1/renders/estimate    RENDER_ESTIMATE_REQUEST_SCHEMA — a PURE
+//                                READ: no idempotencyKey anywhere (the
+//                                gateway exempts the route from the §7.2
+//                                Idempotency-Key header gate) → EstimateResult
+//   POST /v1/renders/:id/cancel CANCEL_RENDER_SCHEMA (optional reason);
+//                                Idempotency-Key HEADER required (§7.2 house
+//                                mutation convention) → RenderJob
+//   GET  /v1/renders             RENDERS_QUERY_SCHEMA → Page<RenderJob>
+//   GET  /v1/renders/:id         → RenderJob
+import { z } from "zod";
+import { IDEMPOTENCY_KEY_SCHEMA, ID_SCHEMA, PAGINATION_QUERY_SCHEMA } from "./common.js";
+/** §7.2 render formats: mp4 | prores | png-seq | gif | wav (D-2: all declared). */
+export const RENDER_FORMATS = [
+    "mp4",
+    "prores",
+    "png-seq",
+    "gif",
+    "wav",
+];
+export const RENDER_FORMAT_SCHEMA = z.enum(RENDER_FORMATS);
+export const RENDER_QUALITY_SCHEMA = z.enum(["draft", "good", "best"]);
+/** Render settings (§7.2 `settings`); per-plan quotas are enforced server-side. */
+export const RENDER_SETTINGS_SCHEMA = z
+    .strictObject({
+    timeFrom: z.number().nonnegative().optional(),
+    timeTo: z.number().nonnegative().optional(),
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
+    frameRate: z.number().positive().optional(),
+    quality: RENDER_QUALITY_SCHEMA.optional(),
+    /** Format-specific passthrough knobs; server validates against the plan. */
+    extra: z.record(z.string(), z.unknown()).optional(),
+})
+    .refine((settings) => settings.timeFrom === undefined ||
+    settings.timeTo === undefined ||
+    settings.timeTo >= settings.timeFrom, "timeTo must be >= timeFrom");
+/**
+ * `POST /v1/renders` body (queue a render; §7.2 — idempotent, tenant-scoped).
+ * The SERVER pins the version: it captures the project's currentVersionId at
+ * queue time (→ RenderJob.versionId); clients never send one.
+ */
+export const QUEUE_RENDER_SCHEMA = z.strictObject({
+    projectId: z.string().min(1),
+    compId: z.string().min(1),
+    format: RENDER_FORMAT_SCHEMA,
+    settings: RENDER_SETTINGS_SCHEMA,
+    idempotencyKey: IDEMPOTENCY_KEY_SCHEMA,
+});
+/**
+ * Render statuses — the §9.1 `renders.status` DB vocabulary (D-11: DB wins).
+ * Wire v2 flips the old `succeeded` to `completed`; the gateway's legacy
+ * completed→succeeded mapping is removed in the M8-G route flip. "succeeded"
+ * is no longer accepted anywhere on the render wire.
+ */
+export const RENDER_STATUSES = [
+    "queued",
+    "running",
+    "completed",
+    "failed",
+    "cancelled",
+];
+export const RENDER_STATUS_SCHEMA = z.enum(RENDER_STATUSES);
+// ---------------------------------------------------------------------------
+// Estimate — BP §M8 task 2 "credit estimate" (a pure read)
+// ---------------------------------------------------------------------------
+/**
+ * `POST /v1/renders/estimate` body. Same inputs as queue, minus the key: a
+ * PURE READ carries NO idempotencyKey — not in the body, and the gateway
+ * exempts the route from the §7.2 Idempotency-Key header gate
+ * (IDEMPOTENCY_EXCLUDED_PATHS). Nesting `settings` rules out a query-string
+ * GET.
+ */
+export const RENDER_ESTIMATE_REQUEST_SCHEMA = z.strictObject({
+    projectId: z.string().min(1),
+    compId: z.string().min(1),
+    format: RENDER_FORMAT_SCHEMA,
+    settings: RENDER_SETTINGS_SCHEMA,
+});
+// ---------------------------------------------------------------------------
+// Cancel — BP §M8 task 1 "cancellation"
+// ---------------------------------------------------------------------------
+/**
+ * `POST /v1/renders/:id/cancel` body. Mirrors CANCEL_RUN_SCHEMA: an optional
+ * human-safe reason; an empty body cancels. Idempotency rides the
+ * Idempotency-Key HEADER (§7.2 house mutation convention — 8–128 chars,
+ * bounded by IDEMPOTENCY_KEY_SCHEMA, enforced by the gateway POST
+ * middleware); it must NOT ride the body (strictObject rejects it).
+ */
+export const CANCEL_RENDER_SCHEMA = z.strictObject({
+    reason: z.string().max(280).optional(),
+});
+// ---------------------------------------------------------------------------
+// History list — BP §M8 task 2 "render history"
+// ---------------------------------------------------------------------------
+/**
+ * `GET /v1/renders` query — render history, newest-first, cursor-paginated
+ * (house PAGINATION_QUERY_SCHEMA → Page<RenderJob>). Both filters are
+ * optional: the workspace scope comes from the session (house rule);
+ * `status` accepts only the D-11 vocabulary — "succeeded" is rejected.
+ */
+export const RENDERS_QUERY_SCHEMA = PAGINATION_QUERY_SCHEMA.extend({
+    projectId: ID_SCHEMA.optional(),
+    status: RENDER_STATUS_SCHEMA.optional(),
+});
+//# sourceMappingURL=renders.js.map

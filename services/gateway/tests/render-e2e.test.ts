@@ -173,19 +173,22 @@ interface WorkerModule {
   readonly nullLogger: WorkerLogger;
 }
 
-// @studio/worker ships as SOURCE through the workspace link and its
-// @studio/editor-bridge dependency is authored extensionless (Bundler-style
-// — see the worker's own tsconfig). vitest's bundler resolution loads it
-// perfectly at RUNTIME, but the gateway's NodeNext typecheck program cannot
-// include those sources, so the module is loaded DYNAMICALLY through a
-// query-suffixed specifier (a bare literal tsc cannot resolve; the query is
-// a no-op for vite's resolver) and bound to the structural view above —
-// every type in that view is derived from the same @studio/db,
-// @studio/config and gateway-storage types the worker itself compiles
-// against, so drift breaks loudly at the first journey tick.
+// The worker is loaded as SOURCE through a RELATIVE path, NOT a package
+// devDependency: worker -> @studio/gateway (for the storage seam) is the ONE
+// legal edge; a gateway -> worker devDep would close a cycle turbo refuses
+// to plan (gateway#build <-> worker#build). Its @studio/editor-bridge
+// dependency is authored extensionless (Bundler-style — see the worker's
+// own tsconfig). vitest's bundler resolution loads it perfectly at RUNTIME,
+// but the gateway's NodeNext typecheck program cannot include those
+// sources, so the module is loaded DYNAMICALLY through a query-suffixed
+// specifier (a literal tsc cannot resolve; the query is a no-op for vite's
+// resolver) and bound to the structural view above — every type in that
+// view is derived from the same @studio/db, @studio/config and
+// gateway-storage types the worker itself compiles against, so drift breaks
+// loudly at the first journey tick.
 const loadWorkerModule = async (): Promise<WorkerModule> => {
   // @ts-expect-error TS2307: the worker module is resolved by vitest, not tsc
-  return (await import("@studio/worker?gateway-render-e2e")) as unknown as WorkerModule;
+  return (await import("../../worker/src/index?gateway-render-e2e")) as unknown as WorkerModule;
 };
 
 // ───────────────────────────────────────────────────────────────────────────
