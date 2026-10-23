@@ -482,6 +482,57 @@ describe("env: cross-field rules", () => {
   });
 });
 
+describe("env: DATABASE_URL dialects (W1-03 sqlite dev server)", () => {
+  it("accepts file: and sqlite: URLs in local", () => {
+    expect(parseEnv({ ...localFixture, DATABASE_URL: "file:.local/studio-dev.db" }).db.url).toBe(
+      "file:.local/studio-dev.db",
+    );
+    expect(
+      parseEnv({ ...localFixture, DATABASE_URL: "sqlite:/tmp/studio-dev.db" }).db.url,
+    ).toBe("sqlite:/tmp/studio-dev.db");
+  });
+
+  it("rejects SQLite URLs outside local with the local-only reason — never the path", () => {
+    const staging = expectFatal({
+      ...localFixture,
+      APP_ENV: "staging",
+      STRIPE_SECRET_KEY: "sk_test_1",
+      DATABASE_URL: "file:/secrets/wherever/studio-dev.db",
+    });
+    const problem = staging.problems.find((entry) => entry.name === "DATABASE_URL");
+    expect(problem?.kind).toBe("rejected");
+    expect(problem?.reason).toContain("local-dev");
+    expect(staging.message).toContain("PostgreSQL URL");
+    // The fixture's DIRECTORY is the would-be leak; "studio-dev.db" alone is
+    // the documented example path from the var's purpose text, not the value.
+    expect(staging.message).not.toContain("/secrets/wherever/");
+    const production = expectFatal({
+      ...productionFixture,
+      DATABASE_URL: "sqlite:/tmp/studio-dev.db",
+    });
+    expect(production.problems.map((entry) => entry.name)).toEqual(["DATABASE_URL"]);
+    expect(production.problems[0]?.reason).toContain("production");
+  });
+
+  it("still rejects other schemes with the dual-dialect reason", () => {
+    const fatal = expectFatal({ ...localFixture, DATABASE_URL: "mysql://localhost/studio" });
+    const problem = fatal.problems.find((entry) => entry.name === "DATABASE_URL");
+    expect(problem?.kind).toBe("invalid");
+    expect(problem?.reason).toContain("SQLite file URL");
+    expect(problem?.reason).toContain("postgres:// or postgresql://");
+    // An empty file: URL is not a database either.
+    const bare = expectFatal({ ...localFixture, DATABASE_URL: "file:" });
+    expect(bare.problems.map((entry) => entry.name)).toEqual(["DATABASE_URL"]);
+  });
+
+  it("documents both dialects in the generated example", () => {
+    const text = renderEnvExample();
+    expect(text).toContain("file:.local/studio-dev.db");
+    expect(text).toContain("dev:sqlite");
+    expect(text).toContain('only when APP_ENV is "local"');
+  });
+});
+
 describe("env: getEnv singleton", () => {
   it("parses once per source object (WeakMap cache)", () => {
     const first: StudioEnv = getEnv(localFixture);
