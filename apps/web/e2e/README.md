@@ -31,6 +31,25 @@ member's lease-state + request queue, the activity pages); everything else
 is real gateway + Postgres. The spec adds **no screenshot baselines** and
 needs no env or config changes.
 
+`m8-renders.spec.ts` is the §M8 companion (the "Render…" dialog + history
+drawer over the editor, the live estimate, the queue → poll → cancel →
+download journey, and the `/w/:slug/history` Renders tab) over the same boot
+recipe — **no extra setup steps, no new baselines, no env or config changes**.
+No render worker runs on the CI browser box, so **every renders-API leg is
+scripted at the browser boundary** (`page.route`, schema-exact §7.3 envelopes
+that parse against the api-client's runtime validators: queue 201,
+estimate 200/402/415, the query-stringed history list, the per-id poll,
+cancel) — while the REAL queue → render → settle → download journeys (real
+worker + real effectcraft-cli + real ledger) are proven at the gateway level
+by `services/gateway/tests/render-e2e.test.ts`. Everything else in the spec
+is real: sign-in, the editor wasm, the render region's lazy workspace +
+project scope resolution (`/v1/me` + `/v1/projects`), the lease, and the
+hub's version-pin resolution through the real versions timeline. Route-
+matching note: Playwright glob patterns anchor at the end of the full URL
+(query string included), so the `GET /v1/renders?projectId=…` list is matched
+with a regex; the query-less routes use exact-path globs, and the estimate
+route registers last (the most recently registered match wins).
+
 It is **not runnable on the build-fleet box**: that box has no browsers and
 no dev servers (docs/AGENTS.md), which is why `@playwright/test` is not a
 devDependency there. `apps/web/tsconfig.json` therefore **excludes** `e2e/`
@@ -386,8 +405,9 @@ result names comp "Main".
   `playwright.config.ts` — the spec/config import `@playwright/test`, which
   is not installed there; excluded files are not type-checked. Everything
   else (`src/`, `tests/`, `next-env.d.ts`, `.next/types/**`) stays included.
-  (Applies unchanged to `m7-collab.spec.ts` — it lives under `e2e/` and is a
-  `.spec.ts`, so it is excluded from typecheck and never matched by vitest.)
+  (Applies unchanged to `m7-collab.spec.ts` and `m8-renders.spec.ts` — they
+  live under `e2e/` and are `.spec.ts` files, so they are excluded from
+  typecheck and never matched by vitest.)
 - **vitest**: `apps/web/vitest.config.ts` includes only
   `tests/**/*.test.{ts,tsx}` + `src/**/*.test.{ts,tsx}` — the spec
   (`e2e/chat.spec.ts`) matches neither the directories nor the `*.test.*`
