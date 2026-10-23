@@ -638,9 +638,7 @@ describe("createApiClient — settings + workspace audit (W3-G2)", () => {
   });
 
   it("settings.update PATCHes the strict body with an idempotency key", async () => {
-    const { client, calls } = makeClient(() =>
-      Promise.resolve(jsonOk({ autoApplyEnabled: true })),
-    );
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk({ autoApplyEnabled: true })));
     const result = await client.settings.update({ autoApplyEnabled: true });
     expect(result.autoApplyEnabled).toBe(true);
     const call = calls[0];

@@ -1,0 +1,126 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "Studio — home" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - generic [ref=e8]: Studio
+        - generic [ref=e9]:
+          - link "Sign in" [ref=e10] [cursor=pointer]:
+            - /url: /sign-in
+          - link "Start trial" [ref=e11] [cursor=pointer]:
+            - /url: /sign-up
+    - main [ref=e12]:
+      - generic [ref=e13]:
+        - paragraph [ref=e14]: Studio — Legal
+        - heading "Privacy Policy" [level=1] [ref=e15]
+        - paragraph [ref=e16]: What we collect, why we collect it, where it lives, and the things we never do with your work.
+        - generic [ref=e17]: This is a beta product; final terms are being reviewed. This page is the working draft we operate under today — clear about what the service does, without legalese.
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - heading "01 What we collect" [level=2] [ref=e20]:
+              - generic [ref=e21]: "01"
+              - text: What we collect
+            - paragraph [ref=e23]: "Account data: your name, email address and workspace membership. Content: the projects, assets and versions you store in the service. Usage data: billing records, credit ledger entries, render jobs and technical telemetry like page errors and timing."
+          - generic [ref=e24]:
+            - heading "02 What we use it for" [level=2] [ref=e25]:
+              - generic [ref=e26]: "02"
+              - text: What we use it for
+            - paragraph [ref=e28]: "To run the service: authenticating you, storing your projects, running the agent when you ask it to, queuing renders and billing your plan. To keep the service working: debugging, rate limiting and detecting abuse. To answer you: support conversations."
+          - generic [ref=e29]:
+            - heading "03 What we never do" [level=2] [ref=e30]:
+              - generic [ref=e31]: "03"
+              - text: What we never do
+            - paragraph [ref=e33]: We never sell your data. We never use your project content to train machine-learning models. Agent prompts are processed by model providers to answer your request in that moment — not retained for their training.
+          - generic [ref=e34]:
+            - heading "04 Where your data lives" [level=2] [ref=e35]:
+              - generic [ref=e36]: "04"
+              - text: Where your data lives
+            - paragraph [ref=e38]: "Project files and assets live in object storage attached to your workspace's region. Databases and queues run in the same region. Third parties involved in running the service: our hosting provider, Stripe for payments, and the model providers that serve agent requests. Each gets only what the task requires."
+          - generic [ref=e39]:
+            - heading "05 Your choices" [level=2] [ref=e40]:
+              - generic [ref=e41]: "05"
+              - text: Your choices
+            - paragraph [ref=e43]: You can export your project files at any time. You can delete a workspace, which removes its projects and assets from active storage. You can ask us for a copy of your personal data or its deletion by writing to us.
+          - generic [ref=e44]:
+            - heading "06 Security and contact" [level=2] [ref=e45]:
+              - generic [ref=e46]: "06"
+              - text: Security and contact
+            - paragraph [ref=e48]:
+              - text: Sessions use secure httpOnly cookies; access is role-scoped inside a workspace. Found something sensitive? Responsible disclosures go to
+              - link "security@studio.example.com" [ref=e49] [cursor=pointer]:
+                - /url: mailto:security@studio.example.com
+              - text: .
+          - paragraph [ref=e50]:
+            - text: "See also:"
+            - link "Terms" [ref=e51] [cursor=pointer]:
+              - /url: /legal/terms
+            - text: ·
+            - link "Privacy" [ref=e52] [cursor=pointer]:
+              - /url: /legal/privacy
+            - text: ·
+            - link "Licences" [ref=e53] [cursor=pointer]:
+              - /url: /legal/licences
+        - generic [ref=e54]:
+          - generic [ref=e56]: END — LEGAL
+          - paragraph [ref=e57]:
+            - text: Questions about this page?
+            - link "support@studio.example.com" [ref=e58] [cursor=pointer]:
+              - /url: mailto:support@studio.example.com
+    - contentinfo [ref=e59]:
+      - generic [ref=e60]:
+        - generic [ref=e61]:
+          - generic [ref=e62]:
+            - generic [ref=e65]: Studio
+            - paragraph [ref=e66]: A composition editor with an agent that understands layers, keyframes and taste. Built on an open-source compositing engine — see the licences page.
+          - navigation "Product" [ref=e67]:
+            - heading "Product" [level=2] [ref=e68]
+            - list [ref=e69]:
+              - listitem [ref=e70]:
+                - link "Pricing" [ref=e71] [cursor=pointer]:
+                  - /url: /pricing
+              - listitem [ref=e72]:
+                - link "FAQ" [ref=e73] [cursor=pointer]:
+                  - /url: /faq
+              - listitem [ref=e74]:
+                - link "The agent" [ref=e75] [cursor=pointer]:
+                  - /url: /#agent
+              - listitem [ref=e76]:
+                - link "The editor" [ref=e77] [cursor=pointer]:
+                  - /url: /#product
+              - listitem [ref=e78]:
+                - link "Changelog" [ref=e79] [cursor=pointer]:
+                  - /url: /changelog
+          - navigation "Resources" [ref=e80]:
+            - heading "Resources" [level=2] [ref=e81]
+            - list [ref=e82]:
+              - listitem [ref=e83]:
+                - link "Support" [ref=e84] [cursor=pointer]:
+                  - /url: mailto:support@studio.example.com
+              - listitem [ref=e85]:
+                - link "Status" [ref=e86] [cursor=pointer]:
+                  - /url: /status
+          - navigation "Legal" [ref=e87]:
+            - heading "Legal" [level=2] [ref=e88]
+            - list [ref=e89]:
+              - listitem [ref=e90]:
+                - link "Terms" [ref=e91] [cursor=pointer]:
+                  - /url: /legal/terms
+              - listitem [ref=e92]:
+                - link "Privacy" [ref=e93] [cursor=pointer]:
+                  - /url: /legal/privacy
+              - listitem [ref=e94]:
+                - link "Licences" [ref=e95] [cursor=pointer]:
+                  - /url: /legal/licences
+        - generic [ref=e96]:
+          - paragraph [ref=e97]: © 2026 Studio. Studio — Motion, directed by you.
+          - paragraph [ref=e98]: This is a beta product. Prices, plans and placeholder links are finalised at launch.
+  - button "Open Next.js Dev Tools" [ref=e104] [cursor=pointer]:
+    - img [ref=e105]
+  - alert [ref=e108]
+```

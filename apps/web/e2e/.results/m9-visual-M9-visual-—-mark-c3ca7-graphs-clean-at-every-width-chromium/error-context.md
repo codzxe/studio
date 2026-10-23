@@ -1,0 +1,135 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "Studio — home" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - generic [ref=e8]: Studio
+        - generic [ref=e9]:
+          - link "Sign in" [ref=e10] [cursor=pointer]:
+            - /url: /sign-in
+          - link "Start trial" [ref=e11] [cursor=pointer]:
+            - /url: /sign-up
+    - main [ref=e12]:
+      - generic [ref=e13]:
+        - paragraph [ref=e14]: Studio — Legal
+        - heading "Terms of Service" [level=1] [ref=e15]
+        - paragraph [ref=e16]: How the service works, who is responsible for what, and what you can expect from us while the product is in beta.
+        - generic [ref=e17]: This is a beta product; final terms are being reviewed. This page is the working draft we operate under today — clear about what the service does, without legalese.
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - heading "01 The service" [level=2] [ref=e20]:
+              - generic [ref=e21]: "01"
+              - text: The service
+            - paragraph [ref=e23]: "Studio is a browser-based motion-graphics workspace: a compositing editor, an agent that proposes and applies edits to your compositions, storage for projects and versions, and a render queue. You get a workspace, projects live inside it, and your plan decides seats, credits and model tiers."
+          - generic [ref=e24]:
+            - heading "02 Accounts and workspaces" [level=2] [ref=e25]:
+              - generic [ref=e26]: "02"
+              - text: Accounts and workspaces
+            - generic [ref=e27]:
+              - paragraph [ref=e28]: "You sign in with email or an OAuth provider. A workspace is the tenant boundary: it owns members, projects, credits and billing. Roles are owner, admin, editor and viewer; the role list in your workspace settings is the source of truth for what each can do."
+              - paragraph [ref=e29]: You are responsible for activity under your account, for keeping your credentials safe, and for who you invite into your workspace.
+          - generic [ref=e30]:
+            - heading "03 Trials and billing" [level=2] [ref=e31]:
+              - generic [ref=e32]: "03"
+              - text: Trials and billing
+            - generic [ref=e33]:
+              - paragraph [ref=e34]: The trial lasts 14 days and requires a card at start. There is no free tier. Plans and credit top-ups are charged through Stripe; you can cancel any time from billing, and cancellation stops future charges — it does not delete your work.
+              - paragraph [ref=e35]: If payment fails, workspaces go read-only until billing is fixed. Projects are never deleted for non-payment.
+          - generic [ref=e36]:
+            - heading "04 Your content" [level=2] [ref=e37]:
+              - generic [ref=e38]: "04"
+              - text: Your content
+            - paragraph [ref=e40]: Your projects, assets and renders remain yours. We store them to provide the service, render them when you queue a render, and show them to the workspace members you choose. We do not use your project content to train models.
+          - generic [ref=e41]:
+            - heading "05 Acceptable use" [level=2] [ref=e42]:
+              - generic [ref=e43]: "05"
+              - text: Acceptable use
+            - paragraph [ref=e45]: Don't upload content you have no right to use, don't use the service to break the law or attack our systems, and keep agent usage within your plan's credits. The credit ledger is the usage record of truth.
+          - generic [ref=e46]:
+            - heading "06 Changes and availability" [level=2] [ref=e47]:
+              - generic [ref=e48]: "06"
+              - text: Changes and availability
+            - paragraph [ref=e50]: "This is a beta: features, prices and plan limits may change before launch, and we will give reasonable notice of pricing changes. We aim for high availability and publish incidents to the status page. The service is provided without a formal SLA during beta."
+          - generic [ref=e51]:
+            - heading "07 Contact" [level=2] [ref=e52]:
+              - generic [ref=e53]: "07"
+              - text: Contact
+            - paragraph [ref=e55]:
+              - text: Questions about these terms, or anything else legal? Write to
+              - link "support@studio.example.com" [ref=e56] [cursor=pointer]:
+                - /url: mailto:support@studio.example.com
+              - text: — we answer as humans, not a ticket wall.
+          - paragraph [ref=e57]:
+            - text: "See also:"
+            - link "Terms" [ref=e58] [cursor=pointer]:
+              - /url: /legal/terms
+            - text: ·
+            - link "Privacy" [ref=e59] [cursor=pointer]:
+              - /url: /legal/privacy
+            - text: ·
+            - link "Licences" [ref=e60] [cursor=pointer]:
+              - /url: /legal/licences
+        - generic [ref=e61]:
+          - generic [ref=e63]: END — LEGAL
+          - paragraph [ref=e64]:
+            - text: Questions about this page?
+            - link "support@studio.example.com" [ref=e65] [cursor=pointer]:
+              - /url: mailto:support@studio.example.com
+    - contentinfo [ref=e66]:
+      - generic [ref=e67]:
+        - generic [ref=e68]:
+          - generic [ref=e69]:
+            - generic [ref=e72]: Studio
+            - paragraph [ref=e73]: A composition editor with an agent that understands layers, keyframes and taste. Built on an open-source compositing engine — see the licences page.
+          - navigation "Product" [ref=e74]:
+            - heading "Product" [level=2] [ref=e75]
+            - list [ref=e76]:
+              - listitem [ref=e77]:
+                - link "Pricing" [ref=e78] [cursor=pointer]:
+                  - /url: /pricing
+              - listitem [ref=e79]:
+                - link "FAQ" [ref=e80] [cursor=pointer]:
+                  - /url: /faq
+              - listitem [ref=e81]:
+                - link "The agent" [ref=e82] [cursor=pointer]:
+                  - /url: /#agent
+              - listitem [ref=e83]:
+                - link "The editor" [ref=e84] [cursor=pointer]:
+                  - /url: /#product
+              - listitem [ref=e85]:
+                - link "Changelog" [ref=e86] [cursor=pointer]:
+                  - /url: /changelog
+          - navigation "Resources" [ref=e87]:
+            - heading "Resources" [level=2] [ref=e88]
+            - list [ref=e89]:
+              - listitem [ref=e90]:
+                - link "Support" [ref=e91] [cursor=pointer]:
+                  - /url: mailto:support@studio.example.com
+              - listitem [ref=e92]:
+                - link "Status" [ref=e93] [cursor=pointer]:
+                  - /url: /status
+          - navigation "Legal" [ref=e94]:
+            - heading "Legal" [level=2] [ref=e95]
+            - list [ref=e96]:
+              - listitem [ref=e97]:
+                - link "Terms" [ref=e98] [cursor=pointer]:
+                  - /url: /legal/terms
+              - listitem [ref=e99]:
+                - link "Privacy" [ref=e100] [cursor=pointer]:
+                  - /url: /legal/privacy
+              - listitem [ref=e101]:
+                - link "Licences" [ref=e102] [cursor=pointer]:
+                  - /url: /legal/licences
+        - generic [ref=e103]:
+          - paragraph [ref=e104]: © 2026 Studio. Studio — Motion, directed by you.
+          - paragraph [ref=e105]: This is a beta product. Prices, plans and placeholder links are finalised at launch.
+  - button "Open Next.js Dev Tools" [ref=e111] [cursor=pointer]:
+    - img [ref=e112]
+  - alert [ref=e115]
+```

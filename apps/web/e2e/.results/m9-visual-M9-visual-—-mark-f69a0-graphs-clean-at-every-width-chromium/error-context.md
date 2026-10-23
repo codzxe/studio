@@ -1,0 +1,117 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "Studio — home" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - generic [ref=e8]: Studio
+        - generic [ref=e9]:
+          - link "Sign in" [ref=e10] [cursor=pointer]:
+            - /url: /sign-in
+          - link "Start trial" [ref=e11] [cursor=pointer]:
+            - /url: /sign-up
+    - main [ref=e12]:
+      - generic [ref=e13]:
+        - paragraph [ref=e14]: Studio — FAQ
+        - heading "Questions, answered." [level=1] [ref=e15]
+        - paragraph [ref=e16]: Browser support, project formats, credits, the agent's models, privacy and cancellation — the honest version of each answer, no marketing varnish.
+        - generic [ref=e17]:
+          - generic [ref=e18]:
+            - generic [ref=e20]: 00:00:01 — THE ANSWERS
+            - generic [ref=e21]:
+              - heading "Which browsers are supported?" [level=2] [ref=e23]:
+                - button "Which browsers are supported?" [ref=e24] [cursor=pointer]:
+                  - generic [ref=e25]: Which browsers are supported?
+                  - generic [ref=e26]: +
+              - heading "What file formats does the project use?" [level=2] [ref=e28]:
+                - button "What file formats does the project use?" [ref=e29] [cursor=pointer]:
+                  - generic [ref=e30]: What file formats does the project use?
+                  - generic [ref=e31]: +
+              - heading "Where does my data live?" [level=2] [ref=e33]:
+                - button "Where does my data live?" [ref=e34] [cursor=pointer]:
+                  - generic [ref=e35]: Where does my data live?
+                  - generic [ref=e36]: +
+              - heading "Which models does the agent use?" [level=2] [ref=e38]:
+                - button "Which models does the agent use?" [ref=e39] [cursor=pointer]:
+                  - generic [ref=e40]: Which models does the agent use?
+                  - generic [ref=e41]: +
+              - heading "What are credits and how do they work?" [level=2] [ref=e43]:
+                - button "What are credits and how do they work?" [ref=e44] [cursor=pointer]:
+                  - generic [ref=e45]: What are credits and how do they work?
+                  - generic [ref=e46]: +
+              - heading "Can I cancel? What about refunds?" [level=2] [ref=e48]:
+                - button "Can I cancel? What about refunds?" [ref=e49] [cursor=pointer]:
+                  - generic [ref=e50]: Can I cancel? What about refunds?
+                  - generic [ref=e51]: +
+              - heading "Can I use the editor without the agent?" [level=2] [ref=e53]:
+                - button "Can I use the editor without the agent?" [ref=e54] [cursor=pointer]:
+                  - generic [ref=e55]: Can I use the editor without the agent?
+                  - generic [ref=e56]: +
+              - heading "Is there a free tier?" [level=2] [ref=e58]:
+                - button "Is there a free tier?" [ref=e59] [cursor=pointer]:
+                  - generic [ref=e60]: Is there a free tier?
+                  - generic [ref=e61]: +
+          - generic [ref=e62]:
+            - generic [ref=e64]: END — FAQ
+            - paragraph [ref=e65]:
+              - text: Something we did not answer?
+              - link "support@studio.example.com" [ref=e66] [cursor=pointer]:
+                - /url: mailto:support@studio.example.com
+              - text: — we answer as humans, not a ticket wall.
+    - contentinfo [ref=e67]:
+      - generic [ref=e68]:
+        - generic [ref=e69]:
+          - generic [ref=e70]:
+            - generic [ref=e73]: Studio
+            - paragraph [ref=e74]: A composition editor with an agent that understands layers, keyframes and taste. Built on an open-source compositing engine — see the licences page.
+          - navigation "Product" [ref=e75]:
+            - heading "Product" [level=2] [ref=e76]
+            - list [ref=e77]:
+              - listitem [ref=e78]:
+                - link "Pricing" [ref=e79] [cursor=pointer]:
+                  - /url: /pricing
+              - listitem [ref=e80]:
+                - link "FAQ" [ref=e81] [cursor=pointer]:
+                  - /url: /faq
+              - listitem [ref=e82]:
+                - link "The agent" [ref=e83] [cursor=pointer]:
+                  - /url: /#agent
+              - listitem [ref=e84]:
+                - link "The editor" [ref=e85] [cursor=pointer]:
+                  - /url: /#product
+              - listitem [ref=e86]:
+                - link "Changelog" [ref=e87] [cursor=pointer]:
+                  - /url: /changelog
+          - navigation "Resources" [ref=e88]:
+            - heading "Resources" [level=2] [ref=e89]
+            - list [ref=e90]:
+              - listitem [ref=e91]:
+                - link "Support" [ref=e92] [cursor=pointer]:
+                  - /url: mailto:support@studio.example.com
+              - listitem [ref=e93]:
+                - link "Status" [ref=e94] [cursor=pointer]:
+                  - /url: /status
+          - navigation "Legal" [ref=e95]:
+            - heading "Legal" [level=2] [ref=e96]
+            - list [ref=e97]:
+              - listitem [ref=e98]:
+                - link "Terms" [ref=e99] [cursor=pointer]:
+                  - /url: /legal/terms
+              - listitem [ref=e100]:
+                - link "Privacy" [ref=e101] [cursor=pointer]:
+                  - /url: /legal/privacy
+              - listitem [ref=e102]:
+                - link "Licences" [ref=e103] [cursor=pointer]:
+                  - /url: /legal/licences
+        - generic [ref=e104]:
+          - paragraph [ref=e105]: © 2026 Studio. Studio — Motion, directed by you.
+          - paragraph [ref=e106]: This is a beta product. Prices, plans and placeholder links are finalised at launch.
+  - button "Open Next.js Dev Tools" [ref=e112] [cursor=pointer]:
+    - img [ref=e113]
+  - alert [ref=e116]
+```

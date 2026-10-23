@@ -1,0 +1,367 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "Studio — home" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - generic [ref=e8]: Studio
+        - generic [ref=e9]:
+          - link "Sign in" [ref=e10] [cursor=pointer]:
+            - /url: /sign-in
+          - link "Start trial" [ref=e11] [cursor=pointer]:
+            - /url: /sign-up
+    - main [ref=e12]:
+      - region "Motion, directed by you." [ref=e13]:
+        - generic [ref=e14]:
+          - paragraph [ref=e15]: Studio — Agent Motion Suite
+          - heading "Motion, directed by you." [level=1] [ref=e16]
+          - paragraph [ref=e17]: A composition editor with an agent that understands layers, keyframes and taste.
+          - generic [ref=e18]:
+            - link "Start 14-day trial" [ref=e19] [cursor=pointer]:
+              - /url: /sign-up
+            - link "Watch the 90s film" [ref=e20] [cursor=pointer]:
+              - /url: "#film"
+          - paragraph [ref=e21]: Card required · Cancel anytime · No free tier
+          - generic [ref=e23]:
+            - generic [ref=e24]:
+              - generic "An eight-second loop of the studio editor and its agent, captured from the real build." [ref=e25]
+              - generic:
+                - generic: REEL 01
+                - generic: —
+                - generic: Studio tour
+              - generic:
+                - generic: RUNTIME
+                - generic: 00:00:08
+              - button "Play the demo loop" [ref=e26]:
+                - img [ref=e27]
+            - paragraph [ref=e29]: An eight-second loop of the studio editor and its agent, captured from the real build.
+      - region "The work" [ref=e30]:
+        - generic [ref=e31]:
+          - generic [ref=e33]: 00:00:01 — THE WORK
+          - generic [ref=e34]:
+            - paragraph [ref=e35]: Frame-accurate timeline. Real layers. Editable output.
+            - list "Capabilities" [ref=e36]:
+              - listitem [ref=e37]:
+                - generic [ref=e38]: Keyframes
+              - listitem [ref=e39]:
+                - generic [ref=e40]: ·
+                - generic [ref=e41]: 3D
+              - listitem [ref=e42]:
+                - generic [ref=e43]: ·
+                - generic [ref=e44]: 300+ effects
+              - listitem [ref=e45]:
+                - generic [ref=e46]: ·
+                - generic [ref=e47]: Agent edits
+              - listitem [ref=e48]:
+                - generic [ref=e49]: ·
+                - generic [ref=e50]: Version history
+      - generic [ref=e51]:
+        - generic [ref=e52]:
+          - heading "The agent" [level=2] [ref=e53]
+          - paragraph [ref=e54]: Ask in plain language. Review the plan. Apply with one undo step.
+        - generic [ref=e56]:
+          - region "Ask" [ref=e57]:
+            - generic [ref=e58]:
+              - generic [ref=e59]: "01"
+              - generic [ref=e60]:
+                - heading "Ask" [level=3] [ref=e61]
+                - paragraph [ref=e62]: Plain language, right next to the timeline.
+            - generic [ref=e63]:
+              - paragraph [ref=e64]: Make the title reveal feel weightier — stretch the ease-out over eight frames.
+              - generic [ref=e65]:
+                - generic [ref=e66]: Agent reading the comp
+                - paragraph [ref=e68]: Found the title layer, its scale keyframes and the background fade — three layers, all animatable.
+          - region "Review the plan" [ref=e69]:
+            - generic [ref=e70]:
+              - generic [ref=e71]: "02"
+              - generic [ref=e72]:
+                - heading "Review the plan" [level=3] [ref=e73]
+                - paragraph [ref=e74]: Every edit arrives as a plan before it touches a layer.
+            - generic [ref=e75]:
+              - generic [ref=e76]:
+                - heading "Plan · Edit 3 layers" [level=3] [ref=e77]
+                - generic [ref=e78]: Low risk
+                - generic [ref=e80]: ~12 credits
+              - list [ref=e81]:
+                - listitem [ref=e82]: Stretch the title scale ease-out from 4f to 8f — ease-out quart.
+                - listitem [ref=e83]: Delay the background fade by six frames to sit under the reveal.
+                - listitem [ref=e84]: Render a preview frame at 00:02:00 for the result.
+              - generic [ref=e85]:
+                - button "Preview" [ref=e86]
+                - button "Apply" [ref=e87]
+                - button "Cancel" [ref=e88]
+          - region "Applied" [ref=e89]:
+            - generic [ref=e90]:
+              - generic [ref=e91]: "03"
+              - generic [ref=e92]:
+                - heading "Applied" [level=3] [ref=e93]
+                - paragraph [ref=e94]: One undo step, versions recorded.
+            - generic [ref=e95]:
+              - generic [ref=e96]:
+                - img [ref=e97]
+                - generic [ref=e99]: Applied · 3 layers · 0.8s
+              - paragraph [ref=e100]: The comp updates live. Nothing is destructive — every run is one undo step, and the version history records the change.
+              - button "Undo" [ref=e101]
+      - region "The editor" [ref=e102]:
+        - generic [ref=e103]:
+          - generic [ref=e104]:
+            - heading "The editor" [level=2] [ref=e105]
+            - paragraph [ref=e106]: A complete compositing environment — compositions, a keyframe timeline, 3D and hundreds of built-in effects — running as-is in the browser.
+          - generic [ref=e107]:
+            - generic [ref=e108]:
+              - 'img "The EffectCraft editor viewport: compositions panel on the left, keyframe timeline at the bottom, render queue on the right." [ref=e109]'
+              - generic [ref=e110]:
+                - generic [ref=e111]: VIEWPORT 01
+                - generic [ref=e112]: —
+                - generic [ref=e113]: 1920 × 1080
+              - generic [ref=e114]:
+                - generic [ref=e118]: Compositions
+                - generic [ref=e122]: Keyframe timeline
+                - generic [ref=e126]: Render queue
+            - generic [ref=e127]:
+              - paragraph [ref=e128]: A full compositing editor, unmodified.
+              - paragraph [ref=e129]: Timeless timeline. 306 effects. Runs in the browser. Captured from the real build.
+      - generic [ref=e130]:
+        - generic [ref=e132]: 00:00:04 — WORKFLOW
+        - generic [ref=e134]:
+          - heading "From media to master" [level=2] [ref=e135]
+          - paragraph [ref=e136]: Five steps, no detours — the same project file from first import to final render.
+        - list [ref=e137]:
+          - listitem [ref=e138]:
+            - generic [ref=e139]:
+              - generic [ref=e140]: "01"
+              - img [ref=e142]
+            - heading "Import" [level=3] [ref=e146]
+            - paragraph [ref=e147]: Bring in media, fonts, LUTs — or an existing .ecproj project.
+          - listitem [ref=e148]:
+            - generic [ref=e149]:
+              - generic [ref=e150]: "02"
+              - img [ref=e152]
+            - heading "Compose" [level=3] [ref=e157]
+            - paragraph [ref=e158]: Layer compositions, shapes, text, 3D — real layers, named.
+          - listitem [ref=e159]:
+            - generic [ref=e160]:
+              - generic [ref=e161]: "03"
+              - img [ref=e163]
+            - heading "Animate" [level=3] [ref=e167]
+            - paragraph [ref=e168]: Keyframes with real eases on every property. Frame-accurate.
+          - listitem [ref=e169]:
+            - generic [ref=e170]:
+              - generic [ref=e171]: "04"
+              - img [ref=e173]
+            - heading "Review" [level=3] [ref=e175]
+            - paragraph [ref=e176]: Comments anchored to a comp, a layer or a frame. Resolve, ship.
+          - listitem [ref=e177]:
+            - generic [ref=e178]:
+              - generic [ref=e179]: "05"
+              - img [ref=e181]
+            - heading "Render" [level=3] [ref=e186]
+            - paragraph [ref=e187]: Queue MP4, ProRes, PNG sequences, GIF or WAV renders.
+      - generic [ref=e188]:
+        - generic [ref=e189]:
+          - heading "Collaboration" [level=2] [ref=e190]
+          - paragraph [ref=e191]: Comments anchored to the work. Versions that never rewrite. One writer at a time — no mystery merges.
+        - generic [ref=e192]:
+          - generic [ref=e193]:
+            - heading "Comments" [level=3] [ref=e194]
+            - paragraph [ref=e195]: Notes anchored to a composition, a layer or a frame — resolved in place, nothing floats free.
+            - generic [ref=e196]:
+              - img "Alex Jordan" [ref=e197]:
+                - generic [ref=e198]: AJ
+              - paragraph [ref=e199]: Hold this reveal two frames longer — it lands early.
+          - generic [ref=e200]:
+            - heading "Versions" [level=3] [ref=e201]
+            - paragraph [ref=e202]: Every save is an immutable snapshot. Restoring creates a new version — history never rewrites.
+            - list [ref=e203]:
+              - listitem [ref=e204]:
+                - generic [ref=e206]: v14 · applied by agent
+              - listitem [ref=e207]:
+                - generic [ref=e209]: v13 · preview render
+              - listitem [ref=e210]:
+                - generic [ref=e212]: v12 · manual save
+          - generic [ref=e213]:
+            - heading "Presence" [level=3] [ref=e214]
+            - paragraph [ref=e215]: See who is in the project and who holds the write lease — one writer at a time, everyone reads.
+            - generic [ref=e216]:
+              - generic [ref=e217]:
+                - img "Alex Jordan" [ref=e218]:
+                  - generic [ref=e219]: AJ
+                - img "Mia Reyes" [ref=e220]:
+                  - generic [ref=e221]: MR
+                - img "Tom Silva" [ref=e222]:
+                  - generic [ref=e223]: TS
+              - generic [ref=e225]: Alex is editing
+              - paragraph [ref=e226]: Lease example — 2-minute heartbeat, 5-minute expiry.
+      - region "Performance" [ref=e227]:
+        - generic [ref=e228]:
+          - generic [ref=e230]: 00:00:09 — PERFORMANCE
+          - generic [ref=e232]:
+            - heading "Fast where it counts" [level=2] [ref=e233]
+            - paragraph [ref=e234]: GPU-accelerated, browser-native, no install. These are the budgets we hold ourselves to — not measurements; the measured numbers get published here when staging deploys begin.
+          - generic [ref=e235]:
+            - generic [ref=e236]:
+              - term [ref=e237]: Editor ready, warm cache (budget)
+              - definition [ref=e238]: < 6 s
+            - generic [ref=e239]:
+              - term [ref=e240]: Editor ready, cold (budget)
+              - definition [ref=e241]: < 12 s
+            - generic [ref=e242]:
+              - term [ref=e243]: First chat token (budget)
+              - definition [ref=e244]: < 1.5 s
+            - generic [ref=e245]:
+              - term [ref=e246]: Local apply (budget)
+              - definition [ref=e247]: < 300 ms
+            - generic [ref=e248]:
+              - term [ref=e249]: Playback, 1080p (budget)
+              - definition [ref=e250]: 60 fps
+          - paragraph [ref=e251]: Performance budgets from our build plan; p75 measurements land with the first staging deploys.
+      - generic [ref=e252]:
+        - generic [ref=e254]: 00:00:11 — PRICING
+        - generic [ref=e256]:
+          - heading "Pricing" [level=2] [ref=e257]
+          - paragraph [ref=e258]: Three plans with included monthly credits, seats, storage and render minutes. One-time credit top-ups any time.
+        - generic [ref=e260]:
+          - generic [ref=e261]:
+            - heading "Starter" [level=3] [ref=e263]
+            - paragraph [ref=e264]: For solo motion work and small jobs.
+            - paragraph [ref=e265]:
+              - generic [ref=e266]: $12
+              - generic [ref=e267]: /mo
+            - list [ref=e268]:
+              - listitem [ref=e269]: 500 credits/mo
+              - listitem [ref=e270]: 2 seats
+              - listitem [ref=e271]: Fast + Smart models
+              - listitem [ref=e272]: 10 projects
+              - listitem [ref=e273]: 20 GB storage
+              - listitem [ref=e274]: 60 render minutes/mo
+            - paragraph [ref=e275]: 1 render at a time · up to 1,920 px · outputs kept 7 days
+            - link "Start Starter trial" [ref=e276] [cursor=pointer]:
+              - /url: /sign-up
+          - generic [ref=e277]:
+            - generic [ref=e278]:
+              - heading "Pro" [level=3] [ref=e279]
+              - generic [ref=e280]: Most popular
+            - paragraph [ref=e281]: For small teams shipping every week.
+            - paragraph [ref=e282]:
+              - generic [ref=e283]: $39
+              - generic [ref=e284]: /mo
+            - list [ref=e285]:
+              - listitem [ref=e286]: 2,000 credits/mo
+              - listitem [ref=e287]: 5 seats
+              - listitem [ref=e288]: Fast + Smart models
+              - listitem [ref=e289]: 50 projects
+              - listitem [ref=e290]: 200 GB storage
+              - listitem [ref=e291]: 600 render minutes/mo
+            - paragraph [ref=e292]: 3 renders at a time · up to 3,840 px · outputs kept 30 days
+            - link "Start Pro trial" [ref=e293] [cursor=pointer]:
+              - /url: /sign-up
+          - generic [ref=e294]:
+            - heading "Studio" [level=3] [ref=e296]
+            - paragraph [ref=e297]: For studios with heavy render volume.
+            - paragraph [ref=e298]:
+              - generic [ref=e299]: $99
+              - generic [ref=e300]: /mo
+            - list [ref=e301]:
+              - listitem [ref=e302]: 10,000 credits/mo
+              - listitem [ref=e303]: 15 seats
+              - listitem [ref=e304]: Fast + Smart models
+              - listitem [ref=e305]: 200 projects
+              - listitem [ref=e306]: 1 TB storage
+              - listitem [ref=e307]: 3,000 render minutes/mo
+            - paragraph [ref=e308]: 8 renders at a time · up to 3,840 px · outputs kept 90 days
+            - link "Start Studio trial" [ref=e309] [cursor=pointer]:
+              - /url: /sign-up
+        - generic [ref=e310]:
+          - paragraph [ref=e311]: Need more mid-cycle? One-time credit top-ups, priced at checkout — never a forced upgrade.
+          - paragraph [ref=e312]: 14 days free with card. No free tier. Cancel anytime.
+      - region "Questions, answered" [ref=e313]:
+        - generic [ref=e314]:
+          - heading "Questions, answered" [level=2] [ref=e315]
+          - generic [ref=e316]:
+            - group [ref=e317]:
+              - generic "Which browsers are supported?" [ref=e318] [cursor=pointer]:
+                - text: Which browsers are supported?
+                - generic [ref=e319]: +
+            - group [ref=e320]:
+              - generic "What file formats can I import and export?" [ref=e321] [cursor=pointer]:
+                - text: What file formats can I import and export?
+                - generic [ref=e322]: +
+            - group [ref=e323]:
+              - generic "Where does my data live?" [ref=e324] [cursor=pointer]:
+                - text: Where does my data live?
+                - generic [ref=e325]: +
+            - group [ref=e326]:
+              - generic "Which models does the agent use?" [ref=e327] [cursor=pointer]:
+                - text: Which models does the agent use?
+                - generic [ref=e328]: +
+            - group [ref=e329]:
+              - generic "Can I use the editor without the agent?" [ref=e330] [cursor=pointer]:
+                - text: Can I use the editor without the agent?
+                - generic [ref=e331]: +
+            - group [ref=e332]:
+              - generic "Can I cancel anytime?" [ref=e333] [cursor=pointer]:
+                - text: Can I cancel anytime?
+                - generic [ref=e334]: +
+      - generic [ref=e335]:
+        - heading "Start the 14-day trial." [level=2] [ref=e336]
+        - generic [ref=e337]:
+          - link "Start 14-day trial" [ref=e338] [cursor=pointer]:
+            - /url: /sign-up
+          - paragraph [ref=e339]: Card required.
+    - contentinfo [ref=e340]:
+      - generic [ref=e341]:
+        - generic [ref=e342]:
+          - generic [ref=e343]:
+            - generic [ref=e346]: Studio
+            - paragraph [ref=e347]: A composition editor with an agent that understands layers, keyframes and taste. Built on an open-source compositing engine — see the licences page.
+          - navigation "Product" [ref=e348]:
+            - heading "Product" [level=2] [ref=e349]
+            - list [ref=e350]:
+              - listitem [ref=e351]:
+                - link "Pricing" [ref=e352] [cursor=pointer]:
+                  - /url: /pricing
+              - listitem [ref=e353]:
+                - link "FAQ" [ref=e354] [cursor=pointer]:
+                  - /url: /faq
+              - listitem [ref=e355]:
+                - link "The agent" [ref=e356] [cursor=pointer]:
+                  - /url: /#agent
+              - listitem [ref=e357]:
+                - link "The editor" [ref=e358] [cursor=pointer]:
+                  - /url: /#product
+              - listitem [ref=e359]:
+                - link "Changelog" [ref=e360] [cursor=pointer]:
+                  - /url: /changelog
+          - navigation "Resources" [ref=e361]:
+            - heading "Resources" [level=2] [ref=e362]
+            - list [ref=e363]:
+              - listitem [ref=e364]:
+                - link "Support" [ref=e365] [cursor=pointer]:
+                  - /url: mailto:support@studio.example.com
+              - listitem [ref=e366]:
+                - link "Status" [ref=e367] [cursor=pointer]:
+                  - /url: /status
+          - navigation "Legal" [ref=e368]:
+            - heading "Legal" [level=2] [ref=e369]
+            - list [ref=e370]:
+              - listitem [ref=e371]:
+                - link "Terms" [ref=e372] [cursor=pointer]:
+                  - /url: /legal/terms
+              - listitem [ref=e373]:
+                - link "Privacy" [ref=e374] [cursor=pointer]:
+                  - /url: /legal/privacy
+              - listitem [ref=e375]:
+                - link "Licences" [ref=e376] [cursor=pointer]:
+                  - /url: /legal/licences
+        - generic [ref=e377]:
+          - paragraph [ref=e378]: © 2026 Studio. Studio — Motion, directed by you.
+          - paragraph [ref=e379]: This is a beta product. Prices, plans and placeholder links are finalised at launch.
+  - button "Open Next.js Dev Tools" [ref=e385] [cursor=pointer]:
+    - img [ref=e386]
+  - alert [ref=e389]
+```

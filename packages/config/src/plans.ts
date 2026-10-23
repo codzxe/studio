@@ -37,12 +37,17 @@
 // must move `amount` to bigint (or grant in split rows) before Studio
 // allowances are written. Flagged in the M6-A report/worklog.
 //
-// DRIFT NOTE (models): @studio/contracts `PLAN_MODEL_ENTITLEMENTS` is the
-// pre-M6 illustrative map (starter→[fast], studio→[fast,smart,vision]). It
-// does NOT match this catalog (starter→[fast,smart]; studio→[fast,smart],
-// vision reserved per D-8). Consumers must gate the picker through
-// `maxModelTier`/`entitlementsFor` here; the contracts map needs an M6
-// follow-up edit by its owner (config cannot import contracts).
+// ALIGNMENT NOTE (models): @studio/contracts `PLAN_MODEL_ENTITLEMENTS` is
+// ALIGNED with this catalog since the M6-A ruling (D-4/D-8, 2026-10-24):
+// trial→[studio-fast] and every paid plan→[studio-fast, studio-smart];
+// studio-vision is reserved on every tier (D-8: eval harness / vision
+// critic only). Both maps are pinned by their own package's tests
+// (contracts tests/models.test.ts + config tests/plans.test.ts); the
+// gateway picker gates through the contracts map (routes/models.ts +
+// routes/chat.ts) while server-side entitlement checks gate through
+// `maxModelTier`/`entitlementsFor` here — keep the two in lockstep when a
+// tier's model list changes (config cannot import contracts, so the pin is
+// the pair of tests, not a type).
 
 import { StudioError } from "./errors.js";
 

@@ -78,6 +78,18 @@ const BOOT_COMMAND = [
   "wait",
 ].join(" ");
 
+/**
+ * External-stack mode (on-box runs): point the suite at an ALREADY-RUNNING
+ * stack instead of booting the edge+gateway+web trio below. Set E2E_BASE_URL
+ * to the live origin — e.g. `http://localhost:3000` for the canonical
+ * `scripts/dev-stack.sh start` boot (W5-01): the web app proxies `/v1/*` to
+ * the gateway via GATEWAY_INTERNAL_URL (apps/web/next.config.ts), so the
+ * whole journey stays same-origin AND better-auth's APP_URL origin check
+ * passes (APP_URL=http://localhost:3000 in dev-stack.sh). When set, the
+ * webServer block is omitted — the caller owns the stack's lifecycle.
+ */
+const EXTERNAL_BASE_URL = process.env.E2E_BASE_URL;
+
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "./e2e/.results",
@@ -89,7 +101,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: [["list"]],
   use: {
-    baseURL: `http://127.0.0.1:${EDGE_PORT}`,
+    baseURL: EXTERNAL_BASE_URL ?? `http://127.0.0.1:${EDGE_PORT}`,
     // First-hit dev compiles of the editor route can be slow on cold CI.
     navigationTimeout: 60_000,
     actionTimeout: 10_000,
@@ -109,11 +121,15 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  webServer: {
-    command: BOOT_COMMAND,
-    url: `http://127.0.0.1:${EDGE_PORT}/`,
-    timeout: 240_000,
-    // CI always boots its own stack; a local run may reuse a live one.
-    reuseExistingServer: !process.env.CI,
-  },
+  ...(EXTERNAL_BASE_URL
+    ? {}
+    : {
+        webServer: {
+          command: BOOT_COMMAND,
+          url: `http://127.0.0.1:${EDGE_PORT}/`,
+          timeout: 240_000,
+          // CI always boots its own stack; a local run may reuse a live one.
+          reuseExistingServer: !process.env.CI,
+        },
+      }),
 });

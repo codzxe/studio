@@ -1,0 +1,53 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - main [ref=e4]:
+      - generic [ref=e6]:
+        - heading "Sign in to Studio." [level=1] [ref=e7]
+        - generic [ref=e8]:
+          - button "Continue with Google" [ref=e9]:
+            - img [ref=e10]
+            - text: Continue with Google
+          - button "Continue with GitHub" [ref=e12]:
+            - img [ref=e13]
+            - text: Continue with GitHub
+        - generic [ref=e17]: or continue with email
+        - generic [ref=e19]:
+          - generic [ref=e20]:
+            - generic [ref=e21]: Email*
+            - textbox "Email" [ref=e22]
+          - generic [ref=e23]:
+            - generic [ref=e24]: Password*
+            - generic [ref=e25]:
+              - textbox "Password" [ref=e26]
+              - button "Show password" [ref=e27]:
+                - img [ref=e28]
+          - button "Sign in" [ref=e31]
+        - generic [ref=e32]:
+          - link "Forgot password?" [ref=e33] [cursor=pointer]:
+            - /url: /forgot-password
+          - paragraph [ref=e34]:
+            - text: New to Studio?
+            - link "Create your workspace" [ref=e35] [cursor=pointer]:
+              - /url: /sign-up
+      - paragraph [ref=e36]:
+        - text: By continuing you agree to the
+        - link "terms" [ref=e37] [cursor=pointer]:
+          - /url: /legal/terms
+        - text: and
+        - link "privacy policy" [ref=e38] [cursor=pointer]:
+          - /url: /legal/privacy
+        - text: .
+    - complementary "Studio — the approach" [ref=e39]:
+      - generic [ref=e41]: 00:00:00 — OPENING FRAME
+      - figure "The agent's working thesis — Studio, an agent motion suite." [ref=e42]:
+        - blockquote [ref=e43]: “Ask. Review the plan. Apply.”
+        - generic [ref=e44]: The agent's working thesis — Studio, an agent motion suite.
+  - button "Open Next.js Dev Tools" [ref=e50] [cursor=pointer]:
+    - img [ref=e51]
+  - alert [ref=e54]
+```
