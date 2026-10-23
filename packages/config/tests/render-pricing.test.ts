@@ -10,6 +10,7 @@ import {
   RENDER_QUALITY_MULTIPLIERS,
   RENDER_RESOLUTION_TIERS,
   StudioError,
+  estimateRenderCostDetailUc,
   estimateRenderCostUc,
   isRenderFormatDeclared,
   isRenderQualityId,
