@@ -2169,3 +2169,29 @@ Stage Summary:
 - Backend gaps for Wave 2 (documented, NOT faked): (1) no mail transport in gateway → email verification not enabled (verify-email-panel.tsx header); (2) top-up pack PRICES live only in Stripe products ("Price shown at checkout", topup-flow.tsx) — configure Stripe + expose if a pre-checkout price is ever wanted; (3) PLAN_CATALOG monthlyPriceCents are documented BUSINESS-PENDING placeholders ($12/$39/$99) pending real pricing; (4) marketing film capture owed (W5-02, captureOwed:true) — hero anchor now resolves to the honest slate; (5) docs site/host is a Brand placeholder token — docs link stays hidden until a real host ships.
 - Files: apps/web/src/app/(marketing)/page.tsx, apps/web/src/components/marketing/marketing-page.tsx, apps/web/tests/landing.test.tsx (+ sibling churn swept by add -A).
 - Blockers: none.
+---
+Task ID: W5-01
+Agent: W5-01 (retry — prior attempt ran out of turns)
+
+Task: Boot the REAL stack (gateway :8787 + web :3000) on the SQLite dev DB and prove the core flows; fix what is broken; write the reproducible recipe.
+
+Work Log:
+- Read env law: packages/config/src/env.ts is the single source of truth — required vars are APP_URL, APP_ENV, DATABASE_URL, ASSET_MAX_BYTES, PROJECT_MAX_BYTES, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_IDS, AUTH_SECRET (≥32 chars — NOT BETTER_AUTH_SECRET), AUTH_GOOGLE_{ID,SECRET}, AUTH_GITHUB_{ID,SECRET}, LITELLM_BASE_URL, LITELLM_API_KEY, CHAT_MAX_STEPS. MOCK_MODEL=true is legal in local (rejected only in production); SQLite DATABASE_URL is local-only. Gateway does NOT auto-load .env — vars must be in the environment.
+- Found a stale pre-booted stack from the prior attempt holding :8787 (its env was wrong → sign-in with Origin header 403 INVALID_ORIGIN). Killed it; with the canonical env the same request is 200 — not a code bug, a stale-process bug.
+- Boot bug found + fixed: exporting PORT=8787 for the gateway also reaches `next dev`, which honors PORT and steals 8787 (web logs "Local: http://localhost:8787", gateway dies EADDRINUSE). Fix: scope PORT to the gateway launch only (`nohup env PORT=8787 …`) in scripts/dev-stack.sh; documented the trap in a comment.
+- Verified (curl, real stack): GET /v1/health → {"status":"ok","db":true}; POST /v1/auth/sign-in/email via the web /v1 proxy with Origin header → 200 + set-cookie (better-auth.session_token); GET /v1/me with cookie → real user JSON (Demo User, org_demo owner membership, trial plan, 1000 credits) — direct :8787 and via :3000/v1 proxy both work; GET /v1/projects (x-workspace-id: org_demo) → seeded Demo Project row. Public pages /, /sign-in, /pricing → 200. Authed pages /w, /w/projects, /w/billing, /w/settings/members → 200 with real markup + testids (app-shell, account-menu, dashboard-greeting, projects-card-prj_demo, billing-credit-balance, capability-*). Unauth /w → 307 to /sign-in?next=%2Fw.
+- Note for future agents: an early AUTH_REQUIRED on /v1/me was a curl cookie-jar domain artifact (cookie set by localhost:3000 not sent to 127.0.0.1:8787) — always match hosts when testing cookies.
+- New scripts/dev-stack.sh (33 lines, start|stop; logs .local/{gateway,web}-dev.log) + cross-link added to scripts/dev-sqlite.sh header. Gates: bash -n both scripts; biome has no .sh surface (no-op); no TS files touched → no typecheck/vitest delta. All servers killed; ports 3000/8787 verified free.
+
+Env recipe (exact, APP_ENV=local):
+  APP_URL=http://localhost:3000 APP_ENV=local MOCK_MODEL=true
+  DATABASE_URL=file:/home/z/my-project/.local/studio-dev.db
+  AUTH_SECRET=dev-local-secret-0123456789abcdef0123456789abcdef (any ≥32 chars)
+  AUTH_GOOGLE_ID=replace-me AUTH_GOOGLE_SECRET=replace-me AUTH_GITHUB_ID=replace-me AUTH_GITHUB_SECRET=replace-me
+  STRIPE_WEBHOOK_SECRET=whsec_replace_me STRIPE_PRICE_IDS='{"starter":"price_starter","pro":"price_pro","studio":"price_studio"}'
+  LITELLM_BASE_URL=http://localhost:4000 LITELLM_API_KEY=sk-litellm-replace-me
+  ASSET_MAX_BYTES=524288000 PROJECT_MAX_BYTES=262144000 CHAT_MAX_STEPS=50
+  (web) NEXT_PUBLIC_APP_URL=http://localhost:3000 GATEWAY_INTERNAL_URL=http://127.0.0.1:8787
+  Boot: `bash scripts/dev-stack.sh start`; stop: `bash scripts/dev-stack.sh stop`.
+
+Stage Summary: W5-01 complete — the real stack boots on the SQLite dev DB and every core flow (health, email sign-in via the /v1 proxy, session'd /v1/me, workspace-scoped projects API, all four authed /w pages, auth redirect gate) is verified green. One real bug fixed (PORT collision: next dev stealing 8787 when PORT is exported); recipe committed as scripts/dev-stack.sh. Remaining broken: nothing found in the verified surface; untested here (out of scope, needs a running LiteLLM): real model chat runs — MOCK_MODEL=true covers the offline path only.
