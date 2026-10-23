@@ -1,0 +1,1029 @@
+     1→/**
+     2→ * M7 collaboration — the CI-owned Playwright specs (BUILD_PLAN §M7 tasks 1–5:
+     3→ * comments, presence, lease UX, versions/activity, the public share page).
+     4→ *
+     5→ * NEVER RUN ON THE BUILD-FLEET BOX — same class of debt as e2e/chat.spec.ts and
+     6→ * e2e/m5-agent-edits.spec.ts (M3/M4/M5 precedent): this box has no browsers and
+     7→ * no dev servers, so `@playwright/test` is NOT installed here.
+     8→ * apps/web/tsconfig.json excludes `e2e` from typecheck for exactly that reason
+     9→ * and the web vitest config never matches `e2e/*.spec.ts`; CI owns the
+    10→ * devDependency, the lockfile and the run (e2e/README.md is the boot recipe —
+    11→ * env, seed, the staged `.ecproj` fixture, the share-link fixture §10).
+    12→ *
+    13→ * ----------------------------------------------------------------------------
+    14→ * What is ACTIVE today vs WIRING-PENDING (fixme) — the honest split
+    15→ * ----------------------------------------------------------------------------
+    16→ *
+    17→ * Five journeys, all against the LIVE app (real sign-in, real editor wasm, real
+    18→ * gateway + Postgres — the seed's demo project):
+    19→ *
+    20→ *   1. (ACTIVE) Comments — the M7-F panel over the real editor: open the panel
+    21→ *      from the floating toggle, create an ANCHORED comment (the create box
+    22→ *      prefills comp "Main" + the playhead time chip from the live bridge),
+    23→ *      reply (thread depth 2), resolve (the thread leaves "Open", returns
+    24→ *      under "Resolved"/"All"), and reload the page: the anchored thread is
+    25→ *      still there — the §M7 exit criterion "comments survive reload and link
+    26→ *      to the right comp/time". Fully real: create/reply/resolve POST through
+    27→ *      the gateway and land in Postgres.
+    28→ *   2. (ACTIVE) Presence + lease — the M7-G chrome: the presence strip renders
+    29→ *      the beat's viewers (scripted-gateway presence responses — three
+    30→ *      viewers incl. the self avatar), and the lease banner renders the REAL
+    31→ *      holder state ("You have the edit lease" — the M3 session acquires the
+    32→ *      seeded project's lease on open). A second test drives the
+    33→ *      scripted-gateway lease-state matrix (the M5 spec's scenario-B
+    34→ *      page.route pattern): viewer ("Viewing — Maya Rivera is editing" +
+    35→ *      countdown) → Request edit → queued ("You're #2 in line" + Cancel
+    36→ *      request) → cancel → back to viewer.
+    37→ *   3. (ACTIVE) History — the M7-H surface at /w/demo-project/history: the
+    38→ *      seeded timeline rows (v1–v3, current badge, first-version linkage, the
+    39→ *      real structural diff), the inline label edit (real POST — the demo
+    40→ *      owner can label), the §9.3 restore dialog with its TYPED confirmation
+    41→ *      (wrong label keeps Restore disabled; "empty project" — v1's exact seed
+    42→ *      label — unlocks it; the restore creates a NEW v4 and never rewrites
+    43→ *      history), and the activity tab pagination (scripted-gateway activity
+    44→ *      pages: 25 rows → Load more → 30 → "That's the whole feed.") + the
+    45→ *      admin audit export download (real route, real payload).
+    46→ *   4. (ACTIVE) Share — the M7-I public journey at /s/:token, fully REAL
+    47→ *      thanks to the README §10 share-link fixture (the page's FIRST read —
+    48→ *      `GET /v1/share/:token` — happens server-side in the RSC route, so no
+    49→ *      browser-level scripted gateway can serve it; the fixture rows make the
+    50→ *      real gateway serve everything): the noindex meta, the password gate
+    51→ *      (wrong → the typed 401 copy, right → unlock), the guest comment submit
+    52→ *      (name/email/body → real row), the request-access form, and the
+    53→ *      "no editor for anonymous" pin — ZERO iframes and ZERO requests under
+    54→ *      /editor/ on the whole page. Plus the open link (no gate) and the
+    55→ *      §12.1 404 for an unknown-but-well-formed token.
+    56→ *   5. (ACTIVE) Read-only — the D-23 pin under a scripted lease-held state:
+    57→ *      the read-only chrome strip renders ("Viewing — Maya Rivera is
+    58→ *      editing" + countdown), the CHAT still opens and completes a full
+    59→ *      read-only run through the gate-wrapped bridge (the studio.get_context
+    60→ *      tool card reaches done — reads pass, D-23), the proposal renders with
+    61→ *      NO apply control anywhere (the host wires no apply ports in this
+    62→ *      session — see below), and the comments panel stays fully usable with
+    63→ *      the lease note + a comment posted under another member's lease
+    64→ *      (review is the point of the read-only state).
+    65→ *   6. (fixme, WIRING-PENDING) The apply-blocked half of D-23: clicking Apply
+    66→ *      while another member holds the lease must fail LOCALLY with the typed
+    67→ *      lease explanation. Written as real code against the pinned contract
+    68→ *      (lib/chat/apply.ts → ReadOnlyLeaseError → card status "failed" +
+    69→ *      plan-failed-detail naming the holder + NO retry); flip
+    70→ *      `test.fixme` → `test` when editor-host.tsx passes the ChatProvider
+    71→ *      (LANDED 2026-10-24 — the K-1 fix passes applyPorts; both fixmes are ACTIVE now)
+    72→ *      `applyPorts` (see the test's header note — the precise blocker).
+    73→ *
+    74→ * ----------------------------------------------------------------------------
+    75→ * Determinism contract (no real network model, no real second user)
+    76→ * ----------------------------------------------------------------------------
+    77→ *
+    78→ * - Boot: the README recipe (seeded demo user → real /sign-in → real editor
+    79→ *   wasm opening the staged `.ecproj` fixture → additive collab chrome), the
+    80→ *   gateway in MOCK_MODEL=true mode. Sign-in is the M4/M5 primary (a fresh
+    81→ *   user owns no workspace — README §6).
+    82→ * - Scripted-gateway legs (page.route, the M5 scenario-B pattern) answer ONLY
+    83→ *   the surfaces the seed's single-user world cannot produce, with
+    84→ *   schema-exact §7.3 envelopes (`{ data: … }`) that parse against the
+    85→ *   api-client's runtime validators:
+    86→ *     · `POST|GET /v1/projects/:id/presence` → PRESENCE_VIEWERS (3 viewers);
+    87→ *     · `GET /v1/projects/:id/lease-state` → LEASE_STATE_RESPONSE (viewer /
+    88→ *       queued, holder "Maya Rivera" — LEASE_STATE_RESPONSE_SCHEMA);
+    89→ *     · `POST|DELETE /v1/projects/:id/lease-request` → the join/cancel
+    90→ *       outcomes (LeaseRequestResponse / LeaseRequestCancelledResponse);
+    91→ *     · `GET /v1/projects/:id/activity` → two cursor pages (Page<
+    92→ *       ActivityEntry>).
+    93→ *   Everything else (comments create/reply/resolve, versions list/diff/label/
+    94→ *   restore, audit export, share meta/manifest/comments/request-access, the
+    95→ *   chat run, the real lease acquire + heartbeat) goes to the REAL gateway.
+    96→ * - The share journey needs the README §10 fixture rows (two share_tokens:
+    97→ *   one open, one password-protected with the pinned password). Unknown-token
+    98→ *   404s, the noindex meta and the no-editor pin run against the real page.
+    99→ * - The lease-state polls happen at banner MOUNT (plus every 15 s and on
+   100→ *   window focus), and the presence beat at poller mount (plus every 120 s) —
+   101→ *   so every scripted route is installed BEFORE `page.goto`, and the
+   102→ *   scripted lease-state handler is STATEFUL (viewer → queued → viewer) to
+   103→ *   drive the request/cancel loop deterministically.
+   104→ *
+   105→ * ----------------------------------------------------------------------------
+   106→ * testid map driven by this spec (drift detector — every id verified against
+   107→ * the source when written)
+   108→ * ----------------------------------------------------------------------------
+   109→ *
+   110→ *   comments-toggle, comments-layer (+ data-open)                comments-region.tsx
+   111→ *   comments-panel, comments-header, comments-title,             comments-panel.tsx
+   112→ *   comments-project, comments-close
+   113→ *   comments-filters, comments-filter-{open,resolved,all},       comments-panel.tsx
+   114→ *   comments-comp-filter, comments-comp-menu,
+   115→ *   comments-comp-option-all, comments-comp-option-<id>
+   116→ *   comments-lease-note (+ data-holder)                          comments-panel.tsx
+   117→ *   comments-list, comments-empty, comments-load-more            comments-panel.tsx
+   118→ *   comments-composer, comments-composer-anchor,
+   119→ *   comments-composer-anchor-{comp,layer,time},                  comments-panel.tsx
+   120→ *   comments-composer-refresh, comments-composer-send
+   121→ *   comment-thread-<id>, comment-row-<id> (+ data-depth),        comments-panel.tsx
+   122→ *   comment-author-<id>, comment-body-<id>,
+   123→ *   comment-anchor-{comp,layer,time}-<id>,
+   124→ *   comment-reply-open-<id>, comment-reply-box-<id>,
+   125→ *   comment-reply-send-<id>, comment-resolve-<id>,
+   126→ *   comment-reopen-<id>, comment-resolved-<id>
+   127→ *   (inputs by aria-label: "Write a comment" / "Write a reply")
+   128→ *   presence-strip (+ data-viewer-count), presence-viewer         presence-strip.tsx
+   129→ *   (+ data-self), presence-overflow, presence-viewer-name/comp (tooltip)
+   130→ *   lease-banner (+ data-youare), lease-holder-status,            lease-banner.tsx
+   131→ *   lease-readonly-strip, lease-countdown, lease-queue-line,
+   132→ *   lease-request-button, lease-cancel-request-button
+   133→ *   history-view, history-project-name, history-open-editor,      history-view.tsx
+   134→ *   history-tabs, history-tab-{versions,activity},
+   135→ *   history-panel-{versions,activity}, audit-export-button
+   136→ *   version-timeline, timeline-list, version-row                 version-timeline.tsx
+   137→ *   (+ data-version/current/agent), version-number, version-label,
+   138→ *   version-label-edit(+button/input/save/cancel), version-author,
+   139→ *   version-linkage, version-diff(+toggle/parent), version-current-badge,
+   140→ *   version-restore, restore-dialog-title, restore-input,
+   141→ *   restore-confirm, timeline-end
+   142→ *   activity-feed, activity-row (+ data-action), activity-actor,  activity-feed.tsx
+   143→ *   activity-verb, activity-target, activity-day, activity-day-group,
+   144→ *   activity-load-more, activity-end
+   145→ *   share-page, share-header, share-project-name, share-gate,    share-review.tsx
+   146→ *   share-gate-form, share-gate-input, share-gate-submit,
+   147→ *   share-surface, share-player, share-version-label,
+   148→ *   share-player-empty, share-comments, share-comments-count,
+   149→ *   share-comment-<id>, share-comment-author, share-comment-body,
+   150→ *   share-composer(+name/email/body/submit/success),
+   151→ *   share-request-access(+email/message/submit/ok)               share-request-access.tsx
+   152→ *   not-found                                                     app/not-found.tsx
+   153→ *   editor-host (+ data-editor-phase), editor-iframe,            editor-host.tsx
+   154→ *   chat-layer, chat-header, chat-status (+ data-phase),          header.tsx
+   155→ *   chat-close-button, chat-thread-list, tool-card (+ data-tool/
+   156→ *   data-status), plan-card (+ data-status), plan-actions,
+   157→ *   plan-failed, plan-failed-detail, plan-retry                  plan-card.tsx
+   158→ *   (composer by aria-label "Message the agent")
+   159→ */
+   160→
+   161→import { type Page, expect, test } from "@playwright/test";
+   162→
+   163→// ---------------------------------------------------------------------------
+   164→// Seeded world (packages/db/scripts/seed.ts — e2e/README.md §Seed + §10)
+   165→// ---------------------------------------------------------------------------
+   166→
+   167→/** The seed's demo login (dev fixture credentials, never production). */
+   168→const SEEDED_EMAIL = "demo@studio.test";
+   169→const SEEDED_PASSWORD = "demo-password-12345";
+   170→
+   171→/** `/w/[slug]/editor` and `/w/[slug]/history` for the seeded project. */
+   172→const SEEDED_EDITOR_PATH = "/w/demo-project/editor";
+   173→const SEEDED_HISTORY_PATH = "/w/demo-project/history";
+   174→
+   175→/** The seed's project display name (prj_demo, slug "demo-project"). */
+   176→const SEEDED_PROJECT_NAME = "Demo Project";
+   177→
+   178→/**
+   179→ * The share-link fixture tokens (README §10) — url-safe, ≥ 16 chars, matching
+   180→ * the contracts SHARE_TOKEN_PATH_SCHEMA. The locked one's password is
+   181→ * pinned there too; both rows never expire.
+   182→ */
+   183→const SHARE_TOKEN_OPEN = "e2e-share-open-7f3d92b1c4";
+   184→const SHARE_TOKEN_LOCKED = "e2e-share-locked-2a6e8d41f9";
+   185→const SHARE_PASSWORD = "review-pass-1234";
+   186→
+   187→/** Wasm boot + manifest → project download → file.open + the chat bridge. */
+   188→const EDITOR_OPEN_TIMEOUT_MS = 120_000;
+   189→/** Second/third bridge attach (chat layer, comments region) after "open". */
+   190→const CHAT_MOUNT_TIMEOUT_MS = 30_000;
+   191→/** A generous bound for one mock-model run / one real gateway mutation. */
+   192→const RUN_SETTLE_TIMEOUT_MS = 30_000;
+   193→
+   194→// ---------------------------------------------------------------------------
+   195→// Helpers — boot + the scripted-gateway legs (M5 scenario-B pattern)
+   196→// ---------------------------------------------------------------------------
+   197→
+   198→/**
+   199→ * Sign the seeded demo user in through the REAL /sign-in form (better-auth
+   200→ * email+password → session cookie) and land on `nextPath` — the M4/M5
+   201→ * recipe's `?next=` round-trip.
+   202→ */
+   203→async function signIn(page: Page, nextPath: string): Promise<void> {
+   204→  await page.goto(`/sign-in?next=${encodeURIComponent(nextPath)}`);
+   205→  await page.locator("#sign-in-email").fill(SEEDED_EMAIL);
+   206→  await page.locator("#sign-in-password").fill(SEEDED_PASSWORD);
+   207→  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+   208→  await page.waitForURL(`**${nextPath}`);
+   209→}
+   210→
+   211→/**
+   212→ * Sign in and land on the seeded project's editor with the chat overlay
+   213→ * mounted (identical to e2e/chat.spec.ts / e2e/m5-agent-edits.spec.ts).
+   214→ * Scripted-gateway routes for THIS page must be installed BEFORE the call.
+   215→ */
+   216→async function openSeededEditor(page: Page): Promise<void> {
+   217→  await signIn(page, SEEDED_EDITOR_PATH);
+   218→
+   219→  await expect(page.getByTestId("editor-host")).toHaveAttribute("data-editor-phase", "open", {
+   220→    timeout: EDITOR_OPEN_TIMEOUT_MS,
+   221→  });
+   222→  await expect(page.getByTestId("editor-iframe")).toBeVisible();
+   223→  await expect(page.getByTestId("chat-layer")).toBeVisible({ timeout: CHAT_MOUNT_TIMEOUT_MS });
+   224→  await expect(page.getByTestId("chat-header")).toBeVisible();
+   225→}
+   226→
+   227→/** One §7.3 success envelope as a route.fulfill body. */
+   228→function okEnvelope(data: unknown): { status: number; contentType: string; body: string } {
+   229→  return {
+   230→    status: 200,
+   231→    contentType: "application/json",
+   232→    body: JSON.stringify({ data }),
+   233→  };
+   234→}
+   235→
+   236→/** The scripted presence viewers (PRESENCE_VIEWERS_SCHEMA-exact, M7-B wire). */
+   237→function scriptedPresenceViewers(): unknown {
+   238→  return {
+   239→    viewers: [
+   240→      {
+   241→        userId: "usr_demo_self",
+   242→        displayName: "Demo User",
+   243→        compId: "Main",
+   244→        playheadTicks: 0,
+   245→        lastSeenAgoMs: 0,
+   246→        self: true,
+   247→      },
+   248→      {
+   249→        userId: "usr_maya",
+   250→        displayName: "Maya Rivera",
+   251→        compId: "Main",
+   252→        playheadTicks: null,
+   253→        lastSeenAgoMs: 2000,
+   254→        self: false,
+   255→      },
+   256→      {
+   257→        userId: "usr_pat",
+   258→        displayName: "Pat Orai",
+   259→        compId: null,
+   260→        playheadTicks: null,
+   261→        lastSeenAgoMs: 42_000,
+   262→        self: false,
+   263→      },
+   264→    ],
+   265→  };
+   266→}
+   267→
+   268→/**
+   269→ * Script the presence beat/poll (`POST|GET /v1/projects/:id/presence`): every
+   270→ * beat answers with three active viewers (self first — the strip renders the
+   271→ * beat response in wire order). The REAL gateway would answer with just the
+   272→ * caller (the seed has one member); the strip's layout needs a crowd.
+   273→ */
+   274→async function installScriptedPresence(page: Page): Promise<void> {
+   275→  await page.route("**/v1/projects/*/presence", async (route) => {
+   276→    await route.fulfill(okEnvelope(scriptedPresenceViewers()));
+   277→  });
+   278→}
+   279→
+   280→/** The scripted holder (LeaseStateResponse.holder — LEASE_* schemas). */
+   281→function scriptedHolder(): Record<string, unknown> {
+   282→  const now = Date.now();
+   283→  return {
+   284→    userId: "usr_maya",
+   285→    displayName: "Maya Rivera",
+   286→    acquiredAt: new Date(now - 60_000).toISOString(),
+   287→    expiresAt: new Date(now + 5 * 60_000).toISOString(),
+   288→  };
+   289→}
+   290→
+   291→/**
+   292→ * The stateful scripted lease UX (the M5 spec's scenario-B pattern, mounted
+   293→ * BEFORE the goto so the banner's mount poll reads it):
+   294→ *  - `GET /v1/projects/:id/lease-state` answers "viewer" until the request
+   295→ *    lands, then "queued" (my own queue entry rides the queuedAt the scripted
+   296→ *    requestLease response pinned — the banner's position fallback), and back
+   297→ *    to "viewer" after the cancel;
+   298→ *  - `POST /v1/projects/:id/lease-request` answers the join outcome;
+   299→ *  - `DELETE /v1/projects/:id/lease-request` answers the cancel outcome.
+   300→ */
+   301→async function installScriptedLeaseFlow(page: Page): Promise<void> {
+   302→  const myQueuedAt = new Date(Date.now() - 30_000).toISOString();
+   303→  let phase: "viewer" | "queued" = "viewer";
+   304→
+   305→  await page.route("**/v1/projects/*/lease-state", async (route) => {
+   306→    const state =
+   307→      phase === "queued"
+   308→        ? {
+   309→            holder: scriptedHolder(),
+   310→            queue: [
+   311→              {
+   312→                userId: "usr_sam",
+   313→                displayName: "Sam Vega",
+   314→                queuedAt: new Date(Date.now() - 90_000).toISOString(),
+   315→              },
+   316→              { userId: "usr_demo_queued", displayName: "Demo User", queuedAt: myQueuedAt },
+   317→            ],
+   318→            youAre: "queued",
+   319→            canAcquire: false,
+   320→          }
+   321→        : { holder: scriptedHolder(), queue: [], youAre: "viewer", canAcquire: false };
+   322→    await route.fulfill(okEnvelope(state));
+   323→  });
+   324→
+   325→  await page.route("**/v1/projects/*/lease-request", async (route) => {
+   326→    const method = route.request().method();
+   327→    if (method === "DELETE") {
+   328→      phase = "viewer";
+   329→      await route.fulfill(okEnvelope({ cancelled: true }));
+   330→      return;
+   331→    }
+   332→    phase = "queued";
+   333→    await route.fulfill(
+   334→      okEnvelope({
+   335→        queued: true,
+   336→        position: 2,
+   337→        queueLength: 2,
+   338→        queuedAt: myQueuedAt,
+   339→        duplicate: false,
+   340→      }),
+   341→    );
+   342→  });
+   343→}
+   344→
+   345→// ---------------------------------------------------------------------------
+   346→// The scripted activity pages (M7-H feed pagination — the M5 scenario-B class)
+   347→// ---------------------------------------------------------------------------
+   348→
+   349→/** One schema-exact ActivityEntry (contracts routes/activity.ts). */
+   350→function activityEntry(index: number): Record<string, unknown> {
+   351→  const actors = ["Alex Chen", "Riley Diaz", "Sam Vega", "Jordan Kim"];
+   352→  const actions: ReadonlyArray<{
+   353→    action: string;
+   354→    targetType: string;
+   355→    verb: string;
+   356→    target: string;
+   357→  }> = [
+   358→    { action: "version.uploaded", targetType: "version", verb: "saved", target: "a version" },
+   359→    { action: "comment.created", targetType: "comment", verb: "left", target: "a comment" },
+   360→    {
+   361→      action: "lease.acquired",
+   362→      targetType: "project",
+   363→      verb: "started editing",
+   364→      target: "the project",
+   365→    },
+   366→    { action: "comment.resolved", targetType: "comment", verb: "resolved", target: "a comment" },
+   367→  ];
+   368→  // One UTC day → exactly one day-group header; newest-first page order.
+   369→  const created = new Date(Date.UTC(2026, 9, 26, 9, 0, 0) - index * 60_000).toISOString();
+   370→  const actor = index === 0 ? null : actors[index % actors.length];
+   371→  const entry = actions[index % actions.length];
+   372→  return {
+   373→    id: `aud_m7_p${index}`,
+   374→    projectId: "prj_demo",
+   375→    actorId: `usr_actor_${index % 4}`,
+   376→    actorName: actor,
+   377→    action: entry.action,
+   378→    targetType: entry.targetType,
+   379→    targetId: `tgt_m7_${index}`,
+   380→    createdAt: created,
+   381→  };
+   382→}
+   383→
+   384→/**
+   385→ * Script the activity feed (`GET /v1/projects/:id/activity`) with TWO cursor
+   386→ * pages: 25 rows → `Load more` → 5 rows → "That's the whole feed." The real
+   387→ * audit table cannot seed > 25 deterministic rows; pagination is the point.
+   388→ */
+   389→async function installScriptedActivityPages(page: Page): Promise<void> {
+   390→  await page.route("**/v1/projects/*/activity", async (route) => {
+   391→    const cursor = new URL(route.request().url()).searchParams.get("cursor");
+   392→    if (cursor === null) {
+   393→      await route.fulfill(
+   394→        okEnvelope({
+   395→          items: Array.from({ length: 25 }, (_, index) => activityEntry(index)),
+   396→          nextCursor: "act-page-2",
+   397→        }),
+   398→      );
+   399→      return;
+   400→    }
+   401→    await route.fulfill(
+   402→      okEnvelope({
+   403→        items: Array.from({ length: 5 }, (_, index) => activityEntry(25 + index)),
+   404→        nextCursor: null,
+   405→      }),
+   406→    );
+   407→  });
+   408→}
+   409→
+   410→// ---------------------------------------------------------------------------
+   411→// M7 task 1 — comments (BUILD_PLAN §M7 "Anchor to project/comp/layer/time;
+   412→// create, reply, resolve; filters"; exit criterion "Comments survive reload
+   413→// and link to the right comp/time")
+   414→// ---------------------------------------------------------------------------
+   415→
+   416→test.describe("M7 comments — anchored threads over the real editor", () => {
+   417→  test("anchored comment: create with the prefilled anchor → reply → resolve → filters → reload persistence", async ({
+   418→    page,
+   419→  }) => {
+   420→    await openSeededEditor(page);
+   421→
+   422→    // The comments panel opens from the floating toggle (M7-F). Collapse the
+   423→    // chat first so the floating chat panel never covers the toggle.
+   424→    await page.getByTestId("chat-close-button").click();
+   425→    await expect(page.getByTestId("chat-collapsed-layer")).toBeVisible();
+   426→
+   427→    const toggle = page.getByTestId("comments-toggle");
+   428→    await expect(toggle).toBeVisible();
+   429→    await toggle.click();
+   430→
+   431→    const panel = page.getByTestId("comments-panel");
+   432→    await expect(panel).toBeVisible();
+   433→    await expect(page.getByTestId("comments-title")).toHaveText("Comments");
+   434→    await expect(page.getByTestId("comments-project")).toContainText(SEEDED_PROJECT_NAME);
+   435→
+   436→    // The create box prefills the CURRENT editor context (bridge ui.inspect →
+   437→    // comp.info): the fixture project's comp is "Main" and the playhead at
+   438→    // rest is 0 ticks → "0:00". A layer chip renders only when a layer is
+   439→    // selected — data-driven, never asserted into existence.
+   440→    const anchorBox = page.getByTestId("comments-composer-anchor");
+   441→    await expect(anchorBox).toBeVisible({ timeout: CHAT_MOUNT_TIMEOUT_MS });
+   442→    await expect(page.getByTestId("comments-composer-anchor-comp")).toContainText("Main");
+   443→    await expect(page.getByTestId("comments-composer-anchor-time")).toContainText("0:00");
+   444→
+   445→    // CREATE — Enter posts from the textarea (the panel's pinned UX).
+   446→    const stamp = Date.now().toString(36);
+   447→    const rootBody = `Anchored review note ${stamp}`;
+   448→    const composer = page.getByLabel("Write a comment");
+   449→    await composer.fill(rootBody);
+   450→    await composer.press("Enter");
+   451→
+   452→    // The new thread renders newest-first with the anchor chips + "You".
+   453→    const thread = page.locator('[data-testid^="comment-thread-"]').filter({ hasText: rootBody });
+   454→    await expect(thread).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+   455→    const rootRow = thread.locator('[data-testid^="comment-row-"]').filter({ hasText: rootBody });
+   456→    await expect(rootRow).toBeVisible();
+   457→    await expect(rootRow.locator('[data-testid^="comment-author-"]')).toHaveText("You");
+   458→    await expect(rootRow.locator('[data-testid^="comment-anchor-comp-"]')).toContainText("Main");
+   459→    await expect(rootRow.locator('[data-testid^="comment-anchor-time-"]')).toBeVisible();
+   460→
+   461→    // REPLY — the reply box inherits the thread anchor (wire: parentId only).
+   462→    const replyBody = `Reply on the same anchor ${stamp}`;
+   463→    await rootRow.locator('[data-testid^="comment-reply-open-"]').click();
+   464→    await expect(rootRow.locator('[data-testid^="comment-reply-box-"]')).toBeVisible();
+   465→    await page.getByLabel("Write a reply").fill(replyBody);
+   466→    await rootRow.locator('[data-testid^="comment-reply-send-"]').click();
+   467→
+   468→    const replyRow = thread.locator('[data-testid^="comment-row-"]').filter({ hasText: replyBody });
+   469→    await expect(replyRow).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+   470→    await expect(replyRow).toHaveAttribute("data-depth", "2");
+   471→
+   472→    // RESOLVE — under "All" the resolved badge renders; the thread-level
+   473→    // filter semantics then take the whole thread out of "Open" (D-15: a
+   474→    // filter never SPLITS a thread — the replies follow their root).
+   475→    await page.getByTestId("comments-filter-all").click();
+   476→    await expect(thread).toBeVisible();
+   477→    await thread.locator('[data-testid^="comment-resolve-"]').first().click();
+   478→    await expect(thread.locator('[data-testid^="comment-resolved-"]')).toContainText("Resolved", {
+   479→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   480→    });
+   481→
+   482→    // FILTERS — "Open" drops the resolved thread; "Resolved" brings it back.
+   483→    await page.getByTestId("comments-filter-open").click();
+   484→    await expect(thread).toHaveCount(0, { timeout: RUN_SETTLE_TIMEOUT_MS });
+   485→    await page.getByTestId("comments-filter-resolved").click();
+   486→    await expect(thread).toBeVisible();
+   487→    await expect(thread.locator('[data-testid^="comment-resolved-"]')).toContainText("Resolved");
+   488→    await page.getByTestId("comments-filter-all").click();
+   489→    await expect(thread).toBeVisible();
+   490→
+   491→    // The comp-filter menu lists the live project's comps (D-15); picking
+   492→    // "All comps" closes the menu and keeps the thread visible.
+   493→    await page.getByTestId("comments-comp-filter").click();
+   494→    await expect(page.getByTestId("comments-comp-menu")).toBeVisible();
+   495→    const mainOption = page
+   496→      .locator('[data-testid^="comments-comp-option-"]')
+   497→      .filter({ hasText: "Main" });
+   498→    await expect(mainOption).toBeVisible();
+   499→    await page.getByTestId("comments-comp-option-all").click();
+   500→    await expect(page.getByTestId("comments-comp-menu")).toHaveCount(0);
+   501→    await expect(
+   502→      page.locator('[data-testid^="comment-thread-"]').filter({ hasText: rootBody }),
+   503→    ).toBeVisible();
+   504→
+   505→    // RELOAD PERSISTENCE — the §M7 exit criterion: the anchored, resolved
+   506→    // thread survives a full editor reboot (the rows live in Postgres).
+   507→    await page.reload();
+   508→    await expect(page.getByTestId("editor-host")).toHaveAttribute("data-editor-phase", "open", {
+   509→      timeout: EDITOR_OPEN_TIMEOUT_MS,
+   510→    });
+   511→    await page.getByTestId("comments-toggle").click();
+   512→    await expect(page.getByTestId("comments-panel")).toBeVisible();
+   513→    await page.getByTestId("comments-filter-resolved").click();
+   514→    await expect(
+   515→      page.locator('[data-testid^="comment-thread-"]').filter({ hasText: rootBody }),
+   516→    ).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+   517→    await expect(
+   518→      page
+   519→        .locator('[data-testid^="comment-thread-"]')
+   520→        .filter({ hasText: rootBody })
+   521→        .locator('[data-testid^="comment-row-"]')
+   522→        .filter({ hasText: replyBody }),
+   523→    ).toBeVisible();
+   524→    await expect(
+   525→      page
+   526→        .locator('[data-testid^="comment-thread-"]')
+   527→        .filter({ hasText: rootBody })
+   528→        .locator('[data-testid^="comment-anchor-comp-"]'),
+   529→    ).toContainText("Main");
+   530→  });
+   531→});
+   532→
+   533→// ---------------------------------------------------------------------------
+   534→// M7 tasks 2–3 — presence strip + lease banner (the M7-G chrome)
+   535→// ---------------------------------------------------------------------------
+   536→
+   537→test.describe("M7 presence + lease — who is viewing, who is editing", () => {
+   538→  test("the presence strip renders the beat's viewers and the banner shows the REAL holder state", async ({
+   539→    page,
+   540→  }) => {
+   541→    // The beat response IS the viewers list (heartbeat = poll, M7-B): three
+   542→    // viewers incl. the self entry, answered for both POST (beat) and GET.
+   543→    await installScriptedPresence(page);
+   544→    await openSeededEditor(page);
+   545→
+   546→    const strip = page.getByTestId("presence-strip");
+   547→    await expect(strip).toBeVisible({ timeout: CHAT_MOUNT_TIMEOUT_MS });
+   548→    await expect(strip).toHaveAttribute("data-viewer-count", "3");
+   549→    await expect(strip).toHaveAttribute("aria-label", "3 people are viewing");
+   550→    await expect(strip.locator('[data-testid="presence-viewer"]')).toHaveCount(3);
+   551→    await expect(strip.locator('[data-testid="presence-viewer"][data-self="true"]')).toHaveCount(1);
+   552→
+   553→    // The REAL lease-state (nothing scripted here): the M3 session acquired
+   554→    // the seeded project's lease on open, so the banner's mount poll reads
+   555→    // youAre = "holder" — the third state of the §M7 task 3 matrix.
+   556→    const banner = page.getByTestId("lease-banner");
+   557→    await expect(banner).toBeVisible({ timeout: CHAT_MOUNT_TIMEOUT_MS });
+   558→    await expect(banner).toHaveAttribute("data-youare", "holder");
+   559→    await expect(page.getByTestId("lease-holder-status")).toContainText("You have the edit lease");
+   560→  });
+   561→
+   562→  test("scripted lease-state: viewer strip + countdown → Request edit → queued in line → Cancel request", async ({
+   563→    page,
+   564→  }) => {
+   565→    // The single-member seed cannot produce another member's lease: script
+   566→    // the lease-state + request/cancel legs (installed BEFORE the goto so
+   567→    // the banner's mount poll reads the scripted viewer state).
+   568→    await installScriptedPresence(page);
+   569→    await installScriptedLeaseFlow(page);
+   570→    await openSeededEditor(page);
+   571→
+   572→    // VIEWER — the read-only strip names the holder (never an id), with the
+   573→    // live countdown ("m:ss left") and the queue join affordance.
+   574→    const banner = page.getByTestId("lease-banner");
+   575→    await expect(banner).toBeVisible({ timeout: CHAT_MOUNT_TIMEOUT_MS });
+   576→    await expect(banner).toHaveAttribute("data-youare", "viewer");
+   577→    const stripLine = page.getByTestId("lease-readonly-strip");
+   578→    await expect(stripLine).toContainText("Viewing");
+   579→    await expect(stripLine).toContainText("Maya Rivera");
+   580→    await expect(stripLine).toContainText("is editing");
+   581→    await expect(page.getByTestId("lease-countdown")).toHaveText(/\d+:\d\d left/);
+   582→    const requestButton = page.getByTestId("lease-request-button");
+   583→    await expect(requestButton).toBeVisible();
+   584→    await expect(requestButton).toHaveText("Request edit");
+   585→
+   586→    // REQUEST EDIT — joins the queue; the scripted requestLease answers and
+   587→    // the banner re-polls into the queued state with MY position (the
+   588→    // queuedAt fallback — the position the scripted join pinned).
+   589→    await requestButton.click();
+   590→    await expect(banner).toHaveAttribute("data-youare", "queued", {
+   591→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   592→    });
+   593→    await expect(page.getByTestId("lease-queue-line")).toHaveText("You're #2 in line");
+   594→    await expect(page.getByTestId("lease-readonly-strip")).toContainText("Maya Rivera");
+   595→    const cancelButton = page.getByTestId("lease-cancel-request-button");
+   596→    await expect(cancelButton).toBeVisible();
+   597→
+   598→    // CANCEL — leaves the queue; the banner re-polls back to viewer.
+   599→    await cancelButton.click();
+   600→    await expect(banner).toHaveAttribute("data-youare", "viewer", {
+   601→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   602→    });
+   603→    await expect(page.getByTestId("lease-request-button")).toBeVisible();
+   604→  });
+   605→});
+   606→
+   607→// ---------------------------------------------------------------------------
+   608→// M7 task 4 — versions + activity (the M7-H /history surface)
+   609→// ---------------------------------------------------------------------------
+   610→
+   611→test.describe("M7 history — version timeline, restore, activity", () => {
+   612→  test("the seeded timeline: rows, current badge, first-version linkage, the real structural diff", async ({
+   613→    page,
+   614→  }) => {
+   615→    await signIn(page, SEEDED_HISTORY_PATH);
+   616→
+   617→    await expect(page.getByTestId("history-view")).toBeVisible();
+   618→    await expect(page.getByTestId("history-project-name")).toHaveText(SEEDED_PROJECT_NAME);
+   619→
+   620→    // The seed's immutable chain: v1 → v2 → v3, newest first, no agent rows.
+   621→    // (Run-repeat tolerance: re-runs against a long-lived CI DB have grown
+   622→    // the chain via the restore test below — the seed's three rows and the
+   623→    // CURRENT badge on the newest seed row are what stay pinned.)
+   624→    const rows = page.locator('[data-testid="version-row"]');
+   625→    await expect(rows.first()).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+   626→    expect(await rows.count()).toBeGreaterThanOrEqual(3);
+   627→    const v3 = page.locator('[data-testid="version-row"][data-version="3"]');
+   628→    const v2 = page.locator('[data-testid="version-row"][data-version="2"]');
+   629→    const v1 = page.locator('[data-testid="version-row"][data-version="1"]');
+   630→    await expect(v3).toBeVisible();
+   631→    await expect(v3.getByTestId("version-number")).toHaveText("v3");
+   632→    await expect(v3.getByTestId("version-agent-badge")).toHaveCount(0);
+   633→    await expect(v1.getByTestId("version-linkage")).toHaveText("First version");
+   634→
+   635→    // The structural diff (real GET …/diff): v3 vs its parent v2.
+   636→    await v3.getByTestId("version-diff-toggle").click();
+   637→    await expect(v3.getByTestId("version-diff")).toBeVisible();
+   638→    await expect(v3.getByTestId("version-diff-parent")).toHaveText("v2");
+   639→    await v3.getByTestId("version-diff-toggle").click();
+   640→    await expect(v3.getByTestId("version-diff")).toHaveCount(0);
+   641→
+   642→    // Cursor end: a handful of rows < one page → the honest end line.
+   643→    await expect(page.getByTestId("timeline-end")).toContainText("That's the whole history.");
+   644→    await expect(page.getByTestId("timeline-load-more")).toHaveCount(0);
+   645→    await expect(v2).toBeVisible();
+   646→  });
+   647→
+   648→  test("inline label edit persists (D-24: the label is the only mutable field)", async ({
+   649→    page,
+   650→  }) => {
+   651→    await signIn(page, SEEDED_HISTORY_PATH);
+   652→
+   653→    const v3 = page.locator('[data-testid="version-row"][data-version="3"]');
+   654→    await expect(v3).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+   655→
+   656→    // The seeded label pre-fills the editor; the save is a REAL POST …/label.
+   657→    await v3.getByTestId("version-label-edit-button").click();
+   658→    await expect(v3.getByTestId("version-label-edit")).toBeVisible();
+   659→    await v3.getByTestId("version-label-input").fill("Client cut A");
+   660→    await v3.getByTestId("version-label-save").click();
+   661→    await expect(v3.getByTestId("version-label-edit")).toHaveCount(0, {
+   662→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   663→    });
+   664→    await expect(v3.getByTestId("version-label")).toHaveText("Client cut A");
+   665→  });
+   666→
+   667→  test("activity tab: day-grouped feed, cursor pagination, and the admin audit export download", async ({
+   668→    page,
+   669→  }) => {
+   670→    await signIn(page, SEEDED_HISTORY_PATH);
+   671→
+   672→    // The real audit table has no deterministic 25+ rows: script two pages
+   673→    // (installed before the tab mounts — the feed fetches on tab open).
+   674→    await installScriptedActivityPages(page);
+   675→    await page.getByTestId("history-tab-activity").click();
+   676→    await expect(page.getByTestId("history-panel-activity")).toBeVisible();
+   677→
+   678→    const feed = page.getByTestId("activity-feed");
+   679→    await expect(feed).toBeVisible();
+   680→    await expect(page.getByTestId("activity-row")).toHaveCount(25, {
+   681→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   682→    });
+   683→
+   684→    // §8.6 day grouping + the row sentence (actor · verb · target).
+   685→    await expect(page.getByTestId("activity-day-group")).toHaveCount(1);
+   686→    await expect(page.getByTestId("activity-day")).toHaveText("Oct 26, 2026");
+   687→    const firstRow = page.locator('[data-testid="activity-row"]').first();
+   688→    await expect(firstRow.getByTestId("activity-actor")).toHaveText("A member");
+   689→    await expect(firstRow.getByTestId("activity-verb")).toHaveText("saved");
+   690→    await expect(firstRow.getByTestId("activity-target")).toHaveText("a version");
+   691→
+   692→    // Cursor pagination: Load more appends page two, then the feed ends.
+   693→    await page.getByTestId("activity-load-more").click();
+   694→    await expect(page.getByTestId("activity-row")).toHaveCount(30, {
+   695→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   696→    });
+   697→    await expect(page.getByTestId("activity-end")).toContainText("That's the whole feed.");
+   698→
+   699→    // The owner-only audit export (REAL GET …/audit-export): the parsed
+   700→    // payload downloads as the pinned filename (mirrors the gateway's
+   701→    // Content-Disposition).
+   702→    await expect(page.getByTestId("audit-export-button")).toBeVisible();
+   703→    const downloadPromise = page.waitForEvent("download");
+   704→    await page.getByTestId("audit-export-button").click();
+   705→    const download = await downloadPromise;
+   706→    expect(download.suggestedFilename()).toBe("studio-audit-prj_demo.json");
+   707→  });
+   708→
+   709→  test("restore: the typed confirmation gates the POST; the restore creates a NEW version and never rewrites history", async ({
+   710→    page,
+   711→  }) => {
+   712→    await signIn(page, SEEDED_HISTORY_PATH);
+   713→
+   714→    const v1 = page.locator('[data-testid="version-row"][data-version="1"]');
+   715→    await expect(v1).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+   716→    const rows = page.locator('[data-testid="version-row"]');
+   717→    const rowCountBefore = await rows.count();
+   718→    // §9.3: the new version's number is the current row's + 1 (read from the
+   719→    // DOM so re-runs against a long-lived CI DB stay honest).
+   720→    const currentRow = page.locator('[data-testid="version-row"][data-current="true"]');
+   721→    await expect(currentRow).toBeVisible();
+   722→    const currentNumberText = await currentRow.getByTestId("version-number").textContent();
+   723→    const expectedNewVersion = Number.parseInt((currentNumberText ?? "v").replace("v", ""), 10);
+   724→    expect(Number.isFinite(expectedNewVersion)).toBe(true);
+   725→
+   726→    // §9.3 restore: the dialog demands the version's EXACT typed label —
+   727→    // the seed's v1 label is "empty project" (restoreConfirmPhrase).
+   728→    await v1.getByTestId("version-restore").click();
+   729→    await expect(page.getByTestId("restore-dialog-title")).toHaveText("Restore v1?");
+   730→    const confirm = page.getByTestId("restore-confirm");
+   731→    await expect(confirm).toBeDisabled();
+   732→
+   733→    // A wrong phrase keeps the confirm disabled (client-side gate).
+   734→    await page.getByTestId("restore-input").fill("some other label");
+   735→    await expect(confirm).toBeDisabled();
+   736→
+   737→    // The exact phrase unlocks it; the REAL POST restores v1 as a NEW row
+   738→    // (version = current + 1, parent = v1 — history is never rewritten).
+   739→    await page.getByTestId("restore-input").fill("empty project");
+   740→    await expect(confirm).toBeEnabled();
+   741→    await confirm.click();
+   742→
+   743→    await expect(page.getByTestId("restore-dialog-title")).toHaveCount(0, {
+   744→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   745→    });
+   746→    const newRow = page.locator(
+   747→      `[data-testid="version-row"][data-version="${expectedNewVersion + 1}"]`,
+   748→    );
+   749→    await expect(newRow).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+   750→    await expect(newRow).toHaveAttribute("data-current", "true");
+   751→    await expect(newRow.getByTestId("version-label")).toHaveText("Restored from v1");
+   752→    await expect(newRow.getByTestId("version-current-badge")).toBeVisible();
+   753→
+   754→    // §9.3: history is never rewritten — every pre-existing row (incl. the
+   755→    // seed's v1..v3) still exists; the chain grew by exactly one row.
+   756→    await expect(rows).toHaveCount(rowCountBefore + 1, {
+   757→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   758→    });
+   759→    for (const version of ["1", "2", "3"]) {
+   760→      await expect(
+   761→        page.locator(`[data-testid="version-row"][data-version="${version}"]`),
+   762→      ).toBeVisible();
+   763→    }
+   764→  });
+   765→});
+   766→
+   767→// ---------------------------------------------------------------------------
+   768→// M7 task 5 — the public /s/:token review page (M7-I). Anonymous: NO sign-in.
+   769→// ---------------------------------------------------------------------------
+   770→
+   771→test.describe("M7 share — public review journey (no editor for anonymous)", () => {
+   772→  test("password-protected link: wrong/right gate, guest comment, request access, noindex, zero editor wasm", async ({
+   773→    page,
+   774→  }) => {
+   775→    // The "no editor for anonymous" pin: count every request under /editor/
+   776→    // (the wasm dist mount) for the whole journey.
+   777→    let editorRequests = 0;
+   778→    await page.route("**/editor/**", async (route) => {
+   779→      editorRequests += 1;
+   780→      await route.continue();
+   781→    });
+   782→
+   783→    // The RSC route read the fixture token server-side (README §10); the
+   784→    // gate renders from ShareInfo.hasPassword.
+   785→    await page.goto(`/s/${SHARE_TOKEN_LOCKED}`);
+   786→    await expect(page.getByTestId("share-page")).toBeVisible();
+   787→    await expect(page.getByTestId("share-project-name")).toHaveText(SEEDED_PROJECT_NAME);
+   788→    await expect(page.getByTestId("share-gate")).toBeVisible();
+   789→    await expect(page.getByTestId("share-gate-form")).toBeVisible();
+   790→
+   791→    // A share link is a review capability, not a page to index.
+   792→    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
+   793→
+   794→    // WRONG password — the gateway's 401 and the typed copy (no oracle).
+   795→    await page.getByTestId("share-gate-input").fill("definitely-not-the-password");
+   796→    await page.getByTestId("share-gate-submit").click();
+   797→    await expect(page.getByText("That password didn't unlock this link.")).toBeVisible();
+   798→
+   799→    // RIGHT password — one call proves the password AND loads the surface.
+   800→    await page.getByTestId("share-gate-input").fill(SHARE_PASSWORD);
+   801→    await page.getByTestId("share-gate-submit").click();
+   802→    await expect(page.getByTestId("share-surface")).toBeVisible({
+   803→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   804→    });
+   805→    await expect(page.getByTestId("share-gate")).toHaveCount(0);
+   806→    await expect(page.getByTestId("share-player")).toBeVisible();
+   807→    await expect(page.getByTestId("share-version-label")).toHaveText(/^v\d+/);
+   808→
+   809→    // GUEST COMMENT — name + email + body, rate-limited server-side; the
+   810→    // row renders id-stripped (guest name only).
+   811→    await expect(page.getByTestId("share-comments")).toBeVisible();
+   812→    const stamp = Date.now().toString(36);
+   813→    const guestBody = `The title card lands too early ${stamp}`;
+   814→    await page.getByTestId("share-composer-name").fill("Riley Reviewer");
+   815→    await page.getByTestId("share-composer-email").fill("riley@example.com");
+   816→    await page.getByTestId("share-composer-body").fill(guestBody);
+   817→    await page.getByTestId("share-composer-submit").click();
+   818→    await expect(page.getByTestId("share-composer-success")).toContainText("Comment posted.", {
+   819→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   820→    });
+   821→    const guestRow = page.getByTestId("share-comment-list").locator("li").filter({
+   822→      hasText: guestBody,
+   823→    });
+   824→    await expect(guestRow).toBeVisible();
+   825→    await expect(guestRow.getByTestId("share-comment-author")).toHaveText("Riley Reviewer");
+   826→    await expect(guestRow.getByTestId("share-comment-body")).toContainText(guestBody);
+   827→
+   828→    // REQUEST ACCESS — the anonymous reviewer asks the workspace (recorded
+   829→    // as a share.request_access audit row — v1's notification).
+   830→    await page.getByTestId("share-request-access-email").fill("riley@example.com");
+   831→    await page
+   832→      .getByTestId("share-request-access-message")
+   833→      .fill("Need edit rights for the client review.");
+   834→    await page.getByTestId("share-request-access-submit").click();
+   835→    await expect(page.getByTestId("share-request-access-ok")).toContainText(
+   836→      "Request sent. The workspace will see it in its activity feed.",
+   837→      { timeout: RUN_SETTLE_TIMEOUT_MS },
+   838→    );
+   839→
+   840→    // THE NO-EDITOR PIN: zero iframes (the editor only ever mounts through
+   841→    // editor-iframe) and zero requests under /editor/ — the review player
+   842→    // never loads the wasm dist for an anonymous visitor.
+   843→    await expect(page.locator("iframe")).toHaveCount(0);
+   844→    expect(editorRequests).toBe(0);
+   845→  });
+   846→
+   847→  test("open link: no gate, the honest empty player, still zero editor", async ({ page }) => {
+   848→    let editorRequests = 0;
+   849→    await page.route("**/editor/**", async (route) => {
+   850→      editorRequests += 1;
+   851→      await route.continue();
+   852→    });
+   853→
+   854→    await page.goto(`/s/${SHARE_TOKEN_OPEN}`);
+   855→    await expect(page.getByTestId("share-surface")).toBeVisible({
+   856→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   857→    });
+   858→    await expect(page.getByTestId("share-gate")).toHaveCount(0);
+   859→
+   860→    // The seeded project has NO uploaded assets: the player says so instead
+   861→    // of inventing a renderer (M7-I's honesty pin).
+   862→    await expect(page.getByTestId("share-player")).toBeVisible();
+   863→    await expect(page.getByTestId("share-player-empty")).toContainText(
+   864→      "No preview media is shared on this link yet.",
+   865→    );
+   866→    await expect(page.locator("iframe")).toHaveCount(0);
+   867→    expect(editorRequests).toBe(0);
+   868→  });
+   869→
+   870→  test("an unknown-but-well-formed token is the §12.1 404 (never an oracle)", async ({ page }) => {
+   871→    await page.goto("/s/aaaaaaaaaaaaaaaaaaaaaaaa");
+   872→    await expect(page.getByTestId("not-found")).toBeVisible();
+   873→    await expect(page.getByTestId("share-page")).toHaveCount(0);
+   874→  });
+   875→});
+   876→
+   877→// ---------------------------------------------------------------------------
+   878→// M7 task 3 (read-only arm) — D-23: chat + review stay alive under another
+   879→// member's lease; only project mutations are gated.
+   880→// ---------------------------------------------------------------------------
+   881→
+   882→test.describe("M7 read-only — another member holds the edit lease", () => {
+   883→  test("the read-only chrome renders; chat still completes a full run (D-23); comments stay open; no apply control exists", async ({
+   884→    page,
+   885→  }) => {
+   886→    // The scripted lease-held state (viewer, holder "Maya Rivera") + the
+   887→    // scripted presence — both BEFORE the goto: the banner's mount poll and
+   888→    // the presence beat are the first reads.
+   889→    await installScriptedPresence(page);
+   890→    await installScriptedLeaseFlow(page);
+   891→    await openSeededEditor(page);
+   892→
+   893→    // THE READ-ONLY CHROME STRIP — the banner's viewer state with the
+   894→    // holder's NAME (law #1), the countdown, and the strip presence.
+   895→    const banner = page.getByTestId("lease-banner");
+   896→    await expect(banner).toBeVisible({ timeout: CHAT_MOUNT_TIMEOUT_MS });
+   897→    await expect(banner).toHaveAttribute("data-youare", "viewer");
+   898→    const strip = page.getByTestId("lease-readonly-strip");
+   899→    await expect(strip).toContainText("Viewing");
+   900→    await expect(strip).toContainText("Maya Rivera");
+   901→    await expect(strip).toContainText("is editing");
+   902→    await expect(page.getByTestId("lease-countdown")).toHaveText(/\d+:\d\d left/);
+   903→
+   904→    // D-23, chat arm: the chat still opens and the gate-wrapped bridge lets
+   905→    // every READ through — a full mock-model run completes under the lease.
+   906→    await expect(page.getByTestId("chat-header")).toBeVisible();
+   907→    await expect(page.getByTestId("presence-strip")).toBeVisible();
+   908→    const composer = page.getByLabel("Message the agent");
+   909→    await composer.click();
+   910→    await composer.fill("What's on this comp?");
+   911→    await composer.press("Enter");
+   912→
+   913→    await expect(page.getByTestId("chat-status")).toHaveAttribute("data-phase", "done", {
+   914→      timeout: RUN_SETTLE_TIMEOUT_MS,
+   915→    });
+   916→    const contextCard = page.locator('[data-testid="tool-card"][data-tool="studio.get_context"]');
+   917→    await expect(contextCard).toHaveAttribute("data-status", "done");
+   918→
+   919→    // D-23, apply arm (the structural half): the run's proposal renders as
+   920→    // the callback-less card — this session wires NO apply ports, so no
+   921→    // stream + lease state can conjure an Apply control anywhere.
+   922→    const plan = page.getByTestId("plan-card");
+   923→    await expect(plan).toBeVisible();
+   924→    await expect(plan).toHaveAttribute("data-status", "proposed");
+   925→    await expect(plan.getByTestId("plan-actions").getByRole("button")).toHaveCount(0);
+   926→    await expect(page.getByRole("button", { name: /^apply/i })).toHaveCount(0);
+   927→    await expect(plan.getByTestId("plan-apply")).toHaveCount(0);
+   928→
+   929→    // D-23, review arm: the comments panel OPENS under another member's
+   930→    // lease with the lease note — and posting still works (review is the
+   931→    // point of the read-only state).
+   932→    await page.getByTestId("chat-close-button").click();
+   933→    await expect(page.getByTestId("chat-collapsed-layer")).toBeVisible();
+   934→    await page.getByTestId("comments-toggle").click();
+   935→
+   936→    const leaseNote = page.getByTestId("comments-lease-note");
+   937→    await expect(page.getByTestId("comments-panel")).toBeVisible();
+   938→    await expect(leaseNote).toBeVisible();
+   939→    await expect(leaseNote).toHaveAttribute("data-holder", "Maya Rivera");
+   940→    await expect(leaseNote).toContainText("Maya Rivera is editing");
+   941→    await expect(leaseNote).toContainText("you can still read and comment");
+   942→
+   943→    const stamp = Date.now().toString(36);
+   944→    const readOnlyBody = `Reviewing read-only ${stamp}`;
+   945→    const readComposer = page.getByLabel("Write a comment");
+   946→    await expect(readComposer).toBeEnabled();
+   947→    await readComposer.fill(readOnlyBody);
+   948→    await readComposer.press("Enter");
+   949→    await expect(
+   950→      page.locator('[data-testid^="comment-row-"]').filter({ hasText: readOnlyBody }),
+   951→    ).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+   952→  });
+   953→
+   954→  // -------------------------------------------------------------------------
+   955→  // WIRING-PENDING (fixme): the Apply-blocked-with-lease-explanation journey
+   956→  // -------------------------------------------------------------------------
+   957→  //
+   958→  // NOT fixme because of CI ownership (CI runs this suite — README §Run) and
+   959→  // NOT because of the scripted lease (that leg works — the ACTIVE test above
+   960→  // proves the gate flips). The ONLY missing link is HOST WIRING:
+   961→  // editor-host.tsx mounts `<ChatProvider client bridge …/>` WITHOUT
+   962→  // `applyPorts`, so lib/chat/provider.tsx builds NO ApplyController
+   963→  // (`planWiring.ready === false` → the card is callback-less → no Apply
+   964→  // control exists to click). The whole lease-blocked apply pipeline IS
+   965→  // landed and unit-proven (apps/web/src/lib/chat/__tests__/apply-lease-
+   966→  // held.test.ts): the GATE-WRAPPED bridge rejects engine.batch with the
+   967→  // typed ReadOnlyLeaseError (lib/editor-session/read-only.ts), apply.ts maps
+   968→  // it to the `lease-held` outcome, and the plan card renders status
+   969→  // "failed" + plan-failed-detail with the holder-naming explanation and NO
+   970→  // Try-again (APPLY_FAILED is not in the retryable sets).
+   971→  //
+   972→  // FLIP: change `test.fixme` → `test` when editor-host.tsx passes
+   973→  // ChatProvider `applyPorts` — the M3 autosave controller (saveNow) + a
+   974→  // `currentVersionId()` session port (the use-editor-session handles own
+   975→  // both). The M5 spec's apply→undo journey fixme flips the same day (the
+   976→  // same one-line host mount).
+   977→  //
+   978→  // Deterministic fixture notes: the mock model's plan is LOW risk (no
+   979→  // confirm checkbox, no dialog — a single click drives apply), its compiled
+   980→  // batch references layer "Headline" by the pinned $request placeholder, and
+   981→  // the local gate rejection happens BEFORE any engine traffic — the
+   982→  // wire-level proof is that no /apply POST ever fires.
+   983→  test("Apply under another member's lease fails locally with the typed lease explanation", async ({
+   984→    page,
+   985→  }) => {
+   986→    await installScriptedPresence(page);
+   987→    await installScriptedLeaseFlow(page);
+   988→    await openSeededEditor(page);
+   989→
+   990→    const composer = page.getByLabel("Message the agent");
+   991→    await composer.click();
+   992→    await composer.fill("Rename the selected layer to Subtitle");
+   993→    await composer.press("Enter");
+   994→
+   995→    const plan = page.getByTestId("plan-card");
+   996→    await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+   997→    await expect(plan).toHaveAttribute("data-status", "proposed");
+   998→
+   999→    // No apply POST can ever fire — the local gate refuses first.
+  1000→    let applyPosts = 0;
+  1001→    await page.route("**/v1/runs/*/apply", async (route) => {
+  1002→      applyPosts += 1;
+  1003→      await route.continue();
+  1004→    });
+  1005→
+  1006→    await plan.getByTestId("plan-apply").click();
+  1007→
+  1008→    // The typed lease explanation (ReadOnlyLeaseError → apply.ts):
+  1009→    // "Maya Rivera is editing this project right now. The plan was not
+  1010→    // applied — request edit access, or take the lease when it is free,
+  1011→    // then apply again." — holder name, never an id (law #1).
+  1012→    await expect(plan).toHaveAttribute("data-status", "failed", {
+  1013→      timeout: RUN_SETTLE_TIMEOUT_MS,
+  1014→    });
+  1015→    await expect(page.getByTestId("plan-failed")).toContainText(
+  1016→      "The edit didn't apply — nothing changed.",
+  1017→    );
+  1018→    await expect(page.getByTestId("plan-failed-detail")).toContainText(
+  1019→      "Maya Rivera is editing this project right now.",
+  1020→    );
+  1021→    await expect(page.getByTestId("plan-failed-detail")).toContainText(
+  1022→      "request edit access, or take the lease when it is free, then apply again",
+  1023→    );
+  1024→    // F-L3: a post-execution-style failure offers no re-execution path.
+  1025→    await expect(page.getByTestId("plan-retry")).toHaveCount(0);
+  1026→    expect(applyPosts).toBe(0);
+  1027→  });
+  1028→});
+  1029→
