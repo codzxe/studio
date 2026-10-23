@@ -40,6 +40,9 @@ const EXTRA_NOTES: Readonly<Record<string, readonly string[]>> = {
   DATABASE_URL: [
     "# Local default: `pnpm dev:pg` starts portable PostgreSQL 17 at 127.0.0.1:5432",
     "# (user `studio`, password `studio`, database `studio`).",
+    "# PG-free alternative: `pnpm dev:sqlite` maintains a SQLite file instead —",
+    "# set DATABASE_URL=file:.local/studio-dev.db (APP_ENV=local only; rejected",
+    "# in staging/production, which always require the PostgreSQL URL).",
   ],
   VALKEY_URL: [
     "# Local default: `scripts/dev-valkey.sh start` starts Valkey 8 at 127.0.0.1:6379.",

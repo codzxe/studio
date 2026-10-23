@@ -136,11 +136,18 @@ status() {
   sql_node '
 const { DatabaseSync } = await import("node:sqlite");
 const { statSync } = await import("node:fs");
+const Q = "\u0027"; // SQL string-literal quote (bash keeps this block single-quoted)
 const path = process.env.W1_SQLITE_PATH ?? "";
 console.log("file: " + path + " (" + statSync(path).size + " bytes)");
 const db = new DatabaseSync(path);
 const tables = db
-  .prepare("select name from sqlite_master where type = \"table\" and name not like \"sqlite_%\" order by name")
+  .prepare(
+    "select name from sqlite_master where type = " +
+      Q + "table" + Q +
+      " and name not like " +
+      Q + "sqlite_%" + Q +
+      " order by name",
+  )
   .all()
   .map((r) => r.name);
 console.log("tables (" + tables.length + "): " + tables.join(", "));
@@ -159,9 +166,14 @@ dump_schema() {
   [ -f "$DB_PATH" ] || die "no dev database yet — run scripts/dev-sqlite.sh start first"
   sql_node '
 const { DatabaseSync } = await import("node:sqlite");
+const Q = "\u0027"; // SQL string-literal quote (bash keeps this block single-quoted)
 const db = new DatabaseSync(process.env.W1_SQLITE_PATH ?? "");
 const rows = db
-  .prepare("select sql from sqlite_master where sql is not null and name not like \"sqlite_%\" order by type desc, name")
+  .prepare(
+    "select sql from sqlite_master where sql is not null and name not like " +
+      Q + "sqlite_%" + Q +
+      " order by type desc, name",
+  )
   .all();
 for (const r of rows) console.log(r.sql + ";");
 db.close();
