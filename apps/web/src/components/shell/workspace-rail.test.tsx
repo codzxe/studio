@@ -98,7 +98,7 @@ describe("WorkspaceRail — collapse + persistence (D-10)", () => {
     await user.click(screen.getByTestId("rail-toggle"));
     await user.click(screen.getByTestId("rail-toggle"));
     expect(rail()).not.toHaveAttribute("data-collapsed");
-    expect(setItemSpy).toHaveLastCalledWith(RAIL_STORAGE_KEY, "expanded");
+    expect(setItemSpy).toHaveBeenLastCalledWith(RAIL_STORAGE_KEY, "expanded");
   });
 
   it("restores the persisted collapsed state on mount", () => {

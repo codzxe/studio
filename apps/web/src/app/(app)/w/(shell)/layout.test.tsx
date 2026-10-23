@@ -118,7 +118,7 @@ describe("(shell) layout (RSC)", () => {
 
     expect(screen.getByTestId("app-shell-stub")).toBeInTheDocument();
     expect(screen.getByTestId("page-content")).toBeInTheDocument();
-    const calls = gatewayMock.mock.calls.map(([path]: [string]) => path);
+    const calls = gatewayMock.mock.calls.map((call) => call[0] as string);
     expect(calls).toEqual(["/v1/me", "/v1/billing/state"]);
 
     expect(lastShellProps).not.toBeNull();
