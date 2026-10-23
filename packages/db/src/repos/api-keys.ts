@@ -1,7 +1,7 @@
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
-import type { StudioDb } from "../db.js";
+import { getDialect, type StudioDb } from "../db.js";
 import { apiKey as apiKeyTable } from "../schema.js";
 import type { WorkspaceId } from "./shared.js";
 
@@ -56,9 +56,15 @@ export interface ApiKeysRepo {
   get(workspaceId: WorkspaceId, keyId: string): Promise<ApiKeyRecord | null>;
 }
 
-/** Workspace binding predicate: `metadata::jsonb ->> 'workspaceId' = <id>`. */
-function inWorkspace(workspaceId: WorkspaceId) {
-  return sql`(${apiKeyTable.metadata})::jsonb ->> 'workspaceId' = ${workspaceId}`;
+/**
+ * Workspace binding predicate. Dialect fork (W1-03 sqlite dev server):
+ * pg `metadata::jsonb ->> 'workspaceId'`; sqlite `json_extract(metadata, …)`
+ * (the twin keeps metadata as plain TEXT in both dialects).
+ */
+function inWorkspace(db: StudioDb, workspaceId: WorkspaceId) {
+  return getDialect(db) === "sqlite"
+    ? sql`json_extract(${apiKeyTable.metadata}, '$.workspaceId') = ${workspaceId}`
+    : sql`(${apiKeyTable.metadata})::jsonb ->> 'workspaceId' = ${workspaceId}`;
 }
 
 const RECORD_COLUMNS = {
@@ -101,7 +107,7 @@ export function createApiKeysRepo(db: StudioDb): ApiKeysRepo {
           .from(apiKeyTable)
           .where(
             and(
-              inWorkspace(workspaceId),
+              inWorkspace(db, workspaceId),
               cursor
                 ? or(
                     lt(apiKeyTable.createdAt, new Date(cursor.t)),
@@ -131,7 +137,7 @@ export function createApiKeysRepo(db: StudioDb): ApiKeysRepo {
       const [row] = await db
         .select(RECORD_COLUMNS)
         .from(apiKeyTable)
-        .where(and(eq(apiKeyTable.id, keyId), inWorkspace(workspaceId)))
+        .where(and(eq(apiKeyTable.id, keyId), inWorkspace(db, workspaceId)))
         .limit(1);
       return row === undefined ? null : toRecord(row);
     },

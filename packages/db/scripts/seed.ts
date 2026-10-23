@@ -3,10 +3,10 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { createAuth } from "../src/auth.js";
-import { createDb } from "../src/db.js";
+import { createDb, getDialect, isSqliteUrl } from "../src/db.js";
+import { tablesFor } from "../src/tables.js";
 import { migrateDatabase } from "../src/migrate.js";
 import { createRepos } from "../src/repos/index.js";
-import * as schema from "../src/schema.js";
 
 /**
  * Idempotent demo seed — run with `pnpm --filter @studio/db seed`
@@ -77,12 +77,20 @@ async function main(): Promise<void> {
     db,
   });
 
+  const t = tablesFor(db);
+
   try {
-    await migrateDatabase(db);
+    // Postgres: apply the canonical forward-only migrations. SQLite dev
+    // databases are THROWAWAY — their DDL source is the bootstrap twin
+    // (sqlite-bootstrap.ts), already applied by createDb's sqlite branch;
+    // running the pg migration folder against the twin would only collide.
+    if (!isSqliteUrl(env.DATABASE_URL)) {
+      await migrateDatabase(db);
+    }
 
     // 1 — demo user (better-auth hashes the password properly)
     const existingUser = (
-      await db.select().from(schema.user).where(eq(schema.user.email, DEMO_EMAIL)).limit(1)
+      await db.select().from(t.user).where(eq(t.user.email, DEMO_EMAIL)).limit(1)
     ).at(0);
     if (!existingUser) {
       await auth.api.signUpEmail({
@@ -91,22 +99,22 @@ async function main(): Promise<void> {
       console.info(`[seed] created user ${DEMO_EMAIL} (password: ${DEMO_PASSWORD})`);
     }
     const demoUser = (
-      await db.select().from(schema.user).where(eq(schema.user.email, DEMO_EMAIL)).limit(1)
+      await db.select().from(t.user).where(eq(t.user.email, DEMO_EMAIL)).limit(1)
     ).at(0);
     if (!demoUser) throw new Error("demo user missing after sign-up");
 
     // 2 — demo workspace (organization) + owner membership
     await db
-      .insert(schema.organization)
+      .insert(t.organization)
       .values({ id: ORG_ID, name: "Demo Workspace", slug: "demo-workspace" })
-      .onConflictDoNothing({ target: schema.organization.id });
+      .onConflictDoNothing({ target: t.organization.id });
     const memberRows = await db
       .select()
-      .from(schema.member)
-      .where(eq(schema.member.organizationId, ORG_ID));
+      .from(t.member)
+      .where(eq(t.member.organizationId, ORG_ID));
     const membership = memberRows.find((m) => m.userId === demoUser.id);
     if (!membership) {
-      await db.insert(schema.member).values({
+      await db.insert(t.member).values({
         id: `member_demo_${demoUser.id.replaceAll("-", "").slice(0, 12)}`,
         organizationId: ORG_ID,
         userId: demoUser.id,
@@ -117,7 +125,7 @@ async function main(): Promise<void> {
 
     // 3 — demo project + 3 placeholder versions (§9.3 immutable chain)
     await db
-      .insert(schema.projects)
+      .insert(t.projects)
       .values({
         id: PROJECT_ID,
         workspaceId: ORG_ID,
@@ -127,11 +135,11 @@ async function main(): Promise<void> {
         createdBy: demoUser.id,
         currentVersionId: null,
       })
-      .onConflictDoNothing({ target: schema.projects.id });
+      .onConflictDoNothing({ target: t.projects.id });
 
     for (const [index, versionId] of VERSION_IDS.entries()) {
       await db
-        .insert(schema.projectVersions)
+        .insert(t.projectVersions)
         .values({
           id: versionId,
           projectId: PROJECT_ID,
@@ -148,14 +156,14 @@ async function main(): Promise<void> {
                 : "another placeholder edit",
           createdBy: demoUser.id,
         })
-        .onConflictDoNothing({ target: schema.projectVersions.id });
+        .onConflictDoNothing({ target: t.projectVersions.id });
     }
     const lastVersionId = VERSION_IDS[VERSION_IDS.length - 1];
     if (lastVersionId === undefined) throw new Error("unreachable: version ids fixed");
     await db
-      .update(schema.projects)
+      .update(t.projects)
       .set({ currentVersionId: lastVersionId })
-      .where(eq(schema.projects.id, PROJECT_ID));
+      .where(eq(t.projects.id, PROJECT_ID));
 
     // 4 — 1,000 demo credits (idempotent grant via the ledger repo)
     const repos = createRepos(db);
@@ -171,16 +179,16 @@ async function main(): Promise<void> {
 
     // 5 — demo thread + greeting message
     await db
-      .insert(schema.agentThreads)
+      .insert(t.agentThreads)
       .values({
         id: THREAD_ID,
         projectId: PROJECT_ID,
         createdBy: demoUser.id,
         title: "Getting started",
       })
-      .onConflictDoNothing({ target: schema.agentThreads.id });
+      .onConflictDoNothing({ target: t.agentThreads.id });
     await db
-      .insert(schema.agentMessages)
+      .insert(t.agentMessages)
       .values({
         id: MESSAGE_ID,
         threadId: THREAD_ID,
@@ -189,13 +197,19 @@ async function main(): Promise<void> {
         // the real contentJson schema (AI SDK parts).
         contentJson: { text: "Welcome to Studio! Ask me to animate something." },
       })
-      .onConflictDoNothing({ target: schema.agentMessages.id });
+      .onConflictDoNothing({ target: t.agentMessages.id });
 
     console.info(
       `[seed] done: workspace=${ORG_ID} project=${PROJECT_ID} currentVersion=${lastVersionId} thread=${THREAD_ID}`,
     );
   } finally {
-    await db.$client.end({ timeout: 5 });
+    // Dialect-aware teardown: postgres.js pools end via .end(); a sqlite
+    // handle is a better-sqlite3 client closed via .close().
+    if (getDialect(db) === "sqlite") {
+      (db.$client as unknown as { close: () => void }).close();
+    } else {
+      await db.$client.end({ timeout: 5 });
+    }
   }
 }
 

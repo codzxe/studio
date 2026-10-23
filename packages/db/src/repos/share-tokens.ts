@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 
-import type { StudioDb } from "../db.js";
+import { getDialect, type StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
 import { type ShareToken, projects, shareTokens, user } from "../schema.js";
@@ -90,7 +90,16 @@ export interface ShareTokensRepo {
 function activeFilter() {
   return and(
     isNull(shareTokens.revokedAt),
-    or(isNull(shareTokens.expiresAt), gt(shareTokens.expiresAt, sql`now()`)),
+    or(
+          isNull(shareTokens.expiresAt),
+          // Dialect fork: pg now() vs the twin's integer-ms clock (unixepoch ms).
+          gt(
+            shareTokens.expiresAt,
+            getDialect(db) === "sqlite"
+              ? sql`(unixepoch('subsec') * 1000)`
+              : sql`now()`,
+          ),
+        ),
   );
 }
 

@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
-import type { StudioDb } from "../db.js";
+import { getDialect, type StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
 import { type Render, type RenderStatus, projectVersions, projects, renders } from "../schema.js";
@@ -197,6 +197,22 @@ function requireValidDate(value: Date, field: string): Date {
   return value;
 }
 
+
+/**
+ * Dialect fork (W1-03 sqlite dev server): pg `greatest(a, b)` vs sqlite
+ * `max(a, b)` — both clamp-to-the-larger; the spelling differs.
+ */
+function greatest<TColumn>(db: StudioDb, column: TColumn, value: number) {
+  return getDialect(db) === "sqlite"
+    ? sql`max(${column}, ${value})`
+    : sql`greatest(${column}, ${value})`;
+}
+
+/** Dialect fork: pg `count(*)::int` cast vs sqlite's plain integer count. */
+function countStarInt(db: StudioDb) {
+  return getDialect(db) === "sqlite" ? sql<number>`count(*)` : sql<number>`count(*)::int`;
+}
+
 export function createRendersRepo(db: StudioDb): RendersRepo {
   async function requireRender(workspaceId: WorkspaceId, renderId: string): Promise<Render> {
     const [row] = await db
@@ -355,13 +371,20 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
       return db.transaction(async (tx) => {
         // SELECT … FOR UPDATE SKIP LOCKED: concurrent workers never block each
         // other or double-claim — locked rows are simply skipped.
-        const queued = await tx
+        // (SQLite dev server: better-sqlite3 is one serialized connection —
+        // the whole transaction is exclusive, so the lock clause is dropped;
+        // single-writer semantics give the same no-double-claim guarantee.)
+        const dialect = getDialect(db);
+        const baseQuery = tx
           .select({ id: renders.id })
           .from(renders)
           .where(and(eq(renders.status, "queued"), eq(renders.cancelRequested, false)))
           .orderBy(asc(renders.createdAt), asc(renders.id))
-          .limit(limit)
-          .for("update", { skipLocked: true });
+          .limit(limit);
+        const queued =
+          dialect === "sqlite"
+            ? await baseQuery
+            : await baseQuery.for("update", { skipLocked: true });
         if (queued.length === 0) return [];
 
         const now = new Date();
@@ -428,10 +451,10 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
           heartbeatAt: new Date(),
           ...(framesDone === undefined
             ? {}
-            : { framesDone: sql`greatest(${renders.framesDone}, ${framesDone})` }),
+            : { framesDone: greatest(db, renders.framesDone, framesDone) }),
           ...(framesTotal === undefined
             ? {}
-            : { framesTotal: sql`greatest(${renders.framesTotal}, ${framesTotal})` }),
+            : { framesTotal: greatest(db, renders.framesTotal, framesTotal) }),
         })
         .where(and(eq(renders.id, render.id), eq(renders.status, "running")))
         .returning();
@@ -541,7 +564,7 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
 
     async countActive(workspaceId) {
       const [row] = await db
-        .select({ total: sql<number>`count(*)::int` })
+        .select({ total: countStarInt(db) })
         .from(renders)
         .innerJoin(projects, eq(renders.projectId, projects.id))
         .where(

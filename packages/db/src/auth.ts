@@ -6,8 +6,10 @@ import { role } from "better-auth/plugins/access";
 import { defaultRoles } from "better-auth/plugins/organization/access";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { getDialect } from "./db.js";
 import type { StudioDb } from "./db.js";
 import * as schema from "./schema.js";
+import * as sqliteSchema from "./schema-sqlite.js";
 
 /**
  * Better Auth factory — ADR-0003 + PRODUCT_ARCHITECTURE §7.1.
@@ -77,6 +79,20 @@ function bearerApiKeyFromContext(ctx: {
 export function createAuth(env: AuthEnv): Auth {
   const db = env.db ?? drizzle(postgres(env.databaseUrl, { max: 10 }), { schema });
 
+  // W1-03 (sqlite dev server): the drizzle adapter is dialect-aware. On a
+  // sqlite dev handle two things change:
+  //  - `transaction: false` — better-auth wraps multi-write operations in
+  //    `db.transaction(async cb)`; the better-sqlite3 driver is SYNCHRONOUS
+  //    and rejects promise-returning callbacks ("Transaction function cannot
+  //    return a promise"), so the wrapper must stay off. Dev-server auth
+  //    operations run unwrapped; Postgres keeps the transactional wrapper.
+  //  - the SQLITE TWIN tables + `provider: "sqlite"` — the pg tables carry
+  //    pg column mappers (Date→ISO string) that would write wrong shapes into
+  //    the twin's integer-ms timestamp columns; provider "sqlite" also flips
+  //    better-auth's id/JSON capability flags to the sqlite set.
+  const isSqlite = getDialect(db) === "sqlite";
+  const authSchema = isSqlite ? sqliteSchema : schema;
+
   const socialProviders: {
     google?: { clientId: string; clientSecret: string };
     github?: { clientId: string; clientSecret: string };
@@ -102,17 +118,17 @@ export function createAuth(env: AuthEnv): Auth {
     secret: env.secret,
     trustedOrigins: [env.appUrl],
     database: drizzleAdapter(db, {
-      provider: "pg",
-      transaction: true,
+      provider: isSqlite ? "sqlite" : "pg",
+      transaction: !isSqlite,
       schema: {
-        user: schema.user,
-        session: schema.session,
-        account: schema.account,
-        verification: schema.verification,
-        organization: schema.organization,
-        member: schema.member,
-        invitation: schema.invitation,
-        apikey: schema.apiKey,
+        user: authSchema.user,
+        session: authSchema.session,
+        account: authSchema.account,
+        verification: authSchema.verification,
+        organization: authSchema.organization,
+        member: authSchema.member,
+        invitation: authSchema.invitation,
+        apikey: authSchema.apiKey,
       },
     }),
     emailAndPassword: { enabled: true },
