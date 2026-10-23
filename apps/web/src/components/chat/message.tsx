@@ -58,6 +58,11 @@
  *    commands that never touch the undo stack, verified against the vendored
  *    engine: comp.rs `open`, time.rs `set`). Best-effort and quiet on
  *    failure; the editor UI itself is frozen (law #7).
+ *  * Version-history link (W1-07, M5.7b): the APPLIED card also carries a
+ *    token-styled link to the project's `/w/:slug/history` timeline page —
+ *    the slug parsed from the app-router pathname (the chat panel only
+ *    mounts under /w/:slug/*, so the pathname IS the workspace truth; a
+ *    non-workspace mount degrades to no link, never a guess).
  *  * D-22 pre-arm: `autoApply.mode === "auto"` (never for high risk) renders
  *    the "Auto-apply is on" hint and focuses the Apply button — Apply is
  *    STILL the user's explicit click; nothing ever executes from the event.
@@ -72,6 +77,7 @@ import { applicablePlanFromRuntime } from "@/lib/chat/run-state";
 import type { ChatUiMessage, PlanRuntime, RunPhase } from "@/lib/chat/types";
 import type { AgentBatch, EditPlan } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
+import { usePathname } from "next/navigation";
 import { type ReactElement, type ReactNode, useEffect, useRef } from "react";
 import { PlanDiffCard } from "./diff-card";
 import { Markdown } from "./markdown";
@@ -213,6 +219,22 @@ async function revealPlanInTimeline(
 }
 
 /**
+ * W1-07 (M5.7b): `/w/:slug/history` for the workspace whose page this thread
+ * renders on, parsed from the app-router pathname. The chat panel only
+ * mounts under `/w/:slug/*` (editor-host), so a matching pathname is the
+ * honest slug source; anything else (embeds, tests) yields NO link rather
+ * than a guessed href. The slug is URI-encoded defensively (repo slugs are
+ * URL-safe by construction; law #1/#2 posture anyway).
+ */
+export function historyHrefFromPathname(pathname: string | null): string | undefined {
+  if (pathname === null) return undefined;
+  const match = /^\/w\/([^/]+)(?:\/|$)/.exec(pathname);
+  const slug = match?.[1];
+  if (slug === undefined || slug === "") return undefined;
+  return `/w/${encodeURIComponent(slug)}/history`;
+}
+
+/**
  * The full M5-G card contract derived from one message's runtime + the wiring.
  * Pure: every branch is pinned by the chat-integration M5 scenarios. `null`
  * when the message carries no plan (the caller renders no card).
@@ -220,6 +242,7 @@ async function revealPlanInTimeline(
 function derivePlanCardProps(
   message: ChatUiMessage,
   wiring: PlanMessageWiring | null | undefined,
+  timelineHref: string | undefined,
 ): PlanCardProps | null {
   const plan = message.plan;
   const runtime = message.planRuntime;
@@ -400,6 +423,7 @@ function derivePlanCardProps(
     ...(status === "applied" && (runtime.outcome === "applied" || runtime.outcome === "undo-failed")
       ? { onUndo, onViewInTimeline }
       : {}),
+    ...(status === "applied" && timelineHref !== undefined ? { timelineHref } : {}),
     ...(onReapplyCallback !== undefined ? { onReapply: onReapplyCallback } : {}),
     ...(status === "ambiguous-resolution" ? { onResolveCandidate } : {}),
   };
@@ -416,7 +440,12 @@ export function ChatMessageView({
   const cardRef = useRef<HTMLDivElement | null>(null);
   const armedOnceRef = useRef(false);
 
-  const derived = derivePlanCardProps(message, planWiring);
+  // W1-07 (M5.7b): the applied card's version-history link — derived from the
+  // app-router pathname (see historyHrefFromPathname). usePathname is mocked
+  // in the vitest setup ("/" ⇒ undefined ⇒ no link), so unit renders of this
+  // view stay deterministic.
+  const timelineHref = historyHrefFromPathname(usePathname());
+  const derived = derivePlanCardProps(message, planWiring, timelineHref);
   const preArmed =
     derived !== null &&
     planWiring !== null &&
