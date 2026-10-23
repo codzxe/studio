@@ -359,7 +359,8 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
         if (claimed.length === 0) return [];
 
         // Resolve workspaceId per row (renders scope through projects) so the
-        // worker can make workspace-first calls for everything else.
+        // worker can make workspace-first calls for everything else. Returned
+        // in claim (FIFO) order.
         const scoped = await tx
           .select({ render: renders, workspaceId: projects.workspaceId })
           .from(renders)
@@ -369,7 +370,8 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
               renders.id,
               claimed.map((row) => row.id),
             ),
-          );
+          )
+          .orderBy(asc(renders.createdAt), asc(renders.id));
         return scoped.map((row) => ({ ...row.render, workspaceId: row.workspaceId }));
       });
     },

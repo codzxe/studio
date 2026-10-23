@@ -114,6 +114,28 @@ describe("render status machine (§7.4)", () => {
     }
     expect(() => assertRenderTransition("queued", "completed")).toThrowError(DbError);
   });
+
+  it("M8-A requeue: running → queued is legal (crash-recovery ONLY)", () => {
+    // statuses.ts documents this as requeueStale's private edge — the ONLY
+    // sanctioned caller; never exposed as a public transition.
+    expect(() => assertRenderTransition("running", "queued")).not.toThrow();
+    // running stays non-terminal: the requeue is a recovery edge, not an exit.
+    expect(isTerminalRenderStatus("running")).toBe(false);
+  });
+
+  it("M8-A requeue is the ONLY backwards edge — terminal → queued stays a typed CONFLICT", () => {
+    for (const from of ["completed", "failed", "cancelled"] as const) {
+      try {
+        assertRenderTransition(from, "queued");
+        expect.unreachable();
+      } catch (error) {
+        expect((error as DbError).code).toBe("CONFLICT");
+      }
+    }
+    // the requeue did not loosen anything else (queued jump stays illegal)
+    expect(() => assertRenderTransition("queued", "completed")).toThrowError(DbError);
+    expect(() => assertRenderTransition("queued", "failed")).toThrowError(DbError);
+  });
 });
 
 describe("cursors", () => {
