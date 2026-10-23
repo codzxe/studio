@@ -295,6 +295,46 @@ describe("EditorHost — boot", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Offline (§8.11, W5-06) — the editor route's own offline banner
+// ---------------------------------------------------------------------------
+
+/** jsdom navigator.onLine shim (the auth-offline / offline-banner pattern). */
+function setNavigatorOnline(online: boolean) {
+  Object.defineProperty(window.navigator, "onLine", {
+    configurable: true,
+    get: () => online,
+  });
+  window.dispatchEvent(new Event(online ? "online" : "offline"));
+}
+
+describe("EditorHost — offline (§8.11)", () => {
+  it("renders no offline chrome while online (editor UI unchanged)", () => {
+    setNavigatorOnline(true);
+    renderHost();
+    expect(screen.queryByTestId("editor-offline-banner")).not.toBeInTheDocument();
+  });
+
+  it("shows the honest offline banner when the browser reports no connection", async () => {
+    const harness = renderHost();
+    await bootToOpen(harness);
+
+    await act(async () => {
+      setNavigatorOnline(false);
+    });
+
+    const banner = screen.getByTestId("editor-offline-banner");
+    expect(banner).toHaveTextContent("You're offline.");
+    expect(banner).toHaveTextContent(/last saved version is safe/);
+    expect(banner).toHaveTextContent(/kept and retried automatically/);
+
+    await act(async () => {
+      setNavigatorOnline(true);
+    });
+    expect(screen.queryByTestId("editor-offline-banner")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Load + missing assets (M3.3)
 // ---------------------------------------------------------------------------
 

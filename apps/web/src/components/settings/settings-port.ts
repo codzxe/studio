@@ -8,13 +8,16 @@
 // - `client.apiKeys.{create,list,revoke}` and `client.models.list` are LANDED
 //   namespaces (W1-02/03) — bound directly, no cast.
 // - `client.settings.{get,update}` and `client.audit.list(workspaceId, query)`
-//   land with sibling W3-G2 THIS WAVE (gateway routes GET/PATCH /v1/me/settings
-//   + GET /v1/workspaces/:id/audit, contracts routes/settings.ts, the client
-//   namespaces following the members pattern). Until that sync, this module
-//   reaches them through ONE narrow typed cast with a runtime presence check —
-//   a pre-sync deployment degrades to the honest typed failure below instead
-//   of a TypeError. When the namespaces are on main, DELETE the cast and bind
-//   them directly (TODO(W3-G2) marks the exact lines).
+//   DO NOT EXIST yet: the wire contracts landed (contracts routes/settings.ts
+//   + routes/audit.ts, W3-G3) but the GATEWAY routes (GET/PATCH
+//   /v1/me/settings + GET /v1/workspaces/:id/audit) and the api-client
+//   namespaces never did — a Wave-2 backend gap (documented in the W5-03
+//   worklog; do NOT fake data behind them). Until they land, this module
+//   reaches the expected shapes through ONE narrow typed cast with a runtime
+//   presence check — a deployment without the namespaces degrades to the
+//   honest typed failure below instead of a TypeError. When the namespaces
+//   are on main, DELETE the cast and bind them directly (TODO(W3-G2) marks
+//   the exact lines).
 //
 // Boundary law (apps/web): `@studio/contracts` is `import type` ONLY — the
 // W3-G2 wire shapes are restated here as local types (the billing page's
@@ -171,8 +174,8 @@ export function isSettingsSeamPendingError(value: unknown): value is SettingsSea
 }
 
 /**
- * TODO(W3-G2, this wave): the expected `client.settings` namespace (following
- * the members pattern) — `settings: { get, update }` over
+ * TODO(W3-G2, backend gap): the expected `client.settings` namespace
+ * (following the members pattern) — `settings: { get, update }` over
  * GET/PATCH /v1/me/settings. When it lands, delete this interface and the
  * cast in {@link settingsNamespace}, and bind `client.settings` directly in
  * {@link asSettingsPort}.
@@ -186,7 +189,7 @@ interface SettingsNamespaceSeam {
 }
 
 /**
- * TODO(W3-G2, this wave): the expected `client.audit` namespace —
+ * TODO(W3-G2, backend gap): the expected `client.audit` namespace —
  * `audit: { list(workspaceId, query) }` over GET /v1/workspaces/:id/audit.
  * Same deal as {@link SettingsNamespaceSeam} when it lands.
  */

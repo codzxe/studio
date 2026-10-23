@@ -26,8 +26,10 @@
 import { Brand } from "@studio/config";
 import type { ShareInfo, ShareManifest } from "@studio/contracts";
 import { Button, Input, Spinner } from "@studio/ui";
+import { WifiOff } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useOnlineStatus } from "@/lib/use-online-status";
 import { ShareComments } from "./share-comments";
 import { SharePlayer } from "./share-player";
 import {
@@ -60,6 +62,12 @@ export function formatExpiry(iso: string): string {
 
 export function ShareReview({ token, info, port }: ShareReviewProps) {
   const client = useMemo<SharePort>(() => port ?? createDefaultSharePort(), [port]);
+
+  // §8.11 offline (W5-06): this public surface has no app shell, so it owns
+  // its own arm — honest about what is at risk (nothing: the link is fine,
+  // already-loaded content stays) and what to do (reconnect). Fetch failures
+  // while technically "online" still land in the typed unavailable state.
+  const online = useOnlineStatus();
 
   const [password, setPassword] = useState("");
   const [gateFailure, setGateFailure] = useState<ShareFailure | null>(null);
@@ -148,6 +156,25 @@ export function ShareReview({ token, info, port }: ShareReviewProps) {
           Read the preview, leave anchored comments and let the team know what to change.
         </p>
       </header>
+
+      {/* ---------------------------------------------------- offline (§8.11) */}
+      {!online ? (
+        <output
+          data-testid="share-offline"
+          className="flex max-w-xl items-start gap-3 rounded-md border border-warning/40 bg-panel p-4"
+        >
+          <WifiOff
+            size={16}
+            strokeWidth={1.75}
+            className="mt-0.5 shrink-0 text-warning"
+            aria-hidden="true"
+          />
+          <p className="text-body-s text-primary">
+            You're offline. Reconnect to load the review or post comments — the link itself is fine,
+            and anything already on screen stays put.
+          </p>
+        </output>
+      ) : null}
 
       {/* -------------------------------------------------------------- gate */}
       {!unlocked ? (

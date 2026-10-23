@@ -20,7 +20,6 @@ import { Hono } from "hono";
 import { z } from "zod";
 
 import {
-  ID_SCHEMA,
   PAGINATION_QUERY_SCHEMA,
   RESTORE_VERSION_SCHEMA,
   SET_VERSION_LABEL_SCHEMA,
@@ -41,21 +40,17 @@ import { sha256Hex, snapshotKey } from "../storage.js";
 import { audit } from "./projects.js";
 
 /**
- * W3-gw bugfix: a project's FIRST snapshot has no base version — a fresh
- * project has currentVersionId null, so the only non-conflicting descriptor
- * is baseVersionId: null (§9.3 keeps "base is required on upload" — the
- * field is present, its value is null). @studio/contracts'
- * UPLOAD_VERSION_SCHEMA pins baseVersionId to a non-null Id, which made the
- * first upload via POST /v1/projects/:id/versions unreachable (always 409);
- * the gateway therefore accepts null/omitted locally and passes it through to
- * the repo, which still enforces the optimistic-concurrency check. Follow-up
- * for the contracts owner: make UPLOAD_VERSION_SCHEMA.baseVersionId nullable.
+ * W3-gw bugfix → CLOSED by W5-09: a project's FIRST snapshot has no base
+ * version — a fresh project has currentVersionId null, so the only
+ * non-conflicting descriptor is baseVersionId: null (§9.3 keeps "base is
+ * required on upload" — the field is present, its value is null).
+ * @studio/contracts' UPLOAD_VERSION_SCHEMA.baseVersionId is now
+ * ID_SCHEMA.nullable() (required-but-nullable; a missing key stays invalid),
+ * so the earlier local null-permission override is gone. What remains local:
+ * query strings deliver sizeBytes as text — coerce here so the raw-bytes
+ * branch parses; the multipart branch already receives numbers.
  */
 const UPLOAD_VERSION_GATEWAY_SCHEMA = UPLOAD_VERSION_SCHEMA.extend({
-  baseVersionId: ID_SCHEMA.nullable(),
-  // Query strings deliver sizeBytes as text — coerce here so the raw-bytes
-  // branch parses; the multipart branch already receives numbers and is
-  // unaffected. (Without this the raw upload path could never validate.)
   sizeBytes: z.coerce.number().int().positive(),
 });
 

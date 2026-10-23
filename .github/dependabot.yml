@@ -20,19 +20,8 @@ updates:
       - "codzxe"
     labels:
       - "dependencies"
-    # §16 policy reminder: AGPL/SSPL/BUSL/RSALv2/Elastic/FSL deps fail the CI
-    # license gate (license-check.yml) even if Dependabot proposes them.
-
-  # GitHub Actions — keep actions/*, dtolnay/*, Swatinem/* fresh (weekly).
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "06:00"
-      timezone: "UTC"
-    open-pull-requests-limit: 5
-    reviewers:
-      - "codzxe"
-    labels:
-      - "dependencies"
+    # §16 policy reminder: AGPL/SSPL/BUSL/RSALv2/Elastic deps fail the
+    # license gate (scripts/check-licenses.mjs, run via pnpm check:licenses)
+    # even if Dependabot proposes them. No GitHub Actions workflows exist in
+    # .github/workflows yet (W5-08 removed the inert github-actions stanza;
+    # re-add it when CI workflows land).

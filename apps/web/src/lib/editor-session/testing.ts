@@ -3,6 +3,12 @@
  * tests): deterministic, in-memory, no network. Behaviours are injectable
  * per seam (asset failures, upload conflicts/failures/hangs) and every call
  * is recorded for assertions.
+ *
+ * Token-audit note (W5-06): the hex strings below are NOT styling — they are
+ * DATA inside the fake `.ecproj` project file (a composition's background
+ * colour in the project-file format, exactly what a real project would
+ * carry). Design tokens govern UI colour/radius/type; project-file contents
+ * are user data and pass through verbatim.
  */
 
 import type {

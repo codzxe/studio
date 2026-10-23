@@ -348,7 +348,7 @@ describe("createApiClient — extra headers + paths", () => {
   });
 });
 
-describe("createApiClient — versions.upload (two-phase)", () => {
+describe("createApiClient — versions.upload (single multipart POST)", () => {
   const versionRow = {
     id: "ver_9",
     projectId: "prj_1",
@@ -362,94 +362,90 @@ describe("createApiClient — versions.upload (two-phase)", () => {
     createdAt: "2026-01-01T00:00:00Z",
   };
 
-  it("POSTs the descriptor then PUTs the bytes to the signed URL", async () => {
-    const { client, calls } = makeClient(async (input) => {
-      if (input === `${BASE}/projects/prj_1/versions`) {
-        return jsonOk({
-          version: versionRow,
-          upload: {
-            url: "https://cdn.studio.test/signed?token=x",
-            method: "PUT",
-            expiresAt: "2026-01-01T00:05:00Z",
-            headers: { "x-amz-server-side-encryption": "AES256" },
-          },
-        });
-      }
-      return new Response(null, { status: 200 });
-    });
+  /** The descriptor part of a recorded multipart call, parsed back to JSON. */
+  function descriptorOf(call: RecordedCall | undefined): Record<string, unknown> {
+    if (!(call?.init?.body instanceof FormData)) throw new Error("expected a FormData body");
+    return JSON.parse(String(call.init.body.get("descriptor"))) as Record<string, unknown>;
+  }
+
+  it("uploads the FIRST version (baseVersionId null) as ONE multipart POST", async () => {
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk(versionRow)));
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const version = await client.versions.upload(
       "prj_1",
-      { baseVersionId: "ver_4", sha256: "b".repeat(64), label: "agent run", bytes },
+      { baseVersionId: null, sha256: "b".repeat(64), label: "first save", bytes },
       { idempotencyKey: "idem-upload-0001" },
     );
     expect(version.id).toBe("ver_9");
+    // ONE request: the bytes ride the POST itself — there is NO signed-URL
+    // second phase on this route (that is the assets upload's protocol).
+    expect(calls).toHaveLength(1);
     const post = calls[0];
-    expect(post?.init?.method).toBe("POST");
-    expect(header(post ?? ({} as RecordedCall), "Idempotency-Key")).toBe("idem-upload-0001");
-    const descriptor = JSON.parse(String(post?.init?.body)) as Record<string, unknown>;
-    expect(descriptor.sizeBytes).toBe(4); // computed from the bytes
-    expect(descriptor.baseVersionId).toBe("ver_4");
-
-    const put = calls[1];
-    expect(put?.input).toBe("https://cdn.studio.test/signed?token=x");
-    expect(put?.init?.method).toBe("PUT");
-    expect(put?.init?.body).toBe(bytes);
-    expect(header(put ?? ({} as RecordedCall), "x-amz-server-side-encryption")).toBe("AES256");
+    if (post === undefined) throw new Error("no recorded call");
+    expect(post.input).toBe(`${BASE}/projects/prj_1/versions`);
+    expect(post.init?.method).toBe("POST");
+    expect(header(post, "Idempotency-Key")).toBe("idem-upload-0001");
+    // No manual Content-Type — fetch derives the multipart boundary itself
+    // (a hand-set one would omit the boundary and break server parsing).
+    expect(header(post, "Content-Type")).toBeNull();
+    // The exact protocol the gateway's own suite pins (projects-versions.test.ts
+    // uploadMultipart): `descriptor` JSON part + `file` bytes part.
+    expect(descriptorOf(post)).toEqual({
+      baseVersionId: null,
+      sha256: "b".repeat(64),
+      label: "first save",
+      sizeBytes: 4, // computed from the bytes
+    });
+    const file = post.init?.body instanceof FormData ? post.init.body.get("file") : null;
+    expect(file).toBeInstanceOf(Blob);
+    expect((file as Blob).size).toBe(4);
   });
 
-  it("computes sizeBytes from a Blob", async () => {
-    const { client, calls } = makeClient(async (input) => {
-      if (input === `${BASE}/projects/prj_1/versions`) {
-        return jsonOk({
-          version: versionRow,
-          upload: {
-            url: "https://cdn.studio.test/blob",
-            method: "PUT",
-            expiresAt: "2026-01-01T00:05:00Z",
-            headers: {},
-          },
-        });
-      }
-      return new Response(null, { status: 200 });
+  it("sends the base id for later versions in the descriptor part", async () => {
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk(versionRow)));
+    await client.versions.upload("prj_1", {
+      baseVersionId: "ver_4",
+      sha256: "b".repeat(64),
+      agentRunId: "run_1",
+      bytes: new Uint8Array([1, 2, 3, 4]),
     });
+    expect(descriptorOf(calls[0])).toEqual({
+      baseVersionId: "ver_4",
+      sha256: "b".repeat(64),
+      agentRunId: "run_1",
+      sizeBytes: 4,
+    });
+  });
+
+  it("computes sizeBytes from a Blob and posts it as the file part", async () => {
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk(versionRow)));
     const blob = new Blob(["12345678"], { type: "application/octet-stream" });
     await client.versions.upload("prj_1", {
       baseVersionId: "ver_4",
       sha256: "b".repeat(64),
       bytes: blob,
     });
-    const descriptor = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
-    expect(descriptor.sizeBytes).toBe(8);
-    expect(calls[1]?.init?.body).toBe(blob);
+    expect(descriptorOf(calls[0]).sizeBytes).toBe(8);
+    const post = calls[0];
+    if (post === undefined) throw new Error("no recorded call");
+    // get() may hand back a File view of the same bytes — compare content.
+    const file = post.init?.body instanceof FormData ? post.init.body.get("file") : null;
+    expect(file).toBeInstanceOf(Blob);
+    expect((file as Blob).size).toBe(8);
+    expect((file as Blob).type).toBe("application/octet-stream");
   });
 
-  it("throws UPLOAD_FAILED when the signed PUT fails", async () => {
-    const { client } = makeClient(async (input) => {
-      if (input === `${BASE}/projects/prj_1/versions`) {
-        return jsonOk({
-          version: versionRow,
-          upload: {
-            url: "https://cdn.studio.test/fail",
-            method: "PUT",
-            expiresAt: "2026-01-01T00:05:00Z",
-            headers: {},
-          },
-        });
-      }
-      return new Response("Forbidden", { status: 403 });
-    });
+  it("rejects a MISSING base client-side — the base is always stated, even when null", async () => {
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk(versionRow)));
     await expectAsyncFail(
       client.versions.upload("prj_1", {
-        baseVersionId: "ver_4",
+        baseVersionId: undefined as unknown as null,
         sha256: "b".repeat(64),
         bytes: new Uint8Array([9]),
       }),
-      (error) => {
-        expect(error.code).toBe("UPLOAD_FAILED");
-        expect(error.retryable).toBe(true);
-      },
+      (error) => expect(error.code).toBe("VALIDATION_FAILED"),
     );
+    expect(calls).toHaveLength(0);
   });
 
   it("rejects non-Blob/non-Uint8Array bytes before sending", async () => {
@@ -489,7 +485,10 @@ describe("createApiClient — surface map", () => {
     const paginated = createApiClient({ baseUrl: BASE, fetch: okFetch });
 
     await ignore(recorder.me.get());
+    await ignore(recorder.settings.get());
+    await ignore(recorder.settings.update({ autoApplyEnabled: true }));
     await ignore(paginated.workspaces.list());
+    await ignore(recorder.workspaces.get("w2"));
     await ignore(recorder.workspaces.patch("w1", { name: "New" }));
     await ignore(recorder.invites.create("w1", { email: "a@b.example", role: "editor" }));
     await ignore(recorder.invites.accept("tok_123"));
@@ -499,6 +498,13 @@ describe("createApiClient — surface map", () => {
     await ignore(recorder.projects.delete("p1"));
     await ignore(recorder.projects.manifest("p1"));
     await ignore(paginated.versions.list("p1"));
+    await ignore(
+      recorder.versions.upload("p1", {
+        baseVersionId: null,
+        sha256: "b".repeat(64),
+        bytes: new Uint8Array([1]),
+      }),
+    );
     await ignore(recorder.versions.restore("p1", "ver_1", { confirmLabel: "v1" }));
     await ignore(recorder.versions.label("p1", "ver_1", { label: "shipped cut" }));
     await ignore(recorder.versions.diff("p1", "ver_1"));
@@ -526,6 +532,12 @@ describe("createApiClient — surface map", () => {
     );
     await ignore(recorder.credits.get());
     await ignore(paginated.credits.ledger());
+    await ignore(
+      recorder.credits.reconcile({
+        sinceTs: "2026-01-01T00:00:00Z",
+        uptoTs: "2026-01-02T00:00:00Z",
+      }),
+    );
     await ignore(recorder.billing.checkout({ planId: "pro" }));
     await ignore(recorder.billing.portal({ returnUrl: "https://app/studio.example.com" }));
     await ignore(paginated.billing.invoices());
@@ -556,11 +568,15 @@ describe("createApiClient — surface map", () => {
     await ignore(recorder.comments.resolveComment("cmt_1"));
     await ignore(paginated.activity.list("p1"));
     await ignore(recorder.activity.auditExport("p1"));
+    await ignore(paginated.audit.list("w1"));
 
     const paths = calls.map((call) => call.input.replace(BASE, "").split("?")[0]);
     expect(paths).toEqual([
       "/me",
+      "/me/settings",
+      "/me/settings",
       "/workspaces",
+      "/workspaces/w2",
       "/workspaces/w1",
       "/workspaces/w1/invites",
       "/invites/tok_123/accept",
@@ -569,6 +585,7 @@ describe("createApiClient — surface map", () => {
       "/projects/p1",
       "/projects/p1",
       "/projects/p1/manifest",
+      "/projects/p1/versions",
       "/projects/p1/versions",
       "/projects/p1/versions/ver_1/restore",
       "/projects/p1/versions/ver_1/label",
@@ -586,6 +603,7 @@ describe("createApiClient — surface map", () => {
       "/runs/run_1/events",
       "/credits",
       "/credits/ledger",
+      "/credits/reconcile",
       "/billing/checkout",
       "/billing/portal",
       "/billing/invoices",
@@ -601,7 +619,98 @@ describe("createApiClient — surface map", () => {
       "/comments/cmt_1/resolve",
       "/projects/p1/activity",
       "/projects/p1/audit-export",
+      "/workspaces/w1/audit",
     ]);
+  });
+});
+
+// W3-G2 wire: GET/PATCH /v1/me/settings + GET /v1/workspaces/:id/audit —
+// the M9 settings surface's backend seam (user-scoped auto-apply flag; the
+// viewer-floor workspace audit feed).
+describe("createApiClient — settings + workspace audit (W3-G2)", () => {
+  it("settings.get validates the echo shape", async () => {
+    const { client } = makeClient(() =>
+      Promise.resolve(jsonOk({ autoApplyEnabled: true, extra: "dropped" })),
+    );
+    const result = await client.settings.get();
+    expect(result.autoApplyEnabled).toBe(true);
+    expect("extra" in result).toBe(false);
+  });
+
+  it("settings.update PATCHes the strict body with an idempotency key", async () => {
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ autoApplyEnabled: true })),
+    );
+    const result = await client.settings.update({ autoApplyEnabled: true });
+    expect(result.autoApplyEnabled).toBe(true);
+    const call = calls[0];
+    expect(call.input.replace(BASE, "")).toBe("/me/settings");
+    expect(call.init?.method).toBe("PATCH");
+    expect(call.init?.body).toBe('{"autoApplyEnabled":true}');
+    expect(header(call, "idempotency-key")).not.toBeNull();
+  });
+
+  it("settings.update rejects a non-boolean flag client-side (no request sent)", async () => {
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk(null)));
+    // @ts-expect-error — the wire mistake this pin guards against
+    await client.settings.update({ autoApplyEnabled: "yes" }).catch(() => undefined);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("audit.list hits the workspace feed with the targetType filter", async () => {
+    const entry = {
+      id: "aud_1",
+      actorId: "usr_1",
+      actorName: "Ada",
+      action: "member.role_changed",
+      targetType: "member",
+      targetId: "usr_2",
+      createdAt: "2026-01-01T00:00:00Z",
+    };
+    const { client, calls } = makeClient(() =>
+      Promise.resolve(jsonOk({ items: [entry], nextCursor: null })),
+    );
+    const result = await client.audit.list("ws_1", { targetType: "member", limit: 25 });
+    expect(result.items[0]?.actorName).toBe("Ada");
+    expect(result.nextCursor).toBeNull();
+    const url = new URL(calls[0]?.input ?? "", BASE);
+    expect(url.pathname.replace("/v1", "")).toBe("/workspaces/ws_1/audit");
+    expect(url.searchParams.get("targetType")).toBe("member");
+    expect(url.searchParams.get("limit")).toBe("25");
+  });
+
+  it("audit.list strips unknown fields from feed rows (law #1 client-side)", async () => {
+    const { client } = makeClient(() =>
+      Promise.resolve(
+        jsonOk({
+          items: [
+            {
+              id: "aud_2",
+              actorId: null,
+              actorName: null,
+              action: "workspace.ownership_transferred",
+              targetType: "workspace",
+              targetId: "ws_1",
+              createdAt: "2026-01-01T00:00:00Z",
+              metadata: { ip: "10.0.0.1" },
+              ip: "10.0.0.1",
+            },
+          ],
+          nextCursor: "cur_1",
+        }),
+      ),
+    );
+    const result = await client.audit.list("ws_1");
+    expect(result.items[0]).toEqual({
+      id: "aud_2",
+      actorId: null,
+      actorName: null,
+      action: "workspace.ownership_transferred",
+      targetType: "workspace",
+      targetId: "ws_1",
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    expect(result.nextCursor).toBe("cur_1");
   });
 });
 
@@ -746,3 +855,129 @@ async function expectAsyncFail(
   expect(isApiError(error)).toBe(true);
   assert(error as ApiError);
 }
+
+// W5-09 sweep: GET /v1/workspaces/:id — the workspace row + the CALLER's role
+// + the roster (gateway routes/workspaces.ts resolveWorkspaceContext shape).
+describe("createApiClient — workspaces.get (W5-09)", () => {
+  const detail = {
+    id: "ws_1",
+    name: "Northlight",
+    slug: "northlight",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    role: "admin",
+    members: [
+      { userId: "usr_1", role: "owner", name: "Ada", email: "ada@example.com" },
+      { userId: "usr_2", role: "viewer", name: null, email: null },
+    ],
+  };
+
+  it("GETs the detail and validates the roster shape", async () => {
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk(detail)));
+    const result = await client.workspaces.get("ws_1");
+    expect(result.role).toBe("admin");
+    expect(result.members[1]?.name).toBeNull();
+    expect(calls[0]?.input).toBe(`${BASE}/workspaces/ws_1`);
+    expect(calls[0]?.init?.method).toBe("GET");
+  });
+
+  it("strips unknown keys (a drifted payload never crashes the client)", async () => {
+    const { client } = makeClient(() =>
+      Promise.resolve(jsonOk({ ...detail, internalFlag: "leak" })),
+    );
+    const result = await client.workspaces.get("ws_1");
+    expect(result).not.toHaveProperty("internalFlag");
+  });
+});
+
+// W5-09 sweep: POST /v1/credits/reconcile — the admin true-up (report-only by
+// default; gateway reconciliation.ts report mirrors contracts routes/credits.ts).
+describe("createApiClient — credits.reconcile (W5-09)", () => {
+  const report = {
+    workspaceId: "ws_1",
+    window: { sinceTs: "2026-01-01T00:00:00Z", uptoTs: "2026-01-02T00:00:00Z" },
+    mode: "reconcile",
+    ledger: {
+      grants: 1000,
+      reserves: 12,
+      outstandingReserves: 0,
+      commits: 9,
+      refunds: 1,
+      adjusts: 0,
+      entryCount: 22,
+    },
+    usage: {
+      runs: { discovered: 3, settledInWindow: 3, committedCredits: 9 },
+      renders: { count: 0, credits: 0 },
+      usageSum: 9,
+    },
+    balance: 990,
+    discrepancies: [
+      {
+        code: "ledger_usage_mismatch",
+        ledgerCommitSum: 9,
+        usageSum: 11,
+        delta: 2,
+        runsUsage: 11,
+        rendersUsage: 0,
+        runCount: 3,
+        renderCount: 0,
+        runDrift: [{ runId: "run_1", ledgerCommits: 2, rowCommitted: 4 }],
+      },
+      { code: "negative_balance", balance: -1 },
+    ],
+    external: {
+      source: "none",
+      spendCredits: null,
+      perModel: [],
+      unknownModels: [],
+      error: null,
+    },
+    action: {
+      attempted: true,
+      applied: true,
+      replayed: false,
+      adjustAmount: -2,
+      entryId: "led_1",
+      balanceAfter: 988,
+      skippedReason: null,
+    },
+    scan: { truncated: false, scannedEntries: 22 },
+    generatedAt: "2026-01-02T00:00:01Z",
+  };
+
+  it("POSTs the window with an idempotency key and parses the report", async () => {
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk(report)));
+    const result = await client.credits.reconcile(
+      { sinceTs: report.window.sinceTs, uptoTs: report.window.uptoTs, mode: "reconcile" },
+      { idempotencyKey: "idem-recon-0001" },
+    );
+    expect(result.mode).toBe("reconcile");
+    expect(result.discrepancies).toHaveLength(2);
+    expect(result.discrepancies[1]?.code).toBe("negative_balance");
+    expect(result.action.applied).toBe(true);
+    const post = calls[0];
+    if (post === undefined) throw new Error("no recorded call");
+    expect(post.input).toBe(`${BASE}/credits/reconcile`);
+    expect(post.init?.method).toBe("POST");
+    expect(header(post, "Idempotency-Key")).toBe("idem-recon-0001");
+    expect(JSON.parse(String(post.init?.body))).toEqual({
+      sinceTs: report.window.sinceTs,
+      uptoTs: report.window.uptoTs,
+      mode: "reconcile",
+    });
+  });
+
+  it("rejects a bogus mode client-side — the request never leaves", async () => {
+    const { client, calls } = makeClient(() => Promise.resolve(jsonOk(report)));
+    await expectAsyncFail(
+      client.credits.reconcile({
+        sinceTs: report.window.sinceTs,
+        uptoTs: report.window.uptoTs,
+        mode: "purge" as "reconcile",
+      }),
+      (error) => expect(error.code).toBe("VALIDATION_FAILED"),
+    );
+    expect(calls).toHaveLength(0);
+  });
+});

@@ -29,10 +29,12 @@ import type {
   RenderJob,
   TopUpResponse,
 } from "@studio/contracts";
+import { PLAN_CATALOG } from "@studio/config";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type Mock, afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { formatMonthlyPrice } from "./page-format";
 import {
   type BillingInvoiceRow,
   BillingPageView,
@@ -251,7 +253,9 @@ describe("BillingPageView — plan card", () => {
   it("renders the active plan: display name, price, status, renewal date and seats", () => {
     view(PRO_STATE, fakePort());
     expect(screen.getByTestId("billing-plan-name")).toHaveTextContent("Pro");
-    expect(screen.getByTestId("billing-plan-price")).toHaveTextContent("$39/mo");
+    expect(screen.getByTestId("billing-plan-price")).toHaveTextContent(
+      formatMonthlyPrice(PLAN_CATALOG.pro.monthlyPriceCents),
+    );
     expect(screen.getByTestId("billing-plan-status")).toHaveTextContent("Active");
     expect(screen.getByTestId("billing-plan-status-line")).toHaveTextContent("Renews Nov 1, 2026.");
     expect(screen.getByTestId("billing-seats")).toHaveTextContent("Up to 5 seats");
@@ -359,9 +363,15 @@ describe("BillingPageView — change plan (UpgradeCta wiring)", () => {
     expect(screen.getByTestId("upgrade-plan-pro")).toBeInTheDocument();
     expect(screen.getByTestId("upgrade-plan-studio")).toBeInTheDocument();
     expect(screen.queryByTestId("upgrade-plan-trial")).not.toBeInTheDocument();
-    expect(within(screen.getByTestId("upgrade-plan-starter")).getByText("$12")).toBeInTheDocument();
-    expect(within(screen.getByTestId("upgrade-plan-pro")).getByText("$39")).toBeInTheDocument();
-    expect(within(screen.getByTestId("upgrade-plan-studio")).getByText("$99")).toBeInTheDocument();
+    // Prices derive from PLAN_CATALOG (W5-03) — a catalog change moves the
+    // component and this pin together (the UpgradeCta strip drops the "/mo").
+    for (const id of ["starter", "pro", "studio"] as const) {
+      expect(
+        within(screen.getByTestId(`upgrade-plan-${id}`)).getByText(
+          `$${PLAN_CATALOG[id].monthlyPriceCents / 100}`,
+        ),
+      ).toBeInTheDocument();
+    }
     expect(screen.getByTestId("upgrade-current-pro")).toHaveTextContent("Current plan");
     expect(screen.getByTestId("upgrade-choose-studio")).toHaveTextContent("Switch to Studio");
   });

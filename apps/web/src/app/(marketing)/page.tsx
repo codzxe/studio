@@ -54,7 +54,7 @@ function SectionHeading({ title, line }: { title: string; line: string }) {
 
 /* ------------------------------------------------------------------ §8.1 1 · Hero */
 
-const PROOF_TOKENS = ["Keyframes", "3D", "306 effects", "Agent edits", "Version history"] as const;
+const PROOF_TOKENS = ["Keyframes", "3D", "300+ effects", "Agent edits", "Version history"] as const;
 
 /* ---------------------------------------------------------------- §8.1 5 · Workflow */
 
@@ -93,12 +93,19 @@ const WORKFLOW_STEPS = [
 
 /* --------------------------------------------------------- §8.1 7 · Performance rows */
 
+/**
+ * The §6 performance BUDGETS (BUILD_PLAN §6), not measurements — nothing has
+ * a measured p75 yet (docs/performance.md: “Not yet measured”). Presenting
+ * them as “p75, reference machine” would be an invented metric (§16.6/§17);
+ * the copy below says they are budgets and where the measured numbers will
+ * come from.
+ */
 const PERFORMANCE_ROWS = [
-  { metric: "Editor ready, warm cache", value: "< 6 s" },
-  { metric: "Editor ready, cold", value: "< 12 s" },
-  { metric: "First chat token", value: "< 1.5 s" },
-  { metric: "Local apply", value: "< 300 ms" },
-  { metric: "Playback, 1080p", value: "60 fps" },
+  { metric: "Editor ready, warm cache (budget)", value: "< 6 s" },
+  { metric: "Editor ready, cold (budget)", value: "< 12 s" },
+  { metric: "First chat token (budget)", value: "< 1.5 s" },
+  { metric: "Local apply (budget)", value: "< 300 ms" },
+  { metric: "Playback, 1080p (budget)", value: "60 fps" },
 ] as const;
 
 /* ------------------------------------------------------------------ §8.1 8 · Pricing */
@@ -229,7 +236,7 @@ export default function LandingPage() {
         <div className="mx-auto flex w-full max-w-(--width-marketing-max) flex-col gap-8 px-5 py-20 md:px-8 lg:px-12 xl:px-16 xl:py-28">
           <SectionHeading
             title="The editor"
-            line="A complete compositing environment — compositions, a keyframe timeline, 3D and 306 effects — running as-is in the browser."
+            line="A complete compositing environment — compositions, a keyframe timeline, 3D and hundreds of built-in effects — running as-is in the browser."
           />
           <EditorFrame />
         </div>
@@ -344,7 +351,7 @@ export default function LandingPage() {
           <div className="mt-12">
             <SectionHeading
               title="Fast where it counts"
-              line="GPU-accelerated, browser-native, no install. Targets we hold ourselves to — real numbers only."
+              line="GPU-accelerated, browser-native, no install. These are the budgets we hold ourselves to — not measurements; the measured numbers get published here when staging deploys begin."
             />
           </div>
           <dl className="mt-12 flex flex-col">
@@ -358,7 +365,10 @@ export default function LandingPage() {
               </div>
             ))}
           </dl>
-          <p className="mt-4 text-caption text-muted">p75, reference machine.</p>
+          <p className="mt-4 text-caption text-muted">
+            Performance budgets from our build plan; p75 measurements land with the first staging
+            deploys.
+          </p>
         </div>
       </section>
 

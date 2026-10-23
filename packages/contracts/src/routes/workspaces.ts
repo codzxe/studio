@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 
-import { ID_SCHEMA } from "./common.js";
+import { type Id, type Role } from "./common.js";
 
 /** Slug: lowercase alnum + inner hyphens, 1-64 chars (URL-safe). */
 export const WORKSPACE_SLUG_SCHEMA = z
@@ -41,4 +41,30 @@ export interface Workspace {
   readonly slug: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/**
+ * One roster row of `GET /v1/workspaces/:id` (W5-09): a lighter member view
+ * than routes/members.ts `Member` — the detail read carries no status,
+ * activity or isCurrentUser flags, just the roster facts better-auth already
+ * resolved for the workspace context (name/email null until the user sets
+ * them).
+ */
+export interface WorkspaceMemberSummary {
+  readonly userId: Id;
+  readonly role: Role;
+  readonly name: string | null;
+  readonly email: string | null;
+}
+
+/**
+ * `GET /v1/workspaces/:id` response (W5-09): the workspace row plus the
+ * CALLER's role in it and the full roster (the gateway's resolveWorkspaceContext
+ * shape). Tenant law (§12.1): a workspace the caller does not belong to reads
+ * as 404, never 403.
+ */
+export interface WorkspaceDetail extends Workspace {
+  /** The calling user's role in this workspace. */
+  readonly role: Role;
+  readonly members: readonly WorkspaceMemberSummary[];
 }

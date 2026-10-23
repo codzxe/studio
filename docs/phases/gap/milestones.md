@@ -1,5 +1,13 @@
 # Milestone Master Checklist -- EffectCraft (Studio) v1 plan
 
+> **SUPERSEDED (W5-08, 2026-10-23):** this checklist was the W-R reader wave's
+> pre-landing completion map. Waves W1–W5 have since landed the build —
+> milestone evidence now lives in `docs/phases/M0.md`–`M8.md` (+ the
+> `m8-cli-spike.md` evidence file), rulings in `docs/DECISIONS.md`, the build
+> log in the fleet `worklog.md`. Treat every verdict below as a historical
+> snapshot; do not cite it as the current gap list. Kept for the paper trail.
+
+
 Status: canonical fleet checklist | Compiled by agent W-R6 (reader), 2026-10-22
 Sources (read in full): `docs/BUILD_PLAN.md` (841 lines), `docs/PRODUCT_ARCHITECTURE.md`
 (905), `docs/EDITOR_CHAT_UX.md` (640), `docs/UI_DESIGN_SYSTEM.md` (743),

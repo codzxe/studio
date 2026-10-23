@@ -13,6 +13,11 @@ import type { NextConfig } from "next";
  *   404s `/editor/*` (a public/editor/ directory would take precedence if
  *   one is ever dropped in).
  *
+ * API serving model (W5-01): production fronts `/v1/*` at the same origin
+ * (infra/caddy Caddyfile); in dev the `/v1/:path*` rewrite below proxies to
+ * GATEWAY_INTERNAL_URL so a plain `next dev` boot speaks the production
+ * shape (no separate edge proxy needed).
+ *
  * Headers:
  * - COOP/COEP on `/editor/:path*` — the WASM editor needs a cross-origin
  *   isolated context (SharedArrayBuffer).
@@ -24,6 +29,21 @@ import type { NextConfig } from "next";
 
 const EDITOR_DEV_SERVER_URL =
   process.env.NODE_ENV === "production" ? undefined : process.env.EDITOR_DEV_SERVER_URL;
+
+// W5-01: dev-only `/v1` proxy to the gateway. The browser talks same-origin
+// `/v1/*` (`createApiClient({ baseUrl: "/v1" })` — auth-client too, via
+// NEXT_PUBLIC_APP_URL); production fronts both with one origin (infra/caddy
+// Caddyfile) and the E2E recipe boots its own edge proxy (playwright.config.ts).
+// A plain `next dev` boot had NO `/v1` route at all, so every client-side API
+// call — including the sign-in POST itself — 404'd. This rewrite gives
+// `pnpm dev:web` + `pnpm dev:gateway` the production shape out of the box:
+// `/v1/:path*` → the same GATEWAY_INTERNAL_URL origin the RSC seam
+// (src/lib/gateway.ts) already uses. Dev only; `next build` never emits it.
+const GATEWAY_INTERNAL_URL = (
+  process.env.NODE_ENV === "production"
+    ? undefined
+    : process.env.GATEWAY_INTERNAL_URL ?? "http://127.0.0.1:8787"
+)?.replace(/\/+$/, "");
 
 // W3-I: Turbopack still lacks webpack's `extensionAlias` (".js" → ".ts"),
 // so the NodeNext workspace packages (`@studio/config` via the vendor shim,
@@ -79,10 +99,18 @@ const nextConfig: NextConfig = {
     ];
   },
   async rewrites() {
+    // W5-01: dev-only `/v1` → gateway proxy (see GATEWAY_INTERNAL_URL above).
+    // Always first in the list so it wins over any future catch-alls; the
+    // editor dev-server rewrites stay below it (disjoint path spaces).
+    const v1Rewrites =
+      GATEWAY_INTERNAL_URL !== undefined
+        ? [{ source: "/v1/:path*", destination: `${GATEWAY_INTERNAL_URL}/v1/:path*` }]
+        : [];
     if (!EDITOR_DEV_SERVER_URL) {
-      return [];
+      return v1Rewrites;
     }
     return [
+      ...v1Rewrites,
       // Bare `/editor` and `/editor/` both resolve to the dist index so the
       // iframe URL `/editor/?empty` boots correctly in dev.
       {

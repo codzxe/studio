@@ -36,10 +36,12 @@ import { presenceRoutes } from "./routes/presence.js";
 import { projectsRoutes } from "./routes/projects.js";
 import { rendersRoutes } from "./routes/renders.js";
 import { runsRoutes } from "./routes/runs.js";
+import { settingsRoutes } from "./routes/settings.js";
 import { shareAuthedRoutes, sharePublicRoutes } from "./routes/share.js";
 import { threadsRoutes } from "./routes/threads.js";
 import { versionsRoutes } from "./routes/versions.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
+import { workspaceAuditRoutes } from "./routes/workspace-audit.js";
 
 export interface BuildAppOptions {
   readonly deps: GatewayDeps;
@@ -142,7 +144,9 @@ export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
 
   app.route("/", healthRoutes(deps));
   app.route("/", meRoutes(deps));
+  app.route("/", settingsRoutes(deps));
   app.route("/", workspacesRoutes(deps));
+  app.route("/", workspaceAuditRoutes(deps));
   app.route("/", invitesRoutes(deps));
   app.route("/", projectsRoutes(deps));
   app.route("/", versionsRoutes(deps));

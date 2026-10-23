@@ -10,9 +10,10 @@
  * - Step 1 (Workspace) creates the workspace (`POST /v1/workspaces`) — the
  *   orphaned `slug.ts` slugify finally derives the slug live here. A typed
  *   409 CONFLICT surfaces inline ("that slug is taken").
- * - Step 2 (Use case) is skippable and persists to localStorage
- *   `studio.onboarding.usecase.v1` ONLY — there is no backend field for it
- *   (honest: nothing is faked server-side).
+ * - Step 2 (Use case) is skippable (§8.3). W5-03: the choice persists
+ *   NOTHING — the old `studio.onboarding.usecase.v1` localStorage write had
+ *   no consumer (no backend field exists), so the copy says the pick changes
+ *   nothing today and nothing is stored.
  * - Step 3 (Start) offers "Start trial" (`POST /v1/billing/trial`, card
  *   required per D-4) or "Create workspace" straight to `/w`.
  *
@@ -30,6 +31,7 @@ import { Card, cn } from "@studio/ui";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
+import { OnboardingOfflineNotice } from "./offline-notice";
 import { TrialStep } from "./trial-step";
 import { UseCaseStep } from "./use-case-step";
 import { WorkspaceStep } from "./workspace-step";
@@ -185,6 +187,10 @@ export function OnboardingFlow({ api, navigate }: OnboardingFlowProps) {
 
   return (
     <Card data-testid="onboarding-card" className="w-full max-w-md py-8 sm:p-8">
+      {/* §8.11 offline (W5-06) — null while online; the forms' failure copy
+          ("Check your connection, then retry.") covers requests that fail
+          while technically online. */}
+      <OnboardingOfflineNotice />
       <ProgressLine step={step} />
 
       {step === 1 ? (

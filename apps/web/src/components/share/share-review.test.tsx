@@ -25,7 +25,7 @@ import type {
   ShareManifest,
   ShareManifestAsset,
 } from "@studio/contracts";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -648,5 +648,47 @@ describe("share review — request access", () => {
 
     expect(await within(form).findByTestId("share-request-access-ok")).toBeInTheDocument();
     expect(double.requestAccess).toHaveBeenCalledWith(TOKEN, { email: "locked@example.com" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Offline (§8.11, W5-06) — the share surface's own arm (no app shell here)
+// ---------------------------------------------------------------------------
+
+/** jsdom navigator.onLine shim (the auth-offline / offline-banner pattern). */
+function setNavigatorOnline(online: boolean) {
+  Object.defineProperty(window.navigator, "onLine", {
+    configurable: true,
+    get: () => online,
+  });
+  window.dispatchEvent(new Event(online ? "online" : "offline"));
+}
+
+describe("share review — offline (§8.11)", () => {
+  it("renders no offline chrome while online", async () => {
+    setNavigatorOnline(true);
+    await renderShare();
+    await screen.findByTestId("share-surface");
+    expect(screen.queryByTestId("share-offline")).not.toBeInTheDocument();
+  });
+
+  it("shows the honest offline notice over the gated surface and clears on reconnect", async () => {
+    setNavigatorOnline(true);
+    await renderShare(LOCKED_INFO);
+
+    await act(async () => {
+      setNavigatorOnline(false);
+    });
+
+    const notice = screen.getByTestId("share-offline");
+    expect(notice).toHaveTextContent("You're offline.");
+    expect(notice).toHaveTextContent(/the link itself is fine/);
+    // The gate stays rendered — offline explains, it never hides the form.
+    expect(screen.getByTestId("share-gate-form")).toBeInTheDocument();
+
+    await act(async () => {
+      setNavigatorOnline(true);
+    });
+    expect(screen.queryByTestId("share-offline")).not.toBeInTheDocument();
   });
 });

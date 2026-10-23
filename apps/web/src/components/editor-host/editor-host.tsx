@@ -15,6 +15,7 @@ import {
   BootFailureBanner,
   BootOverlay,
   ConflictBanner,
+  EditorOfflineBanner,
   LeaseWarningBanner,
   LoadFailedBanner,
   MissingAssetsBanner,
@@ -313,6 +314,11 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
 
       {/* M3.3: missing assets never block the open. */}
       {state.phase !== "load-failed" ? <MissingAssetsBanner missing={state.missingAssets} /> : null}
+
+      {/* §8.11 offline (W5-06) — the editor route's own arm (no shell here):
+          honest about the last saved version + the autosave retry, null while
+          online so the editor UI is unchanged. */}
+      <EditorOfflineBanner />
 
       {/* D-6 save feedback — transient, bottom-right. */}
       {state.saveError && !state.conflict ? <SaveErrorBanner /> : null}

@@ -1,8 +1,9 @@
 "use client";
 
 import type { MissingAsset } from "@/lib/editor-session";
+import { useOnlineStatus } from "@/lib/use-online-status";
 import { Badge, Button, Spinner } from "@studio/ui";
-import { AlertTriangle, CircleAlert, TriangleAlert } from "lucide-react";
+import { AlertTriangle, CircleAlert, TriangleAlert, WifiOff } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 /**
@@ -277,6 +278,46 @@ export function SaveErrorBanner() {
         <>
           <AlertTriangle size={16} strokeWidth={1.75} className="text-warning" aria-hidden="true" />
           <span>Couldn’t save just now — your changes are kept and retried automatically.</span>
+        </>,
+      )}
+    </output>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Offline (§8.11, W5-06) — the editor route's offline state
+// ---------------------------------------------------------------------------
+
+/**
+ * The editor route sits OUTSIDE the app shell, so the shell's OfflineBanner
+ * never mounts here — this is the editor's own §8.11 arm: honest about what
+ * is at risk (nothing — the last saved version is on the server, unsaved
+ * changes are kept and retried by the autosave controller), what to do
+ * (reconnect), and nothing else. Renders null while online, so the editor UI
+ * is unchanged (criterion 4); bottom-center keeps it clear of the saved chip
+ * (bottom-right), the missing-assets banner (bottom-left) and the top banner
+ * stack (read-only / lease / conflict).
+ */
+export function EditorOfflineBanner() {
+  const online = useOnlineStatus();
+
+  if (online) {
+    return null;
+  }
+
+  return (
+    <output
+      data-testid="editor-offline-banner"
+      className="absolute inset-x-0 bottom-16 z-20 mx-auto flex max-w-md justify-center px-4"
+    >
+      {panel(
+        "border-warning/40",
+        <>
+          <WifiOff size={16} strokeWidth={1.75} className="text-warning" aria-hidden="true" />
+          <span>
+            You're offline. Your last saved version is safe — unsaved changes are kept and retried
+            automatically.
+          </span>
         </>,
       )}
     </output>

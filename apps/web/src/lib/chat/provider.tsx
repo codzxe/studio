@@ -30,7 +30,11 @@
  *   the panel opens, when flags/pinned change and right before every send.
  * - **Models**: `client.models.list()` on mount (one retry, then `[]` per the
  *   wave-2 header contract: `null` = loading, `[]` = entitlement failure → the
- *   picker hides). The active model defaults to the first allowed model.
+ *   picker hides). The active model defaults to the first allowed model —
+ *   UNLESS the user saved a default model in Settings (`studio.chat.model.v1`,
+ *   the D-10 seam in lib/chat/default-model.ts, W5-03): a saved default that
+ *   is still on-plan becomes the active model; an off-plan or absent save
+ *   falls back to the first allowed model.
  * - **Quick actions**: the ONE window listener for M4-F/M4-G's
  *   `studio:chat-quick-action` CustomEvent lives HERE (not in the slot) so a
  *   single event can never double-dispatch and it works in every layout mode.
@@ -64,6 +68,7 @@ import {
 } from "./apply";
 import { type ChatController, createChatController } from "./chat-controller";
 import { type ContextSnapshot, DEFAULT_FLAGS, autoFlags, collectContextSnapshot } from "./context";
+import { readDefaultModel } from "./default-model";
 import { createInitialChatUiState } from "./run-state";
 import { createToolExecutor } from "./tool-executor";
 import type { ChatSendInput, ChatUiError, ChatUiState } from "./types";
@@ -333,14 +338,27 @@ export function ChatProvider({
   const sessionVersionId = applyPorts?.session?.currentVersionId() ?? null;
 
   // -------------------------------------------------------------------------
-  // Models: fetch once, retry once, then `[]` (picker hidden per wave-2 header)
+  // Models: fetch once, retry once, then `[]` (picker hidden per wave-2 header).
+  // The first adoption honors the Settings-saved default (W5-03): a saved
+  // model id that is on the plan becomes the active model; anything else
+  // (absent, corrupt, off-plan) falls back to the first allowed model.
   // -------------------------------------------------------------------------
   useEffect(() => {
     let cancelled = false;
     const adopt = (response: ModelsResponse): void => {
       if (cancelled) return;
       setModels(response.models);
-      setActiveModelId((current) => current ?? response.models[0]?.id ?? null);
+      setActiveModelId((current) => {
+        if (current !== null) return current;
+        // The saved default wins only when it is still on the plan; the
+        // matched row's id returns so the setter keeps the ModelId type.
+        const saved = readDefaultModel();
+        const match =
+          saved === null
+            ? undefined
+            : response.models.find((model) => model.id === saved);
+        return match !== undefined ? match.id : (response.models[0]?.id ?? null);
+      });
     };
     void (async (): Promise<void> => {
       try {

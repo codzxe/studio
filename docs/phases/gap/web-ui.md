@@ -1,5 +1,13 @@
 # Web UI Gap Report - apps/web (agent W-R1, read-only audit)
 
+> **SUPERSEDED (W5-08, 2026-10-23):** this is a pre-landing read-wave audit
+> snapshot. Waves W1–W5 have landed the product it maps — see the per-milestone
+> evidence files (`docs/phases/M0.md`–`M8.md`), `docs/phases/m8-cli-spike.md`
+> and the fleet `worklog.md` for current state. Every DONE/PARTIAL/MISSING
+> verdict below is historical, not a statement about the tree today. Kept for
+> the paper trail; do not cite it as a gap list.
+
+
 Scope: apps/web/** (Next.js 16 App Router app). Compared against
 docs/BUILD_PLAN.md milestones M1-M9 (UI-relevant tasks). Audited 2026; every
 file under apps/web/src was read. Companion evidence: services/gateway (auth

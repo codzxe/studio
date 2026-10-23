@@ -225,6 +225,30 @@ describe("DashboardView", () => {
     expect(screen.getByRole("dialog", { name: "Import .ecproj" })).toBeInTheDocument();
   });
 
+  it("viewer role (canEdit=false): no create/import affordances, the grid stays readable", () => {
+    render(<DashboardView {...baseProps()} canEdit={false} api={makePort()} />);
+
+    expect(screen.queryByTestId("dashboard-actions")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard-new-project")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard-import")).not.toBeInTheDocument();
+    // Reading is unaffected — the Recent grid renders for a viewer.
+    expect(screen.getAllByTestId("dashboard-project-card")).toHaveLength(3);
+  });
+
+  it("viewer role with no projects: the shared PermissionState replaces the create actions", () => {
+    render(
+      <DashboardView {...baseProps({ initialProjects: [] })} canEdit={false} api={makePort()} />,
+    );
+
+    expect(screen.getByTestId("dashboard-viewer-note")).toBeInTheDocument();
+    expect(screen.getByTestId("permission-state")).toHaveTextContent(
+      "You're a viewer in this workspace.",
+    );
+    // No doomed affordances: nothing to click that the gateway would 403.
+    expect(screen.queryByTestId("dashboard-empty-new-project")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dashboard-empty-import")).not.toBeInTheDocument();
+  });
+
   it("renders the §8.4 error state: inline banner + retry, the page stays usable", () => {
     render(
       <DashboardView

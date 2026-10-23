@@ -5,7 +5,17 @@
     "declaration": true,
     "outDir": "dist",
     "sourceMap": true,
-    "rootDir": "src"
+    // The workspace packages are SOURCE-only (tsconfig paths resolve
+    // @studio/{config,contracts,db,storage} straight to packages/*/src/*.ts),
+    // so they are part of this program and must be emitted with it. rootDir
+    // must therefore be the common root of services/gateway/src AND
+    // packages/*/src — the repo root. Keeping rootDir "src" fails with
+    // TS6059 ("File is not under 'rootDir'") on every package import.
+    // Output mirrors the repo layout: dist/services/gateway/src/index.js +
+    // dist/packages/**; `start` runs the nested entrypoint through the tsx
+    // loader (the workspace packages ship as source, so plain `node` cannot
+    // resolve their NodeNext .js-over-.ts specifiers).
+    "rootDir": "../.."
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts", "tests", "dist", ".local"]

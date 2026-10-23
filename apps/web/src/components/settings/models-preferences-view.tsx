@@ -12,13 +12,11 @@
  * models are simply never on the wire.
  *
  * The default-model seam (D-10 naming, ECUX-literal):
- * - `studio.chat.model.v1` — VERIFIED 2026-10-23: NO pre-existing key exists
- *   anywhere in apps/web (the chat provider keeps the active model in React
- *   state only, lib/chat/provider.tsx — it defaults to the FIRST allowed
- *   model). This module defines the canonical key and WRITES it; the chat
- *   provider reading it is the chat owner's follow-up (worklog hand-forward).
- *   The copy stays honest: the default is "saved on this device" — it makes
- *   no claim the current chat build already honors it.
+ * - `studio.chat.model.v1` — the canonical key + quota-safe helpers live in
+ *   `lib/chat/default-model.ts` (W5-03). This view WRITES the pick; the chat
+ *   provider (lib/chat/provider.tsx) READS it when the plan's models load —
+ *   a saved default that is still on-plan becomes the active model. The
+ *   "saved on this device" copy is true end-to-end.
  * - `studio.chat.layout.v1` — the chat overlay's PERSISTED layout key
  *   (components/chat/layout.ts LAYOUT_STORAGE_KEY, ECUX §2.5/D-10). The reset
  *   button clears it — REUSED by import, never re-declared (no drift).
@@ -51,6 +49,11 @@ import type { ReactElement } from "react";
 
 import { LAYOUT_STORAGE_KEY } from "@/components/chat/layout";
 import { modelDisplayName, modelTierLabel } from "@/components/chat/model-picker";
+import {
+  DEFAULT_MODEL_STORAGE_KEY,
+  readDefaultModel,
+  writeDefaultModel,
+} from "@/lib/chat/default-model";
 
 import {
   type SettingsActionError,
@@ -59,40 +62,14 @@ import {
   toSettingsActionError,
 } from "./settings-port";
 
+// Re-exported for this view's tests + any future consumer: the canonical key
+// and helpers now live in lib/chat/default-model.ts (W5-03 — the provider
+// reads the same seam this view writes).
+export { DEFAULT_MODEL_STORAGE_KEY, readDefaultModel, writeDefaultModel };
+
 // ---------------------------------------------------------------------------
-// The default-model localStorage seam (D-10: ECUX-literal key)
+// The chat-layout reset (ECUX §2.5 persistence — quota-safe remove)
 // ---------------------------------------------------------------------------
-
-/**
- * The default-model preference key. See the module doc: no pre-existing key
- * existed at W2-07 time (verified by grep across apps/web + packages); this
- * constant is the canonical seam, exported so the chat provider can adopt it
- * without re-declaring the literal.
- */
-export const DEFAULT_MODEL_STORAGE_KEY = "studio.chat.model.v1";
-
-/** Quota-safe read: absent, corrupt or blocked storage → null (never throws). */
-export function readDefaultModel(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(DEFAULT_MODEL_STORAGE_KEY);
-    if (typeof raw !== "string" || raw.length === 0 || raw.length > 100) return null;
-    return raw;
-  } catch {
-    return null;
-  }
-}
-
-/** Quota-safe write (best-effort persistence — the saveLayout house pattern). */
-export function writeDefaultModel(id: string): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    window.localStorage.setItem(DEFAULT_MODEL_STORAGE_KEY, id);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /** Quota-safe remove — the chat layout reset (ECUX §2.5 persistence). */
 export function clearChatLayout(): boolean {
@@ -254,8 +231,9 @@ export function ModelsPreferencesView({
   const allowedModels = models.status === "ready" ? models.models : [];
   const savedOnPlan =
     savedDefault !== null && allowedModels.some((model) => model.id === savedDefault);
-  // The provider's effective default today is the FIRST allowed model — the
-  // radio preselects it until the user saves a pick (truthful current state).
+  // The provider adopts a SAVED on-plan default when the plan's models load
+  // (lib/chat/provider.tsx, W5-03); until a pick is saved the plan's first
+  // allowed model is the effective default and the radio preselects it.
   const selected =
     savedOnPlan === true
       ? savedDefault

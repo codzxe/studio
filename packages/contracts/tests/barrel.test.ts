@@ -81,6 +81,12 @@ const REQUIRED_EXPORTS: readonly string[] = [
   "SHA256_SCHEMA",
   "ID_SCHEMA",
   "IDEMPOTENCY_KEY_SCHEMA",
+  // W5-09 gap fill: settings + workspace audit + reconcile wires.
+  "SETTINGS_RESPONSE_SCHEMA",
+  "SETTINGS_PATCH_SCHEMA",
+  "AUDIT_QUERY_SCHEMA",
+  "AUDIT_ENTRY_SCHEMA",
+  "RECONCILE_REQUEST_SCHEMA",
 ] as const;
 
 describe("barrel: @studio/contracts public surface", () => {

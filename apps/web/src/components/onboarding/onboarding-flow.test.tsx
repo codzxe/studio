@@ -5,7 +5,7 @@
  * terminal navigation to /w. Deterministic RTL + fake ports; no network.
  */
 
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OnboardingFlow, type OnboardingPort } from "./onboarding-flow";
@@ -92,7 +92,9 @@ describe("OnboardingFlow — the §8.3 shell", () => {
 
     await USER.click(screen.getByTestId("onboarding-usecase-motion-graphics"));
     await USER.click(screen.getByRole("button", { name: "Continue" }));
-    expect(localStorage.getItem("studio.onboarding.usecase.v1")).toBe("motion-graphics");
+    // W5-03: the orphaned studio.onboarding.usecase.v1 write is dead — the
+    // choice advances the flow and persists nothing (no consumer existed).
+    expect(localStorage.length).toBe(0);
 
     // Step 3: Start — segments 1+2 done, segment 3 current, still ONE card.
     expect(await screen.findByTestId("onboarding-trial")).toBeInTheDocument();
@@ -140,5 +142,48 @@ describe("OnboardingFlow — the §8.3 shell", () => {
 
     expect(port.startTrial).not.toHaveBeenCalled();
     expect(navigate).toHaveBeenCalledWith("/w");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Offline (§8.11, W5-06) — the flow's page-level offline arm
+// ---------------------------------------------------------------------------
+
+/** jsdom navigator.onLine shim (the auth-offline / offline-banner pattern). */
+function setNavigatorOnline(online: boolean) {
+  Object.defineProperty(window.navigator, "onLine", {
+    configurable: true,
+    get: () => online,
+  });
+  window.dispatchEvent(new Event(online ? "online" : "offline"));
+}
+
+describe("OnboardingFlow — offline (§8.11)", () => {
+  it("renders no offline chrome while online", () => {
+    setNavigatorOnline(true);
+    render(<OnboardingFlow api={fakePort()} navigate={vi.fn()} />);
+    expect(screen.queryByTestId("onboarding-offline")).not.toBeInTheDocument();
+  });
+
+  it("shows the shared offline state with form-honest copy when offline", async () => {
+    setNavigatorOnline(true);
+    render(<OnboardingFlow api={fakePort()} navigate={vi.fn()} />);
+
+    await act(async () => {
+      setNavigatorOnline(false);
+    });
+
+    expect(screen.getByTestId("onboarding-offline")).toBeInTheDocument();
+    expect(screen.getByTestId("offline-state")).toBeInTheDocument();
+    expect(
+      screen.getByText("You're offline. Reconnect to continue — what you've typed stays put."),
+    ).toBeInTheDocument();
+    // The flow itself stays usable — the notice explains, it never blocks.
+    expect(screen.getByLabelText(/^Workspace name/)).toBeInTheDocument();
+
+    await act(async () => {
+      setNavigatorOnline(true);
+    });
+    expect(screen.queryByTestId("onboarding-offline")).not.toBeInTheDocument();
   });
 });

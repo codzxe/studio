@@ -1,5 +1,13 @@
 # Platform Gap Report - worker / infra / evals / CI / scripts / env
 
+> **SUPERSEDED (W5-08, 2026-10-23):** this is a pre-landing read-wave audit
+> snapshot. Waves W1–W5 have landed the product it maps — see the per-milestone
+> evidence files (`docs/phases/M0.md`–`M8.md`), `docs/phases/m8-cli-spike.md`
+> and the fleet `worklog.md` for current state. Every DONE/PARTIAL/MISSING
+> verdict below is historical, not a statement about the tree today. Kept for
+> the paper trail; do not cite it as a gap list.
+
+
 Agent: W-R4 (reader, read-only) - 2026-10-22
 Scope: services/worker/**, infra/**, scripts/**, evals/**, .github/**, .env.example,
 turbo.json, pnpm-workspace.yaml, biome.json, root package.json.

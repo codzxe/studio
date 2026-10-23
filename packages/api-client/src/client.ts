@@ -17,6 +17,7 @@ import {
   ACQUIRE_LEASE_SCHEMA,
   ACTIVITY_QUERY_SCHEMA,
   APPLY_REQUEST_SCHEMA,
+  AUDIT_QUERY_SCHEMA,
   type AcceptedInvite,
   type AcquireLeaseRequest,
   type ActivityEntry,
@@ -24,7 +25,9 @@ import {
   type ApplyRequest,
   type ApplyResponse,
   type Asset,
+  type AuditEntry,
   type AuditExport,
+  type AuditQuery,
   type BillingState,
   CANCEL_RENDER_SCHEMA,
   CANCEL_RUN_SCHEMA,
@@ -91,8 +94,11 @@ import {
   type Project,
   type ProjectManifest,
   type ProjectVersion,
-  QUEUE_RENDER_SCHEMA,
   type QueueRenderRequest,
+  type ReconcileReport,
+  type ReconcileRequest,
+  QUEUE_RENDER_SCHEMA,
+  RECONCILE_REQUEST_SCHEMA,
   RENDERS_QUERY_SCHEMA,
   RENDER_ESTIMATE_REQUEST_SCHEMA,
   REQUEST_ACCESS_SCHEMA,
@@ -109,6 +115,9 @@ import {
   type RunEventRequest,
   type RunRecord,
   SET_VERSION_LABEL_SCHEMA,
+  SETTINGS_PATCH_SCHEMA,
+  type SettingsPatchRequest,
+  type SettingsResponse,
   SHARE_COMMENTS_QUERY_SCHEMA,
   SHARE_PASSWORD_HEADER,
   type SetVersionLabelRequest,
@@ -138,6 +147,7 @@ import {
   type VersionDiffSummary,
   type VersionTimelineEntry,
   type Workspace,
+  type WorkspaceDetail,
   isErr,
   isOk,
 } from "@studio/contracts";
@@ -186,6 +196,7 @@ import {
   PAGE_ACTIVITY_SCHEMA,
   PAGE_API_KEYS_SCHEMA,
   PAGE_ASSETS_SCHEMA,
+  PAGE_AUDIT_SCHEMA,
   PAGE_COMMENTS_SCHEMA,
   PAGE_INVOICES_SCHEMA,
   PAGE_LEDGER_SCHEMA,
@@ -214,15 +225,16 @@ import {
   SHARE_LINK_VIEW_SCHEMA,
   SHARE_MANIFEST_SCHEMA,
   SIGNED_URL_RESPONSE_SCHEMA,
+  SETTINGS_RESPONSE_SCHEMA,
   SWITCHED_WORKSPACE_SCHEMA,
   THREAD_MESSAGE_SCHEMA,
   THREAD_SCHEMA,
   TRIAL_RESPONSE_SCHEMA,
   UNDO_RESPONSE_SCHEMA,
-  UPLOAD_VERSION_RESPONSE_SCHEMA,
-  type UploadVersionResponse,
+  RECONCILE_REPORT_SCHEMA,
   VERIFY_ASSET_RESPONSE_SCHEMA,
   VERSION_DIFF_SUMMARY_SCHEMA,
+  WORKSPACE_DETAIL_SCHEMA,
   WORKSPACE_SCHEMA,
 } from "./response-schemas";
 import {
@@ -296,6 +308,7 @@ export type CommentsQueryInput = z.input<typeof COMMENTS_QUERY_SCHEMA>;
 export type ShareCommentsQueryInput = z.input<typeof SHARE_COMMENTS_QUERY_SCHEMA>;
 export type LedgerQueryInput = z.input<typeof LEDGER_QUERY_SCHEMA>;
 export type ActivityQueryInput = z.input<typeof ACTIVITY_QUERY_SCHEMA>;
+export type AuditQueryInput = z.input<typeof AUDIT_QUERY_SCHEMA>;
 export type RendersQueryInput = z.input<typeof RENDERS_QUERY_SCHEMA>;
 /** W1-c (§9.1): projects list + the archived filter (true → archived only). */
 export type ProjectsQueryInput = z.input<typeof PROJECTS_QUERY_SCHEMA>;
@@ -329,6 +342,12 @@ interface RequestPlan<T> {
   readonly path: string;
   readonly query?: Record<string, string | number | boolean | undefined>;
   readonly body?: unknown;
+  /**
+   * Pre-built request body (W5-09): multipart/form-data for the version
+   * upload. Sent as-is; NO Content-Type is set so fetch derives the
+   * multipart boundary itself. Mutually exclusive with `body`.
+   */
+  readonly rawBody?: BodyInit;
   /** Runtime schema for the unwrapped `data` (strip unknown by default). */
   readonly responseSchema?: z.ZodType<T>;
   readonly idempotencyKey?: string;
@@ -403,7 +422,9 @@ class ApiClientImpl {
   private buildInit(plan: RequestPlan<unknown>): RequestInit {
     const headers = new Headers(this.core.extraHeaders);
     headers.set("Accept", "application/json");
-    if (plan.body !== undefined) headers.set("Content-Type", "application/json");
+    if (plan.rawBody === undefined && plan.body !== undefined) {
+      headers.set("Content-Type", "application/json");
+    }
     if (plan.idempotencyKey !== undefined) headers.set("Idempotency-Key", plan.idempotencyKey);
     if (plan.headers !== undefined) {
       for (const [name, value] of Object.entries(plan.headers)) headers.set(name, value);
@@ -413,7 +434,10 @@ class ApiClientImpl {
       headers,
       signal: plan.signal,
     };
-    if (plan.body !== undefined) init.body = JSON.stringify(plan.body);
+    // rawBody (multipart form) goes out verbatim — the browser/undici fetch
+    // derives the Content-Type + boundary; a manual one would break parsing.
+    if (plan.rawBody !== undefined) init.body = plan.rawBody;
+    else if (plan.body !== undefined) init.body = JSON.stringify(plan.body);
     return init;
   }
 
@@ -540,9 +564,24 @@ export interface ApiClient {
     /** GET /v1/me — user + memberships + plan summary. */
     get(options?: CallOptions): Promise<MeResponse>;
   };
+  readonly settings: {
+    /**
+     * GET /v1/me/settings — the signed-in user's preferences. The row is
+     * per USER (no workspace context); `autoApplyEnabled` reads false until
+     * the first opt-in PATCH (D-22: apply is always your explicit click).
+     */
+    get(options?: CallOptions): Promise<SettingsResponse>;
+    /** PATCH /v1/me/settings — upsert; echoes the stored value. */
+    update(body: SettingsPatchRequest, options?: CallOptions): Promise<SettingsResponse>;
+  };
   readonly workspaces: {
     list(query?: PaginationQueryInput, options?: CallOptions): Promise<Page<Workspace>>;
     create(body: CreateWorkspaceRequest, options?: CallOptions): Promise<Workspace>;
+    /**
+     * GET /v1/workspaces/:id (W5-09) — the workspace row + the CALLER's role
+     * + the roster. A workspace the caller doesn't belong to is 404 (§12.1).
+     */
+    get(id: string, options?: CallOptions): Promise<WorkspaceDetail>;
     patch(id: string, body: PatchWorkspaceRequest, options?: CallOptions): Promise<Workspace>;
   };
   readonly invites: {
@@ -608,16 +647,18 @@ export interface ApiClient {
       options?: CallOptions,
     ): Promise<Page<VersionTimelineEntry>>;
     /**
-     * Two-phase immutable snapshot upload (§9.2/§9.3): POST the JSON
-     * descriptor (sha256 + baseVersionId; a stale base returns 409
-     * PROJECT_VERSION_CONFLICT), then PUT the bytes to the signed URL the
-     * response carries. The idempotency key makes the whole operation
-     * retryable without duplicating the version.
+     * Immutable snapshot upload (§9.2/§9.3, W5-09): ONE multipart POST —
+     * `descriptor` (JSON: sha256 + REQUIRED-but-nullable baseVersionId; a
+     * stale base returns 409 PROJECT_VERSION_CONFLICT) + `file` (the bytes).
+     * The gateway buffers the bytes once, hashes them server-side and
+     * rejects a sha256 mismatch; `baseVersionId: null` is the ONLY valid
+     * base for a project's FIRST snapshot. The idempotency key makes the
+     * upload retryable without duplicating the version.
      */
     upload(
       projectId: string,
       input: {
-        readonly baseVersionId: string;
+        readonly baseVersionId: string | null;
         readonly sha256: string;
         readonly label?: string;
         readonly agentRunId?: string;
@@ -774,6 +815,13 @@ export interface ApiClient {
   readonly credits: {
     get(options?: CallOptions): Promise<CreditsSummary>;
     ledger(query?: LedgerQueryInput, options?: CallOptions): Promise<Page<LedgerEntry>>;
+    /**
+     * POST /v1/credits/reconcile (W5-09) — the admin true-up over a bounded
+     * window (≤ 92 days, ending ≤ now). REPORT-ONLY by default; a
+     * `mode: "reconcile"` call appends ONE idempotent adjust entry when the
+     * ledger and usage disagree. Ops surfaces only — no UI consumer yet.
+     */
+    reconcile(body: ReconcileRequest, options?: CallOptions): Promise<ReconcileReport>;
   };
   readonly billing: {
     /** POST /v1/billing/checkout — subscribe to a paid plan (D-4: trial is never a checkout target). */
@@ -894,6 +942,19 @@ export interface ApiClient {
      * parsed payload so hosts can also save it as a file.
      */
     auditExport(projectId: string, options?: CallOptions): Promise<AuditExport>;
+  };
+  readonly audit: {
+    /**
+     * GET /v1/workspaces/:id/audit — the workspace-wide audit feed at the
+     * VIEWER floor (any member; §12.1 renders strangers 404). Newest-first
+     * cursor pagination + the server-side `targetType` filter; entries carry
+     * the actor's display name — never metadata, ip or email (law #1).
+     */
+    list(
+      workspaceId: string,
+      query?: AuditQueryInput,
+      options?: CallOptions,
+    ): Promise<Page<AuditEntry>>;
   };
   readonly presence: {
     /**
@@ -1021,6 +1082,18 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     me: {
       get: async (options) => impl.get("/me", undefined, ME_RESPONSE_SCHEMA, options?.signal),
     },
+    settings: {
+      get: async (options) =>
+        impl.get("/me/settings", undefined, SETTINGS_RESPONSE_SCHEMA, options?.signal),
+      update: async (body, options) =>
+        impl.mutate("PATCH", "/me/settings", {
+          body,
+          bodySchema: SETTINGS_PATCH_SCHEMA,
+          responseSchema: SETTINGS_RESPONSE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
+    },
     workspaces: {
       list: async (query, options) =>
         impl.get("/workspaces", paginated(query), PAGE_WORKSPACES_SCHEMA, options?.signal),
@@ -1032,6 +1105,13 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
+      get: async (id, options) =>
+        impl.get(
+          `/workspaces/${encodeId(id)}`,
+          undefined,
+          WORKSPACE_DETAIL_SCHEMA,
+          options?.signal,
+        ),
       patch: async (id, body, options) =>
         impl.mutate("PATCH", `/workspaces/${encodeId(id)}`, {
           body,
@@ -1377,6 +1457,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           PAGE_LEDGER_SCHEMA,
           options?.signal,
         ),
+      reconcile: async (body, options) =>
+        impl.mutate("POST", "/credits/reconcile", {
+          body,
+          bodySchema: RECONCILE_REQUEST_SCHEMA,
+          responseSchema: RECONCILE_REPORT_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
     },
     billing: {
       checkout: async (body, options) =>
@@ -1542,6 +1630,15 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           options?.signal,
         ),
     },
+    audit: {
+      list: async (workspaceId, query, options) =>
+        impl.get(
+          `/workspaces/${encodeId(workspaceId)}/audit`,
+          queryOf(AUDIT_QUERY_SCHEMA, query),
+          PAGE_AUDIT_SCHEMA,
+          options?.signal,
+        ),
+    },
     presence: {
       // Response validation reuses the contracts Zod schemas directly —
       // presence response SHAPES are pinned there (PRESENCE_VIEWERS_SCHEMA),
@@ -1631,12 +1728,19 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   return Object.freeze(client);
 }
 
-/** Two-phase version upload (§9.2/§9.3): descriptor POST + signed-URL byte PUT. */
+/**
+ * Version snapshot upload (§9.2/§9.3, W5-09): ONE multipart POST —
+ * `descriptor` (the UPLOAD_VERSION_SCHEMA JSON, with the REQUIRED-but-nullable
+ * `baseVersionId`; null = the project's FIRST snapshot) + `file` (the bytes).
+ * The gateway buffers the bytes once, hashes them server-side, rejects a
+ * sha256 mismatch and answers `Ok<ProjectVersion>` (the row, not a signed-URL
+ * handshake — bytes always ride the POST itself).
+ */
 async function uploadVersion(
   impl: ApiClientImpl,
   projectId: string,
   input: {
-    readonly baseVersionId: string;
+    readonly baseVersionId: string | null;
     readonly sha256: string;
     readonly label?: string;
     readonly agentRunId?: string;
@@ -1661,30 +1765,27 @@ async function uploadVersion(
     "upload version descriptor",
   );
 
-  const response = await impl.mutate<UploadVersionResponse>(
-    "POST",
-    `/projects/${encodeId(projectId)}/versions`,
-    {
-      body: descriptor,
-      responseSchema: UPLOAD_VERSION_RESPONSE_SCHEMA,
-      idempotencyKey: options?.idempotencyKey ?? impl.autoKey(),
-      signal: options?.signal,
-    },
+  // The gateway parses the `descriptor` part as JSON and the `file` part as
+  // the bytes (routes/versions.ts multipart branch) — same protocol its own
+  // suite pins (projects-versions.test.ts uploadMultipart).
+  const form = new FormData();
+  form.append("descriptor", JSON.stringify(descriptor));
+  form.append(
+    "file",
+    bytes instanceof Blob
+      ? bytes
+      : // TS 5.7's BlobPart doesn't accept Uint8Array<ArrayBufferLike>
+        // (SharedArrayBuffer edge); runtime fetch (browser + undici) does.
+        new Blob([bytes as unknown as BlobPart], { type: "application/octet-stream" }),
   );
 
-  // Phase two: bytes go straight to object storage via the signed URL — the
-  // storage response is NOT a §7.3 envelope, so only the status is checked.
-  const { url, headers } = response.upload;
-  const put = await impl.core.fetchImpl(url, {
-    method: "PUT",
-    headers: { ...headers },
-    // TS 5.7's DOM BodyInit doesn't accept Uint8Array<ArrayBufferLike>
-    // (SharedArrayBuffer edge); runtime fetch (browser + undici) does.
-    body: bytes instanceof Blob ? bytes : (bytes as unknown as BodyInit),
+  return impl.request<ProjectVersion>({
+    method: "POST",
+    path: `/projects/${encodeId(projectId)}/versions`,
+    // rawBody: no Content-Type header — fetch derives the multipart boundary.
+    rawBody: form,
+    responseSchema: PROJECT_VERSION_SCHEMA,
+    idempotencyKey: options?.idempotencyKey ?? impl.autoKey(),
     signal: options?.signal,
   });
-  if (!put.ok) {
-    throw uploadFailedError(put.status);
-  }
-  return response.version;
 }

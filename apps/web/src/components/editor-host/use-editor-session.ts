@@ -99,13 +99,6 @@ export interface EditorSessionApi {
   /** "Load server version" after a conflict — a full page reload re-runs RSC. */
   readonly reloadServerVersion: () => void;
   /**
-   * TODO(M4, BUILD_PLAN §M5): call this after every applied agent
-   * `engine.batch` (D-6: save after agent apply). Out of scope for the M3
-   * wave — the call site is wired and commented here so M4 only has to
-   * invoke it from the agent overlay.
-   */
-  readonly saveAfterAgentApply: () => void;
-  /**
    * The M5 apply-session ports (K-1 fix): the ChatProvider builds the real
    * ApplyController from these — `saveNow("agent-apply")` uploads the
    * applied version (D-6) and `currentVersionId()` drives the reapply-drift
@@ -448,12 +441,6 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
     window.location.reload();
   }, []);
 
-  const saveAfterAgentApply = useCallback((): void => {
-    // The agent overlay's ApplyController now drives this via applyPorts
-    // (K-1 fix); kept for the page-level API surface (Cmd+S parity callers).
-    saveNow("agent-apply");
-  }, [saveNow]);
-
   // K-1: referentially-stable apply ports for the ChatProvider (the provider
   // builds the real ApplyController from these; the autosaveRef indirection
   // means read-only sessions degrade conservatively without remounting).
@@ -486,7 +473,6 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
     bootAttempt,
     retryBoot,
     reloadServerVersion,
-    saveAfterAgentApply,
     applyPorts,
   };
 }

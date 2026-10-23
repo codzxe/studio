@@ -8,6 +8,7 @@ import {
 import { gatewayCall, isGatewayHttpError } from "@/lib/gateway";
 import { pageMetadata } from "@/lib/seo";
 import {
+  canEditProjects,
   classifyGatewayError,
   parseMemberships,
   resolveActiveWorkspace,
@@ -157,6 +158,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       nowIso={new Date().toISOString()}
       initialProjects={projects}
       initialError={loadError}
+      canEdit={canEditProjects(membership.role)}
     />
   );
 }

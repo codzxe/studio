@@ -4,6 +4,8 @@ import { ok } from "../src/envelope.js";
 import { PLAN_ID_SCHEMA } from "../src/models.js";
 import {
   ACQUIRE_LEASE_SCHEMA,
+  AUDIT_ENTRY_SCHEMA,
+  AUDIT_QUERY_SCHEMA,
   CANCEL_RUN_SCHEMA,
   CHAT_REQUEST_SCHEMA,
   CHECKOUT_SCHEMA,
@@ -26,22 +28,28 @@ import {
   PINNED_CONTEXT_ITEM_SCHEMA,
   PORTAL_SCHEMA,
   QUEUE_RENDER_SCHEMA,
+  RECONCILE_REQUEST_SCHEMA,
   RESOLVE_COMMENT_SCHEMA,
   RESTORE_VERSION_SCHEMA,
   ROLE_SCHEMA,
   RUN_EVENT_REQUEST_SCHEMA,
   SET_VERSION_LABEL_SCHEMA,
+  SETTINGS_PATCH_SCHEMA,
+  SETTINGS_RESPONSE_SCHEMA,
   TOPUP_SCHEMA,
   UPLOAD_VERSION_SCHEMA,
 } from "../src/routes/index.js";
 import type {
   Asset,
+  AuditEntry,
   Comment,
   LedgerEntry,
   ProjectManifest,
+  ReconcileReport,
   RunRecord,
   SignedUrlResponse,
   ThreadMessage,
+  WorkspaceDetail,
 } from "../src/routes/index.js";
 
 const SHA = "a".repeat(64);
@@ -91,7 +99,12 @@ describe("routes: projects + versions", () => {
       agentRunId: "run_1",
     };
     expect(UPLOAD_VERSION_SCHEMA.safeParse(valid).success).toBe(true);
+    // W3-G3/W5-09: the base is REQUIRED but NULLABLE — null is the only valid
+    // descriptor for a project's FIRST snapshot (fresh project, no current
+    // version); the gateway mirrors this (omitted query param → null).
+    expect(UPLOAD_VERSION_SCHEMA.safeParse({ ...valid, baseVersionId: null }).success).toBe(true);
     expect(UPLOAD_VERSION_SCHEMA.safeParse({ ...valid, sha256: "zz" }).success).toBe(false);
+    // A MISSING key stays invalid — the base is always stated, even when null.
     expect(UPLOAD_VERSION_SCHEMA.safeParse({ sha256: SHA, sizeBytes: 1 }).success).toBe(false);
     expect(UPLOAD_VERSION_SCHEMA.safeParse({ ...valid, agentRunId: "" }).success).toBe(false);
     // M7 task 4: confirm-with-confirmation — a restore must carry the typed
@@ -108,6 +121,23 @@ describe("routes: projects + versions", () => {
     expect(SET_VERSION_LABEL_SCHEMA.safeParse({ label: "" }).success).toBe(false);
     expect(SET_VERSION_LABEL_SCHEMA.safeParse({ label: "x".repeat(121) }).success).toBe(false);
     expect(SET_VERSION_LABEL_SCHEMA.safeParse({}).success).toBe(false);
+  });
+
+  it("workspace detail type compiles (row + caller role + roster)", () => {
+    const detail: WorkspaceDetail = {
+      id: "ws_1",
+      name: "Northlight",
+      slug: "northlight",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      role: "admin",
+      members: [
+        { userId: "usr_1", role: "owner", name: "Ada", email: "ada@example.com" },
+        { userId: "usr_2", role: "viewer", name: null, email: null },
+      ],
+    };
+    expect(detail.members[0]?.role).toBe("owner");
+    expect(detail.members[1]?.name).toBeNull();
   });
 });
 
@@ -311,6 +341,59 @@ describe("routes: credits + billing", () => {
     expect(PLAN_ID_SCHEMA.options).toEqual(["trial", "starter", "pro", "studio"]);
   });
 
+  it("reconcile: bounded window + report/reconcile mode (W5-09)", () => {
+    const window = { sinceTs: "2026-01-01T00:00:00Z", uptoTs: "2026-01-02T00:00:00Z" };
+    expect(RECONCILE_REQUEST_SCHEMA.safeParse(window).success).toBe(true);
+    expect(
+      RECONCILE_REQUEST_SCHEMA.safeParse({ ...window, mode: "reconcile", note: "weekly sweep" })
+        .success,
+    ).toBe(true);
+    // Ordered window, real modes only, bounded note.
+    expect(
+      RECONCILE_REQUEST_SCHEMA.safeParse({ sinceTs: "2026-01-02T00:00:00Z", uptoTs: "2026-01-01T00:00:00Z" })
+        .success,
+    ).toBe(true); // ordering is a GATEWAY rule (92d/≤now) — the wire accepts ISO bounds
+    expect(RECONCILE_REQUEST_SCHEMA.safeParse({ ...window, mode: "purge" }).success).toBe(false);
+    expect(RECONCILE_REQUEST_SCHEMA.safeParse({ ...window, note: "" }).success).toBe(false);
+    expect(RECONCILE_REQUEST_SCHEMA.safeParse({ ...window, extra: 1 }).success).toBe(false);
+    expect(RECONCILE_REQUEST_SCHEMA.safeParse({}).success).toBe(false);
+    // The response is an interface (no zod) — pinned structurally here.
+    const report: ReconcileReport = {
+      workspaceId: "ws_1",
+      window: { sinceTs: window.sinceTs, uptoTs: window.uptoTs },
+      mode: "report",
+      ledger: {
+        grants: 1000,
+        reserves: 12,
+        outstandingReserves: 2,
+        commits: 9,
+        refunds: 1,
+        adjusts: 0,
+        entryCount: 22,
+      },
+      usage: {
+        runs: { discovered: 3, settledInWindow: 3, committedCredits: 9 },
+        renders: { count: 0, credits: 0 },
+        usageSum: 9,
+      },
+      balance: 990,
+      discrepancies: [],
+      external: { source: "none", spendCredits: null, perModel: [], unknownModels: [], error: null },
+      action: {
+        attempted: false,
+        applied: false,
+        replayed: false,
+        adjustAmount: null,
+        entryId: null,
+        balanceAfter: null,
+        skippedReason: "report_only",
+      },
+      scan: { truncated: false, scannedEntries: 22 },
+      generatedAt: "2026-01-02T00:00:01Z",
+    };
+    expect(report.action.skippedReason).toBe("report_only");
+  });
+
   it("portal: optional returnUrl", () => {
     expect(PORTAL_SCHEMA.safeParse({}).success).toBe(true);
     expect(PORTAL_SCHEMA.safeParse({ returnUrl: "https://app.example.test/billing" }).success).toBe(
@@ -435,5 +518,57 @@ describe("routes: comments + activity", () => {
       updatedAt: "2026-01-01T00:00:00Z",
     };
     expect(manifest.currentVersion?.version).toBe(12);
+  });
+});
+
+describe("routes: user settings (W3-G2/W5-09)", () => {
+  it("PATCH body is strict boolean-only; GET/echo shape validates", () => {
+    expect(SETTINGS_PATCH_SCHEMA.safeParse({ autoApplyEnabled: true }).success).toBe(true);
+    expect(SETTINGS_PATCH_SCHEMA.safeParse({ autoApplyEnabled: false }).success).toBe(true);
+    expect(SETTINGS_PATCH_SCHEMA.safeParse({ autoApplyEnabled: "yes" }).success).toBe(false);
+    expect(SETTINGS_PATCH_SCHEMA.safeParse({}).success).toBe(false);
+    // Strict: unknown keys never ride the upsert.
+    expect(
+      SETTINGS_PATCH_SCHEMA.safeParse({ autoApplyEnabled: true, theme: "dark" }).success,
+    ).toBe(false);
+    expect(SETTINGS_RESPONSE_SCHEMA.safeParse({ autoApplyEnabled: false }).success).toBe(true);
+    expect(SETTINGS_RESPONSE_SCHEMA.safeParse({ autoApplyEnabled: 1 }).success).toBe(false);
+  });
+});
+
+describe("routes: workspace audit feed (W3-G2/W5-09)", () => {
+  it("query: house pagination + optional targetType filter", () => {
+    expect(AUDIT_QUERY_SCHEMA.safeParse({}).success).toBe(true);
+    expect(AUDIT_QUERY_SCHEMA.safeParse({ targetType: "project", limit: 25 }).success).toBe(true);
+    expect(AUDIT_QUERY_SCHEMA.safeParse({ targetType: "", limit: 101 }).success).toBe(false);
+    // The action filter is NOT a wire param (client-side over loaded rows) —
+    // non-strict z.object strips it rather than rejecting the whole query.
+    const parsed = AUDIT_QUERY_SCHEMA.parse({ action: "member.removed", limit: 10 });
+    expect(parsed).not.toHaveProperty("action");
+    expect(parsed.limit).toBe(10);
+  });
+
+  it("entry: actor join (name nullable for system rows), metadata/ip stripped", () => {
+    const entry = {
+      id: "aud_1",
+      actorId: "usr_1",
+      actorName: "Ada",
+      action: "member.role_changed",
+      targetType: "member",
+      targetId: "usr_2",
+      createdAt: "2026-01-01T00:00:00Z",
+    };
+    expect(AUDIT_ENTRY_SCHEMA.safeParse(entry).success).toBe(true);
+    expect(
+      AUDIT_ENTRY_SCHEMA.safeParse({ ...entry, actorId: null, actorName: null }).success,
+    ).toBe(true);
+    // Law #1: metadata/ip never cross the wire on this feed (strip-unknown
+    // drops them client-side too).
+    expect(
+      AUDIT_ENTRY_SCHEMA.safeParse({ ...entry, metadata: { ip: "10.0.0.1" } }).success,
+    ).toBe(true);
+    expect(AUDIT_ENTRY_SCHEMA.safeParse({ ...entry, actorName: 42 }).success).toBe(false);
+    const typed: AuditEntry = AUDIT_ENTRY_SCHEMA.parse(entry);
+    expect(typed.actorName).toBe("Ada");
   });
 });
