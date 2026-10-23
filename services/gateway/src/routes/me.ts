@@ -20,8 +20,8 @@
 
 import { Hono } from "hono";
 
-import { type MeResponse, type Membership } from "@studio/contracts";
 import { entitlementsFor } from "@studio/config";
+import type { MeResponse, Membership } from "@studio/contracts";
 import type { Repos, Subscription } from "@studio/db";
 
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";

@@ -111,12 +111,14 @@ export const ENV_VAR_SPECS: readonly EnvVarMeta[] = [
   {
     name: "DATABASE_URL",
     purpose:
-      "Postgres connection string for the control plane (auth, projects, versions, runs, credits).",
+      "Control-plane database URL (auth, projects, versions, runs, credits): Postgres (postgres:// or postgresql://) in staging/production and for the full DB-gated test suite, or — local dev only — a SQLite file URL (file:.local/studio-dev.db, maintained by pnpm dev:sqlite) for a PG-free dev server.",
     group: "db",
     required: true,
     secret: true,
     hasDefault: false,
     example: "postgres://studio:studio@localhost:5432/studio",
+    condition:
+      'SQLite URLs (file:… or sqlite:…) are accepted only when APP_ENV is "local" — rejected in staging and production, where a PostgreSQL URL is required.',
   },
   // ── queue ────────────────────────────────────────────────────────────────
   {
@@ -501,13 +503,25 @@ const httpUrl = z
     "must be an http(s) URL",
   );
 
-const postgresUrl = z
+/**
+ * W1-03: DATABASE_URL accepts a second dialect in local dev — SQLite file
+ * URLs (`file:` — the drizzle/better-sqlite3 form — or `sqlite:`). The URL
+ * still names a single database; the schema validation only checks the
+ * scheme, and `crossCheckProblems` below enforces the local-only rule.
+ */
+const databaseUrl = z
   .string()
   .min(1)
   .refine(
-    (value: string) => /^postgres(ql)?:\/\//.test(value),
-    "must be a PostgreSQL URL starting with postgres:// or postgresql://",
+    (value: string) =>
+      /^postgres(ql)?:\/\//.test(value) || /^(file|sqlite):\S+/.test(value),
+    "must be a PostgreSQL URL (postgres:// or postgresql://) or, for local dev only, a SQLite file URL (file:… or sqlite:…)",
   );
+
+/** W1-03: is DATABASE_URL a local-dev SQLite file URL? (local-only rule in crossCheckProblems) */
+export function isSqliteDatabaseUrl(url: string): boolean {
+  return /^(file|sqlite):\S+/.test(url);
+}
 
 const valkeyUrl = z
   .string()
@@ -593,8 +607,9 @@ export const envSchema = z.object({
   APP_ENV: appEnvSchema,
   LOG_LEVEL: logLevelSchema.default("info"),
   MOCK_MODEL: envBool.default(false),
-  // db
-  DATABASE_URL: postgresUrl,
+  // db — Postgres everywhere except local dev, where a SQLite file URL
+  // (file:…/sqlite:…, pnpm dev:sqlite) is the PG-free alternative.
+  DATABASE_URL: databaseUrl,
   // queue
   VALKEY_URL: valkeyUrl.optional(),
   // storage — optional as a group: local dev runs the gateway's filesystem
@@ -855,6 +870,12 @@ function crossCheckProblems(env: FlatEnv): EnvProblem[] {
     push(
       "STRIPE_SECRET_KEY",
       `required when APP_ENV is "${env.APP_ENV}" — Stripe checkout, portal and webhooks cannot run without it`,
+    );
+  }
+  if (env.APP_ENV !== "local" && isSqliteDatabaseUrl(env.DATABASE_URL)) {
+    push(
+      "DATABASE_URL",
+      `must be a PostgreSQL URL when APP_ENV is "${env.APP_ENV}" — SQLite file URLs are the local-dev PG-free server only; point DATABASE_URL at the production Postgres`,
     );
   }
   if (env.APP_ENV === "production" && env.MOCK_MODEL) {
