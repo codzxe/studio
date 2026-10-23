@@ -189,6 +189,9 @@ export function projectsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       const project = await deps.repos.projects.patch(workspace.id, pathParam(c, "id"), {
         name: parsed.data.name,
         description: parsed.data.description,
+        // W1-c (§9.1): archived PATCHes ride the same lease rule — flipping
+        // the lifecycle flag is a project-scoped mutation.
+        archived: parsed.data.archived,
       });
       await audit(deps, c, workspace.id, "project.updated", project.id);
       return ok(c, toDto(project));
@@ -206,7 +209,117 @@ export function projectsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     },
   );
 
+  // W1-c (§M2.1/§9.1): duplicate — copy the project and its CURRENT version
+  // snapshot into a new "<name> (copy)" project. Design notes:
+  //   * Reads of the source stay lease-legal (D-23 gates MUTATIONS only) and
+  //     the fresh target cannot hold a lease — no lease gate here.
+  //   * The snapshot copy is server-side (driver.copy — S3 CopyObject / a
+  //     kernel file copy; the bytes never transit the gateway), then the
+  //     versions repo owns the row + currentVersionId advance transactionally
+  //     (same upload path as POST /v1/projects/:id/versions, §9.3: the copy is
+  //     version 1 of the NEW project with parent null).
+  //   * The maxProjects quota is enforced BEFORE anything is created.
+  //   * v1 copies project metadata + the current snapshot only: history stays
+  //     on the source, and project-scoped assets are not re-linked (the
+  //     workspace library remains visible to the copy's manifest).
+  app.post(
+    "/v1/projects/:id/duplicate",
+    requireWorkspace("editor"),
+    async (c: AppContext): Promise<Response> => {
+      const workspace = c.get("workspace");
+      const sourceId = pathParam(c, "id");
+      // §12.1 first: the repo get is tenant-scoped — cross-tenant ids read as
+      // 404 before any quota state is probed.
+      const source = await deps.repos.projects.get(workspace.id, sourceId);
+      await assertProjectQuota(deps, workspace.id, c.get("requestId"));
+
+      const target = await deps.repos.projects.create(workspace.id, {
+        name: duplicateName(source.name),
+        description: source.description ?? undefined,
+        createdBy: c.get("auth").user.id,
+      });
+
+      let project = target;
+      if (source.currentVersionId !== null) {
+        try {
+          const snapshot = await deps.repos.versions.get(
+            workspace.id,
+            source.id,
+            source.currentVersionId,
+          );
+          // §9.2 content addressing: the same sha lands under the TARGET
+          // project's own key space (identical bytes, independent lifecycle).
+          const targetKey = snapshotKey(workspace.id, target.id, snapshot.sha256);
+          await deps.storage.copy(snapshot.objectKey, targetKey);
+          const uploaded = await deps.repos.versions.upload(workspace.id, {
+            projectId: target.id,
+            expectedVersionId: null,
+            objectKey: targetKey,
+            sha256: snapshot.sha256,
+            sizeBytes: snapshot.sizeBytes,
+            label: `Copied from ${source.name}`.slice(0, 120),
+            createdBy: c.get("auth").user.id,
+          });
+          project = uploaded.project;
+        } catch (error) {
+          // Roll the empty shell back into the deleted_at recovery window — a
+          // half-duplicate (project row without its snapshot) must not linger
+          // in the list view. The storage copy is best-effort (§9.2 orphans are
+          // lifecycle-reclaimed); rethrow the original failure.
+          await deps.repos.projects.softDelete(workspace.id, target.id).catch(() => undefined);
+          throw error;
+        }
+      }
+
+      await audit(deps, c, workspace.id, "project.duplicated", project.id, {
+        sourceProjectId: source.id,
+        snapshotCopied: source.currentVersionId !== null,
+      });
+      return ok(c, toDto(project), 201);
+    },
+  );
+
   return app;
+}
+
+/**
+ * W1-c (§M2.5): the workspace's EFFECTIVE plan entitlements, resolved through
+ * the single resolvePlan seam (subscription row; legacy/stub boots fall back
+ * to trial per D-4 — the most restrictive tier, so quota gates fail CLOSED).
+ * Exported for the assets route (the storageBytes gate shares this seam).
+ */
+export async function planEntitlements(workspaceId: string): Promise<Entitlements> {
+  return entitlementsFor(await resolvePlan(workspaceId));
+}
+
+/** 429 QUOTA_EXCEEDED when the workspace is at its plan's maxProjects cap. */
+async function assertProjectQuota(
+  deps: GatewayDeps,
+  workspaceId: string,
+  requestId: string,
+): Promise<void> {
+  const [entitlements, liveProjects] = await Promise.all([
+    planEntitlements(workspaceId),
+    deps.repos.projects.countActive(workspaceId),
+  ]);
+  if (liveProjects >= entitlements.maxProjects) {
+    throw new GatewayError(
+      "QUOTA_EXCEEDED",
+      "You've reached your plan's project limit.",
+      {
+        status: 429,
+        hint: "Upgrade your plan to create more projects, or delete one you no longer need.",
+        requestId,
+      },
+    );
+  }
+}
+
+/** "<name> (copy)" — truncated so the total respects the 120-char name cap. */
+function duplicateName(name: string): string {
+  const suffix = " (copy)";
+  if (name.length + suffix.length <= 120) return `${name}${suffix}`;
+  return `${name.slice(0, 120 - suffix.length).trimEnd()}${suffix}`;
 }
 
 export async function audit(

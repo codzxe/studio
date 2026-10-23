@@ -73,7 +73,7 @@ describe("verify-email panel", () => {
     resolveVerification({ data: { status: true, user: null }, error: null });
     expect(await screen.findByTestId("verify-email-success")).toBeInTheDocument();
     expect(screen.getByText("Email verified.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sign in", exact: true })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /^Sign in$/ })).toHaveAttribute(
       "href",
       "/sign-in",
     );
@@ -88,7 +88,7 @@ describe("verify-email panel", () => {
     render(<VerifyEmailPanel />);
     expect(await screen.findByTestId("verify-email-failure")).toBeInTheDocument();
     expect(screen.getByText("This verification link doesn't work anymore.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sign in", exact: true })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /^Sign in$/ })).toHaveAttribute(
       "href",
       "/sign-in",
     );
