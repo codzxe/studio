@@ -4,7 +4,7 @@
 // cache named after the version, served cache-first (responses keep the server's headers, so
 // the page stays cross-origin isolated: COOP/COEP), and old versions are dropped once the new
 // one activates. Anything else same-origin is fetched from the network and cached for next time.
-const VERSION = "00e1ef3fa0221c87";
+const VERSION = "d0049f28f42ad009";
 const FILES = ["./", "./audio-worklet.js", "./effectcraft_web.js", "./effectcraft_web_bg.wasm", "./favicon.svg", "./icon-256.png", "./icon-512.png", "./index.html", "./manifest.webmanifest", "./snippets/effectcraft-web-6247e0b7c298e283/js/host.js", "./worker.js"];
 const CACHE = `effectcraft-${VERSION}`;
 
