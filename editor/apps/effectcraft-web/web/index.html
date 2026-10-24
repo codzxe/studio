@@ -98,24 +98,102 @@
         console.warn("service worker:", e);
       }
     }
+    // Ask for the high-performance GPU on every WebGPU adapter request that does not
+    // name a preference: wgpu/eframe send none by default, so hybrid-graphics laptops
+    // (an iGPU plus a discrete card) boot the editor on the power-saving iGPU. The
+    // wrapper only fills in what the caller left unset.
+    const gpu = navigator.gpu;
+    if (gpu && typeof gpu.requestAdapter === "function" && !gpu.__studioHighPerformance) {
+      const originalRequestAdapter = gpu.requestAdapter.bind(gpu);
+      gpu.requestAdapter = (options) =>
+        originalRequestAdapter(
+          options && options.powerPreference ? options : { ...(options ?? {}), powerPreference: "high-performance" },
+        );
+      gpu.__studioHighPerformance = true;
+    }
     try {
-      // Compile once: the page and its render workers instantiate the same module.
-      const wasmUrl = new URL("effectcraft_web_bg.wasm", location.href);
+      const status = document.getElementById("status");
+      const say = (text) => { if (status) status.textContent = text; };
+      // GPU pre-flight, before the engine download. This build prefers WebGPU at
+      // runtime and falls back to WebGL2:
+      // - A WebGPU adapter answers -> leave the canvas alone; the engine boots
+      //   WebGPU (the adapter shim above picks the discrete GPU).
+      // - No adapter -> the engine will run WebGL2: take the context FIRST with
+      //   wgpu's own attribute (antialias: false) plus the high-performance hint.
+      //   The first getContext decides the GPU; wgpu's later call reuses our
+      //   context instead of creating one without a preference.
+      // - WebGL2 unavailable too -> fail NOW with the remedy, not after the whole
+      //   engine download. On machines with a GPU this almost always means the
+      //   browser's hardware acceleration is off.
+      let webgpu = false;
+      try {
+        webgpu = !!(await gpu?.requestAdapter?.({ powerPreference: "high-performance" }));
+      } catch {
+        webgpu = false;
+      }
+      const gpuInfo = { webgpu, webgl2: false, renderer: "", software: false };
+      if (!webgpu) {
+        const canvas = document.getElementById("effectcraft_canvas");
+        const gl = canvas && canvas.getContext("webgl2", { antialias: false, powerPreference: "high-performance" });
+        gpuInfo.webgl2 = !!gl;
+        if (gl) {
+          const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+          if (dbg) {
+            gpuInfo.renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+            gpuInfo.software = /swiftshader|llvmpipe|softpipe|software/i.test(gpuInfo.renderer);
+          }
+          if (gpuInfo.software) {
+            say("GPU acceleration is off in this browser — running in software…");
+          }
+        } else {
+          const message =
+            "WebGL2 is not available in this browser, so the editor cannot start. " +
+            "Turn on hardware acceleration (Chrome/Edge: Settings > System > " +
+            '"Use graphics acceleration when available", then relaunch) and retry.';
+          window.effectcraftLoad.error = message;
+          if (status) {
+            status.className = "err";
+            status.textContent = message;
+          }
+          throw new Error(message);
+        }
+      }
+      window.effectcraftLoad.gpu = gpuInfo;
+      // The engine module: the host page (same-origin) may have started the
+      // download + compile in parallel with this iframe — adopt its module
+      // instead of downloading again. Any problem falls back to our own fetch.
       let module;
       try {
-        module = await WebAssembly.compileStreaming(fetch(wasmUrl));
+        const warm = window.parent !== window ? window.parent.__studioEditorWasm : undefined;
+        if (warm instanceof Promise) module = await warm;
       } catch {
-        module = await WebAssembly.compile(await (await fetch(wasmUrl)).arrayBuffer());
+        // The host's warm-up died; boot our own copy.
+      }
+      if (!module) {
+        // Compile once: the page and its render workers instantiate the same module.
+        const wasmUrl = new URL("effectcraft_web_bg.wasm", location.href);
+        say("Downloading Studio…");
+        try {
+          module = await WebAssembly.compileStreaming(fetch(wasmUrl));
+        } catch {
+          module = await WebAssembly.compile(await (await fetch(wasmUrl)).arrayBuffer());
+        }
       }
       window.effectcraftModule = module;
+      say("Starting Studio…");
       await init({ module_or_path: module });
       window.effectcraftLoad.wasmMs = performance.now() - t0;
       await ec.start("effectcraft_canvas");
       window.effectcraftLoad.readyMs = performance.now() - t0;
     } catch (e) {
       const s = document.getElementById("status");
-      if (s) { s.className = "err"; s.textContent = "Studio failed to start:\n" + (e && e.stack || e); }
-      window.effectcraftLoad.error = String(e);
+      // A pre-flight failure keeps its plain-language message and status text;
+      // everything else keeps the original stack trace.
+      if (s && !window.effectcraftLoad.error) {
+        s.className = "err";
+        s.textContent = "Studio failed to start:\n" + (e && e.stack || e);
+      }
+      window.effectcraftLoad.error = window.effectcraftLoad.error ?? String(e);
       throw e;
     }
   </script>

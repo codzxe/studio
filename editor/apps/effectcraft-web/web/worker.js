@@ -11,6 +11,21 @@
 // the next message (a project sync, the next request) is looked at.
 import init, * as ec from "./effectcraft_web.js";
 
+// Ask for the high-performance GPU on every WebGPU adapter request that does not
+// name a preference: the engine's worker devices send none by default, so
+// hybrid-graphics laptops (an iGPU plus a discrete card) would render on the
+// power-saving iGPU. Same wrapper as the page's index.html; it only fills in
+// what the caller left unset.
+const gpu = navigator.gpu;
+if (gpu && typeof gpu.requestAdapter === "function" && !gpu.__studioHighPerformance) {
+  const originalRequestAdapter = gpu.requestAdapter.bind(gpu);
+  gpu.requestAdapter = (options) =>
+    originalRequestAdapter(
+      options && options.powerPreference ? options : { ...(options ?? {}), powerPreference: "high-performance" },
+    );
+  gpu.__studioHighPerformance = true;
+}
+
 let ready = null;
 let queue = Promise.resolve();
 

@@ -1,10 +1,11 @@
 "use client";
 
 import type { MissingAsset } from "@/lib/editor-session";
+import type { EditorWarmupSnapshot } from "@/lib/editor-warmup";
 import { useOnlineStatus } from "@/lib/use-online-status";
 import { Badge, Button, Spinner } from "@studio/ui";
 import { AlertTriangle, CircleAlert, TriangleAlert, WifiOff } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 /**
  * The editor-host banners (M3.5/M3.7). Every banner sits OVER the editor
@@ -29,7 +30,35 @@ function panel(className: string, children: ReactNode, testId?: string): ReactNo
 // Boot (M3.7) — loading screen + wasm failure with the dist's error + Retry
 // ---------------------------------------------------------------------------
 
-export function BootOverlay({ projectName }: { readonly projectName: string }) {
+/** Whole megabytes above 10, one decimal below (the overlay's progress copy). */
+function formatBytes(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+}
+
+export interface BootOverlayProps {
+  readonly projectName: string;
+  /** The engine warm-up's live progress (the parent page's parallel download + compile). */
+  readonly warmup?: EditorWarmupSnapshot;
+}
+
+export function BootOverlay({ projectName, warmup }: BootOverlayProps) {
+  // The engine module's download + compile runs in the parent page in parallel
+  // with the iframe's own load; surface where it is so the wait reads honest
+  // instead of frozen. Absent/idle/failed (the iframe fetches on its own) keeps
+  // the original copy.
+  let progress: string | null = null;
+  if (warmup?.phase === "downloading") {
+    const received = formatBytes(warmup.receivedBytes);
+    progress =
+      warmup.totalBytes !== null && warmup.totalBytes > 0
+        ? `Downloading the editor engine… ${received} of ${formatBytes(warmup.totalBytes)}`
+        : `Downloading the editor engine… ${received}`;
+  } else if (warmup?.phase === "compiling") {
+    progress = "Compiling the editor engine…";
+  } else if (warmup?.phase === "done") {
+    progress = "Starting the editor engine…";
+  }
   return (
     <output
       data-testid="editor-boot-loading"
@@ -38,10 +67,19 @@ export function BootOverlay({ projectName }: { readonly projectName: string }) {
     >
       <Spinner size={24} label={`Preparing the editor for ${projectName}`} />
       <p className="text-body text-secondary">Preparing “{projectName}”…</p>
-      <p className="text-caption text-muted">The editor loads once per session.</p>
+      {progress !== null ? (
+        <p className="text-caption text-muted" data-testid="editor-boot-progress">
+          {progress}
+        </p>
+      ) : (
+        <p className="text-caption text-muted">The editor loads once per session.</p>
+      )}
     </output>
   );
 }
+
+/** The dist's boot errors that mean "the browser refused the GPU" (§8.7). */
+const GPU_FAILURE_PATTERN = /webgl2|webgpu|wgpu|surface|getcontext|hardware/i;
 
 export interface BootFailureBannerProps {
   /** The dist's own error string (helps support; copy stays non-technical). */
@@ -50,6 +88,11 @@ export interface BootFailureBannerProps {
 }
 
 export function BootFailureBanner({ bootError, onRetry }: BootFailureBannerProps) {
+  // The most common boot failure is the browser refusing every GPU backend
+  // with hardware acceleration off (the machine can still have a fine GPU) —
+  // name the remedy instead of a bare retry.
+  const gpuHint =
+    typeof bootError === "string" && bootError.length > 0 && GPU_FAILURE_PATTERN.test(bootError);
   return (
     <div
       data-testid="editor-boot-failed"
@@ -65,6 +108,13 @@ export function BootFailureBanner({ bootError, onRetry }: BootFailureBannerProps
         {typeof bootError === "string" && bootError.length > 0 ? (
           <p className="text-caption break-all text-muted" data-testid="editor-boot-error">
             {bootError}
+          </p>
+        ) : null}
+        {gpuHint ? (
+          <p className="text-caption text-secondary" data-testid="editor-boot-gpu-hint">
+            If this device has a graphics card, the usual cause is a browser setting: turn on
+            hardware acceleration (Chrome/Edge: Settings &gt; System &gt; “Use graphics acceleration
+            when available”, then relaunch) and press Retry.
           </p>
         ) : null}
       </div>

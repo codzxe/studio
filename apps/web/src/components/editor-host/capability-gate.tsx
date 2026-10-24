@@ -1,28 +1,34 @@
 "use client";
 
 import { UnsupportedGpuState } from "@/components/system/system-states";
+import { warmEditorWasm } from "@/lib/editor-warmup";
 import { X } from "lucide-react";
 import { type ReactElement, type ReactNode, useEffect, useState } from "react";
 
 /**
  * EditorCapabilityGate — §8.7/§8.11 (UI_DESIGN_SYSTEM) + §13 responsive rule.
  *
- * The EffectCraft compositor needs WebGPU or WebGL2. This client wrapper
- * probes the browser BEFORE mounting the editor host, so an unsupported
- * machine never boots the wasm canvas at all ("do not trap the user in a
- * broken canvas" — §8.7):
+ * The EffectCraft compositor needs WebGPU or WebGL2 — and "has WebGPU" means
+ * an adapter actually ANSWERS, not just that `navigator.gpu` exists: a
+ * browser with hardware acceleration off still exposes `navigator.gpu` and
+ * refuses every adapter request (the machine can have a fine discrete GPU —
+ * the dist would otherwise boot into "failed to create wgpu surface"). The
+ * probe mirrors the dist's own boot pre-flight (`public/editor/index.html`):
  *
- *   navigator.gpu (WebGPU)  → children
- *   canvas.getContext("webgl2") (WebGL2 floor) → children
- *   neither → the §8.7 full-page UnsupportedGpuState (supported-browsers
- *             link) PLUS the static-preview offer: the project's version
+ *   navigator.gpu.requestAdapter() answers → children
+ *   canvas.getContext("webgl2") answers         → children
+ *   neither → the §8.7 full-page UnsupportedGpuState (whose copy now names
+ *             the usual fixable cause: hardware acceleration off in the
+ *             browser) PLUS the static-preview offer: the project's version
  *             history (`/w/[slug]/history`) — previews render server-side,
  *             no GPU needed (§8.11 "offer a rendered preview").
  *
- * The probe runs in an effect (SSR cannot see navigator), so the first
- * client frame renders NOTHING while "checking" — a one-frame dark page
- * instead of a broken-canvas flash; supported machines mount the editor
- * on the very next paint.
+ * The probe is async (one adapter request), so the first client frame(s)
+ * render NOTHING while "checking" — a one-frame dark page instead of a
+ * broken-canvas flash; supported machines mount the editor a few
+ * milliseconds later, and the moment the verdict lands the engine's 49 MB
+ * download + compile starts (`warmEditorWasm`) so it overlaps the iframe's
+ * own load instead of waiting behind it.
  *
  * §13: below 1024px the editor stays usable but shows a DISMISSIBLE
  * "best on desktop" note (never a blocking overlay — the editor is
@@ -32,16 +38,32 @@ import { type ReactElement, type ReactNode, useEffect, useState } from "react";
 /** §13 breakpoint: the editor is desktop-first below 1024px. */
 const NARROW_EDITOR_QUERY = "(max-width: 1023px)";
 
+/** A structural stand-in for the not-yet-typed `navigator.gpu`. */
+type GpuLike = {
+  readonly requestAdapter?: (options?: {
+    readonly powerPreference?: "low-power" | "high-performance" | undefined;
+  }) => Promise<unknown>;
+};
+
 /**
- * Browser capability probe (§8.7). Pure DOM read — no async, no side
- * effects beyond the throwaway probe canvas. WebGPU first (the editor's
- * preferred backend), WebGL2 as the floor.
+ * Browser capability probe (§8.7): a working WebGPU adapter (the dist's
+ * preferred backend, asked for the high-performance GPU — the same request
+ * its own boot pre-flight makes) or the WebGL2 floor. Pure DOM read — no
+ * side effects beyond the throwaway probe canvas.
  */
-function hasEditorGpuSupport(): boolean {
+async function probeEditorGpuSupport(): Promise<boolean> {
   if (typeof navigator === "undefined") return false;
-  // navigator.gpu is not in the TS DOM lib yet — probe it structurally.
-  const nav = navigator as Navigator & { readonly gpu?: unknown };
-  if (nav.gpu !== undefined) return true;
+  const nav = navigator as Navigator & { readonly gpu?: GpuLike | undefined };
+  const gpu = nav.gpu;
+  if (typeof gpu?.requestAdapter === "function") {
+    try {
+      const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" });
+      if (adapter != null) return true;
+    } catch {
+      // A broken WebGPU (blocklisted driver, crashed GPU process) falls
+      // through to the WebGL2 floor.
+    }
+  }
   try {
     return document.createElement("canvas").getContext("webgl2") !== null;
   } catch {
@@ -67,7 +89,18 @@ export function EditorCapabilityGate({
   const [noteDismissed, setNoteDismissed] = useState(false);
 
   useEffect(() => {
-    setSupported(hasEditorGpuSupport());
+    let live = true;
+    void probeEditorGpuSupport().then((supported) => {
+      if (!live) return;
+      setSupported(supported);
+      // The engine download + compile starts the moment the browser is known
+      // to be able to run it — never on unsupported machines (they never
+      // mount the iframe, so nothing would fetch it).
+      if (supported) warmEditorWasm();
+    });
+    return () => {
+      live = false;
+    };
   }, []);
 
   // §13 — live <1024px tracking (the note follows a rotated/resized window).

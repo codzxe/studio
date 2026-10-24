@@ -41,6 +41,13 @@ vi.mock("@/lib/gateway", () => ({
   gatewayCall: (path: string, init?: { workspaceId?: string }) => gatewayMock(path, init),
 }));
 
+// The gate's "supported" verdict kicks the engine warm-up; the page test only
+// cares about the route's RSC logic, so the warm-up is a no-op here (its own
+// module tests cover the download/compile state machine).
+vi.mock("@/lib/editor-warmup", () => ({
+  warmEditorWasm: vi.fn(),
+}));
+
 let lastHostPayload: EditorHostPayload | null = null;
 vi.mock("@/components/editor-host/editor-host", () => ({
   EditorHost: (props: { payload: EditorHostPayload }) => {
@@ -54,18 +61,21 @@ import EditorPage from "./page";
 
 // ---------------------------------------------------------------------------
 // Capability-probe stubs (§8.7) — mirror capability-gate.test.tsx: jsdom has
-// neither navigator.gpu nor WebGL2, so without a stub the real gate blocks
-// the editor-host stub in every supported-path render.
+// neither a working navigator.gpu nor WebGL2, so without a stub the real gate
+// blocks the editor-host stub in every supported-path render. "Present" now
+// means an adapter actually ANSWERS (the gate probes requestAdapter, not the
+// property's existence).
 // ---------------------------------------------------------------------------
 
 /**
- * Define (or clear) navigator.gpu. `undefined` is the honest "absent" stub —
- * the gate probes `navigator.gpu !== undefined` (biome bans `delete`).
+ * Define (or clear) navigator.gpu. `undefined` is the honest "absent" stub
+ * (biome bans `delete`); the present form carries a requestAdapter that
+ * resolves an adapter, exactly what the gate's probe awaits.
  */
 function stubNavigatorGpu(present: boolean): void {
   const nav = navigator as Navigator & { gpu?: unknown };
   Object.defineProperty(nav, "gpu", {
-    value: present ? {} : undefined,
+    value: present ? { requestAdapter: async () => ({}) } : undefined,
     configurable: true,
     writable: true,
   });
@@ -182,7 +192,12 @@ describe("editor RSC route", () => {
     const page = await renderPage("launch-film");
     render(<>{page}</>);
 
-    expect(screen.getByTestId("editor-host-stub")).toHaveAttribute("data-project", "Launch film");
+    // The gate's probe is async (one adapter request) — the host appears once
+    // the verdict lands.
+    expect(await screen.findByTestId("editor-host-stub")).toHaveAttribute(
+      "data-project",
+      "Launch film",
+    );
     expect(lastHostPayload).not.toBeNull();
     const payload = lastHostPayload as EditorHostPayload;
     expect(payload.workspaceId).toBe("ws_second");
@@ -223,10 +238,10 @@ describe("editor RSC route", () => {
 
     // The gate replaces the canvas page with the §8.11 full-page state; the
     // host (and its wasm boot) never runs — `lastHostPayload` stays null.
+    const gate = await screen.findByTestId("editor-capability-gate");
+    expect(gate).toHaveAttribute("data-gate-state", "unsupported");
     expect(screen.queryByTestId("editor-host-stub")).not.toBeInTheDocument();
     expect(lastHostPayload).toBeNull();
-    const gate = screen.getByTestId("editor-capability-gate");
-    expect(gate).toHaveAttribute("data-gate-state", "unsupported");
     // §8.11 static-preview offer routes to THIS project's history page.
     expect(screen.getByTestId("editor-gate-preview-link")).toHaveAttribute(
       "href",

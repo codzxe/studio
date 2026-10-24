@@ -265,6 +265,20 @@ eyedroppers read GPU frames back asynchronously (`Gpu::read_display_async`: the 
 frame later). On WebGL2, or without a usable adapter, everything renders on the CPU.
 `effectcraft.info().gpu` reports `{compositor, viewerOnGpu}`.
 
+**Discrete GPU and the boot pre-flight** (`web/index.html`, `web/worker.js`): adapter requests and
+WebGL2 contexts carry no preference by default, so hybrid-graphics laptops (an iGPU plus a discrete
+card) start the editor on the power-saving iGPU. The page and the workers wrap
+`navigator.gpu.requestAdapter` to ask for `powerPreference: "high-performance"` whenever the caller
+did not name one, and the app's `eframe::WebOptions` passes `PowerPreference::HighPerformance`
+natively; when no WebGPU adapter answers, the page takes the canvas's WebGL2 context first with the
+same hint (the first `getContext` decides the GPU — wgpu reuses the existing context). Before the
+engine download, a pre-flight probe asks for one adapter and one WebGL2 context: neither answering
+means the browser's hardware acceleration is off (the usual cause on machines with a GPU), and the
+page fails immediately with that remedy instead of after the whole download.
+`effectcraftLoad.gpu` reports `{webgpu, webgl2, renderer, software}` (`renderer` from
+`WEBGL_debug_renderer_info`; `software` true for SwiftShader and friends — the editor still runs,
+slower, and the loading note says so).
+
 If the page's WebGPU device is lost (a driver reset, the browser reclaiming the GPU), the canvas
 can't show anything new, while the project stays open and commands keep working. The page then
 covers the canvas with a notice (`showDeviceLost` in `js/host.js`) offering **Save Project** (a

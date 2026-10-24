@@ -204,10 +204,31 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
     diskcache::init();
     storage::refresh();
     let runner = eframe::WebRunner::new();
+    // Prefer the discrete GPU: without a power preference, Chrome picks the
+    // power-saving integrated adapter on hybrid-graphics laptops (an iGPU plus
+    // a discrete card) for both WebGPU adapter requests and WebGL2 contexts.
+    // egui-wgpu 0.36 keeps WebGPU preferred with the WebGL2 fallback; the
+    // page's index.html installs a matching `requestAdapter` shim so the
+    // already-shipped dist gets the same choice without a rebuild.
+    let web_options = eframe::WebOptions {
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
+                eframe::egui_wgpu::WgpuSetupCreateNew {
+                    instance_descriptor: Default::default(),
+                    display_handle: None,
+                    power_preference: eframe::egui_wgpu::wgpu::PowerPreference::HighPerformance,
+                    native_adapter_selector: None,
+                    device_descriptor: Arc::new(|_| Default::default()),
+                },
+            ),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     runner
         .start(
             canvas,
-            eframe::WebOptions::default(),
+            web_options,
             Box::new(move |cc| {
                 CTX.with(|c| *c.borrow_mut() = Some(cc.egui_ctx.clone()));
                 // The page owns this shared presentation device; worker devices retain their

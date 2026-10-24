@@ -8,6 +8,7 @@ import {
   createReadOnlyGate,
   wrapReadOnlyBridge,
 } from "@/lib/editor-session";
+import { type EditorWarmupSnapshot, editorWarmupSnapshot } from "@/lib/editor-warmup";
 import { Brand } from "@studio/config";
 import { type EditorBridge, attachEditorBridge } from "@studio/editor-bridge";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -70,6 +71,19 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
   const { state } = session;
   const projectName = payload.manifest.project.name;
   const bus = shortcutBus ?? editorChatShortcutBus;
+
+  // ---------------------------------------------------------------------------
+  // Boot progress (the engine warm-up's parallel download + compile, started by
+  // the capability gate): polled at the same cadence as the dist's own
+  // `effectcraftLoad` boot poll while the boot overlay is up, so the overlay
+  // can say WHERE the 49 MB engine is instead of a frozen "Preparing…".
+  // ---------------------------------------------------------------------------
+  const [warmup, setWarmup] = useState<EditorWarmupSnapshot>(() => editorWarmupSnapshot());
+  useEffect(() => {
+    if (state.phase !== "booting") return;
+    const poll = setInterval(() => setWarmup(editorWarmupSnapshot()), 250);
+    return () => clearInterval(poll);
+  }, [state.phase]);
 
   // ---------------------------------------------------------------------------
   // M4-J: the chat overlay over the editor (additive only — D-18). The host
@@ -288,7 +302,7 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
 
       {/* M3.7 boot UI (covers the iframe while the wasm boots / fails). */}
       {state.phase === "booting" && state.boot === "loading" ? (
-        <BootOverlay projectName={projectName} />
+        <BootOverlay projectName={projectName} warmup={warmup} />
       ) : null}
       {bootFailed && <BootFailureBanner bootError={state.bootError} onRetry={session.retryBoot} />}
 

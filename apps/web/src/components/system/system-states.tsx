@@ -69,6 +69,11 @@ export function UnsupportedGpuState() {
         The editor needs WebGPU or WebGL2. You can still open project pages and watch rendered
         previews — the compositor is the only thing that needs the GPU.
       </p>
+      <p className="mx-auto mt-2 max-w-[68ch] text-center text-caption text-muted">
+        If this device has a graphics card, the usual cause is a browser setting: turn on hardware
+        acceleration (Chrome/Edge: Settings &gt; System &gt; “Use graphics acceleration when
+        available”, then relaunch) and reload the page.
+      </p>
     </div>
   );
 }
