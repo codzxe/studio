@@ -39,7 +39,7 @@
 //      rule 9) and make sure its license text exists under LICENSES/.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -68,24 +68,44 @@ const ALLOW = new Set([
 
 // Allowed, but only under the §16.0 condition (printed as a notice).
 const ALLOW_CONDITIONAL = new Map([
-  ["MPL-2.0", "MPL-2.0 is allowed only for unmodified files, kept identifiable, notices retained (§16.0)"],
+  [
+    "MPL-2.0",
+    "MPL-2.0 is allowed only for unmodified files, kept identifiable, notices retained (§16.0)",
+  ],
 ]);
 
 const DENY_RULES = [
-  { match: (a) => a.startsWith("AGPL"), label: "AGPL — forbidden by §16.5 without written legal review" },
+  {
+    match: (a) => a.startsWith("AGPL"),
+    label: "AGPL — forbidden by §16.5 without written legal review",
+  },
   { match: (a) => a.startsWith("SSPL"), label: "SSPL — forbidden by §16.5" },
-  { match: (a) => a.startsWith("BUSL"), label: "BUSL (Business Source License) — forbidden by §16.5" },
-  { match: (a) => a.startsWith("RSAL"), label: "RSALv2 (Redis Source Available License) — forbidden by §16.5; use Valkey (BSD-3-Clause)" },
+  {
+    match: (a) => a.startsWith("BUSL"),
+    label: "BUSL (Business Source License) — forbidden by §16.5",
+  },
+  {
+    match: (a) => a.startsWith("RSAL"),
+    label:
+      "RSALv2 (Redis Source Available License) — forbidden by §16.5; use Valkey (BSD-3-Clause)",
+  },
   { match: (a) => a.startsWith("ELASTIC"), label: "Elastic License — forbidden by §16.5" },
-  { match: (a) => a.startsWith("FSL"), label: "FSL (Functional Source License) — forbidden by §16.5" },
-  { match: (a) => a === "SUSTAINABLE-USE" || a === "SUSTAINABLE USE LICENSE", label: "Sustainable Use License — forbidden by §16.5" },
+  {
+    match: (a) => a.startsWith("FSL"),
+    label: "FSL (Functional Source License) — forbidden by §16.5",
+  },
+  {
+    match: (a) => a === "SUSTAINABLE-USE" || a === "SUSTAINABLE USE LICENSE",
+    label: "Sustainable Use License — forbidden by §16.5",
+  },
   {
     match: (a) => a === "UNLICENSED" || a === "PROPRIETARY" || a.startsWith("SEE LICENSE"),
     label: "unlicensed/proprietary — not allowed in the closed core",
   },
   {
     match: (a) => a.startsWith("GPL"),
-    label: "GPL/LGPL copyleft — not allowed as a product dependency (§16.0: copyleft tools are fine only as internal, unmodified, separately-run utilities)",
+    label:
+      "GPL/LGPL copyleft — not allowed as a product dependency (§16.0: copyleft tools are fine only as internal, unmodified, separately-run utilities)",
   },
   {
     match: (a) => a.startsWith("CC-BY-NC") || a.startsWith("CC-BY-SA") || a.startsWith("CC-BY-ND"),
@@ -129,7 +149,10 @@ function classify(raw) {
   if (!expr) return { verdict: "unknown", reason: "no license declared" };
 
   // SPDX choice ("MIT OR Apache-2.0"): any allowed branch makes it usable.
-  const orParts = expr.split(" OR ").map((p) => p.trim()).filter(Boolean);
+  const orParts = expr
+    .split(" OR ")
+    .map((p) => p.trim())
+    .filter(Boolean);
   if (orParts.length > 1) {
     const parts = orParts.map(classify);
     const allowed = parts.find((p) => p.verdict === "allow" || p.verdict === "conditional");
@@ -139,7 +162,10 @@ function classify(raw) {
   }
 
   // SPDX conjunction ("A AND B"): every branch must pass.
-  const andParts = expr.split(" AND ").map((p) => p.trim()).filter(Boolean);
+  const andParts = expr
+    .split(" AND ")
+    .map((p) => p.trim())
+    .filter(Boolean);
   if (andParts.length > 1) {
     const parts = andParts.map(classify);
     const denied = parts.find((p) => p.verdict === "deny");
@@ -157,7 +183,8 @@ function classify(raw) {
   const deny = DENY_RULES.find((r) => r.match(atom));
   if (deny) return { verdict: "deny", reason: deny.label };
   if (ALLOW.has(atom)) {
-    if (ALLOW_CONDITIONAL.has(atom)) return { verdict: "conditional", reason: ALLOW_CONDITIONAL.get(atom) };
+    if (ALLOW_CONDITIONAL.has(atom))
+      return { verdict: "conditional", reason: ALLOW_CONDITIONAL.get(atom) };
     return { verdict: "allow" };
   }
   return { verdict: "unknown", reason: `"${expr}" is not in the §16.0 allowlist` };
@@ -247,7 +274,9 @@ function isEnvSecretFile(name) {
 // old behavior there.
 function listCommittedFiles() {
   try {
-    const out = execFileSync("git", ["-C", repoRoot, "ls-files", "-z"], { maxBuffer: 64 * 1024 * 1024 });
+    const out = execFileSync("git", ["-C", repoRoot, "ls-files", "-z"], {
+      maxBuffer: 64 * 1024 * 1024,
+    });
     return out
       .toString("utf8")
       .split("\0")
@@ -264,7 +293,13 @@ function listCommittedFiles() {
 
 function normalizeEntry(name, raw) {
   if (typeof raw === "string") {
-    return { license: raw, status: "declared", kind: "npm", note: "", source: "manifest shorthand" };
+    return {
+      license: raw,
+      status: "declared",
+      kind: "npm",
+      note: "",
+      source: "manifest shorthand",
+    };
   }
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     return {
@@ -275,7 +310,13 @@ function normalizeEntry(name, raw) {
       source: typeof raw.source === "string" ? raw.source : "",
     };
   }
-  return { license: "", status: "invalid", kind: "npm", note: `invalid entry for "${name}"`, source: "" };
+  return {
+    license: "",
+    status: "invalid",
+    kind: "npm",
+    note: `invalid entry for "${name}"`,
+    source: "",
+  };
 }
 
 function loadManifestEntries(errors) {
@@ -292,11 +333,14 @@ function loadManifestEntries(errors) {
     errors.push(`licenses.overrides.json is not valid JSON: ${err.message}`);
     return null;
   }
-  const rawEntries = data && typeof data === "object" && data.packages && typeof data.packages === "object"
-    ? data.packages
-    : null;
+  const rawEntries =
+    data && typeof data === "object" && data.packages && typeof data.packages === "object"
+      ? data.packages
+      : null;
   if (!rawEntries) {
-    errors.push('licenses.overrides.json must contain a "packages" object mapping dependency name → license entry.');
+    errors.push(
+      'licenses.overrides.json must contain a "packages" object mapping dependency name → license entry.',
+    );
     return null;
   }
   const entries = new Map();
@@ -317,7 +361,9 @@ const counts = { ok: 0, conditional: 0, internal: 0, todoVerify: 0, unused: 0 };
 
 const manifests = collectPackageManifests();
 if (manifests.length === 0) {
-  errors.push("no package.json found at root, apps/* or packages/* — nothing to check (is this the repo root?)");
+  errors.push(
+    "no package.json found at root, apps/* or packages/* — nothing to check (is this the repo root?)",
+  );
 }
 
 const deps = new Map(); // name → { spec, locations: Set<string> }
@@ -350,14 +396,13 @@ const where = (locations) => [...locations].sort().join(", ");
 
 // 1) Every external dependency must be declared and its license allowed.
 if (entries) {
-  for (const [name, { spec, locations }] of [...deps.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [name, { spec, locations }] of [...deps.entries()].sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
     const entry = entries.get(name);
     if (!entry) {
       errors.push(
-        `[unknown] "${name}" (${spec}) used in: ${where(locations)} — not declared in licenses.overrides.json.\n` +
-          `        Fix: add   "${name}": { "license": "<SPDX>", "source": "<verified where>" }   to the "packages" map.\n` +
-          `        Unsure? add "status": "TODO-verify". If it ships to users, also add an ATTRIBUTION.md\n` +
-          `        row and its license text under LICENSES/ (spec §1.5 rule 9, §16.0).`,
+        `[unknown] "${name}" (${spec}) used in: ${where(locations)} — not declared in licenses.overrides.json.\n        Fix: add   "${name}": { "license": "<SPDX>", "source": "<verified where>" }   to the "packages" map.\n        Unsure? add "status": "TODO-verify". If it ships to users, also add an ATTRIBUTION.md\n        row and its license text under LICENSES/ (spec §1.5 rule 9, §16.0).`,
       );
       continue;
     }
@@ -369,14 +414,14 @@ if (entries) {
     }
     const verdict = classify(entry.license);
     if (verdict.verdict === "deny") {
-      errors.push(`[deny] "${name}" (${spec}; ${where(locations)}): ${entry.license} — ${verdict.reason}`);
+      errors.push(
+        `[deny] "${name}" (${spec}; ${where(locations)}): ${entry.license} — ${verdict.reason}`,
+      );
       continue;
     }
     if (verdict.verdict === "unknown") {
       errors.push(
-        `[unknown] "${name}" (${spec}; ${where(locations)}): ${verdict.reason}.\n` +
-          `        If this is genuinely a §16.0-class permissive license, add it to ALLOW in\n` +
-          `        scripts/check-licenses.mjs with a spec citation; otherwise replace the dependency.`,
+        `[unknown] "${name}" (${spec}; ${where(locations)}): ${verdict.reason}.\n        If this is genuinely a §16.0-class permissive license, add it to ALLOW in\n        scripts/check-licenses.mjs with a spec citation; otherwise replace the dependency.`,
       );
       continue;
     }
@@ -387,7 +432,9 @@ if (entries) {
       else warnings.push(msg);
     }
     if (entry.kind === "infra") {
-      warnings.push(`"${name}" is declared with kind "infra" but is a real package.json dependency — fix the manifest entry kind.`);
+      warnings.push(
+        `"${name}" is declared with kind "infra" but is a real package.json dependency — fix the manifest entry kind.`,
+      );
     }
     if (verdict.verdict === "conditional") {
       counts.conditional += 1;
@@ -402,7 +449,9 @@ if (entries) {
     if (deps.has(name)) continue;
     const verdict = classify(entry.license);
     if (verdict.verdict === "deny") {
-      errors.push(`[deny] manifest entry "${name}" declares ${entry.license} — ${verdict.reason}. Remove the row or the dependency.`);
+      errors.push(
+        `[deny] manifest entry "${name}" declares ${entry.license} — ${verdict.reason}. Remove the row or the dependency.`,
+      );
       continue;
     }
     if (verdict.verdict === "unknown") {
@@ -413,7 +462,9 @@ if (entries) {
     }
     if (entry.kind === "infra") continue; // infrastructure declarations are expected not to be npm deps
     counts.unused += 1;
-    notices.push(`[info] manifest entry "${name}" matches no current dependency (leftover? fine to keep if a re-add is planned).`);
+    notices.push(
+      `[info] manifest entry "${name}" matches no current dependency (leftover? fine to keep if a re-add is planned).`,
+    );
   }
 }
 
@@ -439,8 +490,12 @@ for (const path of listCommittedFiles()) {
 // ---------------------------------------------------------------------------
 
 out("studio license check — spec §16.0/§16.5, §1.5 rules 8–9 (licenses + fonts + secrets)");
-out(`manifest: ${rel(MANIFEST_PATH)} (${entries ? entries.size : 0} entries, strict mode: ${STRICT ? "on" : "off"})`);
-out(`scanned:  ${manifests.length} package.json (root + apps/* + packages/*), ${deps.size} external dependencies`);
+out(
+  `manifest: ${rel(MANIFEST_PATH)} (${entries ? entries.size : 0} entries, strict mode: ${STRICT ? "on" : "off"})`,
+);
+out(
+  `scanned:  ${manifests.length} package.json (root + apps/* + packages/*), ${deps.size} external dependencies`,
+);
 out(
   `deps:     ${counts.ok} allowed (${counts.conditional} conditional), ${counts.internal} workspace-internal skipped, ${counts.todoVerify} TODO-verify, ${counts.unused} unused manifest rows`,
 );
@@ -463,5 +518,7 @@ if (errors.length > 0) {
   out("(+ ATTRIBUTION.md row and LICENSES/ text if it ships), or remove the dependency/file.");
   process.exitCode = 1;
 } else {
-  out(`PASS — ${counts.ok} declared dependencies allowed, 0 font binaries committed, 0 .env files committed.`);
+  out(
+    `PASS — ${counts.ok} declared dependencies allowed, 0 font binaries committed, 0 .env files committed.`,
+  );
 }

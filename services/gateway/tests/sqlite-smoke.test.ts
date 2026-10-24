@@ -34,9 +34,12 @@ import { afterAll, describe, expect, it } from "vitest";
 // vitest's vite pipeline normalizes node: builtins by stripping the "node:"
 // prefix and vite 5.4's builtin list predates node:sqlite, so a static ESM
 // import fails to resolve under the test runner ("Failed to load url sqlite").
-const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import(
-  "node:sqlite"
-);
+// NOTE (W1-F): the import type lives on a single-line alias on purpose — a
+// multiline `as typeof import(\n  "node:sqlite"\n)` makes Biome's formatter
+// add a trailing comma inside import(...) (call-style), which TypeScript and
+// esbuild both reject (TS1005) — the two tools can only agree on one line.
+type NodeSqliteModule = typeof import("node:sqlite");
+const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as NodeSqliteModule;
 
 import { type ServerType, serve } from "@hono/node-server";
 import { type StudioEnv, parseEnv } from "@studio/config";

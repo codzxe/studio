@@ -68,7 +68,10 @@ export function settingsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       });
     }
 
-    const row = await settings.setUserAutoApply(c.get("auth").user.id, parsed.data.autoApplyEnabled);
+    const row = await settings.setUserAutoApply(
+      c.get("auth").user.id,
+      parsed.data.autoApplyEnabled,
+    );
     const body: SettingsResponse = { autoApplyEnabled: row.autoApplyEnabled };
     return ok(c, body);
   });

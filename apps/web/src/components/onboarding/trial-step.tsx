@@ -24,8 +24,8 @@
 
 import { daysUntil, formatDate, formatMonthlyPrice } from "@/components/billing/page-format";
 import { type CallOptions, isApiError } from "@studio/api-client";
-import type { TrialResponse } from "@studio/contracts";
 import { PLAN_CATALOG } from "@studio/config";
+import type { TrialResponse } from "@studio/contracts";
 import { Button } from "@studio/ui";
 import Link from "next/link";
 import { useMemo, useState } from "react";

@@ -487,9 +487,9 @@ describe("env: DATABASE_URL dialects (W1-03 sqlite dev server)", () => {
     expect(parseEnv({ ...localFixture, DATABASE_URL: "file:.local/studio-dev.db" }).db.url).toBe(
       "file:.local/studio-dev.db",
     );
-    expect(
-      parseEnv({ ...localFixture, DATABASE_URL: "sqlite:/tmp/studio-dev.db" }).db.url,
-    ).toBe("sqlite:/tmp/studio-dev.db");
+    expect(parseEnv({ ...localFixture, DATABASE_URL: "sqlite:/tmp/studio-dev.db" }).db.url).toBe(
+      "sqlite:/tmp/studio-dev.db",
+    );
   });
 
   it("rejects SQLite URLs outside local with the local-only reason — never the path", () => {

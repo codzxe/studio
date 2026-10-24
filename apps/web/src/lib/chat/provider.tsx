@@ -354,9 +354,7 @@ export function ChatProvider({
         // matched row's id returns so the setter keeps the ModelId type.
         const saved = readDefaultModel();
         const match =
-          saved === null
-            ? undefined
-            : response.models.find((model) => model.id === saved);
+          saved === null ? undefined : response.models.find((model) => model.id === saved);
         return match !== undefined ? match.id : (response.models[0]?.id ?? null);
       });
     };

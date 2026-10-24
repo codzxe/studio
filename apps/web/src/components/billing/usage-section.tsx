@@ -440,7 +440,12 @@ export function UsageSection({
       </h3>
       {ledger.loading && ledger.entries.length === 0 ? (
         <div data-testid="usage-ledger-loading" className="mt-2 flex flex-col gap-2">
-          <Skeleton className="h-4 w-56" />
+          {/* max-w-full: §12 no-horizontal-scroll at 320px — w-56 (224px)
+           * alone overflows the card's 211px content box there by 13px
+           * (m9-visual w-billing @320 gate, W1-E; the loading state is
+           * user-visible chrome, so the clamp is the page fix, not a
+           * spec-side wait). */}
+          <Skeleton className="h-4 w-56 max-w-full" />
           <Skeleton className="h-4 w-40" />
         </div>
       ) : ledger.error !== null ? (

@@ -56,7 +56,8 @@ SMOKES — not baselines —, the no-horizontal-scroll gates at 320/390, the
 200% zoom (deviceScaleFactor 2) and reduced-motion arms, an LCP/CLS
 recording, and the guarded axe sweeps over the public marketing + auth
 routes. They add NO new boot steps and NO new baselines: same recipe, same
-env, same ports — plus ONE CI-owned devDep for axe (§11c). The
+env, same ports — plus the axe devDep (§11c — installed on this box 2026-10-24;
+CI owns the scheduled re-runs). The
 editor-unchanged baselines stay in chat/m5, untouched by the M9 wave.
 
 It is **not runnable on the build-fleet box**: that box has no browsers and
@@ -70,6 +71,12 @@ config never picks the spec up (its `include` is
 change was needed). CI owns the devDependency, the lockfile sync and the
 baselines — this README is the exact recipe.
 
+*Status update 2026-10-24: the no-browser/no-devDep framing above is
+superseded on this box — Playwright's chromium is cached, the §5b stack runs
+here, and both devDeps are installed with the lockfile synced (§1a); the
+tsconfig/vitest exclusions stay as recorded. CI still owns the scheduled
+runs and the baselines.*
+
 ---
 
 ## 1. One-time CI setup
@@ -79,6 +86,11 @@ baselines — this README is the exact recipe.
 ```sh
 pnpm --filter @studio/web add -D @playwright/test
 ```
+
+On-box status 2026-10-24: the devDeps are installed (`@playwright/test` 1.57.0;
+`@axe-core/playwright` ^4.14.0, §11c) and `pnpm-lock.yaml` is synced and
+committed — the §5b recipe runs on this box. CI remains the owner of record for
+scheduled runs; the recipe above stays canonical.
 
 Optional script entries for `apps/web/package.json` (the quality-bar
 command `pnpm --filter @studio/web e2e` needs the first one):
@@ -221,6 +233,11 @@ output — recorded from a verified run against the current pin
 comp "Main" · 3 items · next_id 66
 47997 bytes · sha256 aec54404efd423674555df2388bbf8b0ed59f378dbb3e3fe20684c818351f91d
 ```
+
+Re-produced 2026-10-24 at the same pin (`9db7f3b2`): **byte-identical** to the
+recorded fingerprint — the generated artifact is now committed at
+`apps/web/demo-project.ecproj` (47,997 bytes, sha256 unchanged), so the staging
+step below can copy the committed file instead of re-running the generator.
 
 Stage the bytes at the seeded object keys (the gateway's local driver reads
 `<cwd>/.local/storage/<key>`, and `pnpm --filter @studio/gateway dev` runs
@@ -558,7 +575,7 @@ baselines in the suite and are not touched by the M9 wave.
 | Spec | Tests | What it proves |
 |---|---|---|
 | `m9-visual.spec.ts` | 22 | 8 marketing + 2 auth + 4 authed pages each swept at 320/390/768/1024/1280/1440/1920 (document answers < 400, surface testid renders, §13 primary action visible, full-page screenshot smoke at every width; hard no-horizontal-scroll gate at 320 + 390); a reduced-motion arm (3 pages × 390/1280: matchMedia took, theme.css §6.2 override collapses the frame-line animation, layout invariants hold); a 200% zoom spot-check (deviceScaleFactor 2 at 390 + 768); a landing LCP/CLS smoke (§11e) |
-| `m9-axe.spec.ts` | 10 (skipped until §11c) | axe sweeps over the 10 public routes — zero WCAG 2.x A/AA violations, full JSON report attached per test |
+| `m9-axe.spec.ts` | 10 (runtime-guarded per §11c — the devDep is installed on this box since 2026-10-24, so the sweeps run here; an absent install still skips visibly) | axe sweeps over the 10 public routes — zero WCAG 2.x A/AA violations, full JSON report attached per test |
 
 Run just the M9 wave: `pnpm --filter @studio/web exec playwright test m9-`.
 
@@ -591,17 +608,20 @@ may overflow 320px. If CI confirms, the fix belongs in the app chrome
 the gate. The same ruling applies to the authed shell pages at 320
 (§12: "no horizontal scroll at 320px for the shell").
 
-### 11c. The axe install contract (CI-owned — packages/ui/README.md §5)
+### 11c. The axe install contract (installed on this box 2026-10-24; CI owns the scheduled re-runs — packages/ui/README.md §5)
 
 ```sh
 pnpm --filter @studio/web add -D @axe-core/playwright
 ```
 
-- The spec loads the package through a **runtime import guard**: absent →
-  every axe test SKIPS with the install command as its printed reason (a
-  logged, visible skip — never a silent green, never a red). On the build
-  box that is the permanent state (the no-install law); CI installs once and
-  the sweep goes live with zero other changes.
+- **Installed 2026-10-24** — `@axe-core/playwright` is now a devDep in
+  `apps/web/package.json` (`^4.14.0`) with `pnpm-lock.yaml` synced and committed:
+  the sweeps are runnable on this box, no longer a CI-only install. CI still owns
+  the scheduled re-runs (the sweep's home of record); the command above stays the
+  canonical install for any box that lacks it.
+- The spec keeps its **runtime import guard**: absent → every axe test SKIPS with
+  the install command as its printed reason (a logged, visible skip — never a
+  silent green, never a red). With the devDep present the tests run for real.
 - The gate is **zero violations** on `wcag2a/wcag2aa/wcag21a/wcag21aa`. The
   full JSON report is attached per test (`axe-report-<page>`) so a red names
   the exact rules and nodes.

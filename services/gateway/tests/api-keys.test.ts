@@ -197,7 +197,10 @@ d("GET /v1/workspaces/:id/api-keys — workspace list (never key material)", () 
   it("an admin sees the OWNER-minted key; paged; plaintext never appears", async () => {
     const jarOwner = await signUp();
     const ws = await createWorkspace(jarOwner);
-    const first = await mintKey(jarOwner, ws.id, { name: "Owner key A", scopes: ["projects:read"] });
+    const first = await mintKey(jarOwner, ws.id, {
+      name: "Owner key A",
+      scopes: ["projects:read"],
+    });
     const second = await mintKey(jarOwner, ws.id, {
       name: "Owner key B",
       scopes: ["billing:read"],
@@ -231,7 +234,10 @@ d("DELETE /v1/workspaces/:id/api-keys/:keyId — revoke (§7.1)", () => {
   it("an admin revokes the owner's key: idempotent, audited, enabled flips", async () => {
     const jarOwner = await signUp();
     const ws = await createWorkspace(jarOwner);
-    const created = await mintKey(jarOwner, ws.id, { name: "Doomed key", scopes: ["projects:read"] });
+    const created = await mintKey(jarOwner, ws.id, {
+      name: "Doomed key",
+      scopes: ["projects:read"],
+    });
     expect(created.status).toBe(201);
     expect(created.minted).toBeDefined();
 

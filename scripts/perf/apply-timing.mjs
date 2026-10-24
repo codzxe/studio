@@ -210,7 +210,9 @@ const HIGH_RISK_COMPILED_BATCH = {
   ],
 };
 
-const HIGH_RISK_RESOLUTIONS = [{ requestId: "req_bg", layerName: "Background", disambiguation: [] }];
+const HIGH_RISK_RESOLUTIONS = [
+  { requestId: "req_bg", layerName: "Background", disambiguation: [] },
+];
 
 function highRiskRunEvents(runId) {
   return [
@@ -267,7 +269,10 @@ async function measureApplyOnce(page, runId) {
   const onResponse = (res) => {
     if (t0 === null) return;
     const m = mutations.find(
-      (x) => x.status === null && res.url().replace(BASE_URL, "") === x.url && res.request().method() === x.method,
+      (x) =>
+        x.status === null &&
+        res.url().replace(BASE_URL, "") === x.url &&
+        res.request().method() === x.method,
     );
     if (m) m.status = res.status();
   };
@@ -279,7 +284,10 @@ async function measureApplyOnce(page, runId) {
     await page.route("**/v1/threads/*/chat", async (route) => {
       await route.fulfill({
         status: 200,
-        headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store" },
+        headers: {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-store",
+        },
         body: sseFrames(highRiskRunEvents(runId)),
       });
     });
@@ -291,9 +299,7 @@ async function measureApplyOnce(page, runId) {
 
     const plan = page.getByTestId("plan-card");
     await plan.waitFor({ state: "visible", timeout: RUN_SETTLE_TIMEOUT_MS });
-    await page
-      .locator('[data-testid="plan-card"]')
-      .waitFor({ state: "attached" });
+    await page.locator('[data-testid="plan-card"]').waitFor({ state: "attached" });
     await page.waitForFunction(
       () => {
         const el = document.querySelector('[data-testid="plan-card"]');
@@ -306,10 +312,13 @@ async function measureApplyOnce(page, runId) {
     const applyButton = plan.getByTestId("plan-apply");
     await checkbox.check();
     await applyButton.waitFor({ state: "visible" });
-    await page.waitForFunction(() => {
-      const btn = document.querySelector('[data-testid="plan-apply"]');
-      return btn !== null && !btn.hasAttribute("disabled");
-    }, { timeout: RUN_SETTLE_TIMEOUT_MS });
+    await page.waitForFunction(
+      () => {
+        const btn = document.querySelector('[data-testid="plan-apply"]');
+        return btn !== null && !btn.hasAttribute("disabled");
+      },
+      { timeout: RUN_SETTLE_TIMEOUT_MS },
+    );
 
     await applyButton.click();
     const dialog = page.getByTestId("chat-confirm-dialog");
@@ -421,9 +430,11 @@ async function main() {
       const sample = await measureApplyOnce(page, `run_perf_apply_${i}_${Date.now()}`);
       result.samples.push(sample);
       log(
-        `apply run ${i}: ${sample.ok
-          ? `applied ${sample.appliedMs} ms, versionSaved ${sample.versionSavedMs ?? "NEVER"} ms, saveFailureCopy=${sample.saveFailureCopyVisible}`
-          : `FAILED: ${sample.error}`}`,
+        `apply run ${i}: ${
+          sample.ok
+            ? `applied ${sample.appliedMs} ms, versionSaved ${sample.versionSavedMs ?? "NEVER"} ms, saveFailureCopy=${sample.saveFailureCopyVisible}`
+            : `FAILED: ${sample.error}`
+        }`,
       );
       await page.close();
       persist();
@@ -439,7 +450,8 @@ async function main() {
     .map((s) => s.versionSavedMs);
   result.summary = {
     confirmToApplied: stats(appliedOk),
-    confirmToVersionSaved: savedOk.length > 0 ? stats(savedOk) : { n: 0, note: "no version upload landed in any run" },
+    confirmToVersionSaved:
+      savedOk.length > 0 ? stats(savedOk) : { n: 0, note: "no version upload landed in any run" },
     budget: { row: "Apply (engine.batch, ≤20 steps)", p75Ms: 300 },
     note: "confirm→applied INCLUDES engine.batch + card state machinery + version upload + applyRun report (an upper bound for the engine.batch-only budget); next dev + tsx gateway, sandbox shared CPU, loopback; scripted SSE plan (m5 fixture) so the model wire never contaminates the timing",
   };
@@ -451,6 +463,7 @@ async function main() {
 }
 
 main().catch((err) => {
+  // biome-ignore lint/suspicious/noConsole: CLI perf script — reports failure to stderr before exit
   console.error(`apply-timing FAILED: ${err?.stack ?? err}`);
   process.exit(1);
 });

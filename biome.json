@@ -19,7 +19,14 @@
       "**/fixtures/**",
       "editor/**",
       "**/target/**",
-      "skills/**"
+      "skills/**",
+      ".turbo/**",
+      ".local/**",
+      "apps/web/e2e/.results/**",
+      "apps/web/e2e/zz-*",
+      "packages/*/src/**/*.js",
+      "packages/*/src/**/*.js.map",
+      "packages/*/src/**/*.d.ts"
     ]
   }
 }

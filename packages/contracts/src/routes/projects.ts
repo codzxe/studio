@@ -34,7 +34,8 @@ export const PATCH_PROJECT_SCHEMA = z
     archived: z.boolean().optional(),
   })
   .refine(
-    (body) => body.name !== undefined || body.description !== undefined || body.archived !== undefined,
+    (body) =>
+      body.name !== undefined || body.description !== undefined || body.archived !== undefined,
     "at least one of name, description or archived is required",
   );
 

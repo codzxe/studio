@@ -35,7 +35,14 @@ mkdirSync(OUT, { recursive: true });
 mkdirSync(RAW, { recursive: true });
 
 const log = (...a) => console.log(`[capture ${new Date().toISOString().slice(11, 19)}]`, ...a);
-const marks = { contextStart: 0, typingStart: 0, sentAt: 0, streamDoneAt: 0, motionStart: 0, closedAt: 0 };
+const marks = {
+  contextStart: 0,
+  typingStart: 0,
+  sentAt: 0,
+  streamDoneAt: 0,
+  motionStart: 0,
+  closedAt: 0,
+};
 
 const browser = await chromium.launch({
   // /dev/shm is 64MB on this box — Chromium's default shm usage crashes the
@@ -116,9 +123,7 @@ try {
   const editorFrame = page.frames().find((f) => f.url().includes("/editor/"));
   if (editorFrame) {
     const ec = await editorFrame.evaluate(() => typeof window.effectcraft);
-    const canvases = await editorFrame.evaluate(
-      () => document.querySelectorAll("canvas").length,
-    );
+    const canvases = await editorFrame.evaluate(() => document.querySelectorAll("canvas").length);
     log(`iframe window.effectcraft=${ec}, canvases=${canvases}`);
   } else {
     log("WARN: editor iframe not found by URL");
@@ -141,7 +146,10 @@ try {
   }
 
   // Click the iframe first (focus inside the editor, D-5).
-  await page.mouse.click(iframeBox.x + iframeBox.width * 0.5, iframeBox.y + iframeBox.height * 0.45);
+  await page.mouse.click(
+    iframeBox.x + iframeBox.width * 0.5,
+    iframeBox.y + iframeBox.height * 0.45,
+  );
   await page.waitForTimeout(400);
 
   const before = await readPlayhead();
@@ -208,12 +216,8 @@ try {
   // everything from the user bubble down to just above the tool card — the
   // raw tool-card JSON and the plan card get their own crop / none.
   const userMsg = page.locator('[data-testid="chat-message"][data-role="user"]');
-  const toolCard = page.locator(
-    '[data-testid="tool-card"][data-tool="studio.get_context"]',
-  );
-  const panelBox = await page
-    .getByTestId("chat-panel-layer")
-    .boundingBox();
+  const toolCard = page.locator('[data-testid="tool-card"][data-tool="studio.get_context"]');
+  const panelBox = await page.getByTestId("chat-panel-layer").boundingBox();
   const b1 = await userMsg.boundingBox();
   const bTool = await toolCard.boundingBox();
   const pad = 10;
@@ -278,7 +282,10 @@ try {
   // Real interaction: playback (Space) + a slow timeline scrub drag through
   // the discovered scrub zone. Content settles as the video's final 8s.
   marks.motionStart = Date.now();
-  await page.mouse.click(iframeBox.x + iframeBox.width * 0.5, iframeBox.y + iframeBox.height * 0.45);
+  await page.mouse.click(
+    iframeBox.x + iframeBox.width * 0.5,
+    iframeBox.y + iframeBox.height * 0.45,
+  );
   await page.waitForTimeout(300);
   await page.keyboard.press("Space");
   await page.waitForTimeout(2000);
@@ -287,11 +294,9 @@ try {
   await page.mouse.move(iframeBox.x + iframeBox.width * 0.08, dragY);
   await page.mouse.down();
   for (let i = 1; i <= 24; i++) {
-    await page.mouse.move(
-      iframeBox.x + iframeBox.width * (0.08 + 0.34 * (i / 24)),
-      dragY,
-      { steps: 2 },
-    );
+    await page.mouse.move(iframeBox.x + iframeBox.width * (0.08 + 0.34 * (i / 24)), dragY, {
+      steps: 2,
+    });
     await page.waitForTimeout(80);
   }
   await page.mouse.up();
@@ -317,6 +322,7 @@ try {
   writeFileSync(`${RAW}/timeline.json`, JSON.stringify(summary, null, 2));
   log("timeline.json:", JSON.stringify(summary.offsets));
 } catch (error) {
+  // biome-ignore lint/suspicious/noConsole: CLI capture script — reports failure to stderr before exit
   console.error("[capture] FAILED:", error);
   await page.screenshot({ path: `${RAW}/failure.png` }).catch(() => {});
   process.exitCode = 1;

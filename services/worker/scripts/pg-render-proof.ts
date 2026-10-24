@@ -29,13 +29,7 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { type StudioEnv, estimateRenderCostDetailUc, parseEnv } from "@studio/config";
-import {
-  createDb,
-  createRepos,
-  migrateDatabase,
-  organization,
-  user,
-} from "@studio/db";
+import { createDb, createRepos, migrateDatabase, organization, user } from "@studio/db";
 import { assetKey, renderKey, sha256Hex, snapshotKey } from "@studio/gateway/storage";
 
 import { resolveCliPath, resolveRenderKnobs } from "../src/cli.js";
@@ -45,8 +39,7 @@ import { createWorkerStorage, defaultRepoRoot } from "../src/storage.js";
 import { MAIN_COMP, loadPhotoFixture, loadProjectFixture } from "../tests/integration/harness.js";
 
 const REPO = defaultRepoRoot();
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgres://studio:studio@127.0.0.1:5432/studio";
+const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://studio:studio@127.0.0.1:5432/studio";
 const PROOF_ROOT = join(REPO, ".local", "v1-loop-proof");
 const GRANT_UC = 20_000_000;
 
@@ -83,7 +76,9 @@ async function main(): Promise<void> {
   const env = proofEnv();
   const cli = resolveCliPath(env.render.cliPath, REPO);
   const cliPresent = existsSync(cli.path);
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`v1-loop render proof — dialect=postgres db=${DATABASE_URL}`);
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`CLI resolution: path=${cli.path} source=${cli.source} present=${cliPresent}`);
   if (!cliPresent) throw new Error("effectcraft-cli not resolvable — nothing to prove");
 
@@ -131,6 +126,7 @@ async function runProof(
       drained += 1;
     }
   }
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`\nqueue hygiene: terminal-failed ${drained} ownerless debris rows`);
 
   // ── seed one throwaway workspace exactly the way the gateway would ────────
@@ -218,6 +214,7 @@ async function runProof(
     idempotencyKey: `render:reserve:${render.id}`,
     metadata: { proof: "W3-C3", quality: knobs.effective.quality },
   });
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(
     `\nqueued render ${render.id} — comp=${MAIN_COMP.compId} 1920×1080 best, quote=${detail.totalUc} µc (raw ${detail.rawUc}${detail.minApplied ? ", min applied" : ""})`,
   );
@@ -274,23 +271,41 @@ async function runProof(
   };
   writeFileSync(join(PROOF_ROOT, "proof.json"), `${JSON.stringify(proof, null, 2)}\n`);
 
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log("\n── v1-loop RENDER STEP PROOF ──────────────────────────────");
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`  renderId     : ${render.id}`);
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`  wall time    : ${wallMs} ms`);
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`  objectKey    : ${outcome.objectKey}`);
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`  on-disk path : ${onDisk}`);
-  console.log(`  size         : ${sizeOnDisk} bytes (${(sizeOnDisk / 1024 / 1024).toFixed(2)} MiB)`);
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
+  console.log(
+    `  size         : ${sizeOnDisk} bytes (${(sizeOnDisk / 1024 / 1024).toFixed(2)} MiB)`,
+  );
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`  mp4 ftyp     : yes; frames total: ${row.framesTotal}`);
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(
     `  ledger       : ${ledgerRows.join(", ")} → net ${GRANT_UC - balance} µc (quoted ${detail.totalUc})`,
   );
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`  proof.json   : ${join(PROOF_ROOT, "proof.json")}`);
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log("────────────────────────────────────────────────────────────");
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`  tick claimed ${tick.claimed} job(s) — the proof render ran the real pipeline`);
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log("V1-LOOP RENDER PROOF: PASS");
 }
 
 main().catch((error: unknown) => {
-  console.error("V1-LOOP RENDER PROOF FAIL:", error instanceof Error ? error.message : String(error));
+  // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
+  console.error(
+    "V1-LOOP RENDER PROOF FAIL:",
+    error instanceof Error ? error.message : String(error),
+  );
   process.exitCode = 1;
 });

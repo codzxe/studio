@@ -13,7 +13,7 @@
 
 import { z } from "zod";
 
-import { type Id, ID_SCHEMA, ISO8601_SCHEMA, PAGINATION_QUERY_SCHEMA } from "./common.js";
+import { ID_SCHEMA, ISO8601_SCHEMA, type Id, PAGINATION_QUERY_SCHEMA } from "./common.js";
 
 /** `GET /v1/workspaces/:id/audit` query — pagination + optional target filter. */
 export const AUDIT_QUERY_SCHEMA = PAGINATION_QUERY_SCHEMA.extend({

@@ -49,9 +49,7 @@ function attempt<T>(call: () => T): Attempt<T> {
 /** A guard that throws on fuzz input is a bug — fail the test with context. */
 function unwrap<T>(result: Attempt<T>): T {
   if (result.threw) {
-    throw new Error(
-      `guard crashed instead of returning a typed envelope: ${String(result.error)}`,
-    );
+    throw new Error(`guard crashed instead of returning a typed envelope: ${String(result.error)}`);
   }
   return result.value;
 }

@@ -513,8 +513,7 @@ const databaseUrl = z
   .string()
   .min(1)
   .refine(
-    (value: string) =>
-      /^postgres(ql)?:\/\//.test(value) || /^(file|sqlite):\S+/.test(value),
+    (value: string) => /^postgres(ql)?:\/\//.test(value) || /^(file|sqlite):\S+/.test(value),
     "must be a PostgreSQL URL (postgres:// or postgresql://) or, for local dev only, a SQLite file URL (file:… or sqlite:…)",
   );
 

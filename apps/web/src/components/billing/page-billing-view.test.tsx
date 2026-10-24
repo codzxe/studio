@@ -20,6 +20,7 @@
  */
 
 import { ApiError } from "@studio/api-client";
+import { PLAN_CATALOG } from "@studio/config";
 import type {
   BillingState,
   CheckoutResponse,
@@ -29,17 +30,16 @@ import type {
   RenderJob,
   TopUpResponse,
 } from "@studio/contracts";
-import { PLAN_CATALOG } from "@studio/config";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type Mock, afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { formatMonthlyPrice } from "./page-format";
 import {
   type BillingInvoiceRow,
   BillingPageView,
   type BillingPageViewProps,
 } from "./page-billing-view";
+import { formatMonthlyPrice } from "./page-format";
 
 // ---------------------------------------------------------------------------
 // Redirect seam: jsdom cannot navigate — replace `location` with a stub that

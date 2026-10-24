@@ -445,7 +445,8 @@ export const CORPUS = [
   {
     id: "zip-bomb/png-61mp-claim-1kb-payload",
     category: "zip-bomb",
-    threat: "IHDR claims 10000×6100 (61 MP) on a 1 KB zero IDAT — the decompression bomb is rejected from the header claim alone, nothing is ever inflated",
+    threat:
+      "IHDR claims 10000×6100 (61 MP) on a 1 KB zero IDAT — the decompression bomb is rejected from the header claim alone, nothing is ever inflated",
     claimedExt: ".png",
     claimedMime: "image/png",
     filename: "totally-a-photo.png",
@@ -465,7 +466,8 @@ export const CORPUS = [
   {
     id: "zip-bomb/png-60mp-claim-1kb-payload-inert",
     category: "zip-bomb",
-    threat: "exactly 60 MP claimed on a 1 KB payload — inert-header rule: the validator parses headers only (never inflates), so an at-cap claim passes and decode safety is the worker's job",
+    threat:
+      "exactly 60 MP claimed on a 1 KB payload — inert-header rule: the validator parses headers only (never inflates), so an at-cap claim passes and decode safety is the worker's job",
     claimedExt: ".png",
     claimedMime: "image/png",
     filename: "sixty-megapixels.png",
@@ -492,7 +494,8 @@ export const CORPUS = [
   {
     id: "exif/app1-gps-thumbnail-and-comment",
     category: "exif-payload",
-    threat: "APP1 EXIF with IFD0 + GPS block + embedded thumbnail JPEG plus a scripted COM segment — upload must be ACCEPTED (§20.2: stripped downstream, never rejected) and the strip plan must drop APP1+COM without growing the file",
+    threat:
+      "APP1 EXIF with IFD0 + GPS block + embedded thumbnail JPEG plus a scripted COM segment — upload must be ACCEPTED (§20.2: stripped downstream, never rejected) and the strip plan must drop APP1+COM without growing the file",
     claimedExt: ".jpg",
     claimedMime: "image/jpeg",
     filename: "phone-photo.jpg",
@@ -513,7 +516,8 @@ export const CORPUS = [
   {
     id: "exif/xmp-and-icc-survive-strip",
     category: "exif-payload",
-    threat: "XMP APP1 + ICC APP2 + COM: only the comment may be dropped — §15.2 keep colour profiles",
+    threat:
+      "XMP APP1 + ICC APP2 + COM: only the comment may be dropped — §15.2 keep colour profiles",
     claimedExt: ".jpg",
     claimedMime: "image/jpeg",
     filename: "profiled.jpg",
@@ -537,7 +541,8 @@ export const CORPUS = [
   {
     id: "exif/dual-app1-little-and-big-endian",
     category: "exif-payload",
-    threat: "two EXIF APP1 segments (II and MM byte order) + COM — all three metadata segments removed by one plan",
+    threat:
+      "two EXIF APP1 segments (II and MM byte order) + COM — all three metadata segments removed by one plan",
     claimedExt: ".jpg",
     claimedMime: "image/jpeg",
     filename: "dual-exif.jpg",
@@ -576,7 +581,8 @@ export const CORPUS = [
   {
     id: "corrupt/png-ihdr-bad-crc",
     category: "corrupt",
-    threat: "IHDR CRC has one flipped bit — dimension claims must not be trusted from a broken header",
+    threat:
+      "IHDR CRC has one flipped bit — dimension claims must not be trusted from a broken header",
     claimedExt: ".png",
     claimedMime: "image/png",
     filename: "bad-crc.png",
@@ -700,15 +706,7 @@ export const CORPUS = [
     claimedExt: ".jpg",
     claimedMime: "image/jpeg",
     filename: "two-frames.jpg",
-    bytes: concat(
-      JPEG_SOI,
-      jfifApp0(),
-      sof0(4, 4),
-      sof0(16, 16),
-      JPEG_SOS,
-      JPEG_ENTROPY,
-      JPEG_EOI,
-    ),
+    bytes: concat(JPEG_SOI, jfifApp0(), sof0(4, 4), sof0(16, 16), JPEG_SOS, JPEG_ENTROPY, JPEG_EOI),
     expect: { sniff: "image/jpeg", validate: "file_corrupt", strip: "file_corrupt" },
   },
 
@@ -716,7 +714,8 @@ export const CORPUS = [
   {
     id: "unsupported/svg-with-inline-script",
     category: "unsupported",
-    threat: "SVG with inline script — must never be sniffable (§15.2 XSS note: only sanitised SVG may be accepted, never via this path)",
+    threat:
+      "SVG with inline script — must never be sniffable (§15.2 XSS note: only sanitised SVG may be accepted, never via this path)",
     claimedExt: ".svg",
     claimedMime: "image/svg+xml",
     filename: "logo.svg",
@@ -747,7 +746,8 @@ export const CORPUS = [
   {
     id: "unsupported/zip-pk-renamed-png",
     category: "unsupported",
-    threat: "ZIP container (PK\\x03\\x04) renamed to .png — archive bomb hoping to be re-served as an image",
+    threat:
+      "ZIP container (PK\\x03\\x04) renamed to .png — archive bomb hoping to be re-served as an image",
     claimedExt: ".png",
     claimedMime: "image/png",
     filename: "archive.png",
@@ -797,7 +797,8 @@ export const CORPUS = [
   {
     id: "mislabeled/webp-outside-upload-surface",
     category: "mislabeled",
-    threat: "well-formed WebP — recognised by the sniffer but outside the §20.2 JPEG/PNG upload surface",
+    threat:
+      "well-formed WebP — recognised by the sniffer but outside the §20.2 JPEG/PNG upload surface",
     claimedExt: ".webp",
     claimedMime: "image/webp",
     filename: "modern.webp",
@@ -833,7 +834,7 @@ export const CORPUS = [
     threat: "10 KB filename — header/DB overflow at layers that store names verbatim",
     claimedExt: ".png",
     claimedMime: "image/png",
-    filename: "a".repeat(10_000) + ".png",
+    filename: `${"a".repeat(10_000)}.png`,
     bytes: PNG_1x1,
     expect: { sniff: "image/png", validate: "ok", strip: "ok-keep" },
   },
@@ -899,7 +900,8 @@ export const CORPUS = [
   {
     id: "degenerate/over-25mb-cap",
     category: "degenerate",
-    threat: "25 MB cap + 1 byte, PNG-prefixed — pins the check order: the size gate fires before any sniff or scan",
+    threat:
+      "25 MB cap + 1 byte, PNG-prefixed — pins the check order: the size gate fires before any sniff or scan",
     claimedExt: ".png",
     claimedMime: "image/png",
     filename: "huge.png",

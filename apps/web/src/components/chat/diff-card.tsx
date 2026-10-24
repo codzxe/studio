@@ -513,7 +513,6 @@ export function PlanDiffCard({
 
   // Before-values: read ONCE per batch content while the plan is proposed.
   const [reads, setReads] = useState<ReadonlyMap<string, OldValueResult> | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: diff is memoized on batchKey; requests derive from it deterministically
   useEffect(() => {
     if (bridge === undefined) return;
     const requests = oldValueRequestsOf(diff);

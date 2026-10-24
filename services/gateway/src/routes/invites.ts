@@ -61,15 +61,11 @@ async function assertSeatAvailable(
   const seats = entitlementsFor(plan).seats;
   const pending = await countPendingInvites(deps, c.req.raw.headers, context.id);
   if (context.members.length + pending >= seats) {
-    throw new GatewayError(
-      "SEATS_EXCEEDED",
-      "This workspace is at its plan's seat limit.",
-      {
-        status: 429,
-        hint: "Upgrade the plan, or remove a member, before inviting more people.",
-        requestId: c.get("requestId"),
-      },
-    );
+    throw new GatewayError("SEATS_EXCEEDED", "This workspace is at its plan's seat limit.", {
+      status: 429,
+      hint: "Upgrade the plan, or remove a member, before inviting more people.",
+      requestId: c.get("requestId"),
+    });
   }
 }
 

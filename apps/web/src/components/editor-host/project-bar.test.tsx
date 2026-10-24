@@ -16,12 +16,7 @@
  */
 
 import { ApiError } from "@studio/api-client";
-import type {
-  Page,
-  ShareLinkIssued,
-  ShareLinkRevoked,
-  ShareLinkView,
-} from "@studio/contracts";
+import type { Page, ShareLinkIssued, ShareLinkRevoked, ShareLinkView } from "@studio/contracts";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectBar } from "./project-bar";
@@ -268,13 +263,7 @@ describe("ProjectBar — the real Share dialog", () => {
         },
       },
     };
-    render(
-      <ProjectBar
-        projectName="P"
-        readOnly={false}
-        share={{ projectId: "prj_1", client }}
-      />,
-    );
+    render(<ProjectBar projectName="P" readOnly={false} share={{ projectId: "prj_1", client }} />);
     openShareDialog();
     await waitFor(() => {
       expect(screen.getAllByTestId("editor-share-link")).toHaveLength(2);
@@ -325,13 +314,7 @@ describe("ProjectBar — the real Share dialog", () => {
         },
       },
     };
-    render(
-      <ProjectBar
-        projectName="P"
-        readOnly={false}
-        share={{ projectId: "prj_1", client }}
-      />,
-    );
+    render(<ProjectBar projectName="P" readOnly={false} share={{ projectId: "prj_1", client }} />);
     openShareDialog();
 
     // List error → typed message + Try again recovers.

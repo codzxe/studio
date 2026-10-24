@@ -85,6 +85,7 @@ const MAIN_COMP = { compId: "Main", width: 640, height: 360, frameRate: 30, dura
 
 function assert(condition: boolean, label: string): void {
   if (!condition) throw new Error(label);
+  // biome-ignore lint/suspicious/noConsole: CLI smoke script — console progress/results are its interface
   console.log(`  ✓ ${label}`);
 }
 
@@ -116,6 +117,7 @@ async function main(): Promise<void> {
   const logger = createWorkerLogger(env);
   const deps = { db, repos, ledger: repos.ledger, storage, env, logger };
 
+  // biome-ignore lint/suspicious/noConsole: CLI smoke script — console progress/results are its interface
   console.log(`W5-10 sqlite pipeline smoke — db=${SMOKE_DB} storage=${storageRoot}`);
 
   // ── Seed: throwaway workspace exactly like the gateway would persist it ──
@@ -217,6 +219,7 @@ async function main(): Promise<void> {
   let expectedBalance = GRANT_UC;
 
   // ── PHASE 1 — dialect forks at repo level (no CLI involved) ──────────────
+  // biome-ignore lint/suspicious/noConsole: CLI smoke script — console progress/results are its interface
   console.log("\n[Phase 1] renders/ledger repo dialect forks on sqlite");
   {
     const seeded = await seedProject(true);
@@ -322,9 +325,11 @@ async function main(): Promise<void> {
   }
 
   // ── PHASE 2 — LIVE pipeline: runOnce drives claim → hydrate → spawn ──────
+  // biome-ignore lint/suspicious/noConsole: CLI smoke script — console progress/results are its interface
   console.log("\n[Phase 2] runOnce: live claim → hydrate → spawn → honest terminal");
   const cli = resolveCliPath(env.render.cliPath, REPO);
   const cliPresent = cli.source === "env" || (cli.source === "repo-build" && existsSync(cli.path));
+  // biome-ignore lint/suspicious/noConsole: CLI smoke script — console progress/results are its interface
   console.log(`  CLI resolution: path=${cli.path} source=${cli.source} present=${cliPresent}`);
   let renderCId = "";
   {
@@ -355,6 +360,7 @@ async function main(): Promise<void> {
       );
       const page = await repos.ledger.list(workspaceId, { renderId: renderCId });
       const kinds = page.items.map((entry) => `${entry.kind}:${entry.amount}`).join(", ");
+      // biome-ignore lint/suspicious/noConsole: CLI smoke script — console progress/results are its interface
       console.log(`  ledger rows for render: ${kinds}`);
       assert(
         kinds.includes("reserve:-") && kinds.includes("refund:"),
@@ -376,6 +382,7 @@ async function main(): Promise<void> {
   }
 
   // ── PHASE 3 — the long-lived loop: startWorker + graceful stop ────────────
+  // biome-ignore lint/suspicious/noConsole: CLI smoke script — console progress/results are its interface
   console.log("\n[Phase 3] startWorker loop: claims, terminal-fails, stops cleanly");
   {
     const seededD = await seedProject(true); // CLI missing → RENDER_CLI_MISSING
@@ -424,6 +431,7 @@ async function main(): Promise<void> {
   }
 
   // ── Hygiene: no leaked render workdirs, throwaway files removed ──────────
+  // biome-ignore lint/suspicious/noConsole: CLI smoke script — console progress/results are its interface
   console.log("\n[Hygiene]");
   {
     const entries = (
@@ -439,6 +447,7 @@ async function main(): Promise<void> {
   rmSync(scratchParent, { recursive: true, force: true });
   for (const suffix of ["", "-shm", "-wal"]) rmSync(`${SMOKE_DB}${suffix}`, { force: true });
 
+  // biome-ignore lint/suspicious/noConsole: CLI smoke script — console progress/results are its interface
   console.log(
     `\nW5-10 SMOKE PASS — sqlite pipeline verified (CLI ${
       cliPresent ? "PRESENT — full success path" : "ABSENT — honest degrade path"
@@ -447,6 +456,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
+  // biome-ignore lint/suspicious/noConsole: CLI smoke script — console progress/results are its interface
   console.error("W5-10 SMOKE FAIL:", error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });

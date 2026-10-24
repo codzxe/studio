@@ -19,7 +19,6 @@ import {
 
 import { activityRoutes } from "./routes/activity.js";
 import { apiKeysRoutes } from "./routes/api-keys.js";
-import { membersRoutes } from "./routes/members.js";
 import { applyRoutes } from "./routes/apply.js";
 import { assetsRoutes } from "./routes/assets.js";
 import { billingRoutes } from "./routes/billing.js";
@@ -31,6 +30,7 @@ import { invitesRoutes } from "./routes/invites.js";
 import { leasesRoutes } from "./routes/leases.js";
 import { localStorageRoutes } from "./routes/local-storage.js";
 import { meRoutes } from "./routes/me.js";
+import { membersRoutes } from "./routes/members.js";
 import { modelsRoutes } from "./routes/models.js";
 import { presenceRoutes } from "./routes/presence.js";
 import { projectsRoutes } from "./routes/projects.js";
@@ -40,8 +40,8 @@ import { settingsRoutes } from "./routes/settings.js";
 import { shareAuthedRoutes, sharePublicRoutes } from "./routes/share.js";
 import { threadsRoutes } from "./routes/threads.js";
 import { versionsRoutes } from "./routes/versions.js";
-import { workspacesRoutes } from "./routes/workspaces.js";
 import { workspaceAuditRoutes } from "./routes/workspace-audit.js";
+import { workspacesRoutes } from "./routes/workspaces.js";
 
 export interface BuildAppOptions {
   readonly deps: GatewayDeps;

@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 
-import { type Id, type Role } from "./common.js";
+import type { Id, Role } from "./common.js";
 
 /** Slug: lowercase alnum + inner hyphens, 1-64 chars (URL-safe). */
 export const WORKSPACE_SLUG_SCHEMA = z

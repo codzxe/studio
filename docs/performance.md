@@ -12,21 +12,50 @@ today's numbers come from the build box (2 cores, 4 GB RAM) and are flagged as s
 | `effectcraft_web_bg.wasm` uncompressed | 76.2 MB | `apps/web/public/editor/` | 2026-10-22 |
 | brotli q8 (the production path: Caddy `encode zstd br`) | **14.5 MB** — **within budget** | build-box measurement | 2026-10-22 |
 | gzip fallback (dev servers, no brotli) | 19.8 MB — over budget without brotli | build-box measurement | 2026-10-22 |
+| `effectcraft_web_bg.wasm` uncompressed — re-tuned rebuild | **49,353,339 bytes (47.1 MiB / 49.4 MB)**; dist total 49,590,279 bytes (≈49.6 MB) | `apps/web/public/editor/` | 2026-10-24 |
+| brotli q8 — re-tuned rebuild | **13,431,119 bytes (12.8 MiB / 13.4 MB)** — **within budget** | build-box node-zlib re-measurement | 2026-10-24 |
+| gzip fallback — re-tuned rebuild | 17,835,959 bytes (17.8 MB) — **now also within budget** (GNU gzip -9 CLI: 17,708,918 bytes) | build-box measurement | 2026-10-24 |
 
-Causes of the large uncompressed size vs upstream's ≈58 MB note (editor/UPSTREAM.md):
-`wasm-opt -O2` is skipped (binaryen absent on the build box) and the release profile was
-built with `codegen-units=16` instead of upstream's `1` (env override; the 4 GB build box
+The 2026-10-22 rows are kept as history — they measured the superseded cg16 artifact
+(re-derived 2026-10-24 from the old git blob for this ledger: 76,155,501 bytes →
+14,547,137 bytes brotli q8 / 20,783,682 bytes gzip). Cause of that size: `wasm-opt -O2`
+was skipped (binaryen absent on the build box) and the release profile was built with
+`codegen-units=16` instead of upstream's `1` (env override; the 4 GB build box
 OOM-kills rustc at `codegen-units=1` on heavy crates). Thin LTO was kept.
 
-**Waiver/rebuild note:** the committed dist is the best this box can produce. A re-tuned
-rebuild (`codegen-units=1`, `lto="thin"`, `wasm-opt -O2`) on a ≥16 GB CI box should land
-≈58 MB uncompressed / ≈10-12 MB brotli and is owed before the private beta gate. The
-committed artifact is re-buildable from the pin + patch 0001 at any time.
+**Re-tune done 2026-10-24 — the owed rebuild landed, and on this box.** Rebuilt from
+the same pin `9db7f3b2` + patch 0001 with the profile's true `lto="thin"` +
+`codegen-units=1` (no cg16 override this time) plus the xtask's `wasm-opt -O2` pass
+(binaryen 125, absent at the first build): Rust 1.99.1 (same as the original),
+wasm-bindgen-cli 0.2.129 (crate pin `=0.2.129`). Result: uncompressed −35.2%
+(76,155,501 → 49,353,339 bytes — better than the old waiver's ≈58 MB estimate),
+brotli q8 −7.7% (14,547,137 → 13,431,119 bytes = 12.8 MiB — a hair above the old
+waiver's ≈10-12 MB estimate, comfortably inside the binding < 18 MB budget), and the
+< 18 MB budget now holds even on the gzip fallback path. The
+re-tuned dist is committed and was boot-verified live in Chromium the same day:
+`window.effectcraft` present, `info().version` "0.13.0", `window.effectcraftLoad`
+wasmMs ≈ 3,198 / readyMs ≈ 3,433, `crossOriginIsolated` true, zero console errors,
+zero failed requests (`scripts/e2e-probe-editor.mjs`, the §5b stack). Over the same
+dist `chat.spec.ts` passed 5 with 1 skip (editor-unchanged pixel baselines green) and
+`m5-agent-edits` went 3/4 — the m5-readonly pixel baseline is owed to W1-E and is not
+claimed here. The superseded artifact stays re-buildable from the pin + patch 0001 +
+the `scripts/build_editor_web.sh` cg16 recipe.
 
 ## Editor ready time (budgets: < 6 s warm, < 12 s cold)
 
-Not yet measured — needs a browser with WebGPU/WebGL2 on the reference machine; the build
-box has no display. Owed with the first staging deploy (M3 exit).
+Reference-machine measurement still owed (WebGPU/WebGL2, first staging deploy, M3
+exit). On-box data points, same caveats as the wave-3 numbers below (dev server,
+headless software GL, shared 2-core box):
+- 2026-10-23, against the old 76.2 MB dist: p75 2,829 ms warm / 8,230 ms cold-ish
+  (the wave-3 section below — measured before the re-tune, so it does not describe
+  the committed dist).
+- 2026-10-24, against the re-tuned 49.4 MB dist — first boot smoke, n=1
+  (`scripts/e2e-probe-editor.mjs` through the §5b stack): `window.effectcraftLoad`
+  wasmMs ≈ 3,198 (module fetch + compile) / readyMs ≈ 3,433 (until the app runs),
+  `info().version` "0.13.0", `crossOriginIsolated` true, zero console errors, zero
+  failed requests. Different readiness marker than the wave-3 rows
+  (`window.effectcraftLoad` vs the app's `data-editor-phase="open"`) — indicative
+  only, not a budget verdict.
 
 ## Everything else
 
@@ -47,7 +76,7 @@ Sign-in is the real better-auth form as the seeded demo user. p75/p95 = nearest-
 |---|---|---|
 | Editor ready, warm cache < 6 s | **p75 2,829 ms** (n=5 same-session reloads; nav-start → `[data-editor-phase="open"]` read in-page via `performance.now()`) | **MET** — but see caveats; n=5 is small |
 | Editor ready, cold < 12 s | **p75 8,230 ms** (n=5 fresh-context loads — *cold-ish*: dev server + OS caches already warm, empty HTTP cache only) | **MET** (cold-ish, not a true cold boot; n=5) |
-| Editor wasm transfer < 18 MB | 14.5 MB brotli (2026-10-22, unchanged above) | MET (existing measurement) |
+| Editor wasm transfer < 18 MB | **13,431,119 bytes brotli q8 (12.8 MiB / 13.4 MB)** — re-measured 2026-10-24 on the re-tuned committed dist (was 14.5 MB on the 2026-10-22 cg16 dist, see the top ledger); gzip fallback 17.8 MB now also within budget | **MET** (re-measured on the current committed artifact) |
 | Editor memory (1080p project) < 1.5 GB | host-page JS heap 57.5 MB / chromium tree RSS 66–70 MB on the seeded *demo* comp | **NOT MEASURED for this row** — the budget scenario is a 1080p 20-layer comp on the reference box; recorded as a non-budget data point (host-context heap only; the wasm iframe's heap is not visible to the host page) |
 | Editor playback 60 fps @1080p | — | UNMEASURABLE on this box (headless software GL, no GPU) — reference-machine row |
 | Chat first token < 1.5 s p75 | — | **UNMEASURABLE here**: the model wire is `MOCK_MODEL=true` (canned script — timing it would measure the mock, not the model). Needs the deployed LiteLLM stack |

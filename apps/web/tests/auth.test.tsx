@@ -2,9 +2,9 @@ import { ForgotPasswordForm } from "@/components/auth/forgot-password-form";
 import { SignInForm } from "@/components/auth/sign-in-form";
 import { SignUpForm } from "@/components/auth/sign-up-form";
 import { formatMonthlyPrice } from "@/components/billing/page-format";
+import { PLAN_CATALOG } from "@studio/config";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { PLAN_CATALOG } from "@studio/config";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**

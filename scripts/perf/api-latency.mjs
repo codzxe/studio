@@ -39,9 +39,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const GATEWAY_URL = (
-  process.env.PERF_GATEWAY_URL ?? "http://127.0.0.1:8787"
-).replace(/\/$/, "");
+const GATEWAY_URL = (process.env.PERF_GATEWAY_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const RUNS = Number.parseInt(process.env.PERF_RUNS ?? "30", 10);
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = process.env.PERF_OUT_DIR ?? resolve(HERE, "results");
@@ -180,15 +178,22 @@ async function main() {
   // A fresh Idempotency-Key per request (mutation middleware, §7.2): each beat
   // is its own real write, never a replay.
   let beatSeq = 0;
-  const beatInit = () => ({
-    method: "POST",
-    headers: {
-      ...authedHeadersWithOrigin,
-      "content-type": "application/json",
-      "idempotency-key": `perf-beat-${Date.now()}-${(beatSeq += 1)}`,
-    },
-    body: "{}",
-  });
+  const beatInit = () => {
+    // Same evaluation order as the original inline expression (Date.now before
+    // the sequence bump), just hoisted out of the template literal so the
+    // assignment is a statement, not an expression side effect.
+    const now = Date.now();
+    beatSeq += 1;
+    return {
+      method: "POST",
+      headers: {
+        ...authedHeadersWithOrigin,
+        "content-type": "application/json",
+        "idempotency-key": `perf-beat-${now}-${beatSeq}`,
+      },
+      body: "{}",
+    };
+  };
   await timedFetch(
     "presence-warmup",
     `${GATEWAY_URL}/v1/projects/${PROJECT_ID}/presence`,
@@ -203,9 +208,7 @@ async function main() {
     200,
     RUNS,
   );
-  log(
-    `POST .../presence p95 ${result.writePresenceBeat.p95} ms (n=${result.writePresenceBeat.n})`,
-  );
+  log(`POST .../presence p95 ${result.writePresenceBeat.p95} ms (n=${result.writePresenceBeat.n})`);
 
   result.summary = {
     health: { p95: result.health.p95 },
@@ -229,6 +232,7 @@ async function main() {
 }
 
 main().catch((err) => {
+  // biome-ignore lint/suspicious/noConsole: CLI perf script — reports failure to stderr before exit
   console.error(`api-latency FAILED: ${err?.stack ?? err}`);
   process.exit(1);
 });

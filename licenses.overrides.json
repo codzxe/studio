@@ -1,7 +1,7 @@
 {
   "version": 1,
   "description": "License manifest for the studio monorepo. Every external dependency of root + apps/*/ + packages/*/package.json must appear in `packages` below with a declared license, plus `kind: infra` rows for the docker images / image tooling referenced by apps/*/Dockerfile and infra/compose/docker-compose.yml (W10-I). Enforced offline by scripts/check-licenses.mjs (`pnpm check:licenses`); CI should additionally confirm each declaration against package metadata (npm registry / pnpm-lock.yaml). All TODO-verify rows were resolved in W10-I (license audit: docs/legal/license-audit.md); new unsure entries may add \"status\": \"TODO-verify\" again.",
-  "policy": "docs/BUILD_PROMPT.md §16.0 (allow: MIT, Apache-2.0, BSD-2/3, ISC, 0BSD, PostgreSQL, MPL-2.0-unmodified), §16.5 (deny: AGPL, SSPL, BUSL, RSALv2, Elastic, FSL, Sustainable Use), §1.5 rules 8-9 (licensing + attribution).",
+  "policy": "docs/BUILD_PROMPT.md \u00a716.0 (allow: MIT, Apache-2.0, BSD-2/3, ISC, 0BSD, PostgreSQL, MPL-2.0-unmodified), \u00a716.5 (deny: AGPL, SSPL, BUSL, RSALv2, Elastic, FSL, Sustainable Use), \u00a71.5 rules 8-9 (licensing + attribution).",
   "how_to_add": "Add \"<package>\": { \"license\": \"<SPDX>\", \"source\": \"<where you verified it>\" }. Unsure? add \"status\": \"TODO-verify\". If it ships to users, also add an ATTRIBUTION.md row and ensure the license text exists under LICENSES/. For docker images / image tooling use \"kind\": \"infra\".",
   "entry_fields": {
     "license": "required SPDX identifier or expression (e.g. MIT, Apache-2.0, MIT OR Apache-2.0)",
@@ -11,70 +11,309 @@
     "note": "optional free-form note"
   },
   "packages": {
-    "@better-auth/api-key": { "license": "MIT", "source": "better-auth org (same MIT as better-auth, §16.3); license field read from the installed package (W3-C4)", "note": "packages/db runtime dep — the apiKey plugin ships as its own MIT package at 1.7.x" },
-    "@biomejs/biome": { "license": "MIT OR Apache-2.0", "source": "spec §16.4 (lists MIT); upstream biomejs/biome is dual-licensed MIT/Apache-2.0 — either branch satisfies §16.0", "note": "declared as the upstream dual license (W10-I)" },
-    "@hono/node-server": { "license": "MIT", "source": "honojs org, same license as hono (§16.3); W10-I resolved former TODO-verify from upstream LICENSE", "note": "CI re-confirms against package metadata" },
-    "@hono/zod-validator": { "license": "MIT", "source": "honojs org (same as hono, §16.3)" },
-    "@playwright/test": { "license": "Apache-2.0", "source": "microsoft/playwright (Apache-2.0); license field read from the installed package (W3-C4)", "note": "apps/web e2e runner — dev/test tooling, never shipped to users" },
-    "@radix-ui/react-avatar": { "license": "MIT", "source": "Radix UI (MIT; pairs with shadcn/ui §16.3); license field read from the installed package (W3-C4)" },
-    "@radix-ui/react-dialog": { "license": "MIT", "source": "Radix UI (MIT; pairs with shadcn/ui §16.3)" },
-    "@radix-ui/react-dropdown-menu": { "license": "MIT", "source": "Radix UI (MIT; pairs with shadcn/ui §16.3); license field read from the installed package (W3-C4)" },
-    "@radix-ui/react-label": { "license": "MIT", "source": "Radix UI (MIT; pairs with shadcn/ui §16.3)" },
-    "@radix-ui/react-popover": { "license": "MIT", "source": "Radix UI (MIT; pairs with shadcn/ui §16.3); license field read from the installed package (W3-C4)" },
-    "@radix-ui/react-select": { "license": "MIT", "source": "Radix UI (MIT; pairs with shadcn/ui §16.3); license field read from the installed package (W3-C4)" },
-    "@radix-ui/react-slot": { "license": "MIT", "source": "Radix UI (MIT; pairs with shadcn/ui §16.3)" },
-    "@radix-ui/react-tabs": { "license": "MIT", "source": "Radix UI (MIT; pairs with shadcn/ui §16.3)" },
-    "@radix-ui/react-toast": { "license": "MIT", "source": "Radix UI (MIT; pairs with shadcn/ui §16.3); license field read from the installed package (W3-C4)" },
-    "@radix-ui/react-tooltip": { "license": "MIT", "source": "Radix UI (MIT; pairs with shadcn/ui §16.3)" },
-    "@tailwindcss/postcss": { "license": "MIT", "source": "tailwindlabs, same as tailwindcss (§16.3)" },
-    "@tanstack/react-query": { "license": "MIT", "source": "spec §16.4" },
-    "@testing-library/dom": { "license": "MIT", "source": "Testing Library family (MIT); W10-I resolved former TODO-verify from upstream LICENSE", "note": "CI re-confirms against package metadata" },
-    "@testing-library/jest-dom": { "license": "MIT", "source": "Testing Library family (MIT); W10-I resolved former TODO-verify from upstream LICENSE", "note": "CI re-confirms against package metadata" },
-    "@testing-library/react": { "license": "MIT", "source": "Testing Library family (MIT); W10-I resolved former TODO-verify from upstream LICENSE", "note": "CI re-confirms against package metadata" },
-    "@testing-library/user-event": { "license": "MIT", "source": "Testing Library family (MIT); W10-I resolved former TODO-verify from upstream LICENSE", "note": "CI re-confirms against package metadata" },
-    "@types/better-sqlite3": { "license": "MIT", "source": "DefinitelyTyped (MIT); license field read from the installed package (W3-C4)", "note": "CI re-confirms against package metadata" },
-    "@types/node": { "license": "MIT", "source": "DefinitelyTyped (MIT); W10-I resolved former TODO-verify from upstream LICENSE", "note": "CI re-confirms against package metadata" },
-    "@types/react": { "license": "MIT", "source": "DefinitelyTyped (MIT); W10-I resolved former TODO-verify from upstream LICENSE", "note": "CI re-confirms against package metadata" },
-    "@types/react-dom": { "license": "MIT", "source": "DefinitelyTyped (MIT); W10-I resolved former TODO-verify from upstream LICENSE", "note": "CI re-confirms against package metadata" },
-    "@vitejs/plugin-react": { "license": "MIT", "source": "vitejs org (MIT, same as vite/vitest toolchain); apps/web devDep for vitest jsdom transform (W10-I inventory)" },
-    "ai": { "license": "Apache-2.0", "source": "spec §16.3 (vercel/ai)" },
-    "alertmanager": { "license": "Apache-2.0", "kind": "infra", "source": "spec §22/§16; prom/alertmanager (prometheus org, Apache-2.0)", "note": "compose image prom/alertmanager:latest (obs profile); pin a major on the box" },
-    "aws4fetch": { "license": "MIT", "source": "mhart/aws4fetch (MIT, LICENSES/LICENSE-MIT); W10-I resolved former TODO-verify (declared for packages/storage, W2-M/W2-Q)", "note": "CI re-confirms against package metadata" },
-    "better-auth": { "license": "MIT", "source": "spec §16.3", "note": "organization/admin plugins ship inside the MIT better-auth package itself; the apiKey plugin ships as the separate MIT package @better-auth/api-key (declared above)" },
-    "better-sqlite3": { "license": "MIT", "source": "WiseLibs/better-sqlite3 (MIT); license field read from the installed package (W3-C4)", "note": "packages/db devDep — embedded SQL engine for local/dev/CI database runs" },
-    "bullmq": { "license": "MIT", "source": "spec §16.3" },
-    "caddy": { "license": "Apache-2.0", "kind": "infra", "source": "spec §16.3 (caddyserver/caddy)", "note": "compose image caddy:2-alpine — the only service publishing host ports (§17.2)" },
-    "class-variance-authority": { "license": "MIT", "source": "cva (MIT; pairs with shadcn/ui §16.3)" },
-    "clsx": { "license": "MIT", "source": "clsx (MIT; pairs with shadcn/ui §16.3)" },
-    "drizzle-kit": { "license": "Apache-2.0", "source": "drizzle team, same as drizzle-orm (§16.3)" },
-    "drizzle-orm": { "license": "Apache-2.0", "source": "spec §16.3" },
-    "dumb-init": { "license": "MIT", "kind": "infra", "source": "Yelp dumb-init (MIT)", "note": "apk-installed PID 1 inside the five app images; ships with upstream notice in the image" },
-    "glitchtip": { "license": "MIT", "kind": "infra", "source": "spec §16.3 (glitchtip/glitchtip, MIT) — avoids the FSL-licensed Sentry server (§16.5)", "note": "compose image glitchtip/glitchtip:latest (obs profile)" },
-    "hono": { "license": "MIT", "source": "spec §16.3" },
-    "ioredis": { "license": "MIT", "source": "task W1-R; Redis-compatible client (talks to Valkey, §16.3)" },
-    "jsdom": { "license": "MIT", "source": "jsdom (MIT); W10-I resolved former TODO-verify from upstream LICENSE", "note": "CI re-confirms against package metadata" },
-    "lucide-react": { "license": "ISC", "source": "task W1-R; lucide is ISC" },
-    "next": { "license": "MIT", "source": "spec §16.3" },
-    "node": { "license": "MIT", "kind": "infra", "source": "Node.js is MIT-licensed; official docker image node:22-alpine", "note": "base image of all five app Dockerfiles; the alpine userspace it carries (e.g. busybox GPL-2.0) is an unmodified internal utility — §16.0, see docs/legal/license-audit.md" },
-    "pino": { "license": "MIT", "source": "spec §16.3" },
-    "pnpm": { "license": "MIT", "kind": "infra", "source": "pnpm/pnpm (MIT)", "note": "corepack-activated toolchain pinned via root packageManager pnpm@9.15.0; used in image build stages only, never at runtime" },
-    "perses": { "license": "Apache-2.0", "kind": "infra", "source": "persesdev/perses (Apache-2.0) — chosen instead of AGPL-3.0 Grafana, §16.5/§16.0 (W9-F/W9-M)", "note": "compose image persesdev/perses:latest (obs profile)" },
-    "postgres": { "license": "MIT", "source": "task W1-R; postgres.js driver (distinct from the PostgreSQL server, which is PostgreSQL-licensed)" },
-    "postgresql": { "license": "PostgreSQL", "kind": "infra", "source": "spec §16.3; the database server (LICENSES/LICENSE-POSTGRESQL)", "note": "compose image postgres:16-alpine (docker-library/postgres)" },
-    "prometheus": { "license": "Apache-2.0", "kind": "infra", "source": "spec §22; prom/prometheus (Apache-2.0)", "note": "compose image prom/prometheus:latest (obs profile); pin a major on the box" },
-    "promptfoo": { "license": "MIT", "source": "spec §16.3" },
-    "react": { "license": "MIT", "source": "task W1-R" },
-    "react-dom": { "license": "MIT", "source": "same publisher and license as react (MIT)" },
-    "stripe": { "license": "MIT", "source": "spec §16.3 (SDK only; Stripe the service is separate)" },
-    "tailwind-merge": { "license": "MIT", "source": "tailwind-merge (MIT); W10-I resolved former TODO-verify from upstream LICENSE", "note": "CI re-confirms against package metadata" },
-    "tailwindcss": { "license": "MIT", "source": "spec §16.3" },
-    "tsx": { "license": "MIT", "source": "task W2-Q (db:seed runner); tsx (privatenumber, MIT)" },
-    "turbo": { "license": "MIT", "source": "task W1-R; Turborepo (Vercel, MIT)" },
-    "typescript": { "license": "Apache-2.0", "source": "task W1-R; TypeScript (Microsoft, Apache-2.0)" },
-    "uptime-kuma": { "license": "MIT", "kind": "infra", "source": "spec §16.3 (louislam/uptime-kuma, MIT)", "note": "compose image louislam/uptime-kuma:latest (obs profile); §17.2 pins the 1.x major on the box" },
-    "valkey": { "license": "BSD-3-Clause", "kind": "infra", "source": "spec §16.3/§16.5 — Valkey, NOT Redis >= 7.4 (RSALv2/SSPL); (LICENSES/LICENSE-BSD-3-CLAUSE)", "note": "compose image valkey/valkey:8-alpine" },
-    "vitest": { "license": "MIT", "source": "spec §16.4" },
-    "zod": { "license": "MIT", "source": "spec §16.3" },
-    "zustand": { "license": "MIT", "source": "spec §16.4" }
+    "@axe-core/playwright": {
+      "license": "MPL-2.0",
+      "source": "axe-core npm package (MPL-2.0); license field read from the installed package (4.14.0)",
+      "note": "apps/web e2e a11y sweep devDep \u2014 dev/test tooling wrapping axe-core, never shipped to users; MPL-2.0-unmodified allow per policy"
+    },
+    "@better-auth/api-key": {
+      "license": "MIT",
+      "source": "better-auth org (same MIT as better-auth, \u00a716.3); license field read from the installed package (W3-C4)",
+      "note": "packages/db runtime dep \u2014 the apiKey plugin ships as its own MIT package at 1.7.x"
+    },
+    "@biomejs/biome": {
+      "license": "MIT OR Apache-2.0",
+      "source": "spec \u00a716.4 (lists MIT); upstream biomejs/biome is dual-licensed MIT/Apache-2.0 \u2014 either branch satisfies \u00a716.0",
+      "note": "declared as the upstream dual license (W10-I)"
+    },
+    "@hono/node-server": {
+      "license": "MIT",
+      "source": "honojs org, same license as hono (\u00a716.3); W10-I resolved former TODO-verify from upstream LICENSE",
+      "note": "CI re-confirms against package metadata"
+    },
+    "@hono/zod-validator": {
+      "license": "MIT",
+      "source": "honojs org (same as hono, \u00a716.3)"
+    },
+    "@playwright/test": {
+      "license": "Apache-2.0",
+      "source": "microsoft/playwright (Apache-2.0); license field read from the installed package (W3-C4)",
+      "note": "apps/web e2e runner \u2014 dev/test tooling, never shipped to users"
+    },
+    "@radix-ui/react-avatar": {
+      "license": "MIT",
+      "source": "Radix UI (MIT; pairs with shadcn/ui \u00a716.3); license field read from the installed package (W3-C4)"
+    },
+    "@radix-ui/react-dialog": {
+      "license": "MIT",
+      "source": "Radix UI (MIT; pairs with shadcn/ui \u00a716.3)"
+    },
+    "@radix-ui/react-dropdown-menu": {
+      "license": "MIT",
+      "source": "Radix UI (MIT; pairs with shadcn/ui \u00a716.3); license field read from the installed package (W3-C4)"
+    },
+    "@radix-ui/react-label": {
+      "license": "MIT",
+      "source": "Radix UI (MIT; pairs with shadcn/ui \u00a716.3)"
+    },
+    "@radix-ui/react-popover": {
+      "license": "MIT",
+      "source": "Radix UI (MIT; pairs with shadcn/ui \u00a716.3); license field read from the installed package (W3-C4)"
+    },
+    "@radix-ui/react-select": {
+      "license": "MIT",
+      "source": "Radix UI (MIT; pairs with shadcn/ui \u00a716.3); license field read from the installed package (W3-C4)"
+    },
+    "@radix-ui/react-slot": {
+      "license": "MIT",
+      "source": "Radix UI (MIT; pairs with shadcn/ui \u00a716.3)"
+    },
+    "@radix-ui/react-tabs": {
+      "license": "MIT",
+      "source": "Radix UI (MIT; pairs with shadcn/ui \u00a716.3)"
+    },
+    "@radix-ui/react-toast": {
+      "license": "MIT",
+      "source": "Radix UI (MIT; pairs with shadcn/ui \u00a716.3); license field read from the installed package (W3-C4)"
+    },
+    "@radix-ui/react-tooltip": {
+      "license": "MIT",
+      "source": "Radix UI (MIT; pairs with shadcn/ui \u00a716.3)"
+    },
+    "@tailwindcss/postcss": {
+      "license": "MIT",
+      "source": "tailwindlabs, same as tailwindcss (\u00a716.3)"
+    },
+    "@tanstack/react-query": {
+      "license": "MIT",
+      "source": "spec \u00a716.4"
+    },
+    "@testing-library/dom": {
+      "license": "MIT",
+      "source": "Testing Library family (MIT); W10-I resolved former TODO-verify from upstream LICENSE",
+      "note": "CI re-confirms against package metadata"
+    },
+    "@testing-library/jest-dom": {
+      "license": "MIT",
+      "source": "Testing Library family (MIT); W10-I resolved former TODO-verify from upstream LICENSE",
+      "note": "CI re-confirms against package metadata"
+    },
+    "@testing-library/react": {
+      "license": "MIT",
+      "source": "Testing Library family (MIT); W10-I resolved former TODO-verify from upstream LICENSE",
+      "note": "CI re-confirms against package metadata"
+    },
+    "@testing-library/user-event": {
+      "license": "MIT",
+      "source": "Testing Library family (MIT); W10-I resolved former TODO-verify from upstream LICENSE",
+      "note": "CI re-confirms against package metadata"
+    },
+    "@types/better-sqlite3": {
+      "license": "MIT",
+      "source": "DefinitelyTyped (MIT); license field read from the installed package (W3-C4)",
+      "note": "CI re-confirms against package metadata"
+    },
+    "@types/node": {
+      "license": "MIT",
+      "source": "DefinitelyTyped (MIT); W10-I resolved former TODO-verify from upstream LICENSE",
+      "note": "CI re-confirms against package metadata"
+    },
+    "@types/react": {
+      "license": "MIT",
+      "source": "DefinitelyTyped (MIT); W10-I resolved former TODO-verify from upstream LICENSE",
+      "note": "CI re-confirms against package metadata"
+    },
+    "@types/react-dom": {
+      "license": "MIT",
+      "source": "DefinitelyTyped (MIT); W10-I resolved former TODO-verify from upstream LICENSE",
+      "note": "CI re-confirms against package metadata"
+    },
+    "@vitejs/plugin-react": {
+      "license": "MIT",
+      "source": "vitejs org (MIT, same as vite/vitest toolchain); apps/web devDep for vitest jsdom transform (W10-I inventory)"
+    },
+    "ai": {
+      "license": "Apache-2.0",
+      "source": "spec \u00a716.3 (vercel/ai)"
+    },
+    "alertmanager": {
+      "license": "Apache-2.0",
+      "kind": "infra",
+      "source": "spec \u00a722/\u00a716; prom/alertmanager (prometheus org, Apache-2.0)",
+      "note": "compose image prom/alertmanager:latest (obs profile); pin a major on the box"
+    },
+    "aws4fetch": {
+      "license": "MIT",
+      "source": "mhart/aws4fetch (MIT, LICENSES/LICENSE-MIT); W10-I resolved former TODO-verify (declared for packages/storage, W2-M/W2-Q)",
+      "note": "CI re-confirms against package metadata"
+    },
+    "better-auth": {
+      "license": "MIT",
+      "source": "spec \u00a716.3",
+      "note": "organization/admin plugins ship inside the MIT better-auth package itself; the apiKey plugin ships as the separate MIT package @better-auth/api-key (declared above)"
+    },
+    "better-sqlite3": {
+      "license": "MIT",
+      "source": "WiseLibs/better-sqlite3 (MIT); license field read from the installed package (W3-C4)",
+      "note": "packages/db devDep \u2014 embedded SQL engine for local/dev/CI database runs"
+    },
+    "bullmq": {
+      "license": "MIT",
+      "source": "spec \u00a716.3"
+    },
+    "caddy": {
+      "license": "Apache-2.0",
+      "kind": "infra",
+      "source": "spec \u00a716.3 (caddyserver/caddy)",
+      "note": "compose image caddy:2-alpine \u2014 the only service publishing host ports (\u00a717.2)"
+    },
+    "class-variance-authority": {
+      "license": "MIT",
+      "source": "cva (MIT; pairs with shadcn/ui \u00a716.3)"
+    },
+    "clsx": {
+      "license": "MIT",
+      "source": "clsx (MIT; pairs with shadcn/ui \u00a716.3)"
+    },
+    "drizzle-kit": {
+      "license": "Apache-2.0",
+      "source": "drizzle team, same as drizzle-orm (\u00a716.3)"
+    },
+    "drizzle-orm": {
+      "license": "Apache-2.0",
+      "source": "spec \u00a716.3"
+    },
+    "dumb-init": {
+      "license": "MIT",
+      "kind": "infra",
+      "source": "Yelp dumb-init (MIT)",
+      "note": "apk-installed PID 1 inside the five app images; ships with upstream notice in the image"
+    },
+    "glitchtip": {
+      "license": "MIT",
+      "kind": "infra",
+      "source": "spec \u00a716.3 (glitchtip/glitchtip, MIT) \u2014 avoids the FSL-licensed Sentry server (\u00a716.5)",
+      "note": "compose image glitchtip/glitchtip:latest (obs profile)"
+    },
+    "hono": {
+      "license": "MIT",
+      "source": "spec \u00a716.3"
+    },
+    "ioredis": {
+      "license": "MIT",
+      "source": "task W1-R; Redis-compatible client (talks to Valkey, \u00a716.3)"
+    },
+    "jsdom": {
+      "license": "MIT",
+      "source": "jsdom (MIT); W10-I resolved former TODO-verify from upstream LICENSE",
+      "note": "CI re-confirms against package metadata"
+    },
+    "lucide-react": {
+      "license": "ISC",
+      "source": "task W1-R; lucide is ISC"
+    },
+    "next": {
+      "license": "MIT",
+      "source": "spec \u00a716.3"
+    },
+    "node": {
+      "license": "MIT",
+      "kind": "infra",
+      "source": "Node.js is MIT-licensed; official docker image node:22-alpine",
+      "note": "base image of all five app Dockerfiles; the alpine userspace it carries (e.g. busybox GPL-2.0) is an unmodified internal utility \u2014 \u00a716.0, see docs/legal/license-audit.md"
+    },
+    "pino": {
+      "license": "MIT",
+      "source": "spec \u00a716.3"
+    },
+    "pnpm": {
+      "license": "MIT",
+      "kind": "infra",
+      "source": "pnpm/pnpm (MIT)",
+      "note": "corepack-activated toolchain pinned via root packageManager pnpm@9.15.0; used in image build stages only, never at runtime"
+    },
+    "perses": {
+      "license": "Apache-2.0",
+      "kind": "infra",
+      "source": "persesdev/perses (Apache-2.0) \u2014 chosen instead of AGPL-3.0 Grafana, \u00a716.5/\u00a716.0 (W9-F/W9-M)",
+      "note": "compose image persesdev/perses:latest (obs profile)"
+    },
+    "postgres": {
+      "license": "MIT",
+      "source": "task W1-R; postgres.js driver (distinct from the PostgreSQL server, which is PostgreSQL-licensed)"
+    },
+    "postgresql": {
+      "license": "PostgreSQL",
+      "kind": "infra",
+      "source": "spec \u00a716.3; the database server (LICENSES/LICENSE-POSTGRESQL)",
+      "note": "compose image postgres:16-alpine (docker-library/postgres)"
+    },
+    "prometheus": {
+      "license": "Apache-2.0",
+      "kind": "infra",
+      "source": "spec \u00a722; prom/prometheus (Apache-2.0)",
+      "note": "compose image prom/prometheus:latest (obs profile); pin a major on the box"
+    },
+    "promptfoo": {
+      "license": "MIT",
+      "source": "spec \u00a716.3"
+    },
+    "react": {
+      "license": "MIT",
+      "source": "task W1-R"
+    },
+    "react-dom": {
+      "license": "MIT",
+      "source": "same publisher and license as react (MIT)"
+    },
+    "stripe": {
+      "license": "MIT",
+      "source": "spec \u00a716.3 (SDK only; Stripe the service is separate)"
+    },
+    "tailwind-merge": {
+      "license": "MIT",
+      "source": "tailwind-merge (MIT); W10-I resolved former TODO-verify from upstream LICENSE",
+      "note": "CI re-confirms against package metadata"
+    },
+    "tailwindcss": {
+      "license": "MIT",
+      "source": "spec \u00a716.3"
+    },
+    "tsx": {
+      "license": "MIT",
+      "source": "task W2-Q (db:seed runner); tsx (privatenumber, MIT)"
+    },
+    "turbo": {
+      "license": "MIT",
+      "source": "task W1-R; Turborepo (Vercel, MIT)"
+    },
+    "typescript": {
+      "license": "Apache-2.0",
+      "source": "task W1-R; TypeScript (Microsoft, Apache-2.0)"
+    },
+    "uptime-kuma": {
+      "license": "MIT",
+      "kind": "infra",
+      "source": "spec \u00a716.3 (louislam/uptime-kuma, MIT)",
+      "note": "compose image louislam/uptime-kuma:latest (obs profile); \u00a717.2 pins the 1.x major on the box"
+    },
+    "valkey": {
+      "license": "BSD-3-Clause",
+      "kind": "infra",
+      "source": "spec \u00a716.3/\u00a716.5 \u2014 Valkey, NOT Redis >= 7.4 (RSALv2/SSPL); (LICENSES/LICENSE-BSD-3-CLAUSE)",
+      "note": "compose image valkey/valkey:8-alpine"
+    },
+    "vitest": {
+      "license": "MIT",
+      "source": "spec \u00a716.4"
+    },
+    "zod": {
+      "license": "MIT",
+      "source": "spec \u00a716.3"
+    },
+    "zustand": {
+      "license": "MIT",
+      "source": "spec \u00a716.4"
+    }
   }
 }

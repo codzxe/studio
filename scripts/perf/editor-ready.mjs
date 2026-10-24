@@ -236,16 +236,18 @@ async function measureEditorOpen(page, label) {
     await gotoWithRetry(page, url, "commit");
     // The editor-ready signal: performance.now() read in-page at the moment
     // the phase attribute first reads "open" — ms since navigation start.
-    const openSinceNavStart = await page.waitForFunction(
-      () => {
-        const el = document.querySelector('[data-testid="editor-host"]');
-        if (el !== null && el.getAttribute("data-editor-phase") === "open") {
-          return performance.now();
-        }
-        return false;
-      },
-      { timeout: EDITOR_OPEN_TIMEOUT_MS },
-    ).then((handle) => handle.jsonValue());
+    const openSinceNavStart = await page
+      .waitForFunction(
+        () => {
+          const el = document.querySelector('[data-testid="editor-host"]');
+          if (el !== null && el.getAttribute("data-editor-phase") === "open") {
+            return performance.now();
+          }
+          return false;
+        },
+        { timeout: EDITOR_OPEN_TIMEOUT_MS },
+      )
+      .then((handle) => handle.jsonValue());
     const wallMs = Date.now() - t0Wall;
 
     // Post-open context metrics (one round-trip): navigation timing, the wasm
@@ -331,7 +333,9 @@ async function main() {
     await signInThroughForm(bootPage);
     log("bootstrap: signed in — first editor open (untimed warmup / route compile)");
     const warmup = await measureEditorOpen(bootPage, "bootstrap-warmup");
-    log(`bootstrap: editor open ${warmup.ok ? "OK" : "FAILED"} in ${warmup.openSinceNavStartMs ?? warmup.wallMs} ms (discarded)`);
+    log(
+      `bootstrap: editor open ${warmup.ok ? "OK" : "FAILED"} in ${warmup.openSinceNavStartMs ?? warmup.wallMs} ms (discarded)`,
+    );
     if (!warmup.ok) throw new Error(`bootstrap editor open failed: ${warmup.error}`);
     const storageState = await boot.storageState();
     await boot.close();
@@ -367,7 +371,9 @@ async function main() {
     const warmPage = await warmContext.newPage();
     log("warm series: untimed warmup load (warms this context's HTTP cache)");
     const warmWarmup = await measureEditorOpen(warmPage, "warm-warmup");
-    log(`warm warmup: ${warmWarmup.ok ? `${warmWarmup.openSinceNavStartMs} ms` : `FAILED: ${warmWarmup.error}`} (discarded)`);
+    log(
+      `warm warmup: ${warmWarmup.ok ? `${warmWarmup.openSinceNavStartMs} ms` : `FAILED: ${warmWarmup.error}`} (discarded)`,
+    );
     for (let i = 1; i <= RUNS; i += 1) {
       log(`warm run ${i}/${RUNS}: same session reload`);
       let sample = await measureEditorOpen(warmPage, `warm-${i}`);
@@ -402,6 +408,7 @@ async function main() {
 }
 
 main().catch((err) => {
+  // biome-ignore lint/suspicious/noConsole: CLI perf script — reports failure to stderr before exit
   console.error(`editor-ready FAILED: ${err?.stack ?? err}`);
   process.exit(1);
 });

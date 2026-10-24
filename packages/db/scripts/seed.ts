@@ -74,6 +74,7 @@ function objectKeyFor(versionId: string): string {
 async function main(): Promise<void> {
   const parsed = EnvSchema.safeParse(process.env);
   if (!parsed.success) {
+    // biome-ignore lint/suspicious/noConsole: CLI seed script — reports invalid env to stderr before exit
     console.error(
       "Invalid seed environment:",
       parsed.error.issues.map((i) => `${String(i.path.join("."))}: ${i.message}`).join("; "),
@@ -110,6 +111,7 @@ async function main(): Promise<void> {
       await auth.api.signUpEmail({
         body: { email: DEMO_EMAIL, password: DEMO_PASSWORD, name: "Demo User" },
       });
+      // biome-ignore lint/suspicious/noConsole: CLI seed script — prints the created demo credentials (the script's whole point)
       console.info(`[seed] created user ${DEMO_EMAIL} (password: ${DEMO_PASSWORD})`);
     }
     const demoUser = (
@@ -131,6 +133,7 @@ async function main(): Promise<void> {
         userId: demoUser.id,
         role: "owner",
       });
+      // biome-ignore lint/suspicious/noConsole: CLI seed script — reports the workspace owner grant
       console.info("[seed] demo user is owner of Demo Workspace");
     }
 
@@ -184,6 +187,7 @@ async function main(): Promise<void> {
       metadata: { source: "seed" },
     });
     const balance = await repos.ledger.balance(ORG_ID);
+    // biome-ignore lint/suspicious/noConsole: CLI seed script — reports the credit grant + resulting balance
     console.info(
       `[seed] credits: grant ${grant.replayed ? "(replayed)" : "created"}, balance=${balance}`,
     );
@@ -210,6 +214,7 @@ async function main(): Promise<void> {
       })
       .onConflictDoNothing({ target: t.agentMessages.id });
 
+    // biome-ignore lint/suspicious/noConsole: CLI seed script — prints the final summary line
     console.info(
       `[seed] done: workspace=${ORG_ID} project=${PROJECT_ID} currentVersion=${lastVersionId} thread=${THREAD_ID}`,
     );

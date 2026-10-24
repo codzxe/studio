@@ -49,7 +49,9 @@ describe("UseCaseStep", () => {
   it("the copy claims no effect: the pick changes nothing today", () => {
     render(<UseCaseStep onNext={vi.fn()} />);
     expect(
-      screen.getByText("Optional — it changes nothing today. Skip it if you'd rather jump straight in."),
+      screen.getByText(
+        "Optional — it changes nothing today. Skip it if you'd rather jump straight in.",
+      ),
     ).toBeInTheDocument();
   });
 

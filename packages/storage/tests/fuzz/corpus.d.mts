@@ -24,11 +24,7 @@ export interface CorpusProbe {
 
 /** Exact expected verdicts for the three guards under test. */
 export interface CorpusExpect {
-  readonly sniff:
-    | "image/png"
-    | "image/jpeg"
-    | "image/webp"
-    | "unsupported_media_type";
+  readonly sniff: "image/png" | "image/jpeg" | "image/webp" | "unsupported_media_type";
   readonly validate:
     | "ok"
     | "unsupported_media_type"

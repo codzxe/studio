@@ -19,9 +19,9 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { Hono } from "hono";
 import type { PlanId } from "@studio/config";
 import type { Repos, SubscriptionStatus } from "@studio/db";
+import type { Hono } from "hono";
 
 import { buildApp } from "../src/app.js";
 import type { AppBindings } from "../src/context.js";
@@ -358,7 +358,11 @@ d("invite seat gate (real Postgres + Better Auth)", () => {
   }
 
   /** Signs the invited address up and accepts its invitation as that user. */
-  async function signUpAndAccept(ws: Workspace, email: string, inviteId: string): Promise<Response> {
+  async function signUpAndAccept(
+    ws: Workspace,
+    email: string,
+    inviteId: string,
+  ): Promise<Response> {
     const inviteeJar = new CookieJar();
     const signUp = await api(server.base, "/v1/auth/sign-up/email", {
       method: "POST",

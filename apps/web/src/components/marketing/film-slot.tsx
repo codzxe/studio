@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { DEMO_FILM } from "@/lib/demo";
 import { Brand } from "@studio/config";
 import { Pause, Play } from "lucide-react";
-import { DEMO_FILM } from "@/lib/demo";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * The hero film slot (§8.1 hero CTA target) — the REAL demo loop
@@ -87,11 +87,7 @@ export function FilmSlot() {
           className="absolute right-4 bottom-4 flex h-11 w-11 items-center justify-center rounded-pill border border-strong bg-app/90 text-primary outline-offset-2 backdrop-blur-sm transition-colors hover:bg-app focus-visible:outline-2 focus-visible:outline-signal"
           aria-label={playing ? "Pause the demo loop" : "Play the demo loop"}
         >
-          {playing ? (
-            <Pause size={18} strokeWidth={1.75} />
-          ) : (
-            <Play size={18} strokeWidth={1.75} />
-          )}
+          {playing ? <Pause size={18} strokeWidth={1.75} /> : <Play size={18} strokeWidth={1.75} />}
         </button>
       </div>
 

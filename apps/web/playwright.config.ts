@@ -73,7 +73,7 @@ const EDGE_PROXY_JS = [
   "  });",
   "  req.pipe(upstream);",
   "});",
-  "server.on(\"upgrade\", (req, socket, head) => {",
+  'server.on("upgrade", (req, socket, head) => {',
   '  const up = net.connect(targets.web, "127.0.0.1", () => {',
   "    up.write([",
   "      `${req.method} ${req.url} HTTP/1.1`,",

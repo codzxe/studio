@@ -34,11 +34,18 @@ rsync -a --exclude=.git --exclude=target effectcraft-upstream/ ../studio/editor/
   (`request`, `execute`, `inspect`, `renderFrame`, `addFile`, `saveToBrowser`,
   `readFile`, `screenshot`) and that `engine.batch` is atomic with one-undo-step.
 
-Gate status at patch 0001 (2026-10-22, build box 2 cores / 4 GB / 9.9 GB disk):
-`cargo xtask web` **done** (656-crate wasm32 release graph, zero errors, dist committed).
-`cargo test --workspace`, clippy and `xtask wasm` are **owed on a bigger box**: the host
-debug+incremental ladder does not fit on this disk (filled to 100% twice). Evidence and
-the reproduction recipe: [docs/phases/M0.md](../docs/phases/M0.md).
+Gate status at patch 0001 (updated 2026-10-24): `cargo xtask web` is **proven twice
+on this box**. Original 2026-10-22: the 656-crate wasm32 release graph compiled with
+zero errors (cg16 env override, `wasm-opt` skipped — binaryen absent). Re-proven
+2026-10-24 at the same pin `9db7f3b2` with the profile's true `lto="thin"` +
+`codegen-units=1` plus the xtask's `wasm-opt -O2` pass (binaryen 125): the committed
+dist is now a 49,353,339-byte wasm (47.1 MiB; 12.8 MiB brotli q8), boot-verified live
+in Chromium (`window.effectcraft` present, `info().version` "0.13.0", zero console
+errors, zero failed requests) — numbers in [docs/performance.md](../docs/performance.md).
+`cargo test --workspace`, clippy and `xtask wasm` are still **owed on a bigger box** and
+did NOT run here (the host debug+incremental ladder does not fit on this disk; filled
+to 100% twice). Evidence and the reproduction recipe:
+[docs/phases/M0.md](../docs/phases/M0.md).
 
 ## Product patches
 
@@ -76,7 +83,7 @@ Open Demo Project, About). Technical identifiers are intentionally unchanged:
 ```sh
 cd editor
 cargo xtask web --dev          # fast dev wasm build → target/web/dist
-cargo xtask web                # release wasm build (≈58 MB wasm, ~10-17 MB compressed)
+cargo xtask web                # release wasm build (measured 2026-10-24: 49.4 MB wasm, 12.8 MiB brotli q8 / 17.8 MB gzip)
 cargo xtask web --serve 8765   # build + serve with COOP/COEP on 127.0.0.1:8765
 cargo build -p effectcraft-cli # native headless CLI (worker renders)
 ```
@@ -84,13 +91,17 @@ cargo build -p effectcraft-cli # native headless CLI (worker renders)
 Requirements: Rust ≥ 1.95, `rustup target add wasm32-unknown-unknown`,
 `wasm-bindgen-cli` exactly `0.2.129` (`cargo install wasm-bindgen-cli
 --version 0.2.129 --locked`). Build it from source on this box: the official musl
-prebuilt OOM-kills on the 76 MB wasm (musl allocator); a glibc source build handles it.
+prebuilt OOM-killed on the 2026-10-22 76 MB wasm (musl allocator; untested against
+the 49 MB re-tune); a glibc source build handles it. `wasm-opt` on PATH (binaryen
+125 as of 2026-10-24) lets the xtask apply its `-O2` pass — skipped silently when
+absent.
 
 ## Dist record (committed artifact, per DECISIONS.md D-17)
 
 | Date | Profile | Source | Notes |
 |---|---|---|---|
-| 2026-10-22 | release (thin LTO kept; `codegen-units=16` env override — the 4 GB build box OOMs at upstream's `codegen-units=1`; `wasm-opt` skipped — binaryen absent) | pin `9db7f3b2` + patch 0001, built with Rust 1.99.1 + wasm-bindgen-cli 0.2.129 (glibc source build — the musl prebuilt OOMs on this wasm) | `apps/web/public/editor/`: 76.2 MB wasm (14.5 MB brotli q8 / 19.8 MB gzip), 76.4 MB dist total; re-tuned rebuild (cg1 + wasm-opt) owed on a bigger CI box — see `docs/performance.md` |
+| 2026-10-22 | release (thin LTO kept; `codegen-units=16` env override — the 4 GB build box OOMs at upstream's `codegen-units=1`; `wasm-opt` skipped — binaryen absent) | pin `9db7f3b2` + patch 0001, built with Rust 1.99.1 + wasm-bindgen-cli 0.2.129 (glibc source build — the musl prebuilt OOMs on this wasm) | `apps/web/public/editor/`: 76.2 MB wasm (14.5 MB brotli q8 / 19.8 MB gzip), 76.4 MB dist total; superseded 2026-10-24 by the re-tuned row below — `docs/performance.md` |
+| 2026-10-24 | release (the profile's true thin LTO + `codegen-units=1` — no cg16 override this time; xtask `wasm-opt -O2` applied — binaryen 125) | pin `9db7f3b2` + patch 0001, built with Rust 1.99.1 + wasm-bindgen-cli 0.2.129 (glibc source build) | **the committed dist**: `apps/web/public/editor/` — 49,353,339-byte wasm (47.1 MiB), 12.8 MiB brotli q8 (13,431,119 bytes) / 17.8 MB gzip — both under the §6 < 18 MB budget; dist total ≈49.6 MB; boot-verified in Chromium 2026-10-24 (version 0.13.0, zero console errors); ledger + re-measured transfer sizes in `docs/performance.md` |
 
 ## Licence
 

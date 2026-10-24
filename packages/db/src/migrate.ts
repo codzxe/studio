@@ -35,6 +35,7 @@ function isInvokedDirectly(): boolean {
 async function main(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
+    // biome-ignore lint/suspicious/noConsole: CLI migrate entrypoint — reports missing DATABASE_URL to stderr before exit
     console.error("DATABASE_URL is required to run migrations");
     process.exitCode = 1;
     return;
@@ -44,6 +45,7 @@ async function main(): Promise<void> {
   const db: StudioDb = drizzle(client, { schema });
   try {
     await migrateDatabase(db, folder);
+    // biome-ignore lint/suspicious/noConsole: CLI migrate entrypoint — logs completion to stdout
     console.info(`[db] migrations applied from ${folder}`);
   } finally {
     await client.end({ timeout: 5 });

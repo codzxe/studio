@@ -88,7 +88,12 @@ async function listMembers(
   jar: CookieJar,
   workspaceId: string,
   query?: { limit?: number; cursor?: string },
-): Promise<{ status: number; items: MemberRow[]; nextCursor: string | null; err?: { code: string } }> {
+): Promise<{
+  status: number;
+  items: MemberRow[];
+  nextCursor: string | null;
+  err?: { code: string };
+}> {
   const params = new URLSearchParams();
   if (query?.limit !== undefined) params.set("limit", String(query.limit));
   if (query?.cursor !== undefined) params.set("cursor", query.cursor);
@@ -148,9 +153,7 @@ async function inviteAndAccept(
 }
 
 /** A ready-to-use workspace with the owner + `roles.length` invited members. */
-async function seededWorkspace(
-  roles: readonly ("admin" | "editor" | "viewer")[],
-): Promise<{
+async function seededWorkspace(roles: readonly ("admin" | "editor" | "viewer")[]): Promise<{
   workspaceId: string;
   ownerJar: CookieJar;
   ownerId: string;
@@ -185,7 +188,10 @@ async function removeMember(
   jar: CookieJar,
   workspaceId: string,
   memberId: string,
-): Promise<{ status: number; body: { data?: { id: string; removed: boolean }; error?: { code: string } } }> {
+): Promise<{
+  status: number;
+  body: { data?: { id: string; removed: boolean }; error?: { code: string } };
+}> {
   const response = await api(
     server.base,
     `/v1/workspaces/${workspaceId}/members/${encodeURIComponent(memberId)}`,
@@ -337,7 +343,12 @@ d("role change (§3.3 matrix, §7.1 audit)", () => {
     const { workspaceId, members } = await seededWorkspace(["viewer", "editor"]);
     const viewer = members[0];
     const editor = members[1];
-    const result = await changeRole(viewer?.jar ?? new CookieJar(), workspaceId, editor?.userId ?? "", "viewer");
+    const result = await changeRole(
+      viewer?.jar ?? new CookieJar(),
+      workspaceId,
+      editor?.userId ?? "",
+      "viewer",
+    );
     expect(result.status).toBe(403);
     expect(result.body.error?.code).toBe("FORBIDDEN");
   });
@@ -346,7 +357,12 @@ d("role change (§3.3 matrix, §7.1 audit)", () => {
     const { workspaceId, members } = await seededWorkspace(["editor", "viewer"]);
     const editor = members[0];
     const viewer = members[1];
-    const result = await changeRole(editor?.jar ?? new CookieJar(), workspaceId, viewer?.userId ?? "", "viewer");
+    const result = await changeRole(
+      editor?.jar ?? new CookieJar(),
+      workspaceId,
+      viewer?.userId ?? "",
+      "viewer",
+    );
     expect(result.status).toBe(403);
     expect(result.body.error?.code).toBe("FORBIDDEN");
   });

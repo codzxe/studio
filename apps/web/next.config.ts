@@ -42,7 +42,7 @@ const EDITOR_DEV_SERVER_URL =
 const GATEWAY_INTERNAL_URL = (
   process.env.NODE_ENV === "production"
     ? undefined
-    : process.env.GATEWAY_INTERNAL_URL ?? "http://127.0.0.1:8787"
+    : (process.env.GATEWAY_INTERNAL_URL ?? "http://127.0.0.1:8787")
 )?.replace(/\/+$/, "");
 
 // W3-I: Turbopack still lacks webpack's `extensionAlias` (".js" → ".ts"),

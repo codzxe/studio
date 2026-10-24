@@ -26,7 +26,7 @@
 
 import { z } from "zod";
 
-import { ID_SCHEMA, type Id, ISO8601_SCHEMA, PAGINATION_QUERY_SCHEMA } from "./common.js";
+import { ID_SCHEMA, ISO8601_SCHEMA, type Id, PAGINATION_QUERY_SCHEMA } from "./common.js";
 
 /**
  * v1 API-key scope vocabulary (§7.1 "scoped"). A key carries a set of these;

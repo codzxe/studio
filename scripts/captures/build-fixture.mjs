@@ -85,7 +85,13 @@ const SWITCHES = src.items[1].kind.layers[0].switches; // verbatim clone
 const AUTO_ORIENT = src.items[1].kind.layers[0].auto_orient; // "Off"
 
 /** Transform group cloned from the fixture's real Transform (build::transform). */
-function transformGroup(anchor, position, scale, opacity, { positionKeys = null, scaleKeys = null } = {}) {
+function transformGroup(
+  anchor,
+  position,
+  scale,
+  opacity,
+  { positionKeys = null, scaleKeys = null } = {},
+) {
   const prop = (match, name, value, ui, extra = {}) => ({
     node: "Prop",
     uid: nextUid(),
@@ -104,11 +110,23 @@ function transformGroup(anchor, position, scale, opacity, { positionKeys = null,
     enabled: true,
     children: [
       prop("anchor", "Anchor Point", v3(...anchor), { kind: "Point" }, { spatial: true }),
-      prop("position", "Position", v3(...position), { kind: "Point" }, {
-        spatial: true,
-        ...(positionKeys ? { keys: positionKeys } : {}),
-      }),
-      prop("scale", "Scale", v3(...scale), { kind: "Percent" }, scaleKeys ? { keys: scaleKeys } : {}),
+      prop(
+        "position",
+        "Position",
+        v3(...position),
+        { kind: "Point" },
+        {
+          spatial: true,
+          ...(positionKeys ? { keys: positionKeys } : {}),
+        },
+      ),
+      prop(
+        "scale",
+        "Scale",
+        v3(...scale),
+        { kind: "Percent" },
+        scaleKeys ? { keys: scaleKeys } : {},
+      ),
       prop("orientation", "Orientation", v3(0, 0, 0), { kind: "Angle" }, { three_d_only: true }),
       prop("rotationX", "X Rotation", scalar(0), { kind: "Angle" }, { three_d_only: true }),
       prop("rotationY", "Y Rotation", scalar(0), { kind: "Angle" }, { three_d_only: true }),
@@ -152,8 +170,24 @@ function solidLayer(name, label, solidItemId, { w, h }, transform) {
       kind: { kind: "Plain" },
       enabled: true,
       children: [
-        { node: "Group", uid: nextUid(), match: "masks", name: "Masks", kind: { kind: "Plain" }, enabled: true, children: [] },
-        { node: "Group", uid: nextUid(), match: "effects", name: "Effects", kind: { kind: "Plain" }, enabled: true, children: [] },
+        {
+          node: "Group",
+          uid: nextUid(),
+          match: "masks",
+          name: "Masks",
+          kind: { kind: "Plain" },
+          enabled: true,
+          children: [],
+        },
+        {
+          node: "Group",
+          uid: nextUid(),
+          match: "effects",
+          name: "Effects",
+          kind: { kind: "Plain" },
+          enabled: true,
+          children: [],
+        },
         transform,
         // Material Options (cloned shape from the fixture's av layer; 2D
         // layers keep it serialized — the editor hides it until 3D).
@@ -165,15 +199,78 @@ function solidLayer(name, label, solidItemId, { w, h }, transform) {
           kind: { kind: "Plain" },
           enabled: true,
           children: [
-            { node: "Prop", uid: nextUid(), match: "castsShadows", name: "Casts Shadows", value: { t: "Bool", v: false }, ui: { kind: "Checkbox" } },
-            { node: "Prop", uid: nextUid(), match: "lightTransmission", name: "Light Transmission", value: scalar(0), ui: { kind: "Percent" } },
-            { node: "Prop", uid: nextUid(), match: "acceptsShadows", name: "Accepts Shadows", value: { t: "Enum", v: 0 }, ui: { kind: "Popup", options: ["Off", "On", "Only"] } },
-            { node: "Prop", uid: nextUid(), match: "acceptsLights", name: "Accepts Lights", value: { t: "Bool", v: true }, ui: { kind: "Checkbox" } },
-            { node: "Prop", uid: nextUid(), match: "ambient", name: "Ambient", value: scalar(100), ui: { kind: "Percent" } },
-            { node: "Prop", uid: nextUid(), match: "diffuse", name: "Diffuse", value: scalar(100), ui: { kind: "Percent" } },
-            { node: "Prop", uid: nextUid(), match: "specularIntensity", name: "Specular Intensity", value: scalar(100), ui: { kind: "Percent" } },
-            { node: "Prop", uid: nextUid(), match: "specularShininess", name: "Specular Shininess", value: scalar(20), ui: { kind: "Slider", min: 1, max: 500, slider_min: 1, slider_max: 100, decimals: 0 } },
-            { node: "Prop", uid: nextUid(), match: "metal", name: "Metal", value: scalar(100), ui: { kind: "Percent" } },
+            {
+              node: "Prop",
+              uid: nextUid(),
+              match: "castsShadows",
+              name: "Casts Shadows",
+              value: { t: "Bool", v: false },
+              ui: { kind: "Checkbox" },
+            },
+            {
+              node: "Prop",
+              uid: nextUid(),
+              match: "lightTransmission",
+              name: "Light Transmission",
+              value: scalar(0),
+              ui: { kind: "Percent" },
+            },
+            {
+              node: "Prop",
+              uid: nextUid(),
+              match: "acceptsShadows",
+              name: "Accepts Shadows",
+              value: { t: "Enum", v: 0 },
+              ui: { kind: "Popup", options: ["Off", "On", "Only"] },
+            },
+            {
+              node: "Prop",
+              uid: nextUid(),
+              match: "acceptsLights",
+              name: "Accepts Lights",
+              value: { t: "Bool", v: true },
+              ui: { kind: "Checkbox" },
+            },
+            {
+              node: "Prop",
+              uid: nextUid(),
+              match: "ambient",
+              name: "Ambient",
+              value: scalar(100),
+              ui: { kind: "Percent" },
+            },
+            {
+              node: "Prop",
+              uid: nextUid(),
+              match: "diffuse",
+              name: "Diffuse",
+              value: scalar(100),
+              ui: { kind: "Percent" },
+            },
+            {
+              node: "Prop",
+              uid: nextUid(),
+              match: "specularIntensity",
+              name: "Specular Intensity",
+              value: scalar(100),
+              ui: { kind: "Percent" },
+            },
+            {
+              node: "Prop",
+              uid: nextUid(),
+              match: "specularShininess",
+              name: "Specular Shininess",
+              value: scalar(20),
+              ui: { kind: "Slider", min: 1, max: 500, slider_min: 1, slider_max: 100, decimals: 0 },
+            },
+            {
+              node: "Prop",
+              uid: nextUid(),
+              match: "metal",
+              name: "Metal",
+              value: scalar(100),
+              ui: { kind: "Percent" },
+            },
           ],
         },
       ],
@@ -212,37 +309,34 @@ const CARD = [0.086, 0.094, 0.118];
 
 // Layers render top-first (layer #1 at the top of the stack).
 const titleCard = solidLayer(
-  "Title Card", "Blue", cardItem, { w: 840, h: 260 },
-  transformGroup(
-    [420, 130, 0],
-    [960, 506, 0],
-    [100, 100, 100],
-    100,
-    {
-      scaleKeys: [
-        key(0.4, v3(4, 4, 100), { bezierOut: true }),
-        key(1.6, v3(100, 100, 100), { bezierIn: true }),
-      ],
-    },
-  ),
+  "Title Card",
+  "Blue",
+  cardItem,
+  { w: 840, h: 260 },
+  transformGroup([420, 130, 0], [960, 506, 0], [100, 100, 100], 100, {
+    scaleKeys: [
+      key(0.4, v3(4, 4, 100), { bezierOut: true }),
+      key(1.6, v3(100, 100, 100), { bezierIn: true }),
+    ],
+  }),
 );
 const signalBar = solidLayer(
-  "Signal Bar", "Orange", barItem, { w: 520, h: 12 },
-  transformGroup(
-    [260, 6, 0],
-    [560, 700, 0],
-    [100, 100, 100],
-    100,
-    {
-      positionKeys: [
-        key(0.2, v3(430, 700, 0), { bezierOut: true }),
-        key(3.2, v3(1490, 700, 0), { bezierIn: true }),
-      ],
-    },
-  ),
+  "Signal Bar",
+  "Orange",
+  barItem,
+  { w: 520, h: 12 },
+  transformGroup([260, 6, 0], [560, 700, 0], [100, 100, 100], 100, {
+    positionKeys: [
+      key(0.2, v3(430, 700, 0), { bezierOut: true }),
+      key(3.2, v3(1490, 700, 0), { bezierIn: true }),
+    ],
+  }),
 );
 const backdrop = solidLayer(
-  "Backdrop", "Sandstone", backdropItem, { w: W, h: H },
+  "Backdrop",
+  "Sandstone",
+  backdropItem,
+  { w: W, h: H },
   transformGroup([W / 2, H / 2, 0], [W / 2, H / 2, 0], [100, 100, 100], 100),
 );
 
@@ -280,13 +374,37 @@ const project = {
   schema: 2,
   settings: src.settings, // verbatim clone of the real serialization
   items: {
-    [FOLDER]: { id: FOLDER, name: "Solids", label: "None", comment: "", parent: null, kind: { type: "Folder" } },
+    [FOLDER]: {
+      id: FOLDER,
+      name: "Solids",
+      label: "None",
+      comment: "",
+      parent: null,
+      kind: { type: "Folder" },
+    },
     [backdropItem]: solidItem("Backdrop", "Sandstone", FOLDER, BACKDROP, W, H),
     [barItem]: solidItem("Signal Bar", "Orange", FOLDER, BAR, 520, 12),
     [cardItem]: solidItem("Title Card", "Blue", FOLDER, CARD, 840, 260),
-    [compItem]: { id: compItem, name: "Main", label: "Yellow", comment: "", parent: null, kind: comp },
+    [compItem]: {
+      id: compItem,
+      name: "Main",
+      label: "Yellow",
+      comment: "",
+      parent: null,
+      kind: comp,
+    },
   },
-  next_id: Math.max(FOLDER, backdropItem, barItem, cardItem, compItem, titleCard.id, signalBar.id, backdrop.id) + 1,
+  next_id:
+    Math.max(
+      FOLDER,
+      backdropItem,
+      barItem,
+      cardItem,
+      compItem,
+      titleCard.id,
+      signalBar.id,
+      backdrop.id,
+    ) + 1,
 };
 
 // Sanity: strict-shape self-check on the fields we fabricated. (uids are
@@ -297,10 +415,13 @@ const project = {
   const parsed = JSON.parse(json);
   for (const layer of parsed.items[parsed.activeComp].kind.layers) {
     const uids = [...JSON.stringify(layer.props).matchAll(/"uid":(\d+)/g)].map((m) => Number(m[1]));
-    if (new Set(uids).size !== uids.length) throw new Error(`duplicate uid inside layer ${layer.name}`);
+    if (new Set(uids).size !== uids.length)
+      throw new Error(`duplicate uid inside layer ${layer.name}`);
     if (layer.source.type !== "Solid") throw new Error("non-solid layer");
   }
-  if (parsed.items[parsed.activeComp].kind.type !== "Comp") throw new Error("activeComp is not a comp");
+  if (parsed.items[parsed.activeComp].kind.type !== "Comp")
+    throw new Error("activeComp is not a comp");
+  // biome-ignore lint/suspicious/noConsole: CLI fixture builder — prints staging progress/digest to console
   console.log(
     `[fixture] comp "Main" ${W}x${H}@${fps} ${DURATION_SECONDS}s · layers:`,
     parsed.items[parsed.activeComp].kind.layers.map((l) => l.name).join(" / "),
@@ -313,5 +434,7 @@ for (const version of VERSIONS) {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "project.ecproj"), bytes);
 }
+// biome-ignore lint/suspicious/noConsole: CLI fixture builder — prints staging progress/digest to console
 console.log(`[fixture] staged ${bytes.length} bytes at ${VERSIONS.length} seeded object keys`);
+// biome-ignore lint/suspicious/noConsole: CLI fixture builder — prints staging progress/digest to console
 console.log(`[fixture] sha256 ${createHash("sha256").update(bytes).digest("hex")}`);
