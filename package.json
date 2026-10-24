@@ -37,5 +37,9 @@
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },
-  "workspaces": ["apps/*", "services/*", "packages/*"]
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ]
 }
