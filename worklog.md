@@ -3171,3 +3171,20 @@ Stage Summary:
 - W3-C2's EDGE_PROXY_JS WS tunnel: LANDED and proven live — full hydration through :3100 (CI's e2e job path), 502-readiness preserved, payload syntax-checked standalone.
 - Bonus (ownership): forwardShortcut capture-phase fix resurrects the iframe-side Ctrl+L/K/I/§9.2 arm — chat.spec.ts 5/6 (+1 skip) vs 4/6 at wave-2; W3-C2's host-side arm becomes the true fallback it was designed to be.
 - Remaining risks: m9-visual/m7/m8/m9-axe suites not re-run this task (m9-axe still needs the @axe-core devDep; billing-320px row in M9.md can now flip on a green m9-visual rerun through the FIXED edge — recommend the next e2e owner sweep); the sandbox reaps background stacks between invocations (boot+test must stay ONE invocation — a 6/6-fail artifact dir from one violated attempt is in e2e/.results and can be ignored); e2e/.results failure artifacts from this run's diagnostics are untracked scratch.
+---
+Task ID: SYNC-01
+Agent: main integrator (session continuation)
+Task: Resolve "commit and push — why didn't you push it": account for local W1-05 commit (347ff7a) left unpushed when the prior session died, realign the stale sandbox to origin/main, land the resolution.
+
+Work Log:
+- Forensics: local main was ahead 1 / behind 34 vs origin/main. Local HEAD 347ff7a ("W1-05: owed fixes") was authored 2026-10-23 08:48:46 but never pushed — the prior session ran out of context between commit and push.
+- Remote already contained the same-titled W1-05 (80d1797, identical author-date and message) landed via the "W1-05 divergence rebase rescue" (f86a00ab) — a concurrent agent had re-landed the same work through a cleaner path.
+- Equivalence proof: `git diff 347ff7a 80d1797 -- ':!upload'` is EMPTY — the two commits are tree-identical outside `upload/`. The only local-unique content was 16 `upload/Pasted Content_*.txt` junk pastes (7x 3459-line duplicates) the remote deliberately excluded and later purged (be11c7b untrack round).
+- Force-pushing the local duplicate was correctly NOT done: it would have re-added junk and clobbered 30+ newer commits (W3/W4/W5 + wave1/2/3). The work itself was never lost — it was already on the remote.
+- Realign: `git reset --hard origin/main` (90d74d2, wave3 head) — stale working tree synced to the newer remote state; ignored dirs (upload/, download/, skills/, editor/assets/fonts/, bun.lock) preserved on disk untouched.
+- Stale-relic sweep: 21 untracked leftovers from the old tree removed — pre-(shell)-move routes (`w/[slug]/history/`, `w/billing/`, `w/page.tsx` — the latter conflicted with the moved `w/(shell)/page.tsx` route), old fat `packages/storage` src+tests superseded by the wave-2 slim (22->9 files), the Slate trio deleted at W4-KILL, `scripts/fix-plan-compiler.py` + `scripts/serve-editor.py` removed at W5-08, `services/gateway/scratch-w1-07.ts`, root `next-env.d.ts`. Tree now exactly matches origin/main.
+
+Stage Summary:
+- Nothing was ever lost: W1-05's real content has been on origin/main as 80d1797 all along; local 347ff7a was a content-identical duplicate carrying only junk.
+- Sandbox realigned to 90d74d2 (wave3 head), clean tree; this entry is the only new commit.
+- Guidance for future agents: at session start ALWAYS `git fetch` and diff vs origin/main before committing/pushing — multiple sessions race this repo and the same work has now landed twice through different paths (W1-05 is the second divergence incident).
