@@ -17,22 +17,38 @@ Doc hierarchy (all under `docs/`): `BUILD_PLAN.md` (execution, milestones M0–M
 on every documented ambiguity — read it before "deciding" anything.
 `docs/phases/gap/` holds the completion map from the W-R reader wave.
 
-## Environment truth (this box, re-probed 2026-10-22)
+## Environment truth (this box, re-probed 2026-10-22; dated corrections 2026-10-24)
 
 - node 24, pnpm 9.15.9 (on PATH), bun available. **No Docker.** Rust toolchain IS
   installed (rustup at /home/z/.rustup, cargo at /home/z/.cargo/bin — export
-  PATH="$HOME/.cargo/bin:$PATH") with the wasm32 target; the editor wasm dist is
-  built from the vendored pin. ffmpeg IS available.
-- PostgreSQL 17 is **installed and running** at `127.0.0.1:5432` (user `studio`, pw
-  `studio`, db `studio`) via `scripts/dev-postgres.sh`. When a command needs the DB,
+  PATH="$HOME/.cargo/bin:$PATH") with the wasm32 target; verified 2026-10-24:
+  rustc 1.99.1, `wasm-bindgen-cli` 0.2.129, `wasm-opt` 125 all on PATH (W1-C) —
+  the editor wasm dist is built from the vendored pin **on this box** (re-tuned
+  2026-10-24, 49.4 MB wasm). ffmpeg IS available, and Playwright's chromium
+  runs here: the e2e stack boots on-box via `scripts/e2e-run.sh` (W1-E,
+  2026-10-24).
+- PostgreSQL 17 is **installed** at `127.0.0.1:5432` (user `studio`, pw
+  `studio`, db `studio`) via `scripts/dev-postgres.sh` — *2026-10-24:* currently
+  STOPPED (W1-F left it stopped; start it with the script when a command needs
+  the DB). When a command needs the DB,
   export `DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio` — the shell may
   carry a STALE `DATABASE_URL=file:...custom.db`; always set it explicitly in your
   command. PG-free alternative for dev-server work: the SQLite dev database (next
   section).
 - Valkey optional: `bash scripts/dev-valkey.sh start` (127.0.0.1:6379). Everything
   degrades gracefully without it.
-- Dependencies are **installed**. Do NOT run `pnpm install`. Do NOT run dev servers or
-  `pnpm dev` (port conflicts; use tests). This box OOMs on parallel tsc:
+- Dependencies are **installed**. *Correction 2026-10-24:* this box CAN install
+  and CAN run dev stacks — the `@axe-core/playwright` devDep was installed +
+  lockfile-synced 2026-10-24 (commit 3a766a3), and dev stacks + the full
+  Playwright e2e boot on-box (`scripts/dev-stack.sh`, `scripts/e2e-run.sh` —
+  the latter hardened by W1-E and load-bearing for every e2e run here). The
+  old blanket "no installs / no dev servers" bans were environment-era
+  claims, now superseded; what REMAINS is fleet coordination law: don't run
+  `pnpm install` unless your task explicitly owns a dependency change (it
+  mutates the shared `node_modules` under siblings' feet), don't race or
+  abandon ports (exactly ONE `next dev` per app dir boots — a second defers
+  to the survivor and dies; prefer tests for unit work), and tear stacks
+  down when done. This box OOMs on parallel tsc:
   always `pnpm turbo run <task> --concurrency=1`.
 - `.env` (root) is populated for local runs (MOCK_MODEL=true, AUTH_SECRET set). Never
   commit it; never print secret values.

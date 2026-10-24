@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
 import type { StudioDb } from "../db.js";
@@ -131,6 +131,45 @@ function requireGuestEmail(raw: string): string {
 export function createCommentsRepo(db: StudioDb): CommentsRepo {
   // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
   const { comments, projects } = tablesFor(db);
+  // Thread-aware resolved filter (2026-10-24, first-live m7-collab finding):
+  // a thread's resolved state is its ROOT's `resolvedAt` — the panel
+  // root-gates its Resolve control, so only roots ever flip — and a filter
+  // must never SPLIT a thread on fresh fetches (the pre-fix row-level
+  // `isNotNull(resolvedAt)` returned a resolved root without its replies
+  // under ?resolved=true, and orphaned unresolved replies under
+  // ?resolved=false).
+  //
+  // The root walk lives in the WHERE clause as correlated subqueries over
+  // aliased inner copies of the SAME table — deliberately NOT drizzle
+  // self-joins: joining an aliased table collapses drizzle's builder
+  // generics on the dual-dialect table union (tablesFor returns pg OR
+  // sqlite tables), typing the result rows `never`. The raw inner
+  // identifiers are pinned safe by the tables.ts seam contract (identical
+  // table AND column names across both dialect schemas). Depth ≤ 3 bounds
+  // the walk at two hops; a broken parent chain (data corruption) reads
+  // NULL → unresolved, and the client tree is orphan-safe anyway.
+  const threadRootResolvedAt = sql<Date | null>`
+    CASE
+      WHEN ${comments.parentId} IS NULL THEN ${comments.resolvedAt}
+      WHEN (
+        SELECT parent.parent_id IS NULL FROM ${comments} parent
+        WHERE parent.id = ${comments.parentId}
+      ) THEN (
+        SELECT parent.resolved_at FROM ${comments} parent
+        WHERE parent.id = ${comments.parentId}
+      )
+      ELSE (
+        SELECT grandparent.resolved_at FROM ${comments} grandparent
+        WHERE grandparent.id = (
+          SELECT parent.parent_id FROM ${comments} parent
+          WHERE parent.id = ${comments.parentId}
+        )
+      )
+    END
+  `;
+  /** Thread-aware `resolved` condition for the flat list queries. */
+  const threadResolvedCondition = (resolved: boolean) =>
+    resolved ? sql`${threadRootResolvedAt} IS NOT NULL` : sql`${threadRootResolvedAt} IS NULL`;
   return {
     async create(workspaceId, input) {
       const body = requireNonEmpty(input.body, "body");
@@ -271,11 +310,8 @@ export function createCommentsRepo(db: StudioDb): CommentsRepo {
             eq(projects.workspaceId, workspaceId),
             // D-15: the comp filter is a server-side query parameter.
             options?.compId === undefined ? undefined : eq(comments.compId, options.compId),
-            options?.resolved === undefined
-              ? undefined
-              : options.resolved
-                ? isNotNull(comments.resolvedAt)
-                : isNull(comments.resolvedAt),
+            // Thread-aware: the ROOT's resolvedAt decides the whole thread.
+            options?.resolved === undefined ? undefined : threadResolvedCondition(options.resolved),
             cursor
               ? or(
                   lt(comments.createdAt, new Date(cursor.t)),
@@ -308,11 +344,9 @@ export function createCommentsRepo(db: StudioDb): CommentsRepo {
           and(
             eq(comments.projectId, projectId),
             eq(projects.workspaceId, workspaceId),
-            options?.resolved === undefined
-              ? undefined
-              : options.resolved
-                ? isNotNull(comments.resolvedAt)
-                : isNull(comments.resolvedAt),
+            // Thread-aware (same semantics as listThreaded): the ROOT's
+            // resolvedAt decides the whole thread.
+            options?.resolved === undefined ? undefined : threadResolvedCondition(options.resolved),
             cursor
               ? or(
                   lt(comments.createdAt, new Date(cursor.t)),

@@ -24,6 +24,10 @@
 # PERF_SKIP_SEED=1 to skip the idempotent re-seed, PERF_FORCE_CLEANUP=1.
 set -euo pipefail
 
+# Box toolchain (worklog wave-2 law): corepack is broken on this box — plain
+# pnpm 9.15.9 from ~/.npm-global, exactly like scripts/e2e-run.sh.
+export PATH="/home/z/.npm-global/bin:/home/z/.cargo/bin:$PATH"
+
 MODE="${1:-}"
 case "$MODE" in
   api | editor | apply) ;;
@@ -127,13 +131,18 @@ export DATABASE_URL="file:$DB_FILE" \
 # --- Idempotent re-seed (packages/db/scripts/seed.ts replays cleanly) --------
 if [ "${PERF_SKIP_SEED:-0}" != "1" ]; then
   log "re-seeding $DB_FILE (idempotent)"
-  (cd "$ROOT" && corepack pnpm --filter @studio/db seed >/tmp/perf-seed.log 2>&1) \
+  (cd "$ROOT" && pnpm --filter @studio/db seed >/tmp/perf-seed.log 2>&1) \
     || { log "seed FAILED (see /tmp/perf-seed.log)"; exit 4; }
   log "seed OK"
 fi
 
 # --- Boot the gateway ---------------------------------------------------------
-setsid bash -c "cd $ROOT && PORT=$GW_PORT corepack pnpm --filter @studio/gateway dev" \
+# WATCH-FREE (`tsx src/index.ts`, not the package's `dev` = `tsx watch`): the
+# W1-E e2e-run.sh hardening (2026-10-24) — tsx watch registers an inotify
+# watch on EVERY file under node_modules and this box caps a user at 8192
+# watches (ENOSPC crash-loop + watcher-heavy respawns). A perf round never
+# edits gateway sources, and a watcher also adds CPU noise to the samples.
+setsid bash -c "cd $ROOT && PORT=$GW_PORT pnpm --filter @studio/gateway exec tsx src/index.ts" \
   >"$GW_LOG" 2>&1 &
 PIDS+=("$!")
 log "gateway booting on :$GW_PORT (pgid ${PIDS[-1]}) — log $GW_LOG"
@@ -147,7 +156,7 @@ log "gateway healthy: $(curl -sf "http://127.0.0.1:${GW_PORT}/health")"
 
 # --- Boot next dev — browser modes (editor / apply) ---------------------------
 if [ "$MODE" != "api" ]; then
-  setsid bash -c "cd $ROOT && corepack pnpm --filter @studio/web exec next dev --port $WEB_PORT" \
+  setsid bash -c "cd $ROOT && pnpm --filter @studio/web exec next dev --port $WEB_PORT" \
     >"$WEB_LOG" 2>&1 &
   PIDS+=("$!")
   log "next dev booting on :$WEB_PORT (pgid ${PIDS[-1]}) — log $WEB_LOG"

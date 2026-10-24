@@ -148,17 +148,25 @@ package entry (`src/index.ts`) and never ship to the app.
 
 **Accessibility floor (what is covered here, honestly).** The spec
 (`docs/UI_DESIGN_SYSTEM.md` §7) says "Every component has a Storybook-style
-example and an axe test." Full **axe-core scans are CI-owed**: the
-`@axe-core/*` devDependency is **not installable on this build box** (the
-no-install environment law, `docs/AGENTS.md` — dependencies are pinned and
-installing is forbidden), so the on-box floor is unit-level a11y assertions
-in each `<name>.test.tsx`: semantic roles, `aria-*` wiring
-(`aria-describedby` / `aria-invalid` / `aria-required` / `aria-expanded` /
-`aria-selected` / `aria-disabled`), accessible names (labels above controls,
-icon-only buttons carrying `aria-label`), keyboard journeys (arrows, Home /
-End, Enter, Escape), focus behaviour, disabled states, and `data-state`
-attributes (§15). A **Playwright + axe pass is specced for the CI wave**
-(§16.4 "Axe clean") and must run against these components before M10.
+example and an axe test." *Correction 2026-10-24:* this section previously
+said full **axe-core scans are CI-owed** because the `@axe-core/*` devDep
+was "not installable on this build box" — stale. `@axe-core/playwright`
+^4.14.0 **is installed** (devDep + `pnpm-lock.yaml` synced, commit 3a766a3,
+2026-10-24) and the **first live sweep ran on-box the same day**: the e2e
+`m9-axe` suite passed **10/10 — zero violations** across the 10 public
+routes at wcag2a/2aa/21a/21aa (W1-E; contract in
+`apps/web/e2e/README.md` §11c; the `docs/AGENTS.md` no-install law it cited
+carries its own dated correction). Division of labour now: this kit's own
+floor **remains** the unit-level a11y assertions in each
+`<name>.test.tsx` — the live proof is the in-app e2e sweep, which exercises
+these components on real routes rather than scanning each primitive in
+isolation — and **CI owns the scheduled re-runs** (§16.4 "Axe clean").
+The unit floor: semantic roles, `aria-*` wiring (`aria-describedby` /
+`aria-invalid` / `aria-required` / `aria-expanded` / `aria-selected` /
+`aria-disabled`), accessible names (labels above controls, icon-only
+buttons carrying `aria-label`), keyboard journeys (arrows, Home / End,
+Enter, Escape), focus behaviour, disabled states, and `data-state`
+attributes (§15).
 
 Two jsdom limitations are covered by the app's Playwright e2e instead of
 the unit suite: Radix Select's pointer-capture open path (keyboard open is

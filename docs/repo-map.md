@@ -109,9 +109,21 @@ see the .gitignore stale-tsc-emit block).
 
 Byte-identical upstream pin `9db7f3b2` (v0.13.0) per `editor/UPSTREAM.md` and
 ADR-0006; the wasm dist is built with the Rust toolchain (`cargo xtask web`)
-and committed under `apps/web/public/editor/`. Editor UI is frozen (law #7);
+and committed under `apps/web/public/editor/` (re-tuned 2026-10-24 to a
+49.4 MB wasm — W1-C/W1-E). Editor UI is frozen (law #7);
 the chat is an additive overlay. Wire contract: the `window.effectcraft`
 surface consumed by `packages/editor-bridge`.
+
+### `evals/` — golden agent prompts + scoring harness (added 2026-10-24 map refresh)
+
+Deliberately NOT a pnpm workspace package (`pnpm-workspace.yaml` globs only
+`apps/*`, `services/*`, `packages/*`, so turbo/root install/test are
+unaffected). 40 golden prompts (`prompts/manifest.json`, the BUILD_PLAN §7.2
+categories + six hardening extras) plus a hermetic scoring harness
+(`harness/` — 20 schema-integrity tests, ~1 s, zero new dependencies;
+vocabulary drift-checked against the real `@studio/contracts` sources);
+live-model scoring is skip-guarded behind `EVALS_LIVE=1` and **not wired
+yet**. Landed with wave 3 (90d74d2). Entry doc: `evals/README.md`.
 
 ### `deploy/` — service deployment extras
 
@@ -140,7 +152,12 @@ read before deciding anything), `adr/` (0001–0006, incl. the EffectCraft pivot
 maps, superseded by the W1–W5 landing; each carries a SUPERSEDED header),
 `api/` (the wire-contract pointer — `@studio/contracts` + `@studio/api-client`
 are the source of truth), `runbooks/`,
-`devlog.md`, `repo-map.md` (this file).
+`devlog.md`, `repo-map.md` (this file). Also on disk (2026-10-24 refresh):
+`DEVELOPMENT.md` (the dev loop), `performance.md` (the measured-budget
+ledger), `release-checklist.md` (the v0.1.0-beta.0 tag gate),
+`secrets-policy.md`, `BUILD_PROMPT.md` (the superseded pre-pivot plan),
+`README.md` (the doc index), and the `authoring/`, `deploy/`, `legal/`,
+`security/` subdirs.
 
 ### `scripts/` — fleet tooling
 
@@ -150,6 +167,13 @@ push; serialized fleet-wide; never force-push). Dev services: `dev-postgres.sh`
 stack runs on it), `dev-stack.sh` (one-shot boot of the REAL stack: gateway
 :8787 + web :3000 on the SQLite DB, `start|stop`, logs under `.local/`),
 `dev-valkey.sh` (optional), `dev-litellm.sh` (optional, 127.0.0.1:4000).
+E2E + perf (added 2026-10-24): `e2e-run.sh` (the on-box Playwright stack
+runner — watch-free gateway boot + process-group teardown, hardened by W1-E
+after an inotify watch-budget crash-loop; load-bearing for every e2e run
+here), `e2e-probe-editor.mjs` (the committed editor-boot probe evidence),
+`perf/` (the §6 budget measurers: `boot-and-measure.sh` entry,
+`api-latency.mjs`, `editor-ready.mjs`, `apply-timing.mjs`; results under
+`perf/results/`).
 Editor: `build-editor-dist.sh` (canonical wasm-dist build + staging into
 `apps/web/public/editor/`), `build_editor_web.sh` (the 4 GB-box OOM-workaround
 chunked `cargo build` primitive behind it), `debrand_editor.py` +
@@ -189,5 +213,8 @@ here — only in a 0600 `.env` on the box (docs/secrets-policy.md).
 Ownership note: this file describes the tree as-built. Keep it updated when
 the layout changes (W1-10 refreshed it 2026-10-23 after the W1-01 purge;
 W5-08 refreshed the apps/web route-group map, the gateway route-module count
-and the infra paragraph on 2026-10-23; the per-milestone proof lives in
-`docs/phases/*.md` and the fleet `worklog.md`).
+and the infra paragraph on 2026-10-23; W2-E re-verified the route map,
+the gateway route-module count (25), the workspace-package count (7), the
+UI-component count (22) and the drizzle range (0000–0006) against the tree
+and added the `evals/`, scripts e2e/perf and docs-index entries on 2026-10-24;
+the per-milestone proof lives in `docs/phases/*.md` and the fleet `worklog.md`).

@@ -34,8 +34,9 @@ Milestones from [`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md) (M0–M10):
 | M9 | design system, landing, dashboard | audited + gap-fixed; field perf owed to M10 |
 | M10 | hardening, private beta, release | remaining |
 
-Per-milestone evidence: `docs/phases/` (M0, M3–M8 + the m8 CLI spike; the M1/M2
-foundations predate the pivot). Binding rulings:
+Per-milestone evidence: `docs/phases/` (M0–M9 + the m8 CLI spike; the M1/M2
+foundations predate the pivot — their evidence files were minted later, in
+wave 2). Binding rulings:
 [`docs/DECISIONS.md`](docs/DECISIONS.md). Fleet history: `worklog.md`.
 
 ## 5-minute quickstart (zero Postgres, zero Docker)

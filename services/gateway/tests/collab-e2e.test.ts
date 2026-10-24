@@ -1511,20 +1511,34 @@ d("journey 3 — the comment conversation: anchors, threads, resolution, reload"
   });
 
   it("the D-15 filters are server-side: compId, resolved=true/false", async () => {
+    // *Update 2026-10-24 (thread-aware resolved filter):* the original
+    // assertions pinned the ROW-level behavior the first live m7-collab
+    // run exposed as a bug — a resolved root came back WITHOUT its replies
+    // under resolved=true, and an unresolved reply was orphaned from its
+    // resolved root under resolved=false ("replies stay open threads of
+    // their own"). The thread ROOT's resolvedAt now decides every row, so
+    // the assertions below follow the WHOLE thread.
     const resolvedMain = await listComments(
       team.bJar,
       team.wsId,
       projectId,
       "compId=comp_main&resolved=true&limit=100",
     );
-    expect(resolvedMain).toHaveLength(1);
-    expect(resolvedMain[0]?.id).toBe(root1.id);
+    // root1's whole thread — root + both replies (they inherit the
+    // comp_main anchor) — follows the root under the Resolved filter;
+    // root3 stays out. A filter never splits a thread.
+    expect(resolvedMain).toHaveLength(3);
+    expect(new Set(resolvedMain.map((row) => row.id))).toEqual(
+      new Set([root1.id, reply1.id, reply2.id]),
+    );
 
     const open = await listComments(team.bJar, team.wsId, projectId, "resolved=false&limit=100");
     const openIds = open.map((row) => row.id);
     expect(openIds).toContain(root3.id);
-    expect(openIds).toContain(reply1.id); // replies stay open threads of their own
+    // root1's resolved thread leaves "Open" WHOLE — no orphaned replies.
     expect(openIds).not.toContain(root1.id);
+    expect(openIds).not.toContain(reply1.id);
+    expect(openIds).not.toContain(reply2.id);
 
     const titlesOnly = await listComments(
       team.aJar,

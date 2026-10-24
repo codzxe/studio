@@ -400,6 +400,88 @@ d("resolve is idempotent and records the resolver (§M7 task 1)", () => {
   });
 });
 
+d("the resolved filter is THREAD-aware (a filter never splits a thread)", () => {
+  // First-live m7-collab finding (2026-10-24): the row-level filter split
+  // resolved roots from their replies on fresh fetches — the panel's
+  // client-side thread semantics (root-gated Resolve, whole-thread filter
+  // moves) did not survive a reload. Fixed server-side: the thread ROOT's
+  // resolvedAt decides every row of the thread.
+  let ws: Workspace;
+  let projectId: string;
+
+  beforeAll(async () => {
+    ws = await newWorkspaceWithEditor();
+    projectId = await createProject(ws, ws.ownerJar);
+  });
+
+  it("?resolved=true returns the resolved root WITH its replies; ?resolved=false returns neither", async () => {
+    const rootRow = expectComment(
+      await createComment(ws, ws.ownerJar, projectId, {
+        compId: "comp_main",
+        body: "thread root to resolve",
+      }),
+    );
+    const replyRow = expectComment(
+      await reply(ws, ws.editorJar, rootRow.id, { body: "reply under the resolved root" }),
+    );
+    const resolveResult = await resolveComment(ws, ws.ownerJar, rootRow.id);
+    expect(resolveResult.status).toBe(200);
+
+    const done = await listComments(ws, projectId, "?resolved=true");
+    const doneIds = new Set(done.items.map((row) => row.id));
+    expect(doneIds.has(rootRow.id)).toBe(true);
+    expect(doneIds.has(replyRow.id)).toBe(true); // the first-live RED row
+
+    const open = await listComments(ws, projectId, "?resolved=false");
+    const openIds = new Set(open.items.map((row) => row.id));
+    expect(openIds.has(rootRow.id)).toBe(false);
+    expect(openIds.has(replyRow.id)).toBe(false); // no orphaned reply under Open
+  });
+
+  it("an open root keeps its whole thread under ?resolved=false; ?resolved=true stays empty", async () => {
+    const rootRow = expectComment(
+      await createComment(ws, ws.ownerJar, projectId, {
+        compId: "comp_main",
+        body: "open thread root",
+      }),
+    );
+    const replyRow = expectComment(
+      await reply(ws, ws.editorJar, rootRow.id, { body: "reply under the open root" }),
+    );
+
+    const open = await listComments(ws, projectId, "?resolved=false");
+    const openIds = new Set(open.items.map((row) => row.id));
+    expect(openIds.has(rootRow.id)).toBe(true);
+    expect(openIds.has(replyRow.id)).toBe(true);
+
+    const done = await listComments(ws, projectId, "?resolved=true");
+    expect(done.items.some((row) => row.id === rootRow.id || row.id === replyRow.id)).toBe(false);
+  });
+
+  it("depth-3 replies follow their resolved root too (the two-hop root walk)", async () => {
+    const rootRow = expectComment(
+      await createComment(ws, ws.ownerJar, projectId, {
+        compId: "comp_main",
+        body: "deep thread root",
+      }),
+    );
+    const depth2 = expectComment(
+      await reply(ws, ws.ownerJar, rootRow.id, { body: "depth 2 reply" }),
+    );
+    const depth3 = expectComment(
+      await reply(ws, ws.editorJar, depth2.id, { body: "depth 3 reply" }),
+    );
+    const resolveResult = await resolveComment(ws, ws.ownerJar, rootRow.id);
+    expect(resolveResult.status).toBe(200);
+
+    const done = await listComments(ws, projectId, "?resolved=true");
+    const doneIds = new Set(done.items.map((row) => row.id));
+    expect(doneIds.has(rootRow.id)).toBe(true);
+    expect(doneIds.has(depth2.id)).toBe(true);
+    expect(doneIds.has(depth3.id)).toBe(true);
+  });
+});
+
 d("threaded list: D-15 server-side compId filter + cursor pagination", () => {
   let ws: Workspace;
   let projectId: string;

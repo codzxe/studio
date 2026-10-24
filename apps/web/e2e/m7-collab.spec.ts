@@ -41,7 +41,7 @@
  *      (wrong label keeps Restore disabled; "empty project" — v1's exact seed
  *      label — unlocks it; the restore creates a NEW v4 and never rewrites
  *      history), and the activity tab pagination (scripted-gateway activity
- *      pages: 25 rows → Load more → 30 → "That's the whole feed.") + the
+ *      pages: 25 rows → Load more → 30 → "That’s the whole feed.") + the
  *      admin audit export download (real route, real payload).
  *   4. (ACTIVE) Share — the M7-I public journey at /s/:token, fully REAL
  *      thanks to the README §10 share-link fixture (the page's FIRST read —
@@ -58,18 +58,20 @@
  *      editing" + countdown), the CHAT still opens and completes a full
  *      read-only run through the gate-wrapped bridge (the studio.get_context
  *      tool card reaches done — reads pass, D-23), the proposal renders with
- *      NO apply control anywhere (the host wires no apply ports in this
- *      session — see below), and the comments panel stays fully usable with
+ *      NO apply control anywhere (first-live 2026-10-24: the host DOES wire
+ *      applyPorts post-K-1, but the REAL mock-model plan wire carries no
+ *      compiledBatch, so the card keeps the M4 callback-less shape — see the
+ *      apply arm's comment), and the comments panel stays fully usable with
  *      the lease note + a comment posted under another member's lease
  *      (review is the point of the read-only state).
  *   6. (fixme, WIRING-PENDING) The apply-blocked half of D-23: clicking Apply
  *      while another member holds the lease must fail LOCALLY with the typed
  *      lease explanation. Written as real code against the pinned contract
  *      (lib/chat/apply.ts → ReadOnlyLeaseError → card status "failed" +
- *      plan-failed-detail naming the holder + NO retry); flip
- *      `test.fixme` → `test` when editor-host.tsx passes the ChatProvider
- *      (LANDED 2026-10-24 — the K-1 fix passes applyPorts; both fixmes are ACTIVE now)
- *      `applyPorts` (see the test's header note — the precise blocker).
+ *      plan-failed-detail naming the holder + NO retry). The K-1 host-wiring
+ *      blocker RESOLVED 2026-10-24; the first-ever run then found the REAL
+ *      remaining blocker — the real mock-model plan wire has no compiledBatch
+ *      (see the test's header note — the precise evidence + flip options).
  *
  * ----------------------------------------------------------------------------
  * Determinism contract (no real network model, no real second user)
@@ -383,7 +385,7 @@ function activityEntry(index: number): Record<string, unknown> {
 
 /**
  * Script the activity feed (`GET /v1/projects/:id/activity`) with TWO cursor
- * pages: 25 rows → `Load more` → 5 rows → "That's the whole feed." The real
+ * pages: 25 rows → `Load more` → 5 rows → "That’s the whole feed." The real
  * audit table cannot seed > 25 deterministic rows; pagination is the point.
  */
 async function installScriptedActivityPages(page: Page): Promise<void> {
@@ -418,6 +420,14 @@ async function installScriptedActivityPages(page: Page): Promise<void> {
 // ---------------------------------------------------------------------------
 
 test.describe("M7 comments — anchored threads over the real editor", () => {
+  test.beforeEach(() => {
+    // The default 30s test timeout cannot cover a wasm editor boot
+    // (EDITOR_OPEN_TIMEOUT_MS is 120s) plus the CRUD/reload settle waits
+    // (chat.spec.ts / m5-agent-edits.spec.ts set the same per-describe —
+    // first-live finding 2026-10-24: without this, the journey dies at 30s
+    // mid-reply).
+    test.setTimeout(300_000);
+  });
   test("anchored comment: create with the prefilled anchor → reply → resolve → filters → reload persistence", async ({
     page,
   }) => {
@@ -425,8 +435,13 @@ test.describe("M7 comments — anchored threads over the real editor", () => {
 
     // The comments panel opens from the floating toggle (M7-F). Collapse the
     // chat first so the floating chat panel never covers the toggle.
+    // The chat collapses — the visible affordance is the PILL
+    // (chat-collapsed-pill). The chat-collapsed-layer wrapper is a
+    // zero-height positioning box (its only child is absolutely
+    // positioned, so the wrapper has no bounding box) — first-live finding
+    // 2026-10-24: toBeVisible on the layer can never pass.
     await page.getByTestId("chat-close-button").click();
-    await expect(page.getByTestId("chat-collapsed-layer")).toBeVisible();
+    await expect(page.getByTestId("chat-collapsed-pill")).toBeVisible();
 
     const toggle = page.getByTestId("comments-toggle");
     await expect(toggle).toBeVisible();
@@ -508,6 +523,37 @@ test.describe("M7 comments — anchored threads over the real editor", () => {
 
     // RELOAD PERSISTENCE — the §M7 exit criterion: the anchored, resolved
     // thread survives a full editor reboot (the rows live in Postgres).
+    //
+    // FIRST-LIVE APP-SIDE FINDING (2026-10-24, this suite's first-ever run —
+    // W2-B; kept below as history — FIXED same-day, see the update): the
+    // reply-row assertion below failed after a reload because the
+    // "Resolved" filter was ROW-level on the server (packages/db/src/repos/
+    // comments.ts: `resolved=true` → `isNotNull(resolvedAt)`), so the fresh
+    // fetch returned the resolved ROOT without its UNRESOLVED reply — D-15
+    // ("a filter never splits a thread — the replies follow their root")
+    // was violated on fresh fetches. The pre-reload legs passed because the
+    // panel holds both rows in local state (toggleResolve keeps threads
+    // whole client-side); the DB rows are correct (reply parent_id → the
+    // resolved root); only the filtered payload split them. Mirror gap:
+    // under "Open" the unresolved reply was returned WITHOUT its resolved
+    // root (an orphan row). Fix belongs server-side (thread-aware resolved
+    // filter) — the panel's client-side thread semantics then hold on fresh
+    // fetches too.
+    //
+    // UPDATE 2026-10-24 (fixed server-side, same day): the resolved filter
+    // is now THREAD-aware in packages/db/src/repos/comments.ts — the thread
+    // ROOT's resolvedAt decides every row of the thread (a correlated-
+    // subquery root walk bounded by the depth-≤3 chain), in both
+    // listThreaded and list. Fresh fetches return whole threads under both
+    // filter states. Regression-pinned in services/gateway/tests/comments.
+    // test.ts (wire level, sqlite) and packages/db/tests/integration/repos.
+    // test.ts (repo level, Postgres). This reload leg went GREEN — every
+    // DATA assertion below is unchanged (the red was never weakened, the
+    // server was fixed); the ONLY edit is the final anchor-chip locator
+    // scoped to the root row, because the now-whole thread renders an
+    // anchor chip per row and the old thread-wide locator trips Playwright
+    // strict mode (first post-fix run failed exactly there — the DOM
+    // proving the fix).
     await page.reload();
     await expect(page.getByTestId("editor-host")).toHaveAttribute("data-editor-phase", "open", {
       timeout: EDITOR_OPEN_TIMEOUT_MS,
@@ -525,9 +571,16 @@ test.describe("M7 comments — anchored threads over the real editor", () => {
         .locator('[data-testid^="comment-row-"]')
         .filter({ hasText: replyBody }),
     ).toBeVisible();
+    // The anchor chip lives on EVERY row of the now-whole thread (root +
+    // reply), so this scopes to the ROOT row — under the pre-fix split the
+    // thread held only the root and a bare thread-level locator passed;
+    // first post-fix run (2026-10-24) failed it as a strict-mode violation
+    // (2 anchor chips = the thread is whole, the fix is visible in the DOM).
     await expect(
       page
         .locator('[data-testid^="comment-thread-"]')
+        .filter({ hasText: rootBody })
+        .locator('[data-testid^="comment-row-"]')
         .filter({ hasText: rootBody })
         .locator('[data-testid^="comment-anchor-comp-"]'),
     ).toContainText("Main");
@@ -539,6 +592,12 @@ test.describe("M7 comments — anchored threads over the real editor", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("M7 presence + lease — who is viewing, who is editing", () => {
+  test.beforeEach(() => {
+    // The default 30s test timeout cannot cover a wasm editor boot
+    // (EDITOR_OPEN_TIMEOUT_MS is 120s) plus the settle waits (the sibling
+    // editor suites set the same per-describe).
+    test.setTimeout(300_000);
+  });
   test("the presence strip renders the beat's viewers and the banner shows the REAL holder state", async ({
     page,
   }) => {
@@ -644,7 +703,7 @@ test.describe("M7 history — version timeline, restore, activity", () => {
     await expect(v3.getByTestId("version-diff")).toHaveCount(0);
 
     // Cursor end: a handful of rows < one page → the honest end line.
-    await expect(page.getByTestId("timeline-end")).toContainText("That's the whole history.");
+    await expect(page.getByTestId("timeline-end")).toContainText("That’s the whole history.");
     await expect(page.getByTestId("timeline-load-more")).toHaveCount(0);
     await expect(v2).toBeVisible();
   });
@@ -698,7 +757,7 @@ test.describe("M7 history — version timeline, restore, activity", () => {
     await expect(page.getByTestId("activity-row")).toHaveCount(30, {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
-    await expect(page.getByTestId("activity-end")).toContainText("That's the whole feed.");
+    await expect(page.getByTestId("activity-end")).toContainText("That’s the whole feed.");
 
     // The owner-only audit export (REAL GET …/audit-export): the parsed
     // payload downloads as the pinned filename (mirrors the gateway's
@@ -884,6 +943,12 @@ test.describe("M7 share — public review journey (no editor for anonymous)", ()
 // ---------------------------------------------------------------------------
 
 test.describe("M7 read-only — another member holds the edit lease", () => {
+  test.beforeEach(() => {
+    // The default 30s test timeout cannot cover a wasm editor boot
+    // (EDITOR_OPEN_TIMEOUT_MS is 120s) plus the chat-run settle waits
+    // (the sibling editor suites set the same per-describe).
+    test.setTimeout(300_000);
+  });
   test("the read-only chrome renders; chat still completes a full run (D-23); comments stay open; no apply control exists", async ({
     page,
   }) => {
@@ -921,8 +986,15 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
     await expect(contextCard).toHaveAttribute("data-status", "done");
 
     // D-23, apply arm (the structural half): the run's proposal renders as
-    // the callback-less card — this session wires NO apply ports, so no
-    // stream + lease state can conjure an Apply control anywhere.
+    // the callback-less card. Post-K-1 (2026-10-24) the host DOES wire
+    // applyPorts (editor-host.tsx passes session.applyPorts and the provider
+    // builds the ApplyController) — but the REAL mock-model plan wire carries
+    // no compiledBatch (runner.ts mockEditPlan), so the client keeps the M4
+    // callback-less shape (run-state.ts planRuntimeFromEvent → null) and no
+    // Apply control exists in this journey. The lease gate is the second
+    // wall: even with a compiled batch on the wire, the gate-wrapped bridge
+    // rejects engine.batch locally while another member holds the lease
+    // (the fixme test below drives exactly that journey).
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible();
     await expect(plan).toHaveAttribute("data-status", "proposed");
@@ -934,7 +1006,9 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
     // lease with the lease note — and posting still works (review is the
     // point of the read-only state).
     await page.getByTestId("chat-close-button").click();
-    await expect(page.getByTestId("chat-collapsed-layer")).toBeVisible();
+    // The collapsed affordance is the PILL — the chat-collapsed-layer wrapper
+    // is a zero-height positioning box (first-live finding 2026-10-24).
+    await expect(page.getByTestId("chat-collapsed-pill")).toBeVisible();
     await page.getByTestId("comments-toggle").click();
 
     const leaseNote = page.getByTestId("comments-lease-note");
@@ -959,74 +1033,87 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
   // WIRING-PENDING (fixme): the Apply-blocked-with-lease-explanation journey
   // -------------------------------------------------------------------------
   //
-  // NOT fixme because of CI ownership (CI runs this suite — README §Run) and
-  // NOT because of the scripted lease (that leg works — the ACTIVE test above
-  // proves the gate flips). The ONLY missing link is HOST WIRING:
-  // editor-host.tsx mounts `<ChatProvider client bridge …/>` WITHOUT
-  // `applyPorts`, so lib/chat/provider.tsx builds NO ApplyController
-  // (`planWiring.ready === false` → the card is callback-less → no Apply
-  // control exists to click). The whole lease-blocked apply pipeline IS
-  // landed and unit-proven (apps/web/src/lib/chat/__tests__/apply-lease-
-  // held.test.ts): the GATE-WRAPPED bridge rejects engine.batch with the
-  // typed ReadOnlyLeaseError (lib/editor-session/read-only.ts), apply.ts maps
-  // it to the `lease-held` outcome, and the plan card renders status
-  // "failed" + plan-failed-detail with the holder-naming explanation and NO
-  // Try-again (APPLY_FAILED is not in the retryable sets).
+  // First-live status 2026-10-24 (this suite's FIRST-EVER run — W2-B): the
+  // original blocker below (host wiring) is RESOLVED — the K-1 fix landed
+  // (editor-host.tsx passes ChatProvider `applyPorts={session.applyPorts}`
+  // and the provider builds the real ApplyController; proven live the same
+  // day by m5-agent-edits' scripted apply journey going 4/4). The REMAINING
+  // blocker is the PLAN WIRE: this journey drives a REAL mock-model run,
+  // and the MockRunner's plan event never carries `compiledBatch`
+  // (services/gateway/src/runner.ts mockEditPlan → `stream.emit({ type:
+  // "plan", plan })` only — `git log -S compiledBatch` on runner.ts has no
+  // commits, it never did; contracts events.ts keeps the field optional),
+  // so the client keeps the M4 callback-less card
+  // (run-state.ts planRuntimeFromEvent → null → message.tsx "the M4 shape
+  // … read-only card") and NO Apply control exists to click. First-live
+  // evidence: TimeoutError waiting for `plan-apply` while the card sat at
+  // data-status="proposed" with zero plan-actions buttons (08:44 UTC run,
+  // trace + error-context preserved). The lease-blocked apply pipeline
+  // itself IS landed and unit-proven (apps/web/src/lib/chat/__tests__/
+  // apply-lease-held.test.ts): the GATE-WRAPPED bridge rejects engine.batch
+  // with the typed ReadOnlyLeaseError (lib/editor-session/read-only.ts),
+  // apply.ts maps it to the `lease-held` outcome, and the plan card renders
+  // status "failed" + plan-failed-detail with the holder-naming explanation
+  // and NO Try-again (APPLY_FAILED is not in the retryable sets).
   //
-  // FLIP: change `test.fixme` → `test` when editor-host.tsx passes
-  // ChatProvider `applyPorts` — the M3 autosave controller (saveNow) + a
-  // `currentVersionId()` session port (the use-editor-session handles own
-  // both). The M5 spec's apply→undo journey fixme flips the same day (the
-  // same one-line host mount).
+  // FLIP: change `test.fixme` → `test` when a plan wire with a compiled
+  // batch reaches this journey — either the mock runner grows a
+  // compiledBatch (app-side: extend mockEditPlan + its wire event; note the
+  // ACTIVE test above pins today's callback-less real-mock card and needs
+  // re-review the same day) or this test scripts the SSE plan leg the m5
+  // way (page.route "**/v1/threads/*/chat" with compiledBatch +
+  // resolutionRequests — a deviation from this suite's "the chat run goes
+  // to the REAL gateway" determinism contract, so it is the spec author's
+  // call, not a harness fix).
   //
   // Deterministic fixture notes: the mock model's plan is LOW risk (no
-  // confirm checkbox, no dialog — a single click drives apply), its compiled
-  // batch references layer "Headline" by the pinned $request placeholder, and
-  // the local gate rejection happens BEFORE any engine traffic — the
-  // wire-level proof is that no /apply POST ever fires.
-  test("Apply under another member's lease fails locally with the typed lease explanation", async ({
-    page,
-  }) => {
-    await installScriptedPresence(page);
-    await installScriptedLeaseFlow(page);
-    await openSeededEditor(page);
+  // confirm checkbox, no dialog — a single click drives apply), and the
+  // local gate rejection happens BEFORE any engine traffic — the wire-level
+  // proof is that no /apply POST ever fires.
+  test.fixme(
+    "Apply under another member's lease fails locally with the typed lease explanation",
+    async ({ page }) => {
+      await installScriptedPresence(page);
+      await installScriptedLeaseFlow(page);
+      await openSeededEditor(page);
 
-    const composer = page.getByLabel("Message the agent");
-    await composer.click();
-    await composer.fill("Rename the selected layer to Subtitle");
-    await composer.press("Enter");
+      const composer = page.getByLabel("Message the agent");
+      await composer.click();
+      await composer.fill("Rename the selected layer to Subtitle");
+      await composer.press("Enter");
 
-    const plan = page.getByTestId("plan-card");
-    await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
-    await expect(plan).toHaveAttribute("data-status", "proposed");
+      const plan = page.getByTestId("plan-card");
+      await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+      await expect(plan).toHaveAttribute("data-status", "proposed");
 
-    // No apply POST can ever fire — the local gate refuses first.
-    let applyPosts = 0;
-    await page.route("**/v1/runs/*/apply", async (route) => {
-      applyPosts += 1;
-      await route.continue();
-    });
+      // No apply POST can ever fire — the local gate refuses first.
+      let applyPosts = 0;
+      await page.route("**/v1/runs/*/apply", async (route) => {
+        applyPosts += 1;
+        await route.continue();
+      });
 
-    await plan.getByTestId("plan-apply").click();
+      await plan.getByTestId("plan-apply").click();
 
-    // The typed lease explanation (ReadOnlyLeaseError → apply.ts):
-    // "Maya Rivera is editing this project right now. The plan was not
-    // applied — request edit access, or take the lease when it is free,
-    // then apply again." — holder name, never an id (law #1).
-    await expect(plan).toHaveAttribute("data-status", "failed", {
-      timeout: RUN_SETTLE_TIMEOUT_MS,
-    });
-    await expect(page.getByTestId("plan-failed")).toContainText(
-      "The edit didn't apply — nothing changed.",
-    );
-    await expect(page.getByTestId("plan-failed-detail")).toContainText(
-      "Maya Rivera is editing this project right now.",
-    );
-    await expect(page.getByTestId("plan-failed-detail")).toContainText(
-      "request edit access, or take the lease when it is free, then apply again",
-    );
-    // F-L3: a post-execution-style failure offers no re-execution path.
-    await expect(page.getByTestId("plan-retry")).toHaveCount(0);
-    expect(applyPosts).toBe(0);
-  });
+      // The typed lease explanation (ReadOnlyLeaseError → apply.ts):
+      // "Maya Rivera is editing this project right now. The plan was not
+      // applied — request edit access, or take the lease when it is free,
+      // then apply again." — holder name, never an id (law #1).
+      await expect(plan).toHaveAttribute("data-status", "failed", {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+      });
+      await expect(page.getByTestId("plan-failed")).toContainText(
+        "The edit didn’t apply — nothing changed.",
+      );
+      await expect(page.getByTestId("plan-failed-detail")).toContainText(
+        "Maya Rivera is editing this project right now.",
+      );
+      await expect(page.getByTestId("plan-failed-detail")).toContainText(
+        "request edit access, or take the lease when it is free, then apply again",
+      );
+      // F-L3: a post-execution-style failure offers no re-execution path.
+      await expect(page.getByTestId("plan-retry")).toHaveCount(0);
+      expect(applyPosts).toBe(0);
+    },
+  );
 });

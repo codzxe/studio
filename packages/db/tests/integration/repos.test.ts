@@ -317,6 +317,43 @@ describe.skipIf(!hasDb)("repos (integration)", { timeout: 30_000 }, () => {
     await expect(repos.comments.get(wsB, comment.id)).rejects.toBeInstanceOf(DbError);
   });
 
+  it("the resolved filter is thread-aware (a filter never splits a thread)", async () => {
+    // First-live m7-collab finding (2026-10-24): the filter was row-level,
+    // splitting resolved roots from their replies on fresh fetches. The
+    // thread ROOT's resolvedAt decides every row of the thread.
+    const project = await repos.projects.create(wsA, { name: "Threaded", createdBy: userId });
+    const root = await repos.comments.create(wsA, {
+      projectId: project.id,
+      compId: "comp_main",
+      body: "thread root",
+      authorId: userId,
+    });
+    const replyRow = await repos.comments.createReply(wsA, {
+      commentId: root.id,
+      body: "reply under the root",
+      authorId: userId,
+    });
+    const deep = await repos.comments.createReply(wsA, {
+      commentId: replyRow.id,
+      body: "depth-3 reply",
+      authorId: userId,
+    });
+    await repos.comments.resolve(wsA, { commentId: root.id, resolvedBy: userId });
+
+    const done = await repos.comments.listThreaded(wsA, project.id, { resolved: true });
+    const doneIds = new Set(done.items.map((c) => c.id));
+    expect(doneIds.has(root.id)).toBe(true);
+    expect(doneIds.has(replyRow.id)).toBe(true); // the first-live RED row
+    expect(doneIds.has(deep.id)).toBe(true); // the two-hop root walk
+
+    const open = await repos.comments.listThreaded(wsA, project.id, { resolved: false });
+    expect(open.items.some((c) => c.id === root.id || c.id === replyRow.id)).toBe(false);
+
+    // The flat `list` variant carries the same thread-aware semantics.
+    const doneFlat = await repos.comments.list(wsA, project.id, { resolved: true });
+    expect(doneFlat.items.some((c) => c.id === deep.id)).toBe(true);
+  });
+
   it("audit entries append and paginate", async () => {
     await repos.audit.append(wsA, { actorId: userId, action: "test.action", ip: "127.0.0.1" });
     const page = await repos.audit.list(wsA, { limit: 1 });
