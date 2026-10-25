@@ -58,10 +58,15 @@
  *   wasm opening the staged `.ecproj` fixture → chat overlay) with the
  *   gateway in MOCK_MODEL=true mode. The mock runner's answer is asserted
  *   from services/gateway/src/runner.ts `createMockRunner`/`mockEditPlan`
- *   (plan: low risk, intent "edit", summary "Rename the selected layer",
- *   ONE step "Rename layer"/studio.set_properties, affected layer
- *   "Headline"/"Rename to Subtitle", estimatedCredits = estimateCredits(1
- *   low step) = (1 + 0.5) × 1 = 1.5 → the card renders "≈ 1.5 credits").
+ *   (plan: SERVER-recomputed medium risk — create_composition floors it —
+ *   intent "create", summary "Create an Agent Demo composition with a text
+ *   layer", TWO steps "Create composition"/studio.create_composition +
+ *   "Add text layer"/studio.create_text, NO affected layers (additive),
+ *   estimatedCredits = estimateCredits(medium, 2 steps) = (1 + 1) × 1.25 =
+ *   2.5 → the card renders "≈ 2.5 credits"). The plan event carries a
+ *   compiledBatch (comp.new + layer.newText), so the card is APPLICABLE:
+ *   preview slot + Apply/Cancel actions (no confirm checkbox — that is
+ *   high-risk only).
  * - High-risk variant: the spec installs its OWN scripted gateway leg —
  *   `page.route` on the chat run POST (`…/v1/threads/<id>/chat`) fulfills it with
  *   byte-exact §7.4 frames (`id: <seq>\ndata: <json>\n\n`, gateway
@@ -378,82 +383,87 @@ test.describe("M5 agent edits — plan card journey", () => {
     await openSeededEditor(page);
   });
 
-  test("the mock model's plan renders the full M5 card in the real thread (proposed, risk, steps, credits, affected layers)", async ({
+  test("the mock model's plan renders the full M5 card in the real thread (proposed, risk, steps, credits, preview, actions)", async ({
     page,
   }) => {
     // The MOCK_MODEL runner always streams the same script (runner.ts) —
-    // deltas + an EditPlan + one studio.get_context call — whatever the
-    // prompt says. A plan-flavored prompt keeps the scenario honest.
+    // deltas + a compile-enriched CREATE EditPlan + one studio.get_context
+    // call — whatever the prompt says. A plan-flavored prompt keeps the
+    // scenario honest.
     const composer = page.getByLabel("Message the agent");
     await composer.click();
-    await composer.fill("Rename the selected layer to Subtitle");
+    await composer.fill("Set up a demo composition with a text layer");
     await composer.press("Enter");
 
-    await expect(page.getByTestId("chat-thread-list")).toContainText("Rename the selected layer", {
-      timeout: RUN_SETTLE_TIMEOUT_MS,
-    });
+    await expect(page.getByTestId("chat-thread-list")).toContainText(
+      "Set up a demo composition with a text layer",
+      { timeout: RUN_SETTLE_TIMEOUT_MS },
+    );
 
-    // The card: the M5 status machine at rest (M5-G). Without thread
-    // callbacks it is a read-only view of the plan event.
+    // The card: the M5 status machine at rest (M5-G). The run settled, so
+    // the thread wiring armed the card — proposed + APPLICABLE.
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
     await expect(plan).toHaveAttribute("data-status", "proposed");
     await expect(plan).toHaveAttribute("data-applied", "false");
-    await expect(plan).toHaveAttribute("data-risk", "low");
-    await expect(plan).toHaveAttribute("data-intent", "edit");
+    // SERVER-recomputed risk (create_composition floors medium — never the
+    // model's declared "low") + intent "create" (structural, additive).
+    await expect(plan).toHaveAttribute("data-risk", "medium");
+    await expect(plan).toHaveAttribute("data-intent", "create");
     await expect(plan).toHaveAttribute("data-requires-approval", "false");
 
     // §6.2 surfaces: risk badge, intent badge, summary.
-    await expect(page.getByTestId("plan-risk")).toHaveText("Low risk");
-    await expect(page.getByTestId("plan-intent")).toHaveText("Edit");
-    await expect(plan).toContainText("Rename the selected layer");
+    await expect(page.getByTestId("plan-risk")).toHaveText("Medium risk");
+    await expect(page.getByTestId("plan-intent")).toHaveText("Create");
+    await expect(plan).toContainText("Create an Agent Demo composition with a text layer");
 
-    // Steps: the disclosure is a BUTTON now (M5-G) — default expanded, one
-    // step with its tool id, and it toggles the ordered list.
+    // Steps: the disclosure is a BUTTON (M5-G) — default expanded, two
+    // steps with their tool ids, and it toggles the ordered list.
     const stepsToggle = plan.getByTestId("plan-steps-toggle");
     await expect(stepsToggle).toBeVisible();
     await expect(stepsToggle).toHaveAttribute("aria-expanded", "true");
-    await expect(stepsToggle).toContainText("1 step");
+    await expect(stepsToggle).toContainText("2 steps");
     await expect(plan.getByTestId("plan-steps")).toBeVisible();
-    await expect(plan.getByTestId("plan-steps")).toContainText("Rename layer");
-    await expect(plan.getByTestId("plan-steps")).toContainText("studio.set_properties");
+    await expect(plan.getByTestId("plan-steps")).toContainText("Create composition");
+    await expect(plan.getByTestId("plan-steps")).toContainText("studio.create_composition");
+    await expect(plan.getByTestId("plan-steps")).toContainText("Add text layer");
+    await expect(plan.getByTestId("plan-steps")).toContainText("studio.create_text");
     await stepsToggle.click();
     await expect(stepsToggle).toHaveAttribute("aria-expanded", "false");
     await expect(plan.getByTestId("plan-steps")).toBeHidden();
     await stepsToggle.click();
     await expect(plan.getByTestId("plan-steps")).toBeVisible();
 
-    // Affected layers + the server's credit estimate, VERBATIM (the card
-    // never recomputes credits client-side).
-    await expect(page.getByTestId("plan-affected")).toContainText("Headline");
-    await expect(page.getByTestId("plan-affected")).toContainText("Rename to Subtitle");
-    await expect(page.getByTestId("plan-credits")).toHaveText("≈ 1.5 credits");
+    // The plan is purely ADDITIVE — no existing layers affected, so the
+    // affected-layers section is absent. The server's credit estimate rides
+    // VERBATIM (the card never recomputes credits client-side):
+    // estimateCredits(medium, 2 steps) = (1 + 1) × 1.25 = 2.5.
+    await expect(page.getByTestId("plan-affected")).toHaveCount(0);
+    await expect(page.getByTestId("plan-credits")).toHaveText("≈ 2.5 credits");
 
-    // W1-d flip (AUD-3 gap 2) — run-3 reality check: message.tsx mounts the
-    // M5-H preview slot only when the plan event carries a compiledBatch
-    // (runtime.compiledBatch); the MOCK_MODEL runner's plan streams WITHOUT
-    // one, so the mock card is the read-only variant (no preview, no diff,
-    // no actions row — the count-0 assertions at the bottom of this test
-    // confirm that arm). The preview-present assertion belongs to a stream
-    // that ships a batch (see the scripted high-risk test); asserting it
-    // here was premature. Assert the honest absence instead.
-    await expect(page.getByTestId("plan-preview")).toHaveCount(0);
+    // The M5-H preview slot IS mounted now (message.tsx mounts it whenever
+    // the plan event carries a compiledBatch and the risk is below high):
+    // the probe executes the additive batch atomically, renders the after
+    // frame, then edit.undo reverts — the project is untouched at rest. A
+    // failed preview never disables Apply; here the real engine answers.
+    await expect(page.getByTestId("plan-preview")).toHaveCount(1);
 
     // The M4 "Apply arrives with M5" note is GONE — apply is real (M5-G).
     await expect(page.getByTestId("plan-note")).toHaveCount(0);
 
-    // Read-only proof (M4.6 restated for M5): the card mounts without
-    // callbacks, so the action row holds ZERO buttons and no Apply control
-    // exists anywhere in the page. (The steps disclosure is a button — the
-    // M4 whole-card button-count pin no longer holds.)
-    await expect(plan.getByTestId("plan-actions").getByRole("button")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /apply/i })).toHaveCount(0);
-    await expect(plan.getByTestId("plan-apply")).toHaveCount(0);
+    // The card is armed: Apply + Cancel in the action row (medium risk ⇒
+    // NO confirm checkbox, NO dialog). This test never clicks them — the
+    // apply journey is the scripted high-risk test below, and the offline
+    // from-scratch CREATION journey is e2e/m5-mock-create.spec.ts.
     await expect(plan.getByTestId("plan-confirm")).toHaveCount(0);
-    await expect(page.getByTestId("chat-confirm-dialog")).toHaveCount(0);
+    await expect(plan.getByTestId("chat-confirm-dialog")).toHaveCount(0);
+    await expect(plan.getByTestId("plan-apply")).toBeVisible();
+    await expect(plan.getByTestId("plan-apply")).toBeEnabled();
+    await expect(plan.getByTestId("plan-cancel")).toBeVisible();
 
     // The run completes normally (the mock's read tool answered through the
-    // real bridge; nothing was executed against the engine).
+    // real bridge; nothing PERMANENT was executed against the engine — the
+    // preview probe's batch+undo nets out to zero).
     await expect(page.getByTestId("chat-status")).toHaveAttribute("data-phase", "done", {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
@@ -577,10 +587,10 @@ test.describe("M5 agent edits — plan card journey", () => {
     await expect(plan).toHaveAttribute("data-status", "proposed");
     await expect(plan).toHaveAttribute("data-risk", "high");
 
-    // Preview: the M5-H PlanPreview is not thread-mounted in this
-    // environment — the card renders without the slot (asserted ACTIVE in
-    // the mock-plan scenario above). When the wiring mounts it, assert
-    // plan-preview-panel data-status="ready" + plan-preview-frames here.
+    // Preview: the M5-H PlanPreview NEVER mounts for a high-risk card
+    // (message.tsx: only proposed && !highRisk probe — §6.2 nothing runs
+    // before the user confirms). The mock-plan scenario above asserts the
+    // preview PRESENT for the medium-risk applicable card.
     await expect(page.getByTestId("plan-preview")).toHaveCount(0);
 
     // §6.2: the confirm CHECKBOX gates the Apply button.
@@ -651,12 +661,17 @@ test.describe("M5 agent edits — plan card journey", () => {
 
   test("the editor is visually unchanged by the M5 read-only chat journey", async ({ page }) => {
     // After a full plan-bearing run (mock plan card in the thread, nothing
-    // applied), the editor's pixels are the M3-baseline pixels: the M4
-    // mask approach — chat chrome masked, everything else is the editor.
-    // First CI run: --update-snapshots (README §First run).
+    // applied), the editor's pixels are the M3-baseline pixels — with one
+    // honest exception: the plan event now carries a compiledBatch (the mock
+    // runner compiles its plan), so the M5-H preview probe EXECUTES the
+    // additive batch atomically, renders the after frame and edit.undo reverts
+    // it — transiently touching the canvas/panels mid-run. The viewport is
+    // therefore MASKED exactly like the journey test above; everything else
+    // (timeline/panels/header) must be the baseline. First CI run:
+    // --update-snapshots (README §First run).
     const composer = page.getByLabel("Message the agent");
     await composer.click();
-    await composer.fill("Rename the selected layer to Subtitle");
+    await composer.fill("Set up a demo composition with a text layer");
     await composer.press("Enter");
 
     await expect(page.getByTestId("plan-card")).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
@@ -669,7 +684,11 @@ test.describe("M5 agent edits — plan card journey", () => {
       animations: "disabled",
       caret: "hide",
       maxDiffPixelRatio: 0.01,
-      mask: [page.getByTestId("chat-panel-layer"), page.getByTestId("chat-collapsed-layer")],
+      mask: [
+        page.getByTestId("chat-panel-layer"),
+        page.getByTestId("chat-collapsed-layer"),
+        page.getByTestId("editor-viewport"),
+      ],
     });
   });
 });

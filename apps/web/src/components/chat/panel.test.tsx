@@ -303,3 +303,131 @@ describe("ChatPanel — drag/resize through the shared layout store", () => {
     expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-dragging", "false");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Drag & drop (the full gesture vocabulary): the visible grab bar, sidebar
+// drag-out detach, and the right-edge drop-to-dock zone. jsdom window is
+// 1024×768 and getBoundingClientRect returns zeros — so the detach placement
+// math degrades to grab = client (baseX/baseY = 0/0 + the rebase deltas),
+// which these tests pin deterministically.
+// ---------------------------------------------------------------------------
+
+describe("ChatPanel — drag & drop (grab bar, detach, drop-to-dock)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.resetModules();
+  });
+
+  async function renderHarness(): Promise<void> {
+    const { useChatLayout } = await import("./use-layout");
+    const { ChatPanel: Panel } = await import("./panel");
+    function Harness() {
+      const { layout } = useChatLayout();
+      return (
+        <Panel
+          layout={layout}
+          streaming={false}
+          header={<span data-testid="hdr-area">h</span>}
+          thread={<div>t</div>}
+          composer={<div>c</div>}
+          onCycleMode={() => {}}
+          onClose={() => {}}
+        />
+      );
+    }
+    render(<Harness />);
+  }
+
+  it("shows the grab handle bar in BOTH open modes (the drag affordance)", async () => {
+    saveLayout({ mode: "floating", x: 100, y: 100, w: 380, h: 520 });
+    await renderHarness();
+    const handle = screen.getByTestId("chat-panel-drag-handle");
+    // The bar sits INSIDE the drag region and the region is movable in both
+    // modes (cursor + touch-none — the sidebar rail is draggable OUT).
+    expect(handle).toContainElement(screen.getByTestId("chat-drag-grip"));
+    expect(handle).toHaveClass("cursor-move", "touch-none");
+    cleanup();
+
+    saveLayout({ mode: "sidebar", x: 0, y: 0, w: 380, h: 520 });
+    await renderHarness();
+    expect(screen.getByTestId("chat-drag-grip")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-panel-drag-handle")).toHaveClass("cursor-move");
+    // No dock zone until a drag arms it.
+    expect(screen.queryByTestId("chat-dock-zone")).toBeNull();
+  });
+
+  it("dragging the sidebar header DETACHES the rail into a floating panel under the pointer", async () => {
+    saveLayout({ mode: "sidebar", x: 0, y: 0, w: 380, h: 520 });
+    await renderHarness();
+    const handle = screen.getByTestId("chat-panel-drag-handle");
+
+    fireEvent.pointerDown(handle, { button: 0, clientX: 500, clientY: 300, pointerId: 1 });
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-dragging", "true");
+
+    // Sub-threshold jitter stays docked (no accidental detach on a click).
+    fireEvent.pointerMove(handle, { clientX: 504, clientY: 300, pointerId: 1 });
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-chat-mode", "sidebar");
+
+    // Past the detach threshold: floating, placed under the pointer. jsdom's
+    // zero rect makes grab = client, so base = (520-500, 316-300) = (20, 16).
+    fireEvent.pointerMove(handle, { clientX: 520, clientY: 316, pointerId: 1 });
+    const panel = screen.getByTestId("chat-panel");
+    expect(panel).toHaveAttribute("data-chat-mode", "floating");
+    expect(panel.style.left).toBe("20px");
+    expect(panel.style.top).toBe("16px");
+    expect(panel.style.width).toBe("380px"); // geometry memory carried over
+
+    // The gesture continues as a normal floating move (rebased origin).
+    fireEvent.pointerMove(handle, { clientX: 560, clientY: 356, pointerId: 1 });
+    expect(panel.style.left).toBe("60px"); // 20 + 40
+    expect(panel.style.top).toBe("56px"); // 16 + 40
+
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-chat-mode", "floating");
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-dragging", "false");
+  });
+
+  it("a plain sidebar header CLICK (no travel) never detaches", async () => {
+    saveLayout({ mode: "sidebar", x: 0, y: 0, w: 380, h: 520 });
+    await renderHarness();
+    const handle = screen.getByTestId("chat-panel-drag-handle");
+    fireEvent.pointerDown(handle, { button: 0, clientX: 500, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientX: 502, clientY: 301, pointerId: 1 });
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-chat-mode", "sidebar");
+  });
+
+  it("dropping a floating drag at the right edge DOCKS to the sidebar (zone preview armed)", async () => {
+    saveLayout({ mode: "floating", x: 100, y: 100, w: 380, h: 520 });
+    await renderHarness();
+    const handle = screen.getByTestId("chat-panel-drag-handle");
+
+    fireEvent.pointerDown(handle, { button: 0, clientX: 300, clientY: 300, pointerId: 1 });
+    // Move to within 32px of the right edge (1024 - 1000 = 24): the drop
+    // zone preview lights up and the panel keeps tracking (clamped on x).
+    fireEvent.pointerMove(handle, { clientX: 1000, clientY: 300, pointerId: 1 });
+    expect(screen.getByTestId("chat-dock-zone")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-panel").style.left).toBe("644px"); // 1024-380 clamp
+
+    fireEvent.pointerUp(handle, { clientX: 1000, clientY: 300, pointerId: 1 });
+    const panel = screen.getByTestId("chat-panel");
+    expect(panel).toHaveAttribute("data-chat-mode", "sidebar");
+    expect(screen.queryByTestId("chat-dock-zone")).toBeNull();
+    expect(panel).toHaveAttribute("data-dragging", "false");
+  });
+
+  it("dropping away from the right edge just moves (no dock, no zone)", async () => {
+    saveLayout({ mode: "floating", x: 100, y: 100, w: 380, h: 520 });
+    await renderHarness();
+    const handle = screen.getByTestId("chat-panel-drag-handle");
+
+    fireEvent.pointerDown(handle, { button: 0, clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 500, clientY: 340, pointerId: 1 });
+    expect(screen.queryByTestId("chat-dock-zone")).toBeNull();
+    const panel = screen.getByTestId("chat-panel");
+    expect(panel.style.left).toBe("300px"); // 100 + 200
+    expect(panel.style.top).toBe("140px"); // 100 + 40
+
+    fireEvent.pointerUp(handle, { clientX: 500, clientY: 340, pointerId: 1 });
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-chat-mode", "floating");
+  });
+});

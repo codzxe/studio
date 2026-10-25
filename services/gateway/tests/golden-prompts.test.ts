@@ -27,13 +27,14 @@
 //
 // DEVIATION, documented: the brief says "MOCK_MODEL scripted to emit the
 // plan". The MockRunner (src/runner.ts, MOCK_MODEL=true) is NOT scriptable —
-// it hardcodes mockEditPlan() ("rename the selected layer"). The chat-loop
-// harness (M4-K, tests/chat-loop.test.ts) scripts per-fixture model behavior
-// the sanctioned way: MOCK_MODEL=false + createRunnerForEnv against an
-// in-process fake OpenAI-compatible SSE server. That is the technique used
-// here, per fixture: (1) the model calls studio.plan_edit with the user's
-// goal, (2) the structured-output round returns the fixture's plan JSON, (3)
-// the run answers.
+// it hardcodes ONE plan (mockEditPlan(): create an "Agent Demo" composition
+// + a text layer, compile-enriched through the real plan compiler). The
+// chat-loop harness (M4-K, tests/chat-loop.test.ts) scripts per-fixture
+// model behavior the sanctioned way: MOCK_MODEL=false + createRunnerForEnv
+// against an in-process fake OpenAI-compatible SSE server. That is the
+// technique used here, per fixture: (1) the model calls studio.plan_edit
+// with the user's goal, (2) the structured-output round returns the
+// fixture's plan JSON, (3) the run answers.
 //
 // FINDINGS G-1..G-8 (documented in ./golden-plans.ts) are FLIPPED here per the
 // M5 wave-2 integrator fix (translate() now reads the LANDED M5-A write-tool

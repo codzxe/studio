@@ -22,10 +22,12 @@
 //      LiteLLM runner vs an in-process fake OpenAI SSE server (M4-K/M5-K
 //      harness pattern, duplicated per its precedent — gateway tests never
 //      import sibling test files) so plan events arrive COMPILE-ENRICHED;
-//      server B = the MockRunner (un-enriched plan events). Peers land
-//      mid-flight: every scenario branches ADAPTIVELY on whether the M6-D
-//      settings repo is present/writable — its absence must degrade to
-//      propose/setting-unavailable, NEVER crash (the wiring guard).
+//      server B = the MockRunner (its plan is compile-enriched too —
+//      comp.new + layer.newText at server-risk medium — see the enrichment
+//      pin below). Peers land mid-flight: every scenario branches ADAPTIVELY
+//      on whether the M6-D settings repo is present/writable — its absence
+//      must degrade to propose/setting-unavailable, NEVER crash (the wiring
+//      guard).
 //
 // Deterministic: no real sleeps beyond bounded stream waits, no fake timers;
 // DATABASE_URL is resolved by tests/helpers.js.
@@ -1144,13 +1146,34 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
       const { plan: planEvent } = await mockRun(fx);
       expect(planEvent.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
       // The run itself completed: the missing seam never broke the stream.
-      expect(planEvent.plan.summary).toBe("Rename the selected layer");
+      expect(planEvent.plan.summary).toBe("Create an Agent Demo composition with a text layer");
     } finally {
       if (saved !== undefined) holder.settings = saved;
     }
   }, 15_000);
 
-  it("un-enriched (mock) plan event ⇒ propose; compile-failed once the setting is on", async () => {
+  it("the mock plan event is COMPILE-ENRICHED (the offline stack can create something)", async () => {
+    const fx = await newFixture(serverB, "m5o-mock-enriched");
+    const { plan: planEvent } = await mockRun(fx);
+
+    // The mock runner compiles its plan through the REAL server-side plan
+    // compiler (the same seam the LiteLLM runner uses), so MOCK_MODEL runs
+    // carry an applicable batch: comp.new + layer.newText — additive only,
+    // no layer-name resolution requests, one atomic undo step.
+    expect(planEvent.compiledBatch).toBeDefined();
+    const batch = planEvent.compiledBatch;
+    if (batch === undefined) throw new Error("mock plan event was not enriched");
+    expect(batch.steps.map((step) => step.command)).toEqual(["comp.new", "layer.newText"]);
+    expect(batch.atomic).toBe(true);
+    expect(batch.label).toBe("Agent: Create an Agent Demo composition with a text layer");
+    expect(planEvent.resolutionRequests ?? []).toEqual([]);
+    // SERVER-recomputed values (never the model's declared "low"/2.0):
+    // create_composition floors the risk at medium; credits follow it.
+    expect(planEvent.risk).toBe("medium");
+    expect(planEvent.estimatedCredits).toBe(2.5);
+  }, 15_000);
+
+  it("enriched (mock) plan event ⇒ propose; risk-not-low once the setting is on", async () => {
     const fx = await newFixture(serverB, "m5o-mock");
     const before = await mockRun(fx);
     // Default user: propose via the setting gate (off by default), with the
@@ -1161,9 +1184,11 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     const { enabled } = await enableAutoApply(serverB, fx.userId);
     const after = await mockRun(fx);
     if (enabled) {
-      // The mock runner emits NO compiled batch — display-only plan ⇒ nothing
-      // safe to auto-apply.
-      expect(after.plan.autoApply).toEqual({ mode: "propose", reason: "compile-failed" });
+      // The mock plan now COMPILES (comp.new + layer.newText) — but
+      // create_composition floors the server-recomputed risk at medium, so
+      // the §7.3 policy proposes risk-not-low (auto-apply stays low-risk
+      // only; the user reviews and clicks Apply themselves).
+      expect(after.plan.autoApply).toEqual({ mode: "propose", reason: "risk-not-low" });
     } else {
       expect(after.plan.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
     }

@@ -9,9 +9,15 @@
 // against (§7.4 rule: results accepted only for the expected toolCallId).
 //
 // Runners:
-//   * MockRunner     — env MOCK_MODEL=true: run.started → text deltas →
-//                      a small valid EditPlan ("rename layer") →
-//                      studio.get_context tool.started/result → done.
+//   * MockRunner     — env MOCK_MODEL=true: run.started → text deltas → a
+//                      small valid EditPlan that CREATES something (a new
+//                      "Agent Demo" composition + a text layer) and is
+//                      COMPILE-ENRICHED through the real server-side plan
+//                      compiler (compiledBatch + recomputed risk/credits), so
+//                      the offline/local stack — no model keys at all — can
+//                      drive the full plan → Apply → engine.batch → version
+//                      journey. Then a studio.get_context tool.started/result
+//                      → done.
 //   * LiteLLMRunner  — MOCK_MODEL=false: the REAL OpenAI-compatible runner
 //                      (src/litellm/, D-16): streams via the LiteLLM proxy,
 //                      executes the 4 client read tools through the
@@ -35,6 +41,7 @@ import { computeReserveAmount } from "@studio/db";
 
 import { createLiteLLMRunner } from "./litellm/runner.js";
 import { type Logger, nullLogger } from "./logger.js";
+import { compilePlan, defaultCompileDeps } from "./plan-compiler.js";
 
 /** All 12 §7.4 payloads minus the runId/seq the log assigns. */
 export type RunStreamPayload = {
@@ -308,34 +315,117 @@ export function reserveAmountFor(estimatedCredits: number): number {
 
 const MOCK_TOOL_CALL_ID_PREFIX = "call_mock";
 
-/** A small, valid §8.6 EditPlan: rename one layer (auto-appliable: low risk). */
+/**
+ * A small, valid §8.6 EditPlan that CREATES something on ANY project — a new
+ * "Agent Demo" composition plus a text layer — with the M5-A write-tool args
+ * shapes the server-side plan compiler understands. Design constraints:
+ *
+ * - Works on a brand-new project with no compositions (comp.new opens/activates
+ *   the new comp, so the follow-up layer.newText lands inside it) AND on any
+ *   existing project (it only ever ADDS; it never references existing layers,
+ *   so `affectedLayers` is empty and the compiled batch carries NO layer-name
+ *   resolution requests — nothing to resolve, nothing to fail).
+ * - intent "create" (structural, honest) + model-declared risk "low"; the
+ *   compiler recomputes the SERVER risk (create_composition floors at medium)
+ *   and credits, exactly like a real model run — the card never understates.
+ * - The per-step `batch` fields mirror the compiled output (advisory-only,
+ *   §8.5/§8.7 — the compiled batch always comes from the args translation).
+ */
 export function mockEditPlan(): EditPlan {
   const plan = {
-    intent: "edit",
-    summary: "Rename the selected layer",
-    risk: "low",
+    intent: "create" as const,
+    summary: "Create an Agent Demo composition with a text layer",
+    risk: "low" as const,
     requiresApproval: false,
-    // W3-gw bugfix: AFFECTED_LAYER_SCHEMA.id is z.number() (engine layer ids
-    // are numeric) — the previous string id ("layer-headline") failed
-    // EDIT_PLAN_SCHEMA.parse, so MockRunner runs ALWAYS died with
-    // run.failed INTERNAL at the plan step.
-    affectedLayers: [{ id: 0, name: "Headline", change: "Rename to Subtitle" }],
-    estimatedCredits: estimateCredits({ risk: "low", steps: [{}] }),
+    affectedLayers: [],
+    estimatedCredits: estimateCredits({ risk: "low", steps: [{}, {}] }),
     steps: [
       {
-        title: "Rename layer",
-        tool: "studio.set_properties",
-        args: { layerId: "layer-headline", name: "Subtitle" },
+        title: "Create composition",
+        tool: "studio.create_composition",
+        args: {
+          name: "Agent Demo",
+          width: 1920,
+          height: 1080,
+          frameRate: 30,
+          durationSeconds: 4,
+        },
         batch: {
-          label: "Rename layer",
+          label: "Create composition",
           steps: [
-            { command: "set_properties", params: { layerId: "layer-headline", name: "Subtitle" } },
+            {
+              command: "comp.new",
+              params: {
+                name: "Agent Demo",
+                width: 1920,
+                height: 1080,
+                frameRate: 30,
+                duration: 4,
+              },
+            },
+          ],
+        },
+      },
+      {
+        title: "Add text layer",
+        tool: "studio.create_text",
+        args: {
+          text: "Made with Studio",
+          name: "Agent Text",
+          position: [960, 540],
+          size: 96,
+          fill: "#F4F4F5",
+        },
+        batch: {
+          label: "Add text layer",
+          steps: [
+            {
+              command: "layer.newText",
+              params: {
+                text: "Made with Studio",
+                name: "Agent Text",
+                position: [960, 540],
+                size: 96,
+                fill: "#F4F4F5",
+              },
+            },
           ],
         },
       },
     ],
   };
   return EDIT_PLAN_SCHEMA.parse(plan);
+}
+
+/**
+ * Compile-enrich the mock plan through the SAME server-side plan compiler the
+ * LiteLLM runner uses (M5-B seam), so MOCK_MODEL runs carry a real
+ * `compiledBatch` (Apply becomes real: one atomic engine.batch = one undo step
+ * = one version) plus the server-recomputed risk/estimatedCredits. A compile
+ * failure (registry drift) degrades to the M4-shaped bare plan event — the
+ * card stays display-only, never a crash (the LiteLLM precedent, runner.ts
+ * "a compile failure emits the plan UN-enriched").
+ */
+function enrichedMockPlanEvent(plan: EditPlan): RunStreamPayload {
+  const compiled = compilePlan(plan, defaultCompileDeps());
+  if (!compiled.ok) {
+    return { type: "plan", plan };
+  }
+  return {
+    type: "plan",
+    plan,
+    compiledBatch: compiled.batch,
+    // The wire type (contracts events.ts) carries MUTABLE arrays — the
+    // compiler's readonly view maps exactly like litellm/runner.ts's
+    // defaultCompilePlan adapter (the one reconcile point for its seam).
+    resolutionRequests: compiled.resolutionRequests.map((request) => ({
+      requestId: request.requestId,
+      layerName: request.layerName,
+      disambiguation: [...request.disambiguation],
+    })),
+    risk: compiled.risk,
+    estimatedCredits: compiled.estimatedCredits,
+  };
 }
 
 export function createMockRunner(): AgentRunner {
@@ -347,19 +437,19 @@ export function createMockRunner(): AgentRunner {
 
       stream.emit({
         type: "message.delta",
-        delta: "I'll rename that layer for you — it's a one-property change.",
+        delta: "I'll set up a demo for you — a new composition with a text layer.",
       });
       await stream.yieldToStream();
       if (stream.signal.aborted) return { kind: "cancelled" };
 
       stream.emit({
         type: "message.delta",
-        delta: " Planning a single atomic batch so undo stays one step.",
+        delta: " Planning one atomic batch so it applies as a single undo step.",
       });
       await stream.yieldToStream();
       if (stream.signal.aborted) return { kind: "cancelled" };
 
-      stream.emit({ type: "plan", plan: mockEditPlan() });
+      stream.emit(enrichedMockPlanEvent(mockEditPlan()));
       await stream.yieldToStream();
       if (stream.signal.aborted) return { kind: "cancelled" };
 

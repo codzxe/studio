@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Studio gateway: Hono API \u2014 auth, workspaces, projects/versions/leases/assets, threads, SSE chat skeleton, credits, billing, storage (PRODUCT_ARCHITECTURE \u00a77).",
+  "description": "Studio gateway: Hono API — auth, workspaces, projects/versions/leases/assets, threads, SSE chat skeleton, credits, billing, storage (PRODUCT_ARCHITECTURE §7).",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
@@ -19,6 +19,7 @@
     "lint": "biome check src tests"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.78",
     "@aws-sdk/client-s3": "^3.1154.0",
     "@aws-sdk/s3-request-presigner": "^3.1154.0",
     "@hono/node-server": "^2.1.5",
@@ -27,6 +28,7 @@
     "@studio/contracts": "workspace:*",
     "@studio/db": "workspace:*",
     "@studio/storage": "workspace:*",
+    "ai": "^7.0.153",
     "better-auth": "^1.7.12",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.13",

@@ -985,22 +985,22 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
     const contextCard = page.locator('[data-testid="tool-card"][data-tool="studio.get_context"]');
     await expect(contextCard).toHaveAttribute("data-status", "done");
 
-    // D-23, apply arm (the structural half): the run's proposal renders as
-    // the callback-less card. Post-K-1 (2026-10-24) the host DOES wire
+    // D-23, apply arm (the structural half): the run's proposal is now the
+    // FULLY APPLICABLE card. Post-K-1 (2026-10-24) the host wires
     // applyPorts (editor-host.tsx passes session.applyPorts and the provider
-    // builds the ApplyController) — but the REAL mock-model plan wire carries
-    // no compiledBatch (runner.ts mockEditPlan), so the client keeps the M4
-    // callback-less shape (run-state.ts planRuntimeFromEvent → null) and no
-    // Apply control exists in this journey. The lease gate is the second
-    // wall: even with a compiled batch on the wire, the gate-wrapped bridge
-    // rejects engine.batch locally while another member holds the lease
-    // (the fixme test below drives exactly that journey).
+    // builds the ApplyController), and since the mock-model plan wire now
+    // CARRIES a compiledBatch (runner.ts mockEditPlan compiles through the
+    // real plan compiler: comp.new + layer.newText at server-risk medium),
+    // the thread mounts the M5 card with Apply + Cancel. This journey does
+    // NOT click them (the read-only review arm is the point here); the
+    // lease-blocked apply journey is the test below. The lease gate is the
+    // second wall: the gate-wrapped bridge rejects engine.batch locally
+    // while another member holds the lease (driven by the test below).
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible();
     await expect(plan).toHaveAttribute("data-status", "proposed");
-    await expect(plan.getByTestId("plan-actions").getByRole("button")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /^apply/i })).toHaveCount(0);
-    await expect(plan.getByTestId("plan-apply")).toHaveCount(0);
+    await expect(plan.getByTestId("plan-apply")).toBeVisible();
+    await expect(plan.getByTestId("plan-cancel")).toBeVisible();
 
     // D-23, review arm: the comments panel OPENS under another member's
     // lease with the lease note — and posting still works (review is the
@@ -1030,90 +1030,71 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WIRING-PENDING (fixme): the Apply-blocked-with-lease-explanation journey
+  // The Apply-blocked-with-lease-explanation journey
   // -------------------------------------------------------------------------
   //
-  // First-live status 2026-10-24 (this suite's FIRST-EVER run — W2-B): the
-  // original blocker below (host wiring) is RESOLVED — the K-1 fix landed
-  // (editor-host.tsx passes ChatProvider `applyPorts={session.applyPorts}`
-  // and the provider builds the real ApplyController; proven live the same
-  // day by m5-agent-edits' scripted apply journey going 4/4). The REMAINING
-  // blocker is the PLAN WIRE: this journey drives a REAL mock-model run,
-  // and the MockRunner's plan event never carries `compiledBatch`
-  // (services/gateway/src/runner.ts mockEditPlan → `stream.emit({ type:
-  // "plan", plan })` only — `git log -S compiledBatch` on runner.ts has no
-  // commits, it never did; contracts events.ts keeps the field optional),
-  // so the client keeps the M4 callback-less card
-  // (run-state.ts planRuntimeFromEvent → null → message.tsx "the M4 shape
-  // … read-only card") and NO Apply control exists to click. First-live
-  // evidence: TimeoutError waiting for `plan-apply` while the card sat at
-  // data-status="proposed" with zero plan-actions buttons (08:44 UTC run,
-  // trace + error-context preserved). The lease-blocked apply pipeline
-  // itself IS landed and unit-proven (apps/web/src/lib/chat/__tests__/
-  // apply-lease-held.test.ts): the GATE-WRAPPED bridge rejects engine.batch
-  // with the typed ReadOnlyLeaseError (lib/editor-session/read-only.ts),
-  // apply.ts maps it to the `lease-held` outcome, and the plan card renders
-  // status "failed" + plan-failed-detail with the holder-naming explanation
-  // and NO Try-again (APPLY_FAILED is not in the retryable sets).
+  // UNBLOCKED 2026-10-25: the ONE remaining blocker is gone — the
+  // MockRunner's plan event now carries `compiledBatch` (services/gateway/
+  // src/runner.ts mockEditPlan compiles through the real server-side plan
+  // compiler: comp.new + layer.newText, server-recomputed medium risk), so
+  // the client arms the full M5 card (run-state.ts planRuntimeFromEvent)
+  // and the Apply control EXISTS to click. The lease-blocked apply pipeline
+  // itself was landed and unit-proven all along (apps/web/src/lib/chat/
+  // __tests__/apply-lease-held.test.ts): the GATE-WRAPPED bridge rejects
+  // engine.batch with the typed ReadOnlyLeaseError
+  // (lib/editor-session/read-only.ts), apply.ts maps it to the `lease-held`
+  // outcome, and the plan card renders status "failed" + plan-failed-detail
+  // with the holder-naming explanation and NO Try-again (APPLY_FAILED is
+  // not in the retryable sets).
   //
-  // FLIP: change `test.fixme` → `test` when a plan wire with a compiled
-  // batch reaches this journey — either the mock runner grows a
-  // compiledBatch (app-side: extend mockEditPlan + its wire event; note the
-  // ACTIVE test above pins today's callback-less real-mock card and needs
-  // re-review the same day) or this test scripts the SSE plan leg the m5
-  // way (page.route "**/v1/threads/*/chat" with compiledBatch +
-  // resolutionRequests — a deviation from this suite's "the chat run goes
-  // to the REAL gateway" determinism contract, so it is the spec author's
-  // call, not a harness fix).
-  //
-  // Deterministic fixture notes: the mock model's plan is LOW risk (no
-  // confirm checkbox, no dialog — a single click drives apply), and the
-  // local gate rejection happens BEFORE any engine traffic — the wire-level
-  // proof is that no /apply POST ever fires.
-  test.fixme(
-    "Apply under another member's lease fails locally with the typed lease explanation",
-    async ({ page }) => {
-      await installScriptedPresence(page);
-      await installScriptedLeaseFlow(page);
-      await openSeededEditor(page);
+  // Deterministic fixture notes: the mock model's plan is MEDIUM risk
+  // (create_composition floors the server recompute; no confirm checkbox,
+  // no dialog — a single click drives apply), and the local gate rejection
+  // happens BEFORE any engine traffic — the wire-level proof is that no
+  // /apply POST ever fires.
+  test("Apply under another member's lease fails locally with the typed lease explanation", async ({
+    page,
+  }) => {
+    await installScriptedPresence(page);
+    await installScriptedLeaseFlow(page);
+    await openSeededEditor(page);
 
-      const composer = page.getByLabel("Message the agent");
-      await composer.click();
-      await composer.fill("Rename the selected layer to Subtitle");
-      await composer.press("Enter");
+    const composer = page.getByLabel("Message the agent");
+    await composer.click();
+    await composer.fill("Set up a demo composition with a text layer");
+    await composer.press("Enter");
 
-      const plan = page.getByTestId("plan-card");
-      await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
-      await expect(plan).toHaveAttribute("data-status", "proposed");
+    const plan = page.getByTestId("plan-card");
+    await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+    await expect(plan).toHaveAttribute("data-status", "proposed");
 
-      // No apply POST can ever fire — the local gate refuses first.
-      let applyPosts = 0;
-      await page.route("**/v1/runs/*/apply", async (route) => {
-        applyPosts += 1;
-        await route.continue();
-      });
+    // No apply POST can ever fire — the local gate refuses first.
+    let applyPosts = 0;
+    await page.route("**/v1/runs/*/apply", async (route) => {
+      applyPosts += 1;
+      await route.continue();
+    });
 
-      await plan.getByTestId("plan-apply").click();
+    await plan.getByTestId("plan-apply").click();
 
-      // The typed lease explanation (ReadOnlyLeaseError → apply.ts):
-      // "Maya Rivera is editing this project right now. The plan was not
-      // applied — request edit access, or take the lease when it is free,
-      // then apply again." — holder name, never an id (law #1).
-      await expect(plan).toHaveAttribute("data-status", "failed", {
-        timeout: RUN_SETTLE_TIMEOUT_MS,
-      });
-      await expect(page.getByTestId("plan-failed")).toContainText(
-        "The edit didn’t apply — nothing changed.",
-      );
-      await expect(page.getByTestId("plan-failed-detail")).toContainText(
-        "Maya Rivera is editing this project right now.",
-      );
-      await expect(page.getByTestId("plan-failed-detail")).toContainText(
-        "request edit access, or take the lease when it is free, then apply again",
-      );
-      // F-L3: a post-execution-style failure offers no re-execution path.
-      await expect(page.getByTestId("plan-retry")).toHaveCount(0);
-      expect(applyPosts).toBe(0);
-    },
-  );
+    // The typed lease explanation (ReadOnlyLeaseError → apply.ts):
+    // "Maya Rivera is editing this project right now. The plan was not
+    // applied — request edit access, or take the lease when it is free,
+    // then apply again." — holder name, never an id (law #1).
+    await expect(plan).toHaveAttribute("data-status", "failed", {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId("plan-failed")).toContainText(
+      "The edit didn’t apply — nothing changed.",
+    );
+    await expect(page.getByTestId("plan-failed-detail")).toContainText(
+      "Maya Rivera is editing this project right now.",
+    );
+    await expect(page.getByTestId("plan-failed-detail")).toContainText(
+      "request edit access, or take the lease when it is free, then apply again",
+    );
+    // F-L3: a post-execution-style failure offers no re-execution path.
+    await expect(page.getByTestId("plan-retry")).toHaveCount(0);
+    expect(applyPosts).toBe(0);
+  });
 });

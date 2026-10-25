@@ -15,8 +15,10 @@
  * (components/chat/*, components/editor-host/*) — see e2e/README.md for the
  * per-testid source map. The mock answer text is asserted verbatim from
  * services/gateway/src/runner.ts `createMockRunner` (MOCK_MODEL=true): the
- * runner streams two message deltas, an informational EditPlan and one
- * studio.get_context tool call whose result carries the mock comp payload.
+ * runner streams two message deltas, a CREATE EditPlan (an "Agent Demo"
+ * composition + a text layer, compile-enriched with a real engine batch)
+ * and one studio.get_context tool call whose result carries the mock comp
+ * payload.
  *
  * Auth note (documented deviation from the brief's "sign-up primary"): a
  * freshly signed-up user owns NO workspace and NO project in this product —
@@ -176,34 +178,36 @@ test.describe("M4 chat — read-only agent", () => {
     // (services/gateway/src/runner.ts createMockRunner — the two deltas).
     const answer = page.locator('[data-testid="chat-message"][data-role="assistant"]');
     await expect(answer).toContainText(
-      "I'll rename that layer for you — it's a one-property change.",
+      "I'll set up a demo for you — a new composition with a text layer.",
       { timeout: RUN_SETTLE_TIMEOUT_MS },
     );
-    await expect(answer).toContainText("Planning a single atomic batch so undo stays one step.");
+    await expect(answer).toContainText(
+      "Planning one atomic batch so it applies as a single undo step.",
+    );
     await expect(page.getByTestId("chat-status")).toHaveAttribute("data-phase", "done", {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
 
-    // The mock's EditPlan renders as the M5 plan card (M5-G rewrite): a
-    // status machine whose read-only mount (message.tsx passes no callbacks)
-    // shows the "proposed" state with no action controls. The M4
-    // "Apply arrives with M5" note is GONE (apply is real now), and the
-    // steps disclosure is a BUTTON (plan-steps-toggle) — so the no-button
-    // pin targets the ACTION row, not the whole card.
+    // The mock's EditPlan renders as the FULL M5 card (M5-G rewrite): the
+    // plan event carries a compiledBatch (the mock runner compiles through
+    // the real server-side plan compiler), so the thread-mounted card is
+    // APPLICABLE — the actions row holds Apply + Cancel (medium risk needs
+    // NO confirm checkbox; nothing auto-applies — auto-apply is off by
+    // default and "create" is structural). The M4 "Apply arrives with M5"
+    // note is GONE (apply is real).
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible();
     await expect(plan).toHaveAttribute("data-status", "proposed");
     await expect(plan).toHaveAttribute("data-applied", "false");
-    await expect(plan).toContainText("Rename the selected layer");
+    await expect(plan).toContainText("Create an Agent Demo composition with a text layer");
     await expect(page.getByTestId("plan-note")).toHaveCount(0);
-
-    // Read-only proof (M4.6, restated for M5): the card's one button is the
-    // steps disclosure; the ACTION row holds ZERO buttons and no Apply
-    // button exists anywhere in the page (apply/undo arrive with the M5
-    // thread wiring — see e2e/m5-agent-edits.spec.ts for the journey spec).
     await expect(plan.getByTestId("plan-steps-toggle")).toBeVisible();
-    await expect(plan.getByTestId("plan-actions").getByRole("button")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /apply/i })).toHaveCount(0);
+    // The ACTION row: Apply + Cancel (the run settled; the wiring armed the
+    // card). This read-only assert does NOT click — the apply journey (one
+    // atomic engine.batch → applied → undo) is e2e/m5-agent-edits.spec.ts
+    // and the from-scratch creation journey is e2e/m5-mock-create.spec.ts.
+    await expect(plan.getByTestId("plan-apply")).toBeVisible();
+    await expect(plan.getByTestId("plan-cancel")).toBeVisible();
 
     // Expanding the tool card shows the mock's context payload — the comp the
     // question was about ("Main": the seeded project's single composition).
