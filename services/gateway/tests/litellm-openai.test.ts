@@ -167,10 +167,13 @@ describe("streamChatCompletion", () => {
     ]);
   });
 
-  it("tolerates CRLF line endings and a final frame without trailing newline", async () => {
-    const crlf =
-      frame({ choices: [{ delta: { content: "a" } }] }).replaceAll("\n", "\r\n") +
-      frame({ choices: [{ delta: {}, finish_reason: "stop" }] }).replace(/\n+$/, "");
+  it("tolerates CRLF line endings", async () => {
+    const crlf = [
+      frame({ choices: [{ delta: { content: "a" } }] }),
+      frame({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+    ]
+      .join("")
+      .replaceAll("\n", "\r\n");
     const events = await collect(
       streamChatCompletion(clientDeps({ fetch: scriptedFetch([sseResponse([crlf])]) }), {
         model: "studio-fast",
@@ -181,6 +184,78 @@ describe("streamChatCompletion", () => {
     expect(events).toEqual([
       { type: "text", delta: "a" },
       { type: "finish", reason: "stop" },
+    ]);
+  });
+
+  it("fails unavailable when the stream ends mid-frame (no terminating newline)", async () => {
+    // Spec-compliant SSE dispatches an event only at its terminating blank
+    // line — a trailing frame without one is incomplete and the SDK ends the
+    // stream without a finish reason. OpenAI/LiteLLM always terminate events,
+    // so this is a broken-stream failure (§8.9), never silent truncation.
+    const truncated =
+      frame({ choices: [{ delta: { content: "a" } }] }) +
+      frame({ choices: [{ delta: {}, finish_reason: "stop" }] }).replace(/\n+$/, "");
+    await expect(
+      collect(
+        streamChatCompletion(clientDeps({ fetch: scriptedFetch([sseResponse([truncated])]) }), {
+          model: "studio-fast",
+          messages,
+          signal: new AbortController().signal,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(ModelUnavailableError);
+  });
+
+  it("round-trips system + assistant tool_calls + tool results through the SDK wire", async () => {
+    const fetchStub = scriptedFetch([sseResponse([finish("stop"), DONE])]);
+    await collect(
+      streamChatCompletion(clientDeps({ fetch: fetchStub }), {
+        model: "studio-smart",
+        messages: [
+          { role: "system", content: "You are the Studio agent." },
+          { role: "user", content: "what is on this comp?" },
+          {
+            role: "assistant",
+            content: "Let me check.",
+            tool_calls: [
+              {
+                id: "call_get",
+                type: "function",
+                function: {
+                  name: "studio.get_context",
+                  arguments: '{"include":["projectSummary"]}',
+                },
+              },
+            ],
+          },
+          {
+            role: "tool",
+            tool_call_id: "call_get",
+            content: JSON.stringify({ projectSummary: "3 comps" }),
+          },
+          { role: "user", content: "thanks" },
+        ],
+        signal: new AbortController().signal,
+      }),
+    );
+    // The SDK re-serializes the SAME OpenAI wire: `instructions` becomes the
+    // leading system message, tool arguments/results as JSON strings.
+    expect(fetchStub.calls[0]?.body.messages).toEqual([
+      { role: "system", content: "You are the Studio agent." },
+      { role: "user", content: "what is on this comp?" },
+      {
+        role: "assistant",
+        content: "Let me check.",
+        tool_calls: [
+          {
+            id: "call_get",
+            type: "function",
+            function: { name: "studio.get_context", arguments: '{"include":["projectSummary"]}' },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_get", content: '{"projectSummary":"3 comps"}' },
+      { role: "user", content: "thanks" },
     ]);
   });
 
