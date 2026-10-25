@@ -47,6 +47,13 @@ import type { EditorHostPayload, EditorSessionFactory } from "./types";
  *    Cmd/Ctrl+L/K/I (and friends) from inside the iframe onto the chat
  *    shortcut bus; M4's chat consumes them. Inside the editor route
  *    Cmd/Ctrl+K means inline edit (D-5) — the bus records it for now.
+ * 7. Graphics-device recovery: the dist reports `studio:deviceLost` over
+ *    postMessage when the browser's GPU process connection dies (a lost
+ *    WebGPU device cannot be revived in place). The engine stays alive on
+ *    the CPU, so the session saves NOW through the autosave chain and the
+ *    page reloads — RSC re-fetches the manifest and the editor reopens with
+ *    the latest version on a FRESH device. A save that fails or outruns the
+ *    budget parks on the overlay's Try again / Reload now buttons instead.
  */
 
 /** §11: renew the lease every 2 minutes while the tab is open. */
@@ -55,8 +62,22 @@ const LEASE_HEARTBEAT_MS = 120_000;
 const BOOT_POLL_MS = 250;
 /** How long the "Saved" chip stays up (ms). */
 const SAVED_CHIP_MS = 4000;
+/** Device-loss recovery save budget (ms). The chain itself is bounded by the
+ * bridge's per-call timeout × retries; past this the overlay offers the
+ * buttons while a late success still reloads on its own. */
+const DEVICE_LOST_SAVE_BUDGET_MS = 20_000;
 
 export type EditorPhase = "booting" | "loading-project" | "open" | "load-failed";
+
+/** The graphics-device recovery state (the overlay renders from this). */
+export interface DeviceLostState {
+  /** The dist's own message ("GPU device lost (Unknown): …") — the detail line. */
+  readonly message: string;
+  /** "saving": the recovery save runs, the page reloads when it lands. */
+  readonly stage: "saving" | "failed";
+  /** The last version that reached the server (the failed stage's fallback line). */
+  readonly lastSavedLabel: string | null;
+}
 
 export interface EditorSessionState {
   readonly phase: EditorPhase;
@@ -79,6 +100,8 @@ export interface EditorSessionState {
   readonly saveError: boolean;
   /** Last successful save (transient "Saved" chip). */
   readonly savedVersion?: VersionRef;
+  /** The browser's graphics device was lost — recovery in progress (7 above). */
+  readonly deviceLost?: DeviceLostState;
 }
 
 export interface UseEditorSessionOptions {
@@ -99,6 +122,11 @@ export interface EditorSessionApi {
   readonly retryBoot: () => void;
   /** "Load server version" after a conflict — a full page reload re-runs RSC. */
   readonly reloadServerVersion: () => void;
+  /** Retry the device-loss recovery save (the overlay's Try again). */
+  readonly retryDeviceLostSave: () => void;
+  /** Reload after a device loss even though the last save didn't land (the
+   * overlay's Reload now — the unsaved-changes guard is bypassed for it). */
+  readonly reloadAfterDeviceLost: () => void;
   /**
    * The M5 apply-session ports (K-1 fix): the ChatProvider builds the real
    * ApplyController from these — `saveNow("agent-apply")` uploads the
@@ -147,6 +175,12 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
   }
   const shortcutBusRef = useRef(options.shortcutBus ?? editorChatShortcutBus);
   const savedChipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Device-loss recovery (7): the dist reports the loss once; the guard makes
+  // the recovery single-entry (the overlay's Try again re-enters deliberately).
+  const recoveringRef = useRef(false);
+  const deviceLostMessageRef = useRef("GPU device lost");
+  /** A deliberate reload after device loss skips the unsaved-changes guard. */
+  const bypassUnloadGuardRef = useRef(false);
 
   const patchState = useCallback((patch: Partial<EditorSessionState>) => {
     setState((current) => ({ ...current, ...patch }));
@@ -411,6 +445,8 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
       if (document.visibilityState === "hidden") saveNow("before-close");
     };
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      // A deliberate device-loss reload already decided: don't double-prompt.
+      if (bypassUnloadGuardRef.current) return;
       // `dirty` is the controller's cached view as of the last tick — a
       // best-effort unsaved-changes guard (M3.7).
       if (autosaveRef.current?.dirty === true) {
@@ -448,6 +484,98 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
     window.location.reload();
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // Graphics-device recovery (7): a lost WebGPU device cannot be revived in
+  // place, but the engine stays alive on the CPU — save NOW, then reload the
+  // page so RSC re-fetches the manifest and the editor reopens on a FRESH
+  // device with the latest version.
+  // ---------------------------------------------------------------------------
+  const reloadNow = useCallback((): void => {
+    bypassUnloadGuardRef.current = true;
+    window.location.reload();
+  }, []);
+
+  const recoverFromDeviceLost = useCallback(
+    (message: string, mode: "first" | "retry"): void => {
+      if (mode === "first" && recoveringRef.current) return;
+      recoveringRef.current = true;
+      deviceLostMessageRef.current = message;
+      patchState({ deviceLost: { message, stage: "saving", lastSavedLabel: null } });
+      const controller = autosaveRef.current;
+      if (controller === null) {
+        // Read-only/parked session: nothing of ours to upload — straight to a
+        // fresh editor (the lease holder's version reopens).
+        reloadNow();
+        return;
+      }
+      const save = controller.saveNow("device-lost");
+      // Any success — early or late (the budget below may have flipped the UI
+      // already) — reloads with everything saved. saveNow never rejects.
+      void save.then((outcome: SaveOutcome) => {
+        if (outcome.saved) reloadNow();
+      });
+      // The UI waits a bounded time: a dead engine channel burns its bridge
+      // call timeouts inside the retry chain, and a user staring at a spinner
+      // past 20 s needs the buttons (the save keeps running behind them).
+      void Promise.race([
+        save,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), DEVICE_LOST_SAVE_BUDGET_MS)),
+      ]).then((outcome: SaveOutcome | null) => {
+        if (outcome?.saved) return; // reloading above
+        if (outcome !== null && outcome.error === undefined && outcome.conflict !== true) {
+          // Clean project — nothing was owed, the server already has it all.
+          reloadNow();
+          return;
+        }
+        const head = autosaveRef.current?.currentVersion() ?? null;
+        patchState({
+          deviceLost: {
+            message: deviceLostMessageRef.current,
+            stage: "failed",
+            lastSavedLabel: head === null ? null : (head.label ?? head.id),
+          },
+        });
+      });
+    },
+    [patchState, reloadNow],
+  );
+
+  const retryDeviceLostSave = useCallback((): void => {
+    // A fresh single-flight saveNow (the controller dedupes onto the running
+    // chain when one is still in flight) + a fresh UI budget.
+    recoverFromDeviceLost(deviceLostMessageRef.current, "retry");
+  }, [recoverFromDeviceLost]);
+
+  const reloadAfterDeviceLost = useCallback((): void => {
+    // The user chose the fresh editor over the unsaved tail — the overlay's
+    // copy already said what that means.
+    reloadNow();
+  }, [reloadNow]);
+
+  // The dist's report: `window.parent.postMessage({type: "studio:deviceLost",
+  // message}, origin)` from `js/host.js` (same-origin iframe only — the origin
+  // and source checks keep other frames' messages out).
+  useEffect(() => {
+    const onMessage = (event: MessageEvent): void => {
+      if (event.origin !== window.location.origin) return;
+      const data: unknown = event.data;
+      if (
+        typeof data !== "object" ||
+        data === null ||
+        (data as { type?: unknown }).type !== "studio:deviceLost"
+      ) {
+        return;
+      }
+      const iframe = iframeRef.current;
+      if (iframe === null || event.source !== iframe.contentWindow) return;
+      const raw = (data as { message?: unknown }).message;
+      const message = typeof raw === "string" && raw.length > 0 ? raw : "GPU device lost";
+      recoverFromDeviceLost(message, "first");
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [recoverFromDeviceLost]);
+
   // K-1: referentially-stable apply ports for the ChatProvider (the provider
   // builds the real ApplyController from these; the autosaveRef indirection
   // means read-only sessions degrade conservatively without remounting).
@@ -482,6 +610,8 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
     bootAttempt,
     retryBoot,
     reloadServerVersion,
+    retryDeviceLostSave,
+    reloadAfterDeviceLost,
     applyPorts,
   };
 }

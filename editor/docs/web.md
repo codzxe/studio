@@ -279,12 +279,18 @@ page fails immediately with that remedy instead of after the whole download.
 `WEBGL_debug_renderer_info`; `software` true for SwiftShader and friends — the editor still runs,
 slower, and the loading note says so).
 
-If the page's WebGPU device is lost (a driver reset, the browser reclaiming the GPU), the canvas
-can't show anything new, while the project stays open and commands keep working. The page then
-covers the canvas with a notice (`showDeviceLost` in `js/host.js`) offering **Save Project** (a
-download) and **Reload**, which first writes pending changes to browser storage
-(`effectcraft.flush()`) so the session comes back after the reload; when the write fails it says
-so and offers **Reload Anyway**.
+If the page's WebGPU device is lost (a driver reset, the browser's GPU process dying — Chrome's
+"A valid external Instance reference no longer exists" and friends; the machine's GPU is fine, a
+lost device just cannot be revived in place), the canvas can't show anything new, while the project
+stays open and commands keep working. The page then covers the canvas with a notice
+(`showDeviceLost` in `js/host.js`) offering **Save Project** (a download) and **Reload**, which
+first writes pending changes to browser storage (`effectcraft.flush()`) so the session comes back
+after the reload; when the write fails it says so and offers **Reload Anyway**. When the page is
+embedded in a same-origin host (the Studio web app), it first tells the host —
+`window.parent.postMessage({type: "studio:deviceLost", message}, origin)` — and the host recovers
+the session itself: it saves through its autosave chain, then reloads the whole page, so the
+editor reopens with the latest version on a fresh device (a `studio:deviceLost` overlay; the
+fallback dialog stays for the standalone page and unknown hosts).
 
 **GPU effects run in the frame workers.** A browser never lets JavaScript (or wasm) wait for a GPU
 readback, not even in a worker: a buffer maps only once the thread returns to its event loop.

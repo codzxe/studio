@@ -7,6 +7,8 @@ import { Badge, Button, Spinner } from "@studio/ui";
 import { AlertTriangle, CircleAlert, TriangleAlert, WifiOff } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
+import type { DeviceLostState } from "./use-editor-session";
+
 /**
  * The editor-host banners (M3.5/M3.7). Every banner sits OVER the editor
  * iframe (ECUX §1: additive chrome only — nothing is injected into the
@@ -154,6 +156,74 @@ export function LoadFailedBanner({
       <Button onClick={onReload} data-testid="editor-load-retry">
         Reload
       </Button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Graphics device lost (the dist's `studio:deviceLost` report) — recovery
+// ---------------------------------------------------------------------------
+
+/**
+ * The browser's GPU process connection died (Chrome: "A valid external
+ * Instance reference no longer exists" and friends) — the machine's GPU is
+ * fine, a lost WebGPU device just cannot be revived in place. The session
+ * saves NOW and the page reloads onto a fresh device; this overlay says what
+ * is happening and owns the interaction until then (the iframe's own dialog
+ * stays as the fallback for non-Studio hosts, hidden underneath).
+ */
+export interface DeviceLostOverlayProps {
+  readonly deviceLost: DeviceLostState;
+  /** The overlay's Try again — a fresh recovery save with a fresh budget. */
+  readonly onRetry: () => void;
+  /** The overlay's Reload now — reopen from the last saved version. */
+  readonly onReload: () => void;
+}
+
+export function DeviceLostOverlay({ deviceLost, onRetry, onReload }: DeviceLostOverlayProps) {
+  const saving = deviceLost.stage === "saving";
+  return (
+    <div
+      data-testid="device-lost-overlay"
+      className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-app px-6"
+      role="alertdialog"
+      aria-label="The browser's graphics device was lost — Studio is recovering"
+    >
+      <div className="flex max-w-lg flex-col items-center gap-2 text-center">
+        {saving ? (
+          <Spinner size={24} label="Saving your work and reopening the editor" />
+        ) : (
+          <TriangleAlert size={24} strokeWidth={1.75} className="text-warning" aria-hidden="true" />
+        )}
+        <h1 className="text-title-l font-display text-primary">
+          The browser&rsquo;s graphics device was lost.
+        </h1>
+        <p className="text-body text-secondary" data-testid="device-lost-copy">
+          {saving
+            ? "Saving your work, then reopening the editor with a fresh graphics device…"
+            : deviceLost.lastSavedLabel === null
+              ? "Saving the latest changes didn’t finish, and this project has no saved version yet. You can try again, or reopen the editor from scratch — unsaved changes are lost."
+              : `Saving the latest changes didn’t finish. The last saved version is “${deviceLost.lastSavedLabel}”. You can try again, or reopen the editor from it — changes since then are lost.`}
+        </p>
+        <p className="text-caption max-w-lg break-all text-muted" data-testid="device-lost-detail">
+          {deviceLost.message}
+        </p>
+        {saving ? null : (
+          <div className="mt-2 flex items-center gap-2">
+            <Button variant="primary" size="sm" onClick={onRetry} data-testid="device-lost-retry">
+              Try saving again
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onReload}
+              data-testid="device-lost-reload"
+            >
+              Reload now
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

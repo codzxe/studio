@@ -16,6 +16,7 @@ import {
   BootFailureBanner,
   BootOverlay,
   ConflictBanner,
+  DeviceLostOverlay,
   EditorOfflineBanner,
   LeaseWarningBanner,
   LoadFailedBanner,
@@ -310,6 +311,17 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
       {loadFailed && !bootFailed && (
         <LoadFailedBanner loadError={state.loadError} onReload={() => window.location.reload()} />
       )}
+
+      {/* Graphics device lost (the dist's studio:deviceLost report): the
+          recovery owns the page — save now, then reload onto a fresh device;
+          the buttons appear only when the save can't land in time. */}
+      {state.deviceLost !== undefined ? (
+        <DeviceLostOverlay
+          deviceLost={state.deviceLost}
+          onRetry={session.retryDeviceLostSave}
+          onReload={session.reloadAfterDeviceLost}
+        />
+      ) : null}
 
       {/* §9.3 read-only (lease refused) — non-blocking, the iframe stays usable.
           M7-G: while the richer lease banner shows its own read-only strip,

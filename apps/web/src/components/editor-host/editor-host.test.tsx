@@ -458,6 +458,236 @@ describe("EditorHost — saves", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Graphics device lost (the dist's `studio:deviceLost` report) — recovery
+// ---------------------------------------------------------------------------
+
+/** Stub jsdom's not-implemented `location.reload`; exposes the call count.
+ * jsdom's own `reload` is non-configurable on the Location instance, but the
+ * `location` accessor on window is replaceable — swap the whole object for the
+ * test's duration and put the real one back after. */
+function stubLocationReload(): { reloads: () => number; restore: () => void } {
+  let count = 0;
+  const original = window.location;
+  const origin = original.origin;
+  // biome-ignore lint/performance/noDelete: jsdom's window.location accessor is replaceable only by deleting it first — the documented jsdom recipe.
+  delete (window as { location?: Location }).location;
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    writable: true,
+    value: {
+      origin,
+      href: original.href,
+      reload: (): void => {
+        count += 1;
+      },
+    },
+  });
+  return {
+    reloads: () => count,
+    restore: () => {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        writable: true,
+        value: original,
+      });
+    },
+  };
+}
+
+/** The dist's report: `js/host.js` posts `studio:deviceLost` to the parent. */
+function reportDeviceLost(
+  message = "GPU device lost (Unknown): A valid external Instance reference no longer exists",
+  source: Window | null = iframeWindow(),
+): void {
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      origin: window.location.origin,
+      source,
+      data: { type: "studio:deviceLost", message },
+    }),
+  );
+}
+
+describe("EditorHost — graphics device lost", () => {
+  it("recovers: saves through the autosave chain, then reloads the page", async () => {
+    const reload = stubLocationReload();
+    try {
+      const harness = renderHost();
+      await bootToOpen(harness);
+      await editProject();
+
+      reportDeviceLost();
+
+      // The recovery overlay owns the page while the save runs.
+      await waitFor(
+        () => {
+          expect(screen.getByTestId("device-lost-overlay")).toBeInTheDocument();
+        },
+        { timeout: 4000 },
+      );
+      expect(screen.getByTestId("device-lost-copy")).toHaveTextContent(/Saving your work/);
+      expect(screen.getByTestId("device-lost-detail")).toHaveTextContent(
+        "GPU device lost (Unknown): A valid external Instance reference no longer exists",
+      );
+
+      // The save lands through the real chain: saveToBrowser → upload.
+      await waitFor(
+        () => {
+          expect(harness.fakeClient.calls.uploads).toHaveLength(1);
+        },
+        { timeout: 4000 },
+      );
+      expect(harness.fakeClient.calls.uploads[0]?.input.label).toBe(
+        "Save after graphics device loss",
+      );
+      expect(harness.fakeClient.calls.uploads[0]?.input.baseVersionId).toBe("ver_base");
+
+      // Then the page reloads (RSC re-fetch: the editor reopens on a fresh
+      // device with the just-saved version).
+      await waitFor(
+        () => {
+          expect(reload.reloads()).toBe(1);
+        },
+        { timeout: 4000 },
+      );
+
+      // The deliberate reload bypasses the unsaved-changes guard.
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    } finally {
+      reload.restore();
+    }
+  });
+
+  it("parks on the failed stage when the save cannot land; Reload now reloads", async () => {
+    const reload = stubLocationReload();
+    try {
+      const harness = renderHost({
+        upload: () => ({ ok: false, error: new Error("storage unreachable") }),
+      });
+      await bootToOpen(harness);
+      await editProject();
+
+      reportDeviceLost("GPU device lost (Destroyed): destroyed");
+
+      // The retry chain fails → the overlay flips to the buttons.
+      await waitFor(
+        () => {
+          expect(screen.getByTestId("device-lost-retry")).toBeInTheDocument();
+        },
+        { timeout: 4000 },
+      );
+      expect(reload.reloads()).toBe(0); // never a blind reload
+
+      // The failed copy names the last saved version (the base version).
+      expect(screen.getByTestId("device-lost-copy")).toHaveTextContent(/ver_base/);
+      expect(screen.getByTestId("device-lost-reload")).toBeInTheDocument();
+
+      // Try again re-enters the recovery save, fails again → buttons return.
+      fireEvent.click(screen.getByTestId("device-lost-retry"));
+      await waitFor(
+        () => {
+          expect(screen.getByTestId("device-lost-retry")).toBeInTheDocument();
+        },
+        { timeout: 4000 },
+      );
+
+      fireEvent.click(screen.getByTestId("device-lost-reload"));
+      expect(reload.reloads()).toBe(1);
+
+      // The deliberate reload bypasses the unsaved-changes guard.
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    } finally {
+      reload.restore();
+    }
+  });
+
+  it("ignores foreign messages (origin, source, type)", async () => {
+    const reload = stubLocationReload();
+    try {
+      const harness = renderHost();
+      await bootToOpen(harness);
+
+      // Different origin.
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: "https://evil.test",
+          source: iframeWindow(),
+          data: { type: "studio:deviceLost", message: "x" },
+        }),
+      );
+      // Different source (not our iframe).
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: window.location.origin,
+          source: window,
+          data: { type: "studio:deviceLost", message: "x" },
+        }),
+      );
+      // Different type.
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: window.location.origin,
+          source: iframeWindow(),
+          data: { type: "other", message: "x" },
+        }),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(screen.queryByTestId("device-lost-overlay")).not.toBeInTheDocument();
+      expect(reload.reloads()).toBe(0);
+    } finally {
+      reload.restore();
+    }
+  });
+
+  it("read-only session: straight to a fresh editor (no upload of ours)", async () => {
+    const reload = stubLocationReload();
+    try {
+      const harness = renderHost({ lease: createFakeLeasePort("refused") });
+      await bootToOpen(harness);
+
+      reportDeviceLost();
+
+      await waitFor(
+        () => {
+          expect(reload.reloads()).toBe(1);
+        },
+        { timeout: 4000 },
+      );
+      expect(harness.fakeClient.calls.uploads).toHaveLength(0);
+    } finally {
+      reload.restore();
+    }
+  });
+
+  it("clean project: nothing owed — straight reload, never the failed stage", async () => {
+    const reload = stubLocationReload();
+    try {
+      const harness = renderHost();
+      await bootToOpen(harness);
+      // (no editProject: the project is clean — the server already has it all)
+
+      reportDeviceLost();
+
+      await waitFor(
+        () => {
+          expect(reload.reloads()).toBe(1);
+        },
+        { timeout: 4000 },
+      );
+      expect(screen.queryByTestId("device-lost-retry")).not.toBeInTheDocument();
+      expect(harness.fakeClient.calls.uploads).toHaveLength(0);
+    } finally {
+      reload.restore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Read-only enforcement (§9.3 / M3.5 badge)
 // ---------------------------------------------------------------------------
 

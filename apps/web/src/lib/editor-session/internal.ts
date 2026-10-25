@@ -93,6 +93,7 @@ export const SAVE_REASON_LABELS: Readonly<Record<string, string>> = {
   autosave: "Autosave",
   "agent-apply": "Agent apply",
   "before-close": "Save before close",
+  "device-lost": "Save after graphics device loss",
 };
 
 export function labelForSaveReason(reason: string): string | undefined {

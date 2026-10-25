@@ -683,6 +683,10 @@ export function browsePickFiles(directory) {
 /// stays open and editable. Say so over the stale picture, and offer to save the project (a
 /// download) and to reload; the reload first writes pending changes to browser storage, from
 /// which the session comes back when it is `kept` there.
+/// An embedding host (the Studio page, same origin) owns the recovery instead: tell it, and it
+/// saves the session and reloads the page — the editor reopens with the latest version on a
+/// fresh graphics device. The dialog stays for every other host (the standalone page, parents
+/// that don't answer), unchanged.
 export function showDeviceLost(message, kept) {
   if (document.getElementById("device-lost")) return;
   const box = document.createElement("div");
@@ -722,4 +726,16 @@ export function showDeviceLost(message, kept) {
   buttons.append(save, reload);
   box.append(title, text, detail, buttons);
   document.body.append(box);
+  // Tell an embedding same-origin host (the Studio page): it owns the recovery —
+  // it saves the session and reloads, and the editor reopens with the latest
+  // version on a fresh graphics device. Its overlay replaces this dialog; every
+  // other host (the standalone page, parents that don't answer) keeps the dialog
+  // as the interface.
+  if (typeof window !== "undefined" && window.parent !== window) {
+    try {
+      window.parent.postMessage({ type: "studio:deviceLost", message }, window.location.origin);
+    } catch {
+      // No messaging: the dialog above is the interface.
+    }
+  }
 }

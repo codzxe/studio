@@ -126,4 +126,27 @@ assert.equal(buttons()[1].textContent, "Reload Anyway");
 buttons()[1].onclick();
 assert.equal(reloads, 2);
 
+// An embedding same-origin host (the Studio page) is told first: it owns the
+// recovery (save + reload onto a fresh graphics device). The dialog stays for
+// every other host — the standalone page above already covered it.
+document.body.children = [];
+const posted = [];
+globalThis.window = {
+  parent: {
+    postMessage: (data, origin) => posted.push({ data, origin }),
+  },
+  location: { origin: "https://studio.test" },
+};
+host.showDeviceLost("GPU device lost (Unknown): external Instance", false);
+assert.equal(posted.length, 1, "the parent is told once");
+assert.deepEqual(posted[0].data, {
+  type: "studio:deviceLost",
+  message: "GPU device lost (Unknown): external Instance",
+});
+assert.equal(posted[0].origin, "https://studio.test");
+assert.ok(notice(), "the fallback dialog still shows for a host that doesn't answer");
+host.showDeviceLost("again", false);
+assert.equal(posted.length, 1, "repeat loss: the parent is not told twice");
+delete globalThis.window;
+
 console.log("page: ok");
