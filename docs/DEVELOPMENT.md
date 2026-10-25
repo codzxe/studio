@@ -89,6 +89,31 @@ for the `packages/db` DB-gated integration suite and for verifying pg-only SQL
 
 ## 3. Run
 
+Zero-wait one-shot (recommended): `pnpm dev:ready` boots the real stack and
+returns the links only after every page is ALREADY compiled — no first-click
+spinner, no EADDRINUSE, no browser-side compile:
+
+```sh
+corepack pnpm dev:ready            # [1/4] free ports (from 3000/8787)
+                                    # [2/4] SQLite bootstrap + demo seed
+                                    # [3/4] WASM editor dist verification
+                                    # [4/4] boot gateway+web, sign in as the
+                                    #       demo user, warm every route (2xx)
+corepack pnpm dev:ready:status     # pid/port/http per service (exit 3 = down)
+corepack pnpm dev:ready:logs       # last 40 lines of both logs (--follow)
+corepack pnpm dev:ready:stop       # graceful process-group shutdown
+```
+
+Details (scripts/dev-ready.mjs): repo-owned zombies on the base ports are
+stopped first (foreign processes are never killed — the stack moves to the
+next free port instead); the port matrix is injected per child (PORT scoped,
+GATEWAY_INTERNAL_URL / APP_URL / NEXT_PUBLIC_APP_URL — the dev-stack.sh set);
+the warmup signs in through better-auth with the seeded credentials so the
+`/w/*` pages compile their AUTHENTICATED render (better-auth rejects
+Origin-less POSTs — the runner sends the trusted app origin); the wasm is
+range-probed over HTTP (206, `application/wasm`, `\0asm`) without downloading
+49 MB. HMR stays live — this is `next dev`, not a production build.
+
 One-shot real stack (gateway + web on the SQLite dev DB, full local env set):
 
 ```sh
@@ -159,6 +184,7 @@ permissive-licenses-only gate).
 | `corepack pnpm test` / `lint` / `format` / `typecheck` / `build` | Turborepo-wide gates |
 | `corepack pnpm check:licenses` | License gate (`scripts/check-licenses.mjs`) |
 | `corepack pnpm editor:web` / `editor:serve` / `editor:test` | Rebuild editor wasm / dev-serve it / cargo tests |
+| `corepack pnpm dev:ready` (+ `:stop` / `:status` / `:logs`) | Zero-wait one-shot boot: free ports → seeded DB → wasm check → warm every route, then print the links (`scripts/dev-ready.mjs`) |
 | `bash scripts/dev-stack.sh start` / `stop` | Boot/stop gateway + web on the SQLite DB |
 | `bash scripts/git-sync.sh "<msg>"` | The only sanctioned commit/push path |
 
