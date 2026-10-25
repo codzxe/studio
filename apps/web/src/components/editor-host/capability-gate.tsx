@@ -1,7 +1,7 @@
 "use client";
 
 import { UnsupportedGpuState } from "@/components/system/system-states";
-import { warmEditorWasm } from "@/lib/editor-warmup";
+import { probeEditorGpu, warmEditorWasm } from "@/lib/editor-warmup";
 import { X } from "lucide-react";
 import { type ReactElement, type ReactNode, useEffect, useState } from "react";
 
@@ -13,7 +13,10 @@ import { type ReactElement, type ReactNode, useEffect, useState } from "react";
  * browser with hardware acceleration off still exposes `navigator.gpu` and
  * refuses every adapter request (the machine can have a fine discrete GPU —
  * the dist would otherwise boot into "failed to create wgpu surface"). The
- * probe mirrors the dist's own boot pre-flight (`public/editor/index.html`):
+ * probe lives in `@/lib/editor-warmup` (`probeEditorGpu`) and its verdict is
+ * cached for the page session — when the shell's prewarm (W3-D) already
+ * probed, this gate re-uses that answer instead of issuing a second adapter
+ * request:
  *
  *   navigator.gpu.requestAdapter() answers → children
  *   canvas.getContext("webgl2") answers         → children
@@ -23,12 +26,14 @@ import { type ReactElement, type ReactNode, useEffect, useState } from "react";
  *             history (`/w/[slug]/history`) — previews render server-side,
  *             no GPU needed (§8.11 "offer a rendered preview").
  *
- * The probe is async (one adapter request), so the first client frame(s)
- * render NOTHING while "checking" — a one-frame dark page instead of a
- * broken-canvas flash; supported machines mount the editor a few
- * milliseconds later, and the moment the verdict lands the engine's 49 MB
- * download + compile starts (`warmEditorWasm`) so it overlaps the iframe's
- * own load instead of waiting behind it.
+ * The probe is async (one adapter request — or an already-cached answer), so
+ * the first client frame(s) render NOTHING while "checking" — a one-frame
+ * dark page instead of a broken-canvas flash; supported machines mount the
+ * editor a few milliseconds later, and the moment the verdict lands the
+ * engine's 49 MB download + compile starts (`warmEditorWasm`) so it overlaps
+ * the iframe's own load instead of waiting behind it. When the shell's
+ * prewarm already started the download, `warmEditorWasm` is its own one-shot
+ * no-op — the gate's call is just the direct-visit fallback.
  *
  * §13: below 1024px the editor stays usable but shows a DISMISSIBLE
  * "best on desktop" note (never a blocking overlay — the editor is
@@ -37,40 +42,6 @@ import { type ReactElement, type ReactNode, useEffect, useState } from "react";
 
 /** §13 breakpoint: the editor is desktop-first below 1024px. */
 const NARROW_EDITOR_QUERY = "(max-width: 1023px)";
-
-/** A structural stand-in for the not-yet-typed `navigator.gpu`. */
-type GpuLike = {
-  readonly requestAdapter?: (options?: {
-    readonly powerPreference?: "low-power" | "high-performance" | undefined;
-  }) => Promise<unknown>;
-};
-
-/**
- * Browser capability probe (§8.7): a working WebGPU adapter (the dist's
- * preferred backend, asked for the high-performance GPU — the same request
- * its own boot pre-flight makes) or the WebGL2 floor. Pure DOM read — no
- * side effects beyond the throwaway probe canvas.
- */
-async function probeEditorGpuSupport(): Promise<boolean> {
-  if (typeof navigator === "undefined") return false;
-  const nav = navigator as Navigator & { readonly gpu?: GpuLike | undefined };
-  const gpu = nav.gpu;
-  if (typeof gpu?.requestAdapter === "function") {
-    try {
-      const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" });
-      if (adapter != null) return true;
-    } catch {
-      // A broken WebGPU (blocklisted driver, crashed GPU process) falls
-      // through to the WebGL2 floor.
-    }
-  }
-  try {
-    return document.createElement("canvas").getContext("webgl2") !== null;
-  } catch {
-    // Some hardened browsers throw on context creation — treat as absent.
-    return false;
-  }
-}
 
 export interface EditorCapabilityGateProps {
   /** The project slug — routes the static-preview offer to its history page. */
@@ -90,12 +61,13 @@ export function EditorCapabilityGate({
 
   useEffect(() => {
     let live = true;
-    void probeEditorGpuSupport().then((supported) => {
+    void probeEditorGpu().then((supported) => {
       if (!live) return;
       setSupported(supported);
       // The engine download + compile starts the moment the browser is known
       // to be able to run it — never on unsupported machines (they never
-      // mount the iframe, so nothing would fetch it).
+      // mount the iframe, so nothing would fetch it). One-shot: a no-op when
+      // the shell's prewarm already started the download (W3-D).
       if (supported) warmEditorWasm();
     });
     return () => {

@@ -47,6 +47,7 @@ import type {
 } from "@studio/contracts";
 import { Button, Tabs, TabsContent, TabsList, TabsTrigger, buttonVariants } from "@studio/ui";
 import { CircleAlert, Download } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useState } from "react";
 import type { ReactElement } from "react";
 
@@ -309,13 +310,16 @@ export function HistoryPageView({
               Every saved version and everything that happened on this project.
             </p>
           </div>
-          <a
+          {/* A <Link> (W3-D), not a plain <a>: client-side navigation keeps the
+              shell's prewarmed engine module alive (no 49 MB re-download /
+              re-compile on open) and prefetches the editor route. */}
+          <Link
             href={`/w/${encodeURIComponent(slug)}/editor`}
             className={buttonVariants({ variant: "secondary", size: "sm" })}
             data-testid="history-open-editor"
           >
             Open editor
-          </a>
+          </Link>
         </header>
 
         <div className="flex flex-col items-start gap-6 lg:flex-row">

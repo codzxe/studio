@@ -32,6 +32,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import type { WorkspaceMembership } from "@/lib/workspace-membership";
+import { EditorPrewarm } from "../editor-host/editor-prewarm";
 import { OfflineBanner } from "./offline-banner";
 import { ShellCommandPalette } from "./shell-command-palette";
 import type { ShellPort } from "./top-bar";
@@ -234,6 +235,10 @@ export function AppShell({ payload, createPort, children }: AppShellProps) {
 
   return (
     <ShellToastHost>
+      {/* W3-D — the editor engine prewarms the moment the shell mounts (any
+          authenticated surface), so "Open editor" opens onto an engine that
+          is already downloaded + compiled. Renders nothing; one-shot. */}
+      <EditorPrewarm />
       <div data-testid="app-shell" className="flex min-h-svh flex-col bg-app">
         <TopBar
           email={payload.user.email}

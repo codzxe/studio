@@ -37,7 +37,10 @@ case "$MODE" in
     ;;
 esac
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Two levels up: this script lives at scripts/perf/, not scripts/ (the
+# portability sweep's single ".." resolved ROOT to scripts/ — the seed then
+# looked for .local/e2e.db under scripts/ and died on the missing directory).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DB_FILE="$ROOT/.local/e2e.db"
 LOG_DIR="$ROOT/.local"
 GW_LOG="/tmp/perf-gw.log"

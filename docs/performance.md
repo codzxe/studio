@@ -56,11 +56,62 @@ headless software GL, shared 2-core box):
   failed requests. Different readiness marker than the wave-3 rows
   (`window.effectcraftLoad` vs the app's `data-editor-phase="open"`) — indicative
   only, not a budget verdict.
+- 2026-10-25, same dist + the W3-D app-start prewarm (see the next section): p50
+  4,547 ms warm / 10,003 ms cold-ish / 6,687 ms prewarmed (n=3 per series; the
+  box was more loaded than the 10-23 round — cross-round comparisons are
+  indicative only). Evidence:
+  `scripts/perf/results/editor-ready-2026-10-25T06-47-31.json`.
 
-## Everything else
+## App-start editor prewarm (W3-D, 2026-10-25)
 
-Unmeasured. Baseline capture (landing, dashboard, chat first token, apply, render) is
-owned by the M10 hardening milestone; see BUILD_PLAN §6 for the full budget table.
+The user-facing complaint this addresses: "whenever the user opens the editor it
+should not load there — it should load at start itself." The 49.4 MB engine
+download + compile used to start only when the editor route mounted (the
+capability gate's "supported" verdict), i.e. INSIDE the editor-open critical
+path; and the hub/history "Open editor" CTAs were plain `<a>` links — a full
+page reload that threw away any warmed module.
+
+The mechanism (all app-side; the frozen dist is untouched):
+
+1. **The shell prewarms at app start** — `AppShell` mounts the invisible
+   `EditorPrewarm` on every authenticated surface (dashboard, projects, billing,
+   hub), which probes the GPU once (verdict cached and shared with the editor
+   route's gate — one adapter request per session) and, only on a capable
+   machine, starts `warmEditorWasm()` (the 49 MB download + compile, published
+   on `window.__studioEditorWasm`) plus a one-shot prefetch of the dist's small
+   boot files (index document — the iframe's exact `/editor/?empty` URL, glue
+   JS, worker, audio-worklet, snippet host.js — bodies drained so the HTTP
+   cache keeps them) into the HTTP cache.
+2. **The CTAs are client-side** — hub/history/queue-card "Open editor" are
+   `next/link` `<Link>`s now: no full reload, so the prewarmed compiled module
+   survives the navigation and the iframe ADOPTS it (zero wasm network
+   traffic in the editor-open path — verified in the evidence file: no second
+   `.wasm` resource entry in any prewarmed run); the route is also prefetched
+   by the link while it sits in the viewport (production).
+3. **Everything is a pure accelerator** — unsupported machines fetch nothing,
+   and any prewarm failure falls back to the dist's own fetch path.
+
+Measured (n=3 per series, 2026-10-25, same §5b dev stack + caveats as wave-3):
+
+| Series | p50 | What it means |
+|---|---|---|
+| cold-ish | 10,003 ms | direct editor URL, empty HTTP cache — the old experience |
+| warm | 4,547 ms | same-session reload of the editor URL |
+| prewarmed | **6,687 ms from the final click** | /w first, engine download+compile done **while browsing (2,311–2,425 ms)**, then the real click path — the user never waits for the 49 MB module |
+
+The prewarmed phase breakdown (`scripts/perf/prewarm-diagnose.mjs`, n=2): click →
+editor-host mounted 705–759 ms (dev-mode unbundled chunks; production serves the
+prefetched bundle) → iframe init 4,392–4,725 ms (glue eval + GPU pre-flight +
+**wasm instantiation of the adopted module** — the dominant remaining cost, CPU-
+bound) → engine ready +200 ms → project open +~1.7 s (`file.open` + lease). Known
+tail: instantiation is inherent to the dist's `init()` (compilation ≠
+instantiation; the glue instantiates with its own imports); moving it off the
+critical path would need dist-side changes (pre-instantiated module or a
+pre-booted iframe architecture) — deliberately out of scope for W3-D.
+
+On a real network the win is larger than on loopback: the 49 MB transfer
+(~13.4 MB brotli in production) is fully removed from the editor-open wait and
+spent on browsing time instead.
 
 ## Wave-3 on-box measurements (2026-10-23)
 

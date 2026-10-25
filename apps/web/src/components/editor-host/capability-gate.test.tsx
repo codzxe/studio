@@ -1,37 +1,36 @@
 /**
- * EditorCapabilityGate tests (W2-09, §8.7/§8.11/§13) — the probe arms.
+ * EditorCapabilityGate tests (W2-09, §8.7/§8.11/§13) — the gate arms.
  * "Has WebGPU" means an adapter actually ANSWERS `requestAdapter` — a browser
  * with hardware acceleration off still exposes `navigator.gpu` and refuses
  * every adapter request, and the gate must NOT let the editor boot into
  * "failed to create wgpu surface" on such a machine:
  *
- *   adapter answers (asking for the high-performance GPU) → children
- *   adapter null/rejects + WebGL2 floor (canvas context probe) → children
- *   neither → the §8.7 full-page UnsupportedGpuState (hardware-acceleration
- *             hint + static-preview offer), children never mount
+ *   probe → true  → children mount, engine warm-up starts exactly once
+ *   probe → false → the §8.7 full-page UnsupportedGpuState
+ *                   (hardware-acceleration hint + static-preview offer),
+ *                   children never mount
  *
- * Also pinned: a supported verdict starts the engine warm-up exactly once.
- *
- * Seams are browser-global, so each arm stubs what jsdom lacks:
- * - navigator.gpu — absent in jsdom; shaped per arm (requestAdapter answering,
- *   null, or throwing).
- * - HTMLCanvasElement.prototype.getContext — jsdom's is "Not implemented"
- *   (returns null with a console error); spied per arm.
+ * The probe itself (adapter arms, WebGL2 floor, the high-performance adapter
+ * request, the session-cached verdict) lives in `@/lib/editor-warmup` and is
+ * tested in its own module tests — here it is a CONTROLLED MOCK (the gate
+ * only consumes the verdict), same pattern as `warmEditorWasm`:
+ * - @/lib/editor-warmup — mocked: the gate only triggers the warm-up; its own
+ *   module tests own the download/compile state machine and the probe.
  * - window.matchMedia — the vitest-setup shim (matches:false) is plain
  *   WRITABLE, so the <1024px arm swaps the value and restores it after.
- * - @/lib/editor-warmup — mocked: the gate only triggers it; its own module
- *   tests own the download/compile state machine.
  *
- * The probe is async (one adapter request), so every arm awaits the verdict
- * (findByTestId) instead of asserting the first painted frame.
+ * The probe is async, so every arm awaits the verdict (findByTestId) instead
+ * of asserting the first painted frame.
  */
 
-import { warmEditorWasm } from "@/lib/editor-warmup";
+import { probeEditorGpu, warmEditorWasm } from "@/lib/editor-warmup";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
 import { EditorCapabilityGate } from "./capability-gate";
 
 vi.mock("@/lib/editor-warmup", () => ({
+  probeEditorGpu: vi.fn(),
   warmEditorWasm: vi.fn(),
 }));
 
@@ -39,44 +38,12 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.mocked(warmEditorWasm).mockClear();
-  // "Absent" for the probe is undefined (biome bans `delete`; a
-  // defined-undefined property is the honest stub).
-  (navigator as Navigator & { gpu?: unknown }).gpu = undefined;
+  vi.mocked(probeEditorGpu).mockReset();
 });
 
 // ---------------------------------------------------------------------------
-// Browser-global stubs
+// Stubs
 // ---------------------------------------------------------------------------
-
-/** A requestAdapter stub the probe can call (records its options). */
-function adapterStub(result: "adapter" | "null" | "throw") {
-  return vi.fn(async (_options?: unknown) => {
-    if (result === "adapter") return { adapter: true };
-    if (result === "null") return null;
-    throw new Error("WebGPU is unavailable (hardware acceleration off)");
-  });
-}
-
-/**
- * Define (or clear) navigator.gpu with a given requestAdapter behaviour.
- * `undefined` is the "absent" stub — the probe treats a gpu object without a
- * callable requestAdapter as absent too (partial implementations).
- */
-function stubNavigatorGpu(requestAdapter?: ReturnType<typeof adapterStub>): void {
-  const nav = navigator as Navigator & { gpu?: unknown };
-  Object.defineProperty(nav, "gpu", {
-    value: requestAdapter === undefined ? undefined : { requestAdapter },
-    configurable: true,
-    writable: true,
-  });
-}
-
-/** Stub canvas.getContext("webgl2") — `null` = no WebGL2, truthy = present. */
-function stubWebgl2(context: WebGL2RenderingContext | null) {
-  return vi
-    .spyOn(HTMLCanvasElement.prototype, "getContext")
-    .mockReturnValue(context as WebGL2RenderingContext | null);
-}
 
 type MatchMediaStub = (query: string) => MediaQueryList;
 
@@ -100,6 +67,11 @@ function stubMatchMedia(matches: boolean): () => void {
   };
 }
 
+/** Control the gate's (mocked) probe verdict. */
+function stubProbe(supported: boolean): void {
+  vi.mocked(probeEditorGpu).mockResolvedValue(supported);
+}
+
 /** The gate's children — presence is the whole contract in supported arms. */
 function Children() {
   return <div data-testid="gate-child">editor host</div>;
@@ -114,30 +86,22 @@ function renderGate(slug = "launch-film"): void {
 }
 
 // ---------------------------------------------------------------------------
-// Probe arms (§8.7): a working adapter or the WebGL2 floor → children;
-// neither → §8.11 state; a supported verdict warms the engine exactly once
+// Gate arms (§8.7): a supported verdict mounts the editor children and starts
+// the warm-up exactly once; an unsupported verdict shows the §8.11 state
 // ---------------------------------------------------------------------------
 
-describe("EditorCapabilityGate — capability probe", () => {
-  it("a WebGPU adapter answers: mounts the editor children, the canvas probe never runs, the engine warm-up starts", async () => {
-    const requestAdapter = adapterStub("adapter");
-    stubNavigatorGpu(requestAdapter);
-    // The canvas probe must never even run when an adapter answers.
-    const getContext = stubWebgl2(null);
+describe("EditorCapabilityGate — gate arms", () => {
+  it("a supported verdict: mounts the editor children and starts the engine warm-up", async () => {
+    stubProbe(true);
     renderGate();
 
     expect(await screen.findByTestId("gate-child")).toBeInTheDocument();
     expect(screen.queryByTestId("unsupported-gpu-state")).not.toBeInTheDocument();
-    expect(getContext).not.toHaveBeenCalled();
-    // The dist's own boot pre-flight asks the same: the high-performance GPU,
-    // not the browser's default (power-saving) adapter.
-    expect(requestAdapter).toHaveBeenCalledWith({ powerPreference: "high-performance" });
     expect(warmEditorWasm).toHaveBeenCalledTimes(1);
   });
 
-  it("navigator.gpu exists but every adapter request is refused (hardware acceleration off) with no WebGL2: the §8.11 state, children never mount, no warm-up", async () => {
-    stubNavigatorGpu(adapterStub("null"));
-    stubWebgl2(null);
+  it("an unsupported verdict (hardware acceleration off): the §8.11 state, children never mount, no warm-up", async () => {
+    stubProbe(false);
     renderGate("launch-film");
 
     // The children (the wasm editor host) never boot on an unsupported box.
@@ -163,26 +127,6 @@ describe("EditorCapabilityGate — capability probe", () => {
     expect(preview).toHaveAttribute("href", "/w/launch-film/history");
     expect(preview).toHaveTextContent("Open version history");
   });
-
-  it("a throwing adapter request (broken WebGPU) falls through to the WebGL2 floor: mounts the children", async () => {
-    stubNavigatorGpu(adapterStub("throw"));
-    stubWebgl2({} as WebGL2RenderingContext);
-    renderGate();
-
-    expect(await screen.findByTestId("gate-child")).toBeInTheDocument();
-    expect(screen.queryByTestId("unsupported-gpu-state")).not.toBeInTheDocument();
-    expect(warmEditorWasm).toHaveBeenCalledTimes(1);
-  });
-
-  it("no navigator.gpu at all (WebGL2-only browser): the floor alone mounts the children", async () => {
-    stubNavigatorGpu(undefined);
-    stubWebgl2({} as WebGL2RenderingContext);
-    renderGate();
-
-    expect(await screen.findByTestId("gate-child")).toBeInTheDocument();
-    expect(screen.queryByTestId("unsupported-gpu-state")).not.toBeInTheDocument();
-    expect(warmEditorWasm).toHaveBeenCalledTimes(1);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -191,8 +135,7 @@ describe("EditorCapabilityGate — capability probe", () => {
 
 describe("EditorCapabilityGate — best-on-desktop note", () => {
   it("shows the dismissible note below 1024px while the editor stays mounted", async () => {
-    stubNavigatorGpu(undefined);
-    stubWebgl2({} as WebGL2RenderingContext);
+    stubProbe(true);
     const restoreMatchMedia = stubMatchMedia(true);
     try {
       renderGate();
@@ -212,8 +155,7 @@ describe("EditorCapabilityGate — best-on-desktop note", () => {
   });
 
   it("no note at ≥1024px", async () => {
-    stubNavigatorGpu(undefined);
-    stubWebgl2({} as WebGL2RenderingContext);
+    stubProbe(true);
     const restoreMatchMedia = stubMatchMedia(false);
     try {
       renderGate();
@@ -225,8 +167,7 @@ describe("EditorCapabilityGate — best-on-desktop note", () => {
   });
 
   it("no note in the unsupported arm — the §8.11 state replaces the editor page", async () => {
-    stubNavigatorGpu(adapterStub("null"));
-    stubWebgl2(null);
+    stubProbe(false);
     const restoreMatchMedia = stubMatchMedia(true);
     try {
       renderGate();

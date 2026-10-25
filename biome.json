@@ -24,6 +24,9 @@
       ".local/**",
       "apps/web/e2e/.results/**",
       "apps/web/e2e/zz-*",
+      "scripts/ai-sdk-probe.mjs",
+      "scripts/check-mock-plan.ts",
+      "scripts/perf/results/**",
       "packages/*/src/**/*.js",
       "packages/*/src/**/*.js.map",
       "packages/*/src/**/*.d.ts"

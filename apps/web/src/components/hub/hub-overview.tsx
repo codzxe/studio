@@ -29,6 +29,7 @@
 import type { Asset, LeaseStateResponse, Member, VersionTimelineEntry } from "@studio/contracts";
 import { Button, Card, Skeleton } from "@studio/ui";
 import { CircleAlert } from "lucide-react";
+import Link from "next/link";
 import { type ReactElement, useCallback, useEffect, useState } from "react";
 
 import { formatTimeAgo } from "@/components/activity/activity-feed";
@@ -333,26 +334,30 @@ export function HubOverview({
         )}
       </dl>
 
-      {/* Primary CTA — lease-aware per §8.6; the editor route re-checks. */}
+      {/* Primary CTA — lease-aware per §8.6; the editor route re-checks.
+          A <Link> (W3-D), not a plain <a>: client-side navigation keeps the
+          shell's prewarmed engine module (`window.__studioEditorWasm`) alive
+          so the editor opens without re-downloading/re-compiling, and Next
+          prefetches the editor route while the CTA sits in the viewport. */}
       {canEdit ? (
         <div className="flex flex-col gap-3" data-testid="hub-overview-actions">
           <div className="flex flex-wrap items-center gap-2">
             {heldByOther ? (
-              <a
+              <Link
                 href={editorHref}
                 className="inline-flex h-9 items-center justify-center rounded-md border border-border bg-elevated px-4 text-body-s font-medium text-primary transition-colors duration-120 hover:border-border-strong hover:bg-input"
                 data-testid="hub-open-readonly"
               >
                 Open read-only
-              </a>
+              </Link>
             ) : (
-              <a
+              <Link
                 href={editorHref}
                 className="inline-flex h-9 items-center justify-center rounded-md bg-signal px-4 text-body-s font-medium text-signal-ink transition-colors duration-120 hover:bg-signal-hover"
                 data-testid="hub-open-editor"
               >
                 Open editor
-              </a>
+              </Link>
             )}
             {holder !== null && lease !== null && lease.youAre !== "holder" ? (
               <span

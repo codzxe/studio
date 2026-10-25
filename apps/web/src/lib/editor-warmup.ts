@@ -1,8 +1,7 @@
 /**
- * `warmEditorWasm` — start the editor engine's download + compile the moment
- * the editor route mounts (the capability gate's "supported" verdict), so the
- * 49 MB module streams and compiles IN PARALLEL with the iframe's own HTML/JS
- * load instead of waiting for it. The dist's bootstrap
+ * `warmEditorWasm` — start the editor engine's download + compile, so the
+ * 49 MB module streams and compiles IN PARALLEL with whatever else is
+ * happening instead of waiting for it. The dist's bootstrap
  * (`apps/web/public/editor/index.html`) adopts the compiled module through the
  * same-origin parent's `window.__studioEditorWasm` promise; if the warm-up
  * fails for any reason the iframe falls back to its own fetch, so this is a
@@ -14,6 +13,18 @@
  * compile overlaps both), `done`/`failed` at the end. Repeat visits are served
  * by the dist's service worker cache — the warm-up then resolves almost
  * instantly and the phases flash by.
+ *
+ * Two trigger points share this module (W3-D):
+ *
+ * - the editor route's capability gate — the "supported" verdict starts the
+ *   download the moment the editor page mounts (the original trigger; covers
+ *   direct links and reloads);
+ * - `prewarmEditor` — the APP SHELL starts it the moment the user is anywhere
+ *   in the authenticated app (dashboard, projects, billing, the project hub),
+ *   so by the time they click into a project the engine is already downloaded
+ *   AND compiled. This is the "load at start, open instantly" path: the 49 MB
+ *   on the wire (prod: ~10 MB brotli via Caddy) is spent on browsing time the
+ *   user was going to spend anyway, not on the editor-open critical path.
  */
 
 export type EditorWarmupPhase = "idle" | "downloading" | "compiling" | "done" | "failed";
@@ -124,10 +135,139 @@ export function warmEditorWasm(
   w[WARMUP_WINDOW_KEY] = promise;
 }
 
+// ---------------------------------------------------------------------------
+// W3-D — the app-start prewarm: the shared GPU probe + the dist prefetch +
+// `prewarmEditor`, the one entry point the shell mounts once per session.
+// ---------------------------------------------------------------------------
+
+/** A structural stand-in for the not-yet-typed `navigator.gpu`. */
+type GpuLike = {
+  readonly requestAdapter?: (options?: {
+    readonly powerPreference?: "low-power" | "high-performance" | undefined;
+  }) => Promise<unknown>;
+};
+
+/**
+ * Browser capability probe (§8.7, moved from the capability gate so the gate
+ * and the prewarm share ONE verdict — and ONE adapter request — per page
+ * session): a working WebGPU adapter (the dist's preferred backend, asked for
+ * the high-performance GPU — the same request its own boot pre-flight makes)
+ * or the WebGL2 floor. Pure DOM read — no side effects beyond the throwaway
+ * probe canvas.
+ */
+async function probeEditorGpuSupport(): Promise<boolean> {
+  if (typeof navigator === "undefined") return false;
+  const nav = navigator as Navigator & { readonly gpu?: GpuLike | undefined };
+  const gpu = nav.gpu;
+  if (typeof gpu?.requestAdapter === "function") {
+    try {
+      const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" });
+      if (adapter != null) return true;
+    } catch {
+      // A broken WebGPU (blocklisted driver, crashed GPU process) falls
+      // through to the WebGL2 floor.
+    }
+  }
+  try {
+    return document.createElement("canvas").getContext("webgl2") !== null;
+  } catch {
+    // Some hardened browsers throw on context creation — treat as absent.
+    return false;
+  }
+}
+
+/** The module-cached verdict: one adapter request per page session. */
+let gpuProbe: Promise<boolean> | null = null;
+
+/**
+ * The shared capability probe. The verdict is cached for the page session —
+ * the shell's prewarm and the editor route's gate re-use the same answer
+ * instead of racing two adapter requests — and never cached across SSR
+ * (module state on the server is per-bundle, not per-user).
+ */
+export function probeEditorGpu(): Promise<boolean> {
+  if (typeof navigator === "undefined") return Promise.resolve(false);
+  if (gpuProbe === null) gpuProbe = probeEditorGpuSupport();
+  return gpuProbe;
+}
+
+/**
+ * The dist's small boot files, fetched into the HTTP cache so the iframe's
+ * own loads are cache hits (prod cache policy — infra/caddy Caddyfile):
+ * `index.html` is no-cache (a prefetch stores it; the iframe's later request
+ * revalidates with a cheap 304), the glue JS is immutable for a year, the
+ * helpers are shared-cache 1h. The 48 MB wasm is NOT here — it goes through
+ * `warmEditorWasm` (progress + a compiled module), never a plain fetch.
+ * `/editor/?empty` is the iframe's exact document URL: the HTTP cache key
+ * includes the query, so prefetching `/editor/index.html` would be a miss.
+ */
+const EDITOR_DIST_FILES: readonly string[] = [
+  "/editor/?empty",
+  "/editor/effectcraft_web.js",
+  "/editor/worker.js",
+  "/editor/audio-worklet.js",
+  "/editor/favicon.svg",
+  "/editor/snippets/effectcraft-web-6247e0b7c298e283/js/host.js",
+];
+
+let distPrefetchStarted = false;
+
+/**
+ * One-shot prefetch of the dist's small files (bodies are DRAINED — an
+ * unconsumed response body can be dropped from the HTTP cache). Failures are
+ * silent: the iframe fetches on its own anyway, so this is a pure accelerator.
+ */
+export function prefetchEditorDist(fetchImpl: FetchLike = fetch): void {
+  if (distPrefetchStarted || typeof window === "undefined") return;
+  distPrefetchStarted = true;
+  for (const url of EDITOR_DIST_FILES) {
+    void fetchImpl(url)
+      .then((response) => {
+        if (typeof response.arrayBuffer === "function") {
+          // Drain so the cache keeps the entry.
+          void response.arrayBuffer().catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }
+}
+
+let prewarmStarted = false;
+
+/**
+ * W3-D — the app-start prewarm. One shot per page session: probe the GPU
+ * once (shared with the editor route's gate) and, only on a machine that can
+ * actually run the editor, start the engine's download + compile AND the dist
+ * prefetch immediately. Unsupported machines never fetch the 48 MB module —
+ * they can never mount the iframe that would use it.
+ *
+ * Mount via `components/editor-host/editor-prewarm.tsx` — the shell renders
+ * it on every authenticated surface, so the engine loads while the user
+ * browses, not when they click "Open editor".
+ */
+export function prewarmEditor(probe: () => Promise<boolean> = probeEditorGpu): void {
+  if (prewarmStarted || typeof window === "undefined") return;
+  prewarmStarted = true;
+  void probe().then(
+    (supported) => {
+      if (!supported) return;
+      warmEditorWasm();
+      prefetchEditorDist();
+    },
+    () => {
+      // A thrown probe answer is an unsupported verdict (probeEditorGpu
+      // already catches internally; an injected test probe may not).
+    },
+  );
+}
+
 /** Tests only: reset the one-shot guard, the snapshot and the window global. */
 export function __resetEditorWarmupForTests(): void {
   started = false;
   state = IDLE;
+  gpuProbe = null;
+  distPrefetchStarted = false;
+  prewarmStarted = false;
   if (typeof window !== "undefined") {
     (window as WarmupWindow)[WARMUP_WINDOW_KEY] = undefined;
   }

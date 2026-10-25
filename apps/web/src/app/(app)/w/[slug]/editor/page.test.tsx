@@ -12,6 +12,7 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorHostPayload } from "@/components/editor-host/types";
+import { __resetEditorWarmupForTests } from "@/lib/editor-warmup";
 
 vi.mock("next/navigation", () => ({
   notFound: () => {
@@ -43,10 +44,14 @@ vi.mock("@/lib/gateway", () => ({
 
 // The gate's "supported" verdict kicks the engine warm-up; the page test only
 // cares about the route's RSC logic, so the warm-up is a no-op here (its own
-// module tests cover the download/compile state machine).
-vi.mock("@/lib/editor-warmup", () => ({
-  warmEditorWasm: vi.fn(),
-}));
+// module tests cover the download/compile state machine). The REAL probe
+// stays (the navigator.gpu stubs below exercise it); the session cache it
+// now keeps (W3-D — shared with the shell's prewarm) resets per test in the
+// afterEach below.
+vi.mock("@/lib/editor-warmup", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/editor-warmup")>();
+  return { ...actual, warmEditorWasm: vi.fn() };
+});
 
 let lastHostPayload: EditorHostPayload | null = null;
 vi.mock("@/components/editor-host/editor-host", () => ({
@@ -184,6 +189,9 @@ afterEach(() => {
   vi.restoreAllMocks();
   // "Absent" for the next arm is undefined (see stubNavigatorGpu).
   (navigator as Navigator & { gpu?: unknown }).gpu = undefined;
+  // The shared probe's verdict is session-cached (W3-D) — reset it so each
+  // arm's navigator.gpu stub decides its own verdict.
+  __resetEditorWarmupForTests();
 });
 
 describe("editor RSC route", () => {

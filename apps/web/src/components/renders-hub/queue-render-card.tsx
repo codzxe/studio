@@ -42,6 +42,7 @@ import type {
 } from "@studio/contracts";
 import { Button, Field, Input, buttonVariants } from "@studio/ui";
 import { CircleAlert, Clapperboard, X } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
 
@@ -407,13 +408,15 @@ export function QueueRenderCard({
           <p className="text-body-s text-secondary">
             No composition to queue here yet. Open the editor to queue a render from inside it.
           </p>
-          <a
+          {/* A <Link> (W3-D), not a plain <a>: client-side navigation keeps the
+              shell's prewarmed engine module alive and prefetches the route. */}
+          <Link
             href={editorHref}
             className={buttonVariants({ variant: "secondary", size: "sm" })}
             data-testid="renders-hub-queue-editor-link"
           >
             Open the editor
-          </a>
+          </Link>
         </div>
       ) : (
         <>

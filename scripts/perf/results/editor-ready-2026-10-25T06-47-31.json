@@ -1,0 +1,272 @@
+{
+  "kind": "editor-ready",
+  "startedAt": "2026-10-25T06:47:31.653Z",
+  "baseUrl": "http://localhost:3000",
+  "editorPath": "/w/demo-project/editor",
+  "cold": [
+    {
+      "label": "cold-1",
+      "ok": true,
+      "openSinceNavStartMs": 9741,
+      "wallMs": 9743,
+      "domContentLoadedMs": 352,
+      "loadEventMs": 1085,
+      "wasm": [
+        {
+          "name": "effectcraft_web_bg.wasm",
+          "durationMs": 5268,
+          "transferSize": 17856646,
+          "encodedBodySize": 17856346,
+          "decodedBodySize": 49353339
+        }
+      ],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 68.1,
+      "errors": [
+        "console.error: Failed to load resource: net::ERR_CACHE_WRITE_FAILURE"
+      ]
+    },
+    {
+      "label": "cold-2",
+      "ok": true,
+      "openSinceNavStartMs": 10002.8,
+      "wallMs": 10005,
+      "domContentLoadedMs": 402,
+      "loadEventMs": 1092,
+      "wasm": [
+        {
+          "name": "effectcraft_web_bg.wasm",
+          "durationMs": 4993,
+          "transferSize": 17856646,
+          "encodedBodySize": 17856346,
+          "decodedBodySize": 49353339
+        }
+      ],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 68.6,
+      "errors": [
+        "console.error: Failed to load resource: net::ERR_CACHE_WRITE_FAILURE"
+      ]
+    },
+    {
+      "label": "cold-3",
+      "ok": true,
+      "openSinceNavStartMs": 10018.8,
+      "wallMs": 10021,
+      "domContentLoadedMs": 327,
+      "loadEventMs": 1049,
+      "wasm": [
+        {
+          "name": "effectcraft_web_bg.wasm",
+          "durationMs": 5094,
+          "transferSize": 17856646,
+          "encodedBodySize": 17856346,
+          "decodedBodySize": 49353339
+        }
+      ],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 67.6,
+      "errors": [
+        "console.error: Failed to load resource: net::ERR_CACHE_WRITE_FAILURE"
+      ]
+    }
+  ],
+  "warm": [
+    {
+      "label": "warm-1",
+      "ok": true,
+      "openSinceNavStartMs": 5892.7,
+      "wallMs": 5895,
+      "domContentLoadedMs": 2012,
+      "loadEventMs": 2104,
+      "wasm": [
+        {
+          "name": "effectcraft_web_bg.wasm",
+          "durationMs": 3100,
+          "transferSize": 17856646,
+          "encodedBodySize": 17856346,
+          "decodedBodySize": 49353339
+        }
+      ],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 68.5,
+      "errors": []
+    },
+    {
+      "label": "warm-2",
+      "ok": true,
+      "openSinceNavStartMs": 4547.4,
+      "wallMs": 4549,
+      "domContentLoadedMs": 653,
+      "loadEventMs": 1064,
+      "wasm": [
+        {
+          "name": "effectcraft_web_bg.wasm",
+          "durationMs": 3197,
+          "transferSize": 17856646,
+          "encodedBodySize": 17856346,
+          "decodedBodySize": 49353339
+        }
+      ],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 68.7,
+      "errors": []
+    },
+    {
+      "label": "warm-3",
+      "ok": true,
+      "openSinceNavStartMs": 3982.4,
+      "wallMs": 3985,
+      "domContentLoadedMs": 554,
+      "loadEventMs": 965,
+      "wasm": [
+        {
+          "name": "effectcraft_web_bg.wasm",
+          "durationMs": 3128,
+          "transferSize": 17856646,
+          "encodedBodySize": 17856346,
+          "decodedBodySize": 49353339
+        }
+      ],
+      "mem": {
+        "usedJSHeapMb": 57.5,
+        "totalJSHeapMb": 61
+      },
+      "chromiumTreeRssMb": 68.8,
+      "errors": []
+    }
+  ],
+  "prewarmed": [
+    {
+      "label": "prewarmed-1",
+      "ok": true,
+      "openSinceClickMs": 6315.2,
+      "prewarmDoneWhileBrowsingMs": 2315,
+      "prewarmOk": true,
+      "wallMs": 11052,
+      "wasm": [
+        {
+          "name": "effectcraft_web_bg.wasm",
+          "durationMs": 2308,
+          "transferSize": 17856646,
+          "encodedBodySize": 17856346,
+          "decodedBodySize": 49353339
+        }
+      ],
+      "mem": {
+        "usedJSHeapMb": 64.8,
+        "totalJSHeapMb": 73.1
+      },
+      "chromiumTreeRssMb": 68.7,
+      "errors": []
+    },
+    {
+      "label": "prewarmed-2",
+      "ok": true,
+      "openSinceClickMs": 6892.9,
+      "prewarmDoneWhileBrowsingMs": 2425,
+      "prewarmOk": true,
+      "wallMs": 11573,
+      "wasm": [
+        {
+          "name": "effectcraft_web_bg.wasm",
+          "durationMs": 2416,
+          "transferSize": 17856646,
+          "encodedBodySize": 17856346,
+          "decodedBodySize": 49353339
+        }
+      ],
+      "mem": {
+        "usedJSHeapMb": 64.8,
+        "totalJSHeapMb": 73.1
+      },
+      "chromiumTreeRssMb": 68.5,
+      "errors": []
+    },
+    {
+      "label": "prewarmed-3",
+      "ok": true,
+      "openSinceClickMs": 6686.7,
+      "prewarmDoneWhileBrowsingMs": 2311,
+      "prewarmOk": true,
+      "wallMs": 11269,
+      "wasm": [
+        {
+          "name": "effectcraft_web_bg.wasm",
+          "durationMs": 2303,
+          "transferSize": 17856646,
+          "encodedBodySize": 17856346,
+          "decodedBodySize": 49353339
+        }
+      ],
+      "mem": {
+        "usedJSHeapMb": 64.8,
+        "totalJSHeapMb": 68.9
+      },
+      "chromiumTreeRssMb": 68.4,
+      "errors": []
+    }
+  ],
+  "summary": {
+    "cold": {
+      "n": 3,
+      "min": 9741,
+      "p50": 10002.8,
+      "p75": 10018.8,
+      "p95": 10018.8,
+      "max": 10018.8,
+      "samples": [
+        9741,
+        10002.8,
+        10018.8
+      ]
+    },
+    "warm": {
+      "n": 3,
+      "min": 3982.4,
+      "p50": 4547.4,
+      "p75": 5892.7,
+      "p95": 5892.7,
+      "max": 5892.7,
+      "samples": [
+        3982.4,
+        4547.4,
+        5892.7
+      ]
+    },
+    "prewarmed": {
+      "n": 3,
+      "min": 6315.2,
+      "p50": 6686.7,
+      "p75": 6892.9,
+      "p95": 6892.9,
+      "max": 6892.9,
+      "samples": [
+        6315.2,
+        6686.7,
+        6892.9
+      ]
+    },
+    "budget": {
+      "warmMs": 6000,
+      "coldMs": 12000,
+      "prewarmedMs": 6000
+    },
+    "note": "cold = fresh browser context (empty HTTP cache), warm dev server; warm = same-session reload; prewarmed = fresh context, /w first, engine prewarm awaited, timed from the final Open-editor click (client-side nav, W3-D). next dev (not a production build); sandbox shared CPU; headless software GL."
+  }
+}

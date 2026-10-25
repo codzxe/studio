@@ -28,6 +28,14 @@
  *     page cache and the gateway are already warm, hence "cold-ish".
  *   warm ×N: one context, first an untimed load, then N reloads of the same
  *     editor URL (warm HTTP cache) — "same session reload".
+ *   prewarmed ×N (W3-D): fresh context, but the run first lands on /w (the
+ *     dashboard) and WAITS for the shell's app-start prewarm
+ *     (`window.__studioEditorWasm` — the 49 MB download + compile the user
+ *     otherwise waits for INSIDE the editor boot) to finish, then walks the
+ *     REAL click path — dashboard tile Open → project history → "Open
+ *     editor" (all client-side navigations, so the compiled module survives)
+ *     — and times ONLY the final click → data-editor-phase="open". This is
+ *     the "editor opens instantly because it loaded at app start" budget.
  *
  * HONEST LIMITS (recorded with every result set — docs/performance.md)
  *   - `next dev` (Turbopack, no prod bundling/minify, dev overlays) — numbers
@@ -299,6 +307,117 @@ async function measureEditorOpen(page, label) {
 }
 
 // ---------------------------------------------------------------------------
+// One timed PREWARMED editor open (W3-D): /w dashboard → wait for the shell's
+// app-start prewarm (the engine download + compile) → the real click path
+// (tile Open → history → Open editor, all client-side) → time the final
+// click → data-editor-phase="open".
+// ---------------------------------------------------------------------------
+
+async function measurePrewarmedEditorOpen(page, label) {
+  const errors = [];
+  const onPageError = (err) => errors.push(String(err));
+  const onConsole = (msg) => {
+    if (msg.type() === "error") errors.push(`console.error: ${msg.text()}`);
+  };
+  page.on("pageerror", onPageError);
+  page.on("console", onConsole);
+
+  const t0Wall = Date.now();
+  try {
+    // 1. Land on the dashboard — the shell mounts, its EditorPrewarm starts
+    //    the engine download + compile the moment the app hydrates.
+    await gotoWithRetry(page, `${BASE_URL}/w`, "domcontentloaded");
+    await page.waitForFunction(
+      () => {
+        const w = window;
+        return w.__studioEditorWasm !== undefined;
+      },
+      { timeout: EDITOR_OPEN_TIMEOUT_MS },
+    );
+    // 2. Wait out the prewarm (the browsing time a real user spends here
+    //    anyway) — the promise settles when the 49 MB module is compiled.
+    const prewarm = await page.evaluate(() => {
+      const w = window;
+      const started = performance.now();
+      return w.__studioEditorWasm.then(
+        () => ({ ok: true, ms: Math.round(performance.now() - started) }),
+        () => ({ ok: false, ms: Math.round(performance.now() - started) }),
+      );
+    });
+
+    // 3. The real user path: the first recent-project tile's Open button
+    //    (client-side nav → /w/[slug]/history), then the hub header's
+    //    "Open editor" <Link> (client-side nav → the editor route).
+    await page
+      .getByRole("button", { name: "Open", exact: true })
+      .first()
+      .click({ timeout: 60_000, force: true });
+    const editorLink = page.getByTestId("history-open-editor");
+    await editorLink.waitFor({ state: "visible", timeout: 60_000 });
+
+    // 4. Time ONLY the final hop: click → editor phase "open".
+    await page.evaluate(() => {
+      const w = window;
+      w.__prewarmClickT0 = performance.now();
+    });
+    await editorLink.click();
+    const openSinceClick = await page
+      .waitForFunction(
+        () => {
+          const el = document.querySelector('[data-testid="editor-host"]');
+          if (el !== null && el.getAttribute("data-editor-phase") === "open") {
+            const w = window;
+            return performance.now() - (w.__prewarmClickT0 ?? 0);
+          }
+          return false;
+        },
+        { timeout: EDITOR_OPEN_TIMEOUT_MS },
+      )
+      .then((handle) => handle.jsonValue());
+
+    const extras = await page.evaluate(() => {
+      const wasm = performance
+        .getEntriesByType("resource")
+        .filter((e) => e.name.endsWith(".wasm"))
+        .map((e) => ({
+          name: e.name.split("/").pop(),
+          durationMs: Math.round(e.duration),
+          transferSize: e.transferSize,
+          encodedBodySize: e.encodedBodySize,
+          decodedBodySize: e.decodedBodySize,
+        }))
+        .sort((a, b) => b.transferSize - a.transferSize)
+        .slice(0, 3);
+      const mem = performance.memory
+        ? {
+            usedJSHeapMb: Math.round((performance.memory.usedJSHeapSize / 1048576) * 10) / 10,
+            totalJSHeapMb: Math.round((performance.memory.totalJSHeapSize / 1048576) * 10) / 10,
+          }
+        : null;
+      return { wasm, mem };
+    });
+    const rssMb = processTreeRssMb();
+
+    return {
+      label,
+      ok: true,
+      openSinceClickMs: Math.round(openSinceClick * 10) / 10,
+      prewarmDoneWhileBrowsingMs: prewarm.ms,
+      prewarmOk: prewarm.ok,
+      wallMs: Date.now() - t0Wall,
+      ...extras,
+      chromiumTreeRssMb: rssMb,
+      errors,
+    };
+  } catch (err) {
+    return { label, ok: false, wallMs: Date.now() - t0Wall, error: String(err), errors };
+  } finally {
+    page.off("pageerror", onPageError);
+    page.off("console", onConsole);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -312,6 +431,7 @@ async function main() {
     editorPath: EDITOR_PATH,
     cold: [],
     warm: [],
+    prewarmed: [],
   };
   // Incremental persistence: rewrite the result file after every series so a
   // timeout/kill still leaves the samples that already landed on disk.
@@ -388,17 +508,44 @@ async function main() {
     }
     await warmContext.close();
     persist();
+
+    // --- Prewarmed series (W3-D): fresh context → /w dashboard → wait for the
+    // app-start prewarm to finish the engine download + compile → click the
+    // real path (tile Open → history → Open editor, all client-side) → time
+    // the final click → editor open.
+    for (let i = 1; i <= RUNS; i += 1) {
+      log(`prewarmed run ${i}/${RUNS}: fresh context, /w dashboard, click-through to the editor`);
+      const context = await browser.newContext({
+        baseURL: BASE_URL,
+        storageState,
+        viewport: { width: 1280, height: 720 },
+      });
+      const page = await context.newPage();
+      let sample = await measurePrewarmedEditorOpen(page, `prewarmed-${i}`);
+      if (!sample.ok && isTransientNavError(sample.error)) {
+        log(`prewarmed run ${i}: transient nav failure (${sample.error}) — one clean retry`);
+        sample = await measurePrewarmedEditorOpen(page, `prewarmed-${i}r`);
+      }
+      result.prewarmed.push(sample);
+      log(
+        `prewarmed run ${i}: ${sample.ok ? `${sample.openSinceClickMs} ms (click→open), engine ready while browsing after ${sample.prewarmDoneWhileBrowsingMs} ms` : `FAILED: ${sample.error}`}`,
+      );
+      await context.close();
+    }
+    persist();
   } finally {
     await browser.close().catch(() => {});
   }
 
   const coldOk = result.cold.filter((s) => s.ok).map((s) => s.openSinceNavStartMs);
   const warmOk = result.warm.filter((s) => s.ok).map((s) => s.openSinceNavStartMs);
+  const prewarmedOk = result.prewarmed.filter((s) => s.ok).map((s) => s.openSinceClickMs);
   result.summary = {
     cold: stats(coldOk),
     warm: stats(warmOk),
-    budget: { warmMs: 6000, coldMs: 12000 },
-    note: "cold = fresh browser context (empty HTTP cache), warm dev server; warm = same-session reload. next dev (not a production build); sandbox shared CPU; headless software GL.",
+    prewarmed: stats(prewarmedOk),
+    budget: { warmMs: 6000, coldMs: 12000, prewarmedMs: 6000 },
+    note: "cold = fresh browser context (empty HTTP cache), warm dev server; warm = same-session reload; prewarmed = fresh context, /w first, engine prewarm awaited, timed from the final Open-editor click (client-side nav, W3-D). next dev (not a production build); sandbox shared CPU; headless software GL.",
   };
 
   log("SUMMARY editor-ready (nav start → data-editor-phase=open, in-page perf.now)");

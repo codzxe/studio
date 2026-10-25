@@ -1,13 +1,23 @@
 /**
  * editor-warmup tests — the one-shot engine download + compile state machine
  * that lets the editor's 49 MB module stream in parallel with the iframe's
- * own load. No network: `fetch` and `compile` are injected; the global
- * `Response` is stubbed only where the streaming (tee) path needs the
- * constructor (the compile mock receives the wrapper, never real bytes).
+ * own load, the shared GPU capability probe (W3-D — moved here from the
+ * capability gate so the gate and the shell's prewarm share one verdict),
+ * the dist-file prefetch and the app-start prewarm. No network: `fetch` and
+ * `compile` are injected; the global `Response` is stubbed only where the
+ * streaming (tee) path needs the constructor (the compile mock receives the
+ * wrapper, never real bytes).
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { __resetEditorWarmupForTests, editorWarmupSnapshot, warmEditorWasm } from "./editor-warmup";
+import {
+  __resetEditorWarmupForTests,
+  editorWarmupSnapshot,
+  prefetchEditorDist,
+  prewarmEditor,
+  probeEditorGpu,
+  warmEditorWasm,
+} from "./editor-warmup";
 
 type WarmupWindow = typeof window & {
   __studioEditorWasm?: Promise<WebAssembly.Module>;
@@ -78,6 +88,9 @@ afterEach(() => {
   __resetEditorWarmupForTests();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  // "Absent" for the probe is undefined (biome bans `delete`; a
+  // defined-undefined property is the honest stub).
+  (navigator as Navigator & { gpu?: unknown }).gpu = undefined;
 });
 
 describe("warmEditorWasm", () => {
@@ -196,5 +209,192 @@ describe("warmEditorWasm", () => {
     await vi.waitFor(() => expect(editorWarmupSnapshot().phase).toBe("done"));
     expect(compile).toHaveBeenCalledWith(response);
     expect(editorWarmupSnapshot().receivedBytes).toBe(0); // nothing to count
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The shared GPU probe (W3-D) — the arms the capability gate used to own,
+// plus the session-cache contract (one adapter request per page session).
+// jsdom has neither WebGPU nor WebGL2, so every arm stubs the globals.
+// ---------------------------------------------------------------------------
+
+/** A requestAdapter stub the probe can call (records its options). */
+function adapterStub(result: "adapter" | "null" | "throw") {
+  return vi.fn(async (_options?: unknown) => {
+    if (result === "adapter") return { adapter: true };
+    if (result === "null") return null;
+    throw new Error("WebGPU is unavailable (hardware acceleration off)");
+  });
+}
+
+/** Define (or clear) navigator.gpu with a given requestAdapter behaviour. */
+function stubNavigatorGpu(requestAdapter?: ReturnType<typeof adapterStub>): void {
+  const nav = navigator as Navigator & { gpu?: unknown };
+  Object.defineProperty(nav, "gpu", {
+    value: requestAdapter === undefined ? undefined : { requestAdapter },
+    configurable: true,
+    writable: true,
+  });
+}
+
+describe("probeEditorGpu", () => {
+  it("a WebGPU adapter answers: true, and the request asks for the high-performance GPU", async () => {
+    const requestAdapter = adapterStub("adapter");
+    stubNavigatorGpu(requestAdapter);
+
+    await expect(probeEditorGpu()).resolves.toBe(true);
+    // The dist's own boot pre-flight asks the same: the high-performance GPU,
+    // not the browser's default (power-saving) adapter.
+    expect(requestAdapter).toHaveBeenCalledWith({ powerPreference: "high-performance" });
+  });
+
+  it("navigator.gpu exists but every adapter request is refused with no WebGL2: false", async () => {
+    stubNavigatorGpu(adapterStub("null"));
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockReturnValue(null as WebGL2RenderingContext | null);
+
+    await expect(probeEditorGpu()).resolves.toBe(false);
+    expect(getContext).toHaveBeenCalledWith("webgl2");
+  });
+
+  it("a throwing adapter request (broken WebGPU) falls through to the WebGL2 floor: true", async () => {
+    stubNavigatorGpu(adapterStub("throw"));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+      {} as WebGL2RenderingContext | null,
+    );
+
+    await expect(probeEditorGpu()).resolves.toBe(true);
+  });
+
+  it("no navigator.gpu at all (WebGL2-only browser): the floor alone decides", async () => {
+    stubNavigatorGpu(undefined);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+      {} as WebGL2RenderingContext | null,
+    );
+
+    await expect(probeEditorGpu()).resolves.toBe(true);
+  });
+
+  it("caches the verdict: a second call never issues another adapter request", async () => {
+    const requestAdapter = adapterStub("adapter");
+    stubNavigatorGpu(requestAdapter);
+
+    await expect(probeEditorGpu()).resolves.toBe(true);
+    await expect(probeEditorGpu()).resolves.toBe(true);
+    expect(requestAdapter).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The dist prefetch (W3-D) — the small files the iframe fetches on every
+// boot, fetched once into the HTTP cache. Bodies are drained (a dropped body
+// can evict the cache entry); failures are silent.
+// ---------------------------------------------------------------------------
+
+describe("prefetchEditorDist", () => {
+  it("fetches every dist boot file once, with the iframe's exact document URL (query included)", async () => {
+    const fetchImpl = vi.fn(
+      async (_url: string) =>
+        ({
+          arrayBuffer: async () => new ArrayBuffer(1),
+        }) as unknown as Response,
+    );
+
+    prefetchEditorDist(fetchImpl);
+    prefetchEditorDist(fetchImpl); // one-shot (StrictMode double-mount safe)
+
+    // Six files, each fetched EXACTLY once — the second call is a no-op.
+    const urls = fetchImpl.mock.calls.map(([url]) => url);
+    expect(urls).toHaveLength(6);
+    expect(new Set(urls).size).toBe(6);
+    // The HTTP cache key includes the query string — prefetching
+    // /editor/index.html would be a cache MISS for the iframe's /editor/?empty.
+    expect(urls).toContain("/editor/?empty");
+    expect(urls).toContain("/editor/effectcraft_web.js");
+    expect(urls).toContain("/editor/snippets/effectcraft-web-6247e0b7c298e283/js/host.js");
+    // The 48 MB wasm is NEVER a plain prefetch — it goes through
+    // warmEditorWasm (progress + the compiled module).
+    expect(urls).not.toContain("/editor/effectcraft_web_bg.wasm");
+  });
+
+  it("drains each response body (an unconsumed body can be dropped from the HTTP cache)", async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(1));
+    const fetchImpl = vi.fn(async () => ({ arrayBuffer }) as unknown as Response);
+
+    prefetchEditorDist(fetchImpl);
+
+    await vi.waitFor(() => expect(arrayBuffer).toHaveBeenCalled());
+  });
+
+  it("a failed fetch is silent — the iframe fetches on its own anyway", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("offline");
+    });
+
+    expect(() => prefetchEditorDist(fetchImpl)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The app-start prewarm (W3-D) — one shot; a supported verdict starts the
+// engine warm-up AND the dist prefetch; an unsupported verdict never fetches
+// the 48 MB module (no iframe would ever use it).
+// ---------------------------------------------------------------------------
+
+describe("prewarmEditor", () => {
+  it("a supported verdict starts the engine warm-up AND the dist prefetch", async () => {
+    // Observe the DEFAULT-path actions through the global fetch seam: the
+    // warm-up's wasm fetch plus every dist prefetch file, all fired by the
+    // prewarm alone (the compile's fate is the warmup's own concern — here
+    // only that the download STARTED matters).
+    const globalFetch = vi.fn(async () => fakeResponse({ headers: { "content-length": "2" } }));
+    vi.stubGlobal("fetch", globalFetch);
+    const probe = vi.fn(async () => true);
+
+    prewarmEditor(probe);
+
+    await vi.waitFor(() =>
+      expect(globalFetch).toHaveBeenCalledWith("/editor/effectcraft_web_bg.wasm"),
+    );
+    // The dist prefetch files were requested through the same seam.
+    await vi.waitFor(() => expect(globalFetch).toHaveBeenCalledWith("/editor/?empty"));
+    expect(globalFetch).toHaveBeenCalledWith("/editor/effectcraft_web.js");
+    // The engine download was published for the dist to adopt.
+    expect((window as WarmupWindow).__studioEditorWasm).toBeInstanceOf(Promise);
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unsupported verdict warms nothing", async () => {
+    const globalFetch = vi.fn(async () => fakeResponse({}));
+    vi.stubGlobal("fetch", globalFetch);
+    const probe = vi.fn(async () => false);
+
+    prewarmEditor(probe);
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
+
+    // No engine download was published for the dist to adopt; nothing fetched.
+    expect((window as WarmupWindow).__studioEditorWasm).toBeUndefined();
+    expect(editorWarmupSnapshot().phase).toBe("idle");
+    expect(globalFetch).not.toHaveBeenCalled();
+  });
+
+  it("is one-shot: a second call never probes again (shell remounts are no-ops)", async () => {
+    const probe = vi.fn(async () => true);
+
+    prewarmEditor(probe);
+    prewarmEditor(probe);
+
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
+  });
+
+  it("a rejected probe is absorbed as an unsupported verdict (never throws)", async () => {
+    const probe = vi.fn(async () => {
+      throw new Error("adapter exploded");
+    });
+
+    expect(() => prewarmEditor(probe)).not.toThrow();
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
+    expect((window as WarmupWindow).__studioEditorWasm).toBeUndefined();
   });
 });
