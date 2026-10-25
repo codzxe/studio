@@ -709,6 +709,18 @@ export function showDeviceLost(message, kept) {
       .catch((e) => (text.textContent = `Saving failed: ${(e && e.message) || e}`));
   const reload = document.createElement("button");
   reload.textContent = "Reload";
+  // M3 tail 6: this tab's WebGPU stack lost the device — a plain reload would
+  // boot WebGPU again and lose it again (the "A valid external Instance
+  // reference no longer exists" class). Arm the compatibility marker so the
+  // reload boots WebGL2 instead; the Studio host's recovery arms the same
+  // marker for its own reload (same origin, same tab session).
+  const armGpuFallback = () => {
+    try {
+      sessionStorage.setItem("studio:editor-gpu-fallback", "1");
+    } catch {
+      // Storage blocked: the plain reload retries WebGPU.
+    }
+  };
   reload.onclick = async () => {
     reload.disabled = true;
     try {
@@ -717,9 +729,13 @@ export function showDeviceLost(message, kept) {
       text.textContent = `Writing to browser storage failed (${(e && e.message) || e}). Save the project, or reload anyway and lose the changes.`;
       reload.textContent = "Reload Anyway";
       reload.disabled = false;
-      reload.onclick = () => location.reload();
+      reload.onclick = () => {
+        armGpuFallback();
+        location.reload();
+      };
       return;
     }
+    armGpuFallback();
     location.reload();
   };
   const buttons = document.createElement("div");

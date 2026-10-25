@@ -4,7 +4,7 @@ import type { MissingAsset } from "@/lib/editor-session";
 import type { EditorWarmupSnapshot } from "@/lib/editor-warmup";
 import { useOnlineStatus } from "@/lib/use-online-status";
 import { Badge, Button, Spinner } from "@studio/ui";
-import { AlertTriangle, CircleAlert, TriangleAlert, WifiOff } from "lucide-react";
+import { AlertTriangle, CircleAlert, Cpu, TriangleAlert, WifiOff } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
 import type { DeviceLostState } from "./use-editor-session";
@@ -225,6 +225,61 @@ export function DeviceLostOverlay({ deviceLost, onRetry, onReload }: DeviceLostO
         )}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GPU compatibility mode (M3 tail 6) — WebGL2 after a device loss
+// ---------------------------------------------------------------------------
+
+/**
+ * The tab's graphics device was lost once (the recovery reloaded onto the
+ * WebGL2 compatibility boot — `?gpu=webgl2&nogpuworkers`, see
+ * lib/editor-gpu-fallback.ts) and the editor is running on WebGL2 with
+ * CPU-rendering workers. Non-blocking and dismissible: it names the cost
+ * (playback may be slower than WebGPU), and "Try WebGPU again" clears the
+ * breaker and reloads — the right move after a GPU-driver update.
+ */
+export function GpuFallbackBanner({
+  onTryWebGpu,
+}: {
+  /** "Try WebGPU again" — clear the breaker, then reload. */
+  readonly onTryWebGpu: () => void;
+}) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  return (
+    <output
+      data-testid="editor-gpu-fallback-banner"
+      className="absolute inset-x-0 top-12 z-20 mx-auto flex max-w-2xl justify-center px-4"
+    >
+      {panel(
+        "border-warning/40",
+        <>
+          <Cpu size={16} strokeWidth={1.75} className="text-warning" aria-hidden="true" />
+          <span>
+            The graphics device failed, so Studio is running in compatibility mode (WebGL2) —
+            playback may be slower.
+          </span>
+          <Button
+            variant="link"
+            size="sm"
+            onClick={onTryWebGpu}
+            data-testid="editor-gpu-retry-webgpu"
+          >
+            Try WebGPU again
+          </Button>
+          <Button
+            variant="link"
+            size="sm"
+            onClick={() => setDismissed(true)}
+            data-testid="editor-gpu-fallback-dismiss"
+          >
+            Dismiss
+          </Button>
+        </>,
+      )}
+    </output>
   );
 }
 

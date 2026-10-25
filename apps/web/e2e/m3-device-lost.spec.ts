@@ -1,10 +1,19 @@
 /**
- * M3 graphics-device-loss recovery — the e2e proof of the `studio:deviceLost`
- * handoff (docs/phases/M3.md "Known tails" #6): the REAL dist's
- * `js/host.js` `showDeviceLost` posts to the Studio parent when embedded, and
- * the parent recovers the session — save NOW through the real autosave chain
- * (real gateway upload), then reload the page so RSC re-fetches the manifest
- * and the editor reopens on a FRESH graphics device WITH the just-saved work.
+ * M3 graphics-device-loss recovery — the e2e proof of the
+ * `studio:deviceLost` handoff (docs/phases/M3.md "Known tails" #6): the REAL
+ * dist's `js/host.js` `showDeviceLost` posts to the Studio parent when
+ * embedded, and the parent recovers the session — save NOW through the real
+ * autosave chain (real gateway upload), then reload the page so RSC
+ * re-fetches the manifest and the editor reopens on a FRESH graphics device
+ * WITH the just-saved work.
+ *
+ * M3 tail 6 (GPU circuit breaker): the recovery also arms the WebGL2
+ * compatibility marker, so the reopened iframe boots
+ * `/editor/?empty&gpu=webgl2&nogpuworkers` (the dist's no-adapter path:
+ * WebGL2 context first, egui-wgpu on its WebGL backend, CPU-rendering
+ * workers) instead of re-losing the same WebGPU device on every reload —
+ * proven here end to end: reopen ON the compatibility URL, with the banner
+ * that offers "Try WebGPU again".
  *
  * The device "loss" is simulated at the dist's own boundary — the exact
  * function the wasm device-lost callback calls — because a real GPU-process
@@ -168,6 +177,15 @@ test.describe("M3 device-lost recovery — studio:deviceLost → save → reload
     await expect(page.getByTestId("editor-host")).toHaveAttribute("data-editor-phase", "open", {
       timeout: EDITOR_OPEN_TIMEOUT_MS,
     });
+    // M3 tail 6: it reopens on the WebGL2 COMPATIBILITY boot — the recovery
+    // armed the GPU circuit breaker, so this reload cannot loop on the same
+    // dying WebGPU device (the field report: "A valid external Instance
+    // reference no longer exists").
+    await expect(page.getByTestId("editor-iframe")).toHaveAttribute(
+      "src",
+      "/editor/?empty&gpu=webgl2&nogpuworkers",
+    );
+    await expect(page.getByTestId("editor-gpu-fallback-banner")).toBeVisible();
     const items = await editorFrame(page).evaluate(async () => {
       // query commands (project.summary) ride the execute channel — the
       // bridge's own `query()` maps onto `effectcraft.execute` (bridge.ts).

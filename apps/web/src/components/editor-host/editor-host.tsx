@@ -18,6 +18,7 @@ import {
   ConflictBanner,
   DeviceLostOverlay,
   EditorOfflineBanner,
+  GpuFallbackBanner,
   LeaseWarningBanner,
   LoadFailedBanner,
   MissingAssetsBanner,
@@ -235,7 +236,10 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
       {/* The editor: full-bleed, same-origin, restyled by NOBODY (rule 7).
           Keyed by bootAttempt so Retry remounts a fresh wasm boot.
           M4-J: the wrapper div carries the sidebar-mode width (D-18 — the
-          editor only ever sees a viewport resize; its own styles are untouched). */}
+          editor only ever sees a viewport resize; its own styles are untouched).
+          M3 tail 6: `src` comes from the session hook — the plain `/editor/?empty`
+          boot, or the WebGL2 compatibility boot while the GPU circuit breaker
+          is armed (a lost device this tab session); stable per page load. */}
       <div
         data-testid="editor-viewport"
         className="absolute inset-0"
@@ -244,7 +248,7 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
         <iframe
           key={session.bootAttempt}
           ref={session.iframeRef}
-          src="/editor/?empty"
+          src={session.iframeSrc}
           title={`${Brand.productName} editor`}
           data-testid="editor-iframe"
           className="absolute inset-0 h-full w-full border-0"
@@ -321,6 +325,13 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
           onRetry={session.retryDeviceLostSave}
           onReload={session.reloadAfterDeviceLost}
         />
+      ) : null}
+
+      {/* M3 tail 6 — GPU compatibility mode (WebGL2 + CPU workers) after a
+          device loss this tab session: says WHY the editor runs slower, and
+          offers the way back to WebGPU after a driver update. Dismissable. */}
+      {state.phase === "open" && session.gpuFallback ? (
+        <GpuFallbackBanner onTryWebGpu={session.retryWebGpu} />
       ) : null}
 
       {/* §9.3 read-only (lease refused) — non-blocking, the iframe stays usable.

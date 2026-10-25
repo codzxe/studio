@@ -46,7 +46,10 @@ project instead of the last session), `?home` (show the start screen), `?storage
 `?storage=memory` (force a storage backend), `?noworkers` (render, analyse and draw viewer
 frames on the page's thread), `?frameworkers=N` (frame workers, default 2; 0 = viewer frames on
 the page's thread), `?nogpuworkers` (frame and job workers render on their CPU, without a WebGPU
-device of their own), `?nosw` (don't register the service worker).
+device of their own), `?gpu=webgl2` (GPU compatibility mode: boot on WebGL2 instead of WebGPU —
+also armed by the `studio:editor-gpu-fallback` sessionStorage marker, set by the Studio host's
+device-loss recovery and by this page's own Reload button, and normalized to add
+`nogpuworkers`), `?nosw` (don't register the service worker).
 
 ## How the desktop pieces map to the browser
 

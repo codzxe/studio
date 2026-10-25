@@ -7,7 +7,8 @@
 //   instead of failing the whole pick silently, and cancelling picks nothing (#226).
 // - A lost WebGPU device: the page says so over the canvas and offers Save Project and Reload;
 //   the reload writes pending changes to browser storage first, and a failed write is reported
-//   instead of reloading (#225).
+//   instead of reloading (#225). M3 tail 6: the Reload arms the GPU compatibility marker in
+//   sessionStorage, so the reload boots WebGL2 instead of re-losing the WebGPU device.
 // Exits non-zero on failure.
 import assert from "node:assert/strict";
 import { dirname, join } from "node:path";
@@ -55,6 +56,14 @@ globalThis.document = {
 };
 let reloads = 0;
 globalThis.location = { reload: () => reloads++ };
+// M3 tail 6: the compatibility marker the Reload button arms (the Studio
+// host's recovery arms the same key — same origin, same tab session).
+const sessionStore = new Map();
+globalThis.sessionStorage = {
+  getItem: (k) => sessionStore.get(k) ?? null,
+  setItem: (k, v) => sessionStore.set(k, String(v)),
+  removeItem: (k) => sessionStore.delete(k),
+};
 
 const host = await import(pathToFileURL(join(here, "../js/host.js")));
 
@@ -108,10 +117,16 @@ assert.deepEqual(calls.splice(0), [
   ["file.save", {}],
   ["file.saveAs", { path: "/Untitled Project.ecproj" }],
 ]);
-// Reload writes pending changes first.
+// Reload writes pending changes first — and arms the compatibility marker
+// (the reload must boot WebGL2: a plain reload would re-lose the device).
 await buttons()[1].onclick();
 assert.deepEqual(calls.splice(0), ["flush"]);
 assert.equal(reloads, 1);
+assert.equal(
+  sessionStore.get("studio:editor-gpu-fallback"),
+  "1",
+  "Reload arms the GPU compatibility marker",
+);
 
 // A failed write is reported instead of reloading; Reload Anyway reloads.
 document.body.children = [];
@@ -125,6 +140,11 @@ assert.match(text(), /quota exceeded/);
 assert.equal(buttons()[1].textContent, "Reload Anyway");
 buttons()[1].onclick();
 assert.equal(reloads, 2);
+assert.equal(
+  sessionStore.get("studio:editor-gpu-fallback"),
+  "1",
+  "Reload Anyway arms the marker too",
+);
 
 // An embedding same-origin host (the Studio page) is told first: it owns the
 // recovery (save + reload onto a fresh graphics device). The dialog stays for

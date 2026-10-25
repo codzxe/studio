@@ -27,6 +27,8 @@
  *   user was going to spend anyway, not on the editor-open critical path.
  */
 
+import { editorIframeSrc } from "./editor-gpu-fallback";
+
 export type EditorWarmupPhase = "idle" | "downloading" | "compiling" | "done" | "failed";
 
 export interface EditorWarmupSnapshot {
@@ -198,11 +200,14 @@ export function probeEditorGpu(): Promise<boolean> {
  * revalidates with a cheap 304), the glue JS is immutable for a year, the
  * helpers are shared-cache 1h. The 48 MB wasm is NOT here — it goes through
  * `warmEditorWasm` (progress + a compiled module), never a plain fetch.
- * `/editor/?empty` is the iframe's exact document URL: the HTTP cache key
- * includes the query, so prefetching `/editor/index.html` would be a miss.
+ * The document entry is `editorIframeSrc()` — the iframe's EXACT document
+ * URL (the HTTP cache key includes the query), which is the WebGL2
+ * compatibility boot (`/editor/?empty&gpu=webgl2&nogpuworkers`) while the
+ * GPU circuit breaker is armed (M3 tail 6, lib/editor-gpu-fallback.ts):
+ * after a device-loss recovery reload, the prewarm prefetches the URL the
+ * reopened iframe will actually load.
  */
 const EDITOR_DIST_FILES: readonly string[] = [
-  "/editor/?empty",
   "/editor/effectcraft_web.js",
   "/editor/worker.js",
   "/editor/audio-worklet.js",
@@ -220,7 +225,7 @@ let distPrefetchStarted = false;
 export function prefetchEditorDist(fetchImpl: FetchLike = fetch): void {
   if (distPrefetchStarted || typeof window === "undefined") return;
   distPrefetchStarted = true;
-  for (const url of EDITOR_DIST_FILES) {
+  for (const url of [editorIframeSrc(), ...EDITOR_DIST_FILES]) {
     void fetchImpl(url)
       .then((response) => {
         if (typeof response.arrayBuffer === "function") {

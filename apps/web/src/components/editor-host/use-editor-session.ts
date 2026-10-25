@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ChatApplyPorts } from "@/lib/chat/provider";
 import {
+  activateGpuFallback,
+  clearGpuFallback,
+  editorIframeSrc,
+  gpuFallbackActive,
+} from "@/lib/editor-gpu-fallback";
+import {
   type AutosaveController,
   type MissingAsset,
   type SaveOutcome,
@@ -54,6 +60,13 @@ import type { EditorHostPayload, EditorSessionFactory } from "./types";
  *    page reloads — RSC re-fetches the manifest and the editor reopens with
  *    the latest version on a FRESH device. A save that fails or outruns the
  *    budget parks on the overlay's Try again / Reload now buttons instead.
+ *    The FIRST loss also arms the GPU circuit breaker
+ *    (lib/editor-gpu-fallback.ts): the reload boots the editor on WebGL2
+ *    (`?gpu=webgl2&nogpuworkers`), because a machine whose WebGPU device
+ *    dies at creation would loop the recovery forever — a reload cannot fix
+ *    a persistently broken WebGPU stack (the field report: "A valid external
+ *    Instance reference no longer exists"). The compatibility-mode banner's
+ *    "Try WebGPU again" clears the marker and reloads.
  */
 
 /** §11: renew the lease every 2 minutes while the tab is open. */
@@ -127,6 +140,14 @@ export interface EditorSessionApi {
   /** Reload after a device loss even though the last save didn't land (the
    * overlay's Reload now — the unsaved-changes guard is bypassed for it). */
   readonly reloadAfterDeviceLost: () => void;
+  /** The iframe's document URL — `/editor/?empty`, or the WebGL2
+   * compatibility boot while the GPU circuit breaker is armed (M3 tail 6). */
+  readonly iframeSrc: string;
+  /** True while the tab is in GPU compatibility mode (WebGL2 + CPU workers). */
+  readonly gpuFallback: boolean;
+  /** The compatibility-mode banner's "Try WebGPU again": clear the breaker,
+   * then reload — the pagehide save keeps the work, the guard stays quiet. */
+  readonly retryWebGpu: () => void;
   /**
    * The M5 apply-session ports (K-1 fix): the ChatProvider builds the real
    * ApplyController from these — `saveNow("agent-apply")` uploads the
@@ -163,6 +184,11 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
 
   const [state, setState] = useState<EditorSessionState>(INITIAL_STATE);
   const [bootAttempt, setBootAttempt] = useState(0);
+  // M3 tail 6 — the GPU circuit breaker, read ONCE per page load: the iframe
+  // document URL must never change under a mounted iframe, and after the
+  // recovery's reload this is a fresh page that reads the armed marker.
+  const [iframeSrc] = useState<string>(() => editorIframeSrc());
+  const [gpuFallback] = useState<boolean>(() => gpuFallbackActive());
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const bridgeRef = useRef<EditorBridge | null>(null);
@@ -488,7 +514,9 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
   // Graphics-device recovery (7): a lost WebGPU device cannot be revived in
   // place, but the engine stays alive on the CPU — save NOW, then reload the
   // page so RSC re-fetches the manifest and the editor reopens on a FRESH
-  // device with the latest version.
+  // device with the latest version. The circuit breaker is armed FIRST: the
+  // reload boots WebGL2, so a machine whose WebGPU stack is persistently
+  // broken converges instead of looping (a reload alone cannot fix it).
   // ---------------------------------------------------------------------------
   const reloadNow = useCallback((): void => {
     bypassUnloadGuardRef.current = true;
@@ -499,6 +527,10 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
     (message: string, mode: "first" | "retry"): void => {
       if (mode === "first" && recoveringRef.current) return;
       recoveringRef.current = true;
+      // Arm the breaker before anything else: whichever reload path runs
+      // (early save success, clean project, the overlay's Reload now — all
+      // of them below) must reopen on the WebGL2 compatibility boot.
+      activateGpuFallback();
       deviceLostMessageRef.current = message;
       patchState({ deviceLost: { message, stage: "saving", lastSavedLabel: null } });
       const controller = autosaveRef.current;
@@ -548,9 +580,20 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
 
   const reloadAfterDeviceLost = useCallback((): void => {
     // The user chose the fresh editor over the unsaved tail — the overlay's
-    // copy already said what that means.
+    // copy already said what that means. The breaker was armed at the
+    // recovery's start, so this reload boots WebGL2 like every other one.
     reloadNow();
   }, [reloadNow]);
+
+  const retryWebGpu = useCallback((): void => {
+    // The compatibility-mode banner's "Try WebGPU again" (typically after a
+    // driver update): disarm the breaker and reload. The engine is alive, so
+    // the pagehide saveNow("before-close") covers the work; the deliberate
+    // reload keeps the unsaved-changes guard quiet.
+    clearGpuFallback();
+    bypassUnloadGuardRef.current = true;
+    window.location.reload();
+  }, []);
 
   // The dist's report: `window.parent.postMessage({type: "studio:deviceLost",
   // message}, origin)` from `js/host.js` (same-origin iframe only — the origin
@@ -608,10 +651,13 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
     state,
     iframeRef,
     bootAttempt,
+    iframeSrc,
+    gpuFallback,
     retryBoot,
     reloadServerVersion,
     retryDeviceLostSave,
     reloadAfterDeviceLost,
+    retryWebGpu,
     applyPorts,
   };
 }

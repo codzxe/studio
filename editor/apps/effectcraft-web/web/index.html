@@ -98,11 +98,42 @@
         console.warn("service worker:", e);
       }
     }
+    const gpu = navigator.gpu;
+    // GPU compatibility mode (M3 tail 6): a WebGPU device lost earlier in this
+    // tab session — Chrome's "A valid external Instance reference no longer
+    // exists" class, a Dawn/WebGPU failure that a reload cannot fix (WebGL2
+    // rides ANGLE/D3D11, a different driver path). The Studio host's recovery
+    // armed the marker in sessionStorage (shared with a same-origin iframe);
+    // `?gpu=webgl2` is the same switch for direct visits.
+    const gpuParams = new URLSearchParams(location.search);
+    let gpuFallback = gpuParams.get("gpu") === "webgl2";
+    try {
+      gpuFallback = gpuFallback || sessionStorage.getItem("studio:editor-gpu-fallback") === "1";
+    } catch {
+      // Storage blocked: boot the default way.
+    }
+    if (gpuFallback) {
+      // Normalize the URL so the engine AND any reload keep the mode:
+      // `nogpuworkers` makes the frame/job workers render on their CPU (their
+      // own WebGPU devices would die the same way the presentation device
+      // did). replaceState: no navigation, no history entry.
+      if (!gpuParams.has("nogpuworkers") && !gpuParams.has("noworkers")) {
+        gpuParams.set("gpu", "webgl2");
+        gpuParams.set("nogpuworkers", "");
+        history.replaceState(null, "", `?${gpuParams}${location.hash}`);
+      }
+      // "No WebGPU" for BOTH the pre-flight below and the engine's wgpu: the
+      // proven no-adapter path takes the WebGL2 context first and egui-wgpu
+      // falls back to its WebGL backend.
+      if (gpu && typeof gpu.requestAdapter === "function") {
+        gpu.requestAdapter = () => Promise.resolve(null);
+        gpu.__studioHighPerformance = true;
+      }
+    }
     // Ask for the high-performance GPU on every WebGPU adapter request that does not
     // name a preference: wgpu/eframe send none by default, so hybrid-graphics laptops
     // (an iGPU plus a discrete card) boot the editor on the power-saving iGPU. The
     // wrapper only fills in what the caller left unset.
-    const gpu = navigator.gpu;
     if (gpu && typeof gpu.requestAdapter === "function" && !gpu.__studioHighPerformance) {
       const originalRequestAdapter = gpu.requestAdapter.bind(gpu);
       gpu.requestAdapter = (options) =>
@@ -131,7 +162,7 @@
       } catch {
         webgpu = false;
       }
-      const gpuInfo = { webgpu, webgl2: false, renderer: "", software: false };
+      const gpuInfo = { webgpu, webgl2: false, renderer: "", software: false, fallback: gpuFallback };
       if (!webgpu) {
         const canvas = document.getElementById("effectcraft_canvas");
         const gl = canvas && canvas.getContext("webgl2", { antialias: false, powerPreference: "high-performance" });

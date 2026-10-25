@@ -22,6 +22,7 @@
  */
 
 import type { ChatContextApi } from "@/lib/chat/provider";
+import { GPU_FALLBACK_MARKER } from "@/lib/editor-gpu-fallback";
 import {
   type FakeEditorSessionClient,
   createFakeEditorSessionClient,
@@ -241,6 +242,9 @@ function pressCmdS(): void {
 
 afterEach(() => {
   cleanup();
+  // The GPU circuit breaker's marker must never leak across arms (the
+  // device-lost recovery arms it; the compatibility-mode arms set it up).
+  sessionStorage.removeItem(GPU_FALLBACK_MARKER);
 });
 
 // ---------------------------------------------------------------------------
@@ -518,6 +522,11 @@ describe("EditorHost — graphics device lost", () => {
 
       reportDeviceLost();
 
+      // The breaker is armed FIRST — before the save — so whichever reload
+      // path runs reopens on the WebGL2 compatibility boot (M3 tail 6: a
+      // reload cannot fix a persistently broken WebGPU stack).
+      expect(sessionStorage.getItem(GPU_FALLBACK_MARKER)).toBe("1");
+
       // The recovery overlay owns the page while the save runs.
       await waitFor(
         () => {
@@ -684,6 +693,71 @@ describe("EditorHost — graphics device lost", () => {
     } finally {
       reload.restore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GPU compatibility mode (M3 tail 6) — the WebGL2 fallback boot after a
+// device loss this tab session
+// ---------------------------------------------------------------------------
+
+describe("EditorHost — GPU compatibility mode", () => {
+  it("boots the iframe on the WebGL2 compatibility URL and shows the banner", async () => {
+    sessionStorage.setItem(GPU_FALLBACK_MARKER, "1");
+    const harness = renderHost();
+
+    // The iframe document URL carries gpu=webgl2 (the dist's no-adapter path:
+    // WebGL2 context first, egui-wgpu on its WebGL backend) + nogpuworkers
+    // (frame/job workers render on their CPU — their own WebGPU devices
+    // would die the same way the presentation device did).
+    expect(screen.getByTestId("editor-iframe")).toHaveAttribute(
+      "src",
+      "/editor/?empty&gpu=webgl2&nogpuworkers",
+    );
+
+    await bootToOpen(harness);
+
+    // The banner names the cost and offers the way back to WebGPU.
+    expect(screen.getByTestId("editor-gpu-fallback-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("editor-gpu-retry-webgpu")).toBeInTheDocument();
+  });
+
+  it("Try WebGPU again clears the breaker and reloads (guard stays quiet)", async () => {
+    const reload = stubLocationReload();
+    try {
+      sessionStorage.setItem(GPU_FALLBACK_MARKER, "1");
+      const harness = renderHost();
+      await bootToOpen(harness);
+
+      fireEvent.click(screen.getByTestId("editor-gpu-retry-webgpu"));
+
+      expect(reload.reloads()).toBe(1);
+      expect(sessionStorage.getItem(GPU_FALLBACK_MARKER)).toBe(null);
+      // A deliberate reload: no unsaved-changes double-prompt.
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    } finally {
+      reload.restore();
+    }
+  });
+
+  it("the banner is dismissable for the session", async () => {
+    sessionStorage.setItem(GPU_FALLBACK_MARKER, "1");
+    const harness = renderHost();
+    await bootToOpen(harness);
+
+    fireEvent.click(screen.getByTestId("editor-gpu-fallback-dismiss"));
+    expect(screen.queryByTestId("editor-gpu-fallback-banner")).not.toBeInTheDocument();
+    // The breaker itself stays armed — only the notice is dismissed.
+    expect(sessionStorage.getItem(GPU_FALLBACK_MARKER)).toBe("1");
+  });
+
+  it("no marker: the plain WebGPU boot, no banner", async () => {
+    const harness = renderHost();
+    expect(screen.getByTestId("editor-iframe")).toHaveAttribute("src", "/editor/?empty");
+    await bootToOpen(harness);
+    expect(screen.queryByTestId("editor-gpu-fallback-banner")).not.toBeInTheDocument();
   });
 });
 
