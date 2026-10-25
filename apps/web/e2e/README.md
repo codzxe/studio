@@ -348,11 +348,11 @@ Wave 3), boot the stack yourself and point the suite straight at `next dev`
 the gateway, so no edge is needed:
 
 ```sh
-cd /home/z/my-project
+cd "$(git rev-parse --show-toplevel)"
 # orphan cleanup (a previous run's gateway/next can hold :8787/:3000)
 for port in 3000 8787; do pid=$(ss -tlnp "sport = :$port" | grep -o 'pid=[0-9]*' | head -1 | grep -o '[0-9]*'); [ -n "$pid" ] && kill -9 "$pid"; done
 
-export DATABASE_URL="file:/home/z/my-project/.local/e2e.db" \
+export DATABASE_URL="file:$PWD/.local/e2e.db" \
   APP_URL=http://localhost:3000 NEXT_PUBLIC_APP_URL=http://localhost:3000 \
   APP_ENV=local MOCK_MODEL=true GATEWAY_INTERNAL_URL=http://127.0.0.1:8787 \
   AUTH_SECRET="dev-local-secret-0123456789abcdef0123456789abcdef" \
@@ -363,8 +363,8 @@ export DATABASE_URL="file:/home/z/my-project/.local/e2e.db" \
   LITELLM_BASE_URL=http://localhost:4000 LITELLM_API_KEY=sk-litellm-replace-me \
   ASSET_MAX_BYTES=524288000 PROJECT_MAX_BYTES=262144000 CHAT_MAX_STEPS=50
 
-setsid bash -c 'cd /home/z/my-project && PORT=8787 corepack pnpm --filter @studio/gateway dev' >/tmp/e2e-gw.log 2>&1 &
-setsid bash -c 'cd /home/z/my-project && corepack pnpm --filter @studio/web exec next dev --port 3000' >/tmp/e2e-web.log 2>&1 &
+setsid bash -c 'cd "$(git rev-parse --show-toplevel)" && PORT=8787 corepack pnpm --filter @studio/gateway dev' >/tmp/e2e-gw.log 2>&1 &
+setsid bash -c 'cd "$(git rev-parse --show-toplevel)" && corepack pnpm --filter @studio/web exec next dev --port 3000' >/tmp/e2e-web.log 2>&1 &
 for i in $(seq 1 60); do curl -sf http://127.0.0.1:3000/sign-in >/dev/null && break; sleep 2; done
 
 cd apps/web && E2E_BASE_URL=http://localhost:3000 corepack pnpm exec playwright test <spec> --reporter=line

@@ -13,7 +13,7 @@ build/integration patches are allowed, and each is recorded below.
 | Pinned commit | `9db7f3b21700fd821f215782ed1c82afe077880f` |
 | Upstream version | 0.13.0 (release 0.13.0) |
 | Pinned by | studio Wave 0 · 2026-10-22 |
-| Local reference clone | `/home/z/my-project/effectcraft-upstream` (with `origin` remote) |
+| Local reference clone | `<repo-root>/effectcraft-upstream` (untracked; with `origin` remote) |
 
 Re-pin procedure:
 

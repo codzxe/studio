@@ -210,7 +210,7 @@ a live box. Infra verdict: files COMPLETE and coherent, runtime evidence ZERO.
 ## 5. Scripts (fleet protocol + dev)
 
 - `git-sync.sh` - the ONLY sanctioned git mutation path (AGENTS.md): cd repo
-  root; takes a global exclusive flock on `/home/z/my-project/.studio-git.lock`
+  root; takes a global exclusive flock on `<repo-root>/.studio-git.lock`
   (fd 9, 900 s timeout, fail with message); if dirty (tracked diff, staged, or
   any untracked file) -> `git add -A` + `git commit -m "$MSG"`; then up to 6
   attempts: `git pull --rebase origin main` -> `git push origin main` (rebase

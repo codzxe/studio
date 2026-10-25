@@ -3,10 +3,11 @@
 # vendored pin (D-17: real editor only, no mocks) and stage it into apps/web/public/editor.
 # Runs detached; logs to .editor-build.log. Idempotent per stage.
 set -euo pipefail
-export RUSTUP_HOME=/home/z/.rustup
-export CARGO_HOME=/home/z/.cargo
-export PATH="/home/z/.cargo/bin:$PATH"
-REPO=/home/z/my-project
+# Portable: honor an existing RUSTUP/CARGO_HOME, else the user's $HOME.
+export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+export PATH="$HOME/.cargo/bin:$PATH"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG=$REPO/.editor-build.log
 
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG"; }

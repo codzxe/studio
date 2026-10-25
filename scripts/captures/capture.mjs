@@ -22,11 +22,15 @@
  * wasm editor, the real MOCK_MODEL chat stream, real timeline scrubbing.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const BASE = process.env.CAPTURE_BASE_URL ?? "http://127.0.0.1:3100";
-const OUT = "/home/z/my-project/apps/web/public/marketing";
-const RAW = "/home/z/my-project/scripts/captures/.raw";
+// Repo root derived from this file's own URL — works from any checkout on any OS.
+const REPO = fileURLToPath(new URL("../..", import.meta.url));
+const OUT = join(REPO, "apps/web/public/marketing");
+const RAW = join(REPO, "scripts/captures/.raw");
 const EMAIL = "demo@studio.test";
 const PASSWORD = "demo-password-12345";
 const EDITOR_PATH = "/w/demo-project/editor";

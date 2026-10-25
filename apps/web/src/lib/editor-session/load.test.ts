@@ -155,6 +155,24 @@ describe("loadProjectSession", () => {
     expect(outcome.assetPaths).toEqual({});
   });
 
+  it("boots start-from-scratch for a project with no version (nothing downloaded, nothing opened)", async () => {
+    const { bridge, client } = await setup({
+      manifest: { currentVersion: null },
+      assets: {},
+    });
+    const outcome = await loadProjectSession({
+      bridge,
+      client: client.client,
+      projectId: "prj_test",
+    });
+    // No snapshot to fetch or open — the editor keeps its own default
+    // project; the first save creates v1 (root upload, W3-G3).
+    expect(outcome.openedPath).toBeNull();
+    expect(outcome.missingAssets).toEqual([]);
+    expect(outcome.assetPaths).toEqual({});
+    expect(client.calls.downloadProjectFile).toEqual([]);
+  });
+
   it("rejects with a typed error when the manifest is malformed", async () => {
     const { bridge, client } = await setup();
     const broken: EditorSessionClient = {

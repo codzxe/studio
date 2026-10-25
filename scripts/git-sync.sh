@@ -7,7 +7,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 MSG="${1:-sync}"
 BRANCH=main
-LOCK=/home/z/my-project/.studio-git.lock
+LOCK="$PWD/.studio-git.lock"
 
 exec 9>"$LOCK"
 if ! flock -w 900 9; then

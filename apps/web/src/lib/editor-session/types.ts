@@ -47,8 +47,9 @@ export interface MissingAsset {
 }
 
 export interface LoadOutcome {
-  /** The path the editor assigned to the open `.ecproj` (authoritative — upstream keeps the last path segment). */
-  openedPath: string;
+  /** The path the editor assigned to the open `.ecproj` (authoritative — upstream keeps the last path segment).
+   * `null` for a fresh start-from-scratch open (no snapshot to load — the editor keeps its own default project). */
+  openedPath: string | null;
   activeComp: number | null;
   /** Assets that failed to register; a missing asset NEVER blocks the project from opening. */
   missingAssets: MissingAsset[];
@@ -62,10 +63,11 @@ export interface LoadOutcome {
 export interface EditorSessionClient {
   getManifest(projectId: string): Promise<{
     project: { id: string; slug: string; name: string };
-    currentVersion: VersionRef;
+    /** `null` for a project with no versions yet (start-from-scratch). */
+    currentVersion: VersionRef | null;
     assets: ManifestAssetInfo[];
-    /** Signed URL of the current `.ecproj` snapshot. */
-    projectFileUrl: string;
+    /** Signed URL of the current `.ecproj` snapshot; `null` when currentVersion is. */
+    projectFileUrl: string | null;
   }>;
   downloadProjectFile(url: string): Promise<Blob>;
   downloadAsset(url: string): Promise<Blob>;
@@ -81,7 +83,7 @@ export interface EditorSessionClient {
    */
   uploadVersion(
     projectId: string,
-    input: { bytes: Uint8Array; baseVersionId: string; sha256: string; label?: string },
+    input: { bytes: Uint8Array; baseVersionId: string | null; sha256: string; label?: string },
   ): Promise<UploadVersionResult>;
 }
 
@@ -108,7 +110,8 @@ export interface AutosaveController {
   markDirty(reason?: string): void;
   saveNow(reason: string): Promise<SaveOutcome>;
   /** The session's current version (the advancing autosave chain head) — the
-   * M5 apply/reapply gate's honest source. `null` only pre-boot/disposed. */
+   * M5 apply/reapply gate's honest source. `null` pre-boot/disposed, or for a
+   * fresh project until its first save lands. */
   currentVersion(): VersionRef | null;
   dispose(): void;
 }
@@ -133,8 +136,13 @@ export interface CreateAutosaveControllerOptions {
   bridge: EditorBridge;
   client: EditorSessionClient;
   projectId: string;
-  /** The version the session started from (`manifest.currentVersion`). */
-  baseVersion: VersionRef;
+  /** The version the session started from (`manifest.currentVersion`);
+   * `null` for a fresh project — the first save uploads with `baseVersionId: null`
+   * (the gateway's root-upload path, W3-G3) and the chain head advances from there. */
+  baseVersion: VersionRef | null;
+  /** File-table name for the FIRST save of a fresh project (no session path yet);
+   * defaults to `project.ecproj`. Ignored once a version exists. */
+  defaultSaveName?: string;
   hooks?: AutosaveHooks;
   /** Tick cadence while dirty in ms (default 30 000 — DECISIONS.md D-6). */
   intervalMs?: number;
@@ -212,9 +220,9 @@ export function parseVersionRef(value: unknown, where: string): VersionRef {
 /** Validate the `getManifest` result (the subset of the §7.2 manifest this engine consumes). */
 export function parseManifest(value: unknown): {
   project: { id: string; slug: string; name: string };
-  currentVersion: VersionRef;
+  currentVersion: VersionRef | null;
   assets: ManifestAssetInfo[];
-  projectFileUrl: string;
+  projectFileUrl: string | null;
 } {
   if (!isRecord(value)) throw err("manifest-invalid", "getManifest: expected an object");
   const rawProject = value.project;
@@ -229,7 +237,13 @@ export function parseManifest(value: unknown): {
   if (typeof rawProject.name !== "string") {
     throw err("manifest-invalid", "getManifest.project: `name` must be a string");
   }
-  const currentVersion = parseVersionRef(value.currentVersion, "getManifest.currentVersion");
+  // Start-from-scratch: a project with no versions carries `currentVersion: null`
+  // and `projectFileUrl: null` (or omits it) — the editor keeps its own default
+  // empty project and the first save creates v1 (root upload, W3-G3).
+  const currentVersion =
+    value.currentVersion === null || value.currentVersion === undefined
+      ? null
+      : parseVersionRef(value.currentVersion, "getManifest.currentVersion");
   const rawAssets = value.assets;
   if (!Array.isArray(rawAssets))
     throw err("manifest-invalid", "getManifest: `assets` must be an array");
@@ -262,8 +276,11 @@ export function parseManifest(value: unknown): {
     }
     return asset;
   });
-  const projectFileUrl = str(value.projectFileUrl);
-  if (projectFileUrl === undefined) {
+  const projectFileUrl = str(value.projectFileUrl) ?? null;
+  if (currentVersion === null && projectFileUrl !== null) {
+    throw err("manifest-invalid", "getManifest: `projectFileUrl` set without `currentVersion`");
+  }
+  if (currentVersion !== null && projectFileUrl === null) {
     throw err("manifest-invalid", "getManifest: missing or empty `projectFileUrl`");
   }
   return {

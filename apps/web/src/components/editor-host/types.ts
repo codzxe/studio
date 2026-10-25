@@ -14,11 +14,16 @@ import type { ApiClient } from "@studio/api-client";
  */
 export interface EditorInitialManifest {
   readonly project: { readonly id: string; readonly slug: string; readonly name: string };
-  /** The version this session starts from; the autosave chain anchors on it. */
-  readonly currentVersion: VersionRef;
+  /**
+   * The version this session starts from; the autosave chain anchors on it.
+   * `null` = a project with no versions yet — start-from-scratch: the editor
+   * boots with its own default empty project and the FIRST save creates v1
+   * (root upload, baseVersionId null — the gateway's W3-G3 path).
+   */
+  readonly currentVersion: VersionRef | null;
   readonly assets: readonly ManifestAssetInfo[];
-  /** Signed, short-lived download URL of the current `.ecproj` snapshot. */
-  readonly projectFileUrl: string;
+  /** Signed, short-lived download URL of the current `.ecproj` snapshot (null for a fresh project). */
+  readonly projectFileUrl: string | null;
 }
 
 /** Serializable props from the RSC page to the client `EditorHost`. */

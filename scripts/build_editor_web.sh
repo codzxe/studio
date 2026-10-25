@@ -14,5 +14,5 @@ set -euo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_BUILD_JOBS=1
 export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
-cd /home/z/my-project/editor
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/editor"
 exec cargo build --target wasm32-unknown-unknown -p effectcraft-web --profile release

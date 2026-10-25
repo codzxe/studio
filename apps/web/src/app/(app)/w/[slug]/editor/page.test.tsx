@@ -298,17 +298,23 @@ describe("editor RSC route", () => {
     await expect(renderPage("launch-film")).rejects.toThrow("__NOT_FOUND__");
   });
 
-  it("renders the no-version empty state for a project without snapshots", async () => {
+  it("boots the editor start-from-scratch for a project without snapshots", async () => {
     gatewayMock.mockImplementation((path: string) => {
       if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
       if (path.startsWith("/v1/projects?")) {
         return Promise.resolve({ items: [PROJECT_ROW], nextCursor: null });
       }
-      return Promise.resolve({ ...MANIFEST, currentVersion: null });
+      return Promise.resolve({ ...MANIFEST, currentVersion: null, assets: [] });
     });
     const page = await renderPage("launch-film");
     render(<>{page}</>);
-    expect(screen.getByTestId("editor-no-version")).toBeInTheDocument();
-    expect(lastHostPayload).toBeNull();
+    // No dead-end empty state: the host renders and receives the null-version
+    // payload (first save creates v1 through the root-upload path, W3-G3).
+    expect(await screen.findByTestId("editor-host-stub")).toBeInTheDocument();
+    expect(lastHostPayload).not.toBeNull();
+    const payload = lastHostPayload as EditorHostPayload;
+    expect(payload.manifest.currentVersion).toBeNull();
+    expect(payload.manifest.projectFileUrl).toBeNull();
+    expect(payload.manifest.assets).toEqual([]);
   });
 });

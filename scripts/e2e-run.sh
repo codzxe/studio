@@ -19,8 +19,10 @@
 #     PORT=8787 (the gateway tree inherits it) or whose cmdline is this
 #     stack's `next dev --port 3000` is reaped, plus the port listeners.
 set -uo pipefail
-export PATH="/home/z/.npm-global/bin:/home/z/.cargo/bin:$PATH"
-REPO=/home/z/my-project
+# Portable toolchain paths ($HOME, not a hardcoded user) + repo root derived
+# from this script's own location, so the stack boots from any checkout.
+export PATH="$HOME/.npm-global/bin:$HOME/.cargo/bin:$PATH"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # orphan cleanup (a previous run's gateway/next can hold :8787/:3000 or burn
 # inotify watchers as crash-loop strays — environ/cmdline matched, never by

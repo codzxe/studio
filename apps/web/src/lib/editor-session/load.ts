@@ -157,7 +157,35 @@ export async function loadProjectSession(opts: LoadProjectSessionOptions): Promi
     if (slot !== undefined) missingAssets.push(slot);
   }
 
+  // -- start from scratch (M2 follow-up): no version yet --
+  // Nothing to download or open: the editor booted with its own default
+  // empty project (`?empty`), which is exactly the state the user wants.
+  // The first save creates v1 through the root-upload path (W3-G3).
+  if (manifest.currentVersion === null) {
+    const summary = await readProjectSummary(bridge).catch((err: unknown) => {
+      throw new EditorSessionError(
+        "open-failed",
+        `the project did not open: ${messageOf(err)}`,
+        { cause: err },
+      );
+    });
+    return {
+      openedPath: null,
+      activeComp: summary.activeComp ?? null,
+      missingAssets,
+      assetPaths,
+    };
+  }
+
   // -- project snapshot → file table → open --
+  // (parseManifest enforces the currentVersion/projectFileUrl pair; the
+  // guard narrows the type for the download below.)
+  if (manifest.projectFileUrl === null) {
+    throw new EditorSessionError(
+      "manifest-invalid",
+      "getManifest: missing `projectFileUrl` for a versioned project",
+    );
+  }
   const projectBlob = await withTimeout(
     "project file download",
     o.projectFileTimeoutMs,

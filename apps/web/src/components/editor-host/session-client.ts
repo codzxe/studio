@@ -83,7 +83,10 @@ export function createApiSession(options: {
       // with the engine's own `parseManifest` server-side).
       return {
         project: { ...payload.manifest.project },
-        currentVersion: { ...payload.manifest.currentVersion },
+        currentVersion:
+          payload.manifest.currentVersion === null
+            ? null
+            : { ...payload.manifest.currentVersion },
         assets: payload.manifest.assets.map((asset) => ({ ...asset })),
         projectFileUrl: payload.manifest.projectFileUrl,
       };
@@ -99,7 +102,7 @@ export function createApiSession(options: {
 
     async uploadVersion(
       projectId: string,
-      input: { bytes: Uint8Array; baseVersionId: string; sha256: string; label?: string },
+      input: { bytes: Uint8Array; baseVersionId: string | null; sha256: string; label?: string },
     ): Promise<UploadVersionResult> {
       try {
         return await uploadVersionCall(payload.workspaceId, projectId, input, options);
@@ -170,7 +173,7 @@ async function downloadSigned(
 async function uploadVersionCall(
   workspaceId: string,
   projectId: string,
-  input: { bytes: Uint8Array; baseVersionId: string; sha256: string; label?: string },
+  input: { bytes: Uint8Array; baseVersionId: string | null; sha256: string; label?: string },
   options: {
     readonly fetch?: (input: string, init?: RequestInit) => Promise<Response>;
     readonly idempotencyKey?: () => string;

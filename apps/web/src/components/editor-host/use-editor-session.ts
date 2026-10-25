@@ -8,6 +8,7 @@ import {
   type VersionRef,
   createAutosaveController,
   loadProjectSession,
+  safeFileStem,
 } from "@/lib/editor-session";
 import {
   type EditorBridge,
@@ -167,6 +168,11 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
         client: session.client,
         projectId: payload.manifest.project.id,
         baseVersion: payload.manifest.currentVersion,
+        // A fresh project has no file-table name yet — mirror the load flow's
+        // stem so the first save (root upload) lands under a recognizable name.
+        defaultSaveName: `${safeFileStem(
+          payload.manifest.project.slug || payload.manifest.project.id,
+        )}.ecproj`,
         hooks: {
           onSaved: (version) => {
             clearSavedChip();
@@ -444,7 +450,9 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
   // K-1: referentially-stable apply ports for the ChatProvider (the provider
   // builds the real ApplyController from these; the autosaveRef indirection
   // means read-only sessions degrade conservatively without remounting).
-  const manifestVersionId = payload.manifest.currentVersion.id;
+  // `null` manifestVersionId = a fresh project (no version yet); the first
+  // save advances the autosave head and the gate reads the new id from there.
+  const manifestVersionId = payload.manifest.currentVersion?.id ?? null;
   const applyPorts = useMemo<ChatApplyPorts>(
     () => ({
       autosave: {

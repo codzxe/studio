@@ -27,7 +27,7 @@ cp .env.example .env && chmod 600 .env
 
 Edit `.env` for the SQLite path (the template defaults to Postgres):
 
-- `DATABASE_URL=file:/home/z/my-project/.local/studio-dev.db` — a
+- `DATABASE_URL="file:$PWD/.local/studio-dev.db"` (repo-root-absolute) — a
   `file:`/`sqlite:` URL; accepted only with `APP_ENV=local`
   (staging/production require Postgres). Use the repo-root-absolute path:
   scripts run from different workspace directories, and a relative `file:`
@@ -128,7 +128,7 @@ Dialect-specific suites:
 
 ```sh
 # gateway suite on the SQLite dev DB (no Postgres needed):
-DATABASE_URL=file:/home/z/my-project/.local/studio-dev.db MOCK_MODEL=true \
+DATABASE_URL="file:$PWD/.local/studio-dev.db" MOCK_MODEL=true \
   corepack pnpm --filter @studio/gateway test
 
 # packages/db DB-gated integration suite (needs Postgres):

@@ -98,12 +98,12 @@ describe("rewriteFootagePaths (the proven leading-slash fix)", () => {
   it("is a no-op for native-saved projects (absolute local paths)", () => {
     const native = {
       items: {
-        1: { id: 1, kind: { type: "Footage", path: "/home/z/proj/photo.png" } },
+        1: { id: 1, kind: { type: "Footage", path: "/srv/proj/photo.png" } },
       },
     };
     expect(rewriteFootagePaths(native).rewritten).toBe(0);
     expect((native.items as Record<string, { kind: { path: string } }>)["1"]?.kind.path).toBe(
-      "/home/z/proj/photo.png",
+      "/srv/proj/photo.png",
     );
   });
 

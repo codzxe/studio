@@ -11,7 +11,7 @@ vendored copy.
 
 ## Decision
 
-1. The engine is a shallow git clone OUTSIDE this repo at `/home/z/my-project/vendor/photocraft`,
+1. The engine is a shallow git clone OUTSIDE this repo at `<repo-parent>/vendor/photocraft`,
    pinned to commit `872748fb5b2a53e09dd4e385e31968d985c0515b` (recorded in `ATTRIBUTION.md`).
 2. Engine additions required by the SaaS (spec §2.3: `template_cmds.rs`, `component_cmds.rs`,
    `layout_cmds.rs`, `agent_cmds.rs` + registry registration) are authored in THIS repo under

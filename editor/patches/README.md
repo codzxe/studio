@@ -5,7 +5,7 @@ source in `editor/` is the canonical source of truth.** There is no fork workflo
 patches are made directly in this tree and recorded here as diff artifacts for
 provenance against the pin `9db7f3b21700fd821f215782ed1c82afe077880f` (see
 `../UPSTREAM.md`). A local reference clone of upstream may exist at
-`/home/z/my-project/effectcraft-upstream` (excluded from the repo) purely for
+`<repo-root>/effectcraft-upstream` (excluded from the repo) purely for
 diffing/re-pinning — never as the place where product changes live.
 
 Workflow for a new patch (DECISIONS.md D-17):

@@ -68,7 +68,13 @@ function validateOptions(
       "createAutosaveController: `projectId` must be a non-empty string",
     );
   }
-  parseVersionRef(baseVersion, "baseVersion");
+  // `null` baseVersion = a fresh project (start-from-scratch): the chain
+  // head starts empty and the FIRST save uploads with baseVersionId null
+  // (the gateway's root-upload path) and advances the head from there.
+  if (baseVersion !== null) {
+    parseVersionRef(baseVersion, "baseVersion");
+  }
+  const defaultSaveName = o.defaultSaveName ?? "project.ecproj";
   const intervalMs = opts.intervalMs ?? DEFAULT_AUTOSAVE_INTERVAL_MS;
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
     throw new EditorSessionError(
@@ -109,7 +115,7 @@ export function createAutosaveController(
   let proactiveDirty = false;
   /** the editor's own dirty flag as of the last `project.summary` read. */
   let editorDirty = false;
-  let currentVersion: VersionRef = o.baseVersion;
+  let currentVersion: VersionRef | null = o.baseVersion;
   let timer: Timer | null = null;
   let inFlight: Promise<SaveOutcome> | null = null;
 
@@ -136,7 +142,16 @@ export function createAutosaveController(
     const summary = await readProjectSummary(o.bridge);
     editorDirty = summary.dirty === true;
     const path = summary.path;
-    if (typeof path !== "string" || path.length === 0) {
+    // A fresh project has no session path yet (nothing was ever opened) —
+    // saveAs under the default name instead of refusing to save. After the
+    // first save the editor carries the path and this branch never fires.
+    const freshPath =
+      typeof path === "string" && path.length > 0
+        ? path
+        : currentVersion === null
+          ? `/${defaultSaveName.replace(/^\/+/, "")}`
+          : null;
+    if (freshPath === null) {
       throw new EditorSessionError(
         "no-project-open",
         "cannot save: no project is open in the editor",
@@ -153,14 +168,16 @@ export function createAutosaveController(
     // `proactiveDirty` stays set until the upload lands (or dedupes).
     proactiveDirty = true;
 
-    const saved = await o.bridge.saveToBrowser(path);
-    const savePath = typeof saved.path === "string" && saved.path.length > 0 ? saved.path : path;
+    const saved = await o.bridge.saveToBrowser(freshPath);
+    const savePath =
+      typeof saved.path === "string" && saved.path.length > 0 ? saved.path : freshPath;
     const bytes = await o.bridge.readFile(savePath);
     const sha256 = await sha256Hex(bytes);
 
     // The editor's dirty flag may outlive a save upstream (BP M0 risk: "saveToBrowser
-    // may not mark the project clean"); identical content never creates a new version.
-    if (sha256 === currentVersion.sha256) {
+    // may not mark the project clean"); identical content never creates a new version
+    // (a fresh project has no head to dedup against — the first save always uploads).
+    if (currentVersion !== null && sha256 === currentVersion.sha256) {
       proactiveDirty = false;
       safeNotify(hooks.onSaved, currentVersion);
       return { saved: true, version: currentVersion };
@@ -169,7 +186,7 @@ export function createAutosaveController(
     const result = parseUploadResult(
       await o.client.uploadVersion(o.projectId, {
         bytes,
-        baseVersionId: currentVersion.id,
+        baseVersionId: currentVersion?.id ?? null,
         sha256,
         label: labelForSaveReason(reason),
       }),

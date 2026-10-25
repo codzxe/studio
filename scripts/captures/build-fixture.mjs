@@ -28,8 +28,10 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const REPO = "/home/z/my-project";
+// Repo root derived from this file's own URL — works from any checkout on any OS.
+const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const SRC = join(REPO, "services/worker/tests/fixtures/project.ecproj");
 const OUT_ROOT = join(
   REPO,

@@ -1,5 +1,4 @@
 import { CommentsRegion } from "@/components/comments/comments-region";
-import { EmptyState } from "@studio/ui";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 
@@ -22,8 +21,11 @@ import { pageMetadata } from "@/lib/seo";
  *   user is not a member of → `notFound()` (hard rule 3: cross-tenant = 404).
  * - Expired session (the proxy checks cookie presence; the gateway checks
  *   validity) → redirect to /sign-in with a `next` round-trip.
- * - A project with no version yet → friendly empty state (M2's create/upload
- *   flow owns the first snapshot; the editor needs a version to open).
+ * - A project with NO version yet → the editor opens START-FROM-SCRATCH:
+ *   the engine boots its own default empty project and the first save
+ *   creates v1 through the root-upload path (baseVersionId null, W3-G3).
+ *   (Previously this dead-ended on an empty-state page — a chicken-and-egg:
+ *   you could not save a first version without opening the editor.)
  */
 
 // ---------------------------------------------------------------------------
@@ -123,10 +125,6 @@ async function fetchManifest(workspaceId: string, projectId: string): Promise<Ma
 
 type EditorResolution =
   | { readonly status: "missing" }
-  | {
-      readonly status: "no-version";
-      readonly project: { readonly id: string; readonly slug: string; readonly name: string };
-    }
   | { readonly status: "ready"; readonly payload: EditorHostPayload };
 
 /**
@@ -145,19 +143,21 @@ const resolveEditorProject = cache(async (slug: string): Promise<EditorResolutio
       const match = items.find((project) => project.slug === slug && project.deletedAt === null);
       if (match !== undefined) {
         const manifest = await fetchManifest(membership.workspaceId, match.id);
-        if (manifest.currentVersion === null) {
-          return { status: "no-version", project: { id: match.id, slug: match.slug, name: match.name } };
-        }
+        // null currentVersion = no versions yet — the editor opens
+        // start-from-scratch (first save = v1, root upload).
         const payload: EditorHostPayload = {
           workspaceId: membership.workspaceId,
           manifest: {
             project: { id: match.id, slug: match.slug, name: match.name },
-            currentVersion: {
-              id: manifest.currentVersion.id,
-              label: manifest.currentVersion.label,
-              sha256: manifest.currentVersion.sha256,
-              sizeBytes: manifest.currentVersion.sizeBytes,
-            },
+            currentVersion:
+              manifest.currentVersion === null
+                ? null
+                : {
+                    id: manifest.currentVersion.id,
+                    label: manifest.currentVersion.label,
+                    sha256: manifest.currentVersion.sha256,
+                    sizeBytes: manifest.currentVersion.sizeBytes,
+                  },
             assets: manifest.assets.map((asset) => ({
               id: asset.id,
               name: asset.name,
@@ -166,7 +166,7 @@ const resolveEditorProject = cache(async (slug: string): Promise<EditorResolutio
               downloadUrl: asset.url,
               sizeBytes: asset.sizeBytes,
             })),
-            projectFileUrl: manifest.currentVersion.url,
+            projectFileUrl: manifest.currentVersion === null ? null : manifest.currentVersion.url,
           },
         };
         // The client serves this payload through `getManifest`; validate it
@@ -204,10 +204,7 @@ interface EditorPageProps {
 export async function generateMetadata({ params }: EditorPageProps) {
   const { slug } = await params;
   const resolution = await loadEditorPage(slug);
-  const name =
-    resolution.status === "ready" ? resolution.payload.manifest.project.name
-    : resolution.status === "no-version" ? resolution.project.name
-    : undefined;
+  const name = resolution.status === "ready" ? resolution.payload.manifest.project.name : undefined;
   return pageMetadata({
     title: name === undefined ? "Editor" : `${name} — editor`,
     description:
@@ -222,18 +219,6 @@ export default async function EditorPage({ params }: EditorPageProps) {
   const { slug } = await params;
   const resolution = await loadEditorPage(slug);
   if (resolution.status === "missing") notFound();
-
-  if (resolution.status === "no-version") {
-    return (
-      <main id="main" className="flex min-h-svh items-center justify-center bg-app px-5">
-        <EmptyState
-          data-testid="editor-no-version"
-          title="This project has no saved version yet."
-          secondaryLink={{ label: "Back to workspace", href: "/w" }}
-        />
-      </main>
-    );
-  }
 
   return (
     <>

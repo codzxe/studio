@@ -24,7 +24,7 @@ surface. No product code touched. Evidence paths are given inline.
 - `editor/UPSTREAM.md` records the tree as byte-identical to the pin with no
   product patches. `editor/patches/` EXISTS and is EMPTY — consistent with the
   build/integration-only patch policy; nothing has been needed yet.
-- The local reference clone `/home/z/my-project/effectcraft-upstream` named in
+- The local reference clone `<repo-root>/effectcraft-upstream` named in
   UPSTREAM.md is NOT present on this box (informational; re-pin procedure only).
 
 ## 2. Prebuilt dist: DOES NOT EXIST (critical)

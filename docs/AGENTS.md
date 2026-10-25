@@ -20,7 +20,7 @@ on every documented ambiguity — read it before "deciding" anything.
 ## Environment truth (this box, re-probed 2026-10-22; dated corrections 2026-10-24)
 
 - node 24, pnpm 9.15.9 (on PATH), bun available. **No Docker.** Rust toolchain IS
-  installed (rustup at /home/z/.rustup, cargo at /home/z/.cargo/bin — export
+  installed (rustup at ~/.rustup, cargo at ~/.cargo/bin — export
   PATH="$HOME/.cargo/bin:$PATH") with the wasm32 target; verified 2026-10-24:
   rustc 1.99.1, `wasm-bindgen-cli` 0.2.129, `wasm-opt` 125 all on PATH (W1-C) —
   the editor wasm dist is built from the vendored pin **on this box** (re-tuned
@@ -72,8 +72,8 @@ boots healthy on sqlite: `/health` 200, email sign-in 200, projects 200,
 render pipeline runs live on the dialect —
 `services/worker/scripts/sqlite-pipeline-smoke.ts`).
 
-- **URL pattern**: `DATABASE_URL="file:/home/z/my-project/.local/<name>.db"`
-  (also `sqlite:…`; `file::memory:` = in-memory). Default file
+- **URL pattern**: `DATABASE_URL="file:$PWD/.local/<name>.db"`
+  (repo-root-absolute; also `sqlite:…`; `file::memory:` = in-memory). Default file
   `.local/studio-dev.db`, created + seeded idempotently by
   `corepack pnpm dev:sqlite` (`scripts/dev-sqlite.sh start`; also `reset`,
   `status`, `dump-schema`; overrides `STUDIO_SQLITE_DB` / `STUDIO_SQLITE_URL`).
@@ -125,7 +125,7 @@ against it — dev sqlite databases are THROWAWAY (delete the file to rebuild;
 
 - **SQLite** (`file:…`): PG-free dev-server work (gateway + web + worker),
   hosts without Docker/Postgres, and the gateway test suite — it runs green
-  on either dialect (`DATABASE_URL=file:/home/z/my-project/.local/studio-dev.db
+  on either dialect (`DATABASE_URL="file:$PWD/.local/studio-dev.db"
   MOCK_MODEL=true corepack pnpm --filter @studio/gateway test`).
 - **Postgres**: the `packages/db` DB-gated integration suite (advisory locks,
   SKIP LOCKED, jsonb predicates run live there and skip without Postgres),
@@ -208,11 +208,11 @@ syncs encouraged for large file sets.
 
 ## Worklog (MANDATORY)
 
-- Before starting: `tail -n 120 /home/z/my-project/worklog.md`.
+- Before starting: `tail -n 120 worklog.md` (repo root).
 - After finishing, append (never overwrite):
 
 ```bash
-cat >> /home/z/my-project/worklog.md << 'EOF'
+cat >> worklog.md << 'EOF'
 ---
 Task ID: <your id, e.g. W4-A>
 Agent: <subagent name>

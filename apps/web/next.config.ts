@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 import type { NextConfig } from "next";
 
 /**
@@ -54,10 +56,15 @@ const GATEWAY_INTERNAL_URL = (
 // tsx (gateway) and vitest (Vite) already apply to these exact files — scoped
 // by resourcePath to `packages/config` + `packages/contracts` only. Delete
 // this block when the packages move to bundler-resolution re-exports.
-const nodenextLoader = new URL(
-  "../../scripts/captures/nodenext-js-strip-loader.cjs",
-  import.meta.url,
-).pathname;
+// fileURLToPath, NOT `URL.pathname`: on Windows `.pathname` yields
+// `/C:/Users/…` (a POSIX-style prefix glued to the drive letter), which
+// Turbopack then resolves as a relative specifier — the build dies with
+// `Cannot find module './../../../../../../../../../C:/…/nodenext-js-strip-loader.cjs'`
+// the moment any `*.ts` rule fires. `fileURLToPath` is the cross-platform
+// conversion (POSIX `/…` there, `C:\…` here) and is a no-op on Linux.
+const nodenextLoader = fileURLToPath(
+  new URL("../../scripts/captures/nodenext-js-strip-loader.cjs", import.meta.url),
+);
 
 const nextConfig: NextConfig = {
   // Dev cross-origin allowlist (Next 16 blockCrossSiteDEV; W2-B8 finding):

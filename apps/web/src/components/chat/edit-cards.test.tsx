@@ -70,7 +70,7 @@ describe("humanizeEditError", () => {
 
   it("degrades machine-shaped payloads to the generic line (law #1)", () => {
     const hostile = [
-      'at compile (/home/z/plan.rs:44:3) {"secret": true}',
+      'at compile (/opt/studio/plan.rs:44:3) {"secret": true}',
       "Error: node_modules/foo/index.ts:22 blew up",
       "failed: /Users/dev/secret-project/x.tsx:1:1",
       `{"error":"TOOL_FAILED","raw":"0xdeadbeef"}`,
@@ -120,7 +120,7 @@ describe("EditErrorCard", () => {
 
   it("never leaks internals: hostile messages, paths and codes stay out of the DOM", () => {
     const hostileMessage =
-      'at plan (/home/z/studio/services/gateway/src/plan-compiler.rs:9:13) {"batch":{"steps":[{"command":"layer.delete"}]}}';
+      'at plan (/opt/studio/services/gateway/src/plan-compiler.rs:9:13) {"batch":{"steps":[{"command":"layer.delete"}]}}';
     const hostileCode = '</section><script>alert("x")</script>';
     render(
       <EditErrorCard
@@ -129,7 +129,7 @@ describe("EditErrorCard", () => {
       />,
     );
     const dom = document.body.textContent ?? "";
-    expect(dom).not.toContain("/home/z");
+    expect(dom).not.toContain("/opt/studio");
     expect(dom).not.toContain("plan-compiler.rs");
     expect(dom).not.toContain("layer.delete");
     expect(dom).not.toContain("<script>");

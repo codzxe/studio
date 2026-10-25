@@ -19,6 +19,8 @@
 
 export { loadProjectSession } from "./load";
 
+export { safeFileStem } from "./internal";
+
 export {
   createAutosaveController,
   DEFAULT_AUTOSAVE_INTERVAL_MS,

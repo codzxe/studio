@@ -58,7 +58,7 @@ export interface FakeUploadCall {
   readonly projectId: string;
   readonly input: {
     readonly bytes: Uint8Array;
-    readonly baseVersionId: string;
+    readonly baseVersionId: string | null;
     readonly sha256: string;
     readonly label?: string;
   };
@@ -75,9 +75,10 @@ export interface FakeSessionClientOptions {
   /** Manifest returned by `getManifest` (defaults to a two-asset project; see below). */
   readonly manifest?: {
     readonly project?: { readonly id?: string; readonly slug?: string; readonly name?: string };
-    readonly currentVersion?: VersionRef;
+    /** `null` = a fresh project (no versions yet) — start-from-scratch. */
+    readonly currentVersion?: VersionRef | null;
     readonly assets?: readonly ManifestAssetInfo[];
-    readonly projectFileUrl?: string;
+    readonly projectFileUrl?: string | null;
   };
   /** `.ecproj` bytes served by `downloadProjectFile` (default: `defaultFakeProjectBytes`). */
   readonly projectBytes?: Uint8Array;
@@ -122,12 +123,13 @@ export function createFakeEditorSessionClient(
     slug: manifestOpts.project?.slug ?? "test-project",
     name: manifestOpts.project?.name ?? "Test Project",
   };
-  const currentVersion: VersionRef = manifestOpts.currentVersion ?? {
-    id: "ver_base",
-    label: null,
-    sha256: ZERO_SHA,
-    sizeBytes: 4096,
-  };
+  const currentVersion: VersionRef | null =
+    manifestOpts.currentVersion === null ? null : (manifestOpts.currentVersion ?? {
+      id: "ver_base",
+      label: null,
+      sha256: ZERO_SHA,
+      sizeBytes: 4096,
+    });
   const assets: ManifestAssetInfo[] =
     manifestOpts.assets !== undefined
       ? [...manifestOpts.assets]
@@ -136,7 +138,9 @@ export function createFakeEditorSessionClient(
         : [];
   const projectFileUrl =
     manifestOpts.projectFileUrl ??
-    `https://storage.test/${project.slug}/${currentVersion.id}.ecproj`;
+    (currentVersion === null
+      ? null
+      : `https://storage.test/${project.slug}/${currentVersion.id}.ecproj`);
 
   const assetBytes = opts.assets ?? {};
   const projectBytes = opts.projectBytes ?? defaultFakeProjectBytes;
@@ -166,9 +170,9 @@ export function createFakeEditorSessionClient(
   const client: EditorSessionClient = {
     async getManifest(projectId: string): Promise<{
       project: { id: string; slug: string; name: string };
-      currentVersion: VersionRef;
+      currentVersion: VersionRef | null;
       assets: ManifestAssetInfo[];
-      projectFileUrl: string;
+      projectFileUrl: string | null;
     }> {
       calls.getManifest.push(projectId);
       return {
@@ -199,7 +203,7 @@ export function createFakeEditorSessionClient(
 
     async uploadVersion(
       projectId: string,
-      input: { bytes: Uint8Array; baseVersionId: string; sha256: string; label?: string },
+      input: { bytes: Uint8Array; baseVersionId: string | null; sha256: string; label?: string },
     ): Promise<UploadVersionResult> {
       const index = calls.uploads.length;
       calls.uploads.push({ projectId, input });

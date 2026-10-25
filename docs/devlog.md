@@ -164,7 +164,7 @@ subscription, live engine) require a live environment this box cannot provide
 - ✅ Deploy assets: `dc191c6` W1-L compose stack, TLS reverse proxy,
   backup/restore/deploy scripts; `fc6fac2` W1-K web shell + SSE helper;
   `74ae09e` W1-T UI kit; `00cfbc2`+`89a050d` W1-M CI (workflows parked in
-  `/home/z/my-project/ci-staging` — PAT scope, see worklog).
+  `<repo-root>/ci-staging` — PAT scope, see worklog).
 
 **Honest caveats:** "passes on staging with a real Stripe test-mode subscription"
 (§19 Phase 1 exit) is **not demonstrable from this box** — no live Postgres/

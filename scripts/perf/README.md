@@ -20,7 +20,7 @@ production-build claims.
 ## Running a round (one shell invocation each)
 
 ```sh
-cd /home/z/my-project
+cd <repo-root>
 scripts/perf/boot-and-measure.sh api       # gateway only  → api-latency.mjs
 scripts/perf/boot-and-measure.sh editor    # gateway + web → editor-ready.mjs
 scripts/perf/boot-and-measure.sh apply     # gateway + web → apply-timing.mjs

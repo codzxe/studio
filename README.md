@@ -69,7 +69,7 @@ rest of the dev loop: **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**.
 **Databases.** The control plane is Drizzle + **Postgres** in
 staging/production. Local dev additionally has a **SQLite dev twin** (an
 addition beyond the build plan, which assumed Postgres):
-`DATABASE_URL="file:/home/z/my-project/.local/<name>.db"` opens a throwaway
+`DATABASE_URL="file:./.local/<name>.db"` opens a throwaway
 better-sqlite3 database over a mirrored schema — same tables and column
 names, integer-millisecond timestamps. Dev SQLite files are throwaway (delete
 the file to rebuild; no migrations). Twin-schema and dialect rules for

@@ -139,7 +139,7 @@ Evidence:
   (and MOCK_MODEL is rejected when APP_ENV=production, packages/config
   src/env.ts:98-108) every real chat run fails.
 - No provider SDK: gateway package.json deps are hono/better-auth/stripe/
-  aws-sdk/zod only; repo-wide grep for litellm/openai/anthropic/z-ai SDK usage
+  aws-sdk/zod only; repo-wide grep for litellm/openai/anthropic/provider-SDK usage
   finds only comments, env plumbing and an EDIT-ME infra template
   (infra/litellm/config.yaml: studio-fast=gpt-4o-mini, studio-smart=gpt-4o).
 - The chat route itself is clean and provider-agnostic: create run -> balance

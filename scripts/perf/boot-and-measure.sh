@@ -26,7 +26,7 @@ set -euo pipefail
 
 # Box toolchain (worklog wave-2 law): corepack is broken on this box — plain
 # pnpm 9.15.9 from ~/.npm-global, exactly like scripts/e2e-run.sh.
-export PATH="/home/z/.npm-global/bin:/home/z/.cargo/bin:$PATH"
+export PATH="$HOME/.npm-global/bin:$HOME/.cargo/bin:$PATH"
 
 MODE="${1:-}"
 case "$MODE" in
@@ -37,7 +37,7 @@ case "$MODE" in
     ;;
 esac
 
-ROOT="/home/z/my-project"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DB_FILE="$ROOT/.local/e2e.db"
 LOG_DIR="$ROOT/.local"
 GW_LOG="/tmp/perf-gw.log"
