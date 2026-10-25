@@ -74,7 +74,15 @@ function validateOptions(
   if (baseVersion !== null) {
     parseVersionRef(baseVersion, "baseVersion");
   }
-  const defaultSaveName = o.defaultSaveName ?? "project.ecproj";
+  if (
+    opts.defaultSaveName !== undefined &&
+    (typeof opts.defaultSaveName !== "string" || opts.defaultSaveName.length === 0)
+  ) {
+    throw new EditorSessionError(
+      "bad-args",
+      "createAutosaveController: `defaultSaveName` must be a non-empty string",
+    );
+  }
   const intervalMs = opts.intervalMs ?? DEFAULT_AUTOSAVE_INTERVAL_MS;
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
     throw new EditorSessionError(
@@ -104,6 +112,8 @@ export function createAutosaveController(
 ): AutosaveController {
   const o = validateOptions(opts);
   const hooks: AutosaveHooks = o.hooks ?? {};
+  /** File-table name for the FIRST save of a fresh project (no session path). */
+  const defaultSaveName = o.defaultSaveName ?? "project.ecproj";
 
   let disposed = false;
   /** 409 park — terminal: only a new controller (reload) recovers. */

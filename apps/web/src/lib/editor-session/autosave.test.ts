@@ -204,6 +204,41 @@ describe("createAutosaveController", () => {
     expect(vi.getTimerCount()).toBe(1); // only the next cadence timer is pending
   });
 
+  it("a fresh project (no version) saves its FIRST version with baseVersionId null, then the chain advances", async () => {
+    // Start-from-scratch: the manifest carries no currentVersion (the load
+    // boots the editor's own default project), the autosave chain head starts
+    // null, and the first upload is a ROOT upload (baseVersionId null, W3-G3).
+    const h = await openSession({ manifest: { currentVersion: null } });
+    vi.useFakeTimers();
+    const controller = createAutosaveController({
+      bridge: h.bridge,
+      client: h.fakeClient.client,
+      projectId: PROJECT_ID,
+      baseVersion: null,
+      defaultSaveName: "fresh-project.ecproj",
+      hooks: h.hooksObj,
+    });
+    active = { controller };
+    await edit(h, "First Edit");
+    const first = await controller.saveNow("manual");
+    await pump();
+    expect(first.saved).toBe(true);
+    expect(h.fakeClient.calls.uploads).toHaveLength(1);
+    expect(h.fakeClient.calls.uploads[0]?.input.baseVersionId).toBeNull();
+    // the fake saved under the default name (no session path existed yet)
+    expect(h.fake.state.fileTable.map((f) => f.path)).toContain("/fresh-project.ecproj");
+    expect(controller.currentVersion()?.id).toBe(h.hooks.saved[0]?.id);
+
+    // The SECOND save chains from the first version's id (head advanced).
+    await edit(h, "Second Edit");
+    const second = await controller.saveNow("manual");
+    await pump();
+    expect(second.saved).toBe(true);
+    expect(h.fakeClient.calls.uploads).toHaveLength(2);
+    expect(h.fakeClient.calls.uploads[1]?.input.baseVersionId).toBe(h.hooks.saved[0]?.id);
+    controller.dispose();
+  });
+
   it("saveNow on a clean editor never uploads", async () => {
     const h = await openSession();
     const controller = makeController(h);

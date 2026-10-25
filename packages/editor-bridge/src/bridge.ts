@@ -510,10 +510,17 @@ export function attachEditorBridge(
         );
       },
 
-      execute<T = unknown>(command: string, params?: unknown): Promise<T> {
+      execute<T = unknown>(
+        command: string,
+        params?: unknown,
+        opts?: { readonly timeoutMs?: number },
+      ): Promise<T> {
+        // opts.timeoutMs widens ONLY this call's budget (heavy first commands
+        // on a cold engine — file.open — can legitimately outrun the default).
         return call(
           `execute ${command}`,
           async (ec) => (await ec.execute(command, params ?? {})) as T,
+          opts?.timeoutMs ?? callTimeoutMs,
         );
       },
 

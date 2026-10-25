@@ -130,6 +130,13 @@ export interface LoadProjectSessionOptions {
   assetTimeoutMs?: number;
   /** Project-file download timeout in ms (default 60 000). */
   projectFileTimeoutMs?: number;
+  /**
+   * `file.open` execute budget in ms (default 60 000). The open is the FIRST
+   * heavy command after boot (parse + replace project + restore view) and on
+   * a cold, software-rendered engine can outrun the bridge's generic 15 s
+   * call timeout while the engine is perfectly healthy.
+   */
+  openTimeoutMs?: number;
 }
 
 export interface CreateAutosaveControllerOptions {

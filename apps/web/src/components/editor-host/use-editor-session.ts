@@ -204,6 +204,7 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
       patchState,
       payload.manifest.currentVersion,
       payload.manifest.project.id,
+      payload.manifest.project.slug,
       session,
     ],
   );

@@ -93,7 +93,10 @@ export function attachFakeBridge(fake: FakeEditor, opts: FakeBridgeOptions = {})
     };
   };
 
-  async function call<T>(label: string, run: () => Promise<T> | T): Promise<T> {
+  async function call<T>(label: string, run: () => Promise<T> | T, timeoutMs?: number): Promise<T> {
+    // The fake answers instantly — `timeoutMs` is accepted for signature
+    // parity with the real bridge and deliberately ignored (nothing to wait on).
+    void timeoutMs;
     if (disposed) {
       throw new BridgeError("EDITOR_DISCONNECTED", `${label}: bridge is disposed`, false);
     }
@@ -144,10 +147,17 @@ export function attachFakeBridge(fake: FakeEditor, opts: FakeBridgeOptions = {})
       return call(`query ${command}`, async () => (await fake.execute(command, params ?? {})) as T);
     },
 
-    execute<T = unknown>(command: string, params?: unknown): Promise<T> {
+    execute<T = unknown>(
+      command: string,
+      params?: unknown,
+      opts?: { readonly timeoutMs?: number },
+    ): Promise<T> {
+      // The fake answers instantly; opts.timeoutMs is accepted for signature
+      // parity with the real bridge (and honored where call() supports it).
       return call(
         `execute ${command}`,
         async () => (await fake.execute(command, params ?? {})) as T,
+        opts?.timeoutMs,
       );
     },
 

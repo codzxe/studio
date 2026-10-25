@@ -84,9 +84,7 @@ export function createApiSession(options: {
       return {
         project: { ...payload.manifest.project },
         currentVersion:
-          payload.manifest.currentVersion === null
-            ? null
-            : { ...payload.manifest.currentVersion },
+          payload.manifest.currentVersion === null ? null : { ...payload.manifest.currentVersion },
         assets: payload.manifest.assets.map((asset) => ({ ...asset })),
         projectFileUrl: payload.manifest.projectFileUrl,
       };

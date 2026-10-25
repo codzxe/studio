@@ -462,6 +462,18 @@ export interface EditorBridge {
   /** Journaled engine commands (undoable edits): `edit.undo`, `edit.redo`, `layer.newSolid`… */
   execute<T = unknown>(command: string, params?: unknown): Promise<T>;
   /**
+   * Per-call overrides for heavy first commands: `file.open` on a cold,
+   * software-rendered engine (parse + replace project + restore view) can
+   * exceed the default 15 s budget while the engine is perfectly healthy.
+   * `timeoutMs` widens ONLY this call's budget (the promise still resolves
+   * as soon as the engine answers).
+   */
+  execute<T = unknown>(
+    command: string,
+    params: unknown | undefined,
+    opts: { readonly timeoutMs?: number },
+  ): Promise<T>;
+  /**
    * Low-level passthrough for any control method (`ui.click`, `ui.key`,
    * `ui.playback`, `ui.menu.invoke`, `render.frame`, `engine.execute`, …).
    * Results are not validated; prefer the typed methods.

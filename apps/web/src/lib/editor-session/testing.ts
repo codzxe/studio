@@ -124,12 +124,14 @@ export function createFakeEditorSessionClient(
     name: manifestOpts.project?.name ?? "Test Project",
   };
   const currentVersion: VersionRef | null =
-    manifestOpts.currentVersion === null ? null : (manifestOpts.currentVersion ?? {
-      id: "ver_base",
-      label: null,
-      sha256: ZERO_SHA,
-      sizeBytes: 4096,
-    });
+    manifestOpts.currentVersion === null
+      ? null
+      : (manifestOpts.currentVersion ?? {
+          id: "ver_base",
+          label: null,
+          sha256: ZERO_SHA,
+          sizeBytes: 4096,
+        });
   const assets: ManifestAssetInfo[] =
     manifestOpts.assets !== undefined
       ? [...manifestOpts.assets]

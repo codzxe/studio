@@ -116,9 +116,32 @@ describe("session-client — getManifest", () => {
       slug: "test-project",
       name: "Test Project",
     });
-    expect(manifest.currentVersion.id).toBe("ver_base");
+    expect(manifest.currentVersion?.id).toBe("ver_base");
     expect(manifest.assets[0]?.virtualPath).toBe("/assets/ast_logo/logo.png");
     expect(manifest.projectFileUrl).toBe("https://storage.test/signed/project.ecproj");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("serves a fresh (no-version) payload through the same seam — start-from-scratch", async () => {
+    const { calls, fetch } = recordingFetch(() => Promise.resolve(okData(null)));
+    const session = createApiSession({
+      payload: {
+        ...PAYLOAD,
+        manifest: {
+          ...PAYLOAD.manifest,
+          currentVersion: null,
+          projectFileUrl: null,
+          assets: [],
+        },
+      },
+      fetch,
+    });
+    const manifest = await (session.client.getManifest("prj_test") as ReturnType<
+      EditorSessionClient["getManifest"]
+    >);
+    expect(manifest.currentVersion).toBeNull();
+    expect(manifest.projectFileUrl).toBeNull();
+    expect(manifest.assets).toEqual([]);
     expect(calls).toHaveLength(0);
   });
 });

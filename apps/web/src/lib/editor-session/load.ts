@@ -42,6 +42,15 @@ import {
 const DEFAULT_ASSET_CONCURRENCY = 3;
 const DEFAULT_ASSET_TIMEOUT_MS = 30_000;
 const DEFAULT_PROJECT_FILE_TIMEOUT_MS = 60_000;
+/**
+ * `file.open` gets its own (larger) budget, default 60 s: it is the FIRST
+ * heavy command after boot — parse + replace the whole project + restore
+ * the saved view — and on a cold, software-rendered engine it can
+ * legitimately outrun the bridge's generic 15 s call timeout (the live
+ * "file.open failed: execute file.open: timed out after 15000 ms" report;
+ * the engine was healthy, just busy).
+ */
+const DEFAULT_PROJECT_OPEN_TIMEOUT_MS = 60_000;
 
 function requireFunction(value: unknown, label: string): void {
   if (typeof value !== "function") {
@@ -55,7 +64,10 @@ function requireFunction(value: unknown, label: string): void {
 function validateOptions(
   opts: LoadProjectSessionOptions,
 ): Required<
-  Pick<LoadProjectSessionOptions, "assetConcurrency" | "assetTimeoutMs" | "projectFileTimeoutMs">
+  Pick<
+    LoadProjectSessionOptions,
+    "assetConcurrency" | "assetTimeoutMs" | "projectFileTimeoutMs" | "openTimeoutMs"
+  >
 > &
   LoadProjectSessionOptions {
   const { bridge, client, projectId } = opts ?? {};
@@ -100,7 +112,14 @@ function validateOptions(
       "loadProjectSession: `projectFileTimeoutMs` must be a positive number",
     );
   }
-  return { ...opts, assetConcurrency, assetTimeoutMs, projectFileTimeoutMs };
+  const openTimeoutMs = opts.openTimeoutMs ?? DEFAULT_PROJECT_OPEN_TIMEOUT_MS;
+  if (!Number.isFinite(openTimeoutMs) || openTimeoutMs <= 0) {
+    throw new EditorSessionError(
+      "bad-args",
+      "loadProjectSession: `openTimeoutMs` must be a positive number",
+    );
+  }
+  return { ...opts, assetConcurrency, assetTimeoutMs, projectFileTimeoutMs, openTimeoutMs };
 }
 
 /** Register one manifest asset into the editor's file table; resolves with the assigned path or rejects. */
@@ -163,11 +182,9 @@ export async function loadProjectSession(opts: LoadProjectSessionOptions): Promi
   // The first save creates v1 through the root-upload path (W3-G3).
   if (manifest.currentVersion === null) {
     const summary = await readProjectSummary(bridge).catch((err: unknown) => {
-      throw new EditorSessionError(
-        "open-failed",
-        `the project did not open: ${messageOf(err)}`,
-        { cause: err },
-      );
+      throw new EditorSessionError("open-failed", `the project did not open: ${messageOf(err)}`, {
+        cause: err,
+      });
     });
     return {
       openedPath: null,
@@ -204,8 +221,11 @@ export async function loadProjectSession(opts: LoadProjectSessionOptions): Promi
   const openedPath = await bridge.addFile(projectBlob, fileName);
 
   try {
-    // real editor: open the table file (restores the saved view with it)
-    await bridge.execute("file.open", { path: openedPath });
+    // real editor: open the table file (restores the saved view with it).
+    // openTimeoutMs (default 60 s): the FIRST heavy command on a cold,
+    // software-rendered engine legitimately outruns the bridge's generic
+    // 15 s call budget — this call is exactly the live-timeout report.
+    await bridge.execute("file.open", { path: openedPath }, { timeoutMs: o.openTimeoutMs });
   } catch (err) {
     if (!isUnknownCommandError(err)) {
       throw new EditorSessionError("open-failed", `file.open failed: ${messageOf(err)}`, {
