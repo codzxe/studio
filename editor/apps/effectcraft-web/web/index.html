@@ -46,6 +46,20 @@
     import init, * as ec from "./effectcraft_web.js";
     const t0 = performance.now();
     window.effectcraftLoad = {};
+    // Poison-pill hygiene (M3 tail 6): older local builds wrote a PERMANENT
+    // localStorage marker on device loss (`studio_force_webgl`), trapping every
+    // later boot in WebGL2 even after the machine's driver was fixed — and once
+    // WebGL2 itself failed, the boot died with "Neither WebGPU nor WebGL is
+    // available". THIS build's breaker is sessionStorage-only by design (a
+    // one-off crash must never become a machine-wide verdict; see
+    // apps/web/src/lib/editor-gpu-fallback.ts) and never reads that legacy
+    // key — remove it so a stale flag from an older build cannot leak back in.
+    try {
+      localStorage.removeItem("studio_force_webgl");
+      sessionStorage.removeItem("studio_force_webgl");
+    } catch {
+      // Storage blocked: nothing to wipe.
+    }
     // The agent / test API: the desktop control channel as promises (docs/web.md).
     window.effectcraft = {
       request: (method, params) => ec.request(method, params ?? {}),
@@ -130,6 +144,29 @@
         gpu.__studioHighPerformance = true;
       }
     }
+    // Windows + Dawn/D3D12: the engine boots a WebGPU device on the page PLUS
+    // one per frame/job worker (app.rs defaults to 2 workers). Three concurrent
+    // devices on one adapter trip a Chromium-on-Windows concurrency bug —
+    // "GPU device lost (Unknown): A valid external Instance reference no
+    // longer exists", one worker's instance handle invalidating the parent's.
+    // macOS and Linux are unaffected. Boot Windows with NO GPU workers (the
+    // main device stays WebGPU on the discrete card — no WebGL2 downgrade)
+    // unless the URL explicitly opts back in with `?workers=2`.
+    const onWindows =
+      navigator.platform === "Win32" || /Windows/.test(navigator.userAgent);
+    if (
+      !gpuFallback &&
+      onWindows &&
+      !gpuParams.has("noworkers") &&
+      !gpuParams.has("nogpuworkers") &&
+      !gpuParams.has("workers")
+    ) {
+      // Same normalization as the fallback above: the engine reads its OWN
+      // URL (query_flag), and any reload keeps the safer boot. No `gpu`
+      // change — WebGPU itself is fine for the single presentation device.
+      gpuParams.set("noworkers", "");
+      history.replaceState(null, "", `?${gpuParams}${location.hash}`);
+    }
     // Ask for the high-performance GPU on every WebGPU adapter request that does not
     // name a preference: wgpu/eframe send none by default, so hybrid-graphics laptops
     // (an iGPU plus a discrete card) boot the editor on the power-saving iGPU. The
@@ -157,12 +194,37 @@
       //   engine download. On machines with a GPU this almost always means the
       //   browser's hardware acceleration is off.
       let webgpu = false;
+      let adapter = null;
       try {
-        webgpu = !!(await gpu?.requestAdapter?.({ powerPreference: "high-performance" }));
+        adapter = (await gpu?.requestAdapter?.({ powerPreference: "high-performance" })) ?? null;
       } catch {
-        webgpu = false;
+        adapter = null;
       }
+      webgpu = adapter != null;
       const gpuInfo = { webgpu, webgl2: false, renderer: "", software: false, fallback: gpuFallback };
+      if (adapter) {
+        // Hybrid-graphics visibility: record WHICH adapter the engine got
+        // (`adapter.info` on Chromium 128+, the async requestAdapterInfo on
+        // older builds) so a laptop booting the power-saving iGPU instead of
+        // the discrete card is diagnosable from `effectcraftLoad.gpu.adapter`
+        // without opening chrome://gpu.
+        try {
+          const info =
+            adapter.info ?? (typeof adapter.requestAdapterInfo === "function" ? await adapter.requestAdapterInfo() : null);
+          if (info) {
+            gpuInfo.adapter = {
+              vendor: String(info.vendor ?? ""),
+              architecture: String(info.architecture ?? ""),
+              device: String(info.device ?? ""),
+              description: String(info.description ?? ""),
+            };
+            const label = gpuInfo.adapter.description || gpuInfo.adapter.architecture || gpuInfo.adapter.vendor;
+            if (label) console.info(`Studio engine GPU: ${label}`);
+          }
+        } catch {
+          // Adapter info is optional metadata — never a boot blocker.
+        }
+      }
       if (!webgpu) {
         const canvas = document.getElementById("effectcraft_canvas");
         const gl = canvas && canvas.getContext("webgl2", { antialias: false, powerPreference: "high-performance" });

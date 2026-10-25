@@ -46,10 +46,19 @@ project instead of the last session), `?home` (show the start screen), `?storage
 `?storage=memory` (force a storage backend), `?noworkers` (render, analyse and draw viewer
 frames on the page's thread), `?frameworkers=N` (frame workers, default 2; 0 = viewer frames on
 the page's thread), `?nogpuworkers` (frame and job workers render on their CPU, without a WebGPU
-device of their own), `?gpu=webgl2` (GPU compatibility mode: boot on WebGL2 instead of WebGPU —
+device of their own), `?workers=2` (opt back into the engine's default workers — set by the page's
+Windows pre-flight: on Windows/D3D12 the boot normalizes `noworkers` into the URL automatically,
+because the page device plus one device per frame/job worker trips a Chromium/Dawn concurrency bug
+("A valid external Instance reference no longer exists"); macOS/Linux keep the default workers),
+`?gpu=webgl2` (GPU compatibility mode: boot on WebGL2 instead of WebGPU —
 also armed by the `studio:editor-gpu-fallback` sessionStorage marker, set by the Studio host's
 device-loss recovery and by this page's own Reload button, and normalized to add
-`nogpuworkers`), `?nosw` (don't register the service worker).
+`nogpuworkers`), `?nosw` (don't register the service worker). Boot also wipes the legacy
+`studio_force_webgl` key from both storages (older local builds wrote it permanently on device
+loss, trapping later boots in WebGL2 even after the machine's driver was fixed), and records the
+WebGPU adapter it got (`adapter.info` / `requestAdapterInfo`) in `effectcraftLoad.gpu.adapter` —
+on a hybrid-graphics laptop, check there (or the console's "Studio engine GPU:" line) which GPU
+the engine actually picked; the boot always asks for `powerPreference: "high-performance"`.
 
 ## How the desktop pieces map to the browser
 
