@@ -13,9 +13,9 @@ const sql = postgres(
   `postgres://postgres.${SUPA_REF}:${SUPA_DB_PASS}@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres`,
   { max: 1, connect_timeout: 10 },
 );
-const n = await sql`delete from "session" where "user_id" in (select id from "user" where email like 'smoke-%@test.local' or email like 'bundle-%@test.local' or email like 'route-%@test.local' or email = 'live-final@test.local')`;
+const n = await sql`delete from "session" where "user_id" in (select id from "user" where email like 'smoke-%@test.local' or email like 'bundle-%@test.local' or email like 'route-%@test.local' or email = 'live-final@test.local' or email like '%@test.local')`;
 console.log("sessions deleted:", n.count);
-const n2 = await sql`delete from "account" where "user_id" in (select id from "user" where email like 'smoke-%@test.local' or email like 'bundle-%@test.local' or email like 'route-%@test.local' or email = 'live-final@test.local')`;
+const n2 = await sql`delete from "account" where "user_id" in (select id from "user" where email like 'smoke-%@test.local' or email like 'bundle-%@test.local' or email like 'route-%@test.local' or email = 'live-final@test.local' or email like '%@test.local')`;
 console.log("accounts deleted:", n2.count);
 const n3 = await sql`delete from "user" where email like 'smoke-%@test.local' or email like 'bundle-%@test.local' or email like 'route-%@test.local' or email = 'live-final@test.local'`;
 console.log("users deleted:", n3.count);
