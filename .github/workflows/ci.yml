@@ -22,9 +22,22 @@ name: CI
 on:
   push:
     branches: [main]
+    # Docs-only pushes (worklog rounds, README, ADRs) don't touch code —
+    # skip the 7-job run entirely. Every push used to bill ~34-85 job-minutes
+    # (private-repo Actions minutes), which burned the free 2000/mo allowance
+    # in four days. Code paths still run everything.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".well-known/**"
   pull_request:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # Weekly e2e window (Monday 03:00 UTC) — see the e2e job `if:` below.
+    - cron: "0 3 * * 1"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -242,6 +255,13 @@ jobs:
   e2e:
     name: "e2e: playwright chromium (full stack boot)"
     runs-on: ubuntu-latest
+    # MANUAL + WEEKLY ONLY (2026-10-26, Actions-spend triage): this job is
+    # continue-on-error (never gated the run), has never gone green on a GH
+    # runner (visual baselines are runner-image-dependent, README §5), and at
+    # 22-45 billed minutes it was ~2/3 of EVERY push's CI bill. Runs now only
+    # via workflow_dispatch (Actions tab → CI → Run workflow) or the weekly
+    # Monday 03:00 UTC schedule — while pushes/PRs keep the 6 blocking gates.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     timeout-minutes: 45 # 20→45 (2026-10-26, first real e2e run on 07fa9a5): everything before the suite is cheap — rust-cache (workspaces: editor) collapses the fixture build to ~10s, the GH runner image ships chromium (browsers step 24s), pnpm store cache makes install 4s — but the playwright step itself burned 18m44s (cold `next dev` compiles + retries:2 on runner-visual diffs, README §5: baselines are runner-image-dependent) and got CANCELLED at 20m. A cancelled job taints the whole RUN's conclusion (continue-on-error covers failure, not cancellation), so the budget must let the suite finish so it can fail/succeed on its own.
     # OWED: first green run. The boot recipe (apps/web/e2e/README.md) has never
     # been exercised on a GH runner: visual baselines are runner-image-dependent

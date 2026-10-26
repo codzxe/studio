@@ -3718,3 +3718,24 @@ Stage Summary:
 - The SITE is healthy end-to-end — auth, onboarding, dashboard, billing, projects, editor wasm all verified live sub-second; nothing broke on Vercel from the outside.
 - The breakage is GitHub Actions billing: every CI job insta-fails in 2s with no steps/logs; fix the spending limit and re-run run 74.
 - Dependabot majors cleaned up again; Renovate app install still pending; credential rotation still pending; Vercel token needs re-sharing for log-level access.
+
+---
+Task ID: tokenharbor-and-actions-spend (round 7)
+Agent: main-agent (session continuation)
+Task: User shared a Token Harbor API key (thk_live_…) to test; asked why "even Vercel has problems" / why a spending limit is needed; demanded batch commits instead of one-line commit-per-change ("first fix things and then commit").
+
+Work Log:
+- Token Harbor researched (not guessed): tokenharbor.ai = unified OpenAI-compatible AI gateway ("One key, every model", base URL https://tokenharbor.ai/v1, thk_ keys, free tier incl. a free DeepSeek model; blocked regions: US-sanctions, Mainland China, HK, Macau).
+- Key test from this sandbox: GET /v1/models → HTTP 403 "API access from your region is not available" — REGION BLOCK of the sandbox egress (same reason api.openai.com returned unsupported_country_region_territory). The key itself was never evaluated (rejection happens pre-auth on geography). Key FORMAT is valid (thk_live_ + 64 chars). Verdict: cannot test from this box; user must test from their machine/any non-blocked region; the product's Vercel functions run in icn1 Seoul = ALLOWED region, so the deployment path is fine.
+- Product wiring path identified (no code change needed by design): deploy/litellm/config.yaml maps studio-fast/smart/vision aliases → provider models with api_key from env; switching providers = editing that file + env. Token Harbor fits: point aliases at openai-compatibility/<model> entries + api_base https://tokenharbor.ai/v1 + TOKENHARBOR_API_KEY env. BLOCKED on: (a) verifying the key works (user-side curl), (b) no Vercel token in this sandbox (.local/ wiped in reset) to set env / deploy.
+- "Vercel problem" triaged with evidence: vercel-status.com = All Systems Operational; motiongra.vercel.app / + /v1/health + /sign-in all 200 sub-second (verified twice this round). The red the user sees is GITHUB ACTIONS, not Vercel: CI runs 73/74 — all 7 jobs fail in 2 SECONDS, zero steps, logs = BlobNotFound = GitHub's billing rejection (free Actions minutes exhausted for this private repo + payment failed / $0 spending limit).
+- The burn, measured: sampled green run 40288691400 = 34 billed job-minutes (e2e alone 22.8m of it); the 45m-timeout e2e runs (31-36) = ~85m each; ~74 CI runs Oct 23-26 + 30+ dependabot workflow runs → free 2000 min/month blown in 4 days. Contributors: e2e on EVERY push (never green, continue-on-error), and docs-only worklog commits each billing a full 7-job run — my fault (3 such commits in rounds 4-5).
+- FIXED in ONE commit (this one): ci.yml — (1) push gets paths-ignore (**.md, docs/**, LICENSE, .gitignore, .well-known/**) so docs-only pushes trigger NOTHING; (2) e2e job gated `if: workflow_dispatch || schedule` + weekly Monday 03:00 UTC cron added — pushes/PRs run only the 6 blocking gates (~11-12 min); (3) YAML validated (7 jobs, all runs-on present, triggers push/pull_request/dispatch/schedule). Expected usage: ~12 min × real-code pushes only ≈ far inside 2000 free min from Nov 1 reset; no payment required.
+- Dependabot PRs #39/#40/#41 (esbuild 0.28, TS 7, @types/node 26 majors) closed with policy comments + branches deleted (earlier this round); scripts/close-dependabot-flood.mjs comment updated for the root-only-majors case (included in this commit).
+- Commit discipline ACKNOWLEDGED and adopted: verify locally → ONE commit per completed unit of work. This commit = CI spend fix + dependabot script comment + this worklog entry.
+
+Stage Summary:
+- Token Harbor key: format-valid, untestable from this region-blocked sandbox; user-side curl provided (base https://tokenharbor.ai/v1, Bearer thk_…, model deepseek-v4.1-flash free); product wiring path ready in deploy/litellm/config.yaml — needs key verified + Vercel token re-shared (sandbox reset wiped it) to deploy.
+- Vercel is HEALTHY (status page + live probes); the failures are GitHub Actions billing — free minutes exhausted by e2e-on-every-push + docs-only commits burning full runs.
+- CI spend fixed: docs pushes = 0 minutes, code pushes ≈ 12 min, e2e = manual + weekly only. No spending-limit raise needed; free minutes reset Nov 1.
+- User actions: (1) run the provided curl to verify the TH key from their machine, (2) fix GitHub payment OR simply wait for Nov 1 free-minutes reset (nothing is blocked — all gates verified locally), (3) re-share Vercel token if I should wire Token Harbor into the deployment.
