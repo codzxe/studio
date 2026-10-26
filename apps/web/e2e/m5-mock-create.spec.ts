@@ -161,22 +161,17 @@ test.describe("M5 mock-create — zero-API-key creation: fresh project → chat 
 
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
-    await expect(plan).toHaveAttribute("data-status", "proposed");
     await expect(plan).toHaveAttribute("data-intent", "create");
-    // Medium risk (server-recomputed) needs NO confirm checkbox — one click.
-    await expect(plan.getByTestId("plan-apply")).toBeEnabled({
-      timeout: RUN_SETTLE_TIMEOUT_MS,
-    });
-
-    // ONE click Apply: the client allowlist passes (comp.new + layer.newText
-    // are curated), the real engine executes the ATOMIC batch, the autosave
-    // chain saveAs-es the never-saved project (baseVersionId null → v1) and
-    // the applyRun report lands.
-    await plan.getByTestId("plan-apply").click();
-
+    // ROUND-10 v2: no click — the seeded user has no settings row (schema
+    // default ON) and the mock plan is auto-eligible, so the controller's
+    // AUTO-DRIVE executes it at run.completed: the client allowlist passes
+    // (comp.new + layer.newText are curated), the real engine executes the
+    // ATOMIC batch, the autosave chain saveAs-es the never-saved project
+    // (baseVersionId null → v1) and the applyRun report lands.
     await expect(plan).toHaveAttribute("data-status", "applied", {
       timeout: APPLY_SETTLE_TIMEOUT_MS,
     });
+    await expect(plan.getByTestId("plan-apply")).toHaveCount(0);
     await expect(page.getByTestId("plan-applied")).toContainText(/· one undo step\./);
 
     // SERVER proof: exactly one version upload answered 201 — the project's

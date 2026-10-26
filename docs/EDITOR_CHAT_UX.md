@@ -426,13 +426,24 @@ plan approved
 
 ### 7.3 Auto-apply
 
-Off by default. When enabled:
+Round-10 v2: **on by default** — the agent does the work; the user opts out in
+Settings → Models ("Always ask before applying"). When enabled:
 
-- Only `low` risk, reversible edits auto-apply: text content, color, opacity,
-  transform, keyframes on existing properties.
-- Never auto-apply: delete, replace footage, render/export, add many effects,
-  destructive layer operations, credit spend above a threshold.
-- Every auto-applied run still shows a card with Undo.
+- `create`, `edit`, `style` and `animate` intents auto-apply: creating
+  compositions and layers, text content, color, opacity, transform, keyframes,
+  effects and presets — the additive work a "make me…" request expects.
+- Low AND medium (reversible "many layers/effects" work) auto-apply; the
+  compiled batch must consist entirely of reversible commands (no delete-ish,
+  no `effect.remove`, no history, no render/export) and fit the size/credit
+  ceilings (≤ 60 compiled steps, ≤ 16 credits).
+- Never auto-apply: high risk (delete, replace footage, render/export),
+  plans that ask for approval, ambiguous layer-name references (those keep the
+  §6.2 card + resolve flow), anything above the ceilings.
+- Runs that only made write-tool proposals (the model skipped
+  `studio.plan_edit`) still end with ONE merged plan — the runner compiles
+  the carriers into a single plan event, so nothing is orphaned.
+- Every auto-applied run still shows a card with Undo (one apply = one undo
+  step = one saved version).
 - The setting is per user, stored server-side, with a clear explanation.
 
 ### 7.4 Versions

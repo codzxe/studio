@@ -808,8 +808,8 @@ export const userSettings = pgTable("user_settings", {
   userId: text("user_id")
     .primaryKey()
     .references((): AnyPgColumn => user.id, { onDelete: "cascade" }),
-  /** M5-O seam: OFF by default — agent edits stay propose-only until opt-in. */
-  autoApplyEnabled: boolean("auto_apply_enabled").notNull().default(false),
+  /** Round-10 v2: ON by default — the agent DOES the work; opt out in Settings. */
+  autoApplyEnabled: boolean("auto_apply_enabled").notNull().default(true),
   updatedAt: ts("updated_at")
     .notNull()
     .defaultNow()

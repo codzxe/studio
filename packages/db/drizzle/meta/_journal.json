@@ -50,6 +50,13 @@
       "when": 1792737649855,
       "tag": "0006_complex_eternals",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793021850326,
+      "tag": "0007_fresh_dreaming_celestial",
+      "breakpoints": true
     }
   ]
 }

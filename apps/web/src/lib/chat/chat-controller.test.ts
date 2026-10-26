@@ -18,9 +18,16 @@
 import { ApiError } from "@studio/api-client";
 import type { ApiClient, ChatStreamHandlers } from "@studio/api-client";
 import { fixtures } from "@studio/api-client/fixtures";
-import type { ChatRequest, ContextSelection, ModelId, StudioStreamEvent } from "@studio/contracts";
+import type {
+  ChatRequest,
+  ContextSelection,
+  EditPlan,
+  ModelId,
+  StudioStreamEvent,
+} from "@studio/contracts";
 import { describe, expect, it } from "vitest";
 
+import type { ApplicablePlan, ApplyController, ApplyOutcome } from "./apply";
 import { type ChatController, createChatController } from "./chat-controller";
 import type { ChatControllerClient, ChatSendInput, ChatStreamHandle } from "./types";
 
@@ -738,5 +745,185 @@ describe("createChatController — type seam", () => {
     // api-client's real chat.stream signature.
     const check: ChatControllerClient = {} as ApiClient;
     expect(typeof check).toBe("object");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ROUND-10 v2 — the AUTO-APPLY DRIVE: verdict "auto" ⇒ the controller itself
+// drives Apply at run.completed (no click), once per run, guarded.
+// ---------------------------------------------------------------------------
+
+describe("createChatController — auto-apply drive (round-10 v2)", () => {
+  const RUN = "run_auto_1";
+
+  const DEMO_PLAN: EditPlan = {
+    intent: "create",
+    summary: 'Add text layer "Headline"',
+    risk: "low",
+    requiresApproval: false,
+    affectedLayers: [] as Array<{ name: string; change: string }>,
+    estimatedCredits: 1.5,
+    steps: [
+      {
+        title: "Add the headline",
+        tool: "studio.create_text",
+        args: { text: "Hello", name: "Headline" },
+        batch: {
+          label: "Add the headline",
+          steps: [{ command: "create_text", params: { text: "Hello" } }],
+        },
+      },
+    ],
+  };
+
+  const DEMO_COMPILED = {
+    label: 'Agent: Add text layer "Headline"',
+    atomic: true as const,
+    steps: [{ command: "layer.newText", params: { text: "Hello", name: "Headline" } }],
+  };
+
+  /** A run script ending in run.completed; the plan event's verdict is a knob. */
+  const autoRunScript = (
+    autoApply: { mode: "auto" | "propose"; reason: string },
+    extra: { resolutionRequests?: Array<{ requestId: string; layerName: string }> } = {},
+  ): readonly StudioStreamEvent[] => [
+    { type: "run.started", runId: RUN, seq: 0, model: "studio-smart" },
+    { type: "message.delta", runId: RUN, seq: 1, delta: "Built it." },
+    {
+      type: "plan",
+      runId: RUN,
+      seq: 2,
+      plan: DEMO_PLAN,
+      compiledBatch: DEMO_COMPILED,
+      ...(extra.resolutionRequests === undefined
+        ? {}
+        : { resolutionRequests: extra.resolutionRequests }),
+      risk: "low",
+      estimatedCredits: 1.5,
+      autoApply,
+    } as StudioStreamEvent,
+    { type: "run.completed", runId: RUN, seq: 4 },
+  ];
+
+  /** The minimal recording engine; outcome defaults to a successful apply. */
+  function makeEngine(outcome?: ApplyOutcome): {
+    engine: ApplyController;
+    appliedWith: Array<ApplicablePlan>;
+  } {
+    const appliedWith: Array<ApplicablePlan> = [];
+    const ok: ApplyOutcome = outcome ?? { ok: true, versionId: "ver_auto_1", creditsCommitted: 1 };
+    const engine: ApplyController = {
+      apply: async (plan) => {
+        appliedWith.push(plan);
+        return ok;
+      },
+      reapply: async () => ok,
+      undo: async () => ({ ok: true, undone: true }),
+      retrySave: async () => ok,
+    };
+    return { engine, appliedWith };
+  }
+
+  function makeAutoController(
+    client: FakeChatClient,
+    engine: ApplyController,
+    errors: Array<{ code: string; message: string }> = [],
+  ): ChatController {
+    return createChatController({
+      ...OPTIONS,
+      client,
+      apply: engine,
+      onError: (error) => errors.push(error),
+    });
+  }
+
+  it("verdict auto + engine present ⇒ apply fires at run.completed, once, and the card folds to applied", async () => {
+    const client = new FakeChatClient([
+      { events: autoRunScript({ mode: "auto", reason: "eligible" }), dropAt: null },
+    ]);
+    const { engine, appliedWith } = makeEngine();
+    const controller = makeAutoController(client, engine);
+
+    send(controller, "Add a headline.");
+    await until(() => controller.getSnapshot().phase === "done");
+    // The engine was called exactly once, with the enriched plan's batch.
+    await until(() => appliedWith.length === 1);
+    expect(appliedWith[0]?.runId).toBe(RUN);
+    expect(appliedWith[0]?.compiledBatch.steps).toEqual(DEMO_COMPILED.steps);
+    // The card folds to the APPLIED state (the plan runtime settled).
+    await until(() => {
+      const runtime = controller.getSnapshot().messages[1]?.planRuntime;
+      return runtime?.outcome === "applied";
+    });
+    const runtime = controller.getSnapshot().messages[1]?.planRuntime;
+    expect(runtime?.versionId).toBe("ver_auto_1");
+    controller.dispose();
+  });
+
+  it("a duplicated run.completed (raw replay) still applies exactly ONCE", async () => {
+    const script = [
+      ...autoRunScript({ mode: "auto", reason: "eligible" }),
+      // The §8.4 loop may replay the terminal event after a reconnect; the
+      // fold dedupes by seq and the drive's once-per-run guard holds.
+      { type: "run.completed", runId: RUN, seq: 4 } as StudioStreamEvent,
+    ];
+    const client = new FakeChatClient([{ events: script, dropAt: null, raw: true }]);
+    const { engine, appliedWith } = makeEngine();
+    const controller = makeAutoController(client, engine);
+
+    send(controller, "Add a headline.");
+    await until(() => controller.getSnapshot().phase === "done");
+    await pump();
+    expect(appliedWith).toHaveLength(1);
+    controller.dispose();
+  });
+
+  it("no apply engine (read-only embed) ⇒ nothing fires, no crash, the card stays proposed", async () => {
+    const client = new FakeChatClient([
+      { events: autoRunScript({ mode: "auto", reason: "eligible" }), dropAt: null },
+    ]);
+    const controller = makeController(client);
+
+    send(controller, "Add a headline.");
+    await until(() => controller.getSnapshot().phase === "done");
+    await pump();
+    const runtime = controller.getSnapshot().messages[1]?.planRuntime;
+    expect(runtime?.outcome).toBe("idle");
+    controller.dispose();
+  });
+
+  it("unresolved layer-name requests ⇒ the drive stays OFF (ambiguity needs the user's pick)", async () => {
+    const client = new FakeChatClient([
+      {
+        events: autoRunScript(
+          { mode: "auto", reason: "eligible" },
+          { resolutionRequests: [{ requestId: "req_1", layerName: "Headline" }] },
+        ),
+        dropAt: null,
+      },
+    ]);
+    const { engine, appliedWith } = makeEngine();
+    const controller = makeAutoController(client, engine);
+
+    send(controller, "Add a headline.");
+    await until(() => controller.getSnapshot().phase === "done");
+    await pump();
+    expect(appliedWith).toHaveLength(0);
+    expect(controller.getSnapshot().messages[1]?.planRuntime?.outcome).toBe("idle");
+    controller.dispose();
+  });
+
+  it("verdict propose ⇒ nothing fires (manual Apply stays the path)", async () => {
+    const client = new FakeChatClient([
+      { events: autoRunScript({ mode: "propose", reason: "risk-too-high" }), dropAt: null },
+    ]);
+    const { engine, appliedWith } = makeEngine();
+    const controller = makeAutoController(client, engine);
+
+    send(controller, "Add a headline.");
+    await until(() => controller.getSnapshot().phase === "done");
+    await pump();
+    expect(appliedWith).toHaveLength(0);
+    controller.dispose();
   });
 });

@@ -681,7 +681,7 @@ export const userSettings = sqliteTable("user_settings", {
   userId: text("user_id")
     .primaryKey()
     .references((): AnySQLiteColumn => user.id, { onDelete: "cascade" }),
-  autoApplyEnabled: integer("auto_apply_enabled", { mode: "boolean" }).notNull().default(false),
+  autoApplyEnabled: integer("auto_apply_enabled", { mode: "boolean" }).notNull().default(true),
   updatedAt: ts("updated_at")
     .notNull()
     .default(sql`(unixepoch('subsec') * 1000)`)

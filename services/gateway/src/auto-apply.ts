@@ -1,22 +1,35 @@
 // @studio/gateway — the SERVER-SIDE AUTO-APPLY POLICY (BUILD_PLAN §M5 task 6,
-// EDITOR_CHAT_UX §7.3; BUILD_PLAN §9 lists auto-apply as the FIRST optional
-// scope cut — it ships OFF BY DEFAULT and per-user).
+// EDITOR_CHAT_UX §7.3; round-10 v2).
 //
-// v1 semantics — D-22 CANDIDATE RULING (recorded in the M5-O worklog block):
-// the verdict is UI GUIDANCE ONLY. The client NEVER executes a plan from the
-// plan event alone; `mode: "auto"` merely arms the plan card's default state
-// and Apply remains the user's explicit button press (a deliberate ruling per
-// BUILD_PLAN §M5.6 "off by default" + the high-trust UX: the setting flips the
-// card's default state, it never bypasses the click). This module DECIDES; it
-// never applies anything.
+// v2 semantics — ROUND-10 PRODUCT RULING (supersedes the D-22 "UI guidance
+// only" candidate ruling): when the verdict is `mode: "auto"`, the CLIENT
+// EXECUTES the plan automatically at run completion (resolve → one atomic
+// engine.batch → saveNow("agent-apply") → applyRun). The plan card folds to
+// its applied state with Undo as the one-click escape hatch (one apply = one
+// undo step = one version). The product owner ordered this directly: an
+// agent that only writes plans and changes nothing is useless. This module
+// still only DECIDES; it never applies anything — execution stays on the
+// client because the engine (wasm) lives in the browser.
+//
+// v2 envelope (what actually lands automatically vs. v1's tiny box):
+//   - `create` IS auto-applyable (additive: comps/layers/keyframes; the
+//     §6.2 ladder calls medium "many layers/effects" — that is normal work,
+//     not danger),
+//   - low AND medium risk pass (HIGH — delete, replace footage, render —
+//     still proposes; delete-ish ids can never be in an auto batch anyway),
+//   - `comp.new` joined the reversible command set,
+//   - ceilings raised to the size real motion-graphics work needs.
+// The hard safety wall is unchanged: every compiled command must be in the
+// REVERSIBLE subset — no delete/remove, no effect.remove, no edit.undo/redo,
+// no render/export — and the whole batch is one atomic undo step.
 //
 // PURITY: no IO, no clocks, no randomness — the decision is a pure function of
 // (plan, compiled result, user setting), so the entire decision matrix is
 // unit-testable without a database. The wiring (routes/chat.ts) reads the
 // per-user setting through the pinned M6-D seam
 // (`repos.settings.getUserAutoApply(userId): Promise<boolean>`, userSettings
-// table, autoApplyEnabled, default false) and attaches the verdict to the
-// `{type: "plan"}` SSE event (contracts PLAN_EVENT_SCHEMA.autoApply).
+// table, autoApplyEnabled) and attaches the verdict to the `{type: "plan"}`
+// SSE event (contracts PLAN_EVENT_SCHEMA.autoApply).
 //
 // SERVER VALUES ONLY: the rules are evaluated against the plan-compiler's
 // RECOMPUTED risk/estimatedCredits (plan-compiler.ts), never the model's
@@ -25,18 +38,18 @@
 //
 // Defense-in-depth — EVERY rule must hold for `mode: "auto"`, checked in this
 // order (the first failure is the returned reason):
-//   1. user setting enabled (default false)          → "setting-disabled"
-//   2. compiled.ok (a compiled batch exists)          → "compile-failed"
-//   3. server-recomputed risk === "low"              → "risk-not-low"
-//   4. !plan.requiresApproval                        → "approval-required"
-//   5. plan.intent ∈ AUTO_APPLYABLE_INTENTS          → "intent-not-auto-applyable"
-//      (edit | style | animate — create/organize are structural, render is a
-//      spend-heavy export, clarify/explain change nothing; contracts
-//      edit-plan.ts owns the vocabulary)
-//   6. every compiled batch command ∈ a REVERSIBLE   → "command-not-reversible"
-//      subset (below — no effect.remove, no delete-ish, no edit.undo/redo,
+//   1. user setting enabled                      → "setting-disabled"
+//   2. compiled.ok (a compiled batch exists)      → "compile-failed"
+//   3. server-recomputed risk !== "high"         → "risk-too-high"
+//   4. !plan.requiresApproval                    → "approval-required"
+//   5. plan.intent ∈ AUTO_APPLYABLE_INTENTS      → "intent-not-auto-applyable"
+//      (create | edit | style | animate — organize is structural review,
+//       render is spend-heavy export, clarify/explain change nothing;
+//       contracts edit-plan.ts owns the vocabulary)
+//   6. every compiled batch command ∈ a REVERSIBLE → "command-not-reversible"
+//      subset (below — no delete/remove, no effect.remove, no edit.undo/redo,
 //      no render-ish)
-//   7. server-recomputed estimatedCredits ≤ ceiling  → "credits-above-ceiling"
+//   7. server-recomputed estimatedCredits ≤ ceiling → "credits-above-ceiling"
 //   8. compiled batch step count ≤ AUTO_APPLY_MAX_STEPS → "too-many-steps"
 //      (a compiled-ok batch with ZERO steps also lands here — fail-closed: a
 //      malformed compile result never yields "auto")
@@ -55,29 +68,33 @@ import type { CompilePlanResult } from "./plan-compiler.js";
 // ---------------------------------------------------------------------------
 
 /**
- * §7.3 "small, quick" plans only: at most 10 compiled batch steps auto-apply.
- * (The §8.5 hard cap is 100 — auto-apply is deliberately an order of magnitude
- * tighter.)
+ * §7.3 v2: at most 60 compiled batch steps auto-apply — the size real
+ * motion-graphics work needs (a titled comp with per-layer fades is
+ * already 15-30 compiled steps via the keyframe cross-products), while the
+ * §8.5 hard cap is 100 and auto-apply stays deliberately under it.
  */
-export const AUTO_APPLY_MAX_STEPS = 10;
+export const AUTO_APPLY_MAX_STEPS = 60;
 
 /**
- * §7.3 says "credit spend above a threshold" without naming a number. Chosen
- * here: 3 credits — comfortably above every single- or few-step low-risk
- * estimate (estimateCredits: 1 step = 1.5, 4 steps = 3.0) while far below
- * render/high-risk spends (renders estimate 12+ per the M5 goldens). Tighten
- * or loosen per business ruling; this is the documented v1 default.
+ * §7.3 v2 credit ceiling: 16 — covers every plan the schema can produce at
+ * low/medium risk (20 plan steps × 0.5 + base × 1.25 medium multiplier ≈
+ * 13.75 worst case) while staying an order of magnitude under render spends
+ * (renders estimate 12+ per the M5 goldens and never reach this rule — the
+ * intent gate stops them first).
  */
-export const AUTO_APPLY_MAX_CREDITS = 3;
+export const AUTO_APPLY_MAX_CREDITS = 16;
 
 /**
- * The reversible auto-apply command subset — hardcoded, deliberately tiny.
- * Every id is an in-place, non-destructive mutation (or an additive text/preset
- * apply) whose whole effect folds into the batch's single `edit.undo` step
- * (§8.5 / AGENT_COMMAND_UNDOABLE's batch-level heuristic). NO effect.remove,
- * NO delete-ish ids, NO edit.undo/edit.redo, NO render/export ids.
+ * The reversible auto-apply command subset — hardcoded, deliberately small.
+ * Every id is an additive or in-place, non-destructive mutation whose whole
+ * effect folds into the batch's single `edit.undo` step (§8.5 /
+ * AGENT_COMMAND_UNDOABLE's batch-level heuristic). `comp.new` creates a
+ * composition (additive — round-10 v2: composition creation IS the product's
+ * core "do the work" path). NO delete-ish ids, NO effect.remove, NO
+ * edit.undo/edit.redo, NO render/export ids.
  */
 const REVERSIBLE_AUTO_COMMAND_NAMES = [
+  "comp.new",
   "prop.set",
   "layer.rename",
   "text.insert",
@@ -124,7 +141,7 @@ export type AutoApplyReason =
   | "setting-disabled"
   | "setting-unavailable"
   | "compile-failed"
-  | "risk-not-low"
+  | "risk-too-high"
   | "approval-required"
   | "intent-not-auto-applyable"
   | "command-not-reversible"
@@ -149,10 +166,11 @@ export const AUTO_APPLY_REASON_MESSAGES: Readonly<Record<AutoApplyReason, string
   "setting-unavailable":
     "Your auto-apply setting couldn't be read, so nothing applies automatically.",
   "compile-failed": "The plan didn't finish compiling, so there is nothing safe to auto-apply.",
-  "risk-not-low": "Auto-apply only covers low-risk plans — this one needs your review.",
+  "risk-too-high":
+    "This plan deletes, replaces or exports material — it needs your explicit review.",
   "approval-required": "This plan asks for your approval, so it waits for you.",
   "intent-not-auto-applyable":
-    "Only edits, styling and animation auto-apply; this plan does more than that.",
+    "Only creating, editing, styling and animation auto-apply; this plan does more than that.",
   "command-not-reversible": "This plan uses commands outside the reversible auto-apply set.",
   "credits-above-ceiling": "This plan's estimated cost is above the auto-apply limit.",
   "too-many-steps": "This plan doesn't fit the auto-apply size range.",
@@ -182,29 +200,33 @@ function propose(reason: AutoApplyProposeReason): AutoApplyDecision {
 }
 
 /**
- * The §7.3 auto-apply decision for one compiled plan. Pure and total: never
+ * The §7.3 v2 auto-apply decision for one compiled plan. Pure and total: never
  * throws, never mutates its inputs, always answers `{mode, reason}`.
  *
- * Every `mode: "auto"` answer means ALL of: the user opted in, the plan
- * compiled, the SERVER-recomputed risk is low, no approval is required, the
- * intent is an in-place edit/style/animate, every compiled command is in the
- * reversible subset, the server credit estimate is within the ceiling and the
- * batch is small. Anything else proposes with the first-failing reason.
+ * Every `mode: "auto"` answer means ALL of: the user has it on, the plan
+ * compiled, the SERVER-recomputed risk is not high (delete/replace/render
+ * wait for review), no approval is required, the intent is create/edit/style/
+ * animate, every compiled command is in the reversible subset, the server
+ * credit estimate is within the ceiling and the batch is a reasonable size.
+ * Anything else proposes with the first-failing reason.
  */
 export function autoApplyDecision(input: {
   readonly plan: Readonly<EditPlan>;
   readonly compiled: CompilePlanResult;
   readonly userAutoApplyEnabled: boolean;
 }): AutoApplyDecision {
-  // 1. Off by default (BUILD_PLAN §M5.6, §7.3): the per-user setting gates
-  //    everything, so it is checked first — even a perfect plan proposes.
+  // 1. The per-user setting gates everything (checked first — even a perfect
+  //    plan proposes when the user wants to review everything themselves).
   if (input.userAutoApplyEnabled !== true) return propose("setting-disabled");
 
   // 2. No compiled batch ⇒ nothing safe to auto-apply (display-only plan).
   if (!input.compiled.ok) return propose("compile-failed");
 
-  // 3. SERVER-recomputed risk only — never the model's plan.risk.
-  if (input.compiled.risk !== "low") return propose("risk-not-low");
+  // 3. SERVER-recomputed risk only — never the model's plan.risk. v2: HIGH
+  //    (delete, replace footage, render/export) still proposes; low AND
+  //    medium ("many layers/effects" on the §6.2 ladder — normal work) pass —
+  //    the reversible-command gate below is the actual hard wall.
+  if (input.compiled.risk === "high") return propose("risk-too-high");
 
   // 4. The model itself flagged approval; the checkbox always wins.
   if (input.plan.requiresApproval) return propose("approval-required");

@@ -403,14 +403,14 @@ describe.skipIf(!hasDb)("billing persistence (integration)", { timeout: 30_000 }
 
   // ── user settings (M5-O auto-apply seam) ───────────────────────────────────
 
-  it("auto-apply defaults OFF when absent; setUserAutoApply toggles it", async () => {
-    expect(await repos.settings.getUserAutoApply(userId)).toBe(false); // default
-    const off = await repos.settings.setUserAutoApply(userId, true);
-    expect(off.autoApplyEnabled).toBe(true);
-    expect(await repos.settings.getUserAutoApply(userId)).toBe(true);
-    const row = await repos.settings.setUserAutoApply(userId, false);
-    expect(row.autoApplyEnabled).toBe(false);
+  it("auto-apply defaults TRUE when absent (v2); setUserAutoApply toggles it", async () => {
+    expect(await repos.settings.getUserAutoApply(userId)).toBe(true); // v2 default
+    const off = await repos.settings.setUserAutoApply(userId, false);
+    expect(off.autoApplyEnabled).toBe(false);
     expect(await repos.settings.getUserAutoApply(userId)).toBe(false);
+    const row = await repos.settings.setUserAutoApply(userId, true);
+    expect(row.autoApplyEnabled).toBe(true);
+    expect(await repos.settings.getUserAutoApply(userId)).toBe(true);
   });
 
   it("setUserAutoApply for an unknown user reads as NOT_FOUND", async () => {

@@ -93,9 +93,10 @@ export interface PlanRuntime {
    */
   readonly estimatedCredits?: number;
   /**
-   * The §7.3 server-side auto-apply verdict (D-22): UI GUIDANCE ONLY —
-   * `mode: "auto"` pre-arms the card (hint + focus emphasis on Apply), it
-   * NEVER executes anything; Apply stays the user's explicit click.
+   * The §7.3 server-side auto-apply verdict (round-10 v2): `mode: "auto"`
+   * means the CONTROLLER AUTO-DRIVES Apply at run.completed (once per run,
+   * guards in chat-controller.ts) — the card folds to its applied state and
+   * Undo is the escape hatch. `mode: "propose"` keeps the manual Apply path.
    */
   readonly autoApply?: { readonly mode: "auto" | "propose"; readonly reason: string };
   /**

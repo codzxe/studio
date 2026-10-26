@@ -161,6 +161,13 @@ const WIRE_TOOL_IDS = [
   ...WRITE_TOOL_IDS.map((id) => `studio.${id}`),
 ].sort();
 
+/**
+ * The on-the-wire form of the same ids: openai.ts `toolSeam` rewrites dots to
+ * underscores because strict providers enforce the tool-name grammar
+ * ^[a-zA-Z0-9_-]{1,64}$ on tools[].function.name. The registry stays dotted.
+ */
+const WIRE_TOOL_SEAM_IDS = WIRE_TOOL_IDS.map((id) => id.replace(/\./g, "_"));
+
 class FakeOpenAIServer {
   private readonly queue: ScriptEntry[] = [];
   private server: Server | null = null;
@@ -1412,7 +1419,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     expect(fake.calls.length).toBe(3); // plan_edit round + plan round + final answer
     expect(fake.calls[0]?.authorization).toBe("Bearer sk-test-litellm-fake");
     const toolNames = (fake.calls[0]?.body.tools ?? []).map((tool) => tool.function.name).sort();
-    expect(toolNames).toEqual(WIRE_TOOL_IDS);
+    expect(toolNames).toEqual(WIRE_TOOL_SEAM_IDS);
     expect(WIRE_TOOL_IDS).toHaveLength(13);
 
     // The server-side plan round is a TOOLS-FREE structured-output call.
@@ -1451,12 +1458,28 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
       "tool.started",
       "tool.result",
       "message.delta",
+      "plan",
       "credits",
       "run.completed",
     ]);
-    // The propose-only path emits NO plan event (write tools are proposals,
-    // not plans — the run row carries no planJson).
-    expect(events.filter((event) => event.type === "plan")).toHaveLength(0);
+    // ROUND-10 (write-tool rescue): a run that ONLY made write-tool proposals
+    // (no studio.plan_edit) now ends with ONE merged, compile-enriched plan
+    // event — the proposals are never orphaned, the card (and auto-apply) have
+    // a real batch to execute.
+    const planEvents = events.filter((event) => event.type === "plan");
+    expect(planEvents).toHaveLength(1);
+    const merged = planEvents[0] as Extract<(typeof events)[number], { type: "plan" }>;
+    expect(merged.plan.intent).toBe("create");
+    expect(merged.plan.summary).toBe('Add text layer "Headline"');
+    expect(merged.compiledBatch?.steps).toEqual([
+      { command: "layer.newText", params: { text: "Hello", name: "Headline" } },
+    ]);
+    expect(merged.resolutionRequests).toEqual([]);
+    expect(merged.risk).toBe("low");
+    expect(merged.estimatedCredits).toBe(1.5);
+    // The route stamps the §7.3 verdict on every plan event (fresh user = the
+    // v2 schema default ON ⇒ auto for this reversible low-risk creation).
+    expect(merged.autoApply?.mode).toBe("auto");
 
     // The tool result is the pinned WRITE_TOOL_RESULT_SCHEMA envelope: ONLY
     // the proposed batch + the canonical proposed-only note (§8.4 rule 3).
@@ -1509,11 +1532,21 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
       "tool.started",
       "tool.result",
       "message.delta",
+      "plan",
       "credits",
       "run.completed",
     ]);
-    // Still NO plan event for a write-tool proposal (proposals, not plans).
-    expect(driftEvents.filter((event) => event.type === "plan")).toHaveLength(0);
+    // ROUND-10: the set_properties proposal ALSO lands as ONE merged plan
+    // event — with the layer-NAME resolution requests the client resolves at
+    // apply time (layers by name, §8.7).
+    const driftPlanEvents = driftEvents.filter((event) => event.type === "plan");
+    expect(driftPlanEvents).toHaveLength(1);
+    const driftPlan = driftPlanEvents[0] as Extract<(typeof driftEvents)[number], { type: "plan" }>;
+    expect(driftPlan.plan.intent).toBe("edit");
+    expect((driftPlan.resolutionRequests ?? []).map((request) => request.layerName)).toEqual([
+      "Headline",
+      "Sub",
+    ]);
     expect(findToolResult(driftEvents).result).toEqual({
       proposedBatch: {
         label: "Agent: Set 1 property on 2 layers",

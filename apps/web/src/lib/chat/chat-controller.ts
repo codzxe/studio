@@ -219,6 +219,8 @@ export function createChatController(options: CreateChatControllerOptions): Chat
   let disposed = false;
   let lastAttempt: { input: ChatSendInput; idempotencyKey: string; startedRun: boolean } | null =
     null;
+  /** ROUND-10: runIds already auto-driven — the once-per-run guard. */
+  const autoAppliedRuns = new Set<string>();
 
   const newKey = (): string => crypto.randomUUID();
 
@@ -263,6 +265,9 @@ export function createChatController(options: CreateChatControllerOptions): Chat
       // foldEvent returns the SAME reference for replays/no-ops — the store
       // only notifies on real changes.
       commit(foldEvent(snapshot, event));
+      // ROUND-10 v2: the §7.3 verdict said "auto" — execute the plan now, no
+      // click required (Undo on the applied card is the escape hatch).
+      if (event.type === "run.completed") maybeAutoApply(event.runId);
       if (event.type === "run.failed") {
         fireOnError({ code: event.code, message: event.message });
       }
@@ -439,6 +444,36 @@ export function createChatController(options: CreateChatControllerOptions): Chat
 
   const apply = (plan: ApplicablePlan): void => {
     runApplyGesture(plan, (engine) => engine.apply(plan));
+  };
+
+  // -------------------------------------------------------------------------
+  // ROUND-10 v2: the AUTO-APPLY DRIVE. When the server's §7.3 verdict on a
+  // run's plan is `mode: "auto"`, the client EXECUTES it automatically once
+  // the run completes — Apply is no longer a click the user must remember to
+  // make (the product owner's ruling; superseding the D-22 "UI guidance
+  // only" posture). Undo on the applied card is the one-click escape hatch.
+  // Guards (all must hold — anything uncertain stays a manual Apply card):
+  //   * once per runId — SSE replays and reconnects never re-apply,
+  //   * only runs whose run.completed folded LIVE in this controller — a
+  //     reloaded page never resurrects old plans (history renders no runtime),
+  //   * only when the apply engine exists (read-only embeds never execute),
+  //   * only plans with NO unresolved layer-name requests — ambiguity needs
+  //     the user's pick (the card's §8.7 resolve flow),
+  //   * only an idle, non-dismissed card — a racing user gesture wins.
+  // -------------------------------------------------------------------------
+  const maybeAutoApply = (runId: string): void => {
+    if (disposed) return;
+    if (autoAppliedRuns.has(runId)) return;
+    if (options.apply === undefined) return;
+    const runtime = planRuntimeOf(snapshot, runId);
+    if (runtime === undefined) return;
+    if (runtime.autoApply?.mode !== "auto") return;
+    if (runtime.outcome !== "idle" || runtime.dismissed === true) return;
+    const plan = applicablePlanOf(snapshot, runId);
+    if (plan === null) return;
+    if (plan.resolutionRequests !== undefined && plan.resolutionRequests.length > 0) return;
+    autoAppliedRuns.add(runId);
+    apply(plan);
   };
 
   const reapply = (plan: ApplicablePlan): void => {

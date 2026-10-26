@@ -1,7 +1,9 @@
 // Round 9 ops script — list / delete probe-generated rows so production holds
 // only real data. Targets ONLY the probe marker patterns created by
-// scripts/th-live-probe.mjs (probe-r9-<stamp>@test.local + probe-r9-ws-<stamp>)
-// and the round-6 leftovers (probe-check-<stamp>@test.local + probe-ws-<stamp>).
+// scripts/th-live-probe.mjs (probe-r9-<stamp>@test.local + probe-r9-ws-<stamp>),
+// the round-6 leftovers (probe-check-<stamp>@test.local + probe-ws-<stamp>),
+// and the round-10 auto-apply probes (probe-r10[-ap]-<stamp>@test.local +
+// probe-r10[-ap]-ws-<stamp> — scripts/round10-live-probe.mjs / -apply-probe.mjs).
 //
 // USAGE:
 //   node scripts/probe-cleanup.mjs --list        # dry-run: show every marker row
@@ -37,8 +39,8 @@ if (!url || !/^postgres(ql)?:\/\//.test(url)) {
   process.exit(1);
 }
 
-const PROBE_EMAIL = /^probe-(r9-(dbg-)?\d+|check-\d+)@test\.local$/;
-const PROBE_SLUG = /^probe-(r9-ws-|ws-)\d+$/;
+const PROBE_EMAIL = /^probe-(r9-(dbg-)?\d+|r10-(ap-)?\d+|check-\d+)@test\.local$/;
+const PROBE_SLUG = /^probe-(r9-ws-|r10-(ap-)?ws-|ws-)\d+$/;
 
 const args = process.argv.slice(2);
 const list = args.includes("--list");
@@ -62,6 +64,7 @@ const orgs = await sql`
   left join member m on m.organization_id = o.id
   left join "user" u on u.id = m.user_id
   where o.slug like 'probe-ws-%' or o.slug like 'probe-r9-ws-%'
+    or o.slug like 'probe-r10-ws-%' or o.slug like 'probe-r10-ap-ws-%'
   order by o.created_at`;
 
 // Guard: every candidate must match the strict marker patterns (never touch

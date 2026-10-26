@@ -96,20 +96,30 @@ export function needsConfirmCheckbox(risk: PlanRisk): boolean {
 }
 
 /**
- * Auto-apply (§7.3, off by default) is limited to low-risk, reversible, in-place
- * intents. `render` is never auto-applied (render/export), `create`/`organize`
- * are structural, `clarify`/`explain` change nothing anyway.
+ * Auto-apply (§7.3 v2 — round 10: the agent DOES the work by default) is
+ * limited to reversible, in-place-or-additive intents. `render` is never
+ * auto-applied (render/export), `organize` is structural review-worthy,
+ * `clarify`/`explain` change nothing anyway. `create` became auto-applyable
+ * because creating compositions/layers/keyframes is additive — one atomic
+ * batch, one undo step — which is exactly the work users expect the agent
+ * to just do.
  */
 export const AUTO_APPLYABLE_INTENTS = [
+  "create",
   "edit",
   "style",
   "animate",
 ] as const satisfies readonly PlanIntent[];
 
-/** §7.3 gate: only low-risk, approval-free, non-render, in-place plans auto-apply. */
+/**
+ * §7.3 v2 gate (plan-shape predicate): reversible, approval-free,
+ * non-render, non-reorganize plans. HIGH self-declared risk still waits;
+ * the SERVER verdict (auto-apply.ts) re-judges every plan against the
+ * RECOMPUTED values — this helper is the quick shape check, never authority.
+ */
 export function isAutoApplicable(plan: Readonly<EditPlan>): boolean {
   return (
-    plan.risk === "low" &&
+    plan.risk !== "high" &&
     !plan.requiresApproval &&
     (AUTO_APPLYABLE_INTENTS as readonly string[]).includes(plan.intent)
   );

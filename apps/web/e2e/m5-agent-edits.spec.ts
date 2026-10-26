@@ -383,13 +383,16 @@ test.describe("M5 agent edits — plan card journey", () => {
     await openSeededEditor(page);
   });
 
-  test("the mock model's plan renders the full M5 card in the real thread (proposed, risk, steps, credits, preview, actions)", async ({
+  test("the mock model's plan auto-applies end-to-end in the real thread (round-10 v2: applied card + Undo, no click)", async ({
     page,
   }) => {
-    // The MOCK_MODEL runner always streams the same script (runner.ts) —
-    // deltas + a compile-enriched CREATE EditPlan + one studio.get_context
-    // call — whatever the prompt says. A plan-flavored prompt keeps the
-    // scenario honest.
+    // ROUND-10 v2: the seeded user has NO settings row = the schema default =
+    // auto-apply ON, and the mock plan (create intent, server-risk medium,
+    // comp.new + layer.newText, no resolution requests) is inside the v2
+    // envelope — so at run.completed the chat controller AUTO-DRIVES Apply
+    // through the REAL bridge and the card folds to applied. What this test
+    // proves changed with the product: the agent's work now LANDS without a
+    // click (Undo is the escape hatch).
     const composer = page.getByLabel("Message the agent");
     await composer.click();
     await composer.fill("Set up a demo composition with a text layer");
@@ -400,12 +403,14 @@ test.describe("M5 agent edits — plan card journey", () => {
       { timeout: RUN_SETTLE_TIMEOUT_MS },
     );
 
-    // The card: the M5 status machine at rest (M5-G). The run settled, so
-    // the thread wiring armed the card — proposed + APPLICABLE.
+    // The card: the M5 status machine settles at APPLIED (auto-driven at
+    // run.completed; the settle wait covers the bridge batch + save).
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
-    await expect(plan).toHaveAttribute("data-status", "proposed");
-    await expect(plan).toHaveAttribute("data-applied", "false");
+    await expect(plan).toHaveAttribute("data-status", "applied", {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
+    await expect(plan).toHaveAttribute("data-applied", "true");
     // SERVER-recomputed risk (create_composition floors medium — never the
     // model's declared "low") + intent "create" (structural, additive).
     await expect(plan).toHaveAttribute("data-risk", "medium");
@@ -417,8 +422,8 @@ test.describe("M5 agent edits — plan card journey", () => {
     await expect(page.getByTestId("plan-intent")).toHaveText("Create");
     await expect(plan).toContainText("Create an Agent Demo composition with a text layer");
 
-    // Steps: the disclosure is a BUTTON (M5-G) — default expanded, two
-    // steps with their tool ids, and it toggles the ordered list.
+    // Steps: the disclosure persists in the applied state — two steps with
+    // their tool ids.
     const stepsToggle = plan.getByTestId("plan-steps-toggle");
     await expect(stepsToggle).toBeVisible();
     await expect(stepsToggle).toHaveAttribute("aria-expanded", "true");
@@ -428,11 +433,6 @@ test.describe("M5 agent edits — plan card journey", () => {
     await expect(plan.getByTestId("plan-steps")).toContainText("studio.create_composition");
     await expect(plan.getByTestId("plan-steps")).toContainText("Add text layer");
     await expect(plan.getByTestId("plan-steps")).toContainText("studio.create_text");
-    await stepsToggle.click();
-    await expect(stepsToggle).toHaveAttribute("aria-expanded", "false");
-    await expect(plan.getByTestId("plan-steps")).toBeHidden();
-    await stepsToggle.click();
-    await expect(plan.getByTestId("plan-steps")).toBeVisible();
 
     // The plan is purely ADDITIVE — no existing layers affected, so the
     // affected-layers section is absent. The server's credit estimate rides
@@ -441,25 +441,23 @@ test.describe("M5 agent edits — plan card journey", () => {
     await expect(page.getByTestId("plan-affected")).toHaveCount(0);
     await expect(page.getByTestId("plan-credits")).toHaveText("≈ 2.5 credits");
 
-    // The M5-H preview slot IS mounted now (message.tsx mounts it whenever
-    // the plan event carries a compiledBatch and the risk is below high):
-    // the probe executes the additive batch atomically, renders the after
-    // frame, then edit.undo reverts — the project is untouched at rest. A
-    // failed preview never disables Apply; here the real engine answers.
-    await expect(page.getByTestId("plan-preview")).toHaveCount(1);
+    // The preview/diff slots mount only while proposed (derivePlanCardProps) â
+    // after the auto-apply settles they are gone.
+    await expect(page.getByTestId("plan-preview")).toHaveCount(0);
+    await expect(page.getByTestId("plan-diff")).toHaveCount(0);
 
-    // The M4 "Apply arrives with M5" note is GONE — apply is real (M5-G).
+    // The M4 "Apply arrives with M5" note is GONE â apply is real (M5-G).
     await expect(page.getByTestId("plan-note")).toHaveCount(0);
 
-    // The card is armed: Apply + Cancel in the action row (medium risk ⇒
-    // NO confirm checkbox, NO dialog). This test never clicks them — the
-    // apply journey is the scripted high-risk test below, and the offline
-    // from-scratch CREATION journey is e2e/m5-mock-create.spec.ts.
+    // The applied action row: NO Apply/Cancel (the work already landed); the
+    // applied status + Undo instead. Medium risk â no checkbox, no dialog.
     await expect(plan.getByTestId("plan-confirm")).toHaveCount(0);
-    await expect(plan.getByTestId("chat-confirm-dialog")).toHaveCount(0);
-    await expect(plan.getByTestId("plan-apply")).toBeVisible();
-    await expect(plan.getByTestId("plan-apply")).toBeEnabled();
-    await expect(plan.getByTestId("plan-cancel")).toBeVisible();
+    await expect(page.getByTestId("chat-confirm-dialog")).toHaveCount(0);
+    await expect(plan.getByTestId("plan-apply")).toHaveCount(0);
+    await expect(plan.getByTestId("plan-cancel")).toHaveCount(0);
+    await expect(plan.getByTestId("plan-applied")).toBeVisible();
+    await expect(plan.getByTestId("plan-undo")).toBeVisible();
+    await expect(plan.getByTestId("plan-undo")).toBeEnabled();
 
     // The run completes normally (the mock's read tool answered through the
     // real bridge; nothing PERMANENT was executed against the engine — the
@@ -659,28 +657,31 @@ test.describe("M5 agent edits — plan card journey", () => {
     });
   });
 
-  test("the editor is visually unchanged by the M5 read-only chat journey", async ({ page }) => {
-    // After a full plan-bearing run (mock plan card in the thread, nothing
-    // applied), the editor's pixels are the M3-baseline pixels — with one
-    // honest exception: the plan event now carries a compiledBatch (the mock
-    // runner compiles its plan), so the M5-H preview probe EXECUTES the
-    // additive batch atomically, renders the after frame and edit.undo reverts
-    // it — transiently touching the canvas/panels mid-run. The viewport is
-    // therefore MASKED exactly like the journey test above; everything else
-    // (timeline/panels/header) must be the baseline. First CI run:
-    // --update-snapshots (README §First run).
+  test("the auto-applied journey leaves the editor chrome at the M3 baseline (canvas masked — it legitimately CHANGED, round-10)", async ({
+    page,
+  }) => {
+    // ROUND-10 v2: the mock journey now AUTO-APPLIES — the canvas legitimately
+    // GAINS the "Agent Demo" composition + text layer (the whole point), so
+    // the old "editor unchanged" premise is dead: only the CHROME (header,
+    // timeline, panels — everything but the viewport and the chat chrome) is
+    // asserted against the baseline; the viewport stays masked because it now
+    // intentionally differs. First CI run after this change MUST use
+    // --update-snapshots (README §First run) to re-baseline.
     const composer = page.getByLabel("Message the agent");
     await composer.click();
     await composer.fill("Set up a demo composition with a text layer");
     await composer.press("Enter");
 
     await expect(page.getByTestId("plan-card")).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+    await expect(page.getByTestId("plan-card")).toHaveAttribute("data-status", "applied", {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
     await expect(page.getByTestId("chat-status")).toHaveAttribute("data-phase", "done", {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
 
     await page.mouse.move(320, 400);
-    await expect(page).toHaveScreenshot("editor-unchanged-m5-readonly.png", {
+    await expect(page).toHaveScreenshot("editor-autoapplied-m5-readonly.png", {
       animations: "disabled",
       caret: "hide",
       maxDiffPixelRatio: 0.01,

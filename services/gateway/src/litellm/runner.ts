@@ -49,6 +49,7 @@ import {
   type LayerResolutionRequest,
   MAX_BATCH_LABEL_LENGTH,
   MAX_PLAN_AFFECTED_LAYERS,
+  MAX_PLAN_STEPS,
   MAX_PLAN_SUMMARY_LENGTH,
   MODEL_CATALOG,
   type ModelId,
@@ -537,6 +538,68 @@ export function writeToolCarrierPlan(tool: ToolDefinition, args: unknown): EditP
   return EDIT_PLAN_SCHEMA.parse(carrier);
 }
 
+/**
+ * ROUND-10 (write-tool rescue): merge a run's successful write-tool carriers
+ * into ONE synthesized EditPlan — the model that skips studio.plan_edit and
+ * calls write tools directly otherwise leaves its proposals ORPHANED (no
+ * plan event, no plan card, nothing appliable: the exact "it just makes
+ * plans and does nothing" failure). undo_run carriers are EXCLUDED: they
+ * compile to `edit.undo`, a history command that is never part of an
+ * additive batch (the Undo gesture on an applied run's card is that tool's
+ * real surface). `null` when nothing mergeable remains — fail-closed, the
+ * caller emits nothing.
+ *
+ * Honesty notes: `risk` is the MAX across carriers (the §6.2 ladder position
+ * of the whole change); `requiresApproval` is false because no write tool is
+ * high-risk (the §6.2 checkbox is the high-risk affordance) — the compiler
+ * recomputes risk server-side anyway and the auto-apply policy re-judges the
+ * COMPILED batch, never these self-declared fields.
+ */
+export function mergedCarrierPlan(carriers: readonly EditPlan[]): EditPlan | null {
+  const mergeable = carriers.filter((carrier) => carrier.steps[0]?.tool !== "studio.undo_run");
+  if (mergeable.length === 0) return null;
+
+  const intents = new Set(mergeable.map((carrier) => carrier.intent));
+  const first = mergeable[0] as EditPlan;
+  const intent: PlanIntent = intents.size === 1 ? first.intent : "edit";
+  const summary =
+    mergeable.length > 1
+      ? clamp280(`${first.summary} (+${mergeable.length - 1} more changes)`)
+      : first.summary;
+
+  let risk: PlanRisk = "low";
+  for (const carrier of mergeable) {
+    if (carrier.risk === "high") risk = "high";
+    else if (carrier.risk === "medium" && risk !== "high") risk = "medium";
+  }
+
+  // Dedup by name, §8.6-capped (≤ 50 rows for the card).
+  const affectedLayers: Array<{ name: string; change: string }> = [];
+  for (const carrier of mergeable) {
+    for (const layer of carrier.affectedLayers) {
+      if (affectedLayers.length >= MAX_PLAN_AFFECTED_LAYERS) break;
+      if (!affectedLayers.some((row) => row.name === layer.name)) {
+        affectedLayers.push({ name: layer.name, change: layer.change });
+      }
+    }
+  }
+
+  // §8.6: 1..20 steps — merged breadth is capped, never unbounded.
+  const steps = mergeable.flatMap((carrier) => [...carrier.steps]).slice(0, MAX_PLAN_STEPS);
+
+  const merged = {
+    intent,
+    summary,
+    risk,
+    requiresApproval: false,
+    affectedLayers,
+    estimatedCredits: estimateCredits({ risk, steps }),
+    steps,
+  };
+  const parsed = EDIT_PLAN_SCHEMA.safeParse(merged);
+  return parsed.success ? parsed.data : null;
+}
+
 /** First compiler issue as a bounded model/tool message (mirrors PLAN_INVALID). */
 function compileIssueMessage(issues: readonly PlanIssue[]): string {
   const first = issues[0]?.message ?? "The proposed change failed validation.";
@@ -710,6 +773,12 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
 
       let invalidToolCalls = 0;
       let rounds = 0;
+      // ROUND-10 (write-tool rescue): carriers from successful write-tool
+      // proposals + whether a plan event ever fired (studio.plan_edit). A run
+      // that ends with carriers but NO plan event merges them into one
+      // synthesized plan below — otherwise its proposals are orphaned.
+      const writeCarriers: EditPlan[] = [];
+      let planEmitted = false;
 
       while (true) {
         if (signal.aborted) return cancelled();
@@ -805,6 +874,7 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
             );
             if (plan.cancelled === true) return cancelled();
             if (plan.plan !== null) {
+              planEmitted = true;
               // M5 (§M5.2): run the server-side compiler on the plan and
               // attach its output to the {type:"plan"} event — compiledBatch
               // + resolutionRequests + server-recomputed risk/credits. All
@@ -872,6 +942,7 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
                 note: PROPOSED_BATCH_NOTE,
               });
               if (checked.success) {
+                writeCarriers.push(carrier);
                 stream.emit({
                   type: "tool.result",
                   toolCallId: call.id,
@@ -955,6 +1026,37 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
             });
           }
           if (signal.aborted) return cancelled();
+        }
+      }
+
+      // ROUND-10 (write-tool rescue): the model skipped studio.plan_edit and
+      // called write tools directly — its proposals exist but NO plan event
+      // ever fired, so the client has nothing to apply (the "just makes
+      // plans and does nothing" failure). Merge every successful carrier into
+      // ONE plan, compile it through the same server seam, and emit the plan
+      // event BEFORE completion — the card (and auto-apply) then work no
+      // matter how the model chose to structure its work.
+      if (!planEmitted && writeCarriers.length > 0) {
+        const merged = mergedCarrierPlan(writeCarriers);
+        if (merged !== null) {
+          const compiled = await compilePlanSafe({ plan: merged });
+          if (compiled.ok) {
+            stream.emit({
+              type: "plan",
+              plan: merged,
+              compiledBatch: compiled.batch,
+              resolutionRequests: [...compiled.resolutionRequests],
+              risk: compiled.risk,
+              estimatedCredits: compiled.estimatedCredits,
+            });
+            await stream.yieldToStream();
+            if (signal.aborted) return cancelled();
+          } else {
+            logger.debug("carrier_plan_compile_rejected", {
+              runId: run.runId,
+              issues: compiled.issues.length,
+            });
+          }
         }
       }
 

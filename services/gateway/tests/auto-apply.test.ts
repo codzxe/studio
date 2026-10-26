@@ -161,8 +161,8 @@ describe("auto-apply policy — pure decision matrix", () => {
       expect(decide(lyingPlan, honestServer, true)).toEqual({ mode: "auto", reason: "eligible" });
     });
 
-    it("auto-applies each auto-applyable intent (edit | style | animate)", () => {
-      for (const intent of ["edit", "style", "animate"] as const) {
+    it("auto-applies each auto-applyable intent (create | edit | style | animate)", () => {
+      for (const intent of ["create", "edit", "style", "animate"] as const) {
         expect(decide(basePlan({ intent }), compiledOk(), true)).toEqual({
           mode: "auto",
           reason: "eligible",
@@ -170,7 +170,7 @@ describe("auto-apply policy — pure decision matrix", () => {
       }
     });
 
-    it("auto-applies every command in the reversible subset (all 9 ids)", () => {
+    it("auto-applies every command in the reversible subset (all 10 ids incl. comp.new)", () => {
       expect(REVERSIBLE_AUTO_COMMANDS.size).toBeGreaterThan(0);
       for (const command of REVERSIBLE_AUTO_COMMANDS) {
         expect(decide(basePlan(), compiledOk({ commands: [command] }), true)).toEqual({
@@ -180,16 +180,23 @@ describe("auto-apply policy — pure decision matrix", () => {
       }
     });
 
-    it("accepts the boundary: exactly 10 steps and exactly the credit ceiling", () => {
-      const tenSteps = Array.from({ length: 10 }, () => "prop.set");
-      expect(decide(basePlan(), compiledOk({ commands: tenSteps, credits: 3 }), true)).toEqual({
+    it("v2: MEDIUM risk (creation — many layers/effects) passes; only HIGH proposes", () => {
+      expect(decide(basePlan({ intent: "create" }), compiledOk({ risk: "medium" }), true)).toEqual({
+        mode: "auto",
+        reason: "eligible",
+      });
+    });
+
+    it("accepts the boundary: exactly 60 steps and exactly the credit ceiling", () => {
+      const sixtySteps = Array.from({ length: 60 }, () => "prop.set");
+      expect(decide(basePlan(), compiledOk({ commands: sixtySteps, credits: 16 }), true)).toEqual({
         mode: "auto",
         reason: "eligible",
       });
     });
   });
 
-  describe("rule 1 — per-user setting (OFF by default)", () => {
+  describe("rule 1 — per-user setting (v2: ON by default, opt-out in Settings)", () => {
     it("proposes setting-disabled when the setting is off, even for a perfect plan", () => {
       expect(decide(basePlan(), compiledOk(), false)).toEqual({
         mode: "propose",
@@ -222,21 +229,19 @@ describe("auto-apply policy — pure decision matrix", () => {
     });
   });
 
-  describe("rule 3 — SERVER-recomputed risk must be low", () => {
-    it("proposes risk-not-low when the server risk is medium or high", () => {
-      for (const risk of ["medium", "high"] as const) {
-        expect(decide(basePlan(), compiledOk({ risk }), true)).toEqual({
-          mode: "propose",
-          reason: "risk-not-low",
-        });
-      }
+  describe("rule 3 — SERVER-recomputed risk (v2: only HIGH proposes)", () => {
+    it("proposes risk-too-high when the server risk is high", () => {
+      expect(decide(basePlan(), compiledOk({ risk: "high" }), true)).toEqual({
+        mode: "propose",
+        reason: "risk-too-high",
+      });
     });
 
-    it("the model's low claim never overrides a medium server verdict", () => {
+    it("the model's low claim never overrides a high server verdict", () => {
       const plan = basePlan({ risk: "low" });
-      expect(decide(plan, compiledOk({ risk: "medium" }), true)).toEqual({
+      expect(decide(plan, compiledOk({ risk: "high" }), true)).toEqual({
         mode: "propose",
-        reason: "risk-not-low",
+        reason: "risk-too-high",
       });
     });
   });
@@ -251,8 +256,8 @@ describe("auto-apply policy — pure decision matrix", () => {
   });
 
   describe("rule 5 — intent gate (contracts AUTO_APPLYABLE_INTENTS)", () => {
-    it("proposes intent-not-auto-applyable for create/organize/render/clarify/explain", () => {
-      for (const intent of ["create", "organize", "render", "clarify", "explain"] as const) {
+    it("proposes intent-not-auto-applyable for organize/render/clarify/explain", () => {
+      for (const intent of ["organize", "render", "clarify", "explain"] as const) {
         expect(decide(basePlan({ intent }), compiledOk(), true)).toEqual({
           mode: "propose",
           reason: "intent-not-auto-applyable",
@@ -260,8 +265,8 @@ describe("auto-apply policy — pure decision matrix", () => {
       }
     });
 
-    it("pins the contracts vocabulary: AUTO_APPLYABLE_INTENTS is exactly edit|style|animate", () => {
-      expect([...AUTO_APPLYABLE_INTENTS]).toEqual(["edit", "style", "animate"]);
+    it("pins the contracts vocabulary: AUTO_APPLYABLE_INTENTS is exactly create|edit|style|animate", () => {
+      expect([...AUTO_APPLYABLE_INTENTS]).toEqual(["create", "edit", "style", "animate"]);
     });
 
     it("agrees with contracts isAutoApplicable when server risk mirrors the plan", () => {
@@ -283,7 +288,6 @@ describe("auto-apply policy — pure decision matrix", () => {
       "edit.undo", // history commands never auto-apply
       "edit.redo",
       "render.frame", // render-ish
-      "comp.new", // curated but structural
       "layer.newSolid", // curated but outside the pinned subset
       "layer.style.add", // curated but outside the pinned subset
       "prop.setExpression", // deliberately NOT curated (arbitrary code)
@@ -307,9 +311,10 @@ describe("auto-apply policy — pure decision matrix", () => {
       ).toEqual({ mode: "propose", reason: "command-not-reversible" });
     });
 
-    it("REVERSIBLE_AUTO_COMMANDS is exactly the pinned nine, all curated registry ids", () => {
+    it("REVERSIBLE_AUTO_COMMANDS is exactly the pinned ten (comp.new joined round-10), all curated registry ids", () => {
       expect([...REVERSIBLE_AUTO_COMMANDS].sort()).toEqual(
         [
+          "comp.new",
           "prop.set",
           "layer.rename",
           "text.insert",
@@ -335,8 +340,8 @@ describe("auto-apply policy — pure decision matrix", () => {
   });
 
   describe("rule 7 — server credit estimate within the ceiling", () => {
-    it("proposes credits-above-ceiling above the limit (3.01, 99, NaN, Infinity, negative)", () => {
-      for (const credits of [3.01, 99, Number.NaN, Number.POSITIVE_INFINITY, -0.5]) {
+    it("proposes credits-above-ceiling above the limit (16.01, 99, NaN, Infinity, negative)", () => {
+      for (const credits of [16.01, 99, Number.NaN, Number.POSITIVE_INFINITY, -0.5]) {
         expect(decide(basePlan(), compiledOk({ credits }), true)).toEqual({
           mode: "propose",
           reason: "credits-above-ceiling",
@@ -354,9 +359,9 @@ describe("auto-apply policy — pure decision matrix", () => {
   });
 
   describe("rule 8 — compiled batch step bound", () => {
-    it("proposes too-many-steps at 11 steps (10 pass — pinned above)", () => {
-      const eleven = Array.from({ length: 11 }, () => "prop.set");
-      expect(decide(basePlan(), compiledOk({ commands: eleven, credits: 1.5 }), true)).toEqual({
+    it("proposes too-many-steps at 61 steps (60 pass — pinned above)", () => {
+      const sixtyOne = Array.from({ length: 61 }, () => "prop.set");
+      expect(decide(basePlan(), compiledOk({ commands: sixtyOne, credits: 1.5 }), true)).toEqual({
         mode: "propose",
         reason: "too-many-steps",
       });
@@ -373,8 +378,8 @@ describe("auto-apply policy — pure decision matrix", () => {
   describe("first-failing reason follows the rule order", () => {
     it("risk beats approval; approval beats intent", () => {
       expect(
-        decide(basePlan({ requiresApproval: true }), compiledOk({ risk: "medium" }), true).reason,
-      ).toBe("risk-not-low");
+        decide(basePlan({ requiresApproval: true }), compiledOk({ risk: "high" }), true).reason,
+      ).toBe("risk-too-high");
       expect(
         decide(basePlan({ requiresApproval: true, intent: "render" }), compiledOk(), true).reason,
       ).toBe("approval-required");
@@ -388,8 +393,8 @@ describe("auto-apply policy — pure decision matrix", () => {
       expect(
         decide(basePlan(), compiledOk({ commands: ["effect.remove"], credits: 99 }), true).reason,
       ).toBe("command-not-reversible");
-      const eleven = Array.from({ length: 11 }, () => "prop.set");
-      expect(decide(basePlan(), compiledOk({ commands: eleven, credits: 99 }), true).reason).toBe(
+      const sixtyOne = Array.from({ length: 61 }, () => "prop.set");
+      expect(decide(basePlan(), compiledOk({ commands: sixtyOne, credits: 99 }), true).reason).toBe(
         "credits-above-ceiling",
       );
     });
@@ -425,9 +430,9 @@ describe("auto-apply policy — pure decision matrix", () => {
   });
 
   describe("constants, fallback verdict and copy hygiene (law #1)", () => {
-    it("pins the documented bounds: 10 steps, 3 credits", () => {
-      expect(AUTO_APPLY_MAX_STEPS).toBe(10);
-      expect(AUTO_APPLY_MAX_CREDITS).toBe(3);
+    it("pins the documented v2 bounds: 60 steps, 16 credits", () => {
+      expect(AUTO_APPLY_MAX_STEPS).toBe(60);
+      expect(AUTO_APPLY_MAX_CREDITS).toBe(16);
     });
 
     it("AUTO_APPLY_SETTING_UNAVAILABLE is the frozen propose fallback", () => {
@@ -444,7 +449,7 @@ describe("auto-apply policy — pure decision matrix", () => {
         "setting-disabled",
         "setting-unavailable",
         "compile-failed",
-        "risk-not-low",
+        "risk-too-high",
         "approval-required",
         "intent-not-auto-applyable",
         "command-not-reversible",
@@ -1061,25 +1066,28 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
   }
 
   /**
-   * The exact propose reason the route must give a FRESH (default) user,
-   * probed through the same seam the route uses: readable false ⇒
-   * setting-disabled; repo absent or read failing ⇒ setting-unavailable.
+   * The exact verdict the route must give a FRESH (default) user, probed
+   * through the same seam the route uses: readable true (v2 schema default,
+   * no row) ⇒ auto/eligible; repo absent or read failing ⇒ the guarded
+   * setting-unavailable degrade; a stored false row ⇒ setting-disabled.
    */
-  async function expectedDefaultReason(
+  async function expectedDefaultVerdict(
     server: RunningTestServer,
     userId: string,
-  ): Promise<"setting-disabled" | "setting-unavailable"> {
+  ): Promise<{ mode: "auto" | "propose"; reason: string }> {
     const seam = settingsSeamOf(server.deps.repos);
-    if (seam === null) return "setting-unavailable";
+    if (seam === null) return { mode: "propose", reason: "setting-unavailable" };
     try {
       const value = await seam.getUserAutoApply(userId);
-      return value === false ? "setting-disabled" : "setting-unavailable";
+      return value === true
+        ? { mode: "auto", reason: "eligible" }
+        : { mode: "propose", reason: "setting-disabled" };
     } catch {
-      return "setting-unavailable";
+      return { mode: "propose", reason: "setting-unavailable" };
     }
   }
 
-  it("default user ⇒ propose (off by default), on the enriched plan event + replay", async () => {
+  it("default user ⇒ auto (v2: ON by default), on the enriched plan event + replay", async () => {
     const fx = await newFixture(serverA, "m5o-default");
     const { plan: planEvent, key } = await planRun(fx, AUTO_PLAN);
 
@@ -1090,11 +1098,10 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     ]);
     expect(planEvent.risk).toBe("low");
     expect(planEvent.estimatedCredits).toBe(2); // server-recomputed, not the model's 99
-    expect(planEvent.autoApply?.mode).toBe("propose");
-    // The exact propose reason mirrors the seam the route read: setting row
-    // default false ⇒ setting-disabled; repo/table not there ⇒ the guarded
-    // setting-unavailable degrade (mid-flight trees).
-    expect(planEvent.autoApply?.reason).toBe(await expectedDefaultReason(serverA, fx.userId));
+    // v2: a fresh user has NO settings row = the schema default = ON, so a
+    // reversible plan auto-applies (mid-flight trees without the seam degrade
+    // to setting-unavailable — the same guard the route carries).
+    expect(planEvent.autoApply).toEqual(await expectedDefaultVerdict(serverA, fx.userId));
 
     // Replay (law #4): the same idempotencyKey replays the SAME enriched log —
     // the stamped verdict is part of the stored event, byte-identical.
@@ -1122,16 +1129,18 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     }
   }, 15_000);
 
-  it("enabled user ⇒ propose risk-not-low for a history-command plan (edit.undo)", async () => {
+  it("enabled user ⇒ propose command-not-reversible for a history-command plan (edit.undo)", async () => {
     const fx = await newFixture(serverA, "m5o-undo");
     const { enabled } = await enableAutoApply(serverA, fx.userId);
     const { plan: planEvent } = await planRun(fx, UNDO_PLAN);
 
     expect(planEvent.compiledBatch?.steps.map((step) => step.command)).toEqual(["edit.undo"]);
     if (enabled) {
-      // The server recomputed ≥ medium for edit.undo (never the model's "low").
-      expect(planEvent.risk).not.toBe("low");
-      expect(planEvent.autoApply).toEqual({ mode: "propose", reason: "risk-not-low" });
+      // v2: the server-recomputed MEDIUM (history floor) passes the risk gate —
+      // it is the REVERSIBLE-COMMAND wall that stops edit.undo (history
+      // commands are never in the auto-apply subset).
+      expect(planEvent.risk).toBe("medium");
+      expect(planEvent.autoApply).toEqual({ mode: "propose", reason: "command-not-reversible" });
     } else {
       expect(planEvent.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
     }
@@ -1173,24 +1182,25 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     expect(planEvent.estimatedCredits).toBe(2.5);
   }, 15_000);
 
-  it("enriched (mock) plan event ⇒ propose; risk-not-low once the setting is on", async () => {
+  it("enriched (mock) plan event ⇒ auto by default (v2); explicit opt-out ⇒ setting-disabled", async () => {
     const fx = await newFixture(serverB, "m5o-mock");
     const before = await mockRun(fx);
-    // Default user: propose via the setting gate (off by default), with the
-    // exact reason the seam dictates (disabled / unavailable).
-    expect(before.plan.autoApply?.mode).toBe("propose");
-    expect(before.plan.autoApply?.reason).toBe(await expectedDefaultReason(serverB, fx.userId));
+    // Default user (no settings row = schema default ON): the mock plan is
+    // create-intent, comp.new + layer.newText, server-recomputed MEDIUM —
+    // all inside the v2 auto-apply envelope.
+    expect(before.plan.autoApply).toEqual(await expectedDefaultVerdict(serverB, fx.userId));
 
-    const { enabled } = await enableAutoApply(serverB, fx.userId);
-    const after = await mockRun(fx);
-    if (enabled) {
-      // The mock plan now COMPILES (comp.new + layer.newText) — but
-      // create_composition floors the server-recomputed risk at medium, so
-      // the §7.3 policy proposes risk-not-low (auto-apply stays low-risk
-      // only; the user reviews and clicks Apply themselves).
-      expect(after.plan.autoApply).toEqual({ mode: "propose", reason: "risk-not-low" });
-    } else {
-      expect(after.plan.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
+    const seam = settingsSeamOf(serverB.deps.repos);
+    if (seam !== null) {
+      // Explicit opt-out always wins: a stored false row ⇒ setting-disabled,
+      // even for a perfectly reversible creation plan.
+      await seam.setUserAutoApply(fx.userId, false);
+      const off = await mockRun(fx);
+      expect(off.plan.autoApply).toEqual({ mode: "propose", reason: "setting-disabled" });
+      // Opting back in restores auto.
+      await seam.setUserAutoApply(fx.userId, true);
+      const on = await mockRun(fx);
+      expect(on.plan.autoApply).toEqual({ mode: "auto", reason: "eligible" });
     }
   }, 15_000);
 });

@@ -2,8 +2,18 @@
 //
 // StorageDriver is the structural interface; drivers:
 //   * S3Driver      — @aws-sdk/client-s3 against S3/R2/MinIO (env S3_ENDPOINT)
-//   * LocalFSDriver — files under .local/storage/<key>, signed via unguessable
-//                     tokens served by gateway routes; REJECTED in production.
+//   * LocalFSDriver — files under the local FS root, signed via unguessable
+//                     tokens served by gateway routes.
+//
+// LOCAL ROOT RESOLUTION (round-10 fix): the deployment runs APP_ENV=local
+// (no S3 env has been configured yet — the round-5 user-action list still
+// stands), and Vercel functions expose a READ-ONLY bundle — the previous
+// `resolve(".local/storage")` default made EVERY version/asset upload 500
+// with EROFS/EACCES in production. On serverless (VERCEL=1) the only
+// writable path is /tmp, so the LocalFS root lands there. Caveat (honest,
+// pre-existing until S3 lands): /tmp is per-instance and recycled — version
+// BLOBS are ephemeral; the DB version ROWS, lineage and credits are durable.
+// Dev boots (no VERCEL) keep the repo-local .local/storage.
 //
 // Object keys follow §9.2 exactly (tenant-prefixed, never exposed raw):
 //   workspaces/{ws}/projects/{p}/versions/{sha256}/project.ecproj
@@ -440,7 +450,7 @@ export interface StorageChoice {
 
 export function createStorage(env: StudioEnv, fsRoot?: string): StorageChoice {
   if (env.app.env === "local") {
-    const root = fsRoot ?? resolve(".local/storage");
+    const root = fsRoot ?? defaultLocalFsRoot();
     const driver = new LocalFSDriver(root, env.app.url);
     return { driver, local: driver };
   }
@@ -465,6 +475,16 @@ export function createStorage(env: StudioEnv, fsRoot?: string): StorageChoice {
     driver: new S3Driver({ storage: { endpoint, region, accessKeyId, secretAccessKey, bucket } }),
     local: null,
   };
+}
+
+/**
+ * The LocalFS default root: an explicit fsRoot (tests) wins; Vercel functions
+ * mount a READ-ONLY bundle, so serverless boots write to /tmp — the only
+ * writable directory (see the module header for the ephemerality caveat);
+ * local dev keeps the repo-local .local/storage.
+ */
+function defaultLocalFsRoot(): string {
+  return process.env.VERCEL === "1" ? "/tmp/studio-storage" : resolve(".local/storage");
 }
 
 /** SHA-256 helper shared by the upload routes (single-pass hashing). */

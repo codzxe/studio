@@ -13,6 +13,7 @@ import {
   TOOL_LIST,
   WRITE_TOOL_IDS,
   WRITE_TOOL_RESULT_SCHEMA,
+  getTool,
 } from "@studio/contracts";
 
 import { wireToolName } from "../src/litellm/openai.js";
@@ -31,6 +32,8 @@ import {
   TOOL_RESULT_TIMEOUT_MS,
   committedCreditsFor,
   createLiteLLMRunner,
+  mergedCarrierPlan,
+  writeToolCarrierPlan,
 } from "../src/litellm/runner.js";
 import type { LogFields, Logger } from "../src/logger.js";
 import {
@@ -803,6 +806,228 @@ describe("LiteLLM runner — write tools (M5.1: propose-only, never execute)", (
 });
 
 // ---------------------------------------------------------------------------
+// (5d) ROUND-10 — write-tool rescue: write-tool-only runs end with ONE merged,
+//      compile-enriched plan event (proposals are never orphaned)
+// ---------------------------------------------------------------------------
+
+describe("LiteLLM runner — write-tool rescue (round 10)", () => {
+  it("a write-tool-only run emits ONE merged, compile-enriched plan event before completion", async () => {
+    const { runner, stream } = makeRunner([
+      sseResponse([
+        toolCallStart(0, "call_text", "studio.create_text"),
+        toolCallArgs(0, JSON.stringify({ text: "Hello", name: "Headline" })),
+        finish("tool_calls"),
+        usageFrame(100, 40),
+        DONE,
+      ]),
+      sseResponse([textDelta("Done."), finish("stop"), usageFrame(50, 10), DONE]),
+    ]);
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    const planEvents = stream.events.filter((event) => event.type === "plan");
+    expect(planEvents).toHaveLength(1);
+    const rescue = planEvents[0];
+    if (rescue?.type !== "plan") throw new Error("no rescue plan event");
+    // Merged from the create_text carrier: create intent, honest low risk
+    // (create_text), §6.2 rule (no checkbox below high), server-enriched.
+    expect(rescue.plan.intent).toBe("create");
+    expect(rescue.plan.summary).toBe('Add text layer "Headline"');
+    expect(rescue.plan.requiresApproval).toBe(false);
+    expect(rescue.compiledBatch?.steps).toEqual([
+      { command: "layer.newText", params: { text: "Hello", name: "Headline" } },
+    ]);
+    expect(rescue.resolutionRequests).toEqual([]);
+    expect(rescue.risk).toBe("low");
+    expect(rescue.estimatedCredits).toBe(1.5);
+    // Emission order: the rescue plan event lands BEFORE run.completed (the
+    // client's auto-apply drive keys off run.completed with the runtime
+    // already folded).
+    const planIndex = stream.events.findIndex((event) => event.type === "plan");
+    const completedIndex = stream.events.findIndex((event) => event.type === "run.completed");
+    expect(planIndex).toBeGreaterThan(-1);
+    expect(planIndex).toBeLessThan(completedIndex);
+  });
+
+  it("a run that also used studio.plan_edit keeps exactly ONE plan event (the plan_edit one — no double rescue)", async () => {
+    const { runner, stream } = makeRunner([
+      sseResponse([
+        toolCallStart(0, "call_plan", "studio.plan_edit"),
+        toolCallArgs(0, '{"goal":"make a title"}'),
+        toolCallStart(1, "call_text", "studio.create_text"),
+        toolCallArgs(1, JSON.stringify({ text: "Hello", name: "Headline" })),
+        finish("tool_calls"),
+        usageFrame(100, 40),
+        DONE,
+      ]),
+      // The structured-output plan round (server-side plan_edit).
+      sseResponse([
+        textDelta(
+          JSON.stringify({
+            intent: "create",
+            summary: "A cinematic title card",
+            risk: "low",
+            requiresApproval: false,
+            affectedLayers: [],
+            estimatedCredits: 1.5,
+            steps: [
+              {
+                title: "Add the headline",
+                tool: "studio.create_text",
+                args: { text: "Hello", name: "Headline" },
+                batch: {
+                  label: "Add the headline",
+                  steps: [{ command: "create_text", params: { text: "Hello" } }],
+                },
+              },
+            ],
+          }),
+        ),
+        finish("stop"),
+        DONE,
+      ]),
+      sseResponse([textDelta("Built it."), finish("stop"), usageFrame(50, 10), DONE]),
+    ]);
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    const planEvents = stream.events.filter((event) => event.type === "plan");
+    // plan_edit fired ⇒ planEmitted ⇒ the write-tool rescue stays OFF even
+    // though a create_text carrier exists — exactly one plan on the wire.
+    expect(planEvents).toHaveLength(1);
+    const planEvent = planEvents[0];
+    if (planEvent?.type !== "plan") throw new Error("no plan event");
+    expect(planEvent.plan.summary).toBe("A cinematic title card");
+  });
+
+  it("an undo_run-only run emits NO plan event (history commands never merge)", async () => {
+    const { runner, stream } = makeRunner([
+      sseResponse([
+        toolCallStart(0, "call_undo", "studio.undo_run"),
+        toolCallArgs(0, "{}"),
+        finish("tool_calls"),
+        usageFrame(100, 40),
+        DONE,
+      ]),
+      sseResponse([
+        textDelta("Undone via the card instead."),
+        finish("stop"),
+        usageFrame(50, 10),
+        DONE,
+      ]),
+    ]);
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    expect(stream.events.filter((event) => event.type === "plan")).toHaveLength(0);
+  });
+
+  it("undo_run + create_text merges WITHOUT the undo (only additive commands reach the batch)", async () => {
+    const { runner, stream } = makeRunner([
+      sseResponse([
+        toolCallStart(0, "call_undo", "studio.undo_run"),
+        toolCallArgs(0, "{}"),
+        toolCallStart(1, "call_text", "studio.create_text"),
+        toolCallArgs(1, JSON.stringify({ text: "Hello", name: "Headline" })),
+        finish("tool_calls"),
+        usageFrame(100, 40),
+        DONE,
+      ]),
+      sseResponse([textDelta("Done."), finish("stop"), usageFrame(50, 10), DONE]),
+    ]);
+    const outcome = await runToOutcome(runner, makeRun(), stream);
+
+    expect(outcome.kind).toBe("completed");
+    const planEvents = stream.events.filter((event) => event.type === "plan");
+    expect(planEvents).toHaveLength(1);
+    const rescue = planEvents[0];
+    if (rescue?.type !== "plan") throw new Error("no rescue plan event");
+    expect(rescue.compiledBatch?.steps).toEqual([
+      { command: "layer.newText", params: { text: "Hello", name: "Headline" } },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (5e) ROUND-10 — mergedCarrierPlan (the pure merge, unit-pinned)
+// ---------------------------------------------------------------------------
+
+describe("mergedCarrierPlan (round 10 — pure merge)", () => {
+  const createText = getTool("studio.create_text");
+  const createComp = getTool("studio.create_composition");
+  const setProps = getTool("studio.set_properties");
+  const undoRun = getTool("studio.undo_run");
+  if (
+    createText === undefined ||
+    createComp === undefined ||
+    setProps === undefined ||
+    undoRun === undefined
+  ) {
+    throw new Error("curated write tools missing from the contracts catalog");
+  }
+
+  it("one create_text carrier: create intent, low risk, no approval, 1.5 credits", () => {
+    const merged = mergedCarrierPlan([
+      writeToolCarrierPlan(createText, { text: "Hello", name: "Headline" }),
+    ]);
+    if (merged === null) throw new Error("merge returned null");
+    expect(merged.intent).toBe("create");
+    expect(merged.summary).toBe('Add text layer "Headline"');
+    expect(merged.risk).toBe("low");
+    expect(merged.requiresApproval).toBe(false);
+    expect(merged.estimatedCredits).toBe(1.5);
+    expect(merged.steps).toHaveLength(1);
+    expect(merged.steps[0]?.tool).toBe("studio.create_text");
+  });
+
+  it("create_composition + create_text: risk is the MAX (medium), same intent kept, summary notes the rest", () => {
+    const merged = mergedCarrierPlan([
+      writeToolCarrierPlan(createComp, { name: "Main", width: 1920, height: 1080 }),
+      writeToolCarrierPlan(createText, { text: "Hello", name: "Headline" }),
+    ]);
+    if (merged === null) throw new Error("merge returned null");
+    expect(merged.intent).toBe("create");
+    expect(merged.risk).toBe("medium");
+    expect(merged.summary).toBe('Create composition "Main" (+1 more changes)');
+    expect(merged.requiresApproval).toBe(false);
+    expect(merged.steps).toHaveLength(2);
+    expect(EDIT_PLAN_SCHEMA.safeParse(merged).success).toBe(true);
+  });
+
+  it("mixed intents collapse to edit; affected layers dedupe by name", () => {
+    const merged = mergedCarrierPlan([
+      writeToolCarrierPlan(setProps, {
+        layers: [{ name: "Headline" }, { name: "Sub" }],
+        properties: [{ path: "transform/opacity", value: 40 }],
+      }),
+      writeToolCarrierPlan(createText, { text: "Hello", name: "Headline" }),
+    ]);
+    if (merged === null) throw new Error("merge returned null");
+    expect(merged.intent).toBe("edit"); // edit + create ⇒ edit
+    expect(merged.affectedLayers.map((layer) => layer.name)).toEqual(["Headline", "Sub"]);
+  });
+
+  it("undo_run carriers are excluded — null when nothing else remains", () => {
+    expect(mergedCarrierPlan([writeToolCarrierPlan(undoRun, {})])).toBeNull();
+    const mixed = mergedCarrierPlan([
+      writeToolCarrierPlan(undoRun, {}),
+      writeToolCarrierPlan(createText, { text: "Hello", name: "Headline" }),
+    ]);
+    if (mixed === null) throw new Error("merge returned null");
+    expect(mixed.steps.map((step) => step.tool)).toEqual(["studio.create_text"]);
+  });
+
+  it("breadth is capped at MAX_PLAN_STEPS (§8.6: 20)", () => {
+    const many = Array.from({ length: 25 }, (_, index) =>
+      writeToolCarrierPlan(createText, { text: `T${index}`, name: `L${index}` }),
+    );
+    const merged = mergedCarrierPlan(many);
+    if (merged === null) throw new Error("merge returned null");
+    expect(merged.steps).toHaveLength(20);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // (5c) M5 plan-event enrichment — compiledBatch + resolutionRequests + risk
 // ---------------------------------------------------------------------------
 
@@ -1114,38 +1339,32 @@ describe("prompt.ts (§8.3 / §5.4)", () => {
     expect(SYSTEM_PROMPT.toLowerCase()).toContain("motion-graphics");
   });
 
-  it("states the M5+ tool surface truth: 8 PROPOSE-ONLY write tools, never executed directly, every write becomes a user-approved plan (AUD-2 / D-22)", () => {
+  it("states the M5+ tool surface truth: 8 write tools, proposal→apply pipeline, agent DOES the work (AUD-2 / round-10 v2)", () => {
     // The stale M4 line is GONE — the prompt may never deny the write tools the
     // runner registers on the provider wire (runner.ts RUNNER_TOOLS: 5 read +
     // 8 write = 13, tool_choice auto).
     expect(SYSTEM_PROMPT).not.toContain("no write tools");
     expect(SYSTEM_PROMPT).not.toContain("cannot modify the project");
 
-    // Every registered write tool is named and declared PROPOSE-ONLY.
+    // Every registered write tool is named.
     for (const id of WRITE_TOOL_IDS) {
       expect(SYSTEM_PROMPT).toContain(`studio.${id}`);
     }
-    expect(SYSTEM_PROMPT).toContain("Write tools (8, PROPOSE-ONLY)");
+    expect(SYSTEM_PROMPT).toContain("Write tools (8)");
     expect(RUNNER_WRITE_TOOLS).toHaveLength(8);
     expect(RUNNER_TOOLS).toHaveLength(13);
 
-    // D-22 approval semantics: nothing executes from a call, the user applies.
-    expect(SYSTEM_PROMPT).toContain("never execute anything directly");
-    expect(SYSTEM_PROMPT).toContain("plan the USER reviews and approves");
-    expect(SYSTEM_PROMPT).toContain("never tell the user an edit is done");
-    expect(SYSTEM_PROMPT).toContain("it is only proposed until they apply the plan");
+    // Round-10 v2 semantics: the agent is ordered to DO THE WORK (call the
+    // write tools for the complete change), eligible plans APPLY THEMSELVES,
+    // and Undo is the escape hatch.
+    expect(SYSTEM_PROMPT).toContain("DO THE WORK");
+    expect(SYSTEM_PROMPT).toContain("applied to the project AUTOMATICALLY");
+    expect(SYSTEM_PROMPT).toContain("the user's auto-apply setting is on by default");
+    expect(SYSTEM_PROMPT).toContain("one undo step, one saved version");
 
-    // W1-05 completion of the AUD-2 truth fix: the plan-card preview the user
-    // sees, the apply invariant (law #6: one atomic batch = one undo step =
-    // one saved version) and the D-22 auto-apply posture — all phrased
-    // WITHOUT raw engine command ids (law #5; golden-prompts' wire proof
-    // pins their absence from every provider request body).
-    expect(SYSTEM_PROMPT).toContain("plan card — risk badge, affected layers, credit cost");
-    expect(SYSTEM_PROMPT).toContain(
-      "One apply runs one atomic command batch: one undo step, one saved version",
-    );
-    expect(SYSTEM_PROMPT).toContain("Plans may be rejected or never applied at all");
-    expect(SYSTEM_PROMPT).toContain("auto-apply is a gated server policy and is off by default");
+    // The destructive/export branch still waits for explicit review.
+    expect(SYSTEM_PROMPT).toContain("always wait for the user to review");
+    expect(SYSTEM_PROMPT).toContain("Destructive or export-heavy plans");
 
     // The injection-hardening language is intact (§8.3) — updated prompt, same rule.
     expect(SYSTEM_PROMPT).toContain(
