@@ -1,15 +1,16 @@
 // M5-O — AUTO-APPLY POLICY tests (BUILD_PLAN §M5 task 6, EDITOR_CHAT_UX
 // §7.3): the pure decision matrix for services/gateway/src/auto-apply.ts,
 // the PLAN_EVENT_SCHEMA.autoApply extension (contracts events.ts), and the
-// chat.ts wiring — the plan event carries the server-side verdict per the
-// pinned M6-D settings seam (repos.settings.getUserAutoApply/setUserAutoApply
-// over the userSettings table, autoApplyEnabled DEFAULT FALSE), against real
-// Postgres.
+// ROUND-12 TURN WIRING — POST /v1/runs/:id/plan carries the server-side
+// verdict per the pinned M6-D settings seam (repos.settings.getUserAutoApply/
+// setUserAutoApply over the userSettings table; an absent row = the v2 schema
+// default, auto-apply ON), against real Postgres.
 //
-// v1 semantics under test (D-22 candidate ruling): the verdict is UI GUIDANCE
-// ONLY — mode "auto" arms the plan card, Apply stays the user's click; the
-// client never executes a plan from the event alone. Every scenario here
-// asserts the WIRE (the SSE plan event), never client execution.
+// v2 semantics: when the verdict is mode "auto" the CLIENT executes the plan
+// at run end (the gateway only DECIDES — routes/turn.ts stamps the verdict,
+// never applies anything; the engine lives in the browser). Every scenario
+// here asserts the WIRE (the plan-route payload + the turn SSE stream),
+// never client execution.
 //
 // Three suites:
 //   A. Pure decision matrix (no DB): all rules, each first-failing reason,
@@ -18,24 +19,23 @@
 //   B. Contracts schema: the additive optional PLAN_EVENT_SCHEMA.autoApply
 //      field parses M4-shaped events (back-compat), accepts both verdicts,
 //      rejects malformed ones; the gateway type is wire-assignable.
-//   C. Wiring (DATABASE_URL-gated, real Postgres): server A = the REAL
-//      LiteLLM runner vs an in-process fake OpenAI SSE server (M4-K/M5-K
-//      harness pattern, duplicated per its precedent — gateway tests never
-//      import sibling test files) so plan events arrive COMPILE-ENRICHED;
-//      server B = the MockRunner (its plan is compile-enriched too —
-//      comp.new + layer.newText at server-risk medium — see the enrichment
-//      pin below). Peers land mid-flight: every scenario branches ADAPTIVELY
-//      on whether the M6-D settings repo is present/writable — its absence
-//      must degrade to propose/setting-unavailable, NEVER crash (the wiring
+//   C. Wiring (DATABASE_URL-gated, real Postgres; the round-12 client-driven
+//      loop): ONE MOCK_MODEL server (helpers default). POST
+//      /v1/threads/:id/turn (Idempotency-Key `${runId}:${stepIndex}`) creates
+//      the run and proposes the two compile-enriched write carriers offline
+//      (mockTurn: comp.new + layer.newText); POST /v1/runs/:id/plan — the
+//      client's merged plan at run end — re-compiles it AUTHORITATIVELY and
+//      stamps the §7.3 verdict. The retired in-request /chat SSE loop is
+//      pinned GONE (404) plus the turn/tools mounts in the first wiring
+//      test. Peers land mid-flight: every scenario branches ADAPTIVELY on
+//      whether the M6-D settings repo is present/writable — its absence must
+//      degrade to propose/setting-unavailable, NEVER crash (the wiring
 //      guard).
 //
 // Deterministic: no real sleeps beyond bounded stream waits, no fake timers;
 // DATABASE_URL is resolved by tests/helpers.js.
 
-import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
-import type { AddressInfo } from "node:net";
-
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   AGENT_COMMAND_IDS,
@@ -47,6 +47,7 @@ import {
   type PlanRisk,
   STUDIO_STREAM_EVENT_SCHEMA,
   type StudioStreamEvent,
+  type TurnMessage,
   isAutoApplicable,
   reduceEvents,
 } from "@studio/contracts";
@@ -61,9 +62,9 @@ import {
   REVERSIBLE_AUTO_COMMANDS,
   autoApplyDecision,
   describeAutoApplyReason,
+  isReversibleAutoCommand,
 } from "../src/auto-apply.js";
 import type { CompilePlanResult, PlanIssue } from "../src/plan-compiler.js";
-import { createRunnerForEnv } from "../src/runner.js";
 import {
   CookieJar,
   HAS_DATABASE,
@@ -71,7 +72,6 @@ import {
   TEST_APP_ORIGIN,
   api,
   bootServer,
-  testEnv,
   unique,
   uniqueEmail,
 } from "./helpers.js";
@@ -279,18 +279,25 @@ describe("auto-apply policy — pure decision matrix", () => {
     });
   });
 
-  describe("rule 6 — every compiled command must be reversible", () => {
+  describe("rule 6 — every compiled command must pass the reversible classification", () => {
+    // Round-12 note: layer.newSolid / layer.style.add (previously "curated but
+    // outside the pinned subset") FLIPPED to reversible — they are ALLOWED
+    // engine catalog ids and the widened classification defaults those to
+    // reversible (pinned in the round-12 describe below). Everything else here
+    // stays non-reversible through the widening.
     const NON_REVERSIBLE = [
-      "effect.remove", // the explicit §7.3 ban
-      "text.delete",
-      "layer.delete",
+      "effect.remove", // the explicit §7.3 ban (catalog-allowed; the name wall holds)
+      "text.delete", // delete-ish catalog-allowed id — same §7.3 wall
+      "layer.delete", // unknown to the engine catalog
       "comp.delete",
-      "edit.undo", // history commands never auto-apply
+      "edit.undo", // history commands never auto-apply (§7.3)
       "edit.redo",
-      "render.frame", // render-ish
-      "layer.newSolid", // curated but outside the pinned subset
-      "layer.style.add", // curated but outside the pinned subset
-      "prop.setExpression", // deliberately NOT curated (arbitrary code)
+      "render.frame", // not in the engine catalog
+      "file.import", // DENIED catalog id (filesystem, hasPath) — fail closed
+      "anim.applyRecentPreset", // DENIED catalog id (path-param, hasPath)
+      "project.delete", // DENIED catalog id (destructive / project-destructive)
+      "renderQueue.render", // render-queue category: ALLOWED but §7.3-banned
+      "prop.setExpression", // deny-tagged (path-param) — never reversible
       "engine.batch", // meta transport id — never a batch step
       "__proto__.set", // hostile: must not resolve via the prototype chain
       "constructor",
@@ -336,6 +343,95 @@ describe("auto-apply policy — pure decision matrix", () => {
         expect(id).not.toMatch(/delete|remove|undo|redo|render|export|batch/);
       }
       expect(REVERSIBLE_AUTO_COMMANDS.has("effect.remove")).toBe(false);
+    });
+  });
+
+  describe("round-12 rule 6 widening — the engine_commands / run_script / add_asset carriers", () => {
+    it("an engine_commands carrier (ALLOWED additive catalog ids, edit intent, medium risk) auto-applies", () => {
+      // Real ids from the generated catalog — the compiler compiles them
+      // VERBATIM (plan-compiler.test.ts pins the batch shapes).
+      const compiled = compiledOk({
+        commands: ["layer.newSolid", "keys.set", "mask.new", "markers.set"],
+        risk: "medium",
+      });
+      expect(decide(basePlan({ intent: "edit" }), compiled, true)).toEqual({
+        mode: "auto",
+        reason: "eligible",
+      });
+    });
+
+    it("a run_script carrier auto-applies: the client-special script.run step, animate intent, medium risk", () => {
+      const plan = basePlan({ intent: "animate", summary: "Run an engine script (42 chars)" });
+      const compiled = compiledOk({ commands: ["script.run"], risk: "medium" });
+      expect(decide(plan, compiled, true)).toEqual({ mode: "auto", reason: "eligible" });
+    });
+
+    it("an add_asset carrier auto-applies: the client-special asset.importSvg step, create intent", () => {
+      const plan = basePlan({ intent: "create", summary: 'Add svg asset "Badge"' });
+      const compiled = compiledOk({ commands: ["asset.importSvg"], risk: "medium" });
+      expect(decide(plan, compiled, true)).toEqual({ mode: "auto", reason: "eligible" });
+    });
+
+    it("curated + widened + client-special steps mix into ONE auto verdict", () => {
+      const compiled = compiledOk({
+        commands: ["prop.set", "layer.newSolid", "asset.importSvg", "script.run"],
+        risk: "medium",
+      });
+      expect(decide(basePlan(), compiled, true)).toEqual({ mode: "auto", reason: "eligible" });
+    });
+
+    it("a delete-ish ALLOWED id still proposes (the §7.3 name wall holds through the widening)", () => {
+      for (const command of ["effect.remove", "text.delete", "camera.deletePoints"]) {
+        expect(
+          decide(basePlan(), compiledOk({ commands: [command], risk: "medium" }), true),
+        ).toEqual({ mode: "propose", reason: "command-not-reversible" });
+      }
+      // one poisoned step blocks the whole batch
+      expect(
+        decide(basePlan(), compiledOk({ commands: ["prop.set", "text.delete"] }), true).reason,
+      ).toBe("command-not-reversible");
+    });
+
+    it("the render-queue CATEGORY never auto-applies (renderQueue.render is catalog-ALLOWED but §7.3-banned)", () => {
+      for (const command of [
+        "renderQueue.render",
+        "renderQueue.duplicate",
+        "renderQueue.applyTemplate",
+      ]) {
+        expect(
+          decide(basePlan(), compiledOk({ commands: [command], risk: "medium" }), true),
+        ).toEqual({ mode: "propose", reason: "command-not-reversible" });
+      }
+    });
+
+    it("isReversibleAutoCommand pins the classification end to end", () => {
+      // curated fast path
+      for (const id of ["comp.new", "prop.set", "layer.setBlendMode"]) {
+        expect(isReversibleAutoCommand(id)).toBe(true);
+      }
+      // client-special apply-seam steps (the only source: the guarded translations)
+      expect(isReversibleAutoCommand("script.run")).toBe(true);
+      expect(isReversibleAutoCommand("asset.importSvg")).toBe(true);
+      // §7.3 bans that are catalog-ALLOWED (policy, not catalog)
+      expect(isReversibleAutoCommand("edit.undo")).toBe(false);
+      expect(isReversibleAutoCommand("edit.redo")).toBe(false);
+      expect(isReversibleAutoCommand("effect.remove")).toBe(false);
+      // the round-12 default: allowed engine commands are reversible
+      expect(isReversibleAutoCommand("layer.newSolid")).toBe(true);
+      expect(isReversibleAutoCommand("layer.style.add")).toBe(true);
+      expect(isReversibleAutoCommand("edit.pasteSvg")).toBe(true);
+      // never: denied / unknown / meta / hostile
+      for (const id of [
+        "file.import",
+        "anim.applyRecentPreset",
+        "prop.setExpression",
+        "engine.batch",
+        "__proto__.set",
+        "constructor",
+        "",
+      ]) {
+        expect(isReversibleAutoCommand(id)).toBe(false);
+      }
     });
   });
 
@@ -564,130 +660,17 @@ describe("PLAN_EVENT_SCHEMA autoApply extension (backwards compatible)", () => {
 });
 
 // ===========================================================================
-// Part C — the chat.ts wiring (real Postgres; peers land mid-flight)
+// Part C — the round-12 TURN wiring (real Postgres; MOCK_MODEL end-to-end)
 // ===========================================================================
 
 const d = describe.skipIf(!HAS_DATABASE);
 
-d("chat wiring — the plan event carries the §7.3 verdict", () => {
+d("turn wiring — the plan route carries the §7.3 verdict (round-12 loop)", () => {
   // -------------------------------------------------------------------------
-  // Fake OpenAI-compatible SSE server (M4-K/M5-K harness pattern, duplicated
-  // per its precedent — gateway tests never import sibling test files).
+  // SSE reading — POST /v1/threads/:id/turn streams StudioStreamEvents with
+  // `id:` = seq; `: keep-alive` comments every 15s carry no data and are
+  // skipped; the stream terminates with turn.completed | turn.failed.
   // -------------------------------------------------------------------------
-
-  const encoder = new TextEncoder();
-
-  type ChatCompletionBody = {
-    readonly model: string;
-    readonly messages: Array<Record<string, unknown>>;
-    readonly tools?: Array<{ readonly function: { readonly name: string } }>;
-  };
-  type ScriptEntry = (body: ChatCompletionBody) => string[];
-
-  function frameOf(data: unknown): string {
-    return `data: ${JSON.stringify(data)}\n\n`;
-  }
-  function textDelta(content: string): string {
-    return frameOf({ choices: [{ delta: { content } }] });
-  }
-  function toolCallStart(index: number, id: string, name: string): string {
-    return frameOf({
-      choices: [
-        {
-          delta: {
-            tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }],
-          },
-        },
-      ],
-    });
-  }
-  function toolCallArgs(index: number, args: string): string {
-    return frameOf({
-      choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }],
-    });
-  }
-  function finishReason(reason: string): string {
-    return frameOf({ choices: [{ delta: {}, finish_reason: reason }] });
-  }
-  function usageChunk(promptTokens: number, completionTokens: number): string {
-    return frameOf({
-      choices: [],
-      usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
-    });
-  }
-  const DONE = "data: [DONE]\n\n";
-
-  class FakeOpenAIServer {
-    private readonly queue: ScriptEntry[] = [];
-    private server: Server | null = null;
-    url = "";
-
-    enqueue(...entries: ScriptEntry[]): void {
-      this.queue.push(...entries);
-    }
-
-    reset(): void {
-      this.queue.length = 0;
-    }
-
-    async start(): Promise<void> {
-      const server = createServer((request, response) => {
-        void this.handle(request, response);
-      });
-      this.server = server;
-      await new Promise<void>((resolve) => {
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      const address = server.address() as AddressInfo;
-      this.url = `http://127.0.0.1:${address.port}`;
-    }
-
-    async stop(): Promise<void> {
-      await new Promise<void>((resolve) => {
-        const server = this.server;
-        if (server === null) {
-          resolve();
-          return;
-        }
-        server.close(() => resolve());
-      });
-    }
-
-    private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-      response.on("error", () => undefined);
-      request.on("error", () => undefined);
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) {
-        chunks.push(chunk as Buffer);
-        if (response.destroyed) return;
-      }
-      const next = this.queue.shift();
-      if (next === undefined) {
-        response.writeHead(500, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: { message: "fake script exhausted" } }));
-        return;
-      }
-      let body: ChatCompletionBody;
-      try {
-        body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as ChatCompletionBody;
-      } catch {
-        body = { model: "", messages: [] };
-      }
-      const frames = next(body);
-      response.writeHead(200, {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-store",
-      });
-      for (const wireFrame of frames) {
-        if (response.destroyed) return;
-        response.write(encoder.encode(wireFrame));
-        await new Promise<void>((resolveTick) => {
-          setImmediate(resolveTick);
-        });
-      }
-      response.end();
-    }
-  }
 
   interface WireFrame {
     readonly raw: string;
@@ -723,7 +706,7 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
 
     constructor(response: Response) {
       const body = response.body;
-      if (body === null) throw new Error("chat response had no SSE body");
+      if (body === null) throw new Error("turn response had no SSE body");
       this.reader = body.getReader();
     }
 
@@ -735,7 +718,7 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
         if (boundary !== -1) {
           const raw = this.buffer.slice(0, boundary);
           this.buffer = this.buffer.slice(boundary + 2);
-          if (raw.trim() === "") continue;
+          if (raw.trim() === "" || raw.startsWith(":")) continue; // keep-alives
           return parseFrame(raw);
         }
         const remaining = deadline - Date.now();
@@ -778,8 +761,8 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     }
   }
 
-  const TERMINAL_TYPES = new Set(["run.completed", "run.failed", "run.cancelled"]);
-  type PlanEvent = Extract<StudioStreamEvent, { type: "plan" }>;
+  const TERMINAL_TYPES = new Set(["turn.completed", "turn.failed"]);
+  type TurnCompletedEvent = Extract<StudioStreamEvent, { type: "turn.completed" }>;
 
   function expectValidStream(frames: readonly WireFrame[]): StudioStreamEvent[] {
     expect(frames.length).toBeGreaterThan(0);
@@ -808,10 +791,12 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     return events;
   }
 
-  function findPlan(events: readonly StudioStreamEvent[]): PlanEvent {
-    const plan = events.find((event): event is PlanEvent => event.type === "plan");
-    if (plan === undefined) throw new Error("no plan event on the wire");
-    return plan;
+  function findTurnCompleted(events: readonly StudioStreamEvent[]): TurnCompletedEvent {
+    const terminal = events.find(
+      (event): event is TurnCompletedEvent => event.type === "turn.completed",
+    );
+    if (terminal === undefined) throw new Error("no turn.completed event on the wire");
+    return terminal;
   }
 
   // -------------------------------------------------------------------------
@@ -836,34 +821,17 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
   }
 
   // -------------------------------------------------------------------------
-  // Servers + fixtures
+  // Server + fixtures
   // -------------------------------------------------------------------------
 
-  const fake = new FakeOpenAIServer();
-  let serverA: RunningTestServer; // REAL LiteLLM runner ⇒ compile-enriched plan events
-  let serverB: RunningTestServer; // MockRunner ⇒ un-enriched plan events
+  let server: RunningTestServer; // MOCK_MODEL=true + the real repos (helpers default)
 
   beforeAll(async () => {
-    await fake.start();
-    const envSource = {
-      MOCK_MODEL: "false",
-      LITELLM_BASE_URL: fake.url,
-      LITELLM_API_KEY: "sk-test-litellm-fake",
-      CHAT_MAX_STEPS: "6",
-    };
-    const env = testEnv(envSource);
-    serverA = await bootServer({ env: envSource, runner: createRunnerForEnv(env) });
-    serverB = await bootServer(); // MOCK_MODEL=true + MockRunner (helpers default)
+    server = await bootServer();
   }, 30_000);
 
   afterAll(async () => {
-    await serverA?.close();
-    await serverB?.close();
-    await fake.stop();
-  });
-
-  afterEach(() => {
-    fake.reset();
+    await server?.close();
   });
 
   interface Fixture {
@@ -872,9 +840,11 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     readonly workspaceId: string;
     readonly threadId: string;
     readonly userId: string;
+    /** A run row on the fixture thread (repo-seeded, seedRun precedent). */
+    readonly runId: string;
   }
 
-  async function newFixture(server: RunningTestServer, prefix: string): Promise<Fixture> {
+  async function newFixture(prefix: string): Promise<Fixture> {
     const jar = new CookieJar();
     const signup = await api(server.base, "/v1/auth/sign-up/email", {
       method: "POST",
@@ -897,7 +867,7 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     const meResponse = await api(server.base, "/v1/me", { jar });
     const me = (await meResponse.json()) as { data: { user: { id: string } } };
     await server.deps.repos.ledger.grant(ws.data.id, {
-      amount: 100 * 1_000_000, // 100 credits in µc (D-12) — the chat route reserves µc
+      amount: 100 * 1_000_000, // 100 credits in µc (D-12) — the turn route reserves µc
       idempotencyKey: unique("grant"),
     });
     const projectResponse = await api(server.base, "/v1/projects", {
@@ -916,17 +886,45 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     });
     expect(threadResponse.status).toBe(201);
     const thread = (await threadResponse.json()) as { data: { id: string } };
+    // The plan route needs a standing run row; HOW it came to exist is not
+    // this suite's subject (the full client entry wire — step 0, user turn,
+    // run creation — is pinned by the end-to-end journey test below), so the
+    // fixture seeds it directly through the repo, the tests/lease-ux.test.ts
+    // seedRun precedent.
+    const runId = unique("run");
+    await server.deps.repos.runs.create(ws.data.id, {
+      runId,
+      threadId: thread.data.id,
+      projectId: project.data.id,
+      model: "studio-fast",
+      baseVersionId: null,
+      reservedCredits: 0,
+    });
     return {
       base: server.base,
       jar,
       workspaceId: ws.data.id,
       threadId: thread.data.id,
       userId: me.data.user.id,
+      runId,
     };
   }
 
-  async function chatStream(fx: Fixture, idempotencyKey: string): Promise<Response> {
-    return fetch(`${fx.base}/v1/threads/${fx.threadId}/chat`, {
+  // -------------------------------------------------------------------------
+  // The round-12 turn + plan wire helpers
+  // -------------------------------------------------------------------------
+
+  const USER_TEXT = "Add the two text layers we discussed";
+
+  async function postTurn(
+    fx: Fixture,
+    input: {
+      readonly runId: string;
+      readonly stepIndex: number;
+      readonly messages: readonly TurnMessage[];
+    },
+  ): Promise<Response> {
+    return fetch(`${fx.base}/v1/threads/${fx.threadId}/turn`, {
       method: "POST",
       headers: {
         origin: TEST_APP_ORIGIN,
@@ -934,24 +932,57 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
         accept: "text/event-stream",
         cookie: fx.jar.header,
         "x-workspace-id": fx.workspaceId,
+        // TURN WIRE CONTRACT: the Idempotency-Key header IS the turn key.
+        "idempotency-key": `${input.runId}:${input.stepIndex}`,
       },
       body: JSON.stringify({
-        message: "Add the two text layers we discussed",
-        context: {},
-        idempotencyKey,
-        pinned: [],
+        runId: input.runId,
+        stepIndex: input.stepIndex,
+        messages: input.messages,
       }),
       redirect: "manual",
     });
   }
 
+  /** POST /v1/runs/:id/plan — the round-12 home of the §7.3 verdict. */
+  interface PlanRoutePayload {
+    readonly runId: string;
+    readonly plan: EditPlan;
+    readonly autoApply: AutoApplyDecision;
+    readonly baseVersionId?: string;
+    readonly compiledBatch?: {
+      readonly label: string;
+      readonly atomic: boolean;
+      readonly steps: readonly { readonly command: string; readonly params?: unknown }[];
+    };
+    readonly risk?: PlanRisk;
+    readonly estimatedCredits?: number;
+    readonly resolutionRequests?: readonly {
+      readonly requestId: string;
+      readonly layerName: string;
+      readonly disambiguation: readonly string[];
+    }[];
+  }
+
+  async function postPlan(fx: Fixture, runId: string, plan: unknown): Promise<PlanRoutePayload> {
+    const response = await api(fx.base, `/v1/runs/${runId}/plan`, {
+      method: "POST",
+      jar: fx.jar,
+      headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("plan") },
+      body: { plan },
+    });
+    expect(response.status).toBe(200);
+    return (await response.json()) as PlanRoutePayload;
+  }
+
   // -------------------------------------------------------------------------
-  // Scripted model rounds (server A) — the two plans under test
+  // The two plans under test (§8.6-valid; posted to /v1/runs/:id/plan the
+  // way the client folds its merged plan at run end)
   // -------------------------------------------------------------------------
 
   /**
    * Two studio.create_text steps ⇒ two reversible layer.newText commands.
-   * The model is HONEST on risk ("low") — the landed G-4 compiler semantics
+   * The plan is HONEST on risk ("low") — the landed G-4 compiler semantics
    * treat the model's declared risk as a FLOOR that server-side recompute
    * never lowers, so a lying "high" can never recompute low — but it still
    * LIES on estimatedCredits (99): credits are always recomputed server-side
@@ -1011,45 +1042,16 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     ],
   } as const;
 
-  // Fixture self-checks: both scripted plans are §8.6-valid.
+  // Fixture self-checks: both plans are §8.6-valid.
   EDIT_PLAN_SCHEMA.parse(AUTO_PLAN);
   EDIT_PLAN_SCHEMA.parse(UNDO_PLAN);
 
-  async function planRun(
-    fx: Fixture,
-    plan: unknown,
-    key = unique("chat"),
-  ): Promise<{ events: StudioStreamEvent[]; plan: PlanEvent; key: string }> {
-    fake.enqueue(
-      () => [
-        toolCallStart(0, "call_m5o_plan", "studio.plan_edit"),
-        toolCallArgs(0, JSON.stringify({ goal: "the goal" })),
-        finishReason("tool_calls"),
-        DONE,
-      ],
-      () => [textDelta(JSON.stringify(plan)), usageChunk(50, 12), finishReason("stop"), DONE],
-      () => [textDelta("Planned."), usageChunk(40, 8), finishReason("stop"), DONE],
-    );
-    const response = await chatStream(fx, key);
-    expect(response.status).toBe(200);
-    const stream = new SseStream(response);
-    const frames = await stream.rest();
-    const events = expectValidStream(frames);
-    return { events, plan: findPlan(events), key };
-  }
-
-  async function mockRun(fx: Fixture): Promise<{ events: StudioStreamEvent[]; plan: PlanEvent }> {
-    const response = await chatStream(fx, unique("chat"));
-    expect(response.status).toBe(200);
-    const stream = new SseStream(response);
-    const frames = await stream.rest();
-    const events = expectValidStream(frames);
-    return { events, plan: findPlan(events) };
-  }
+  // -------------------------------------------------------------------------
+  // Settings seam adapters (adaptive per peer landing)
+  // -------------------------------------------------------------------------
 
   /** Reads the setting state the route will see; adaptive per peer landing. */
   async function enableAutoApply(
-    server: RunningTestServer,
     userId: string,
   ): Promise<{ enabled: boolean; seam: SettingsAutoApplySeam | null }> {
     const seam = settingsSeamOf(server.deps.repos);
@@ -1072,7 +1074,6 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
    * setting-unavailable degrade; a stored false row ⇒ setting-disabled.
    */
   async function expectedDefaultVerdict(
-    server: RunningTestServer,
     userId: string,
   ): Promise<{ mode: "auto" | "propose"; reason: string }> {
     const seam = settingsSeamOf(server.deps.repos);
@@ -1087,120 +1088,265 @@ d("chat wiring — the plan event carries the §7.3 verdict", () => {
     }
   }
 
-  it("default user ⇒ auto (v2: ON by default), on the enriched plan event + replay", async () => {
-    const fx = await newFixture(serverA, "m5o-default");
-    const { plan: planEvent, key } = await planRun(fx, AUTO_PLAN);
+  // -------------------------------------------------------------------------
+  // Route truth (round 12): the retired /chat loop is GONE; the turn + the
+  // generative-tools routes are mounted.
+  // -------------------------------------------------------------------------
 
-    // The event is compile-enriched: the verdict was genuinely evaluated.
-    expect(planEvent.compiledBatch?.steps.map((step) => step.command)).toEqual([
+  it("round-12 route truth: /chat is gone (404); /turn and the tools routes are mounted", async () => {
+    const fx = await newFixture("m5o-routes");
+
+    // The retired in-request /chat SSE loop is really gone: with a VALID
+    // session the POST falls through every mounted sub-app to the 404 default
+    // (it stays idempotency-exempt, so no key games).
+    const chat = await fetch(`${fx.base}/v1/threads/${fx.threadId}/chat`, {
+      method: "POST",
+      headers: {
+        origin: TEST_APP_ORIGIN,
+        "content-type": "application/json",
+        cookie: fx.jar.header,
+        "x-workspace-id": fx.workspaceId,
+      },
+      body: JSON.stringify({
+        message: "hi",
+        context: {},
+        idempotencyKey: unique("chat"),
+        pinned: [],
+      }),
+      redirect: "manual",
+    });
+    expect(chat.status).toBe(404);
+    expect(((await chat.json()) as { error: { code: string } }).error.code).toBe("NOT_FOUND");
+
+    // The turn route is mounted and owns its idempotency contract: the HEADER
+    // must be exactly `${runId}:${stepIndex}` (TURN WIRE CONTRACT) — a
+    // well-formed but wrong key is rejected by the route itself.
+    const runId = unique("run");
+    const wrongKey = await fetch(`${fx.base}/v1/threads/${fx.threadId}/turn`, {
+      method: "POST",
+      headers: {
+        origin: TEST_APP_ORIGIN,
+        "content-type": "application/json",
+        cookie: fx.jar.header,
+        "x-workspace-id": fx.workspaceId,
+        "idempotency-key": unique("wrong-key"),
+      },
+      body: JSON.stringify({
+        runId,
+        stepIndex: 0,
+        messages: [{ role: "user", text: "hi" }],
+      }),
+      redirect: "manual",
+    });
+    expect(wrongKey.status).toBe(400);
+    const wrongBody = (await wrongKey.json()) as { error: { code: string; hint?: string } };
+    expect(wrongBody.error.code).toBe("VALIDATION_FAILED");
+    expect(wrongBody.error.hint).toContain(`"${runId}:0"`);
+
+    // The round-12 generative-tools routes are mounted too: their own schemas
+    // reject an empty body with 400 (an unmounted path would 404).
+    for (const tool of ["web_search", "generate_image"]) {
+      const probe = await api(fx.base, `/v1/threads/${fx.threadId}/tools/${tool}`, {
+        method: "POST",
+        jar: fx.jar,
+        headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("probe") },
+        body: {},
+      });
+      expect(probe.status).toBe(400);
+      expect(((await probe.json()) as { error: { code: string } }).error.code).toBe(
+        "VALIDATION_FAILED",
+      );
+    }
+  }, 15_000);
+
+  it("default user ⇒ auto (v2: ON by default), on the enriched plan-route payload", async () => {
+    const fx = await newFixture("m5o-default");
+    const payload = await postPlan(fx, fx.runId, AUTO_PLAN);
+
+    // The payload is compile-enriched: the server re-compiled the plan
+    // authoritatively (the same seam the retired plan event used).
+    expect(payload.compiledBatch?.steps.map((step) => step.command)).toEqual([
       "layer.newText",
       "layer.newText",
     ]);
-    expect(planEvent.risk).toBe("low");
-    expect(planEvent.estimatedCredits).toBe(2); // server-recomputed, not the model's 99
+    expect(payload.risk).toBe("low");
+    expect(payload.estimatedCredits).toBe(2); // server-recomputed, not the model's 99
     // v2: a fresh user has NO settings row = the schema default = ON, so a
     // reversible plan auto-applies (mid-flight trees without the seam degrade
     // to setting-unavailable — the same guard the route carries).
-    expect(planEvent.autoApply).toEqual(await expectedDefaultVerdict(serverA, fx.userId));
-
-    // Replay (law #4): the same idempotencyKey replays the SAME enriched log —
-    // the stamped verdict is part of the stored event, byte-identical.
-    const replayResponse = await chatStream(fx, key);
-    expect(replayResponse.status).toBe(200);
-    const replayStream = new SseStream(replayResponse);
-    const replayFrames = await replayStream.rest();
-    const replayEvents = expectValidStream(replayFrames);
-    expect(findPlan(replayEvents)).toEqual(planEvent);
+    expect(payload.autoApply).toEqual(await expectedDefaultVerdict(fx.userId));
   }, 15_000);
 
   it("enabled user ⇒ {mode:auto} on the reversible compiled plan (M6-D seam)", async () => {
-    const fx = await newFixture(serverA, "m5o-enabled");
-    const { enabled } = await enableAutoApply(serverA, fx.userId);
-    const { plan: planEvent } = await planRun(fx, AUTO_PLAN);
+    const fx = await newFixture("m5o-enabled");
+    const { enabled } = await enableAutoApply(fx.userId);
+    const payload = await postPlan(fx, fx.runId, AUTO_PLAN);
 
     if (enabled) {
       // Auto even though the MODEL declared 99 credits: the verdict used the
       // server-recomputed low / 2.0 and the reversible layer.newText batch.
-      expect(planEvent.autoApply).toEqual({ mode: "auto", reason: "eligible" });
+      expect(payload.autoApply).toEqual({ mode: "auto", reason: "eligible" });
     } else {
       // Mid-flight degrade (repo absent or table not applied): propose with
       // the setting-unavailable verdict — never a crash, never auto.
-      expect(planEvent.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
+      expect(payload.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
     }
   }, 15_000);
 
   it("enabled user ⇒ propose command-not-reversible for a history-command plan (edit.undo)", async () => {
-    const fx = await newFixture(serverA, "m5o-undo");
-    const { enabled } = await enableAutoApply(serverA, fx.userId);
-    const { plan: planEvent } = await planRun(fx, UNDO_PLAN);
+    const fx = await newFixture("m5o-undo");
+    const { enabled } = await enableAutoApply(fx.userId);
+    const payload = await postPlan(fx, fx.runId, UNDO_PLAN);
 
-    expect(planEvent.compiledBatch?.steps.map((step) => step.command)).toEqual(["edit.undo"]);
+    expect(payload.compiledBatch?.steps.map((step) => step.command)).toEqual(["edit.undo"]);
     if (enabled) {
       // v2: the server-recomputed MEDIUM (history floor) passes the risk gate —
       // it is the REVERSIBLE-COMMAND wall that stops edit.undo (history
       // commands are never in the auto-apply subset).
-      expect(planEvent.risk).toBe("medium");
-      expect(planEvent.autoApply).toEqual({ mode: "propose", reason: "command-not-reversible" });
+      expect(payload.risk).toBe("medium");
+      expect(payload.autoApply).toEqual({ mode: "propose", reason: "command-not-reversible" });
     } else {
-      expect(planEvent.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
+      expect(payload.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
     }
   }, 15_000);
 
   it("settings repo absent ⇒ propose setting-unavailable (wiring guard, never a crash)", async () => {
-    const fx = await newFixture(serverB, "m5o-guard");
-    const holder = serverB.deps.repos as { settings?: SettingsAutoApplySeam };
+    const fx = await newFixture("m5o-guard");
+    const holder = server.deps.repos as { settings?: SettingsAutoApplySeam };
     const saved = holder.settings;
     holder.settings = undefined;
     try {
-      const { plan: planEvent } = await mockRun(fx);
-      expect(planEvent.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
-      // The run itself completed: the missing seam never broke the stream.
-      expect(planEvent.plan.summary).toBe("Create an Agent Demo composition with a text layer");
+      const payload = await postPlan(fx, fx.runId, AUTO_PLAN);
+      expect(payload.autoApply).toEqual({ mode: "propose", reason: "setting-unavailable" });
+      // And the compile-enrichment is untouched by the missing settings seam:
+      // the run still ends with an applicable, authoritative batch.
+      expect(payload.compiledBatch?.steps.map((step) => step.command)).toEqual([
+        "layer.newText",
+        "layer.newText",
+      ]);
     } finally {
       if (saved !== undefined) holder.settings = saved;
     }
   }, 15_000);
 
-  it("the mock plan event is COMPILE-ENRICHED (the offline stack can create something)", async () => {
-    const fx = await newFixture(serverB, "m5o-mock-enriched");
-    const { plan: planEvent } = await mockRun(fx);
+  it("the full mock-model turn journey: user step 0 ⇒ COMPILE-ENRICHED proposals ⇒ closing step 1 ⇒ durable replay", async () => {
+    const fx = await newFixture("m5o-mock-enriched");
+    const runId = unique("run");
 
-    // The mock runner compiles its plan through the REAL server-side plan
-    // compiler (the same seam the LiteLLM runner uses), so MOCK_MODEL runs
-    // carry an applicable batch: comp.new + layer.newText — additive only,
-    // no layer-name resolution requests, one atomic undo step.
-    expect(planEvent.compiledBatch).toBeDefined();
-    const batch = planEvent.compiledBatch;
-    if (batch === undefined) throw new Error("mock plan event was not enriched");
-    expect(batch.steps.map((step) => step.command)).toEqual(["comp.new", "layer.newText"]);
-    expect(batch.atomic).toBe(true);
-    expect(batch.label).toBe("Agent: Create an Agent Demo composition with a text layer");
-    expect(planEvent.resolutionRequests ?? []).toEqual([]);
-    // SERVER-recomputed values (never the model's declared "low"/2.0):
-    // create_composition floors the risk at medium; credits follow it.
-    expect(planEvent.risk).toBe("medium");
-    expect(planEvent.estimatedCredits).toBe(2.5);
+    // Step 0 — the client's entry wire: the user's message, one turn. This
+    // pins the routes/turn.ts step-0 flow end to end (run row + user turn
+    // persisted + ONE model call): as of round-12 the route links the user
+    // message BEFORE it creates the run row (src/routes/turn.ts:186 links,
+    // :188 creates) while repos.threads.linkUserMessageToRun requires the run
+    // to already exist — every real step-0 turn 404s RUN_NOT_FOUND until the
+    // two calls are reordered (worklog: Task ID 12-w5-t2). Fix the order and
+    // this test is the permanent regression pin for it.
+    const first = await postTurn(fx, {
+      runId,
+      stepIndex: 0,
+      messages: [{ role: "user", text: USER_TEXT }],
+    });
+    expect(first.status).toBe(200);
+    const firstEvents = expectValidStream(await new SseStream(first).rest());
+    const terminal = findTurnCompleted(firstEvents);
+
+    // The mock model proposes the two write carriers, each compiled through
+    // the REAL server-side plan compiler (the same seam the write-tool path
+    // uses), so MOCK_MODEL turns carry applicable batches: comp.new for the
+    // composition + layer.newText for the text — additive only, one atomic
+    // undo step each, no layer-name resolution requests.
+    expect(terminal.finishReason).toBe("tool-calls");
+    const composition = terminal.toolCalls[0];
+    const text = terminal.toolCalls[1];
+    expect(composition?.tool).toBe("studio.create_composition");
+    expect(composition?.proposal?.compiled.batch.steps.map((step) => step.command)).toEqual([
+      "comp.new",
+    ]);
+    expect(composition?.proposal?.compiled.batch.atomic).toBe(true);
+    expect(composition?.proposal?.compiled.batch.label).toBe(
+      'Agent: Create composition "Agent Demo"',
+    );
+    expect(composition?.proposal?.compiled.risk).toBe("medium"); // server-recomputed floor
+    expect(composition?.proposal?.compiled.resolutionRequests).toEqual([]);
+    expect(text?.tool).toBe("studio.create_text");
+    expect(text?.proposal?.compiled.batch.steps.map((step) => step.command)).toEqual([
+      "layer.newText",
+    ]);
+    expect(text?.proposal?.compiled.batch.atomic).toBe(true);
+    expect(text?.proposal?.compiled.resolutionRequests).toEqual([]);
+
+    // The client executes both tools locally and echoes the results with the
+    // NEXT turn: the mock model closes the loop with plain text (stop).
+    const closing = await postTurn(fx, {
+      runId,
+      stepIndex: 1,
+      messages: [
+        { role: "user", text: USER_TEXT },
+        { role: "assistant", text: "" },
+        ...terminal.toolCalls.map(
+          (call): TurnMessage => ({
+            role: "tool_call",
+            toolCallId: call.toolCallId,
+            tool: call.tool,
+            args: call.args,
+          }),
+        ),
+        ...terminal.toolCalls.map(
+          (call): TurnMessage => ({
+            role: "tool_result",
+            toolCallId: call.toolCallId,
+            tool: call.tool,
+            result: { ok: true },
+          }),
+        ),
+      ],
+    });
+    expect(closing.status).toBe(200);
+    const closingEvents = expectValidStream(await new SseStream(closing).rest());
+    const closingTerminal = findTurnCompleted(closingEvents);
+    expect(closingTerminal.finishReason).toBe("stop");
+    expect(closingTerminal.toolCalls).toEqual([]);
+    expect(closingTerminal.assistantText).toBe(
+      "Done — I created the Agent Demo composition with a text layer.",
+    );
+
+    // Durable replay (round-12 law #4): the same turn key replays the STORED
+    // outcome from the thread history, never a second model call. Drop the
+    // in-memory idempotency cache so the duplicate reaches the route itself.
+    server.deps.idempotency.reset();
+    const replay = await postTurn(fx, {
+      runId,
+      stepIndex: 0,
+      messages: [{ role: "user", text: USER_TEXT }],
+    });
+    expect(replay.status).toBe(200);
+    const replayEvents = expectValidStream(await new SseStream(replay).rest());
+    const replayTerminal = findTurnCompleted(replayEvents);
+    expect(replayTerminal.toolCalls).toEqual(terminal.toolCalls);
+    expect(replayTerminal.assistantText).toBe(terminal.assistantText);
+    expect(replayTerminal.credits.committed).toBe(0); // replay never re-settles
+    expect(replayEvents.some((event) => event.type === "message.delta")).toBe(false);
   }, 15_000);
 
-  it("enriched (mock) plan event ⇒ auto by default (v2); explicit opt-out ⇒ setting-disabled", async () => {
-    const fx = await newFixture(serverB, "m5o-mock");
-    const before = await mockRun(fx);
-    // Default user (no settings row = schema default ON): the mock plan is
-    // create-intent, comp.new + layer.newText, server-recomputed MEDIUM —
-    // all inside the v2 auto-apply envelope.
-    expect(before.plan.autoApply).toEqual(await expectedDefaultVerdict(serverB, fx.userId));
+  it("enriched (mock) plan ⇒ auto by default (v2); explicit opt-out ⇒ setting-disabled", async () => {
+    const fx = await newFixture("m5o-mock");
 
-    const seam = settingsSeamOf(serverB.deps.repos);
+    // Default user (no settings row = schema default ON): the reversible plan
+    // is inside the v2 auto-apply envelope.
+    const before = await postPlan(fx, fx.runId, AUTO_PLAN);
+    expect(before.autoApply).toEqual(await expectedDefaultVerdict(fx.userId));
+
+    const seam = settingsSeamOf(server.deps.repos);
     if (seam !== null) {
       // Explicit opt-out always wins: a stored false row ⇒ setting-disabled,
       // even for a perfectly reversible creation plan.
       await seam.setUserAutoApply(fx.userId, false);
-      const off = await mockRun(fx);
-      expect(off.plan.autoApply).toEqual({ mode: "propose", reason: "setting-disabled" });
+      const off = await postPlan(fx, fx.runId, AUTO_PLAN);
+      expect(off.autoApply).toEqual({ mode: "propose", reason: "setting-disabled" });
       // Opting back in restores auto.
       await seam.setUserAutoApply(fx.userId, true);
-      const on = await mockRun(fx);
-      expect(on.plan.autoApply).toEqual({ mode: "auto", reason: "eligible" });
+      const on = await postPlan(fx, fx.runId, AUTO_PLAN);
+      expect(on.autoApply).toEqual({ mode: "auto", reason: "eligible" });
     }
   }, 15_000);
 });

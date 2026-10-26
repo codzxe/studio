@@ -25,13 +25,30 @@ export type { VersionsRepo } from "./versions.js";
 export type { LeasesRepo } from "./leases.js";
 export type { AssetsRepo } from "./assets.js";
 export type { ThreadsRepo } from "./threads.js";
+// Round 12 (client-driven agent loop): transcript persistence + history loader.
+export type {
+  HistoryRole,
+  ThreadHistoryMessage,
+  LoadHistoryOptions,
+  ToolMessageInput,
+  AssistantMessageStatus,
+  AssistantMessageInput,
+  LinkUserMessageInput,
+} from "./threads.js";
+export { toHistoryEntry, historyCostOf } from "./threads.js";
 export type {
   RunsRepo,
   RecordAppliedInput,
   RecordUndoneInput,
   PlanState,
   PlanLifecycleStatus,
+  ToolCallStepInput,
+  CompleteToolStepInput,
+  TouchRunHeartbeatInput,
+  MarkRunAbandonedInput,
+  StaleRun,
 } from "./runs.js";
+export { RUN_STALE_AFTER_MS, RUN_ABANDONED_ERROR_CODE } from "./runs.js";
 export type { LedgerRepo } from "./ledger.js";
 export type { LedgerScope } from "./ledger.js";
 export type { CommentsRepo } from "./comments.js";

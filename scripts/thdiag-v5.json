@@ -1,0 +1,27 @@
+{
+  "region": "icn1",
+  "models_throttled": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shor",
+  "models": {
+    "status": 429,
+    "body": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shortly.\",\"type\":\"rate_limit_error\",\"code\":\"server_busy\"}}"
+  },
+  "chat_th-rudder_throttled": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shor",
+  "chat_th-rudder": {
+    "status": 429,
+    "body": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shortly.\",\"type\":\"rate_limit_error\",\"code\":\"server_busy\"}}"
+  },
+  "chat_th-rudder:free_throttled": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shor",
+  "chat_th-rudder:free": {
+    "status": 429,
+    "body": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shortly.\",\"type\":\"rate_limit_error\",\"code\":\"server_busy\"}}"
+  },
+  "stream_dotted_throttled": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shor",
+  "stream_dotted": {
+    "status": 429,
+    "head": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shortly.\",\"type\":\"rate_limit_error\",\"code\":\"server_busy\"}}"
+  },
+  "stream_sanitized": {
+    "status": 200,
+    "head": "data: {\"id\":\"chatcmpl-791b58d3f3b34505a773b64ce93b9cc6\",\"object\":\"chat.completion.chunk\",\"created\":1793018284,\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-791b58d3f3b34505a773b64ce93b9cc6\",\"object\":\"chat.completion.chunk\",\"created\":1793018284,\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"The\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-791b58d3f3b34505a773b64ce93b9cc6\",\"object\":\"chat.completion.chunk\",\"created\":1793018284,\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" user wants to list the layers\"},\"finish_reason\":null}]}"
+  }
+}

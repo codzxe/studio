@@ -55,23 +55,21 @@
  *      §12.1 404 for an unknown-but-well-formed token.
  *   5. (ACTIVE) Read-only — the D-23 pin under a scripted lease-held state:
  *      the read-only chrome strip renders ("Viewing — Maya Rivera is
- *      editing" + countdown), the CHAT still opens and completes a full
- *      read-only run through the gate-wrapped bridge (the studio.get_context
- *      tool card reaches done — reads pass, D-23), the proposal renders with
- *      NO apply control anywhere (first-live 2026-10-24: the host DOES wire
- *      applyPorts post-K-1, but the REAL mock-model plan wire carries no
- *      compiledBatch, so the card keeps the M4 callback-less shape — see the
- *      apply arm's comment), and the comments panel stays fully usable with
- *      the lease note + a comment posted under another member's lease
- *      (review is the point of the read-only state).
- *   6. (fixme, WIRING-PENDING) The apply-blocked half of D-23: clicking Apply
- *      while another member holds the lease must fail LOCALLY with the typed
- *      lease explanation. Written as real code against the pinned contract
+ *      editing" + countdown), the CHAT still opens and completes the full
+ *      round-12 mock run through the gate-wrapped bridge (the two
+ *      write-carrier chips settle done — the run's reads/wire pass, D-23),
+ *      and the round-10-v2 AUTO-APPLY drive is refused LOCALLY by the
+ *      gate-wrapped bridge (ReadOnlyLeaseError → card "failed" with the
+ *      holder-naming explanation — writes are the gated half). The
+ *      comments panel stays fully usable with the lease note + a comment
+ *      posted under another member's lease (review is the point of the
+ *      read-only state).
+ *   6. (ACTIVE) The apply-blocked half of D-23, round-12 shape: the
+ *      AUTO-APPLY DRIVE (no click — the seeded user's default verdict is
+ *      "auto") hits the gate-wrapped bridge's engine.batch refusal
  *      (lib/chat/apply.ts → ReadOnlyLeaseError → card status "failed" +
- *      plan-failed-detail naming the holder + NO retry). The K-1 host-wiring
- *      blocker RESOLVED 2026-10-24; the first-ever run then found the REAL
- *      remaining blocker — the real mock-model plan wire has no compiledBatch
- *      (see the test's header note — the precise evidence + flip options).
+ *      plan-failed-detail naming the holder + NO retry) and NO /apply POST
+ *      ever fires — the local gate refuses before any wire traffic.
  *
  * ----------------------------------------------------------------------------
  * Determinism contract (no real network model, no real second user)
@@ -370,7 +368,10 @@ function activityEntry(index: number): Record<string, unknown> {
   // One UTC day → exactly one day-group header; newest-first page order.
   const created = new Date(Date.UTC(2026, 9, 26, 9, 0, 0) - index * 60_000).toISOString();
   const actor = index === 0 ? null : actors[index % actors.length];
-  const entry = actions[index % actions.length];
+  // `actions` is a non-empty literal but noUncheckedIndexedAccess still
+  // widens the index access — fall back to the first row (never taken).
+  const entry = actions[index % actions.length] ?? actions[0];
+  if (entry === undefined) throw new Error("activity fixture has no actions");
   return {
     id: `aud_m7_p${index}`,
     projectId: "prj_demo",
@@ -949,7 +950,7 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
     // (the sibling editor suites set the same per-describe).
     test.setTimeout(300_000);
   });
-  test("the read-only chrome renders; chat still completes a full run (D-23); comments stay open; no apply control exists", async ({
+  test("the read-only chrome renders; chat still completes a full run (D-23); the auto-apply drive is lease-blocked locally; comments stay open", async ({
     page,
   }) => {
     // The scripted lease-held state (viewer, holder "Maya Rivera") + the
@@ -971,7 +972,9 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
     await expect(page.getByTestId("lease-countdown")).toHaveText(/\d+:\d\d left/);
 
     // D-23, chat arm: the chat still opens and the gate-wrapped bridge lets
-    // every READ through — a full mock-model run completes under the lease.
+    // the whole RUN through — the round-12 mock loop (two turn POSTs) completes
+    // under the lease and the TWO write-carrier chips settle done (the loop's
+    // synthesized tool.result; write tools never execute mid-run).
     await expect(page.getByTestId("chat-header")).toBeVisible();
     await expect(page.getByTestId("presence-strip")).toBeVisible();
     const composer = page.getByLabel("Message the agent");
@@ -982,25 +985,31 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
     await expect(page.getByTestId("chat-status")).toHaveAttribute("data-phase", "done", {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
-    const contextCard = page.locator('[data-testid="tool-card"][data-tool="studio.get_context"]');
-    await expect(contextCard).toHaveAttribute("data-status", "done");
+    const compChip = page.locator(
+      '[data-testid="tool-card"][data-tool="studio.create_composition"]',
+    );
+    const textChip = page.locator('[data-testid="tool-card"][data-tool="studio.create_text"]');
+    await expect(compChip).toHaveCount(1, { timeout: RUN_SETTLE_TIMEOUT_MS });
+    await expect(textChip).toHaveCount(1);
+    await expect(compChip).toHaveAttribute("data-status", "done");
+    await expect(textChip).toHaveAttribute("data-status", "done");
 
-    // D-23, apply arm (the structural half): the run's proposal is now the
-    // FULLY APPLICABLE card. Post-K-1 (2026-10-24) the host wires
-    // applyPorts (editor-host.tsx passes session.applyPorts and the provider
-    // builds the ApplyController), and since the mock-model plan wire now
-    // CARRIES a compiledBatch (runner.ts mockEditPlan compiles through the
-    // real plan compiler: comp.new + layer.newText at server-risk medium),
-    // the thread mounts the M5 card with Apply + Cancel. This journey does
-    // NOT click them (the read-only review arm is the point here); the
-    // lease-blocked apply journey is the test below. The lease gate is the
-    // second wall: the gate-wrapped bridge rejects engine.batch locally
-    // while another member holds the lease (driven by the test below).
+    // D-23, apply arm (the structural half, round-10-v2 + round-12 shape): the
+    // run's merged plan arrives via POST /v1/runs/:id/plan with the §7.3
+    // verdict "auto" (the seeded user has no settings row), so the
+    // AUTO-APPLY DRIVE fires at run end — and the gate-wrapped bridge
+    // rejects engine.batch LOCALLY while another member holds the lease
+    // (ReadOnlyLeaseError → apply.ts "lease-held" outcome): the card folds
+    // to "failed" with the holder-naming explanation and NO wire apply
+    // ever happens. Reads and review stay alive; writes are the gated half.
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible();
-    await expect(plan).toHaveAttribute("data-status", "proposed");
-    await expect(plan.getByTestId("plan-apply")).toBeVisible();
-    await expect(plan.getByTestId("plan-cancel")).toBeVisible();
+    await expect(plan).toHaveAttribute("data-status", "failed", {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId("plan-failed-detail")).toContainText(
+      "Maya Rivera is editing this project right now.",
+    );
 
     // D-23, review arm: the comments panel OPENS under another member's
     // lease with the lease note — and posting still works (review is the
@@ -1030,28 +1039,27 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
   });
 
   // -------------------------------------------------------------------------
-  // The Apply-blocked-with-lease-explanation journey
+  // The Apply-blocked-with-lease-explanation journey (round-12: the
+  // AUTO-APPLY DRIVE supplies the apply attempt — no click)
   // -------------------------------------------------------------------------
   //
-  // UNBLOCKED 2026-10-25: the ONE remaining blocker is gone — the
-  // MockRunner's plan event now carries `compiledBatch` (services/gateway/
-  // src/runner.ts mockEditPlan compiles through the real server-side plan
-  // compiler: comp.new + layer.newText, server-recomputed medium risk), so
-  // the client arms the full M5 card (run-state.ts planRuntimeFromEvent)
-  // and the Apply control EXISTS to click. The lease-blocked apply pipeline
-  // itself was landed and unit-proven all along (apps/web/src/lib/chat/
-  // __tests__/apply-lease-held.test.ts): the GATE-WRAPPED bridge rejects
-  // engine.batch with the typed ReadOnlyLeaseError
-  // (lib/editor-session/read-only.ts), apply.ts maps it to the `lease-held`
-  // outcome, and the plan card renders status "failed" + plan-failed-detail
-  // with the holder-naming explanation and NO Try-again (APPLY_FAILED is
-  // not in the retryable sets).
+  // ROUND-12 TRUTH: the mock loop proposes the two write carriers
+  // (services/gateway/src/routes/turn.ts `mockTurn`), the client merges them
+  // (mergeEditPlans) and POSTs /v1/runs/:id/plan — the response's §7.3
+  // verdict is "auto" (the seeded user has no settings row), so the
+  // round-10-v2 AUTO-DRIVE executes the apply at the client-synthesized
+  // run.completed. The lease-blocked apply pipeline itself was landed and
+  // unit-proven all along (apps/web/src/lib/chat/__tests__/apply-lease-held
+  // .test.ts): the GATE-WRAPPED bridge rejects engine.batch with the typed
+  // ReadOnlyLeaseError (lib/editor-session/read-only.ts), apply.ts maps it
+  // to the `lease-held` outcome, and the plan card renders status "failed"
+  // + plan-failed-detail with the holder-naming explanation and NO
+  // Try-again (APPLY_FAILED is not in the retryable sets).
   //
-  // Deterministic fixture notes: the mock model's plan is MEDIUM risk
+  // Deterministic fixture notes: the merged plan is MEDIUM risk
   // (create_composition floors the server recompute; no confirm checkbox,
-  // no dialog — a single click drives apply), and the local gate rejection
-  // happens BEFORE any engine traffic — the wire-level proof is that no
-  // /apply POST ever fires.
+  // no dialog), and the local gate rejection happens BEFORE any engine
+  // traffic — the wire-level proof is that no /apply POST ever fires.
   test("Apply under another member's lease fails locally with the typed lease explanation", async ({
     page,
   }) => {
@@ -1066,16 +1074,14 @@ test.describe("M7 read-only — another member holds the edit lease", () => {
 
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
-    await expect(plan).toHaveAttribute("data-status", "proposed");
 
-    // No apply POST can ever fire — the local gate refuses first.
+    // No apply POST can ever fire — the local gate refuses the AUTO-DRIVE's
+    // engine.batch before any wire traffic.
     let applyPosts = 0;
     await page.route("**/v1/runs/*/apply", async (route) => {
       applyPosts += 1;
       await route.continue();
     });
-
-    await plan.getByTestId("plan-apply").click();
 
     // The typed lease explanation (ReadOnlyLeaseError → apply.ts):
     // "Maya Rivera is editing this project right now. The plan was not

@@ -1,40 +1,66 @@
 /**
- * M4-L — the WEB full-loop integration test (docs/phases/M4-SEAMS.md Seam 7
- * "Integration"; BUILD_PLAN §M4 exit criteria "Context chips accurately
- * reflect what is sent" + "Read-only agent answers questions about the open
- * comp/selection/playhead"; EDITOR_CHAT_UX §3.4/§5.3/§8.4).
+ * M4-L/M5-Q — the WEB full-loop integration test, ROUND-12 EDITION (docs/
+ * phases/M4-SEAMS.md Seam 7; research/round12-design.md "Architecture" +
+ * "TURN WIRE CONTRACT"): the flagship that composes the REAL browser-side
+ * client-driven agent loop and fakes ONLY the wire.
  *
- * This is the ONE suite that composes the REAL browser-side M4 stack and
- * fakes ONLY the wire:
+ * THE NEW TRUTH this file pins (round 12 — the loop lives in the browser):
+ *   * every model call is ONE bounded turn POSTed through
+ *     `client.chat.turn` (POST /v1/threads/:id/turn, header
+ *     `Idempotency-Key: ${runId}:${stepIndex}` — the fake records the
+ *     derived `turnKey` and asserts same-key re-POSTs);
+ *   * the turn SSE is run.started → turn.started → message.delta/
+ *     tool.started → turn.completed | turn.failed (NO server plan events,
+ *     NO server run.completed, NO tool.result POST-backs);
+ *   * READ/GENERATIVE tools execute LOCALLY through the provider-wired
+ *     `createClientToolExecutor` (the real fake bridge answers) and the
+ *     result echoes as a tool_result part in the NEXT turn's transcript;
+ *   * WRITE tools arrive as proposal carriers — the loop ACCUMULATES them
+ *     (`carrierEditPlan`), echoes `resultForModel`, and NEVER executes;
+ *   * the run ends on a turn.completed with NO toolCalls → the client
+ *     merges the carriers (`mergeEditPlans`) and POSTs /v1/runs/:id/plan,
+ *     folding the response as the plan card (auto-apply drives on a
+ *     `mode: "auto"` verdict);
+ *   * STOP aborts the in-flight turn + fire-and-forget POSTs
+ *     /v1/runs/:id/abandon; TURN_PAUSED (the turn transport's bounded park)
+ *     plays the old §8.4 RUN_PAUSED role — banner + Retry re-sends the
+ *     SAME step (same key).
+ *
+ * This is the ONE suite that composes the REAL browser-side stack:
  *
  *   REAL ChatProvider (thread lazy-create, models, context orchestration,
- *        executor diff-wiring, send facade)
+ *        canvas snapshot, executor factory, send facade)
  *   REAL ChatPanelSlot (the composed panel: header + context strip/popover +
  *        thread + composer + footer over the provider's render-prop)
- *   REAL createChatController + foldEvent + createToolExecutor + context.ts
+ *   REAL createChatController + foldEvent + createClientToolExecutor +
+ *        createApplyController + context.ts
  *   REAL wave-2 components (ChatComposer emits, ChatThread/ToolCard/PlanCard
  *        render the loop's outputs, ContextStrip/Popover drive the flags)
  *   REAL @studio/editor-bridge fake (createFakeEditor seeded with a real
  *        "Main" comp + a real selected "Headline" text layer — get_context
  *        returns REAL editor data)
  *
- *   FAKED: the api-client surface ONLY (threads.create / models.list /
- *   chat.stream / runs.postEvent — the M4-C2 stub pattern). `chat.stream`
- *   records every §8.4 segment and hands back the controller's handler set so
- *   the tests can drive normalized §7.4 events by hand; the drop/pause helpers
- *   replay the documented sse.ts contract (same-idempotency-key re-POST +
- *   Last-Event-ID replay, pause after 3 attempts, fused cancel/resume).
+ *   FAKED: the api-client surface ONLY (threads.create/list/messages /
+ *   models.list / chat.turn / runs.submitPlan + abandon + applyRun/undoRun).
+ *   `chat.turn` records every POST, mirrors the DOCUMENTED streamTurn
+ *   contract (sse.ts): per-turn server seqs are deduped by a replay cursor
+ *   and rewritten into the run's monotonic LOCAL seqs (`seqBase`), a
+ *   transport drop re-POSTs the SAME body + key through a NEW post with the
+ *   normalizer's cursor continued, `abort()` settles `done` `aborted`, and
+ *   TURN_PAUSED parks with `onError` + `done {reason: "paused"}`.
  *
- * Scenario → test map (M4 evidence file):
- *   1 full read-agent loop   → "full read-agent loop: composer send …"
- *   2 context-flag accuracy → "popover removal drops the selection block …"
- *     (+ "chat POST body omits model when entitlements failed …")
- *   3 replay idempotence    → "replay idempotence: the same event list twice …"
- *   4 reconnect             → "reconnect: transport drop …"
- *   5 RUN_PAUSED            → "RUN_PAUSED: three failed attempts park …"
- *   6 plan card (M4.6)      → "plan card: a §7.4 plan event renders …"
- *   7 write tool forbidden  → "write tool refusal: studio.set_properties …"
- *   8 steer queue           → "steer queue: a composer send while streaming …"
+ * Scenario → test map (M4 evidence, round-12 rewires):
+ *   1 full read-agent loop  → "composer send → client-driven turn POSTs …"
+ *   2 context-chip accuracy → "popover removal drops the selection block …"
+ *     (+ "turn POST body omits model when entitlements failed …")
+ *   3 replay idempotence    → "replay idempotence: the same turn event list …"
+ *   4 reconnect             → "reconnect: a transport drop …"
+ *   5 TURN_PAUSED park      → "TURN_PAUSED: the parked run shows the §8.4 …"
+ *   6 stop → abandon        → "stop: the composer's Stop aborts …"
+ *   7 read-only embed (M4.6)→ "read-only embed: a write-tool proposal …"
+ *   8 non-client tool       → "non-client tool refusal: the wired executor …"
+ *   9 steer queue (§3.4)    → "a composer send while the run is live …"
+ *  10–20 the M5-Q wired apply journey (see the second describe).
  *
  * Deterministic, no network, real timers (the §11 1 Hz inspect poll is given
  * real time to fire where a scenario needs the AUTO selection flags — the
@@ -47,48 +73,66 @@ import { ChatPanelSlot } from "@/components/editor-host/chat-panel-slot";
 import { createChatShortcutBus } from "@/components/editor-host/chat-shortcut-bus";
 import { DEFAULT_FLAGS } from "@/lib/chat/context";
 import { type ChatApplyPorts, type ChatContextApi, ChatProvider } from "@/lib/chat/provider";
+import { createClientToolExecutor, isClientToolError } from "@/lib/chat/tool-executor";
 import type { SaveOutcome } from "@/lib/editor-session";
-import type { ApiClient } from "@studio/api-client";
-import type { ChatRequest, EditPlan, StudioStreamEvent, Thread } from "@studio/contracts";
+import type { ApiClient, TurnStreamHandle } from "@studio/api-client";
+import type { EditPlan, StudioStreamEvent, Thread, TurnToolCall } from "@studio/contracts";
+import type { ContextSelection } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { type FakeEditor, attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 // ---------------------------------------------------------------------------
-// The fake wire (the ONLY fake): an ApiClient stand-in that records segments
+// The fake wire (the ONLY fake): an ApiClient stand-in that records turn POSTs
 // ---------------------------------------------------------------------------
 
-/** The §8.4 handler set the chat engine hands to `client.chat.stream` (sse.ts contract). */
-interface WireHandlers {
+/**
+ * The turn-transport handler set the chat engine hands to `client.chat.turn`
+ * (sse.ts `streamTurn` — `TurnStreamHandlers` + the call's seqBase/replay
+ * cursor options).
+ */
+interface TurnPostHandlers {
   readonly onEvent?: (event: StudioStreamEvent) => void;
   readonly onError?: (error: { code: string; message: string; retryable: boolean }) => void;
-  readonly onReconnect?: (info: {
-    attempt: number;
-    delayMs: number;
-    lastEventId: string | null;
-  }) => void;
-  readonly onPause?: (info: { attempts: number }) => void;
-  readonly onDone?: (summary: { reason: string; runId: string | null; status: string }) => void;
+  readonly onReconnect?: (info: { attempt: number; delayMs: number }) => void;
+  readonly onDone?: (summary: { reason: string; runId: string | null; failure: unknown }) => void;
+  readonly seqBase?: number;
+  readonly replayCursor?: number;
 }
 
-/** One POST to /v1/threads/:id/chat (the original send or a §8.4 same-key re-POST). */
-interface WireSegment {
+/**
+ * ONE POST to /v1/threads/:id/turn (the original call, a controller Retry of
+ * the same step, or the transport's own same-key re-POST after a drop).
+ */
+interface TurnPost {
   readonly threadId: string;
-  readonly body: ChatRequest;
-  readonly handlers: WireHandlers;
-  readonly paused: boolean;
-  readonly cancel: ReturnType<typeof vi.fn>;
-  readonly abort: ReturnType<typeof vi.fn>;
-  readonly reconnect: ReturnType<typeof vi.fn>;
+  /** The POST-time serialized body (the transport stringifies; never aliases). */
+  readonly body: Record<string, unknown>;
+  readonly runId: string;
+  readonly stepIndex: number;
+  /** `${runId}:${stepIndex}` — exactly what the Idempotency-Key header rides. */
+  readonly turnKey: string;
+  readonly seqBase: number;
+  readonly replayCursor: number | null;
+  readonly handlers: TurnPostHandlers;
+  /** The normalizer's server-seq watermark — frames ≤ it are replay no-ops. */
+  lastServerSeq: number;
+  /** The normalizer's LOCAL seq (continues the run's monotonic space). */
+  localSeq: number;
+  /** Every LOCAL event this POST emitted (verbatim — the store-replay probe). */
+  readonly emitted: StudioStreamEvent[];
+  aborted: boolean;
+  paused: boolean;
+  /** Settles the handle's `done` promise (the transport's terminal path). */
+  settle(reason: "terminal" | "aborted" | "paused"): void;
 }
 
-/** One POST to /v1/runs/:id/events (the client tool-executor's result). */
-interface PostedEvent {
+/** One POST to /v1/runs/:id/plan (the run-end merged-carrier fold). */
+interface PostedPlan {
   readonly runId: string;
-  readonly body: Record<string, unknown>;
-  readonly idempotencyKey: string | undefined;
+  readonly plan: EditPlan;
 }
 
 /** One POST to /v1/runs/:id/apply (the ApplyController's report). */
@@ -117,38 +161,88 @@ const FAST_MODEL = {
 
 const MODELS_OK = { plan: "trial", models: [FAST_MODEL] };
 
+/** The default plan-route answer when a test scripts nothing richer. */
+const DEFAULT_PLAN_RESPONSE = (runId: string, plan: EditPlan): Record<string, unknown> => ({
+  runId,
+  plan,
+  autoApply: { mode: "propose", reason: "manual review" },
+});
+
 function makeWire(options: { readonly models?: "ok" | "fail" } = {}) {
-  const segments: WireSegment[] = [];
-  const postEvents: PostedEvent[] = [];
+  const posts: TurnPost[] = [];
+  const planPosts: PostedPlan[] = [];
+  const abandons: string[] = [];
   const applyRuns: PostedApplyRun[] = [];
   const undoRuns: PostedUndoRun[] = [];
   /** Scripted applyRun rejections (shifted per call; apply.ts's apiFailure shape). */
   const applyFailures: Array<{ status: number; code: string; message: string }> = [];
+  /** Scripted /v1/runs/:id/plan responses (shifted per call; default echoes). */
+  const planResponses: Array<Record<string, unknown>> = [];
 
-  const active = (): WireSegment => {
-    const segment = segments[segments.length - 1];
-    if (segment === undefined) throw new Error("no open stream segment");
-    return segment;
+  const active = (): TurnPost => {
+    const post = posts[posts.length - 1];
+    if (post === undefined) throw new Error("no open turn post");
+    return post;
   };
 
-  const openSegment = (
+  /** Opens ONE turn POST + its live handle (sse.ts TurnStreamHandle). */
+  const openTurn = (
     threadId: string,
-    body: ChatRequest,
-    handlers: WireHandlers,
-  ): WireSegment => {
-    const segment: WireSegment = {
-      threadId,
-      body,
-      handlers,
-      paused: false,
-      cancel: vi.fn(async () => undefined),
-      abort: vi.fn(),
-      reconnect: vi.fn(async () => {
-        openSegment(threadId, body, handlers); // sse.ts resume: same body re-POST
-      }),
+    body: Record<string, unknown>,
+    handlers: TurnPostHandlers,
+    continuation?: {
+      readonly lastServerSeq: number;
+      readonly localSeq: number;
+      /** An internal same-key re-POST settles the ORIGINAL call's `done`. */
+      readonly settle?: TurnPost["settle"];
+    },
+  ): TurnStreamHandle => {
+    const runId = String(body.runId);
+    const stepIndex = Number(body.stepIndex);
+    const lastServerSeq = continuation?.lastServerSeq ?? handlers.replayCursor ?? -1;
+    const localSeq = continuation?.localSeq ?? (handlers.seqBase ?? 0) - 1;
+    let settled = false;
+    let resolveDone: (summary: { reason: string }) => void = () => undefined;
+    const done = new Promise<{ reason: string }>((resolve) => {
+      resolveDone = resolve;
+    });
+    const ownSettle: TurnPost["settle"] = (reason) => {
+      if (settled) return;
+      settled = true;
+      resolveDone({ reason });
     };
-    segments.push(segment);
-    return segment;
+    const settleFn = continuation?.settle ?? ownSettle;
+    const post: TurnPost = {
+      threadId,
+      body: JSON.parse(JSON.stringify(body)) as Record<string, unknown>,
+      runId,
+      stepIndex,
+      turnKey: `${runId}:${stepIndex}`,
+      seqBase: handlers.seqBase ?? 0,
+      replayCursor: handlers.replayCursor ?? null,
+      handlers,
+      lastServerSeq,
+      localSeq,
+      emitted: [],
+      aborted: false,
+      paused: false,
+      settle: settleFn,
+    };
+    posts.push(post);
+    return {
+      done: done as never,
+      runId,
+      get lastServerSeq(): number {
+        return post.lastServerSeq;
+      },
+      get paused(): boolean {
+        return post.paused;
+      },
+      abort: () => {
+        post.aborted = true;
+        post.settle("aborted");
+      },
+    };
   };
 
   const client = {
@@ -161,6 +255,9 @@ function makeWire(options: { readonly models?: "ok" | "fail" } = {}) {
         createdAt: "2026-10-24T00:00:00.000Z",
         updatedAt: "2026-10-24T00:00:00.000Z",
       }),
+      // Thread-switcher/history seams (use-thread-history): empty + never throws.
+      list: async () => ({ items: [] as Thread[], n: null }),
+      messages: async () => ({ items: [], n: null }),
     },
     models: {
       list: async () => {
@@ -169,29 +266,43 @@ function makeWire(options: { readonly models?: "ok" | "fail" } = {}) {
       },
     },
     chat: {
-      stream: (threadId: string, body: ChatRequest, handlers?: WireHandlers) =>
-        openSegment(threadId, body, handlers ?? {}),
+      /**
+       * POST /v1/threads/:id/turn — the round-12 turn seam. The REAL
+       * api-client validates the body (TURN_REQUEST_SCHEMA), rides the
+       * `Idempotency-Key: ${runId}:${stepIndex}` header and owns bounded
+       * same-key recovery (pinned in the api-client's own suite); this fake
+       * mirrors the seam the controller codes against.
+       */
+      turn: (
+        threadId: string,
+        body: Record<string, unknown>,
+        handlers?: TurnPostHandlers,
+      ): TurnStreamHandle => openTurn(threadId, body, handlers ?? {}),
     },
     runs: {
-      postEvent: async (
-        runId: string,
-        body: Record<string, unknown>,
-        options?: { idempotencyKey?: string },
-      ) => {
-        postEvents.push({ runId, body, idempotencyKey: options?.idempotencyKey });
+      get: async () => {
+        throw new Error("runs.get is not part of this suite's surface");
+      },
+      submitPlan: async (runId: string, body: { plan: EditPlan }) => {
+        planPosts.push({ runId, plan: body.plan });
+        const scripted = planResponses.shift();
+        return (scripted ?? DEFAULT_PLAN_RESPONSE(runId, body.plan)) as never;
+      },
+      abandon: async (runId: string) => {
+        abandons.push(runId);
         return null;
       },
       applyRun: async (
         runId: string,
         body: Record<string, unknown>,
-        options?: { idempotencyKey?: string },
+        callOptions?: { idempotencyKey?: string },
       ) => {
         const failure = applyFailures.shift();
         if (failure !== undefined) {
           // ApiError-shaped rejection (apply.ts's apiFailure reads status/code/message).
           throw failure;
         }
-        applyRuns.push({ runId, body, idempotencyKey: options?.idempotencyKey });
+        applyRuns.push({ runId, body, idempotencyKey: callOptions?.idempotencyKey });
         return {
           applied: true as const,
           versionId: body.versionId as string,
@@ -201,62 +312,99 @@ function makeWire(options: { readonly models?: "ok" | "fail" } = {}) {
       undoRun: async (
         runId: string,
         body: Record<string, unknown>,
-        options?: { idempotencyKey?: string },
+        callOptions?: { idempotencyKey?: string },
       ) => {
-        undoRuns.push({ runId, body, idempotencyKey: options?.idempotencyKey });
+        undoRuns.push({ runId, body, idempotencyKey: callOptions?.idempotencyKey });
         return { undone: true as const };
       },
     },
   } as unknown as ApiClient;
 
-  /** Feed normalized §7.4 events through the CURRENT segment (foldEvent runs for real). */
+  /** Feed SERVER-seq §7.4 frames through the CURRENT post (the normalizer). */
   const feed = (...events: StudioStreamEvent[]): void => {
+    const post = active();
     act(() => {
-      for (const event of events) active().handlers.onEvent?.(event);
-    });
-  };
-
-  /** The sse.ts terminal summary (fired AFTER the terminal event was folded). */
-  const finishRun = (runId: string): void => {
-    act(() => {
-      active().handlers.onDone?.({ reason: "terminal", runId, status: "applied" });
-    });
-  };
-
-  /** One transport drop: onReconnect → sse.ts re-POSTs the SAME body (a new segment). */
-  const dropOnce = (): void => {
-    const segment = active();
-    act(() => {
-      segment.handlers.onReconnect?.({ attempt: 1, delayMs: 1000, lastEventId: null });
-      openSegment(segment.threadId, segment.body, segment.handlers);
-    });
-  };
-
-  /** §8.4 exhaustion: 3 attempts (each onReconnect + same-key re-POST), then pause. */
-  const dropToPause = (): void => {
-    const segment = active();
-    act(() => {
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        segment.handlers.onReconnect?.({ attempt, delayMs: 1000 * attempt, lastEventId: null });
-        openSegment(segment.threadId, segment.body, segment.handlers);
+      for (const event of events) {
+        // The normalizer's replay dedupe: frames ≤ the cursor are no-ops.
+        if (event.seq <= post.lastServerSeq) continue;
+        post.lastServerSeq = event.seq;
+        post.localSeq += 1;
+        const normalized = { ...event, runId: post.runId, seq: post.localSeq };
+        post.emitted.push(normalized);
+        post.handlers.onEvent?.(normalized);
       }
-      segment.handlers.onPause?.({ attempts: 3 });
-      segment.handlers.onDone?.({ reason: "paused", runId: null, status: "streaming" });
+    });
+  };
+
+  /** Settles the ACTIVE handle's `done` — the transport's terminal path. */
+  const finishTurn = (): void => {
+    const post = active();
+    act(() => {
+      post.settle("terminal");
+    });
+  };
+
+  /**
+   * The transport's TURN_PAUSED park: `onError {code: "TURN_PAUSED"}` then
+   * `done {reason: "paused"}` (bounded same-key retries exhausted).
+   */
+  const pauseTurn = (): void => {
+    const post = active();
+    act(() => {
+      post.paused = true;
+      post.handlers.onError?.({
+        code: "TURN_PAUSED",
+        message: "Run paused. Check your connection.",
+        retryable: true,
+      });
+      post.settle("paused");
+    });
+  };
+
+  /**
+   * ONE transport drop mid-turn: `onReconnect` fires, then the TRANSPORT
+   * re-POSTs the SAME body + turn key through a NEW post whose normalizer
+   * state CONTINUES (frames already emitted stay deduped).
+   */
+  const dropOnce = (): void => {
+    const post = active();
+    act(() => {
+      post.handlers.onReconnect?.({ attempt: 1, delayMs: 1000 });
+      openTurn(post.threadId, post.body, post.handlers, {
+        lastServerSeq: post.lastServerSeq,
+        localSeq: post.localSeq,
+        settle: post.settle,
+      });
+    });
+  };
+
+  /**
+   * Re-folds the ACTIVE post's already-emitted LOCAL events verbatim (a
+   * Last-Event-ID-style re-delivery that bypasses the normalizer): the
+   * STORE's per-run seq cursor must make it a no-op.
+   */
+  const replayEmitted = (): void => {
+    const post = active();
+    act(() => {
+      for (const event of [...post.emitted]) post.handlers.onEvent?.(event);
     });
   };
 
   return {
     client,
-    segments,
-    postEvents,
+    posts,
+    planPosts,
+    abandons,
     applyRuns,
     undoRuns,
     applyFailures,
+    planResponses,
     active,
     feed,
-    finishRun,
+    finishTurn,
+    pauseTurn,
     dropOnce,
-    dropToPause,
+    replayEmitted,
   };
 }
 
@@ -330,6 +478,7 @@ function makeRecordedBridge(fake: FakeEditor): { bridge: EditorBridge; calls: Br
 
 interface Harness {
   readonly wire: ReturnType<typeof makeWire>;
+  readonly bridge: EditorBridge;
   readonly bridgeCalls: BridgeCalls;
   readonly getApi: () => ChatContextApi;
 }
@@ -374,6 +523,7 @@ async function mountSeeded(
   );
   const harness: Harness = {
     wire,
+    bridge,
     bridgeCalls: calls,
     getApi: () => {
       if (api === null) throw new Error("provider did not render");
@@ -384,7 +534,7 @@ async function mountSeeded(
 }
 
 // ---------------------------------------------------------------------------
-// Shared waits + fixtures
+// Shared waits + wire-frame builders + fixtures
 // ---------------------------------------------------------------------------
 
 /** The composer's textarea (the REAL send surface). */
@@ -404,41 +554,107 @@ async function waitForModels(harness: Harness): Promise<void> {
  */
 async function waitForInspectPoll(harness: Harness): Promise<void> {
   await act(async () => {
-    for (let i = 0; i < 15 && harness.getApi().flags.selection === false; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 200));
+    for (let i = 0; i < 15 && harness.getApi().flags.selection === false; i += 1) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 200);
+      });
     }
   });
   expect(harness.getApi().flags.selection).toBe(true);
 }
 
-/** A valid §8.6 plan (parses EDIT_PLAN_SCHEMA; same shape as the plan-card fixture). */
-const PLAN_FIXTURE: EditPlan = {
-  intent: "animate",
-  summary: "Animate the headline scale with a springy overshoot",
-  risk: "low",
-  requiresApproval: true,
-  affectedLayers: [
-    { name: "Headline", change: "Keyframe Scale" },
-    { name: "Subhead", change: "Delay 0.2s" },
-  ],
-  estimatedCredits: 12,
-  steps: [
-    {
-      title: "Keyframe Scale 20% → 110% → 100%",
-      tool: "studio.plan_edit",
-      args: {},
-      batch: { label: "Agent: animate headline", steps: [{ command: "prop.set", params: {} }] },
+/** Placeholder runId — the fake rewrites every emitted frame to the POST's own. */
+const RUN_OF_THE_WIRE = "run_from_the_wire";
+
+// -- SERVER-seq §7.4 turn frames (the fake assigns local seqs) ---------------
+
+function runStarted(seq: number): StudioStreamEvent {
+  return { type: "run.started", runId: RUN_OF_THE_WIRE, seq, model: "studio-fast" };
+}
+
+function delta(seq: number, text: string): StudioStreamEvent {
+  return { type: "message.delta", runId: RUN_OF_THE_WIRE, seq, delta: text };
+}
+
+function toolStarted(
+  seq: number,
+  toolCallId: string,
+  tool: string,
+  args: unknown,
+): StudioStreamEvent {
+  return {
+    type: "tool.started",
+    runId: RUN_OF_THE_WIRE,
+    seq,
+    toolCallId,
+    name: tool,
+    args,
+  };
+}
+
+function turnCompleted(
+  seq: number,
+  stepIndex: number,
+  outcome: {
+    readonly assistantText?: string;
+    readonly toolCalls?: readonly TurnToolCall[];
+  },
+): StudioStreamEvent {
+  return {
+    type: "turn.completed",
+    runId: RUN_OF_THE_WIRE,
+    seq,
+    stepIndex,
+    finishReason: (outcome.toolCalls?.length ?? 0) > 0 ? "tool-calls" : "stop",
+    usage: { inputTokens: 100, outputTokens: 24 },
+    credits: { committed: 1 },
+    ...(outcome.assistantText !== undefined ? { assistantText: outcome.assistantText } : {}),
+    toolCalls: [...(outcome.toolCalls ?? [])],
+  };
+}
+
+/** A write-tool proposal carrier (the gateway's turn.completed payload). */
+function writeProposal(
+  tool: string,
+  args: Record<string, unknown>,
+  toolCallId: string,
+): TurnToolCall {
+  return {
+    toolCallId,
+    tool,
+    args,
+    resultForModel: { proposedBatch: { label: `Agent: ${tool}`, steps: [] }, note: "proposed" },
+    proposal: {
+      compiled: {
+        batch: {
+          label: `Agent: ${tool}`,
+          atomic: true,
+          steps: [{ command: tool.replace(/^studio\./, ""), params: args }],
+        },
+        risk: "low",
+        estimatedCredits: 1.5,
+        resolutionRequests: [],
+      },
     },
-    {
-      title: "Add overshoot at 0.45s",
-      tool: "studio.plan_edit",
-      args: {},
-      batch: { label: "Agent: overshoot", steps: [{ command: "prop.set", params: {} }] },
-    },
-  ],
+  };
+}
+
+/** A read/generative call: no proposal — the client executes it locally. */
+function readCall(tool: string, args: Record<string, unknown>, toolCallId: string): TurnToolCall {
+  return { toolCallId, tool, args, resultForModel: null, proposal: null };
+}
+
+const AUTO_ON_FLAGS: ContextSelection = {
+  ...DEFAULT_FLAGS,
+  selection: true,
+  selectedProperties: true,
 };
 
-const AUTO_ON_FLAGS = { ...DEFAULT_FLAGS, selection: true, selectedProperties: true };
+/** The §8.6 set_properties args the model proposes (the retitle carrier). */
+const SET_PROPERTIES_ARGS = {
+  layers: [{ name: "Headline" }],
+  properties: [{ path: "text/sourceText", value: "New headline" }],
+};
 
 beforeEach(() => {
   // The chat shell persists its layout under this key (D-10); every test
@@ -447,11 +663,11 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 1 — the flagship full read-agent loop
+// Scenario 1 — the flagship full read-agent loop (client-driven turns)
 // ---------------------------------------------------------------------------
 
-describe("M4-L web chat integration — full read-agent loop (flagship)", () => {
-  it("composer send → SSE run → executor queries the bridge → gated tool.result POST → final answer + tool card + credits render", async () => {
+describe("M4-L web chat integration — full read-agent loop (flagship, round 12)", () => {
+  it("composer send → client-driven turn POST → the loop executes get_context LOCALLY → the result echoes into the NEXT turn transcript → the run ends on a turn.completed with NO toolCalls", async () => {
     const user = userEvent.setup();
     const { harness } = await mountSeeded();
     await waitForModels(harness);
@@ -468,62 +684,68 @@ describe("M4-L web chat integration — full read-agent loop (flagship)", () => 
     // The user types the pinned quick-prompt into the REAL composer + Enter.
     await user.type(composerBox(), "What's on this comp?{Enter}");
 
-    // The wire POST: the exact CHAT_REQUEST body (strictObject shape).
-    await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
-    const body = harness.wire.segments[0]?.body;
-    expect(body?.message).toBe("What's on this comp?");
+    // The turn POST: the exact TURN_REQUEST body shape (Idempotency-Key is a
+    // HEADER derived from the body — the fake records the same derivation).
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
+    const post = harness.wire.posts[0];
+    const body = post?.body;
+    expect(post?.threadId).toBe(THREAD_ID);
+    expect(post?.stepIndex).toBe(0);
+    expect(typeof post?.runId).toBe("string"); // client crypto.randomUUID()
+    expect(post?.turnKey).toBe(`${post?.runId}:0`);
+    expect(body?.messages).toEqual([{ role: "user", text: "What's on this comp?" }]);
     expect(body?.context).toEqual(AUTO_ON_FLAGS); // chips mirror what is sent
-    expect(body?.model).toBe("studio-fast"); // the entitlement default
     expect(body?.pinned).toEqual([]);
-    expect(typeof body?.idempotencyKey).toBe("string");
-    expect(body?.idempotencyKey.length ?? 0).toBeGreaterThanOrEqual(8);
+    expect(body?.model).toBe("studio-fast"); // the entitlement default
+    expect(body?.canvas).toMatchObject({
+      // the compact canvas rides step 0 (hash-change rule)
+      activeComp: "Main",
+      layers: [{ id: 1, name: "Headline", type: "text" }],
+      selection: [1],
+    });
 
     // run.started → the assistant placeholder ("Thinking…") with the caret.
-    harness.wire.feed({ type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" });
+    harness.wire.feed(runStarted(0));
     expect(screen.getByTestId("chat-thinking")).toBeInTheDocument();
     expect(screen.getByTestId("chat-caret")).toBeInTheDocument();
     expect(screen.getByLabelText("Stop streaming")).toBeInTheDocument();
 
-    // tool.started → the running card; the REAL executor runs against the
-    // REAL fake bridge (count only THIS call's queries — the provider's own
-    // context collects also query project.summary by design).
+    // tool.started → the running card (no result settles it on the turn wire).
     const summaryBefore = harness.bridgeCalls.queries.filter((q) => q === "project.summary").length;
-    harness.wire.feed({
-      type: "tool.started",
-      runId: "run_1",
-      seq: 2,
-      toolCallId: "call_ctx",
-      name: "studio.get_context",
-      args: {},
-    });
+    harness.wire.feed(toolStarted(1, "call_ctx", "studio.get_context", {}));
     await waitFor(() => expect(screen.getByTestId("tool-card").dataset.status).toBe("running"));
 
-    // The executor POSTs the tool result — exact RUN_EVENT wire shape.
-    await waitFor(() => expect(harness.wire.postEvents).toHaveLength(1));
-    const posted = harness.wire.postEvents[0];
-    expect(posted?.runId).toBe("run_1");
-    expect(posted?.idempotencyKey).toBe("toolresult:run_1:call_ctx");
-    expect(Object.keys(posted?.body ?? {}).sort()).toEqual(["result", "toolCallId", "type"]);
-    expect(posted?.body.type).toBe("tool.result");
-    expect(posted?.body.toolCallId).toBe("call_ctx");
+    // turn.completed carries the read call → the loop executes it LOCALLY
+    // through the provider-wired executor against the REAL fake bridge.
+    harness.wire.feed(
+      turnCompleted(2, 0, {
+        assistantText: "Let me look.",
+        toolCalls: [readCall("studio.get_context", {}, "call_ctx")],
+      }),
+    );
+    harness.wire.finishTurn();
+
+    // The NEXT turn POST (step 1, same run): the transcript echoes the
+    // tool_call + the REAL locally-executed tool_result.
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
+    const stepOne = harness.wire.posts[1];
+    expect(stepOne?.runId).toBe(post?.runId); // ONE run, client-driven
+    expect(stepOne?.turnKey).toBe(`${post?.runId}:1`);
+    expect(stepOne?.body.canvas).toBeUndefined(); // unchanged canvas hash ⇒ omitted
+    const transcript = stepOne?.body.messages as Array<Record<string, unknown>>;
+    expect(transcript).toEqual([
+      { role: "user", text: "What's on this comp?" },
+      { role: "assistant", text: "Let me look." }, // the terminal's authoritative text
+      { role: "tool_call", toolCallId: "call_ctx", tool: "studio.get_context", args: {} },
+      expect.objectContaining({
+        role: "tool_result",
+        toolCallId: "call_ctx",
+        tool: "studio.get_context",
+      }),
+    ]);
+    const result = (transcript[3] as { result: Record<string, unknown> }).result;
 
     // The result carries the REAL fake-editor state, gated by DEFAULT+auto flags.
-    const result = posted?.body.result as {
-      activeComp: { name: string; layers: Array<{ id: number; name: string; type: string }> };
-      focusedPanel: string;
-      playhead: { timeSeconds: number; playing: boolean };
-      projectSummary: {
-        activeComp: number;
-        selectedLayers: number[];
-        items: Array<{ name: string }>;
-      };
-      recentCommands: unknown;
-      selectedProperties: {
-        layerId: number;
-        properties: Record<string, { value: unknown }>;
-      };
-      selection: { layerIds: number[]; tree: { name: string } | null };
-    };
     expect(Object.keys(result).sort()).toEqual([
       "activeComp",
       "focusedPanel",
@@ -533,26 +755,43 @@ describe("M4-L web chat integration — full read-agent loop (flagship)", () => 
       "selectedProperties",
       "selection",
     ]);
-    expect(result.projectSummary.activeComp).toBe(1);
-    expect(result.projectSummary.items[0]?.name).toBe("Main");
-    expect(result.projectSummary.selectedLayers).toEqual([1]);
-    expect(result.activeComp.name).toBe("Main");
-    expect(result.activeComp.layers[0]).toMatchObject({ id: 1, name: "Headline", type: "text" });
-    expect(result.selection.layerIds).toEqual([1]);
-    expect(result.selection.tree).toMatchObject({ name: "Headline" });
+    expect(result.projectSummary).toMatchObject({ activeComp: 1, selectedLayers: [1] });
+    expect((result.projectSummary as { items: Array<{ name: string }> }).items[0]?.name).toBe(
+      "Main",
+    );
+    expect(
+      (
+        result.activeComp as {
+          name: string;
+          layers: Array<{ id: number; name: string; type: string }>;
+        }
+      ).name,
+    ).toBe("Main");
+    expect(
+      (result.activeComp as { layers: Array<{ id: number; name: string; type: string }> })
+        .layers[0],
+    ).toMatchObject({ id: 1, name: "Headline", type: "text" });
+    expect(result.selection).toMatchObject({ layerIds: [1] });
+    expect((result.selection as { tree: { name: string } | null }).tree).toMatchObject({
+      name: "Headline",
+    });
     expect(result.playhead).toEqual({ timeSeconds: 0, playing: false });
     expect(result.focusedPanel).toBe("Viewer");
-    expect(result.selectedProperties.layerId).toBe(1);
-    expect(result.selectedProperties.properties["text/sourceText"]).toMatchObject({
-      value: "Headline",
-    });
-    expect(result.selectedProperties.properties["transform/position"]).toMatchObject({
-      value: [960, 540, 0],
-    });
+    expect(result.selectedProperties).toMatchObject({ layerId: 1 });
+    expect(
+      (result.selectedProperties as { properties: Record<string, { value: unknown }> }).properties[
+        "text/sourceText"
+      ],
+    ).toMatchObject({ value: "Headline" });
+    expect(
+      (result.selectedProperties as { properties: Record<string, { value: unknown }> }).properties[
+        "transform/position"
+      ],
+    ).toMatchObject({ value: [960, 540, 0] });
     expect(result.recentCommands).toBe("removed by user"); // DEFAULT-off flag
 
-    // Read-only proof: the executor queried project.summary EXACTLY once for
-    // this tool call, never mutated, and covered the real read surface.
+    // Read-only proof: the executor queried the real read surface for THIS
+    // tool call, never mutated, and covered the bridge reads.
     expect(
       harness.bridgeCalls.queries.filter((q) => q === "project.summary").length - summaryBefore,
     ).toBe(1);
@@ -562,45 +801,43 @@ describe("M4-L web chat integration — full read-agent loop (flagship)", () => 
     expect(harness.bridgeCalls.executes).toEqual([]);
     expect(harness.bridgeCalls.batches).toBe(0);
 
-    // The server echoes the tool result → the card flips done.
-    harness.wire.feed({
-      type: "tool.result",
-      runId: "run_1",
-      seq: 3,
-      toolCallId: "call_ctx",
-      result: posted?.body.result,
-    });
-    const card = screen.getByTestId("tool-card");
-    expect(card.dataset.status).toBe("done");
-    expect(card.dataset.tool).toBe("studio.get_context");
-    expect(screen.getByText("Inspect project")).toBeInTheDocument();
-
-    // The final assistant answer + credits + terminal.
+    // The final turn: streamed deltas + a turn.completed with NO toolCalls ⇒
+    // the run ENDS (local run.completed — the server is stateless per turn).
     harness.wire.feed(
-      { type: "message.delta", runId: "run_1", seq: 4, delta: "The comp **Main** holds one text" },
-      { type: "message.delta", runId: "run_1", seq: 5, delta: " layer, Headline." },
-      { type: "credits", runId: "run_1", seq: 6, reserved: 1, committed: 1, balance: 99 },
-      { type: "run.completed", runId: "run_1", seq: 7 },
+      runStarted(0),
+      delta(1, "The comp **Main** holds one text"),
+      delta(2, " layer, Headline."),
+      turnCompleted(3, 1, { assistantText: "The comp **Main** holds one text layer, Headline." }),
     );
-    harness.wire.finishRun("run_1");
+    harness.wire.finishTurn();
 
-    // The thread renders the finished loop: user + assistant, card, credits.
+    // The thread renders the finished loop: user + assistant; NO plan POST
+    // (a read-only run never submits a plan); NO banner.
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
     const messages = screen.getAllByTestId("chat-message");
     expect(messages).toHaveLength(2);
     expect(messages[0]?.dataset.role).toBe("user");
     expect(messages[1]?.dataset.role).toBe("assistant");
     expect(messages[1]?.textContent).toContain("The comp");
     expect(messages[1]?.textContent).toContain("text layer, Headline.");
-    expect(screen.getByTestId("chat-credits").textContent).toBe("1 credits used · balance 99");
+    // ROUND-12 end-marker pin (12-w7): a proposal-less run still tells the
+    // gateway it finished — exactly ONE {end:true} plan-route POST (the run
+    // row turns completed server-side instead of rotting "running").
+    expect(harness.wire.planPosts).toEqual([{ plan: undefined, runId: expect.any(String) }]);
+    expect(harness.wire.abandons).toEqual([]);
     expect(screen.queryByTestId("chat-caret")).toBeNull();
     expect(screen.queryByTestId("chat-banner")).toBeNull();
     expect(screen.queryByTestId("chat-thinking")).toBeNull();
     expect(screen.getByLabelText("Send")).toBeInTheDocument(); // composer released
-    expect(harness.getApi().snapshot.phase).toBe("done");
 
-    // The loop's data reaches the card's expandable detail surface.
+    // ROUND-12 fix pin (12-w5-t1): the loop SYNTHESIZES a tool.result for
+    // every executed tool call through the existing §7.4 fold, so the card
+    // settles with its result the moment the turn's calls are processed
+    // (never spins "running" forever like the pre-fix wire gap did).
+    const card = screen.getByTestId("tool-card");
+    expect(card.dataset.tool).toBe("studio.get_context");
+    expect(card.dataset.status).toBe("done");
     await user.click(screen.getByTestId("tool-card-toggle"));
-    expect(screen.getByTestId("tool-card-result").textContent).toContain("Headline");
     expect(screen.getByTestId("tool-card-args").textContent).toContain("{}");
   });
 });
@@ -610,7 +847,7 @@ describe("M4-L web chat integration — full read-agent loop (flagship)", () => 
 // ---------------------------------------------------------------------------
 
 describe("M4-L web chat integration — context accuracy (chips mirror the wire)", () => {
-  it("popover removal drops the selection block: absent from the snapshot + strip, and the next chat POST carries context.selection === false", async () => {
+  it("popover removal drops the selection block: absent from the snapshot + strip, and the next turn POST carries context.selection === false", async () => {
     const user = userEvent.setup();
     const { harness } = await mountSeeded();
     await waitForModels(harness);
@@ -621,15 +858,14 @@ describe("M4-L web chat integration — context accuracy (chips mirror the wire)
     act(() => {
       harness.getApi().send({ message: "what is selected?" });
     });
-    await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
-    expect(harness.wire.segments[0]?.body.context).toEqual(AUTO_ON_FLAGS);
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
+    expect(harness.wire.posts[0]?.body.context).toEqual(AUTO_ON_FLAGS);
 
-    // Settle the first run so the next send is not steer-queued (§3.4).
-    harness.wire.feed(
-      { type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" },
-      { type: "run.completed", runId: "run_1", seq: 2 },
-    );
-    harness.wire.finishRun("run_1");
+    // Settle the first run (final turn, no tool calls) so the next send is a
+    // FRESH run, not a steer (§3.4).
+    harness.wire.feed(runStarted(0), turnCompleted(1, 0, { assistantText: "It is selected." }));
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
 
     // The REAL §5.3 popover path: header "Context N" → the selection row → Done.
     await user.click(screen.getByTestId("chat-context-button"));
@@ -648,28 +884,32 @@ describe("M4-L web chat integration — context accuracy (chips mirror the wire)
     expect(screen.queryByTestId("context-chip-selection")).toBeNull();
     expect(screen.getByTestId("context-chip-selectedProperties")).toBeInTheDocument(); // granular
 
-    // The NEXT send carries the exact wire body with selection === false.
+    // The NEXT send carries the exact turn body with selection === false.
     act(() => {
       harness.getApi().send({ message: "and now?" });
     });
-    await waitFor(() => expect(harness.wire.segments).toHaveLength(2));
-    const body = harness.wire.segments[1]?.body;
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
+    const body = harness.wire.posts[1]?.body;
     expect(Object.keys(body ?? {}).sort()).toEqual([
+      "canvas",
       "context",
-      "idempotencyKey",
-      "message",
+      "messages",
       "model",
       "pinned",
+      "runId",
+      "stepIndex",
     ]);
-    expect(body?.message).toBe("and now?");
+    expect(body?.messages).toEqual([{ role: "user", text: "and now?" }]);
     expect(body?.context).toEqual({ ...DEFAULT_FLAGS, selectedProperties: true });
     expect(body?.pinned).toEqual([]);
     expect(body?.model).toBe("studio-fast");
-    expect(typeof body?.idempotencyKey === "string").toBe(true);
-    expect(body?.idempotencyKey.length ?? 0).toBeGreaterThanOrEqual(8);
+    expect(body?.runId).not.toBe(harness.wire.posts[0]?.runId); // a FRESH run
+    harness.wire.feed(runStarted(0), turnCompleted(1, 0, { assistantText: "Nothing selected." }));
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
   });
 
-  it("chat POST body omits the model key entirely when the entitlement fetch failed", async () => {
+  it("turn POST body omits the model key entirely when the entitlement fetch failed", async () => {
     const { harness } = await mountSeeded({ models: "fail" });
     await waitFor(() => expect(harness.getApi().models).toEqual([])); // one retry, then []
     expect(harness.getApi().activeModelId).toBeNull();
@@ -678,361 +918,433 @@ describe("M4-L web chat integration — context accuracy (chips mirror the wire)
     act(() => {
       harness.getApi().send({ message: "no models loaded" });
     });
-    await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
-    const body = harness.wire.segments[0]?.body;
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
+    const body = harness.wire.posts[0]?.body;
     expect(body?.model).toBeUndefined(); // absent from the wire, not defaulted
     expect(Object.keys(body ?? {}).sort()).toEqual([
+      "canvas",
       "context",
-      "idempotencyKey",
-      "message",
+      "messages",
       "pinned",
+      "runId",
+      "stepIndex",
     ]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 3 — replay idempotence at the UI level
+// Scenario 3 — replay idempotence + reconnect at the component level
 // ---------------------------------------------------------------------------
 
-describe("M4-L web chat integration — resilience (replay, reconnect, pause)", () => {
-  it("replay idempotence: the same event list folded twice leaves ONE assistant message, ONE card, ONE execution", async () => {
+describe("M4-L web chat integration — resilience (replay, reconnect, pause, stop)", () => {
+  it("replay idempotence: the same turn event list folded twice leaves ONE assistant message, ONE card, ONE execution", async () => {
     const { harness } = await mountSeeded();
     await waitForModels(harness);
     act(() => {
       harness.getApi().send({ message: "explain the project" });
     });
-    await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
 
-    const segment = harness.wire.active();
     const summaryBefore = harness.bridgeCalls.queries.filter((q) => q === "project.summary").length;
-    const runStarted = {
-      type: "run.started",
-      runId: "run_1",
-      seq: 1,
-      model: "studio-fast",
-    } as const satisfies StudioStreamEvent;
-    const toolStarted = {
-      type: "tool.started",
-      runId: "run_1",
-      seq: 2,
-      toolCallId: "call_ctx",
-      name: "studio.get_context",
-      args: {},
-    } as const satisfies StudioStreamEvent;
-    act(() => {
-      segment.handlers.onEvent?.(runStarted);
-      segment.handlers.onEvent?.(toolStarted);
-    });
-    await waitFor(() => expect(harness.wire.postEvents).toHaveLength(1));
-    expect(
-      harness.bridgeCalls.queries.filter((q) => q === "project.summary").length - summaryBefore,
-    ).toBe(1); // the executor's ONE query
+    // Step 0 streams: run.started + the read call's tool.started + the
+    // terminal carrying the call.
+    harness.wire.feed(
+      runStarted(0),
+      toolStarted(1, "call_ctx", "studio.get_context", {}),
+      turnCompleted(2, 0, { toolCalls: [readCall("studio.get_context", {}, "call_ctx")] }),
+    );
 
-    // Last-Event-ID replay: the server re-sends the whole segment from seq 1.
-    act(() => {
-      segment.handlers.onEvent?.(runStarted);
-      segment.handlers.onEvent?.(toolStarted);
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 30)); // any re-run would land here
-    });
-    expect(
-      harness.bridgeCalls.queries.filter((q) => q === "project.summary").length - summaryBefore,
-    ).toBe(1); // NEVER re-executed
-    expect(harness.wire.postEvents).toHaveLength(1);
+    // A Last-Event-ID-style re-delivery of the SAME local events: the store's
+    // per-run seq cursor folds each one exactly once (replayEmitted bypasses
+    // the normalizer on purpose — this is the STORE's contract).
+    harness.wire.replayEmitted();
     expect(screen.getAllByTestId("chat-message")).toHaveLength(2); // user + ONE assistant
     expect(screen.getAllByTestId("tool-card")).toHaveLength(1); // ONE card (upserted by id)
 
-    // The tail still folds exactly once.
-    harness.wire.feed(
-      {
-        type: "tool.result",
-        runId: "run_1",
-        seq: 3,
-        toolCallId: "call_ctx",
-        result: harness.wire.postEvents[0]?.body.result,
-      },
-      { type: "message.delta", runId: "run_1", seq: 4, delta: "Once." },
-      { type: "run.completed", runId: "run_1", seq: 5 },
-    );
-    harness.wire.finishRun("run_1");
+    // Settling the turn executes the read tool EXACTLY once.
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
+    expect(
+      harness.bridgeCalls.queries.filter((q) => q === "project.summary").length - summaryBefore,
+    ).toBe(1); // NEVER re-executed
+
+    // The final turn's tail still folds exactly once.
+    harness.wire.feed(runStarted(0), turnCompleted(1, 1, { assistantText: "Once." }));
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
 
     const assistant = screen.getAllByTestId("chat-message")[1];
     const text = assistant?.textContent ?? "";
     expect(text.includes("Once.")).toBe(true);
     expect(text.split("Once.")).toHaveLength(2); // exactly once, never doubled
-    expect(harness.getApi().snapshot.phase).toBe("done");
   });
 
-  // -------------------------------------------------------------------------
-  // Scenario 4 — reconnect at the component level
-  // -------------------------------------------------------------------------
-
-  it("reconnect: a transport drop shows the Reconnecting… banner, re-POSTs the SAME body (same idempotencyKey), and the replay + tail complete the run", async () => {
+  it("reconnect: a transport drop shows the Reconnecting… banner, the turn seam re-POSTs the SAME body + turn key, and the replay + tail complete the run", async () => {
     const { harness } = await mountSeeded();
     await waitForModels(harness);
     act(() => {
       harness.getApi().send({ message: "tell me about the comp" });
     });
-    await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
-    const firstBody = harness.wire.segments[0]?.body;
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
+    const firstBody = harness.wire.posts[0]?.body;
+    const firstKey = harness.wire.posts[0]?.turnKey;
+    const summaryBefore = harness.bridgeCalls.queries.filter((q) => q === "project.summary").length;
 
-    harness.wire.feed(
-      { type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" },
-      {
-        type: "tool.started",
-        runId: "run_1",
-        seq: 2,
-        toolCallId: "call_ctx",
-        name: "studio.get_context",
-        args: {},
-      },
-    );
-    await waitFor(() => expect(harness.wire.postEvents).toHaveLength(1));
+    harness.wire.feed(runStarted(0), delta(1, "Resuming"));
 
-    // Transport drop → §8.4 banner + the same-key re-POST (a new segment).
+    // Transport drop → §8.4 banner + the TRANSPORT's same-key re-POST.
     harness.wire.dropOnce();
     expect(harness.getApi().snapshot.phase).toBe("reconnecting");
     expect(screen.getByTestId("chat-banner").textContent).toContain("Reconnecting…");
-    expect(harness.wire.segments).toHaveLength(2);
-    expect(harness.wire.segments[1]?.body).toEqual(firstBody); // SAME body, SAME key
-    expect(harness.wire.segments[1]?.body.idempotencyKey).toBe(firstBody?.idempotencyKey);
+    expect(harness.wire.posts).toHaveLength(2);
+    expect(harness.wire.posts[1]?.turnKey).toBe(firstKey); // SAME turn key
+    expect(harness.wire.posts[1]?.body).toEqual(firstBody); // SAME body, SAME key
+    expect(harness.wire.posts[1]?.seqBase).toBe(harness.wire.posts[0]?.seqBase);
 
-    // The gateway replays seq 1–2 from its run log (dedupe: no re-execution)…
-    const summaryQueries = harness.bridgeCalls.queries.filter(
-      (q) => q === "project.summary",
-    ).length;
-    harness.wire.feed(
-      { type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" },
-      {
-        type: "tool.started",
-        runId: "run_1",
-        seq: 2,
-        toolCallId: "call_ctx",
-        name: "studio.get_context",
-        args: {},
-      },
-    );
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 30));
-    });
+    // The gateway replays seq 0–1: the normalizer's cursor drops them — the
+    // streamed text never doubles and nothing re-executes.
+    harness.wire.feed(runStarted(0), delta(1, "Resuming"));
+    const assistant = screen.getAllByTestId("chat-message")[1];
+    expect(assistant?.textContent).toContain("Resuming");
+    expect(assistant?.textContent).not.toContain("ResumingResuming");
     expect(harness.bridgeCalls.queries.filter((q) => q === "project.summary")).toHaveLength(
-      summaryQueries,
+      summaryBefore,
     );
-    expect(harness.wire.postEvents).toHaveLength(1);
 
-    // …then the unseen tail completes the run.
+    // …then the unseen tail completes the turn WITH a read call → the loop
+    // executes it LOCALLY exactly once and echoes it into step 1.
     harness.wire.feed(
-      {
-        type: "tool.result",
-        runId: "run_1",
-        seq: 3,
-        toolCallId: "call_ctx",
-        result: harness.wire.postEvents[0]?.body.result,
-      },
-      { type: "message.delta", runId: "run_1", seq: 4, delta: "Resumed." },
-      { type: "run.completed", runId: "run_1", seq: 5 },
+      turnCompleted(2, 0, { toolCalls: [readCall("studio.get_context", {}, "call_ctx")] }),
     );
-    harness.wire.finishRun("run_1");
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(3));
+    expect(harness.bridgeCalls.queries.filter((q) => q === "project.summary")).toHaveLength(
+      summaryBefore + 1,
+    );
+    const transcript = harness.wire.posts[2]?.body.messages as Array<Record<string, unknown>>;
+    expect(transcript).toEqual([
+      { role: "user", text: "tell me about the comp" },
+      { role: "tool_call", toolCallId: "call_ctx", tool: "studio.get_context", args: {} },
+      expect.objectContaining({ role: "tool_result", toolCallId: "call_ctx" }),
+    ]);
 
+    // …and the final turn ends the run with the banner cleared.
+    harness.wire.feed(runStarted(0), turnCompleted(1, 1, { assistantText: "Resumed." }));
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
     expect(screen.queryByTestId("chat-banner")).toBeNull();
-    expect(harness.getApi().snapshot.phase).toBe("done");
     expect(screen.getAllByTestId("chat-message")[1]?.textContent).toContain("Resumed.");
-    expect(screen.getByTestId("tool-card").dataset.status).toBe("done");
   });
 
   // -------------------------------------------------------------------------
-  // Scenario 5 — RUN_PAUSED park + recovery
+  // Scenario 5 — TURN_PAUSED park + recovery (the §8.4 role, turn edition)
   // -------------------------------------------------------------------------
 
-  it("RUN_PAUSED: three failed attempts park the run with the RunPausedBanner, and the banner's Retry resumes the SAME run (same key) to completion", async () => {
+  it("TURN_PAUSED: the parked run shows the §8.4 banner, and the banner's Retry re-POSTs the SAME step (same turn key + resume cursor) to completion", async () => {
     const user = userEvent.setup();
     const { harness } = await mountSeeded();
     await waitForModels(harness);
     act(() => {
       harness.getApi().send({ message: "flaky network please" });
     });
-    await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
+    const key = harness.wire.posts[0]?.turnKey;
 
-    harness.wire.feed(
-      { type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" },
-      { type: "message.delta", runId: "run_1", seq: 2, delta: "Partial" },
-    );
+    harness.wire.feed(runStarted(0), delta(1, "Partial"));
 
-    // §8.4: 3 automatic attempts, all fail → park.
-    harness.wire.dropToPause();
+    // The transport's bounded retries exhausted: onError TURN_PAUSED + parked.
+    harness.wire.pauseTurn();
+    await waitFor(() => expect(harness.getApi().snapshot.error?.code).toBe("TURN_PAUSED"));
     expect(harness.getApi().snapshot.phase).toBe("failed");
-    expect(harness.getApi().snapshot.error?.code).toBe("RUN_PAUSED");
-    expect(screen.getByTestId("chat-banner-run-paused")).toBeInTheDocument();
     expect(screen.getByTestId("chat-banner").textContent).toContain(
       "Run paused. Check your connection.",
     );
-    // The original POST + the 3 same-key re-POST attempts, one key throughout.
-    expect(harness.wire.segments).toHaveLength(4);
-    const key = harness.wire.segments[0]?.body.idempotencyKey;
-    for (const segment of harness.wire.segments) {
-      expect(segment.body.idempotencyKey).toBe(key);
-    }
-
-    // The banner's Retry resumes the SAME run: another same-key re-POST.
-    await user.click(screen.getByTestId("chat-banner-action"));
     expect(screen.getByTestId("chat-banner-action").textContent).toBe("Retry");
-    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("reconnecting"));
-    expect(harness.wire.segments).toHaveLength(5);
-    expect(harness.wire.segments[4]?.body.idempotencyKey).toBe(key);
-    expect(harness.wire.segments[4]?.body.message).toBe("flaky network please");
 
-    // The resumed tail completes the run; the banner clears with the terminal event.
+    // The banner's Retry resumes the SAME step: another POST, SAME turn key,
+    // the paused attempt's cursor riding replayCursor (the transcript is
+    // UNCHANGED — the turn never settled, so nothing re-sends).
+    await user.click(screen.getByTestId("chat-banner-action"));
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("reconnecting"));
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
+    const resumed = harness.wire.posts[1];
+    expect(resumed?.turnKey).toBe(key);
+    expect(resumed?.stepIndex).toBe(0);
+    expect(resumed?.replayCursor).toBe(1); // frames 0–1 were already folded
+    expect(resumed?.body.messages).toEqual([{ role: "user", text: "flaky network please" }]);
+    expect(resumed?.body.model).toBe("studio-fast");
+
+    // The resumed server replays seq 0–1 (dropped ≤ cursor), then the tail.
+    harness.wire.feed(runStarted(0), delta(1, "Partial"));
     harness.wire.feed(
-      { type: "message.delta", runId: "run_1", seq: 3, delta: " answer." },
-      { type: "run.completed", runId: "run_1", seq: 4 },
+      delta(2, " answer."),
+      turnCompleted(3, 0, { assistantText: "Partial answer." }),
     );
-    harness.wire.finishRun("run_1");
-    expect(screen.queryByTestId("chat-banner-run-paused")).toBeNull();
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
+
     expect(screen.queryByTestId("chat-banner")).toBeNull();
-    expect(harness.getApi().snapshot.phase).toBe("done");
-    expect(screen.getAllByTestId("chat-message")[1]?.textContent).toContain("Partial answer.");
+    const assistant = screen.getAllByTestId("chat-message")[1];
+    expect(assistant?.textContent).toContain("Partial answer.");
+    expect((assistant?.textContent ?? "").split("Partial answer.")).toHaveLength(2);
+    expect(harness.wire.posts).toHaveLength(2); // the SAME run completed — never a fresh one
+  });
+
+  // -------------------------------------------------------------------------
+  // Scenario 6 — §8.3 stop: local cancel + server-side abandon
+  // -------------------------------------------------------------------------
+
+  it("stop: the composer's Stop aborts the in-flight turn, folds cancelled locally, and fire-and-forget POSTs /v1/runs/:id/abandon once", async () => {
+    const user = userEvent.setup();
+    const { harness } = await mountSeeded();
+    await waitForModels(harness);
+    await user.type(composerBox(), "long running thing{Enter}");
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
+    const runId = harness.wire.posts[0]?.runId;
+
+    harness.wire.feed(runStarted(0), delta(1, "Working"));
+    expect(screen.getByLabelText("Stop streaming")).toBeInTheDocument();
+
+    // §8.3: the local phase settles at once; the in-flight POST aborts; the
+    // run is abandoned server-side (holds refunded) — fire-and-forget, once.
+    await user.click(screen.getByLabelText("Stop streaming"));
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("cancelled"));
+    expect(harness.wire.active().aborted).toBe(true);
+    expect(harness.wire.abandons).toEqual([runId]);
+    expect(screen.getByLabelText("Send")).toBeInTheDocument(); // composer released
+
+    // A second stop gesture is a no-op — never a second abandon POST.
+    const abandonCount = harness.wire.abandons.length;
+    act(() => {
+      harness.getApi().stop();
+    });
+    expect(harness.wire.abandons).toHaveLength(abandonCount);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 6 — the M4-informational plan card (M4.6 read-only proof)
+// Scenario 7 — the read-only embed (M4.6): proposals accumulate, the plan card
+// mounts WITHOUT any apply surface, nothing ever executes
 // ---------------------------------------------------------------------------
 
-describe("M4-L web chat integration — read-only guarantees (M4.6)", () => {
-  it("plan card: a §7.4 plan event renders the informational card (risk, steps, ≈credits, the M5 note) and NO Apply control exists anywhere", async () => {
-    const { harness } = await mountSeeded();
+describe("M4-L web chat integration — read-only guarantees (M4.6, round 12)", () => {
+  it("read-only embed: a write-tool proposal accumulates (never executes), the merged carrier POSTs to /v1/runs/:id/plan, and the folded plan card mounts with NO Apply control", async () => {
+    const { harness } = await mountSeeded(); // NO applyPorts ⇒ no ApplyController
+    const runIdPlaceholder = "run_response";
+    harness.wire.planResponses.push({
+      runId: runIdPlaceholder,
+      plan: {
+        intent: "edit",
+        summary: "Set 1 property on 1 layer",
+        risk: "low",
+        requiresApproval: false,
+        affectedLayers: [{ name: "Headline", change: "Text → New headline" }],
+        estimatedCredits: 1,
+        steps: [
+          {
+            title: "Set 1 property on 1 layer",
+            tool: "studio.set_properties",
+            args: {},
+            batch: {
+              label: "Agent: retitle the headline",
+              steps: [{ command: "prop.set", params: {} }],
+            },
+          },
+        ],
+      },
+      autoApply: { mode: "propose", reason: "manual review" },
+      compiledBatch: {
+        label: "Agent: retitle the headline",
+        atomic: true,
+        steps: [
+          {
+            command: "prop.set",
+            params: { layer: 1, path: "text/sourceText", value: "New headline" },
+          },
+        ],
+      },
+      risk: "low",
+      estimatedCredits: 2.25,
+      baseVersionId: "ver_base_1",
+    });
     await waitForModels(harness);
     act(() => {
       harness.getApi().send({ message: "make the headline pop" });
     });
-    await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
 
+    // Step 0: the model PROPOSES the write tool — the carrier rides the
+    // terminal; the client NEVER executes it during the run.
+    const proposal = writeProposal("studio.set_properties", SET_PROPERTIES_ARGS, "call_write");
     harness.wire.feed(
-      { type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" },
-      { type: "plan", runId: "run_1", seq: 2, plan: PLAN_FIXTURE },
-      { type: "run.completed", runId: "run_1", seq: 3 },
+      runStarted(0),
+      toolStarted(1, "call_write", "studio.set_properties", SET_PROPERTIES_ARGS),
+      turnCompleted(2, 0, { assistantText: "I would change the text.", toolCalls: [proposal] }),
     );
-    harness.wire.finishRun("run_1");
+    harness.wire.finishTurn();
 
+    // The next turn's transcript echoes the PROPOSE-ONLY resultForModel —
+    // never a local execution of the write tool.
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
+    const transcript = harness.wire.posts[1]?.body.messages as Array<Record<string, unknown>>;
+    expect(transcript[3]).toEqual({
+      role: "tool_result",
+      toolCallId: "call_write",
+      tool: "studio.set_properties",
+      result: proposal.resultForModel,
+    });
+
+    // Step 1: NO toolCalls ⇒ run end → mergeEditPlans → POST /v1/runs/:id/plan.
+    harness.wire.feed(runStarted(0), turnCompleted(1, 1, { assistantText: "Here is my plan." }));
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.wire.planPosts).toHaveLength(1));
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
+
+    // The merged carrier the client POSTed (mergeEditPlans over the carriers).
+    const submitted = harness.wire.planPosts[0];
+    expect(submitted?.runId).toBe(harness.wire.posts[0]?.runId);
+    expect(submitted?.plan.summary).toBe("Set 1 property on 1 layer");
+    expect(submitted?.plan.intent).toBe("edit");
+    expect(submitted?.plan.steps).toHaveLength(1);
+    const carrierStep = submitted?.plan.steps[0] as {
+      batch: { steps: Array<Record<string, unknown>> };
+    };
+    expect(carrierStep.batch.steps[0]).toEqual({
+      command: "set_properties",
+      params: SET_PROPERTIES_ARGS,
+    });
+
+    // The plan-card fold (the submitPlan response → a first-class plan event):
+    // the server's risk/credits ride the card, but with NO apply engine wired
+    // there is NO Apply control anywhere (M4.6 read-only property).
     const card = screen.getByTestId("plan-card");
-    // M5: the card is a status machine now — without callbacks it stays a
-    // read-only preview (status "proposed", no action row mounted).
     expect(card.dataset.status).toBe("proposed");
     expect(card.dataset.applied).toBe("false");
     expect(card.dataset.risk).toBe("low");
     expect(screen.getByTestId("plan-risk").textContent).toBe("Low risk");
-    expect(screen.getByTestId("plan-intent").textContent).toBe("Animate");
+    expect(screen.getByTestId("plan-intent").textContent).toBe("Edit");
     const steps = within(screen.getByTestId("plan-steps")).getAllByRole("listitem");
-    expect(steps).toHaveLength(2);
-    expect(steps[0]?.textContent).toContain("Keyframe Scale 20% → 110% → 100%");
-    expect(screen.getByTestId("plan-credits").textContent).toBe("≈ 12 credits");
-    expect(screen.queryByTestId("plan-note")).toBeNull(); // the M4 notice is gone — apply is real now
-    // The action-row container may render, but with no callbacks it holds ZERO buttons.
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.textContent).toContain("Set 1 property on 1 layer");
+    expect(screen.getByTestId("plan-credits").textContent).toBe("≈ 2.25 credits");
     expect(within(screen.getByTestId("plan-actions")).queryAllByRole("button")).toHaveLength(0);
-
-    // M4.6 read-only proof at the UI level: no apply/cancel control anywhere.
     expect(screen.queryByRole("button", { name: /^apply/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /^cancel/i })).toBeNull();
-    expect(screen.queryByTestId(/apply/i)).toBeNull();
 
-    // Server-side tool: nothing ever dispatched to the client executor.
-    expect(harness.wire.postEvents).toHaveLength(0);
-    expect(harness.getApi().snapshot.phase).toBe("done");
-  });
-
-  // -------------------------------------------------------------------------
-  // Scenario 7 — a hypothetical write tool never executes
-  // -------------------------------------------------------------------------
-
-  it("write tool refusal: studio.set_properties posts TOOL_FORBIDDEN without touching the bridge, and the card renders failed", async () => {
-    const { harness } = await mountSeeded();
-    await waitForModels(harness);
-    act(() => {
-      harness.getApi().send({ message: "set the opacity to zero" });
-    });
-    await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
-
-    const queriesBefore = harness.bridgeCalls.queries.length;
-    harness.wire.feed(
-      { type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" },
-      {
-        type: "tool.started",
-        runId: "run_1",
-        seq: 2,
-        toolCallId: "call_write",
-        name: "studio.set_properties",
-        args: { layerId: 1, properties: { "transform/opacity": 0 } },
-      },
-    );
-
-    // The executor refuses and reports honestly — the exact §7.4 result shape.
-    await waitFor(() => expect(harness.wire.postEvents).toHaveLength(1));
-    const posted = harness.wire.postEvents[0];
-    expect(posted?.body).toEqual({
-      type: "tool.result",
-      toolCallId: "call_write",
-      result: { error: "TOOL_FORBIDDEN", message: "Write tools are not available yet." },
-    });
-    expect(posted?.idempotencyKey).toBe("toolresult:run_1:call_write");
-
-    // Zero bridge traffic for the write call; zero mutation surfaces ever.
-    expect(harness.bridgeCalls.queries).toHaveLength(queriesBefore);
+    // Server-side-tool proof: the proposal never touched the engine.
     expect(harness.bridgeCalls.executes).toEqual([]);
     expect(harness.bridgeCalls.batches).toBe(0);
     expect(harness.bridgeCalls.renderFrames).toBe(0);
+  });
 
-    // The echoed refusal fails the card; the run can still complete.
+  // -------------------------------------------------------------------------
+  // Scenario 8 — a non-client tool never executes (the executor's refusal)
+  // -------------------------------------------------------------------------
+
+  it("non-client tool refusal: the wired executor throws ClientToolError TOOL_FORBIDDEN with ZERO bridge traffic, and a hostile proposal-less write call in the loop echoes the typed refusal without executing", async () => {
+    const { harness } = await mountSeeded();
+    await waitForModels(harness);
+
+    // THE EXECUTOR SEAM (exactly the deps the provider wires per run): a
+    // write tool is refused by the executor itself — the typed ClientToolError
+    // the round-12 contract pins — with ZERO bridge calls.
+    const executor = createClientToolExecutor({
+      bridge: harness.bridge,
+      client: harness.wire.client,
+      workspaceId: "ws_test",
+      threadId: THREAD_ID,
+      runId: "run_refusal_probe",
+      flags: DEFAULT_FLAGS,
+    });
+    expect(executor.handles("studio.set_properties")).toBe(false); // never a client tool
+    const refusal = await executor.execute("studio.set_properties", SET_PROPERTIES_ARGS).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(isClientToolError(refusal)).toBe(true);
+    expect(refusal).toMatchObject({
+      code: "TOOL_FORBIDDEN",
+      message: "Write tools are proposal-only; the plan card applies them.",
+    });
+    // The RAW engine surface is refused BY NAME (law #5/#6 backstop).
+    const rawRefusal = await executor.execute("engine.batch", { steps: [] }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(isClientToolError(rawRefusal)).toBe(true);
+    expect(rawRefusal).toMatchObject({ code: "TOOL_FORBIDDEN" });
+    expect(harness.bridgeCalls.executes).toEqual([]);
+    expect(harness.bridgeCalls.batches).toBe(0);
+
+    // THE LOOP: a hostile server emits the write tool WITHOUT its proposal
+    // carrier — the loop's handles() gate answers the typed refusal (the
+    // executor-level TOOL_FORBIDDEN is shadowed by the gate, honestly), the
+    // run CONTINUES, and nothing ever executes.
+    act(() => {
+      harness.getApi().send({ message: "set the opacity to zero" });
+    });
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
+    const queriesBefore = harness.bridgeCalls.queries.length;
     harness.wire.feed(
-      {
-        type: "tool.result",
-        runId: "run_1",
-        seq: 3,
-        toolCallId: "call_write",
-        result: { error: "TOOL_FORBIDDEN", message: "Write tools are not available yet." },
-      },
-      {
-        type: "message.delta",
-        runId: "run_1",
-        seq: 4,
-        delta: "I can only read in this version — apply arrives with M5.",
-      },
-      { type: "run.completed", runId: "run_1", seq: 5 },
+      runStarted(0),
+      turnCompleted(1, 0, {
+        toolCalls: [
+          {
+            toolCallId: "call_write",
+            tool: "studio.set_properties",
+            args: SET_PROPERTIES_ARGS,
+            resultForModel: null,
+            proposal: null,
+          },
+        ],
+      }),
     );
-    harness.wire.finishRun("run_1");
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
+    const transcript = harness.wire.posts[1]?.body.messages as Array<Record<string, unknown>>;
+    expect(transcript[2]).toEqual({
+      role: "tool_result",
+      toolCallId: "call_write",
+      tool: "studio.set_properties",
+      result: {
+        error: "CLIENT_TOOL_UNAVAILABLE",
+        message: '"studio.set_properties" cannot run in this session.',
+      },
+    });
+    expect(harness.bridgeCalls.queries).toHaveLength(queriesBefore); // ZERO new bridge reads
+    expect(harness.bridgeCalls.executes).toEqual([]);
+    expect(harness.bridgeCalls.batches).toBe(0);
 
-    const card = screen.getByTestId("tool-card");
-    expect(card.dataset.status).toBe("failed");
-    expect(card.dataset.tool).toBe("studio.set_properties");
-    expect(screen.getByTestId("tool-card-summary").textContent).toContain(
-      "Write tools are not available yet.",
+    // The model recovers and the run completes.
+    harness.wire.feed(
+      runStarted(0),
+      turnCompleted(1, 1, {
+        assistantText: "I cannot edit in this session — apply a plan instead.",
+      }),
     );
-    expect(screen.getAllByTestId("chat-message")[1]?.textContent).toContain(
-      "apply arrives with M5",
-    );
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
+    expect(screen.getAllByTestId("chat-message")[1]?.textContent).toContain("apply a plan instead");
   });
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 8 — the §3.4 steer queue through the real composer
+// Scenario 9 — the §3.4 steer part through the real composer
 // ---------------------------------------------------------------------------
 
-describe("M4-L web chat integration — steer queue (§3.4)", () => {
-  it("a composer send while streaming renders immediately, waits for the run to settle, then flushes as a second POST with a FRESH idempotency key", async () => {
+describe("M4-L web chat integration — steer queue (§3.4, turn edition)", () => {
+  it("a composer send while the run is live renders immediately and rides the NEXT turn POST as a steer part — never a second run", async () => {
     const user = userEvent.setup();
     const { harness } = await mountSeeded();
     await waitForModels(harness);
 
     await user.type(composerBox(), "first{Enter}");
-    await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
 
-    harness.wire.feed(
-      { type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" },
-      { type: "message.delta", runId: "run_1", seq: 2, delta: "Working" },
-    );
+    harness.wire.feed(runStarted(0), delta(1, "Working"));
     expect(screen.getByLabelText("Stop streaming")).toBeInTheDocument();
 
-    // The composer stays live while streaming (§3.4): Enter STEERS.
+    // The composer stays live while the run streams (§3.4): Enter STEERS.
     await user.type(composerBox(), "second thought{Enter}");
 
     // The user message renders at once; the wire is untouched.
@@ -1040,87 +1352,86 @@ describe("M4-L web chat integration — steer queue (§3.4)", () => {
     expect(messages).toHaveLength(3);
     expect(messages[2]?.dataset.role).toBe("user");
     expect(messages[2]?.textContent).toContain("second thought");
-    expect(harness.wire.segments).toHaveLength(1);
+    expect(harness.wire.posts).toHaveLength(1);
 
-    // Terminal → the flush fires the queued send as its OWN run.
-    harness.wire.feed({ type: "run.completed", runId: "run_1", seq: 3 });
-    harness.wire.finishRun("run_1");
+    // The step-0 turn completes WITH a tool call ⇒ the loop POSTs step 1 and
+    // the queued send rides it as a `steer` part of the transcript.
+    harness.wire.feed(
+      turnCompleted(2, 0, { toolCalls: [readCall("studio.get_context", {}, "call_ctx")] }),
+    );
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
+    const transcript = harness.wire.posts[1]?.body.messages as Array<Record<string, unknown>>;
+    expect(transcript).toEqual([
+      { role: "user", text: "first" },
+      { role: "tool_call", toolCallId: "call_ctx", tool: "studio.get_context", args: {} },
+      expect.objectContaining({ role: "tool_result", toolCallId: "call_ctx" }),
+      { role: "steer", text: "second thought" },
+    ]);
 
-    expect(harness.wire.segments).toHaveLength(2);
-    const first = harness.wire.segments[0]?.body;
-    const second = harness.wire.segments[1]?.body;
-    expect(second?.message).toBe("second thought");
-    expect(harness.wire.segments[1]?.threadId).toBe(THREAD_ID); // same thread
-    expect(second?.idempotencyKey).not.toBe(first?.idempotencyKey); // §7.2 never re-uses a live key
-    expect(first?.idempotencyKey.length ?? 0).toBeGreaterThanOrEqual(8);
-    expect(second?.idempotencyKey.length ?? 0).toBeGreaterThanOrEqual(8);
-
-    // The second run streams into the same thread.
-    harness.wire.feed({ type: "run.started", runId: "run_2", seq: 1, model: "studio-fast" });
-    expect(screen.getAllByTestId("chat-message")).toHaveLength(4);
-    expect(harness.getApi().snapshot.activeRunId).toBe("run_2");
-    expect(screen.getAllByTestId("chat-message")[3]?.dataset.role).toBe("assistant");
+    // The steered run settles; the steer NEVER spawns its own POST/run.
+    harness.wire.feed(runStarted(0), turnCompleted(1, 1, { assistantText: "Steered — noted." }));
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
+    expect(harness.wire.posts).toHaveLength(2);
+    expect(screen.getAllByTestId("chat-message")[2]?.dataset.role).toBe("user");
   });
 });
 
 // ---------------------------------------------------------------------------
 // M5-Q — the WIRED apply journey (BUILD_PLAN §M5.4/§M5.5; DECISIONS D-21/D-22)
 //
-// The REAL mounted thread end-to-end: ChatProvider (with applyPorts → the REAL
-// createApplyController over the REAL fake bridge + scripted autosave/api
-// ports) → ChatPanelSlot → ChatThread → ChatMessageView → the M5-G PlanCard +
-// M5-H PlanPreview. Fakes remain ONLY the wire + the ports; every gesture
-// flows through the real controller, the real run-state folds and the real
-// apply engine.
+// The REAL mounted thread end-to-end, round-12 edition: ChatProvider (with
+// applyPorts → the REAL createApplyController over the REAL fake bridge +
+// scripted autosave/api ports) → ChatPanelSlot → ChatThread → ChatMessageView
+// → the M5-G PlanCard + M5-H PlanPreview. The run itself is the REAL
+// client-driven loop: a write-tool PROPOSAL turn → the final turn → the client
+// merges the carriers (mergeEditPlans) → POST /v1/runs/:id/plan → the
+// response's authoritative compiled batch + §7.3 verdict fold as the plan
+// card. Fakes remain ONLY the wire + the ports; every gesture flows through
+// the real controller, the real run-state folds and the real apply engine.
 // ---------------------------------------------------------------------------
 
-/** The version head the plan was proposed against (D-21 → the plan event). */
+/** The version head the plan was proposed against (D-21 → the plan response). */
 const BASE_VERSION_ID = "ver_base_1";
 
 /** The D-6 apply save reason pinned by apply.ts. */
 const AGENT_APPLY_REASON = "agent-apply";
 
-/** A §8.6-valid display plan (EDIT_PLAN_SCHEMA shape). */
-function wiredPlan(risk: "low" | "high"): EditPlan {
-  return {
-    intent: "edit",
-    summary:
-      risk === "high" ? "Retitle the headline (destructive variant)" : "Retitle the headline",
-    risk: "low", // the MODEL's lie — the server event overrides it (D-21)
-    requiresApproval: false,
-    affectedLayers: [{ id: 1, name: "Headline", change: "Text → New headline" }],
-    estimatedCredits: 12, // the MODEL's lie — the server value wins on the card
-    steps: [
-      {
-        title: "Set the text to New headline",
-        tool: "studio.set_properties",
-        args: {},
-        batch: {
-          label: "Agent: retitle the headline",
-          steps: [{ command: "prop.set", params: {} }],
-        },
-      },
-    ],
-  };
-}
+/** The server's authoritative display plan for the retitle carrier. */
+const RETITLE_DISPLAY_PLAN: EditPlan = {
+  intent: "edit",
+  summary: "Set 1 property on 1 layer",
+  risk: "low",
+  requiresApproval: false,
+  affectedLayers: [{ id: 1, name: "Headline", change: "Text → New headline" }],
+  estimatedCredits: 12, // the MODEL's lie — the server's 2.25 wins on the card
+  steps: [
+    {
+      title: "Set the text to New headline",
+      tool: "studio.set_properties",
+      args: {},
+      batch: { label: "Agent: retitle the headline", steps: [{ command: "prop.set", params: {} }] },
+    },
+  ],
+};
 
 /**
- * A compiledBatch-carrying plan event (the M5 wire shape). `layer` is either
- * the pinned `$request:` placeholder (the compiler's real output — the CLIENT
- * resolves by name) or the concrete id 1 (probe-friendly plans).
+ * The gateway's authoritative /v1/runs/:id/plan response: it re-compiles the
+ * merged carrier server-side and stamps the §7.3 verdict (D-21/D-22). The
+ * compiled batch is either the pinned `$request:` placeholder (the compiler's
+ * real output — the CLIENT resolves by name at apply) or the concrete id 1.
  */
-function wiredPlanEvent(options: {
-  readonly seq: number;
+function retitlePlanResponse(options: {
   readonly risk?: "low" | "medium" | "high";
   readonly withResolution?: boolean;
   readonly autoApply?: { readonly mode: "auto" | "propose"; readonly reason: string };
-}): StudioStreamEvent {
+}): Record<string, unknown> {
   const layerParam: string | number = options.withResolution === true ? "$request:req_head" : 1;
   return {
-    type: "plan",
-    runId: "run_1",
-    seq: options.seq,
-    plan: wiredPlan(options.risk === "high" ? "high" : "low"),
+    runId: "run_response",
+    plan: RETITLE_DISPLAY_PLAN,
+    autoApply: options.autoApply ?? { mode: "propose", reason: "manual review" },
     compiledBatch: {
       label: "Agent: retitle the headline",
       atomic: true,
@@ -1141,7 +1452,6 @@ function wiredPlanEvent(options: {
     risk: options.risk ?? "low",
     estimatedCredits: 2.25, // server-recomputed — beats the plan's 12 on the card
     baseVersionId: BASE_VERSION_ID,
-    ...(options.autoApply !== undefined ? { autoApply: options.autoApply } : {}),
   };
 }
 
@@ -1184,27 +1494,48 @@ function makeApplyPorts(config: { readonly currentVersionId?: string | null } = 
   };
 }
 
-/** Sends + streams one full plan run to the settled (phase "done") thread. */
-async function streamSettledPlanRun(harness: Harness, event: StudioStreamEvent): Promise<void> {
+/**
+ * Sends + streams one full WRITE-PROPOSAL run through the REAL client-driven
+ * loop to the settled (phase "done") thread: proposal turn → final turn →
+ * merged-carrier plan POST → the scripted response folds the plan card.
+ */
+async function streamSettledProposalRun(
+  harness: Harness,
+  response: Record<string, unknown>,
+): Promise<void> {
+  harness.wire.planResponses.push(response);
   await waitFor(() => expect(harness.getApi().models).not.toBeNull());
   act(() => {
     harness.getApi().send({ message: "retitle the headline" });
   });
-  await waitFor(() => expect(harness.wire.segments).toHaveLength(1));
-  harness.wire.feed({ type: "run.started", runId: "run_1", seq: 1, model: "studio-fast" }, event);
-  harness.wire.feed({ type: "run.completed", runId: "run_1", seq: 9 });
-  harness.wire.finishRun("run_1");
+  await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
+  // Step 0: the model PROPOSES the write tool (a carrier, never executed).
+  harness.wire.feed(
+    runStarted(0),
+    toolStarted(1, "call_write", "studio.set_properties", SET_PROPERTIES_ARGS),
+    turnCompleted(2, 0, {
+      assistantText: "Let me retitle that.",
+      toolCalls: [writeProposal("studio.set_properties", SET_PROPERTIES_ARGS, "call_write")],
+    }),
+  );
+  harness.wire.finishTurn();
+  await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
+  // Step 1: NO toolCalls ⇒ run end → mergeEditPlans → POST /v1/runs/:id/plan.
+  harness.wire.feed(runStarted(0), turnCompleted(1, 1, { assistantText: "Here is the plan." }));
+  harness.wire.finishTurn();
+  await waitFor(() => expect(harness.wire.planPosts).toHaveLength(1));
+  await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
 }
 
-describe("M5-Q web chat integration — the wired apply journey", () => {
+describe("M5-Q web chat integration — the wired apply journey (client-driven loop)", () => {
   it('apply happy path: settled card → Apply → ONE engine.batch → saveNow("agent-apply") → applyRun → applied', async () => {
     const user = userEvent.setup();
     const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
     const { harness } = await mountSeeded({ applyPorts: ports.ports });
-    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    await streamSettledProposalRun(harness, retitlePlanResponse({ withResolution: true }));
 
-    // Mid-stream gate proof (the run just settled): the card is proposed with
-    // the FULL M5 surface — the server's credits VERBATIM (2.25, never the
+    // Mid-run gate proof (the run just settled): the card is proposed with
+    // the FULL M5 surface — the SERVER's credits VERBATIM (2.25, never the
     // plan's 12), the server's risk, the Apply/Cancel pair.
     const card = screen.getByTestId("plan-card");
     expect(card.dataset.status).toBe("proposed");
@@ -1245,7 +1576,7 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     // (the provider's cross-seam adapter: apply.ts pins numbers, the wire IDs).
     expect(harness.wire.applyRuns).toHaveLength(1);
     const posted = harness.wire.applyRuns[0];
-    expect(posted?.runId).toBe("run_1");
+    expect(posted?.runId).toBe(harness.wire.posts[0]?.runId);
     expect(typeof posted?.body.idempotencyKey).toBe("string");
     expect((posted?.body.idempotencyKey as string).length ?? 0).toBeGreaterThanOrEqual(8);
     expect(posted?.body.versionId).toBe("ver_apply_1");
@@ -1258,7 +1589,7 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     const user = userEvent.setup();
     const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
     const { harness } = await mountSeeded({ applyPorts: ports.ports });
-    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    await streamSettledProposalRun(harness, retitlePlanResponse({ withResolution: true }));
     // Wait the probe out (nothing user-visible depends on it).
     await waitFor(() =>
       expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
@@ -1281,7 +1612,7 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     const user = userEvent.setup();
     const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
     const { harness } = await mountSeeded({ applyPorts: ports.ports });
-    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    await streamSettledProposalRun(harness, retitlePlanResponse({ withResolution: true }));
     await waitFor(() =>
       expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
     );
@@ -1316,7 +1647,7 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
       applyPorts: ports.ports,
       twinNames: true, // the hostile duplicate-name project
     });
-    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    await streamSettledProposalRun(harness, retitlePlanResponse({ withResolution: true }));
     // The preview probe fails (the raw $request token) — wait it out.
     await waitFor(() =>
       expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
@@ -1372,7 +1703,7 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     const user = userEvent.setup();
     const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
     const { harness } = await mountSeeded({ applyPorts: ports.ports });
-    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    await streamSettledProposalRun(harness, retitlePlanResponse({ withResolution: true }));
     await waitFor(() =>
       expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
     );
@@ -1390,7 +1721,7 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     );
     expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "edit.undo")).toHaveLength(1);
     expect(harness.wire.undoRuns).toHaveLength(1);
-    expect(harness.wire.undoRuns[0]?.runId).toBe("run_1");
+    expect(harness.wire.undoRuns[0]?.runId).toBe(harness.wire.posts[0]?.runId);
     const reapply = screen.getByTestId("plan-reapply");
     expect(reapply).toBeEnabled(); // sessionVersionId === baseVersionId (not drifted)
     expect(screen.queryByTestId("plan-reapply-blocked")).toBeNull();
@@ -1412,7 +1743,7 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     const user = userEvent.setup();
     const ports = makeApplyPorts({ currentVersionId: "ver_drifted_9" });
     const { harness } = await mountSeeded({ applyPorts: ports.ports });
-    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2, withResolution: true }));
+    await streamSettledProposalRun(harness, retitlePlanResponse({ withResolution: true }));
     await waitFor(() =>
       expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("failed"),
     );
@@ -1439,9 +1770,9 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     const user = userEvent.setup();
     const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
     const { harness } = await mountSeeded({ applyPorts: ports.ports });
-    await streamSettledPlanRun(
+    await streamSettledProposalRun(
       harness,
-      wiredPlanEvent({ seq: 2, risk: "high", withResolution: true }),
+      retitlePlanResponse({ risk: "high", withResolution: true }),
     );
 
     const card = screen.getByTestId("plan-card");
@@ -1453,8 +1784,6 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     // batch + undo — nothing runs before the user confirms).
     expect(screen.queryByTestId("plan-preview")).toBeNull();
     expect(screen.queryByTestId("plan-preview-panel")).toBeNull();
-    // D-22: auto-apply NEVER pre-arms a high-risk card (no autoApply on this
-    // event either — the pre-arm test below covers the low-risk arm).
 
     const checkbox = screen.getByTestId("plan-confirm-checkbox");
     const apply = screen.getByTestId("plan-apply");
@@ -1486,7 +1815,7 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
   it("preview (M5-H): a low-risk plan WITHOUT name placeholders mounts the before/after frames (probe → render → undo)", async () => {
     const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
     const { harness, fake } = await mountSeeded({ applyPorts: ports.ports });
-    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2 })); // concrete layer id
+    await streamSettledProposalRun(harness, retitlePlanResponse({})); // concrete layer id
 
     // The probe: ONE engine.batch (applied momentarily) + ONE render + ONE
     // edit.undo restoring the state — nothing stays applied (§8.5 atomicity).
@@ -1522,14 +1851,15 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(1);
   });
 
-  it("D-22 pre-arm: an auto verdict pre-arms the LOW-risk card (hint + focused Apply) — Apply is still the user's click", async () => {
+  it("auto verdict pre-arm: an auto verdict with UNRESOLVED layer names pre-arms the LOW-risk card (hint + focused Apply) — the auto-drive defers to the user's pick and Apply is still the user's click", async () => {
     const user = userEvent.setup();
     const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
     const { harness } = await mountSeeded({ applyPorts: ports.ports });
-    await streamSettledPlanRun(
+    // mode "auto" + an unresolved $request: the auto-drive guard refuses
+    // (ambiguity needs the user's §8.7 pick) — the card stays proposed.
+    await streamSettledProposalRun(
       harness,
-      wiredPlanEvent({
-        seq: 2,
+      retitlePlanResponse({
         withResolution: true,
         autoApply: { mode: "auto", reason: "eligible" },
       }),
@@ -1545,8 +1875,8 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     const apply = screen.getByTestId("plan-apply");
     expect(document.activeElement).toBe(apply);
 
-    // …but NOTHING executed from the event alone (D-22): no batch, no save,
-    // no report until the explicit click.
+    // …but NOTHING executed from the verdict alone (the ambiguity guard):
+    // no batch, no save, no report until the explicit click.
     expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(0);
     expect(ports.saves).toEqual([]);
     expect(harness.wire.applyRuns).toHaveLength(0);
@@ -1557,11 +1887,45 @@ describe("M5-Q web chat integration — the wired apply journey", () => {
     expect(harness.wire.applyRuns).toHaveLength(1);
   });
 
+  it("auto-apply drive: a mode:auto verdict with NO unresolved names AUTO-DRIVES the apply at run end (once per run) — ONE batch, ONE save, ONE report, the card lands applied with Undo", async () => {
+    const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
+    const { harness } = await mountSeeded({ applyPorts: ports.ports });
+    // The §7.3 verdict says auto + the compiled batch is concrete (no
+    // $request tokens) → the round-10 v2 drive fires at the local
+    // run.completed, BEFORE the card ever renders proposed (no probe).
+    await streamSettledProposalRun(
+      harness,
+      retitlePlanResponse({ autoApply: { mode: "auto", reason: "low risk additive batch" } }),
+    );
+
+    // No click ever happened: the card drove itself to applied.
+    const card = screen.getByTestId("plan-card");
+    await waitFor(() => expect(card.dataset.status).toBe("applied"));
+    expect(screen.getByTestId("plan-applied").textContent).toContain("· one undo step.");
+    expect(screen.getByTestId("plan-undo")).toBeInTheDocument();
+    expect(screen.queryByTestId("plan-auto-armed")).toBeNull(); // never sat proposed
+
+    // Exactly ONE gesture: one engine.batch (the apply), one saveNow pair,
+    // one report — and NO probe (the runtime went straight to applying).
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "engine.batch")).toHaveLength(1);
+    expect(harness.bridgeCalls.executes.filter((cmd) => cmd === "edit.undo")).toHaveLength(0);
+    expect(harness.bridgeCalls.batches).toBe(0); // the preview probe never mounted
+    expect(harness.bridgeCalls.renderFrames).toBe(0);
+    expect(ports.saves).toEqual(["markDirty:agent-apply", AGENT_APPLY_REASON]);
+    expect(harness.wire.applyRuns).toHaveLength(1);
+    expect(harness.wire.applyRuns[0]?.runId).toBe(harness.wire.posts[0]?.runId);
+    expect(harness.wire.applyRuns[0]?.body.versionId).toBe("ver_apply_1");
+    expect(harness.wire.undoRuns).toHaveLength(0);
+
+    // The engine holds the edit: one undo step reverts it (Undo's escape hatch).
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
+  });
+
   it('F-L3 save-failed: the card shows the honest "in the editor only" copy and Retry save NEVER re-executes the batch (F-L1)', async () => {
     const user = userEvent.setup();
     const ports = makeApplyPorts({ currentVersionId: BASE_VERSION_ID });
     const { harness } = await mountSeeded({ applyPorts: ports.ports });
-    await streamSettledPlanRun(harness, wiredPlanEvent({ seq: 2 })); // concrete id → clean probe
+    await streamSettledProposalRun(harness, retitlePlanResponse({})); // concrete id → clean probe
     await waitFor(() =>
       expect(screen.getByTestId("plan-preview-panel").dataset.status).toBe("ready"),
     );

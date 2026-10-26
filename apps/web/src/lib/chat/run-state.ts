@@ -730,6 +730,55 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
       // M4: cursor-only events — previews ride tool cards (render_preview is
       // a client tool whose result lands on the card); approval UI is M5.
       break;
+    // -----------------------------------------------------------------------
+    // ROUND-12 turn events (TURN WIRE CONTRACT): the browser's chat-controller
+    // owns the loop; the server is stateless per turn. `turn.started` and a
+    // TRANSIENT `turn.failed` (the transport's bounded retry heals it) are
+    // cursor-only — the run's phase must never flap mid-recovery.
+    // -----------------------------------------------------------------------
+    case "turn.started": {
+      if (frozen) break;
+      next = { ...next, phase: resumeConfirm(next.phase) };
+      break;
+    }
+    case "turn.completed": {
+      if (frozen) break;
+      next = {
+        ...next,
+        phase: resumeConfirm(next.phase),
+        messages: mapActiveMessage(next, (message) => ({
+          ...message,
+          // §8.8 display (12-w5-t1 pin): committed credits accumulate across
+          // the run's turns; reserved/balance carry over when already known.
+          credits: {
+            reserved: message.credits?.reserved ?? 0,
+            committed: (message.credits?.committed ?? 0) + event.credits.committed,
+            balance: message.credits?.balance ?? 0,
+          },
+          // The chips' authoritative payload (the chips themselves light up
+          // from tool.started; this carries resultForModel + proposals).
+          toolCalls: event.toolCalls,
+          // Replay/drop recovery: a durable turn replay re-sends NO deltas —
+          // the terminal alone carries the FULL text. The terminal is
+          // authoritative (it equals the streamed text on a clean turn), so a
+          // half-streamed bubble completes and a fully streamed one is
+          // byte-identical (the !== guard keeps the reference stable).
+          ...(event.assistantText !== undefined &&
+          event.assistantText !== "" &&
+          message.text !== event.assistantText
+            ? { text: event.assistantText }
+            : {}),
+        })),
+      };
+      break;
+    }
+    case "turn.failed": {
+      // Cursor-only BY DESIGN: the turn transport retries a retryable failure
+      // same-key and only the SURFACED one (after retries) reaches the user
+      // via the controller's `chat.error` fold. A transient blip the bounded
+      // retry heals never flickers the phase.
+      break;
+    }
     case "run.completed": {
       next = { ...next, phase: "done", error: undefined, blocked: undefined };
       break;

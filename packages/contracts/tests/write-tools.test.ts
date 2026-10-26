@@ -50,6 +50,13 @@ const MINIMAL_VALID: Record<WriteToolId, unknown> = {
   apply_preset: { preset: { name: "Kinetic In" } },
   undo_run: {},
   save_version: {},
+  engine_commands: { steps: [{ command: "comp.new", params: { name: "Main" } }] },
+  run_script: { code: 'app.beginUndoGroup("agent"); app.endUndoGroup();' },
+  add_asset: {
+    kind: "svg",
+    name: "Logo",
+    svg: '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10H0z"/></svg>',
+  },
 };
 
 function validResult(): Record<string, unknown> {
@@ -67,8 +74,9 @@ function validResult(): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 describe("write-tools: identity and registry", () => {
-  it("WRITE_TOOL_IDS is exactly the 8 spec ids, in BUILD_PLAN §M5.1 order", () => {
-    expect([...WRITE_TOOL_IDS]).toEqual([
+  it("WRITE_TOOL_IDS keeps the 8 spec ids first, in BUILD_PLAN §M5.1 order", () => {
+    // PRESERVED expectation (round 12): the §M5.1 eight stay in spec order.
+    expect([...WRITE_TOOL_IDS].slice(0, 8)).toEqual([
       "create_composition",
       "create_text",
       "set_properties",
@@ -81,7 +89,23 @@ describe("write-tools: identity and registry", () => {
     expect(new Set(WRITE_TOOL_IDS).size).toBe(WRITE_TOOL_IDS.length);
   });
 
-  it("WRITE_TOOL_ARGS_SCHEMAS covers exactly the 8 ids, same order, all ZodObjects", () => {
+  it("round-12 additions: the full id list is the §M5.1 eight + engine_commands, run_script, add_asset", () => {
+    expect([...WRITE_TOOL_IDS]).toEqual([
+      "create_composition",
+      "create_text",
+      "set_properties",
+      "add_effect",
+      "set_keyframes",
+      "apply_preset",
+      "undo_run",
+      "save_version",
+      "engine_commands",
+      "run_script",
+      "add_asset",
+    ]);
+  });
+
+  it("WRITE_TOOL_ARGS_SCHEMAS covers every id, same order, all ZodObjects", () => {
     expect(Object.keys(WRITE_TOOL_ARGS_SCHEMAS)).toEqual([...WRITE_TOOL_IDS]);
     for (const id of WRITE_TOOL_IDS) {
       expect(WRITE_TOOL_ARGS_SCHEMAS[id] instanceof z.ZodObject, id).toBe(true);
@@ -539,6 +563,102 @@ describe("write-tools: undo_run and save_version args", () => {
     );
     expect(WRITE_TOOL_ARGS_SCHEMAS.save_version.safeParse({ label: "" }).success).toBe(false);
     expect(WRITE_TOOL_ARGS_SCHEMAS.save_version.safeParse({ extra: true }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round-12 write tools ("Tool catalog v3" — engine_commands / run_script / add_asset)
+// ---------------------------------------------------------------------------
+
+describe("write-tools: engine_commands args (round 12)", () => {
+  const schema = WRITE_TOOL_ARGS_SCHEMAS.engine_commands;
+
+  it("accepts 1..50 steps of {command, params}", () => {
+    expect(
+      schema.safeParse({ steps: [{ command: "comp.new", params: { name: "Main" } }] }).success,
+    ).toBe(true);
+    expect(
+      schema.safeParse({
+        steps: [
+          { command: "layer.newText", params: {} },
+          { command: "prop.set", params: {} },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(schema.safeParse({ steps: [] }).success).toBe(false); // min 1
+    const fifty = Array.from({ length: 50 }, () => ({
+      command: "markers.set",
+      params: {},
+    }));
+    expect(schema.safeParse({ steps: fifty }).success).toBe(true);
+    expect(schema.safeParse({ steps: [...fifty, fifty[0]] }).success).toBe(false); // max 50
+  });
+
+  it("command must be a dotted id; params are dunder-safe records", () => {
+    expect(schema.safeParse({ steps: [{ command: "newComp", params: {} }] }).success).toBe(false);
+    expect(schema.safeParse({ steps: [{ command: ".comp", params: {} }] }).success).toBe(false);
+    expect(schema.safeParse({ steps: [{ command: "__proto__", params: {} }] }).success).toBe(false);
+    const dunder = JSON.parse('{"__proto__":{"polluted":true}}');
+    expect(schema.safeParse({ steps: [{ command: "comp.new", params: dunder }] }).success).toBe(
+      false,
+    );
+    expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
+  });
+});
+
+describe("write-tools: run_script args (round 12)", () => {
+  const schema = WRITE_TOOL_ARGS_SCHEMAS.run_script;
+
+  it("accepts code 1..20000 chars, nothing else", () => {
+    expect(schema.safeParse({ code: "app.project;" }).success).toBe(true);
+    expect(schema.safeParse({ code: "x".repeat(20_000) }).success).toBe(true);
+    expect(schema.safeParse({ code: "x".repeat(20_001) }).success).toBe(false);
+    expect(schema.safeParse({ code: "" }).success).toBe(false);
+    expect(schema.safeParse({ code: "app.project;", name: "rig" }).success).toBe(false); // strict
+  });
+});
+
+describe("write-tools: add_asset args (round 12)", () => {
+  const schema = WRITE_TOOL_ARGS_SCHEMAS.add_asset;
+
+  it("kind is exactly svg; name ≤ 120 dunder-free; svg 1..50000 chars", () => {
+    expect(
+      schema.safeParse({ kind: "svg", name: "Logo", svg: '<svg><path d="M0 0"/></svg>' }).success,
+    ).toBe(true);
+    expect(schema.safeParse({ kind: "png", name: "Logo", svg: "<svg/>" }).success).toBe(false);
+    expect(schema.safeParse({ kind: "svg", svg: "<svg/>" }).success).toBe(false); // name required
+    expect(schema.safeParse({ kind: "svg", name: "__proto__", svg: "<svg/>" }).success).toBe(false);
+    expect(schema.safeParse({ kind: "svg", name: "x".repeat(121), svg: "<svg/>" }).success).toBe(
+      false,
+    );
+    expect(schema.safeParse({ kind: "svg", name: "L", svg: "x".repeat(50_000) }).success).toBe(
+      true,
+    );
+    expect(schema.safeParse({ kind: "svg", name: "L", svg: "x".repeat(50_001) }).success).toBe(
+      false,
+    );
+    expect(schema.safeParse({ kind: "svg", name: "L", svg: "" }).success).toBe(false);
+  });
+});
+
+describe("write-tools: round-12 badges and intent hints", () => {
+  it("all three round-12 tools carry the medium risk floor", () => {
+    for (const id of ["engine_commands", "run_script", "add_asset"] as const) {
+      const tool = WRITE_TOOLS.find((entry) => entry.id === id);
+      expect(tool, id).toBeDefined();
+      expect(tool?.risk, id).toBe("medium");
+      expect(tool?.kind, id).toBe("write");
+      expect(tool?.returns, id).toBe("proposed-batch");
+    }
+  });
+
+  it("run_script pins its §8.6 intent hint; the others leave the gateway fallback", () => {
+    const runScript = WRITE_TOOLS.find((entry) => entry.id === "run_script");
+    expect(runScript?.intent).toBe("animate");
+    const engineCommands = WRITE_TOOLS.find((entry) => entry.id === "engine_commands");
+    expect(engineCommands?.intent).toBeUndefined();
+    const addAsset = WRITE_TOOLS.find((entry) => entry.id === "add_asset");
+    expect(addAsset?.intent).toBeUndefined();
   });
 });
 

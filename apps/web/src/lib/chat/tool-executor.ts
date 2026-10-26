@@ -1,81 +1,299 @@
 /**
- * apps/web — the CLIENT-side agent tool executor (M4-SEAMS.md seam 6,
- * PRODUCT_ARCHITECTURE.md §7.4/§8.4; M5 posture per the landed wave-1 seams:
- * contracts write-tools.ts + the gateway runner/runs route).
+ * apps/web — the CLIENT-side agent tool executor v2 (round-12 client-driven
+ * loop, research/round12-design.md "Tool catalog v3"; M4-SEAMS seam 6 for the
+ * four curated editor reads).
  *
- * When the gateway's runner emits a §7.4 `tool.started` event for one of the
- * curated tools, M4-J's wiring hands the call to this executor, which:
+ * THE CONTRACT FLIP: the old executor POSTed every outcome to
+ * `/v1/runs/:id/events` because the model loop lived in the gateway runner.
+ * Round 12 moved the loop to the CLIENT — the controller now consumes the
+ * tool result DIRECTLY and echoes it into the next turn, so:
  *
- *   1. refuses the RAW engine surface as a tool (`engine.batch`,
- *      `engine.execute`, `edit.undo`, `edit.redo`) with TOOL_FORBIDDEN and
- *      ZERO bridge calls — executing a batch or an undo here would bypass
- *      the ApplyController (apply.ts) and break law #6 (ONE batch = ONE undo
- *      = ONE version),
- *   2. refuses write tools client-side with the M4 refusal (TOOL_FORBIDDEN,
- *      zero bridge calls). M5 resolves the 8 write tools SERVER-SIDE (the
- *      runner compiles the proposal + posts the WRITE_TOOL_RESULT_SCHEMA
- *      envelope itself) and the runs route REJECTS any client tool.result for
- *      them with a 400 — so this post is the M4-compat defense that the
- *      landed gateway absorbs; it must never execute anything,
- *   3. ignores server-side tools (`studio.plan_edit` is the runner's own
- *      structured-output call — posting for a toolCallId it did not register
- *      would 400: the runs route only accepts expected ids),
- *   4. validates args at RUNTIME through `@studio/api-client/chat-tools` —
- *      the one place web may touch contracts' Zod schemas indirectly
- *      (docs/AGENTS.md hard rule 5),
- *   5. executes the 4 editor-read tools against the live bridge (per-item
- *      bridge failures degrade to per-item nulls / NOT_FOUND entries — never
- *      abort),
- *   6. POSTs `{ type: "tool.result", toolCallId, result }` to
- *      `/v1/runs/:id/events` (RUN_EVENT_REQUEST_SCHEMA — exact shape) with 2
- *      retries on transient failures, then gives up silently: the runner's
- *      `waitForToolResult` times out server-side (EDITOR_DISCONNECTED).
+ *   - `execute(tool, args)` RESOLVES with the tool result, or
+ *   - THROWS `ClientToolError {code, message}` — the typed failure the
+ *     controller turns into the tool_result part (the model sees a graceful,
+ *     explainable error; the run continues). No POSTing, no retries, no
+ *     server-side waitForToolResult — the entire /v1/runs/:id/events back
+ *     channel is GONE for tool results.
  *
- * NOTHING in this module ever throws — every outcome becomes a posted result.
- * The whole execution races a 20 s guard that posts TOOL_TIMEOUT (each bridge
- * call already carries the bridge's own 15 s timeout).
+ * What the executor runs (handles() mirrors the v3 catalog's client-executed
+ * tools — read + generative; kind "read" generative tools mutate NO canvas
+ * state):
+ *   - the 4 curated editor reads against the live bridge (unchanged bodies:
+ *     per-block/per-item degradation, never abort) — get_context,
+ *     list_layers, get_properties, render_preview;
+ *   - studio.list_commands / studio.describe_command — the ALLOWED catalog
+ *     discovery pair over the bridge's `command.list` / `command.describe`
+ *     query ids (tools/catalog-queries.ts);
+ *   - studio.web_search / studio.generate_image — POST to the gateway's
+ *     metered tool endpoints `/v1/threads/:id/tools/...` through the same
+ *     authenticated transport `runs.postEvent` used to use (same-origin
+ *     `/v1`, cookie session + `x-workspace-id` + `Idempotency-Key`; the
+ *     api-client's impl keeps its generic POST seam private, so the call is
+ *     local — the apps/web session-client direct-fetch precedent), mapping
+ *     503 → WEB_SEARCH_UNAVAILABLE and 501 → IMAGE_GENERATION_UNAVAILABLE so
+ *     the model gets a graceful typed answer, never a run failure;
+ *   - studio.render_audio — Tone.js offline synthesis → WAV → the existing
+ *     two-phase asset upload seam (tools/audio-render.ts; the Tone harness
+ *     is injectable so tests never load Tone).
  *
- * Bridge wire facts (verified against `packages/editor-bridge` +
+ * STILL REFUSED, zero bridge calls (law #5/#6, defense in depth behind the
+ * gateway's own validation): the RAW engine surface as a tool name
+ * (`engine.batch`, `engine.execute`, `edit.undo`, `edit.redo`) and every
+ * write tool — writes resolve SERVER-side as proposals; the client executes
+ * them only through the ApplyController (apply.ts), ONE atomic batch = ONE
+ * undo = ONE version.
+ *
+ * Bridge wire facts (unchanged; verified against `packages/editor-bridge` +
  * `editor/crates/engine/src/commands/query.rs` + the fake registry):
  *   - `project.summary` `{}` · `comp.info` `{comp?}` · `edit.history.list` `{}`
- *   - `layer.tree` `{layer?, comp?, depth?, time?}` — PER LAYER (layer defaults
- *     to the first selected layer, and the call FAILS without a selection);
- *     `comp` is a comp id or name; `depth` caps the property-tree expansion.
- *   - `prop.get` `{layer?, path|prop, time?}` — layer id/name/`#n`, no comp.
- *   - `renderFrame` `{comp?, time?, max_side?, …}` — `max_side` caps the LONG
- *     side; the result normalizes `png` → `pngBase64`.
+ *   - `layer.tree` `{layer?, comp?, depth?, time?}` — PER LAYER
+ *   - `prop.get` `{layer?, path|prop, time?}` · `renderFrame` `max_side ≤ 1200`
+ *   - `command.list` `{}` · `command.describe` `{command}` — query ids the web
+ *     bridge's generic `query` seam reaches on every dist that has them.
  */
 
-import type { ApiClient } from "@studio/api-client";
-import { isApiError } from "@studio/api-client";
-import { isClientTool, isWriteTool, validateToolArgs } from "@studio/api-client/chat-tools";
+import { sha256Hex } from "@/lib/editor-session";
+import type { ApiClient, FetchLike } from "@studio/api-client";
+import { isWriteTool, validateToolArgs } from "@studio/api-client/chat-tools";
 import type { ContextBlockKey, ContextSelection } from "@studio/contracts";
 import { type EditorBridge, isBridgeError, messageOf } from "@studio/editor-bridge";
 
+import { type AudioRenderHarness, renderAudioAsset } from "./tools/audio-render";
+import { runDescribeCommand, runListCommands } from "./tools/catalog-queries";
+import { ClientToolError, isClientToolError } from "./tools/client-tool-error";
+
+// The pinned typed failure — re-exported so the chat controller (i4) imports
+// it from the seam it already knows (tool-executor): `new ClientToolError(code,
+// message)` is what `execute` THROWS and `isClientToolError` narrows.
+export { ClientToolError, isClientToolError } from "./tools/client-tool-error";
+export type { AudioRenderHarness } from "./tools/audio-render";
+
 // ---------------------------------------------------------------------------
-// Public surface (pinned by M4-SEAMS.md seam 6)
+// Public surface (pinned by the round-12 chat controller)
 // ---------------------------------------------------------------------------
 
-/** One `tool.started`-shaped call the executor may run (§7.4). */
-export interface ClientToolCall {
-  readonly runId: string;
-  readonly toolCallId: string;
-  readonly name: string;
-  readonly args: unknown;
-}
-
-export interface ToolExecutorDeps {
+/**
+ * Everything the executor needs for one run: the live bridge, the api-client
+ * (render_audio's asset upload), the thread/run the tool calls belong to, the
+ * per-run context toggles (§5.1) and the optional test seams.
+ */
+export interface ClientToolExecutorDeps {
+  /** The live editor bridge (editor reads + catalog queries). */
   readonly bridge: EditorBridge;
+  /** The api-client (asset upload for render_audio). */
   readonly client: ApiClient;
-  /** Present for the M5 apply path + audit scoping; /v1/runs/:id/events derives the workspace from the session. */
+  /** Audit scoping + the `x-workspace-id` header the tools routes require. */
   readonly workspaceId: string;
+  /** The chat thread the run belongs to (web_search/generate_image paths). */
+  readonly threadId: string;
+  /** The client-generated run id (idempotency keys, asset provenance). */
+  readonly runId: string;
   /** Per-run context toggles (§5.1) — user-removed blocks are reported, not fetched. */
   readonly flags: ContextSelection;
-  /** Whole-call guard in ms (default 20 000; 0 disables — tests inject small values). */
+  /** Whole-call guard for the bridge tools in ms (default 20 000; 0 disables — tests inject small values). */
   readonly guardTimeoutMs?: number;
-  /** Pause between postEvent retries in ms (default 250; tests inject 0). */
-  readonly retrySleepMs?: number;
+  /** Authenticated transport for the tools endpoints (tests); defaults to the global fetch. */
+  readonly fetchImpl?: FetchLike;
+  /** render_audio renderer seam (tests); defaults to the real Tone.js harness. */
+  readonly audioHarness?: AudioRenderHarness;
+  /** render_audio render-timeout override (tests); default 20 000. */
+  readonly audioRenderTimeoutMs?: number;
 }
+
+/** The client-executed tools (the v3 catalog's read + generative surface). */
+const HANDLED_TOOLS: ReadonlySet<string> = new Set([
+  "studio.get_context",
+  "studio.list_layers",
+  "studio.get_properties",
+  "studio.render_preview",
+  "studio.list_commands",
+  "studio.describe_command",
+  "studio.web_search",
+  "studio.render_audio",
+  "studio.generate_image",
+]);
+
+/** The executor (pinned interface — the chat controller codes against this). */
+export interface ClientToolExecutor {
+  /** Runs one tool call; RESOLVES with the result or THROWS ClientToolError. */
+  execute(tool: string, args: unknown): Promise<unknown>;
+  /** `true` for the nine client-executed tools (never write tools). */
+  handles(tool: string): boolean;
+}
+
+export function createClientToolExecutor(deps: ClientToolExecutorDeps): ClientToolExecutor {
+  return {
+    handles: (tool) => HANDLED_TOOLS.has(tool),
+
+    async execute(tool, args) {
+      // 1. The RAW engine surface is never a tool (law #5/#6): a batch or an
+      //    undo dispatched here would bypass the ApplyController — refuse by
+      //    name, ZERO bridge calls.
+      if (RAW_ENGINE_TOOL_IDS.has(tool)) {
+        throw new ClientToolError("TOOL_FORBIDDEN", RAW_ENGINE_FORBIDDEN_MESSAGE);
+      }
+      // 2. Write tools never execute client-side — the gateway resolves them
+      //    SERVER-side as proposals; the client executes them only at Apply.
+      if (isWriteTool(tool)) {
+        throw new ClientToolError(
+          "TOOL_FORBIDDEN",
+          "Write tools are proposal-only; the plan card applies them.",
+        );
+      }
+      // 3. Unknown/server-side tools (studio.plan_edit among them) are not
+      //    this executor's — fail closed instead of guessing.
+      if (!HANDLED_TOOLS.has(tool)) {
+        throw new ClientToolError("TOOL_FORBIDDEN", `"${tool}" is not a client-executed tool.`);
+      }
+
+      // 4. Runtime arg validation through the api-client chat-tools seam (the
+      //    one place web may touch contracts' Zod schemas — the model gets
+      //    one repair turn).
+      const parsed = validateToolArgs(tool, args);
+      if (!parsed.ok) {
+        throw new ClientToolError("RUN_INVALID_TOOL", parsed.error);
+      }
+
+      // 5. Dispatch. Bridge tools race the whole-call guard; the gateway
+      //    tools carry their own signal timeouts; render_audio has its own
+      //    20 s render race.
+      switch (tool) {
+        case "studio.get_context":
+          return await runGuarded(deps, (d) =>
+            runGetContext(parsed.value as { include?: readonly string[] }, d),
+          );
+        case "studio.list_layers":
+          return await runGuarded(deps, (d) =>
+            runListLayers(parsed.value as { compId?: string; depth?: number }, d),
+          );
+        case "studio.get_properties":
+          return await runGuarded(deps, (d) =>
+            runGetProperties(
+              parsed.value as { layerIds?: readonly string[]; paths?: readonly string[] },
+              d,
+            ),
+          );
+        case "studio.render_preview":
+          return await runGuarded(deps, (d) =>
+            runRenderPreview(
+              parsed.value as { compId?: string; timeSeconds?: number; maxWidth?: number },
+              d,
+            ),
+          );
+        case "studio.list_commands":
+          return await runGuarded(deps, (d) =>
+            runListCommands(parsed.value as { category?: string }, d.bridge),
+          );
+        case "studio.describe_command":
+          return await runGuarded(deps, (d) =>
+            runDescribeCommand(parsed.value as { command: string }, d.bridge),
+          );
+        case "studio.web_search":
+          return await runWebSearch(parsed.value as { query: string; maxResults?: number }, deps);
+        case "studio.generate_image":
+          return await runGenerateImage(parsed.value as { prompt: string; size?: string }, deps);
+        case "studio.render_audio":
+          return await renderAudioAsset(
+            parsed.value as { name: string; code: string; duration?: number },
+            {
+              client: deps.client,
+              ...(deps.audioHarness === undefined ? {} : { harness: deps.audioHarness }),
+              ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
+              ...(deps.audioRenderTimeoutMs === undefined
+                ? {}
+                : { renderTimeoutMs: deps.audioRenderTimeoutMs }),
+            },
+          );
+        default:
+          // Unreachable (HANDLED_TOOLS filtered) — stay honest anyway.
+          throw new ClientToolError("TOOL_FAILED", `Not a client tool: ${tool}`);
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Guard + error mapping
+// ---------------------------------------------------------------------------
+
+const DEFAULT_GUARD_MS = 20_000;
+
+/** Bridge error codes that mean "the editor is not answering". */
+const DISCONNECT_CODES: ReadonlySet<string> = new Set([
+  "EDITOR_DISCONNECTED",
+  "EDITOR_NOT_READY",
+  "EDITOR_LOAD_FAILED",
+  "EDITOR_TIMEOUT",
+]);
+
+/**
+ * The RAW engine surface is never a model tool (law #5/#6) — refused by name
+ * with ZERO bridge calls even though the gateway would already have rejected
+ * an unknown id (defense in depth).
+ */
+const RAW_ENGINE_TOOL_IDS: ReadonlySet<string> = new Set([
+  "engine.batch",
+  "engine.execute",
+  "edit.undo",
+  "edit.redo",
+]);
+
+const RAW_ENGINE_FORBIDDEN_MESSAGE =
+  "Raw engine commands are not tools. Use the curated Studio tools; apply a plan to make changes.";
+
+/** Bridge/editor failure → the typed ClientToolError (disconnect codes named). */
+function toolError(error: unknown): ClientToolError {
+  const code =
+    isBridgeError(error) && DISCONNECT_CODES.has(error.code)
+      ? "EDITOR_DISCONNECTED"
+      : "TOOL_FAILED";
+  return new ClientToolError(code, messageOf(error));
+}
+
+/** Races a bridge tool against the whole-call guard (default 20 s). */
+async function runGuarded(
+  deps: ClientToolExecutorDeps,
+  run: (deps: ClientToolExecutorDeps) => Promise<unknown>,
+): Promise<unknown> {
+  const guardMs = deps.guardTimeoutMs ?? DEFAULT_GUARD_MS;
+  if (guardMs <= 0) {
+    try {
+      return await run(deps);
+    } catch (error) {
+      if (isClientToolError(error)) throw error;
+      throw toolError(error);
+    }
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), guardMs);
+  });
+  try {
+    // Normalized so a late loss of the race can never reject unhandled.
+    const work = run(deps).then(
+      (result) => ({ result }) as const,
+      (error: unknown) => ({ error }) as const,
+    );
+    const first = await Promise.race([work, guard]);
+    if (typeof first === "string") {
+      throw new ClientToolError("TOOL_TIMEOUT", "The editor did not finish the tool call in time.");
+    }
+    if ("error" in first) {
+      // Typed tool failures (UNKNOWN_COMMAND, …) pass through untouched —
+      // only raw bridge failures go through the disconnect mapping.
+      if (isClientToolError(first.error)) throw first.error;
+      throw toolError(first.error);
+    }
+    return first.result;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The 4 curated editor reads (bodies unchanged from the M4 executor — only
+// the result plumbing flipped from "post" to "resolve")
+// ---------------------------------------------------------------------------
 
 /** Marker for a block the user removed in the Context popover (§5.3). */
 const REMOVED_BY_USER = "removed by user";
@@ -90,183 +308,9 @@ const DEFAULT_PROP_PATHS: readonly string[] = [
   "text/sourceText",
 ];
 
-/** Bridge error codes that mean "the editor is not answering" (→ EDITOR_DISCONNECTED). */
-const DISCONNECT_CODES: ReadonlySet<string> = new Set([
-  "EDITOR_DISCONNECTED",
-  "EDITOR_NOT_READY",
-  "EDITOR_LOAD_FAILED",
-  "EDITOR_TIMEOUT",
-]);
-
-const DEFAULT_GUARD_MS = 20_000;
-const POST_ATTEMPTS = 3; // 1 try + 2 retries on transient failures
-
-/**
- * The RAW engine surface is never a model tool (law #5/#6): a batch or an
- * undo dispatched here would bypass the ApplyController — ONE atomic batch =
- * ONE undo step = ONE version — so the executor refuses them by name with
- * ZERO bridge calls, even though the gateway's own tool validation would
- * already have rejected an unknown tool id (defense in depth).
- */
-const RAW_ENGINE_TOOL_IDS: ReadonlySet<string> = new Set([
-  "engine.batch",
-  "engine.execute",
-  "edit.undo",
-  "edit.redo",
-]);
-
-const RAW_ENGINE_FORBIDDEN_MESSAGE =
-  "Raw engine commands are not tools. Use the curated Studio tools; apply a plan to make changes.";
-
-/**
- * Runs one client tool call end-to-end and reports the outcome as a posted
- * §7.4 tool result. NEVER throws; NEVER posts twice for one call.
- */
-export async function executeClientTool(
-  call: ClientToolCall,
-  deps: ToolExecutorDeps,
-): Promise<void> {
-  let settled = false;
-  const post = async (result: unknown): Promise<void> => {
-    if (settled) return; // the guard may win while the work promise still lands
-    settled = true;
-    await postToolResult(call, deps, result);
-  };
-
-  try {
-    // 1. The RAW engine surface is never a tool: a batch dispatched here would
-    //    bypass the ApplyController (law #6) — refuse by name, zero bridge calls.
-    if (RAW_ENGINE_TOOL_IDS.has(call.name)) {
-      await post({ error: "TOOL_FORBIDDEN", message: RAW_ENGINE_FORBIDDEN_MESSAGE });
-      return;
-    }
-    // 2. Write tools never execute here — the M4 refusal (zero bridge calls).
-    //    M5 resolves them SERVER-SIDE (the runner posts the proposal envelope)
-    //    and the landed runs route 400s any client tool.result for them, so
-    //    this post is defense the gateway absorbs; it never mutates anything.
-    if (isWriteTool(call.name)) {
-      await post({ error: "TOOL_FORBIDDEN", message: "Write tools are not available yet." });
-      return;
-    }
-    // 3. Server-side tools (studio.plan_edit) are the runner's job. The runs
-    //    route 400s on a toolCallId it did not register (expected-ids rule), so
-    //    posting here would only add noise — return without posting.
-    if (!isClientTool(call.name)) return;
-
-    // 4. Runtime arg validation; the model gets one repair turn server-side.
-    const parsed = validateToolArgs(call.name, call.args);
-    if (!parsed.ok) {
-      await post({ error: "RUN_INVALID_TOOL", message: parsed.error });
-      return;
-    }
-
-    // 5. Execute the read under the whole-call guard, then post.
-    await runGuarded(call, parsed.value, deps, post);
-  } catch {
-    // Defensive: an internal bug still reports an honest error result.
-    await post({ error: "TOOL_FAILED", message: "The tool could not complete." });
-  }
-}
-
-/**
- * Executor-factory sugar for M4-J: binds the deps AND guards the toolCallId —
- * the same call (SSE replay after a reconnect, duplicate dispatch) never
- * double-executes or double-posts. Ids are retained for the executor's
- * lifetime (they are unique per run; replays must be no-ops, not re-runs).
- */
-export function createToolExecutor(
-  deps: ToolExecutorDeps,
-): (call: ClientToolCall) => Promise<void> {
-  const executed = new Set<string>();
-  return (call: ClientToolCall): Promise<void> => {
-    if (executed.has(call.toolCallId)) return Promise.resolve();
-    executed.add(call.toolCallId);
-    return executeClientTool(call, deps);
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Guard + dispatch
-// ---------------------------------------------------------------------------
-
-async function runGuarded(
-  call: ClientToolCall,
-  args: unknown,
-  deps: ToolExecutorDeps,
-  post: (result: unknown) => Promise<void>,
-): Promise<void> {
-  const guardMs = deps.guardTimeoutMs ?? DEFAULT_GUARD_MS;
-  if (guardMs <= 0) {
-    await post(await runReadTool(call.name, args, deps));
-    return;
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const guard = new Promise<"timeout">((resolve) => {
-    timer = setTimeout(() => resolve("timeout"), guardMs);
-  });
-  try {
-    // Normalized so a late loss of the race can never reject unhandled.
-    const work = runReadTool(call.name, args, deps).then(
-      (result) => ({ result }) as const,
-      (error: unknown) => ({ error }) as const,
-    );
-    const first = await Promise.race([work, guard]);
-    if (typeof first === "string") {
-      await post({
-        error: "TOOL_TIMEOUT",
-        message: "The editor did not finish the tool call in time.",
-      });
-      return;
-    }
-    await post("error" in first ? toolError(first.error) : first.result);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-/** Dispatches a validated editor-read call; the returned value is the tool result. */
-async function runReadTool(name: string, args: unknown, deps: ToolExecutorDeps): Promise<unknown> {
-  try {
-    switch (name) {
-      case "studio.get_context":
-        return await runGetContext(args as { include?: readonly string[] }, deps);
-      case "studio.list_layers":
-        return await runListLayers(args as { compId?: string; depth?: number }, deps);
-      case "studio.get_properties":
-        return await runGetProperties(
-          args as { layerIds?: readonly string[]; paths?: readonly string[] },
-          deps,
-        );
-      case "studio.render_preview":
-        return await runRenderPreview(
-          args as { compId?: string; timeSeconds?: number; maxWidth?: number },
-          deps,
-        );
-      default:
-        // Unreachable (isClientTool filtered first) — stay honest anyway.
-        return { error: "TOOL_FAILED", message: `Not a client tool: ${name}` };
-    }
-  } catch (error) {
-    return toolError(error);
-  }
-}
-
-/** Bridge/editor failure → the §7.4 failure result the model sees (seam 6). */
-function toolError(error: unknown): { error: string; message: string } {
-  const code =
-    isBridgeError(error) && DISCONNECT_CODES.has(error.code)
-      ? "EDITOR_DISCONNECTED"
-      : "TOOL_FAILED";
-  return { error: code, message: messageOf(error) };
-}
-
-// ---------------------------------------------------------------------------
-// studio.get_context — flags-gated + args-include-gated project snapshot
-// ---------------------------------------------------------------------------
-
 async function runGetContext(
   args: { include?: readonly string[] },
-  deps: ToolExecutorDeps,
+  deps: ClientToolExecutorDeps,
 ): Promise<unknown> {
   const include = args.include;
   const wants = (block: ContextBlockKey): boolean =>
@@ -358,21 +402,14 @@ async function readSelectedProperties(bridge: EditorBridge, layerId: number): Pr
   return { layerId, properties };
 }
 
-// ---------------------------------------------------------------------------
-// studio.list_layers — a composition's layers (+ per-layer trees at depth)
-// ---------------------------------------------------------------------------
-
 /**
  * `layer.tree` is a PER-LAYER query (layer defaults to the first selected
  * layer and fails without a selection), so the composition-wide listing the
- * tool promises (§8.4: "layer ids, names and types") is assembled from:
- *   1. `comp.info {comp}` — the authoritative layer list,
- *   2. `layer.tree {comp, layer, depth}` per layer — the depth-capped trees.
- * Per-layer tree failures degrade to `tree: null`; the listing still posts.
+ * tool promises (§8.4) is assembled from `comp.info {comp}` + per-layer trees.
  */
 async function runListLayers(
   args: { compId?: string; depth?: number },
-  deps: ToolExecutorDeps,
+  deps: ClientToolExecutorDeps,
 ): Promise<unknown> {
   const compParam = args.compId;
   const depth = args.depth ?? 2;
@@ -414,13 +451,9 @@ function compactComp(info: Record<string, unknown> | undefined): Record<string, 
   };
 }
 
-// ---------------------------------------------------------------------------
-// studio.get_properties — prop.get per {layer, path} (bounded concurrency)
-// ---------------------------------------------------------------------------
-
 async function runGetProperties(
   args: { layerIds?: readonly string[]; paths?: readonly string[] },
-  deps: ToolExecutorDeps,
+  deps: ClientToolExecutorDeps,
 ): Promise<unknown> {
   const layerIds = args.layerIds ?? [];
   const paths =
@@ -464,13 +497,9 @@ async function propOrNotFound(
   }
 }
 
-// ---------------------------------------------------------------------------
-// studio.render_preview — one frame, capped at 1200 px on the long side
-// ---------------------------------------------------------------------------
-
 async function runRenderPreview(
   args: { compId?: string; timeSeconds?: number; maxWidth?: number },
-  deps: ToolExecutorDeps,
+  deps: ClientToolExecutorDeps,
 ): Promise<unknown> {
   const frame = await deps.bridge.renderFrame({
     comp: args.compId,
@@ -487,41 +516,187 @@ async function runRenderPreview(
 }
 
 // ---------------------------------------------------------------------------
-// Result POST (RUN_EVENT_REQUEST_SCHEMA, exact) + transient retries
+// Gateway tool endpoints (web_search / generate_image)
 // ---------------------------------------------------------------------------
 
-async function postToolResult(
-  call: ClientToolCall,
-  deps: ToolExecutorDeps,
-  result: unknown,
-): Promise<void> {
-  // Exact RUN_EVENT_REQUEST_SCHEMA "tool.result" arm — strictObject, no extras.
-  const body = { type: "tool.result" as const, toolCallId: call.toolCallId, result };
-  // Same logical mutation across retries (law #4): one key per run+toolCall.
-  const idempotencyKey = `toolresult:${call.runId}:${call.toolCallId}`.slice(0, 128);
-  const sleepMs = deps.retrySleepMs ?? 250;
+/** Same-origin API root (Caddy fronts `/v1` in production — README §Env). */
+const API_BASE_URL = "/v1";
 
-  for (let attempt = 1; attempt <= POST_ATTEMPTS; attempt++) {
-    try {
-      await deps.client.runs.postEvent(call.runId, body, { idempotencyKey });
-      return;
-    } catch (error) {
-      // Give up silently: the runner's waitForToolResult (30 s) eventually
-      // fails the run EDITOR_DISCONNECTED server-side — nothing left to do.
-      if (attempt === POST_ATTEMPTS || !isTransientPostFailure(error)) return;
-      if (sleepMs > 0) await new Promise((resolve) => setTimeout(resolve, sleepMs));
-    }
+/** Per-endpoint transport bounds (the provider calls are 30 s server-side). */
+const WEB_SEARCH_TIMEOUT_MS = 20_000;
+const GENERATE_IMAGE_TIMEOUT_MS = 45_000;
+
+/** The §7.3 envelope, restated (apps/web imports contracts as types only). */
+interface WireEnvelope {
+  readonly data?: unknown;
+  readonly error?: {
+    readonly code?: unknown;
+    readonly message?: unknown;
+  };
+}
+
+/**
+ * POST `/v1/threads/:threadId/tools/:tool` on the same authenticated
+ * transport `runs.postEvent` used to ride (same-origin cookies +
+ * `x-workspace-id` — requireWorkspace reads it — + a deterministic
+ * `Idempotency-Key` per logical call, so a retried call replays instead of
+ * double-charging). The api-client's impl keeps its generic POST seam
+ * private, so the envelope unwrap is local (the gateway.ts precedent).
+ */
+async function postThreadTool(
+  deps: ClientToolExecutorDeps,
+  tool: "web_search" | "generate_image",
+  body: unknown,
+  timeoutMs: number,
+): Promise<unknown> {
+  const fetchImpl: FetchLike = deps.fetchImpl ?? ((input, init) => fetch(input, init));
+  const path = `${API_BASE_URL}/threads/${encodeURIComponent(deps.threadId)}/tools/${tool}`;
+
+  // One stable key per logical call: same run + same tool + same args →
+  // replays the stored outcome server-side (§7.2; the tools route namespaces
+  // its charge key by this header).
+  const argsHash = await sha256OfJson(body);
+  const idempotencyKey = `tool:${deps.runId}:${tool}:${argsHash}`.slice(0, 128);
+
+  let response: Response;
+  try {
+    response = await fetchImpl(path, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        "x-workspace-id": deps.workspaceId,
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(body ?? {}),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    // Network/timeout/abort — for these metered tools that is "unavailable",
+    // never a run failure (the model explains and moves on).
+    throw unavailableError(
+      tool,
+      tool === "web_search"
+        ? "Web search is not available right now."
+        : "Image generation is not available right now.",
+    );
+  }
+
+  const json = await parseEnvelope(response);
+  if (json.error !== undefined) {
+    throw envelopeError(tool, response.status, json.error);
+  }
+  if (!response.ok || json.data === undefined) {
+    throw envelopeError(tool, response.status, {
+      message: `The tool endpoint answered HTTP ${response.status}.`,
+    });
+  }
+  return json.data;
+}
+
+/** sha256 hex of the canonical JSON of `value`, truncated for a wire key. */
+async function sha256OfJson(value: unknown): Promise<string> {
+  return (await sha256Hex(new TextEncoder().encode(JSON.stringify(value ?? {})))).slice(0, 16);
+}
+
+/** Reads the §7.3 envelope (or an empty stand-in for non-JSON bodies). */
+async function parseEnvelope(response: Response): Promise<WireEnvelope> {
+  const text = await response.text().catch(() => "");
+  if (text === "") return {};
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed === "object" && parsed !== null) return parsed as WireEnvelope;
+    return {};
+  } catch {
+    return {};
   }
 }
 
-/** Network-ish (status 0), 408/429 and 5xx responses are transient; 4xx are answers, not flukes. */
-function isTransientPostFailure(error: unknown): boolean {
-  if (isApiError(error)) {
-    return (
-      error.status === 0 || error.status === 408 || error.status === 429 || error.status >= 500
-    );
+/** The graceful typed failure for a tool that is not configured/reachable. */
+function unavailableError(tool: "web_search" | "generate_image", message: string): ClientToolError {
+  return new ClientToolError(
+    tool === "web_search" ? "WEB_SEARCH_UNAVAILABLE" : "IMAGE_GENERATION_UNAVAILABLE",
+    message,
+  );
+}
+
+/** Maps an Err envelope / non-2xx to the honest typed failure for this tool. */
+function envelopeError(
+  tool: "web_search" | "generate_image",
+  status: number,
+  error: { readonly code?: unknown; readonly message?: unknown },
+): ClientToolError {
+  const code = typeof error.code === "string" && error.code.length > 0 ? error.code : undefined;
+  const message =
+    typeof error.message === "string" && error.message.length > 0
+      ? error.message
+      : `The tool endpoint failed (HTTP ${status}).`;
+
+  // The pinned graceful mappings (round-12 design): the model sees a typed
+  // "unavailable" result and the run continues.
+  if (tool === "web_search" && (status >= 500 || code === "WEB_SEARCH_UNAVAILABLE")) {
+    return unavailableError("web_search", message);
   }
-  return true; // unknown shape (e.g. a stubbed fetch in tests) — retry defensively
+  if (
+    tool === "generate_image" &&
+    (status === 501 || status >= 500 || code === "IMAGE_GENERATION_UNAVAILABLE")
+  ) {
+    return unavailableError("generate_image", message);
+  }
+  // Honest typed passthrough for the statuses the model can act on.
+  if (status === 402 || code === "INSUFFICIENT_CREDITS") {
+    return new ClientToolError("INSUFFICIENT_CREDITS", message);
+  }
+  if (status === 429 || code === "RATE_LIMITED") {
+    return new ClientToolError("RATE_LIMITED", message);
+  }
+  return new ClientToolError("TOOL_FAILED", message);
+}
+
+/** studio.web_search → `{ results: [{title, url, content}] }` (metered 1 credit). */
+async function runWebSearch(
+  args: { query: string; maxResults?: number },
+  deps: ClientToolExecutorDeps,
+): Promise<unknown> {
+  const data = (await postThreadTool(
+    deps,
+    "web_search",
+    { query: args.query, maxResults: args.maxResults },
+    WEB_SEARCH_TIMEOUT_MS,
+  )) as Record<string, unknown> | null;
+  if (data === null || typeof data !== "object" || !Array.isArray(data.results)) {
+    throw new ClientToolError("TOOL_FAILED", "The search response was malformed.");
+  }
+  return { results: data.results };
+}
+
+/**
+ * studio.generate_image → `{ imageBase64? | imageUrl? }` + the honest import
+ * hint: the image is NOT in the project yet.
+ */
+async function runGenerateImage(
+  args: { prompt: string; size?: string },
+  deps: ClientToolExecutorDeps,
+): Promise<unknown> {
+  const data = (await postThreadTool(
+    deps,
+    "generate_image",
+    { prompt: args.prompt, ...(args.size === undefined ? {} : { size: args.size }) },
+    GENERATE_IMAGE_TIMEOUT_MS,
+  )) as Record<string, unknown> | null;
+  if (data === null || typeof data !== "object") {
+    throw new ClientToolError("TOOL_FAILED", "The image response was malformed.");
+  }
+  const imageBase64 = typeof data.imageBase64 === "string" ? data.imageBase64 : undefined;
+  const imageUrl = typeof data.imageUrl === "string" ? data.imageUrl : undefined;
+  if (imageBase64 === undefined && imageUrl === undefined) {
+    throw new ClientToolError("TOOL_FAILED", "The image response carried no image.");
+  }
+  return {
+    ...(imageBase64 === undefined ? {} : { imageBase64 }),
+    ...(imageUrl === undefined ? {} : { imageUrl }),
+    hint: "This image is not in the project yet. It must be imported as an asset (via a later add_asset/engine import step) before it can be placed on a layer.",
+  };
 }
 
 // ---------------------------------------------------------------------------

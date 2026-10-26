@@ -6,7 +6,7 @@ import { jsonErr, jsonOk } from "./helpers";
 
 const BASE = "https://api.studio.test/v1";
 const ME = {
-  user: { id: "usr_1", name: null, email: "maya@northlight.example" },
+  user: { id: "usr_1", name: null, email: "maya@northlight.example", role: null },
   memberships: [],
   plan: { plan: "trial", creditsBalance: 10, includedCredits: 10, renewsAt: null },
 };

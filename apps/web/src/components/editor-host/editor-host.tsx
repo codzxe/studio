@@ -2,6 +2,7 @@
 
 import { PresenceStrip } from "@/components/presence/presence-strip";
 import { type PresenceBeatContext, usePresence } from "@/components/presence/use-presence";
+import type { MentionItem } from "@/lib/chat/mentions";
 import { ChatProvider } from "@/lib/chat/provider";
 import {
   type ReadOnlyGateHandle,
@@ -192,6 +193,39 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
     [chatBridge, gateView],
   );
 
+  // ROUND 12 (Chat UI v3): the @-mention canvas getter — ONE read-only
+  // `comp.info` per call (bounded ≤80 layer rows); any failure/absence
+  // degrades to [] (the composer then falls back to the context snapshot's
+  // names — never a broken popup).
+  const getCanvasLayers = useCallback(async (): Promise<readonly MentionItem[]> => {
+    if (gatedChatBridge === null) return [];
+    try {
+      const info = await gatedChatBridge.query<Record<string, unknown> | null>("comp.info", {});
+      if (info === null || typeof info !== "object") return [];
+      const items: MentionItem[] = [];
+      if (typeof info.name === "string" && info.name !== "") {
+        items.push({ id: `comp:${info.name}`, label: info.name, kind: "comp" });
+      }
+      const layers = info.layers;
+      if (Array.isArray(layers)) {
+        for (const raw of layers) {
+          if (items.length >= 80) break;
+          if (typeof raw !== "object" || raw === null) continue;
+          const record = raw as Record<string, unknown>;
+          if (typeof record.name !== "string" || record.name === "") continue;
+          items.push({
+            id: `layer:${typeof record.id === "number" ? record.id : record.name}`,
+            label: record.name,
+            kind: "layer",
+          });
+        }
+      }
+      return items;
+    } catch {
+      return [];
+    }
+  }, [gatedChatBridge]);
+
   // True while the M7 lease banner shows ANY chrome — the host then hides
   // the M3 read-only banner (same verdict, strictly more information).
   const [leaseBannerActive, setLeaseBannerActive] = useState(false);
@@ -279,7 +313,15 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
             shortcutBus={bus}
             applyPorts={session.applyPorts}
           >
-            {(api) => <ChatPanelSlot api={api} onSidebarDock={handleSidebarDock} />}
+            {(api) => (
+              <ChatPanelSlot
+                api={api}
+                onSidebarDock={handleSidebarDock}
+                client={chatClient}
+                projectId={projectId}
+                getCanvasLayers={getCanvasLayers}
+              />
+            )}
           </ChatProvider>
         </div>
       ) : null}

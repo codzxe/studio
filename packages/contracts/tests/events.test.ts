@@ -76,8 +76,9 @@ function allEventSamples(): StudioStreamEvent[] {
 }
 
 describe("events: §7.4 catalogue", () => {
-  it("exposes exactly the 12 spec event types", () => {
-    expect([...STUDIO_STREAM_EVENT_TYPES]).toEqual([
+  it("exposes exactly the 12 spec event types, in wire order", () => {
+    // PRESERVED (round 12): the §7.4 twelve stay, in wire order, at the head.
+    expect([...STUDIO_STREAM_EVENT_TYPES].slice(0, 12)).toEqual([
       "run.started",
       "message.delta",
       "tool.started",
@@ -91,6 +92,16 @@ describe("events: §7.4 catalogue", () => {
       "run.failed",
       "run.cancelled",
     ]);
+  });
+
+  it("round-12 TURN WIRE CONTRACT appends turn.started/completed/failed after the twelve", () => {
+    expect([...STUDIO_STREAM_EVENT_TYPES]).toEqual([
+      ...STUDIO_STREAM_EVENT_TYPES.slice(0, 12),
+      "turn.started",
+      "turn.completed",
+      "turn.failed",
+    ]);
+    expect(STUDIO_STREAM_EVENT_TYPES.length).toBe(15);
   });
 
   it("every event sample parses, in any order of emission", () => {

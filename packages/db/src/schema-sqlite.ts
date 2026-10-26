@@ -430,11 +430,15 @@ export const agentRuns = sqliteTable(
     errorCode: text("error_code"),
     createdAt: ts("created_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
     completedAt: ts("completed_at"),
+    // Round 12 (pg twin: schema.ts §6, migration 0008): per-turn heartbeat.
+    lastStepIndex: integer("last_step_index").notNull().default(0),
+    heartbeatAt: ts("heartbeat_at").notNull().default(sql`(unixepoch('subsec') * 1000)`),
   },
   (t) => [
     index("agent_runs_thread_idx").on(t.threadId),
     index("agent_runs_project_idx").on(t.projectId, sql`${t.createdAt} desc`),
     index("agent_runs_status_idx").on(t.status),
+    index("agent_runs_status_heartbeat_idx").on(t.status, t.heartbeatAt),
   ],
 );
 
@@ -454,8 +458,12 @@ export const agentSteps = sqliteTable(
     commandBatchJson: jsonCol("command_batch_json"),
     status: text("status").$type<StepStatus>().notNull().default("pending"),
     durationMs: integer("duration_ms"),
+    toolCallId: text("tool_call_id"),
   },
-  (t) => [uniqueIndex("agent_steps_run_seq_uniq").on(t.runId, t.seq)],
+  (t) => [
+    uniqueIndex("agent_steps_run_seq_uniq").on(t.runId, t.seq),
+    index("agent_steps_tool_call_idx").on(t.toolCallId),
+  ],
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

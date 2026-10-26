@@ -11,14 +11,18 @@
  * and CI owns the devDependency + lockfile sync (see e2e/README.md for the
  * full boot recipe — env, seed, project fixture, snapshots policy).
  *
- * Every selector below was verified against the landed wave-2 surfaces
+ * Every selector below was verified against the landed surfaces
  * (components/chat/*, components/editor-host/*) — see e2e/README.md for the
- * per-testid source map. The mock answer text is asserted verbatim from
- * services/gateway/src/runner.ts `createMockRunner` (MOCK_MODEL=true): the
- * runner streams two message deltas, a CREATE EditPlan (an "Agent Demo"
- * composition + a text layer, compile-enriched with a real engine batch)
- * and one studio.get_context tool call whose result carries the mock comp
- * payload.
+ * per-testid source map. The mock answer is asserted verbatim from the
+ * ROUND-12 turn loop (services/gateway/src/routes/turn.ts `mockTurn`,
+ * MOCK_MODEL=true): turn 0 streams "I'll set up a demo for you — a new
+ * composition with a text layer. " and proposes the TWO write carriers
+ * studio.create_composition + studio.create_text (each compile-enriched with
+ * a real engine batch); turn 1 closes with "Done — I created the Agent Demo
+ * composition with a text layer."; the browser loop
+ * (apps/web/src/lib/chat/chat-controller.ts) then merges the carriers,
+ * POSTs /v1/runs/:id/plan and (verdict "auto") drives the apply — NO read
+ * tool is called and nothing executes before the auto-apply.
  *
  * Auth note (documented deviation from the brief's "sign-up primary"): a
  * freshly signed-up user owns NO workspace and NO project in this product —
@@ -151,9 +155,15 @@ test.describe("M4 chat — read-only agent", () => {
     await expect(page.getByTestId("chat-header")).toBeVisible();
   });
 
-  test("ask what's on this comp → read-only agent answers with the comp summary", async ({
+  test("ask the agent → the mock loop proposes two carriers, closes, and the plan AUTO-applies", async ({
     page,
   }) => {
+    // ROUND-12: BUILD_PLAN §M4 task 7's journey against the CURRENT mock
+    // truth — the mock no longer answers with a comp summary; it proposes
+    // the demo creation (the old get_context call is gone) and the plan
+    // card auto-applies at run end. The full canvas/undo journey lives in
+    // m5-agent-edits.spec.ts; the from-scratch creation journey in
+    // m5-mock-create.spec.ts.
     const composer = page.getByLabel("Message the agent");
     await expect(page.getByTestId("chat-empty-state")).toBeVisible();
 
@@ -167,53 +177,62 @@ test.describe("M4 chat — read-only agent", () => {
     });
     await expect(page.getByTestId("chat-empty-state")).toHaveCount(0);
 
-    // The mock runner makes exactly one client tool call: studio.get_context.
-    const toolCard = page.locator('[data-testid="tool-card"][data-tool="studio.get_context"]');
-    await expect(toolCard).toHaveCount(1, { timeout: RUN_SETTLE_TIMEOUT_MS });
-    await expect(toolCard).toHaveAttribute("data-status", "done", {
+    // Turn 0's proposals: TWO write-tool chips (never a read tool) settle
+    // via the loop's SYNTHESIZED tool.result — the turn wire itself has no
+    // tool.result events (12-w5-t1 pin); the chips carry the propose-only
+    // resultForModel the client echoes back to the next turn.
+    const compChip = page.locator(
+      '[data-testid="tool-card"][data-tool="studio.create_composition"]',
+    );
+    const textChip = page.locator('[data-testid="tool-card"][data-tool="studio.create_text"]');
+    await expect(compChip).toHaveCount(1, { timeout: RUN_SETTLE_TIMEOUT_MS });
+    await expect(textChip).toHaveCount(1, { timeout: RUN_SETTLE_TIMEOUT_MS });
+    await expect(compChip).toHaveAttribute("data-status", "done", {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
+    await expect(textChip).toHaveAttribute("data-status", "done", {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
 
-    // The assistant answer is the MOCK runner's stream, asserted verbatim
-    // (services/gateway/src/runner.ts createMockRunner — the two deltas).
+    // The mock's closing text (turn 1, toolCalls [] ⇒ the run ends)
+    // — services/gateway/src/routes/turn.ts `mockTurn`, asserted verbatim.
     const answer = page.locator('[data-testid="chat-message"][data-role="assistant"]');
     await expect(answer).toContainText(
-      "I'll set up a demo for you — a new composition with a text layer.",
+      "Done — I created the Agent Demo composition with a text layer.",
       { timeout: RUN_SETTLE_TIMEOUT_MS },
-    );
-    await expect(answer).toContainText(
-      "Planning one atomic batch so it applies as a single undo step.",
     );
     await expect(page.getByTestId("chat-status")).toHaveAttribute("data-phase", "done", {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
 
-    // The mock's EditPlan renders as the FULL M5 card (M5-G rewrite): the
-    // plan event carries a compiledBatch (the mock runner compiles through
-    // the real server-side plan compiler), so the thread-mounted card is
-    // APPLICABLE — the actions row holds Apply + Cancel (medium risk needs
-    // NO confirm checkbox; nothing auto-applies — auto-apply is off by
-    // default and "create" is structural). The M4 "Apply arrives with M5"
-    // note is GONE (apply is real).
+    // The MERGED plan card auto-applies (the seeded user has NO settings row
+    // = the schema default ON, and the create plan is auto-eligible): the
+    // card folds from the POST /v1/runs/:id/plan response with summary
+    // `Create composition "Agent Demo" (+1 more changes)` (mergeEditPlans)
+    // and the drive executes it at the client-synthesized run.completed —
+    // NO Apply/Cancel row, Undo is the escape hatch, the M4 "Apply arrives
+    // with M5" note is GONE (apply is real).
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible();
-    await expect(plan).toHaveAttribute("data-status", "proposed");
-    await expect(plan).toHaveAttribute("data-applied", "false");
-    await expect(plan).toContainText("Create an Agent Demo composition with a text layer");
+    await expect(plan).toHaveAttribute("data-status", "applied", {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
+    await expect(plan).toHaveAttribute("data-applied", "true");
+    await expect(plan).toContainText('Create composition "Agent Demo" (+1 more changes)');
     await expect(page.getByTestId("plan-note")).toHaveCount(0);
-    await expect(plan.getByTestId("plan-steps-toggle")).toBeVisible();
-    // The ACTION row: Apply + Cancel (the run settled; the wiring armed the
-    // card). This read-only assert does NOT click — the apply journey (one
-    // atomic engine.batch → applied → undo) is e2e/m5-agent-edits.spec.ts
-    // and the from-scratch creation journey is e2e/m5-mock-create.spec.ts.
-    await expect(plan.getByTestId("plan-apply")).toBeVisible();
-    await expect(plan.getByTestId("plan-cancel")).toBeVisible();
+    await expect(plan.getByTestId("plan-apply")).toHaveCount(0);
+    await expect(plan.getByTestId("plan-cancel")).toHaveCount(0);
+    await expect(page.getByTestId("plan-applied")).toContainText(/· one undo step\./);
+    await expect(plan.getByTestId("plan-undo")).toBeVisible();
 
-    // Expanding the tool card shows the mock's context payload — the comp the
-    // question was about ("Main": the seeded project's single composition).
-    await toolCard.getByTestId("tool-card-toggle").click();
-    await expect(toolCard.getByTestId("tool-card-details")).toBeVisible();
-    await expect(toolCard.getByTestId("tool-card-result")).toContainText("Main");
+    // Expanding a chip shows the PROPOSE-ONLY result the loop echoed (§8.4
+    // — nothing executes until the plan applies): the note is verbatim from
+    // @studio/contracts PROPOSED_BATCH_NOTE.
+    await compChip.getByTestId("tool-card-toggle").click();
+    await expect(compChip.getByTestId("tool-card-details")).toBeVisible();
+    await expect(compChip.getByTestId("tool-card-result")).toContainText(
+      "Proposed batch only — nothing is executed until the user applies the plan.",
+    );
   });
 
   test("context chips reflect what is sent", async ({ page }) => {
@@ -277,31 +296,45 @@ test.describe("M4 chat — read-only agent", () => {
   });
 
   test("stop cancels a streaming run", async () => {
-    // The MOCK_MODEL runner emits the entire run with only `yieldToStream()`
-    // (setImmediate) between events — the whole stream completes in a few
-    // milliseconds, so the Send→Stop transition (the composer shows Stop
-    // while a run is live) is unreachable from a real browser: any attempt
-    // to catch it would be a flake by construction, and a cancelled mock run
-    // asserts nothing about the real cancel path that the gateway suite
-    // (services/gateway/tests) doesn't already prove deterministically.
+    // The MOCK_MODEL turn loop completes both turns with no pacing between
+    // frames (routes/turn.ts emits the mock deltas synchronously into the
+    // run log) — the whole run settles in milliseconds, so the Send→Stop
+    // transition (the composer shows Stop while a run is live) is
+    // unreachable from a real browser: any attempt to catch it would be a
+    // flake by construction, and a cancelled mock run asserts nothing about
+    // the real cancel path that the gateway suite (services/gateway/tests)
+    // doesn't already prove deterministically (abort → TURN_CANCELLED,
+    // refund, the abandon route).
     //
     // Unskip when the gateway grows a mock pacing knob (e.g.
     // MOCK_STREAM_DELAY_MS) or point a local run at a real LiteLLM model —
     // then: send → expect chat-composer-send aria-label "Stop streaming" →
     // click it → expect the run to end cancelled (chat-status data-phase).
-    test.skip(true, "MOCK_MODEL completes instantly — the streaming window is not observable");
+    test.skip(true, "MOCK_MODEL turns complete instantly — the streaming window is not observable");
   });
 
   test("editor UI unchanged by the chat overlay", async ({ page }) => {
     // BUILD_PLAN §M3 "editor screenshot equals upstream (allowing only the
     // floating project bar/chat)" — the D-18 overlay proof. Both states get
     // their own baseline (chat chrome masked); any editor-pixel change in
-    // either state fails the suite. First CI run: --update-snapshots (README
-    // §Snapshots). Mouse parked mid-canvas, away from the auto-hide project
-    // bar and both chat surfaces, so hover chrome never enters a shot.
+    // either state fails the suite. Mouse parked mid-canvas, away from the
+    // auto-hide project bar and both chat surfaces, so hover chrome never
+    // enters a shot.
+    //
+    // ROUND-12 RE-BASELINE NOTE: the panel chrome grew this round (the thread
+    // switcher + panel-settings gear in the header, the live progress strip
+    // + context strip inside the panel, the composer stack). All of it
+    // lives INSIDE the masked chat layers, but the editor-facing pixels
+    // under the masks may still have drifted since the last baseline. The
+    // next MANUAL e2e run MUST re-baseline with --update-snapshots (README
+    // §Snapshots); CI compares against whatever baselines ship after that.
     const shotOptions = {
-      animations: "disabled",
-      caret: "hide",
+      // `as const` keeps the literal types Playwright's screenshot options
+      // expect (animations: "disabled" | "allow" — a widened string 422s
+      // tsc under the repo's strict config; the e2e dir is excluded from the
+      // app tsconfig, so this file is typechecked standalone in CI).
+      animations: "disabled" as const,
+      caret: "hide" as const,
       maxDiffPixelRatio: 0.01,
       mask: [page.getByTestId("chat-panel-layer"), page.getByTestId("chat-collapsed-layer")],
     };

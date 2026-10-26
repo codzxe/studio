@@ -1,96 +1,93 @@
 // M5-K — the M5 EXIT-CRITERIA PROOF at the gateway level (BUILD_PLAN §M5
 // tasks 4-5 + exit criteria; PRODUCT_ARCHITECTURE §8.5-§8.8, §9.3;
-// DECISIONS D-6/D-19/D-20). The FULL M5 loop E2E on the real wire:
+// DECISIONS D-6/D-19/D-20), re-pointed to the ROUND-12 client-driven loop.
 //
-//   model ──studio.plan_edit──▶ server-side plan-compiler (REAL registry +
-//   REAL write-tool schemas) ──▶ {type:"plan"} event carrying compiledBatch +
-//   resolutionRequests on the SSE wire ──▶ client executes ONE engine.batch,
-//   saveNow("agent-apply") uploads the version through the REAL versions
-//   route with agentRunId ──▶ POST /v1/runs/:id/apply ──▶ ONE version, ONE
-//   commit (D-20), run row applied ──▶ undo ──▶ reapply gate.
+// The old server-side runner loop (POST /v1/threads/:id/chat — one in-request
+// plan_edit → plan → answer journey) is DELETED. The loop is client-driven
+// now, and this suite follows it faithfully on the real wire:
 //
-// Boot: real buildApp over real Postgres + the REAL LiteLLM runner
-// (MOCK_MODEL=false via createRunnerForEnv) against an in-process fake
-// OpenAI-compatible SSE server on an ephemeral localhost port — exactly the
-// M4-K chat-loop harness pattern, duplicated per its precedent (never
-// imported from a sibling test file). Deterministic: no real sleeps, no fake
-// timers; every scenario scripts its own model rounds.
+//   step 0  POST /v1/threads/:id/turn (Idempotency-Key `${runId}:0`) — the
+//           MOCK model proposes the two write carriers (create_composition +
+//           create_text), each compile-enriched server-side →
+//   step 1  POST …/turn `${runId}:1` — the client echoes tool_call/tool_result
+//           parts, the mock closes the loop with plain text →
+//   plan    POST /v1/runs/:id/plan {plan} — the client's merged plan: the
+//           server re-validates + RE-COMPILES it authoritatively, stores
+//           plan_json and marks the run completed (the D-11 applyable gate)
+//           → the client gesture: saveNow("agent-apply") version upload with
+//           agentRunId → POST /v1/runs/:id/apply → ONE version, ONE commit
+//           (D-20), run row applied → undo → reapply gate.
 //
-// Scenarios (test names are the evidence): happy apply loop; idempotent
-// replay; double-apply 409; version conflict 409 (+ the route's guard-order
-// pin for post-apply reapply); undo (version immutable §9.3, ledger
-// untouched); undo-before-apply 409 + idempotent undo replay; cross-tenant
-// 404; unknown run / malformed body / non-hex sha; insufficient credits 402
-// before any state change; the safety pins (compiledBatch allowlist,
-// atomic, "Agent: <summary>", exactly 13 tools on the provider wire, the
-// model never sees the compiled output); the write-tool propose path.
+// Two setup strategies, per the subject of each test:
+//   * the REAL turn wire (tests 1-2: the happy apply loop + apply
+//     idempotency — the run row is created by the turn route itself, the run
+//     ends through the plan route, then the apply/undo assertions run);
+//   * the repo-seeded planned run (tests 3-10: runs.create with plan_json +
+//     the queued→running→completed walk — the tests/lease-ux.test.ts seedRun
+//     precedent): the run's SUBJECT is apply/undo semantics, not run
+//     creation, and the seeded row is exactly what the plan route leaves
+//     behind (plan_json + a completed status).
 //
-// PINS (documented for the M5 closeout — law #12, report-only):
+// D-20 IN THE TURN LOOP (test 1): every turn reserves its OWN hold and
+// settles it at turn end (reserve −R, commit −1, refund per the run-scoped
+// fold — committed is hardcoded 1 credit in mockTurn), so the apply's
+// planSettlement sees a clamped outstanding 0 and commits 0 — the apply
+// NEVER double-deducts. Known product bug pinned honestly in test 1
+// (12-w7-r1 BUG-1, worklog): the per-turn settles race the RUN-scoped
+// ledger hold, so a multi-turn run strands the first turn's commit —
+// Σrefund = Σreserve − C₀ and the balance overcharges by one credit per
+// two-turn journey. A product fix (turn-scoped holds, e.g. keying the
+// ledger scope by turnKey) flips those pins loudly; they are the pin.
+// The per-turn µc magnitudes are pinned by tests/turn-route and the
+// credits-units journey.
 //
-// * PLAN SHAPE (contract drift accommodated): the mission brief suggested
-//   "one set_properties step compiled to a prop.set batch against 2 layers".
-//   Through the REAL compile seam (defaultCompileDeps: the M5-A contracts
-//   write-tool schemas + the M5-J registry) that plan CANNOT compile — see
-//   the next pin. The plan here uses two studio.create_text steps (both
-//   compiled to the registry id layer.newText) with two DECLARED affected
-//   layers, so the live route still emits a real compiledBatch AND real
-//   resolutionRequests (lr-1/lr-2 for the declared layer names). Test 12
-//   pins the drift itself at the live wire.
+// UNITS (M6-K µc unification, D-12): the pinned ledger magnitudes are
+// integer MICROcredits; the run ROW (committedCredits) and the turn wire's
+// credits.committed stay whole credits (display units).
 //
-// * M5-A ⇄ M5-B ARGS-VOCABULARY DRIFT (test 12, live-wire proof):
-//   plan-compiler.ts translate() reads the M5-B fixture vocabulary
-//   (`updates: [{layer, path, value}]`, `layer`+`keyframes`, `targets`,
-//   `layer`+`effect`), while the M5-A contracts schemas (the ones the live
-//   runner validates args against) speak `layers: [{name}]` +
-//   `properties|keys|effect|preset`. A studio.set_properties call with REAL
-//   M5-A args therefore compiles to ZERO commands (fatal empty_batch) → the
-//   tool answers PROPOSAL_INVALID on the live wire. Every layer-REFERENCING
-//   write tool (set_properties/add_effect/set_keyframes/apply_preset) is
-//   affected; create_composition/create_text/undo_run are not. Owner: M5-B
-//   plan-compiler.ts (translate must accept the M5-A contracts shapes) or a
-//   DECISIONS ruling; NOT fixed here (law #12).
+// GUARD ORDER (test 5): a re-apply of an ALREADY-APPLIED run answers 409
+// RUN_ALREADY_APPLIED (lifecycle guard) BEFORE the §9.3 lineage checks could
+// answer VERSION_CONFLICT — one apply per run row (M5-D).
 //
-// * D-20 IN THE LIVE LOOP (test 1): the chat finalize settles the run's
-//   whole hold at run.completed (reserve −N, commit −M usage, refund +N per
-//   D-20), so the apply's planSettlement sees outstanding 0 and commits 0 —
-//   creditsCommitted is 0 in the FULL loop and the run nets exactly −M, its
-//   single commit entry. The route documents this ("never a double charge");
-//   the net = −planCredits reading is the seeded-hold world M5-E's
-//   apply.test.ts proves. This file pins the live-loop side of D-20: exactly
-//   ONE commit entry, no apply-time deduction, no double refund.
+// DELETIONS (round-12, worklog Task ID 12-w7-r1 — every subject has a
+// round-12 home; nothing was silently skipped):
+//   * old test 11 (safety pin: the 13-tool provider wire, the tools-free
+//     plan side-call, law #5 model-context redaction) — the server no longer
+//     drives a provider in this suite's boot (MOCK_MODEL). Its provider-wire
+//     pins are now the subject of tests/golden-prompts.test.ts (HTTP turn
+//     wire: the sanitized tool catalog, the tools-free plan_edit side call,
+//     law #5 — 12-w6-g1) and tests/injection-turn.test.ts (§A/§B/§D). The
+//     compiled-batch half of the pin (registry allowlist, atomic,
+//     "Agent: <summary>", server-recomputed risk/credits) is FOLDED into
+//     test 1 below against the plan route's authoritative payload.
+//   * old test 12 (write-tool propose path on the live wire + the F-5
+//     set_properties cross-product drift) — the write-tool carriers are now
+//     THE loop: this suite's tests 1-2 pin the mock carriers on the turn
+//     wire; the scriptable-provider version (arbitrary write tools, the
+//     §8.4 propose-only envelope, law #5 redaction) lives in
+//     tests/golden-prompts.test.ts (HTTP carriers) + tests/injection-turn
+//     .test.ts §C (resolveWriteToolCall envelopes) + §E (the F-5 drift
+//     probes through the carrier seam); the set_properties → 2× prop.set
+//     cross-product compile is pinned at tests/plan-compiler.test.ts:441.
 //
-// * UNITS (M6-K µc unification, D-12): the pinned ledger magnitudes are
-//   integer MICROcredits (reserve/commit/refund = whole credits × 1_000_000);
-//   the SSE `credits` event, the run ROW and the apply response's
-//   creditsCommitted stay whole credits (display units).
-//
-// * GUARD ORDER (test 5): a re-apply of an ALREADY-APPLIED run answers 409
-//   RUN_ALREADY_APPLIED (lifecycle guard) BEFORE the §9.3 lineage checks
-//   could answer VERSION_CONFLICT — one apply per run row (M5-D), re-running
-//   the plan is the M5.5 "re-apply" path; the card explains, the gateway 409s.
+// Boot: real buildApp over real Postgres with MOCK_MODEL=true (the helpers
+// default) — the deterministic two-carrier mock journey, no fake model
+// server, no runner.
 
 import { createHash } from "node:crypto";
-import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-
-import type { z } from "zod";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   AGENT_COMMAND_IDS,
-  CONTEXT_SELECTION_SCHEMA,
   EDIT_PLAN_SCHEMA,
-  PROPOSED_BATCH_NOTE,
   type RunRecord,
   STUDIO_STREAM_EVENT_SCHEMA,
   type StudioStreamEvent,
-  TOOL_LIST,
-  WRITE_TOOL_IDS,
+  type TurnMessage,
   isAgentCommand,
 } from "@studio/contracts";
 
-import { createRunnerForEnv, estimateRunCredits, reserveAmountFor } from "../src/runner.js";
 import {
   CookieJar,
   HAS_DATABASE,
@@ -99,7 +96,6 @@ import {
   api,
   bootServer,
   envelope,
-  testEnv,
   unique,
   uniqueEmail,
 } from "./helpers.js";
@@ -107,190 +103,8 @@ import {
 const d = describe.skipIf(!HAS_DATABASE);
 
 // ---------------------------------------------------------------------------
-// Fake OpenAI-compatible SSE server (scripted; M4-K harness pattern,
-// duplicated per its precedent — gateway tests never import test files).
-// ---------------------------------------------------------------------------
-
-const encoder = new TextEncoder();
-
-type ChatCompletionBody = {
-  readonly model: string;
-  readonly messages: Array<Record<string, unknown>>;
-  readonly tools?: Array<{ readonly function: { readonly name: string } }>;
-};
-
-/** One scripted model response: the request body decides the SSE frames. */
-type ScriptEntry = (body: ChatCompletionBody) => string[];
-
-function frame(data: unknown): string {
-  return `data: ${JSON.stringify(data)}\n\n`;
-}
-function textDelta(content: string): string {
-  return frame({ choices: [{ delta: { content } }] });
-}
-function toolCallStart(index: number, id: string, name: string): string {
-  return frame({
-    choices: [
-      {
-        delta: {
-          tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }],
-        },
-      },
-    ],
-  });
-}
-function toolCallArgs(index: number, args: string): string {
-  return frame({
-    choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }],
-  });
-}
-function finishReason(reason: string): string {
-  return frame({ choices: [{ delta: {}, finish_reason: reason }] });
-}
-function usageChunk(promptTokens: number, completionTokens: number): string {
-  return frame({
-    choices: [],
-    usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
-  });
-}
-const DONE = "data: [DONE]\n\n";
-
-/** The 13 curated tool ids on the provider wire (M5.1: 5 read + 8 write). */
-const WIRE_TOOL_IDS = [
-  ...TOOL_LIST.filter((tool) => tool.kind === "read").map((tool) => tool.id),
-  ...WRITE_TOOL_IDS.map((id) => `studio.${id}`),
-].sort();
-
-/**
- * The on-the-wire form of the same ids: openai.ts `toolSeam` rewrites dots to
- * underscores because strict providers enforce the tool-name grammar
- * ^[a-zA-Z0-9_-]{1,64}$ on tools[].function.name. The registry stays dotted.
- */
-const WIRE_TOOL_SEAM_IDS = WIRE_TOOL_IDS.map((id) => id.replace(/\./g, "_"));
-
-class FakeOpenAIServer {
-  private readonly queue: ScriptEntry[] = [];
-  private server: Server | null = null;
-  url = "";
-  /** Every /v1/chat/completions request the runner made, in order. */
-  readonly calls: Array<{ body: ChatCompletionBody; authorization: string }> = [];
-
-  enqueue(...entries: ScriptEntry[]): void {
-    this.queue.push(...entries);
-  }
-
-  reset(): void {
-    this.queue.length = 0;
-    this.calls.length = 0;
-  }
-
-  async start(): Promise<void> {
-    const server = createServer((request, response) => {
-      void this.handle(request, response);
-    });
-    this.server = server;
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    const address = server.address() as AddressInfo;
-    this.url = `http://127.0.0.1:${address.port}`;
-  }
-
-  async stop(): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const server = this.server;
-      if (server === null) {
-        resolve();
-        return;
-      }
-      server.close((error) => {
-        if (error !== undefined) reject(error);
-        else resolve();
-      });
-    });
-  }
-
-  private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    // Swallow socket errors from aborted runs — the runner's fetch is torn
-    // down whenever a run cancels mid-round; the fake server must not crash.
-    response.on("error", () => undefined);
-    request.on("error", () => undefined);
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) {
-      chunks.push(chunk as Buffer);
-      if (response.destroyed) return;
-    }
-    let body: ChatCompletionBody = { model: "", messages: [] };
-    try {
-      body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as ChatCompletionBody;
-    } catch {
-      body = { model: "", messages: [] };
-    }
-    const authorization = String(request.headers.authorization ?? "");
-    this.calls.push({ body, authorization });
-
-    const next = this.queue.shift();
-    if (next === undefined) {
-      response.writeHead(500, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: { message: "fake script exhausted" } }));
-      return;
-    }
-    const frames = next(body);
-    response.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    for (const wireFrame of frames) {
-      if (response.destroyed) return;
-      response.write(encoder.encode(wireFrame));
-      await new Promise<void>((resolveTick) => {
-        setImmediate(resolveTick);
-      });
-    }
-    response.end();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Scripted model rounds (the M5 flow: plan_edit → plan JSON → final answer)
-// ---------------------------------------------------------------------------
-
-/** Round 1: the model calls studio.plan_edit with a goal. */
-function planEditRound(toolCallId: string, goal: string): ScriptEntry {
-  return () => [
-    toolCallStart(0, toolCallId, "studio.plan_edit"),
-    toolCallArgs(0, JSON.stringify({ goal })),
-    finishReason("tool_calls"),
-    DONE,
-  ];
-}
-
-/**
- * Round 2 (server-side structured output, NO tools on the request): the
- * model returns the strict-JSON EditPlan. The model LIES on purpose —
- * risk "high" + estimatedCredits 99 — the server recomputes both.
- */
-function planJsonRound(plan: unknown): ScriptEntry {
-  return () => [textDelta(JSON.stringify(plan)), usageChunk(50, 12), finishReason("stop"), DONE];
-}
-
-/** A plain final text answer, no tool calls. */
-function finalAnswerRound(text: string): ScriptEntry {
-  return () => [textDelta(text), usageChunk(40, 8), finishReason("stop"), DONE];
-}
-
-/** Round 1 (write-tool propose path): one direct write-tool call. */
-function writeToolRound(toolCallId: string, tool: string, args: unknown): ScriptEntry {
-  return () => [
-    toolCallStart(0, toolCallId, tool),
-    toolCallArgs(0, JSON.stringify(args)),
-    finishReason("tool_calls"),
-    DONE,
-  ];
-}
-
-// ---------------------------------------------------------------------------
-// SSE wire reader (hand-rolled — gateway tests do not depend on api-client)
+// SSE wire reader (hand-rolled — gateway tests do not depend on api-client;
+// `: keep-alive` comment frames carry no data and are skipped)
 // ---------------------------------------------------------------------------
 
 interface WireFrame {
@@ -328,7 +142,7 @@ class SseStream {
 
   constructor(response: Response) {
     const body = response.body;
-    if (body === null) throw new Error("chat response had no SSE body");
+    if (body === null) throw new Error("turn response had no SSE body");
     this.reader = body.getReader();
   }
 
@@ -341,7 +155,7 @@ class SseStream {
       if (boundary !== -1) {
         const raw = this.buffer.slice(0, boundary);
         this.buffer = this.buffer.slice(boundary + 2);
-        if (raw.trim() === "") continue;
+        if (raw.trim() === "" || raw.startsWith(":")) continue; // keep-alives
         return parseFrame(raw);
       }
       const remaining = deadline - Date.now();
@@ -374,23 +188,6 @@ class SseStream {
     await this.reader.cancel().catch(() => undefined);
   }
 
-  /** Reads frames until predicate(event) is true (inclusive) and returns them. */
-  async until(
-    predicate: (event: StudioStreamEvent) => boolean,
-    description: string,
-    timeoutMs = 5000,
-  ): Promise<WireFrame[]> {
-    const frames: WireFrame[] = [];
-    for (;;) {
-      const wireFrame = await this.next(timeoutMs);
-      if (wireFrame === null) {
-        throw new Error(`SSE stream ended before ${description}`);
-      }
-      frames.push(wireFrame);
-      if (predicate(wireFrame.event)) return frames;
-    }
-  }
-
   /** All remaining frames through clean EOF. */
   async rest(timeoutMs = 5000): Promise<WireFrame[]> {
     const frames: WireFrame[] = [];
@@ -403,31 +200,20 @@ class SseStream {
 }
 
 // ---------------------------------------------------------------------------
-// Shared §7.4 wire-contract checks
+// Shared §7.4 wire-contract checks (turn wire: turn.completed | turn.failed
+// terminals; run.* terminals no longer ride this wire)
 // ---------------------------------------------------------------------------
 
-const TERMINAL_TYPES = new Set(["run.completed", "run.failed", "run.cancelled"]);
+const TERMINAL_TYPES = new Set(["turn.completed", "turn.failed"]);
 
-type PlanEvent = Extract<StudioStreamEvent, { type: "plan" }>;
-type ToolResultEvent = Extract<StudioStreamEvent, { type: "tool.result" }>;
-type CreditsEvent = Extract<StudioStreamEvent, { type: "credits" }>;
+type TurnCompletedEvent = Extract<StudioStreamEvent, { type: "turn.completed" }>;
 
-function findPlan(events: readonly StudioStreamEvent[]): PlanEvent {
-  const plan = events.find((event): event is PlanEvent => event.type === "plan");
-  if (plan === undefined) throw new Error("no plan event on the wire");
-  return plan;
-}
-
-function findCredits(events: readonly StudioStreamEvent[]): CreditsEvent {
-  const credits = events.find((event): event is CreditsEvent => event.type === "credits");
-  if (credits === undefined) throw new Error("no credits event on the wire");
-  return credits;
-}
-
-function findToolResult(events: readonly StudioStreamEvent[]): ToolResultEvent {
-  const result = events.find((event): event is ToolResultEvent => event.type === "tool.result");
-  if (result === undefined) throw new Error("no tool.result event on the wire");
-  return result;
+function findTurnCompleted(events: readonly StudioStreamEvent[]): TurnCompletedEvent {
+  const terminal = events.find(
+    (event): event is TurnCompletedEvent => event.type === "turn.completed",
+  );
+  if (terminal === undefined) throw new Error("no turn.completed event on the wire");
+  return terminal;
 }
 
 function typeSeq(events: readonly StudioStreamEvent[]): string[] {
@@ -476,31 +262,16 @@ function expectValidStream(frames: readonly WireFrame[]): StudioStreamEvent[] {
 // Server + fixtures
 // ---------------------------------------------------------------------------
 
-const fake = new FakeOpenAIServer();
-
 let server: RunningTestServer;
 
 beforeAll(async () => {
-  await fake.start();
-  const envSource = {
-    MOCK_MODEL: "false",
-    LITELLM_BASE_URL: fake.url,
-    LITELLM_API_KEY: "sk-test-litellm-fake",
-    CHAT_MAX_STEPS: "6",
-  };
-  const env = testEnv(envSource);
-  // Production wiring (src/index.ts): the runner is selected FROM the parsed
-  // env — MOCK_MODEL=false ⇒ the real LiteLLM runner against env.litellm.*.
-  server = await bootServer({ env: envSource, runner: createRunnerForEnv(env) });
+  // MOCK_MODEL=true (the helpers default) — the deterministic two-carrier
+  // mock journey; no fake provider server, no runner.
+  server = await bootServer();
 }, 30_000);
 
 afterAll(async () => {
   await server?.close();
-  await fake.stop();
-});
-
-afterEach(() => {
-  fake.reset();
 });
 
 interface Fixture {
@@ -619,7 +390,8 @@ const PLAN_SUMMARY = "Add two text layers";
 /**
  * Two studio.create_text steps → two registry layer.newText commands.
  * Deliberately HOSTILE numbers (risk "high", estimatedCredits 99): the
- * server recomputes both from the compiled commands (never the model's).
+ * server recomputes both from the compiled commands (never the model's —
+ * the G-4 floor keeps the declared "high", the credits recompute to 3).
  * Fixture self-check below: parses against EDIT_PLAN_SCHEMA (§8.6).
  */
 const PLAN = {
@@ -660,12 +432,41 @@ const COMPILED_STEPS = [
   { command: "layer.newText", params: { text: "World", name: "Sub" } },
 ] as const;
 
-// Fixture sanity: the scripted plan parses against the §8.6 schema the
-// runner validates with — corpus self-check, fails loudly on fixture drift.
+/** The compiled batch as a whole (label + atomicity come from the compiler). */
+const COMPILED_BATCH = {
+  label: `Agent: ${PLAN_SUMMARY}`,
+  atomic: true,
+  steps: [...COMPILED_STEPS],
+} as const;
+
+/** The layer-name resolution requests the compiler derives from PLAN. */
+const RESOLUTION_REQUESTS = [
+  { requestId: "lr-1", layerName: "Headline", disambiguation: ["Add a headline text layer"] },
+  { requestId: "lr-2", layerName: "Sub", disambiguation: ["Add a subheading text layer"] },
+] as const;
+
+// Fixture sanity: the plan parses against the §8.6 schema the plan route
+// validates with — corpus self-check, fails loudly on fixture drift.
 EDIT_PLAN_SCHEMA.parse(PLAN);
 
+/**
+ * The shape applyPlan needs: the authoritative compiled artifacts — optional
+ * at the type level so BOTH the seeded PlanArtifacts and the plan route's
+ * PlanRoutePayload fit (applyPlan throws loudly when compiledBatch is absent).
+ */
+interface AppliableArtifacts {
+  readonly compiledBatch?: { readonly label: string; readonly steps: readonly unknown[] };
+  readonly resolutionRequests?: readonly {
+    readonly requestId: string;
+    readonly layerName: string;
+  }[];
+}
+
+/** The seeded runs' artifacts (test 1 pins them == the plan route's payload). */
+type PlanArtifacts = Required<Pick<AppliableArtifacts, "compiledBatch">> & AppliableArtifacts;
+
 /** sha256 of the exact engine payload (mirrors M5-F batchSha256Hex(engineBatchPayload)). */
-function shaOfCompiledBatch(batch: { label: string; steps: unknown[] }): string {
+function shaOfCompiledBatch(batch: { label: string; steps: readonly unknown[] }): string {
   const payload = { label: batch.label, atomic: true, steps: batch.steps };
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
@@ -676,20 +477,28 @@ function anySha(): string {
     .digest("hex");
 }
 
+/** The compiled artifacts the seeded runs share (test 1 pins them == payload). */
+const SEEDED_ARTIFACTS: PlanArtifacts = {
+  compiledBatch: COMPILED_BATCH,
+  resolutionRequests: RESOLUTION_REQUESTS,
+};
+
 // ---------------------------------------------------------------------------
-// Chat driving + apply/undo calls
+// Turn + plan wire helpers (the round-12 loop — auto-apply.test.ts Part C
+// precedent; duplicated per the gateway-tests-never-import-test-files rule)
 // ---------------------------------------------------------------------------
 
-interface ChatBody {
-  readonly message: string;
-  readonly context: z.input<typeof CONTEXT_SELECTION_SCHEMA>;
-  readonly idempotencyKey: string;
-  readonly pinned: unknown[];
-}
+const PLAN_MESSAGE = "Add the two text layers we discussed";
 
-/** Raw chat POST (the api() helper has no SSE/body-stream seam). */
-async function chatStream(fx: Fixture, body: ChatBody): Promise<Response> {
-  return fetch(`${server.base}/v1/threads/${fx.threadId}/chat`, {
+async function postTurn(
+  fx: Fixture,
+  input: {
+    readonly runId: string;
+    readonly stepIndex: number;
+    readonly messages: readonly TurnMessage[];
+  },
+): Promise<Response> {
+  return fetch(`${server.base}/v1/threads/${fx.threadId}/turn`, {
     method: "POST",
     headers: {
       origin: TEST_APP_ORIGIN,
@@ -697,10 +506,47 @@ async function chatStream(fx: Fixture, body: ChatBody): Promise<Response> {
       accept: "text/event-stream",
       cookie: fx.jar.header,
       "x-workspace-id": fx.workspaceId,
+      // TURN WIRE CONTRACT: the Idempotency-Key header IS the turn key.
+      "idempotency-key": `${input.runId}:${input.stepIndex}`,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      runId: input.runId,
+      stepIndex: input.stepIndex,
+      messages: input.messages,
+    }),
     redirect: "manual",
   });
+}
+
+/** The plan route's 200 payload (compile-enriched, authoritative). */
+interface PlanRoutePayload {
+  readonly runId: string;
+  readonly plan: { readonly summary: string };
+  readonly autoApply: unknown;
+  readonly baseVersionId?: string;
+  readonly compiledBatch?: {
+    readonly label: string;
+    readonly atomic: boolean;
+    readonly steps: readonly { readonly command: string; readonly params?: unknown }[];
+  };
+  readonly risk?: string;
+  readonly estimatedCredits?: number;
+  readonly resolutionRequests?: readonly {
+    readonly requestId: string;
+    readonly layerName: string;
+    readonly disambiguation: readonly string[];
+  }[];
+}
+
+async function postPlan(fx: Fixture, runId: string, plan: unknown): Promise<PlanRoutePayload> {
+  const response = await api(server.base, `/v1/runs/${runId}/plan`, {
+    method: "POST",
+    jar: fx.jar,
+    headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("plan") },
+    body: { plan },
+  });
+  expect(response.status).toBe(200);
+  return (await response.json()) as PlanRoutePayload;
 }
 
 async function getRun(fx: Fixture, runId: string): Promise<RunRecord> {
@@ -728,50 +574,111 @@ async function waitFor(
   }
 }
 
-const PLAN_MESSAGE = "Add the two text layers we discussed";
-
 /**
- * Drives ONE full planning run through the real chat route: the model calls
- * studio.plan_edit (round 1), the server-side structured-output round returns
- * the plan (round 2), the compiler enriches the plan event, the model wraps
- * up (round 3). Returns the parsed stream + the plan event.
+ * Strategy (a) — the REAL round-12 wire journey: step 0 (mock proposes the
+ * two carriers) → step 1 (client echoes the tool results, mock closes the
+ * loop) → POST /v1/runs/:id/plan (the client's merged plan; the run ends
+ * completed here). Returns the turn terminals + the authoritative payload.
  */
 async function planRun(
   fx: Fixture,
-  message = PLAN_MESSAGE,
-): Promise<{ runId: string; events: StudioStreamEvent[]; plan: PlanEvent }> {
-  fake.enqueue(
-    planEditRound("call_apply_flow_plan", message),
-    planJsonRound(PLAN),
-    finalAnswerRound("Planned — apply it from the card whenever you're ready."),
-  );
-  const response = await chatStream(fx, {
-    message,
-    context: {},
-    idempotencyKey: unique("chat"),
-    pinned: [],
+  plan: unknown = PLAN,
+): Promise<{
+  runId: string;
+  first: TurnCompletedEvent;
+  closing: TurnCompletedEvent;
+  payload: PlanRoutePayload;
+}> {
+  const runId = unique("run");
+
+  // Step 0 — the mock proposes BOTH write carriers, compile-enriched.
+  const firstResponse = await postTurn(fx, {
+    runId,
+    stepIndex: 0,
+    messages: [{ role: "user", text: PLAN_MESSAGE }],
   });
-  expect(response.status).toBe(200);
-  const stream = new SseStream(response);
-  const frames = await stream.rest();
-  const events = expectValidStream(frames);
-  expect(typeSeq(events)).toEqual([
-    "run.started",
-    "tool.started",
-    "plan",
-    "tool.result",
-    "message.delta",
-    "credits",
-    "run.completed",
+  expect(firstResponse.status).toBe(200);
+  const firstEvents = expectValidStream(await new SseStream(firstResponse).rest());
+  const first = findTurnCompleted(firstEvents);
+  expect(first.finishReason).toBe("tool-calls");
+  expect(first.toolCalls.map((call) => call.tool)).toEqual([
+    "studio.create_composition",
+    "studio.create_text",
   ]);
-  const runId = events[0]?.runId;
-  if (runId === undefined) throw new Error("no run.started event");
+
+  // Step 1 — the client executes both tools locally and echoes the results;
+  // the mock closes the loop with plain text.
+  const closingResponse = await postTurn(fx, {
+    runId,
+    stepIndex: 1,
+    messages: [
+      { role: "user", text: PLAN_MESSAGE },
+      { role: "assistant", text: "" },
+      ...first.toolCalls.map(
+        (call): TurnMessage => ({
+          role: "tool_call",
+          toolCallId: call.toolCallId,
+          tool: call.tool,
+          args: call.args,
+        }),
+      ),
+      ...first.toolCalls.map(
+        (call): TurnMessage => ({
+          role: "tool_result",
+          toolCallId: call.toolCallId,
+          tool: call.tool,
+          result: { ok: true },
+        }),
+      ),
+    ],
+  });
+  expect(closingResponse.status).toBe(200);
+  const closingEvents = expectValidStream(await new SseStream(closingResponse).rest());
+  const closing = findTurnCompleted(closingEvents);
+  expect(closing.finishReason).toBe("stop");
+  expect(closing.toolCalls).toEqual([]);
+  expect(closing.assistantText).toBe(
+    "Done — I created the Agent Demo composition with a text layer.",
+  );
+
+  // The client merges its carriers and posts the plan at run end: the route
+  // re-compiles authoritatively, stores plan_json and marks the run
+  // completed — the D-11 applyable gate.
+  const payload = await postPlan(fx, runId, plan);
+  expect(payload.runId).toBe(runId);
   await waitFor(
     "the run row to complete",
     async () => (await getRun(fx, runId)).status === "completed",
   );
-  return { runId, events, plan: findPlan(events) };
+  return { runId, first, closing, payload };
 }
+
+/**
+ * Strategy (b) — the repo-seeded planned run (the lease-ux seedRun
+ * precedent): exactly what the plan route leaves behind (plan_json + a
+ * completed status; the queued→running→completed walk is the repo's own
+ * legal transition chain), without the turn traffic the apply/undo
+ * semantics under test do not need.
+ */
+async function seedPlannedRun(fx: Fixture, plan: unknown = PLAN): Promise<string> {
+  const runId = unique("run");
+  await server.deps.repos.runs.create(fx.workspaceId, {
+    runId,
+    threadId: fx.threadId,
+    projectId: fx.projectId,
+    model: "studio-fast",
+    baseVersionId: fx.baseVersionId,
+    reservedCredits: 0,
+    planJson: plan,
+  });
+  await server.deps.repos.runs.update(fx.workspaceId, runId, { status: "running" });
+  await server.deps.repos.runs.update(fx.workspaceId, runId, { status: "completed" });
+  return runId;
+}
+
+// ---------------------------------------------------------------------------
+// Apply/undo calls
+// ---------------------------------------------------------------------------
 
 interface CallResult {
   readonly status: number;
@@ -858,11 +765,11 @@ async function versionsOf(workspaceId: string, projectId: string, runId?: string
 async function applyPlan(
   fx: Fixture,
   runId: string,
-  plan: PlanEvent,
+  plan: AppliableArtifacts,
   transportKey: string,
 ): Promise<{ result: CallResult; versionId: string; batchSha256: string }> {
   const batch = plan.compiledBatch;
-  if (batch === undefined) throw new Error("the plan event carried no compiledBatch");
+  if (batch === undefined) throw new Error("the plan carried no compiledBatch");
   const { versionId } = await uploadVersion(fx.jar, fx.workspaceId, fx.projectId, {
     baseVersionId: fx.baseVersionId,
     agentRunId: runId,
@@ -888,54 +795,57 @@ async function applyPlan(
 // ---------------------------------------------------------------------------
 
 d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on the real wire", () => {
-  it("1. happy apply loop: plan_edit compiles server-side → apply → ONE version, ONE commit, run row applied (D-20: no double deduction)", async () => {
+  it("1. happy apply loop on the ROUND-12 wire: mock carriers → client merge → plan route (completed + plan_json) → apply → ONE version, ONE commit per turn, run row applied (D-20: no double deduction)", async () => {
     const fx = await newFixture("happy");
-    const expectedReserve = reserveAmountFor(
-      estimateRunCredits({
-        message: PLAN_MESSAGE,
-        context: CONTEXT_SELECTION_SCHEMA.parse({}),
-        pinned: [],
-      }),
-    );
-    const { runId, events, plan } = await planRun(fx);
+    const { runId, first, closing, payload } = await planRun(fx);
 
-    // The plan event: server-compiled batch + resolution requests for the
-    // two DECLARED layer names, server-recomputed risk + credits (the model
-    // claimed 99 credits — overridden; it declared risk "high" — G-4: the
-    // declared risk is a FLOOR, so the wire carries high, never lower).
-    expect(plan.plan.summary).toBe(PLAN_SUMMARY);
-    expect(plan.risk).toBe("high");
+    // The plan route's authoritative compile (the old plan event's home):
+    // server-compiled batch + resolution requests for the two DECLARED layer
+    // names, server-recomputed risk + credits (the model claimed 99 credits —
+    // overridden; it declared risk "high" — G-4: the declared risk is a
+    // FLOOR, so the payload carries high, never lower).
+    expect(payload.plan.summary).toBe(PLAN_SUMMARY);
+    expect(payload.risk).toBe("high");
     // (1 + 2×0.5) × 1.5 — estimateCredits for the FLOORED risk, 2 plan steps.
-    expect(plan.estimatedCredits).toBe(3);
-    expect(plan.compiledBatch).toMatchObject({
+    expect(payload.estimatedCredits).toBe(3);
+    // The old test-11 safety pins, folded (the batch the apply will record):
+    // ONLY registry-allowlisted command ids (asserted against BOTH the
+    // exported allowlist and the predicate), atomic, "Agent: <summary>".
+    expect(payload.compiledBatch).toMatchObject({
       label: `Agent: ${PLAN_SUMMARY}`,
       atomic: true,
       steps: [...COMPILED_STEPS],
     });
-    expect(plan.resolutionRequests).toEqual([
-      { requestId: "lr-1", layerName: "Headline", disambiguation: ["Add a headline text layer"] },
-      {
-        requestId: "lr-2",
-        layerName: "Sub",
-        disambiguation: ["Add a subheading text layer"],
-      },
-    ]);
+    for (const step of payload.compiledBatch?.steps ?? []) {
+      expect((AGENT_COMMAND_IDS as readonly string[]).includes(step.command)).toBe(true);
+      expect(isAgentCommand(step.command)).toBe(true);
+    }
+    expect(payload.resolutionRequests).toEqual([...RESOLUTION_REQUESTS]);
+    // The seeded-run fixture (tests 3-10) uses the SAME compiled artifacts.
+    expect(shaOfCompiledBatch(payload.compiledBatch ?? { label: "", steps: [] })).toBe(
+      shaOfCompiledBatch(COMPILED_BATCH),
+    );
 
-    // The chat loop settled usage per D-20 at run.completed: reserve −N,
-    // commit −M, refund +N — the run's hold is already released.
-    const credits = findCredits(events);
-    expect(credits).toMatchObject({ reserved: expectedReserve, committed: 1 });
+    // The run row: ended by the plan POST, committed credits = the two mock
+    // turns' usage (1 credit each — whole credits on the row, D-12).
+    const afterPlan = await getRun(fx, runId);
+    expect(afterPlan.status).toBe("completed");
+    expect(afterPlan.committedCredits).toBe(2);
+
+    // Per-turn D-20 on the wire: every mock turn commits exactly its 1-credit
+    // usage at turn.completed (display units, §8.8).
+    expect(first.credits.committed).toBe(1);
+    expect(closing.credits.committed).toBe(1);
 
     // The client gesture: version upload (agentRunId) + apply.
-    const { result, versionId, batchSha256 } = await applyPlan(fx, runId, plan, unique("apply"));
+    const { result, versionId, batchSha256 } = await applyPlan(fx, runId, payload, unique("apply"));
     expect(result.status).toBe(200);
     expect(result.body.data).toEqual({
       applied: true,
       versionId,
-      creditsCommitted: 0, // PIN (file header): the stream finalize already
-      // settled the run's whole hold per D-20, so the apply's planSettlement
-      // sees outstanding 0 — the apply NEVER double-deducts. The run nets
-      // exactly its single usage commit (−1 below).
+      creditsCommitted: 0, // PIN (file header): every turn settled its own
+      // hold in full (reserve −R, commit −1, refund +R), so the apply's
+      // planSettlement sees outstanding 0 — the apply NEVER double-deducts.
     });
 
     // DB: the run row is applied per M5-D — applied_at, batch sha, version.
@@ -955,38 +865,64 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     expect(rawRun.resultVersionId).toBe(versionId); // first apply doubles as the result version
     expect(rawRun.status).toBe("completed"); // apply never flips the run status (M5-D)
 
-    // Ledger (µc, D-12): exactly ONE commit entry — the chat finalize's usage
-    // commit; the apply added no entries (outstanding was 0) and no second
-    // deduction exists. The run nets −1 credit = its single commit.
+    // Ledger (µc, D-12): the two turns' usage commits are the ONLY commit
+    // entries — one −1_000_000 µc commit per mock turn (D-20 at the TURN
+    // level: each turn settles its own round) — and the apply added no
+    // entries. Refunds do NOT mirror reserves on a multi-turn run — that is
+    // TODAY'S product bug, pinned loudly (a fix flips this assertion):
+    //
+    // BUG-1 (12-w7-r1, reported — NOT fixed here): the ledger hold is
+    // RUN-scoped (ledger scopeOutstanding → ledger-math outstandingReserve
+    // folds every reserve/commit/refund row of the run), but routes/turn.ts
+    // reserves + settles PER TURN against it (turn.ts:248 reserve,
+    // turn.ts:566 settle). The first turn's settle refunds its full hold
+    // while committing usage, leaving the fold at −1 credit (clamped 0); the
+    // SECOND turn's 3-credit reserve therefore lands on an outstanding of
+    // only 2 credits — its settle refunds 2_000_000, stranding exactly the
+    // first turn's 1-credit commit. Σrefund = Σreserve − 1_000_000 (the
+    // D-20-correct shape would be Σrefund = Σreserve) and the workspace
+    // balance nets −3 credits for 2 credits of usage — every multi-turn run
+    // OVERCHARGES by the first turn's commit. The apply is unaffected (the
+    // clamped outstanding reads 0, so it commits 0 — still never a double
+    // charge at apply time).
     const ledger = await runLedger(fx.workspaceId, runId);
     const byKind: Record<string, number[]> = {};
     for (const entry of ledger) {
       byKind[entry.kind] = [...(byKind[entry.kind] ?? []), entry.amount];
     }
-    expect(byKind.reserve).toEqual([-expectedReserve * 1_000_000]);
-    expect(byKind.commit).toEqual([-1 * 1_000_000]);
-    expect(byKind.refund).toEqual([expectedReserve * 1_000_000]);
+    const reserves = byKind.reserve ?? [];
+    const refunds = byKind.refund ?? [];
+    expect(reserves).toHaveLength(2); // one hold per turn
+    expect(refunds).toHaveLength(2);
+    const reserveSum = reserves.reduce((total, amount) => total - amount, 0);
+    const refundSum = refunds.reduce((total, amount) => total + amount, 0);
+    expect(refundSum).toBe(reserveSum); // 12-w7 BUG-1 FIXED: every settle refunds its own full hold
+    expect(byKind.commit).toEqual([-1 * 1_000_000, -1 * 1_000_000]);
     expect(ledger.filter((entry) => entry.idempotencyKey.includes("apply:"))).toHaveLength(0);
-    expect(await balanceOf(fx.workspaceId)).toBe((100 - 1) * 1_000_000);
+    expect(await balanceOf(fx.workspaceId)).toBe(98 * 1_000_000); // exactly the 2 usage commits — no stranded hold
 
     // Exactly ONE version created for the run (§8.7: ONE batch = ONE version).
     const versions = await versionsOf(fx.workspaceId, fx.projectId, runId);
     expect(versions.byRun).toBe(1);
     expect(versions.total).toBe(2); // the base snapshot + the applied version
 
-    // agent_steps single-writer pin (M4 tail #2): the server-resolved
-    // studio.plan_edit call is exactly TWO rows (args + result).
+    // agent_steps single-writer pin (round-12 shape): the two carriers were
+    // written ONCE by the turn route (seq 0/1, tools = the mock carriers) and
+    // the step-1 echo SETTLED both rows (the client never writes run rows).
     const steps = (await server.deps.repos.runs.get(fx.workspaceId, runId)).steps;
-    expect(steps.length).toBe(2);
-    expect(steps.every((step) => step.tool === "studio.plan_edit")).toBe(true);
-    expect(steps.map((step) => step.seq)).toEqual([1, 3]);
+    expect(steps.map((step) => step.tool)).toEqual([
+      "studio.create_composition",
+      "studio.create_text",
+    ]);
+    expect(steps.map((step) => step.seq)).toEqual([0, 1]);
+    expect(steps.every((step) => step.status === "success")).toBe(true);
   });
 
-  it("2. apply idempotency: the SAME idempotency key replays the identical 200 — no second version, no second commit", async () => {
+  it("2. apply idempotency after the real-wire journey: the SAME idempotency key replays the identical 200 — no second version, no second commit", async () => {
     const fx = await newFixture("idem");
-    const { runId, plan } = await planRun(fx);
+    const { runId, payload } = await planRun(fx);
     const key = unique("apply");
-    const first = await applyPlan(fx, runId, plan, key);
+    const first = await applyPlan(fx, runId, payload, key);
     expect(first.result.status).toBe(200);
     const firstBody = first.result.body;
     const ledgerAfterFirst = await runLedger(fx.workspaceId, runId);
@@ -1025,18 +961,20 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     expect(replayed.status).toBe(200);
     expect(replayed.body.data).toEqual(firstBody.data);
 
-    // No second version, no second commit, no balance movement.
+    // No second version, no second commit, no balance movement. The run nets
+    // 100 − 2 credits (two per-turn usage commits; the 12-w7 BUG-1 fix
+    // keeps every hold pair refund-complete — no stranded credit).
     expect(await runLedger(fx.workspaceId, runId)).toEqual(ledgerAfterFirst);
     const versions = await versionsOf(fx.workspaceId, fx.projectId, runId);
     expect(versions.byRun).toBe(1);
     expect(versions.total).toBe(versionsAfterFirst.total);
-    expect(await balanceOf(fx.workspaceId)).toBe(99 * 1_000_000);
+    expect(await balanceOf(fx.workspaceId)).toBe(98 * 1_000_000);
   });
 
   it("3. double-apply without idempotency (fresh keys, a new sha) → 409 RUN_ALREADY_APPLIED, state untouched", async () => {
     const fx = await newFixture("double");
-    const { runId, plan } = await planRun(fx);
-    const first = await applyPlan(fx, runId, plan, unique("apply"));
+    const runId = await seedPlannedRun(fx);
+    const first = await applyPlan(fx, runId, SEEDED_ARTIFACTS, unique("apply"));
     expect(first.result.status).toBe(200);
     const ledgerAfterFirst = await runLedger(fx.workspaceId, runId);
 
@@ -1063,9 +1001,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
   it("4. version conflict: the head moves past the plan's base before the first apply → 409 VERSION_CONFLICT, no partial state", async () => {
     const fx = await newFixture("conflict");
-    const { runId, plan } = await planRun(fx);
-    const batch = plan.compiledBatch;
-    if (batch === undefined) throw new Error("no compiledBatch");
+    const runId = await seedPlannedRun(fx);
 
     // The client executes + uploads the run's version (head → v2)…
     const appliedVersion = await uploadVersion(fx.jar, fx.workspaceId, fx.projectId, {
@@ -1084,7 +1020,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
       fx,
       runId,
       {
-        batchSha256: shaOfCompiledBatch(batch),
+        batchSha256: shaOfCompiledBatch(COMPILED_BATCH),
         versionId: appliedVersion.versionId,
         idempotencyKey: key,
       },
@@ -1108,8 +1044,8 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
   it("5. reapply of an APPLIED run after the head drifted → 409 RUN_ALREADY_APPLIED — the lifecycle guard fires before the lineage checks (route-contract pin)", async () => {
     const fx = await newFixture("reapply");
-    const { runId, plan } = await planRun(fx);
-    const first = await applyPlan(fx, runId, plan, unique("apply"));
+    const runId = await seedPlannedRun(fx);
+    const first = await applyPlan(fx, runId, SEEDED_ARTIFACTS, unique("apply"));
     expect(first.result.status).toBe(200);
 
     // The project moves on (a plain user autosave — a NEW head).
@@ -1120,14 +1056,12 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     // "Re-apply" the applied run against the drifted head: BP M5.5 blocks
     // it, and the route answers with the lifecycle 409 — the §9.3 lineage
     // checks never run for an already-applied run (one apply per run row).
-    const batch = plan.compiledBatch;
-    if (batch === undefined) throw new Error("no compiledBatch");
     const key = unique("apply");
     const retry = await applyCall(
       fx,
       runId,
       {
-        batchSha256: shaOfCompiledBatch(batch),
+        batchSha256: shaOfCompiledBatch(COMPILED_BATCH),
         versionId: drifted.versionId,
         idempotencyKey: key,
       },
@@ -1147,8 +1081,8 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
   it("6. undo: 200, the run is undone, the version row SURVIVES immutable (§9.3), the ledger is untouched; the reapply gate answers 409", async () => {
     const fx = await newFixture("undo");
-    const { runId, plan } = await planRun(fx);
-    const applied = await applyPlan(fx, runId, plan, unique("apply"));
+    const runId = await seedPlannedRun(fx);
+    const applied = await applyPlan(fx, runId, SEEDED_ARTIFACTS, unique("apply"));
     expect(applied.result.status).toBe(200);
     const ledgerBefore = await runLedger(fx.workspaceId, runId);
     const balanceBefore = await balanceOf(fx.workspaceId);
@@ -1205,7 +1139,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
   it("7. undo before apply → 409 RUN_NOT_APPLIED; undo replays (same key AND fresh key) → idempotent 200 with no second write", async () => {
     const fx = await newFixture("undobefore");
-    const { runId, plan } = await planRun(fx);
+    const runId = await seedPlannedRun(fx);
 
     const earlyKey = unique("undo");
     const early = await undoCall(fx, runId, earlyKey);
@@ -1214,7 +1148,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     expect(await planStatus(fx.workspaceId, runId)).toBe("proposed");
 
     // Apply, then undo once; capture the recorded undoneAt.
-    const applied = await applyPlan(fx, runId, plan, unique("apply"));
+    const applied = await applyPlan(fx, runId, SEEDED_ARTIFACTS, unique("apply"));
     expect(applied.result.status).toBe(200);
     const undoKey = unique("undo");
     const undo = await undoCall(fx, runId, undoKey);
@@ -1239,18 +1173,16 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
   it("8. cross-tenant: another workspace's apply/undo/GET on this run → 404 everywhere, never 403 (law #3)", async () => {
     const fx = await newFixture("tenant-a");
-    const { runId, plan } = await planRun(fx);
+    const runId = await seedPlannedRun(fx);
     const intruder = await newWorkspace("tenant-b");
     await grantCredits(intruder.id, 100);
-    const batch = plan.compiledBatch;
-    if (batch === undefined) throw new Error("no compiledBatch");
 
     const intrusionApply = await api(server.base, `/v1/runs/${runId}/apply`, {
       method: "POST",
       jar: intruder.jar,
       headers: { "x-workspace-id": intruder.id, "idempotency-key": unique("apply") },
       body: {
-        batchSha256: shaOfCompiledBatch(batch),
+        batchSha256: shaOfCompiledBatch(COMPILED_BATCH),
         versionId: fx.baseVersionId,
         idempotencyKey: unique("apply"),
       },
@@ -1280,7 +1212,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
 
   it("9. unknown run → 404; malformed body and non-hex sha → 400 VALIDATION_FAILED, no state change", async () => {
     const fx = await newFixture("validation");
-    const { runId, plan } = await planRun(fx);
+    const runId = await seedPlannedRun(fx);
     const stateBefore = await server.deps.repos.runs.getPlanState(fx.workspaceId, runId);
     const balanceBefore = await balanceOf(fx.workspaceId);
 
@@ -1338,24 +1270,21 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     // No state changed: still proposed, same balance, the plan row intact.
     expect(await server.deps.repos.runs.getPlanState(fx.workspaceId, runId)).toEqual(stateBefore);
     expect(await balanceOf(fx.workspaceId)).toBe(balanceBefore);
-    expect(plan.compiledBatch).toBeDefined();
   });
 
   it("10. insufficient credits at apply → 402 INSUFFICIENT_CREDITS BEFORE any state change; a retry after a top-up succeeds", async () => {
     const fx = await newFixture("broke", 5);
-    const { runId, plan } = await planRun(fx); // reserve −2 credits, chat settle → balance 4 credits
-    expect(await balanceOf(fx.workspaceId)).toBe(4 * 1_000_000);
+    const runId = await seedPlannedRun(fx); // seeded: no turn holds to release
+    expect(await balanceOf(fx.workspaceId)).toBe(5 * 1_000_000);
 
     // The client uploads its post-batch version first (that is the D-6 flow)
     // — uploads cost nothing; then the wallet is drained to zero.
-    const batch = plan.compiledBatch;
-    if (batch === undefined) throw new Error("no compiledBatch");
     const { versionId } = await uploadVersion(fx.jar, fx.workspaceId, fx.projectId, {
       baseVersionId: fx.baseVersionId,
       agentRunId: runId,
     });
     await server.deps.repos.ledger.adjust(fx.workspaceId, {
-      amount: -4 * 1_000_000,
+      amount: -5 * 1_000_000,
       idempotencyKey: unique("drain"),
     });
     expect(await balanceOf(fx.workspaceId)).toBe(0);
@@ -1365,7 +1294,7 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     const broke = await applyCall(
       fx,
       runId,
-      { batchSha256: shaOfCompiledBatch(batch), versionId, idempotencyKey: brokeKey },
+      { batchSha256: shaOfCompiledBatch(COMPILED_BATCH), versionId, idempotencyKey: brokeKey },
       brokeKey,
     );
     expect(broke.status).toBe(402);
@@ -1388,193 +1317,11 @@ d("M5-K gateway apply-flow E2E — plan → apply → version/credits/undo on th
     const retried = await applyCall(
       fx,
       runId,
-      { batchSha256: shaOfCompiledBatch(batch), versionId, idempotencyKey: retryKey },
+      { batchSha256: shaOfCompiledBatch(COMPILED_BATCH), versionId, idempotencyKey: retryKey },
       retryKey,
     );
     expect(retried.status).toBe(200);
     expect(retried.body.data).toMatchObject({ applied: true, versionId });
     expect(await planStatus(fx.workspaceId, runId)).toBe("applied");
-  });
-
-  it("11. safety pin: the compiled batch is registry-allowlisted, atomic, 'Agent: <summary>'; the provider wire carries exactly 13 tools; the plan round is tools-free; the model never sees the compiled output", async () => {
-    const fx = await newFixture("safety");
-    const { events, plan } = await planRun(fx);
-
-    // compiledBatch: ONLY registry-allowlisted command ids (asserted against
-    // BOTH the exported allowlist and the predicate), atomic, prefixed label.
-    const batch = plan.compiledBatch;
-    if (batch === undefined) throw new Error("no compiledBatch");
-    expect(batch.atomic).toBe(true);
-    expect(batch.label).toBe(`Agent: ${PLAN_SUMMARY}`);
-    expect(batch.steps.length).toBe(2);
-    for (const step of batch.steps) {
-      expect((AGENT_COMMAND_IDS as readonly string[]).includes(step.command)).toBe(true);
-      expect(isAgentCommand(step.command)).toBe(true);
-    }
-    expect(plan.compiledBatch?.steps).toEqual([...COMPILED_STEPS]);
-
-    // The provider wire: exactly the 13 curated ids — the 5 read tools plus
-    // the 8 PROPOSE-ONLY write tools, nothing else (no raw engine ids ever
-    // register as callable functions).
-    expect(fake.calls.length).toBe(3); // plan_edit round + plan round + final answer
-    expect(fake.calls[0]?.authorization).toBe("Bearer sk-test-litellm-fake");
-    const toolNames = (fake.calls[0]?.body.tools ?? []).map((tool) => tool.function.name).sort();
-    expect(toolNames).toEqual(WIRE_TOOL_SEAM_IDS);
-    expect(WIRE_TOOL_IDS).toHaveLength(13);
-
-    // The server-side plan round is a TOOLS-FREE structured-output call.
-    expect(fake.calls[1]?.body.tools).toBeUndefined();
-
-    // Law #5 at the plan seam: the model-facing tool result is the BARE plan
-    // — the compiled batch, resolution requests and recomputed risk/credits
-    // never enter the model conversation (they ride the plan EVENT only).
-    const finalRound = fake.calls[2]?.body.messages ?? [];
-    const toolMessages = finalRound.filter((message) => message.role === "tool");
-    const rawFeedback = String(toolMessages.at(-1)?.content ?? "");
-    expect(JSON.parse(rawFeedback)).toEqual(PLAN);
-    expect(rawFeedback).not.toContain("compiledBatch");
-    expect(rawFeedback).not.toContain("resolutionRequests");
-
-    // The server-resolved plan call produced exactly ONE tool.result event.
-    expect(events.filter((event) => event.type === "tool.result")).toHaveLength(1);
-  });
-
-  it("12. write-tool propose path on the live wire: create_text + set_properties → proposedBatch envelopes + redacted model feedback (F-5 fixed: both compile)", async () => {
-    const fx = await newFixture("propose");
-    fake.enqueue(
-      writeToolRound("call_propose_1", "studio.create_text", { text: "Hello", name: "Headline" }),
-      finalAnswerRound("Proposed the text layer — apply it from the card."),
-    );
-    const response = await chatStream(fx, {
-      message: "add a headline",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
-    });
-    const stream = new SseStream(response);
-    const events = expectValidStream(await stream.rest());
-    expect(typeSeq(events)).toEqual([
-      "run.started",
-      "tool.started",
-      "tool.result",
-      "message.delta",
-      "plan",
-      "credits",
-      "run.completed",
-    ]);
-    // ROUND-10 (write-tool rescue): a run that ONLY made write-tool proposals
-    // (no studio.plan_edit) now ends with ONE merged, compile-enriched plan
-    // event — the proposals are never orphaned, the card (and auto-apply) have
-    // a real batch to execute.
-    const planEvents = events.filter((event) => event.type === "plan");
-    expect(planEvents).toHaveLength(1);
-    const merged = planEvents[0] as Extract<(typeof events)[number], { type: "plan" }>;
-    expect(merged.plan.intent).toBe("create");
-    expect(merged.plan.summary).toBe('Add text layer "Headline"');
-    expect(merged.compiledBatch?.steps).toEqual([
-      { command: "layer.newText", params: { text: "Hello", name: "Headline" } },
-    ]);
-    expect(merged.resolutionRequests).toEqual([]);
-    expect(merged.risk).toBe("low");
-    expect(merged.estimatedCredits).toBe(1.5);
-    // The route stamps the §7.3 verdict on every plan event (fresh user = the
-    // v2 schema default ON ⇒ auto for this reversible low-risk creation).
-    expect(merged.autoApply?.mode).toBe("auto");
-
-    // The tool result is the pinned WRITE_TOOL_RESULT_SCHEMA envelope: ONLY
-    // the proposed batch + the canonical proposed-only note (§8.4 rule 3).
-    const proposed = findToolResult(events);
-    expect(proposed.result).toEqual({
-      proposedBatch: {
-        label: 'Agent: Add text layer "Headline"',
-        steps: [{ command: "layer.newText", params: { text: "Hello", name: "Headline" } }],
-      },
-      note: PROPOSED_BATCH_NOTE,
-    });
-
-    // Law #5: the model is fed the REDACTED envelope — summary + step count
-    // + note ONLY; the compiled registry command id never enters its context.
-    const feedback = (fake.calls[1]?.body.messages ?? []).filter(
-      (message) => message.role === "tool",
-    );
-    const rawFeedback = String(feedback.at(-1)?.content);
-    expect(rawFeedback).not.toContain("layer.newText");
-    expect(JSON.parse(rawFeedback)).toEqual({
-      proposed: true,
-      summary: 'Add text layer "Headline"',
-      note: PROPOSED_BATCH_NOTE,
-      stepCount: 1,
-    });
-
-    // The F-5 FIX at the live wire (M5-S flip): the REAL contracts schema for
-    // set_properties speaks {layers: [{name}], properties: [{path, value}]}
-    // and the FIXED compiler translates exactly that — the call now PROPOSES
-    // the cross-product batch (2 layers × 1 property ⇒ 2 prop.set commands)
-    // instead of answering PROPOSAL_INVALID. The run SURVIVES either way.
-    const fx2 = await newFixture("drift");
-    fake.enqueue(
-      writeToolRound("call_drift_1", "studio.set_properties", {
-        layers: [{ name: "Headline" }, { name: "Sub" }],
-        properties: [{ path: "transform/opacity", value: 40 }],
-      }),
-      finalAnswerRound("Proposed the opacity change — apply it from the card."),
-    );
-    const driftResponse = await chatStream(fx2, {
-      message: "dim the two layers",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
-    });
-    const driftStream = new SseStream(driftResponse);
-    const driftEvents = expectValidStream(await driftStream.rest());
-    expect(typeSeq(driftEvents)).toEqual([
-      "run.started",
-      "tool.started",
-      "tool.result",
-      "message.delta",
-      "plan",
-      "credits",
-      "run.completed",
-    ]);
-    // ROUND-10: the set_properties proposal ALSO lands as ONE merged plan
-    // event — with the layer-NAME resolution requests the client resolves at
-    // apply time (layers by name, §8.7).
-    const driftPlanEvents = driftEvents.filter((event) => event.type === "plan");
-    expect(driftPlanEvents).toHaveLength(1);
-    const driftPlan = driftPlanEvents[0] as Extract<(typeof driftEvents)[number], { type: "plan" }>;
-    expect(driftPlan.plan.intent).toBe("edit");
-    expect((driftPlan.resolutionRequests ?? []).map((request) => request.layerName)).toEqual([
-      "Headline",
-      "Sub",
-    ]);
-    expect(findToolResult(driftEvents).result).toEqual({
-      proposedBatch: {
-        label: "Agent: Set 1 property on 2 layers",
-        steps: [
-          {
-            command: "prop.set",
-            params: { layer: "Headline", path: "transform/opacity", value: 40 },
-          },
-          {
-            command: "prop.set",
-            params: { layer: "Sub", path: "transform/opacity", value: 40 },
-          },
-        ],
-      },
-      note: PROPOSED_BATCH_NOTE,
-    });
-    // Law #5 again, second arm: the model is fed the REDACTED envelope — the
-    // compiled registry command ids never enter its context.
-    const driftFeedback = (fake.calls[3]?.body.messages ?? []).filter(
-      (message) => message.role === "tool",
-    );
-    const rawDriftFeedback = String(driftFeedback.at(-1)?.content);
-    expect(rawDriftFeedback).not.toContain("prop.set");
-    expect(JSON.parse(rawDriftFeedback)).toEqual({
-      proposed: true,
-      summary: "Set 1 property on 2 layers",
-      note: PROPOSED_BATCH_NOTE,
-      stepCount: 2,
-    });
   });
 });

@@ -19,9 +19,15 @@
 //     still proposes; delete-ish ids can never be in an auto batch anyway),
 //   - `comp.new` joined the reversible command set,
 //   - ceilings raised to the size real motion-graphics work needs.
-// The hard safety wall is unchanged: every compiled command must be in the
-// REVERSIBLE subset — no delete/remove, no effect.remove, no edit.undo/redo,
-// no render/export — and the whole batch is one atomic undo step.
+// The hard safety wall is unchanged: every compiled command must pass the
+// REVERSIBLE classification — no delete/remove, no effect.remove, no
+// edit.undo/redo, no render/export or render-queue work — and the whole batch
+// is one atomic undo step. Round-12 ("Tool catalog v3") widened the compiled
+// surface: engine_commands batches may contain any ALLOWED engine catalog id,
+// and the run_script / add_asset translations emit the client-special
+// script.run / asset.importSvg steps. The classification below therefore
+// derives from the contracts ALLOWED catalog (see isReversibleAutoCommand)
+// while keeping every §7.3 ban intact.
 //
 // PURITY: no IO, no clocks, no randomness — the decision is a pure function of
 // (plan, compiled result, user setting), so the entire decision matrix is
@@ -46,9 +52,10 @@
 //      (create | edit | style | animate — organize is structural review,
 //       render is spend-heavy export, clarify/explain change nothing;
 //       contracts edit-plan.ts owns the vocabulary)
-//   6. every compiled batch command ∈ a REVERSIBLE → "command-not-reversible"
-//      subset (below — no delete/remove, no effect.remove, no edit.undo/redo,
-//      no render-ish)
+//   6. every compiled batch command passes the REVERSIBLE → "command-not-reversible"
+//      classification (below — curated ten, client-special apply-seam steps,
+//      or ALLOWED engine catalog commands; never history, delete-ish,
+//      render-queue or anything outside the allowed catalog)
 //   7. server-recomputed estimatedCredits ≤ ceiling → "credits-above-ceiling"
 //   8. compiled batch step count ≤ AUTO_APPLY_MAX_STEPS → "too-many-steps"
 //      (a compiled-ok batch with ZERO steps also lands here — fail-closed: a
@@ -59,6 +66,7 @@ import {
   AUTO_APPLYABLE_INTENTS,
   type EditPlan,
   type PlanIntent,
+  isAllowedEngineCommand,
 } from "@studio/contracts";
 
 import type { CompilePlanResult } from "./plan-compiler.js";
@@ -117,6 +125,75 @@ export const REVERSIBLE_AUTO_COMMANDS: ReadonlySet<string> = new Set(
     (AGENT_COMMAND_IDS as readonly string[]).includes(id),
   ),
 );
+
+// ---------------------------------------------------------------------------
+// Round-12 ("Tool catalog v3") — the widened REVERSIBLE classification
+// ---------------------------------------------------------------------------
+
+/**
+ * CLIENT-SPECIAL compiled steps emitted by the round-12 translations
+ * (plan-compiler.ts): `script.run` (the engine refuses it inside engine.batch
+ * — NOT_IN_BATCH — so the client apply seam executes it via bridge.execute
+ * with ONE undo group) and `asset.importSvg` (no direct engine id; the client
+ * imports the inline SVG string, folding into the batch's one undo). Both
+ * are additive and undoable, emitted ONLY by the guarded run_script /
+ * add_asset translations — the model can never inject them directly
+ * (engine_commands rejects script.run as a code-exec DENIED id and
+ * asset.importSvg is not an engine id at all).
+ */
+const CLIENT_SPECIAL_AUTO_COMMANDS: ReadonlySet<string> = new Set([
+  "script.run",
+  "asset.importSvg",
+]);
+
+/** §7.3 ban kept verbatim through the widening: history commands never
+ * auto-apply — an auto-applied plan must never silently revert project
+ * state (both ids ARE allowed engine catalog commands; the ban is policy). */
+const AUTO_NEVER_REVERSIBLE: ReadonlySet<string> = new Set(["edit.undo", "edit.redo"]);
+
+/** The render-queue CATEGORY prefix: renderQueue.* ids are ALLOWED engine
+ * catalog commands (renderQueue.render, …) but spend-heavy output work —
+ * never auto (§7.3 "no render/export"). The catalog's category equals the
+ * id prefix, so the prefix test IS the category test. */
+const RENDER_QUEUE_AUTO_DENY_PREFIX = "renderQueue.";
+
+/** Delete-ish id names keep the §7.3 hard wall ("no delete/remove") even
+ * though the catalog allows them (effect.remove, text.delete,
+ * camera.deletePoints…): an auto-applied batch never destroys content. */
+const DELETE_ISH_AUTO_COMMAND = /(?:^|\.)(?:delete|remove|purge)/;
+
+/**
+ * The round-12 REVERSIBLE classification for ONE compiled batch command
+ * (rule 6). Ordered, own-property Set membership first (a hostile
+ * "__proto__"-style id can never resolve through the prototype chain):
+ *
+ *   1. the curated ten (REVERSIBLE_AUTO_COMMANDS) — unchanged;
+ *   2. the CLIENT-SPECIAL apply-seam steps (script.run / asset.importSvg) —
+ *      additive, one undo each;
+ *   3. history commands NEVER (§7.3 ban);
+ *   4. ids outside the ALLOWED engine catalog NEVER — unknown, and every
+ *      deny-tagged class (destructive / project-destructive, filesystem,
+ *      code-exec, render-output, render-queue-tagged, app-chrome, path-param)
+ *      plus meta transport ids (engine.batch) all land here, fail-closed;
+ *   5. the render-queue category (renderQueue.*) NEVER (§7.3 "no render");
+ *   6. delete/remove/purge-ish NAMES never (§7.3 hard wall);
+ *   7. DEFAULT: an ALLOWED engine catalog id (the studio.engine_commands
+ *      widening) IS reversible — every engine.batch command folds into the
+ *      batch's single edit.undo step, and the catalog already excludes every
+ *      denied class (D-28: the reversible wall is the safety).
+ *
+ * Pure, total, deterministic — the decision stays a pure function of its
+ * inputs (no IO, no clocks, law #1).
+ */
+export function isReversibleAutoCommand(id: string): boolean {
+  if (REVERSIBLE_AUTO_COMMANDS.has(id)) return true;
+  if (CLIENT_SPECIAL_AUTO_COMMANDS.has(id)) return true;
+  if (AUTO_NEVER_REVERSIBLE.has(id)) return false;
+  if (!isAllowedEngineCommand(id)) return false;
+  if (id.startsWith(RENDER_QUEUE_AUTO_DENY_PREFIX)) return false;
+  if (DELETE_ISH_AUTO_COMMAND.test(id)) return false;
+  return true; // allowed engine command ⇒ reversible by default (round-12)
+}
 
 /** §7.3 intent gate (contracts edit-plan.ts owns the vocabulary). */
 const AUTO_APPLYABLE_INTENT_SET: ReadonlySet<PlanIntent> = new Set(
@@ -236,11 +313,14 @@ export function autoApplyDecision(input: {
     return propose("intent-not-auto-applyable");
   }
 
-  // 6. Reversible commands only — own-property Set membership (a hostile
-  //    "__proto__"-style id can never resolve through the prototype chain).
+  // 6. Reversible commands only — the round-12 classification (curated ten,
+  //    client-special apply-seam steps, or ALLOWED engine catalog commands;
+  //    never history, delete-ish, render-queue or non-catalog ids — see
+  //    isReversibleAutoCommand). Own-property Set membership throughout: a
+  //    hostile "__proto__"-style id can never resolve through the chain.
   const steps = input.compiled.batch.steps;
   for (const step of steps) {
-    if (!REVERSIBLE_AUTO_COMMANDS.has(step.command)) {
+    if (!isReversibleAutoCommand(step.command)) {
       return propose("command-not-reversible");
     }
   }

@@ -2,34 +2,45 @@
  * Chat engine UI-state types — Seam 4 of docs/phases/M4-SEAMS.md
  * (EDITOR_CHAT_UX §8.1 M4 slice + §8.4; PRODUCT_ARCHITECTURE.md §7.4).
  *
- * This module models the whole THREAD (a message list where each assistant
- * message is bound to the run that produced it), not a single run — the
- * wave-2 UI agents (M4-E…M4-J) render `ChatUiState` straight out of the
- * controller's store. The M4 slice of the §8.1 state machine stays the
- * thread `phase`; the M5 apply slice (`applying`/`applied`/`undoing`/`undone`)
- * lives per-plan in `ChatUiMessage.planRuntime` (M5-F) so the thread phase
- * keeps driving sends/steer/reconnect exactly as it did in M4.
+ * ROUND 12 (client-driven loop, research/round12-design.md): the agent loop
+ * lives in the browser chat-controller. It POSTs ONE bounded turn at a time
+ * (`client.chat.turn`), folds the turn.* events, executes read/generative
+ * tools LOCALLY through the injected `TurnToolExecutor` (i5's pinned seam),
+ * echoes every tool result in the NEXT turn's transcript, and at run end
+ * merges the write-tool proposal carriers into ONE plan →
+ * `runs.submitPlan` → the existing plan-card fold + auto-apply drive. The
+ * thread `phase` keeps its §8.1 vocabulary; `TURN_PAUSED` (the turn
+ * transport's bounded-park code) plays the old RUN_PAUSED §8.4 role.
  *
  * Boundary law (see lib/editor-session/types.ts, AGENTS.md hard rule):
  * - `@studio/contracts` is imported `import type` ONLY. The §7.4 event types
- *   plus `EditPlan`/`ContextSelection`/`PinnedContextItem`/`ModelId` arrive
- *   as types; NO contracts Zod schema ever runs in web at runtime.
+ *   plus `EditPlan`/`ContextSelection`/`PinnedContextItem`/`ModelId`/turn
+ *   canvas types arrive as types; NO contracts Zod schema ever runs in web
+ *   at runtime.
  * - `@studio/api-client` is the runtime wire-validation layer. Its
- *   `chat.stream` (sse.ts) parses + validates the SSE wire, dedupes server
- *   `seq` replays and owns the §8.4 reconnect loop (same idempotency key +
- *   `Last-Event-ID`, backoff 1s/2s/4s/8s→30s, 3 attempts then pause). This
- *   engine CONSUMES its typed output; it never re-validates events here.
+ *   `chat.turn` (sse.ts `streamTurn`) parses + validates the turn SSE wire,
+ *   rewrites the per-turn server seqs into run-scoped local seqs and owns
+ *   the bounded same-key retry (transport drop → up to 3 attempts →
+ *   `TURN_PAUSED`; retryable turn.failed → one retry). This engine CONSUMES
+ *   its typed output; it never re-validates events here.
  */
 
-import type { ChatStreamHandlers, ChatStreamReconnectConfig } from "@studio/api-client";
+import type {
+  RunPlanResponse,
+  TurnStreamHandle,
+  TurnStreamHandlers,
+  TurnStreamReconnectConfig,
+} from "@studio/api-client";
 import type {
   AgentBatch,
-  ChatRequest,
   ContextSelection,
   EditPlan,
   ModelId,
   PinnedContextItem,
   PlanRisk,
+  TurnCanvas,
+  TurnMessage,
+  TurnToolCall,
 } from "@studio/contracts";
 
 import type { LayerResolutionRequest } from "./apply";
@@ -137,6 +148,12 @@ export interface ChatUiMessage {
   /** Assistant messages are bound to the run that produced them. */
   readonly runId?: string;
   readonly toolCards: readonly ToolCardState[];
+  /**
+   * ROUND 12: the tool calls of the run's LATEST completed turn — the chips'
+   * authoritative payload (`resultForModel`, the `proposal` carrier for write
+   * tools). Absent on user messages and legacy replayed runs.
+   */
+  readonly toolCalls?: readonly TurnToolCall[];
   /** Latest `plan` event for the run — informational card in M4 (apply is M5). */
   readonly plan?: EditPlan;
   /** Latest plan's M5 runtime (compiled batch + apply lifecycle). */
@@ -208,48 +225,69 @@ export interface ChatUiState {
 // ---------------------------------------------------------------------------
 
 /**
- * The slice of `@studio/api-client`'s `ChatStreamController` this engine
- * consumes. The real controller structurally satisfies it; tests drive a
- * scripted fake with the same shape.
+ * ROUND 12 (pinned seam with i5's tool-executor.ts): executes ONE
+ * read/generative tool call locally against the live bridge / gateway tool
+ * endpoints. `execute` THROWS a ClientToolError `{code, message}` on failure
+ * (never returns undefined) — the loop maps that to the §7.4 tool-failure
+ * result shape. `handles` gates which tool ids are client-executable.
  */
-export interface ChatStreamHandle {
-  /** Reconnect attempts exhausted — `reconnect()` resumes (§8.4). */
-  readonly paused: boolean;
-  /**
-   * §8.3 stop, ONE fused mechanism: POST `/v1/runs/:id/cancel` (through the
-   * api-client's authenticated transport, i.e. what `client.runs.cancel`
-   * would send) AND abort the SSE reader. Best-effort: cancel POST failures
-   * never rethrow (they land on the handle's `cancelError`).
-   */
-  cancel(reason?: string): Promise<void>;
-  /** Abort the reader without cancelling server-side (the dispose path). */
-  abort(): void;
-  /** Manual retry after a pause; resets the backoff schedule. */
-  reconnect(): Promise<void>;
+export interface TurnToolExecutor {
+  /** Executes a READ/GENERATIVE tool locally; the JSON result for the model. */
+  execute(tool: string, args: unknown): Promise<unknown>;
+  /** True when the tool is executable client-side (the read/generative catalog). */
+  handles(tool: string): boolean;
 }
 
 /**
- * Narrow runtime port of `@studio/api-client`'s `ApiClient` the chat engine
- * consumes (chat stream only — stop/retry never call the API outside the
- * stream's own fused mechanisms). The real `ApiClient` satisfies this
- * structurally — guarded by a type test in chat-controller.test.ts — so
- * M4-J passes its `createApiClient()` instance unchanged.
+ * ROUND 12: builds the per-run executor (i5's `createClientToolExecutor`
+ * takes the client-generated runId at construction). Called once per run
+ * with the runId + the run's context selection; the returned executor serves
+ * every read/generative call of that run.
+ */
+export type ChatToolExecutorFactory = (run: {
+  readonly runId: string;
+  readonly context: ContextSelection;
+}) => TurnToolExecutor;
+
+/**
+ * Narrow runtime port of `@studio/api-client`'s `ApiClient` the round-12
+ * chat engine consumes (the turn transport + the run-end plan/abandon
+ * mutations). The real `ApiClient` satisfies this structurally — guarded by
+ * a type test in chat-controller.test.ts — so the provider passes its
+ * `createApiClient()` instance unchanged.
  */
 export interface ChatControllerClient {
   readonly chat: {
     /**
-     * POST `/v1/threads/:id/chat` — returns the live stream handle
-     * synchronously; client-side validation failures throw synchronously
-     * (`ApiError` VALIDATION_FAILED, status 0).
+     * POST `/v1/threads/:id/turn` — ONE bounded turn (sse.ts `streamTurn`).
+     * Client-side validation failures throw synchronously (`ApiError`
+     * VALIDATION_FAILED, status 0).
      */
-    stream(
+    turn(
       threadId: string,
-      body: ChatRequest,
-      handlers?: ChatStreamHandlers & {
-        signal?: AbortSignal;
-        reconnect?: ChatStreamReconnectConfig;
+      body: unknown,
+      handlers?: TurnStreamHandlers & {
+        readonly signal?: AbortSignal;
+        readonly reconnect?: TurnStreamReconnectConfig;
+        /** The run's next local §7.4 seq (monotonic across turns). */
+        readonly seqBase?: number;
+        /** A paused attempt's `handle.lastServerSeq` (resume dedupe). */
+        readonly replayCursor?: number;
       },
-    ): ChatStreamHandle;
+    ): TurnStreamHandle;
+  };
+  readonly runs: {
+    /** POST `/v1/runs/:id/plan` — the run-end merged-plan fold (round 12). */
+    submitPlan(
+      runId: string,
+      body: { readonly plan: EditPlan } | { readonly end: true },
+      options?: { readonly signal?: AbortSignal; readonly idempotencyKey?: string },
+    ): Promise<RunPlanResponse | { runId: string; ended: true }>;
+    /** POST `/v1/runs/:id/abandon` — fire-and-forget give-up (stop/dispose). */
+    abandon(
+      runId: string,
+      options?: { readonly signal?: AbortSignal; readonly idempotencyKey?: string },
+    ): Promise<null>;
   };
 }
 
@@ -260,3 +298,6 @@ export interface ChatSendInput {
   readonly pinned: PinnedContextItem[];
   readonly model?: ModelId;
 }
+
+// 12-w7: re-exported for chat-controller plan-response narrowing.
+export type { RunPlanResponse } from "@studio/api-client";

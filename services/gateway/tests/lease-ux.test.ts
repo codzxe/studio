@@ -1,6 +1,6 @@
 // M7-C — lease UX over HTTP against live Postgres (BUILD_PLAN §M7 task 3:
 // "Alex is editing" banner; request edit; release on close; expiry; read-only
-// blocks mutations at the API — D-23: chat stays ALLOWED, apply is gated).
+// blocks mutations at the API — D-23: agent turns stay ALLOWED, apply is gated).
 //
 // Race matrix (§M7 task 6):
 //   * two tabs acquire — one wins, the loser opens read-only (§9.3)
@@ -15,7 +15,7 @@
 //   * read-only enforcement per route: PATCH project / upload version /
 //     restore / apply / undo / project-scoped asset upload all 409 LEASE_HELD
 //     as a non-holder; the holder passes; after release the non-holder
-//     passes; an expired lease never blocks; chat POST is NOT gated (D-23)
+//     passes; an expired lease never blocks; turn POST is NOT gated (D-23)
 //   * law #1: the LEASE_HELD copy carries the holder's DISPLAY NAME, never id
 //   * law #3: cross-tenant project ids 404 on every lease surface (never 403)
 //
@@ -854,7 +854,7 @@ d("lease UX: read-only enforcement (PATCH/upload/restore/apply/undo/assets)", ()
     expect(((await undo.json()) as { data: { undone: boolean } }).data.undone).toBe(true);
   });
 
-  it("chat POST is NOT gated (D-23): the non-holder's agent may look and propose", async () => {
+  it("turn POST is NOT gated (D-23): the non-holder's agent may look and propose", async () => {
     const thread = await api(stable.base, `/v1/projects/${projectId}/threads`, {
       method: "POST",
       jar: team.editor.jar,
@@ -864,7 +864,24 @@ d("lease UX: read-only enforcement (PATCH/upload/restore/apply/undo/assets)", ()
     expect(thread.status).toBe(201);
     const threadBody = (await thread.json()) as { data: { id: string } };
 
-    const response = await fetch(`${stable.base}/v1/threads/${threadBody.data.id}/chat`, {
+    // ROUND 12: the client-driven loop — POST /v1/threads/:id/turn with
+    // Idempotency-Key `${runId}:${stepIndex}` (MOCK_MODEL by default, so the
+    // turn is offline and deterministic). The run row is repo-seeded, the
+    // seedRun precedent above: this test's subject is the LEASE GATE, not run
+    // creation (the step-0 entry wire — including a known round-12 route
+    // ordering bug — is pinned by tests/auto-apply.test.ts's journey test and
+    // noted in the worklog), so the turn rides an in-flight step with the
+    // echoed transcript shape the client sends mid-loop.
+    const runId = unique("run");
+    await stable.deps.repos.runs.create(team.ws.id, {
+      runId,
+      threadId: threadBody.data.id,
+      projectId,
+      model: "studio-fast",
+      baseVersionId: null,
+      reservedCredits: 0,
+    });
+    const response = await fetch(`${stable.base}/v1/threads/${threadBody.data.id}/turn`, {
       method: "POST",
       headers: {
         origin: ORIGIN,
@@ -872,19 +889,23 @@ d("lease UX: read-only enforcement (PATCH/upload/restore/apply/undo/assets)", ()
         accept: "text/event-stream",
         cookie: team.editor.jar.header,
         "x-workspace-id": team.ws.id,
+        "idempotency-key": `${runId}:1`,
       },
       body: JSON.stringify({
-        message: "What's on this comp?",
-        context: {},
-        idempotencyKey: unique("chat"),
-        pinned: [],
+        runId,
+        stepIndex: 1,
+        messages: [
+          { role: "user", text: "What's on this comp?" },
+          { role: "assistant", text: "" },
+        ],
       }),
     });
     expect(response.status).toBe(200); // the SSE route, NOT a LEASE_HELD 409
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     const text = await response.text();
     expect(text).not.toContain("LEASE_HELD");
-    expect(text).toContain("run.");
+    expect(text).toContain("run.started"); // a real turn stream came back
+    expect(text).toContain("turn.completed");
   });
 
   it("after release the non-holder passes the gates; a re-acquire re-arms them", async () => {

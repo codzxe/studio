@@ -114,6 +114,11 @@ export function clientIp(c: Parameters<MiddlewareHandler<AppBindings>>[0]): stri
 const IDEMPOTENCY_EXCLUDED_PATHS = [
   /^\/v1\/auth(\/|$)/,
   /^\/v1\/threads\/[^/]+\/chat$/,
+  // ROUND-12: the turn route carries its OWN durable idempotency (the
+  // `Idempotency-Key: runId:stepIndex` header + the assistant-row turnKey
+  // replay inside routes/turn.ts) — the generic body-store middleware would
+  // wrap the SSE stream in a JSON envelope and kill the replay path.
+  /^\/v1\/threads\/[^/]+\/turn$/,
   /^\/v1\/webhooks\//,
   // M8-G (M8-C pin): POST /v1/renders/estimate is a PURE READ — the body has
   // no idempotencyKey and no hold is taken; the Idempotency-Key header gate

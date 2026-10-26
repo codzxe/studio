@@ -465,15 +465,30 @@ export const agentRuns = pgTable(
     errorCode: text("error_code"),
     createdAt: ts("created_at").notNull().defaultNow(),
     completedAt: ts("completed_at"),
+    // Round 12 (client-driven agent loop, migration 0008): the browser owns the
+    // turn loop, so the run row doubles as the heartbeat record — every turn
+    // bumps last_step_index + heartbeat_at; a `running` row whose heartbeat is
+    // older than 5 minutes reads as abandoned (repos/runs.ts getStaleRunningRuns).
+    lastStepIndex: integer("last_step_index").notNull().default(0),
+    heartbeatAt: ts("heartbeat_at").notNull().defaultNow(),
   },
   (t) => [
     index("agent_runs_thread_idx").on(t.threadId),
     index("agent_runs_project_idx").on(t.projectId, t.createdAt.desc()),
     index("agent_runs_status_idx").on(t.status),
+    // Stale-sweep probe: running rows ordered by heartbeat age.
+    index("agent_runs_status_heartbeat_idx").on(t.status, t.heartbeatAt),
   ],
 );
 
-export type StepStatus = "pending" | "running" | "success" | "failed";
+/**
+ * Round 12: "issued" = the client-driven loop emitted the call (row written
+ * at turn time, before local execution); it settles via completeToolStep →
+ * "success" (or stays "issued" forever if the client died mid-run — the stale
+ * sweep + history loader read that honestly). The legacy chat finalize keeps
+ * writing pending/running/success/failed.
+ */
+export type StepStatus = "issued" | "pending" | "running" | "success" | "failed";
 
 export const agentSteps = pgTable(
   "agent_steps",
@@ -491,8 +506,15 @@ export const agentSteps = pgTable(
     commandBatchJson: jsonb("command_batch_json"),
     status: text("status").$type<StepStatus>().notNull().default("pending"),
     durationMs: integer("duration_ms"),
+    // Round 12 (migration 0008): the model's toolCallId — the stable key the
+    // client echoes back with the result (completeToolStep); nullable because
+    // every legacy step row predates it.
+    toolCallId: text("tool_call_id"),
   },
-  (t) => [uniqueIndex("agent_steps_run_seq_uniq").on(t.runId, t.seq)],
+  (t) => [
+    uniqueIndex("agent_steps_run_seq_uniq").on(t.runId, t.seq),
+    index("agent_steps_tool_call_idx").on(t.toolCallId),
+  ],
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

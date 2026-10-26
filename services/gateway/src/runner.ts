@@ -39,7 +39,6 @@ import {
 } from "@studio/contracts";
 import { computeReserveAmount } from "@studio/db";
 
-import { createLiteLLMRunner } from "./litellm/runner.js";
 import { type Logger, nullLogger } from "./logger.js";
 import { compilePlan, defaultCompileDeps } from "./plan-compiler.js";
 
@@ -486,26 +485,13 @@ export function createMockRunner(): AgentRunner {
 }
 
 // ---------------------------------------------------------------------------
-// Runner selection (D-16): mock for local dev/tests, LiteLLM in production.
+// Runner selection (D-16): the round-12 client-driven loop retired the
+// server-side runner; this seam now serves ONLY the legacy runs-route cancel
+// path and tests (MockRunner semantics). The real model work lives in
+// litellm/turn-engine.ts + routes/turn.ts.
 // ---------------------------------------------------------------------------
 
-/**
- * Runner by env: MockRunner when MOCK_MODEL=true (local dev + tests), the
- * real LiteLLM runner otherwise (D-16). `maxSteps` is the model round cap
- * (env CHAT_MAX_STEPS, `env.agent.chatMaxSteps`); the logger is used ONLY for
- * redacted metadata (prompt lengths + sha256 prefixes — never bodies).
- */
-export function createRunnerForEnv(env: StudioEnv, logger: Logger = nullLogger): AgentRunner {
-  if (env.app.mockModel) return createMockRunner();
-  return createLiteLLMRunner({
-    baseUrl: env.litellm.baseUrl,
-    apiKey: env.litellm.apiKey,
-    virtualKey: env.litellm.virtualKey,
-    // Wire-only alias→provider-model-id rewrite (env LITELLM_MODEL_MAP):
-    // undefined = pass aliases to the proxy unchanged; every internal seam
-    // (entitlements, run rows, credit rates) keeps speaking aliases either way.
-    modelMap: env.litellm.modelMap,
-    maxSteps: env.agent.chatMaxSteps,
-    logger,
-  });
+/** Legacy runner seam (runs-route cancel + test harnesses): always the mock. */
+export function createRunnerForEnv(_env: StudioEnv, _logger: Logger = nullLogger): AgentRunner {
+  return createMockRunner();
 }

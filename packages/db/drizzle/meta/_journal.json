@@ -57,6 +57,13 @@
       "when": 1793021850326,
       "tag": "0007_fresh_dreaming_celestial",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793031066912,
+      "tag": "0008_parallel_black_queen",
+      "breakpoints": true
     }
   ]
 }

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Studio web app \u2014 Next.js marketing site, auth pages and (later) the SaaS shell (docs/UI_DESIGN_SYSTEM.md \u00a78)",
+  "description": "Studio web app — Next.js marketing site, auth pages and (later) the SaaS shell (docs/UI_DESIGN_SYSTEM.md §8)",
   "scripts": {
     "dev": "next dev",
     "build": "node ../../scripts/fetch-web-fonts.mjs && esbuild --bundle api-src/gateway.ts --tsconfig=api-src/tsconfig.json --platform=node --format=esm --target=node22 --banner:js=\"import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);\" --outfile=api/gateway.mjs && next build",
@@ -18,11 +18,13 @@
     "@studio/contracts": "workspace:*",
     "@studio/editor-bridge": "workspace:*",
     "@studio/ui": "workspace:*",
+    "audiobuffer-to-wav": "^1.0.0",
     "better-auth": "^1.7.12",
     "lucide-react": "^1.61.0",
     "next": "^16.4.2",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "tone": "^15.1.22"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
@@ -35,10 +37,10 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "esbuild": "^0.25.0",
     "jsdom": "^25.0.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
-    "esbuild": "^0.25.0"
+    "vitest": "^2.1.8"
   }
 }

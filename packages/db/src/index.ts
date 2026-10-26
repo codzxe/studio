@@ -38,4 +38,21 @@ export { createAuth, type Auth, type AuthEnv, type AuthHandler } from "./auth.js
 export { createRepos, type Repos } from "./repos/index.js";
 // W1-b (§M1 tasks 1+2): the apiKeys repo row type the gateway route consumes.
 export type { ApiKeysRepo, ApiKeyRecord, ApiKeysListOptions } from "./repos/index.js";
+// Round 12 (client-driven agent loop, migration 0008): the turn-route seams —
+// transcript persistence + bounded history loader + run heartbeat/stale sweep.
+export type {
+  HistoryRole,
+  ThreadHistoryMessage,
+  LoadHistoryOptions,
+  ToolMessageInput,
+  AssistantMessageStatus,
+  AssistantMessageInput,
+  LinkUserMessageInput,
+  ToolCallStepInput,
+  CompleteToolStepInput,
+  TouchRunHeartbeatInput,
+  MarkRunAbandonedInput,
+  StaleRun,
+} from "./repos/index.js";
+export { RUN_STALE_AFTER_MS, RUN_ABANDONED_ERROR_CODE } from "./repos/index.js";
 export { migrateDatabase, DEFAULT_MIGRATIONS_FOLDER } from "./migrate.js";

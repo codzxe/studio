@@ -13,16 +13,19 @@
  *   the thread id resolves, the controller is created and the queue flushes in
  *   order. Later sends reuse the same thread. `newThread()` drops the id (and
  *   any unsent queue) — the next send lazily creates a fresh thread.
- * - **Controller**: `createChatController` (wave-1 engine) per thread; the
- *   `ChatUiState` is surfaced through `useSyncExternalStore` so the render-prop
- *   re-renders on every §7.4 fold.
- * - **Tool executor wiring**: the controller has no event emitter BY DESIGN —
- *   the provider subscribes to its store and DIFFS the messages' `toolCards`
- *   for `status === "running"` entries it has not executed yet (M4-B's pinned
- *   observation pattern), then hands each to the executor from
- *   `createToolExecutor` (wave-1, seam 6). Server-side tools (`studio.plan_edit`)
- *   are skipped INSIDE the executor; a provider-level id set keeps SSE replays
- *   and flags-change executor swaps single-shot.
+ * - **Controller**: `createChatController` (the ROUND-12 client-driven
+ *   loop) per thread; the `ChatUiState` is surfaced through
+ *   `useSyncExternalStore` so the render-prop re-renders on every fold.
+ * - **Tool executor wiring (round 12)**: the loop executes read/generative
+ *   tools INSIDE the chat controller — the provider only supplies the
+ *   per-run factory around i5's `createClientToolExecutor`
+ *   (live bridge + api-client + the run's id/context). Write tools never
+ *   execute during the run (proposal carriers merge into the plan card).
+ * - **Canvas snapshot (round 12)**: a compact `TurnCanvas` (active comp,
+ *   ≤80 layer rows, selection, playhead, fps, duration) is rebuilt from
+ *   `bridge.inspect()` + `comp.info` on the 1 Hz poll and right before
+ *   every send; the controller includes it in turn bodies on step 0 and
+ *   whenever its JSON hash changed since the last included turn.
  * - **Context orchestration**: effective flags = `autoFlags(latest inspect)`
  *   overlaid with the user's explicit popover overrides (removed auto-context
  *   STAYS removed, ECUX §3.2). A 1 Hz `bridge.inspect()` poll (§11) runs only
@@ -39,14 +42,17 @@
  *   `studio:chat-quick-action` CustomEvent lives HERE (not in the slot) so a
  *   single event can never double-dispatch and it works in every layout mode.
  *
- * Boundary law (apps/web): `@studio/contracts` is `import type` ONLY; the only
- * runtime tool validation runs inside `@studio/api-client/chat-tools` via the
- * executor. No network besides the api-client calls pinned above.
+ * Boundary law (apps/web): `@studio/contracts` is `import type` ONLY — the
+ * one sanctioned exception is the chat controller's `mergeEditPlans` call
+ * (the round-12 design pins that PURE contracts seam for the client's plan
+ * merge); the only other runtime tool validation runs inside
+ * `@studio/api-client/chat-tools` via the executor. No network besides the
+ * api-client calls pinned above.
  */
 
 import type { ChatShortcutBus } from "@/components/editor-host/chat-shortcut-bus";
 import type { ApiClient, ModelsResponse } from "@studio/api-client";
-import type { ContextSelection, ModelId, PinnedContextItem } from "@studio/contracts";
+import type { ContextSelection, ModelId, PinnedContextItem, TurnCanvas } from "@studio/contracts";
 import type { EditorBridge, UiInspect } from "@studio/editor-bridge";
 import {
   type ReactNode,
@@ -70,7 +76,7 @@ import { type ChatController, createChatController } from "./chat-controller";
 import { type ContextSnapshot, DEFAULT_FLAGS, autoFlags, collectContextSnapshot } from "./context";
 import { readDefaultModel } from "./default-model";
 import { createInitialChatUiState } from "./run-state";
-import { createToolExecutor } from "./tool-executor";
+import { createClientToolExecutor } from "./tool-executor";
 import type { ChatSendInput, ChatUiError, ChatUiState } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -141,6 +147,15 @@ export interface ChatContextApi {
   retry(): void;
   /** Drop the current thread (and unsent queue); the next send creates a fresh one. */
   newThread(): void;
+  /**
+   * ROUND 12 (Chat UI v3): adopt an EXISTING thread (the switcher + the
+   * reload auto-restore). Recreates the controller for it via the same
+   * `[threadId]` effect that serves lazily-created threads — the only
+   * wiring change the history/switcher feature needed here. History rows
+   * are rendered by the PANEL layer (use-thread-history), never folded
+   * into live state.
+   */
+  openThread(threadId: string, title?: string | null): void;
   /** Pick the active model for the next send. */
   setActiveModelId(id: ModelId): void;
   /** Toggle one context block; a user toggle sticks until they change it again (§3.2). */
@@ -209,6 +224,55 @@ const idleSnapshot = (): ChatUiState => IDLE_CHAT_STATE;
 const INSPECT_POLL_MS = 1000;
 
 const THREAD_TITLE_FALLBACK = "Agent";
+
+/** §8.6 canvas bounds mirror (contracts MAX_TURN_CANVAS_LAYERS = 80). */
+const MAX_CANVAS_LAYERS = 80;
+
+/**
+ * ROUND 12: builds the compact turn canvas snapshot (TURN WIRE CONTRACT) —
+ * `ui.inspect` for selection/playhead/fps + ONE `comp.info` query for the
+ * active composition's name/duration and its top `MAX_CANVAS_LAYERS` layer
+ * rows (`{id, name, type}`). Best-effort: ANY failure or a missing bridge
+ * answer resolves `null` (the controller treats a null canvas as "nothing
+ * changed" — never a send blocker). Pure apart from the bridge reads.
+ */
+async function buildCanvasSnapshot(
+  bridge: EditorBridge,
+  inspection?: UiInspect | null,
+): Promise<TurnCanvas | null> {
+  try {
+    const [polled, info] = await Promise.all([
+      inspection === undefined ? bridge.inspect().catch(() => null) : inspection,
+      bridge.query<Record<string, unknown> | null>("comp.info", {}).catch(() => null),
+    ]);
+    if (info === null || typeof info !== "object") return null;
+    const layers: TurnCanvas["layers"] = [];
+    if (Array.isArray(info.layers)) {
+      for (const raw of info.layers) {
+        if (layers.length >= MAX_CANVAS_LAYERS) break;
+        if (typeof raw !== "object" || raw === null) continue;
+        const record = raw as Record<string, unknown>;
+        if (typeof record.id !== "number" || typeof record.name !== "string") continue;
+        layers.push({
+          id: record.id,
+          name: record.name,
+          type: typeof record.type === "string" ? record.type : "",
+        });
+      }
+    }
+    const activeComp = typeof info.name === "string" && info.name !== "" ? info.name : undefined;
+    return {
+      ...(activeComp !== undefined ? { activeComp } : {}),
+      layers,
+      selection: polled?.selectedLayers ?? [],
+      playhead: polled?.time ?? 0,
+      fps: typeof info.frameRate === "number" ? info.frameRate : (polled?.fps ?? 30),
+      duration: typeof info.duration === "number" ? info.duration : 0,
+    };
+  } catch {
+    return null; // a failed canvas read never breaks the run (§5 doctrine)
+  }
+}
 
 function toThreadError(error: unknown): ChatUiError {
   return {
@@ -279,12 +343,11 @@ export function ChatProvider({
     controller === null ? idleSnapshot : controller.getSnapshot,
   );
 
-  // -- tool executor (recreated once per flags change; idempotent by id) -------
-  const executedToolIdsRef = useRef<Set<string>>(new Set());
-  const executor = useMemo(
-    () => createToolExecutor({ bridge, client, workspaceId, flags }),
-    [bridge, client, workspaceId, flags],
-  );
+  // -- canvas snapshot (round 12): refreshed by the §11 poll + before every
+  //    send; the controller reads it SYNCHRONOUSLY at each turn boundary
+  //    (step 0 + hash change) through the stable `canvasSnapshot` closure.
+  //
+  const canvasRef = useRef<TurnCanvas | null>(null);
 
   // -------------------------------------------------------------------------
   // M5-Q: ONE ApplyController per session (BUILD_PLAN §M5.4/§M5.5). Built
@@ -409,6 +472,20 @@ export function ChatProvider({
       projectId,
       threadId,
       ...(engine !== null ? { apply: engine } : {}),
+      // ROUND 12: the per-run client tool executor (read/generative tools
+      // run LOCALLY in the loop; the factory gets the client-generated
+      // runId + the run's context selection at send time).
+      toolExecutor: (run) =>
+        createClientToolExecutor({
+          bridge,
+          client,
+          workspaceId,
+          threadId,
+          runId: run.runId,
+          flags: run.context,
+        }),
+      // ROUND 12: the compact canvas snapshot — step 0 + hash change.
+      canvasSnapshot: () => canvasRef.current,
     });
     controllerRef.current = created;
     setController(created);
@@ -422,7 +499,7 @@ export function ChatProvider({
       created.dispose();
       setController(null);
     };
-  }, [threadId, client, workspaceId, projectId]);
+  }, [threadId, client, workspaceId, projectId, bridge]);
 
   const refreshContext = useCallback((): void => {
     const seq = ++collectSeqRef.current;
@@ -441,7 +518,10 @@ export function ChatProvider({
       void (async (): Promise<void> => {
         // Fresh context right before the wire send (§5): the strip/estimates
         // re-render with what is actually being sent; the flags ride the body.
+        // Round 12: the canvas snapshot refreshes here too — the first turn
+        // of the new run carries what the editor looks like NOW.
         const collected = await collectContextSnapshot(bridge, { flags, pinned });
+        canvasRef.current = await buildCanvasSnapshot(bridge);
         collectSeqRef.current += 1; // supersede any in-flight on-demand collect
         setContextSnapshot(collected);
         const wire: ChatSendInput = {
@@ -479,10 +559,28 @@ export function ChatProvider({
     threadCreateRef.current = null;
     threadIdRef.current = null;
     pendingRef.current = [];
-    executedToolIdsRef.current.clear();
+    canvasRef.current = null;
     setThreadError(null);
     setThreadTitle(THREAD_TITLE_FALLBACK);
     setThreadId(null); // disposes the current controller via the effect cleanup
+  }, []);
+
+  /**
+   * ROUND 12 (Chat UI v3): adopt an existing thread — the switcher and the
+   * reload auto-restore call this. Mirrors `newThread`'s lifecycle guards
+   * (drop any in-flight create + its queue) but lands ON the given id, so
+   * the `[threadId]` effect recreates the controller for it.
+   */
+  const openThread = useCallback((id: string, title?: string | null): void => {
+    if (id === "" || id === threadIdRef.current) return;
+    threadGenerationRef.current += 1; // a create racing this is dropped
+    threadCreateRef.current = null;
+    pendingRef.current = []; // the unsent queue belonged to the old thread
+    canvasRef.current = null;
+    threadIdRef.current = id;
+    setThreadError(null);
+    setThreadTitle(title ?? THREAD_TITLE_FALLBACK);
+    setThreadId(id);
   }, []);
 
   // -------------------------------------------------------------------------
@@ -499,13 +597,22 @@ export function ChatProvider({
   }, [send]);
 
   // -------------------------------------------------------------------------
-  // Context: 1 Hz inspect poll while visible (§11) + on-demand collects
+  // Context: 1 Hz inspect poll while visible (§11) + on-demand collects.
+  // Round 12: the poll ALSO refreshes the compact canvas snapshot so mid-run
+  // edits (steering the agent with the live project) ride the next turn.
   // -------------------------------------------------------------------------
   useEffect(() => {
     if (!panelVisible) return;
     const tick = (): void => {
+      // ONE inspect per tick, SHARED: the poll's own state update and the
+      // canvas refresh both read it (never two bridge reads per second).
       void bridge.inspect().then(
-        (inspection) => setInspect(inspection),
+        (inspection) => {
+          setInspect(inspection);
+          void buildCanvasSnapshot(bridge, inspection).then((canvas) => {
+            canvasRef.current = canvas;
+          });
+        },
         () => undefined, // a missed poll never breaks chat (§5 doctrine)
       );
     };
@@ -520,23 +627,6 @@ export function ChatProvider({
     if (!panelVisible) return;
     refreshContext();
   }, [panelVisible, refreshContext]);
-
-  // -------------------------------------------------------------------------
-  // Tool-executor wiring: diff the snapshot's running tool cards (M4-B's pinned
-  // observation pattern — the engine has no event emitter by design).
-  // -------------------------------------------------------------------------
-  useEffect(() => {
-    for (const message of snapshot.messages) {
-      const runId = message.runId;
-      if (runId === undefined) continue;
-      for (const card of message.toolCards) {
-        if (card.status !== "running") continue;
-        if (executedToolIdsRef.current.has(card.toolCallId)) continue;
-        executedToolIdsRef.current.add(card.toolCallId);
-        void executor({ runId, toolCallId: card.toolCallId, name: card.name, args: card.args });
-      }
-    }
-  }, [snapshot, executor]);
 
   const setFlag = useCallback((kind: ChatContextFlagKey, on: boolean): void => {
     setOverrides((current) => ({ ...current, [kind]: on }));
@@ -593,6 +683,7 @@ export function ChatProvider({
     stop,
     retry,
     newThread,
+    openThread,
     setActiveModelId,
     setFlag,
     clearOptionalBlocks,

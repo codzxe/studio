@@ -1,19 +1,27 @@
 /**
- * tool-executor tests (M4-SEAMS.md seam 6 + M5 write-tool proposals) —
- * deterministic, no network: a fake editor via `@studio/editor-bridge/fake` +
- * a stubbed ApiClient that records every `runs.postEvent` attempt. Covers the
- * 4 client tools' happy paths, the posted RUN_EVENT_REQUEST shape,
- * validation/forbidden/server-tool gates, per-item degradation, flags
- * filtering, the toolCallId guard, post retries, the whole-call timeout guard
- * — and the M5 slice: write tools stay refused client-side (M5 resolves them
- * SERVER-SIDE via the plan compiler; the runs route 400s client posts for
- * them) and the RAW engine surface as a tool name is TOOL_FORBIDDEN with
- * zero bridge calls (the law #6 backstop — only the ApplyController batches).
+ * tool-executor v2 tests (round-12 client-driven loop, "Tool catalog v3") —
+ * deterministic, no network, no Tone.js:
+ *
+ *  - the REAL fake editor (`@studio/editor-bridge/fake`) drives the four
+ *    curated editor reads + the catalog queries (its registry implements
+ *    `command.list`/`command.describe` and its `engine.batch` carries the
+ *    NOT_IN_BATCH semantics);
+ *  - the gateway tools (web_search/generate_image) run against a scripted
+ *    `fetchImpl` (the authenticated transport seam) with hand-built §7.3
+ *    envelopes;
+ *  - render_audio runs with an INJECTED fake harness (the real Tone path
+ *    only runs in the browser) + a fake assets client.
+ *
+ * The contract under pinning: `execute` RESOLVES with the result or THROWS
+ * `ClientToolError {code, message}` — there is no POST-back channel anymore;
+ * `handles` mirrors the nine client-executed tools; the RAW engine surface
+ * and write tools are refused with ZERO bridge calls (law #5/#6).
  */
 
-import { type ApiClient, ApiError } from "@studio/api-client";
+import type { ApiClient } from "@studio/api-client";
 import type { ContextSelection } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
+import { BridgeError } from "@studio/editor-bridge";
 import {
   FAKE_PNG_BASE64,
   type FakeEditor,
@@ -23,11 +31,12 @@ import {
 import { describe, expect, it } from "vitest";
 
 import {
-  type ClientToolCall,
-  type ToolExecutorDeps,
-  createToolExecutor,
-  executeClientTool,
+  type ClientToolError,
+  type ClientToolExecutorDeps,
+  createClientToolExecutor,
+  isClientToolError,
 } from "./tool-executor";
+import type { AudioRenderHarness } from "./tools/audio-render";
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -37,11 +46,12 @@ interface RecordedBridgeCalls {
   inspect: number;
   queries: Array<{ command: string; params: unknown }>;
   renderFrames: Array<Record<string, unknown>>;
+  executes: Array<{ command: string; params: unknown }>;
 }
 
-/** Wraps a bridge so every inspect/query/renderFrame call is recorded. */
+/** Wraps a bridge so every call is recorded (execute counts as a mutation). */
 function recordBridge(bridge: EditorBridge): { bridge: EditorBridge; calls: RecordedBridgeCalls } {
-  const calls: RecordedBridgeCalls = { inspect: 0, queries: [], renderFrames: [] };
+  const calls: RecordedBridgeCalls = { inspect: 0, queries: [], renderFrames: [], executes: [] };
   const wrapped: EditorBridge = {
     ...bridge,
     inspect: async () => {
@@ -56,53 +66,12 @@ function recordBridge(bridge: EditorBridge): { bridge: EditorBridge; calls: Reco
       calls.renderFrames.push(params as Record<string, unknown>);
       return bridge.renderFrame(params);
     },
+    execute: <T>(command: string, params?: unknown) => {
+      calls.executes.push({ command, params });
+      return bridge.execute<T>(command, params);
+    },
   };
   return { bridge: wrapped, calls };
-}
-
-interface StubClientOptions {
-  /** Fail the first N postEvent attempts (transient by default). */
-  failTimes?: number;
-  /** ApiError status for the injected failures (0 = network, 400 = permanent). */
-  failureStatus?: number;
-}
-
-interface PostedEvent {
-  runId: string;
-  body: Record<string, unknown>;
-  idempotencyKey: string | undefined;
-}
-
-function makeStubClient(opts: StubClientOptions = {}) {
-  const events: PostedEvent[] = [];
-  const attempts: Array<string | undefined> = [];
-  let postCalls = 0;
-  const client = {
-    runs: {
-      postEvent: async (runId: string, body: unknown, options?: { idempotencyKey?: string }) => {
-        postCalls += 1;
-        attempts.push(options?.idempotencyKey);
-        if (opts.failTimes !== undefined && postCalls <= opts.failTimes) {
-          throw new ApiError({
-            code:
-              opts.failureStatus === 0 || opts.failureStatus === undefined
-                ? "NETWORK_ERROR"
-                : "VALIDATION_FAILED",
-            message: "injected failure",
-            status: opts.failureStatus ?? 0,
-            retryable: (opts.failureStatus ?? 0) === 0,
-          });
-        }
-        events.push({
-          runId,
-          body: body as Record<string, unknown>,
-          idempotencyKey: options?.idempotencyKey,
-        });
-        return null;
-      },
-    },
-  } as unknown as ApiClient;
-  return { client, events, attempts, postCalls: () => postCalls };
 }
 
 const ALL_TRUE_FLAGS: ContextSelection = {
@@ -117,45 +86,152 @@ const ALL_TRUE_FLAGS: ContextSelection = {
   comments: false,
 };
 
+/** A fake assets client (the two-phase upload seam) recording every call. */
+interface AssetsCalls {
+  descriptors: Array<Record<string, unknown>>;
+  completes: string[];
+  urls: string[];
+}
+
+function makeAssetsClient(opts: { failDescriptor?: boolean; duplicate?: boolean } = {}) {
+  const calls: AssetsCalls = { descriptors: [], completes: [], urls: [] };
+  const client = {
+    assets: {
+      createDescriptor: async (body: Record<string, unknown>) => {
+        calls.descriptors.push(body);
+        if (opts.failDescriptor) {
+          throw new Error("storage quota exceeded");
+        }
+        if (opts.duplicate) {
+          return { asset: { id: "ast_dup" }, upload: null, duplicate: true };
+        }
+        return {
+          asset: { id: `ast_${calls.descriptors.length}` },
+          upload: {
+            url: "https://storage.example/signed?token=abc",
+            method: "PUT" as const,
+            headers: { "content-type": "application/octet-stream" },
+          },
+        };
+      },
+      complete: async (id: string) => {
+        calls.completes.push(id);
+        return { asset: { id }, duplicate: false };
+      },
+      getUrl: async (id: string) => {
+        calls.urls.push(id);
+        return { url: `https://cdn.example/${id}.wav` };
+      },
+    },
+  } as unknown as ApiClient;
+  return { client, calls };
+}
+
+/** A scripted fetch for the tools endpoints (records path/init, replays bodies). */
+interface FetchCall {
+  readonly path: string;
+  readonly init: RequestInit | undefined;
+}
+
+type ScriptedResponse =
+  | { readonly status: number; readonly body: unknown }
+  | { readonly throw: true };
+
+function makeFetch(script: readonly ScriptedResponse[]) {
+  const calls: FetchCall[] = [];
+  let next = 0;
+  const fetchImpl = async (path: string, init?: RequestInit): Promise<Response> => {
+    calls.push({ path, init });
+    const step = script[next] ?? script[script.length - 1];
+    next += 1;
+    if (step !== undefined && "throw" in step) {
+      throw new TypeError("network down");
+    }
+    const body = JSON.stringify(step?.body ?? {});
+    return {
+      ok: (step?.status ?? 200) >= 200 && (step?.status ?? 200) < 300,
+      status: step?.status ?? 200,
+      statusText: "",
+      text: async () => body,
+    } as Response;
+  };
+  return { fetchImpl, calls };
+}
+
+/** Reads the fetch call's JSON body. */
+function postedBody(call: FetchCall): Record<string, unknown> {
+  return JSON.parse(String(call.init?.body)) as Record<string, unknown>;
+}
+
 interface WorldOptions {
   failOn?: Readonly<Record<string, string>>;
-  flags?: Partial<ContextSelection>;
-  clientOpts?: StubClientOptions;
   guardTimeoutMs?: number;
   hang?: boolean;
+  failQuery?: { readonly command: string; readonly error: unknown };
+  queryOverrides?: Readonly<Record<string, () => unknown>>;
+  audioHarness?: AudioRenderHarness;
+  audioRenderTimeoutMs?: number;
 }
 
 interface World {
   fake: FakeEditor;
-  deps: ToolExecutorDeps;
+  deps: ClientToolExecutorDeps;
   calls: RecordedBridgeCalls;
-  events: PostedEvent[];
-  attempts: Array<string | undefined>;
-  postCalls: () => number;
+  assets: ReturnType<typeof makeAssetsClient>;
 }
 
 async function makeWorld(opts: WorldOptions = {}): Promise<World> {
   const fake = createFakeEditor({ comps: [{ name: "Main" }], failOn: opts.failOn });
   // Layer 1 "Hello" (text) in comp 1 "Main"; journaled → selected, dirty.
   await fake.execute("layer.newText", { text: "Hello" });
-  const base = attachFakeBridge(fake);
-  const recorded = recordBridge(base);
-  const stub = makeStubClient(opts.clientOpts);
-  const deps: ToolExecutorDeps = {
-    bridge: opts.hang ? hangBridge(base) : recorded.bridge,
-    client: stub.client,
+  let base: EditorBridge = attachFakeBridge(fake);
+  if (opts.failQuery !== undefined || opts.queryOverrides !== undefined) {
+    const inner = base;
+    const failQuery = opts.failQuery;
+    const overrides = opts.queryOverrides ?? {};
+    base = {
+      ...inner,
+      query: <T>(command: string, params?: unknown) => {
+        const override = overrides[command];
+        if (override !== undefined) return Promise.resolve(override() as T);
+        if (failQuery !== undefined && failQuery.command === command) {
+          return Promise.reject(failQuery.error);
+        }
+        return inner.query<T>(command, params);
+      },
+    };
+  }
+  const recorded = recordBridge(opts.hang ? hangBridge(base) : base);
+  const assets = makeAssetsClient();
+  const deps: ClientToolExecutorDeps = {
+    bridge: recorded.bridge,
+    client: assets.client,
     workspaceId: "ws_test",
-    flags: { ...ALL_TRUE_FLAGS, ...opts.flags },
-    guardTimeoutMs: opts.guardTimeoutMs,
-    retrySleepMs: 0,
+    threadId: "th_test",
+    runId: "run_test",
+    flags: { ...ALL_TRUE_FLAGS },
+    ...(opts.guardTimeoutMs === undefined ? {} : { guardTimeoutMs: opts.guardTimeoutMs }),
+    ...(opts.audioHarness === undefined ? {} : { audioHarness: opts.audioHarness }),
+    ...(opts.audioRenderTimeoutMs === undefined
+      ? {}
+      : { audioRenderTimeoutMs: opts.audioRenderTimeoutMs }),
   };
+  return { fake, deps, calls: recorded.calls, assets };
+}
+
+/** A world with a scripted tools-endpoint transport. */
+async function makeTransportWorld(
+  script: readonly ScriptedResponse[],
+  opts: WorldOptions = {},
+): Promise<{ world: World; calls: FetchCall[] }> {
+  const world = await makeWorld(opts);
+  const transport = makeFetch(script);
   return {
-    fake,
-    deps,
-    calls: recorded.calls,
-    events: stub.events,
-    attempts: stub.attempts,
-    postCalls: stub.postCalls,
+    world: {
+      ...world,
+      deps: { ...world.deps, fetchImpl: transport.fetchImpl },
+    },
+    calls: transport.calls,
   };
 }
 
@@ -165,40 +241,143 @@ function hangBridge(bridge: EditorBridge): EditorBridge {
   return { ...bridge, inspect: never, query: never, renderFrame: never };
 }
 
-function toolCall(
-  name: string,
-  args: unknown,
-  toolCallId = "call_test_1",
-  runId = "run_test",
-): ClientToolCall {
-  return { runId, toolCallId, name, args };
+/** A failing fake audio harness (renders bytes; failure mode scripted). */
+function fakeAudioHarness(
+  behavior:
+    | { readonly wav: readonly number[]; readonly durationSeconds: number }
+    | { readonly reject: string }
+    | { readonly hang: true } = { wav: [82, 73, 70, 70], durationSeconds: 3.5 },
+): AudioRenderHarness {
+  return {
+    render: (input, signal) => {
+      if ("reject" in behavior) {
+        return Promise.reject(new Error(behavior.reject));
+      }
+      if ("hang" in behavior) {
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        });
+      }
+      expect(input.code.length).toBeGreaterThan(0);
+      return Promise.resolve({
+        wav: new Uint8Array(behavior.wav),
+        durationSeconds: behavior.durationSeconds,
+        sampleRate: 44_100,
+        channels: 2,
+      });
+    },
+  };
 }
 
-function resultOf(event: PostedEvent): Record<string, unknown> {
-  return event.body.result as Record<string, unknown>;
+/** The typed failure an execute() rejection must carry. */
+async function failureOf(promise: Promise<unknown>): Promise<ClientToolError> {
+  try {
+    await promise;
+  } catch (error) {
+    if (!isClientToolError(error)) throw new Error(`not a ClientToolError: ${String(error)}`);
+    return error;
+  }
+  throw new Error("execute() resolved instead of failing");
 }
 
 // ---------------------------------------------------------------------------
-// The 4 client tools — happy paths (bridge calls + posted body)
+// handles() — the v3 client-executed surface
 // ---------------------------------------------------------------------------
 
-describe("executeClientTool happy paths", () => {
-  it("studio.get_context: builds the flags-enabled blocks and posts a valid tool.result", async () => {
+describe("createClientToolExecutor.handles", () => {
+  it("mirrors the catalog: the nine client-executed tools, nothing else", async () => {
+    const { deps } = await makeWorld();
+    const executor = createClientToolExecutor(deps);
+    for (const tool of [
+      "studio.get_context",
+      "studio.list_layers",
+      "studio.get_properties",
+      "studio.render_preview",
+      "studio.list_commands",
+      "studio.describe_command",
+      "studio.web_search",
+      "studio.render_audio",
+      "studio.generate_image",
+    ]) {
+      expect(executor.handles(tool)).toBe(true);
+    }
+    // Write tools, the server-side planner, the RAW engine surface, unknowns.
+    for (const tool of [
+      "studio.plan_edit",
+      "studio.create_text",
+      "studio.set_properties",
+      "studio.add_effect",
+      "studio.set_keyframes",
+      "studio.apply_preset",
+      "studio.create_composition",
+      "studio.undo_run",
+      "studio.save_version",
+      "studio.engine_commands",
+      "studio.run_script",
+      "studio.add_asset",
+      "engine.batch",
+      "engine.execute",
+      "edit.undo",
+      "edit.redo",
+      "studio.nope",
+      "",
+    ]) {
+      expect(executor.handles(tool)).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Refusals (zero bridge calls) + arg validation
+// ---------------------------------------------------------------------------
+
+describe("createClientToolExecutor.execute refusals", () => {
+  it("RAW engine ids are TOOL_FORBIDDEN with ZERO bridge calls (law #6)", async () => {
     const world = await makeWorld();
-    await executeClientTool(toolCall("studio.get_context", {}), world.deps);
+    const executor = createClientToolExecutor(world.deps);
+    for (const tool of ["engine.batch", "engine.execute", "edit.undo", "edit.redo"]) {
+      const error = await failureOf(executor.execute(tool, {}));
+      expect(error.code).toBe("TOOL_FORBIDDEN");
+    }
+    expect(world.calls.queries).toHaveLength(0);
+    expect(world.calls.executes).toHaveLength(0);
+    expect(world.calls.renderFrames).toHaveLength(0);
+    expect(world.calls.inspect).toBe(0);
+  });
 
-    expect(world.events).toHaveLength(1);
-    expect(world.postCalls()).toBe(1);
-    const event = world.events[0];
-    if (event === undefined) throw new Error("no event posted");
-    expect(event.runId).toBe("run_test");
-    // Exact RUN_EVENT_REQUEST_SCHEMA arm — strictObject, no extra keys.
-    expect(Object.keys(event.body).sort()).toEqual(["result", "toolCallId", "type"]);
-    expect(event.body.type).toBe("tool.result");
-    expect(event.body.toolCallId).toBe("call_test_1");
-    expect(event.idempotencyKey).toBe("toolresult:run_test:call_test_1");
+  it("write tools and unknown tools are TOOL_FORBIDDEN with zero bridge calls", async () => {
+    const world = await makeWorld();
+    const executor = createClientToolExecutor(world.deps);
+    for (const tool of ["studio.create_text", "studio.add_asset", "studio.plan_edit"]) {
+      const error = await failureOf(executor.execute(tool, {}));
+      expect(error.code).toBe("TOOL_FORBIDDEN");
+    }
+    const unknown = await failureOf(executor.execute("studio.nope", {}));
+    expect(unknown.code).toBe("TOOL_FORBIDDEN");
+    expect(world.calls.executes).toHaveLength(0);
+  });
 
-    const result = resultOf(event);
+  it("invalid args are RUN_INVALID_TOOL before any bridge traffic", async () => {
+    const world = await makeWorld();
+    const executor = createClientToolExecutor(world.deps);
+    const error = await failureOf(executor.execute("studio.get_properties", { layerIds: [] }));
+    expect(error.code).toBe("RUN_INVALID_TOOL");
+    const search = await failureOf(executor.execute("studio.web_search", { query: "" }));
+    expect(search.code).toBe("RUN_INVALID_TOOL");
+    expect(world.calls.queries).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The four curated editor reads (result shapes kept; failures now typed)
+// ---------------------------------------------------------------------------
+
+describe("editor reads", () => {
+  it("studio.get_context builds the flags-enabled blocks", async () => {
+    const world = await makeWorld();
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.get_context", {})) as Record<string, unknown>;
+
     expect(Object.keys(result)).toEqual([
       "projectSummary",
       "activeComp",
@@ -208,385 +387,519 @@ describe("executeClientTool happy paths", () => {
       "selectedProperties",
       "recentCommands",
     ]);
-
-    const summary = result.projectSummary as Record<string, unknown>;
-    expect(summary.activeComp).toBe(1);
-    expect(summary.selectedLayers).toEqual([1]);
-    expect((summary.items as Array<Record<string, unknown>>)[0]?.name).toBe("Main");
-
     const comp = result.activeComp as Record<string, unknown>;
     expect(comp.id).toBe(1);
     expect(comp.name).toBe("Main");
-    expect(comp.width).toBe(1920);
-
-    const selection = result.selection as Record<string, unknown>;
-    expect(selection.layerIds).toEqual([1]);
-    const tree = selection.tree as Record<string, unknown>;
-    expect(tree.name).toBe("Hello");
-    expect(tree.type).toBe("text");
-
-    expect(result.playhead).toEqual({ timeSeconds: 0, playing: false });
-    expect(result.focusedPanel).toBe("Viewer");
-
     const selectedProps = result.selectedProperties as Record<string, unknown>;
-    expect(selectedProps.layerId).toBe(1);
     const props = selectedProps.properties as Record<string, Record<string, unknown>>;
-    expect(props["transform/opacity"]?.value).toBe(100);
-    expect(props["transform/position"]?.value).toEqual([960, 540, 0]);
     expect(props["text/sourceText"]?.value).toBe("Hello");
-    expect(props["solid/color"]).toBeUndefined();
-
-    const history = result.recentCommands as Record<string, unknown>;
-    expect(history.current).toBe(1);
-    const recent = history.recent as Array<Record<string, unknown>>;
-    expect(recent[0]?.label).toBe("Original");
-    expect(recent[1]?.label).toBe("New Text Layer");
-
-    // Anchored on ONE ui.inspect + the verified query param names.
-    expect(world.calls.inspect).toBe(1);
-    expect(world.calls.queries[0]).toEqual({ command: "project.summary", params: {} });
-    expect(world.calls.queries).toContainEqual({ command: "comp.info", params: { comp: 1 } });
-    expect(world.calls.queries).toContainEqual({
-      command: "layer.tree",
-      params: { comp: 1, layer: 1, depth: 2 },
-    });
-    expect(world.calls.queries).toContainEqual({
-      command: "prop.get",
-      params: { layer: 1, path: "transform/opacity" },
-    });
-    expect(world.calls.queries).toContainEqual({ command: "edit.history.list", params: {} });
+    expect(result.playhead).toEqual({ timeSeconds: 0, playing: false });
   });
 
-  it("studio.list_layers: comp.info listing + per-layer trees at the asked depth", async () => {
+  it("studio.get_context reports user-removed blocks instead of fetching them", async () => {
     const world = await makeWorld();
-    await executeClientTool(toolCall("studio.list_layers", { depth: 3 }), world.deps);
-    await executeClientTool(
-      toolCall("studio.list_layers", { compId: "Main" }, "call_test_2"),
-      world.deps,
-    );
-    await executeClientTool(
-      toolCall("studio.list_layers", { compId: "Nope" }, "call_test_3"),
-      world.deps,
-    );
-
-    expect(world.events).toHaveLength(3);
-
-    const first = resultOf(world.events[0] as PostedEvent);
-    expect(first.comp).toEqual({
-      id: 1,
-      name: "Main",
-      width: 1920,
-      height: 1080,
-      frameRate: 29.97,
-      duration: 10,
-    });
-    expect(first.layers).toHaveLength(1);
-    const layer = (first.layers as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
-    expect(layer.id).toBe(1);
-    expect(layer.name).toBe("Hello");
-    expect(layer.type).toBe("text");
-    const tree = layer.tree as Record<string, unknown>;
-    const children = (tree.properties as Record<string, unknown>).children as Array<
-      Record<string, unknown>
-    >;
-    expect(children.some((child) => child.path === "transform/opacity")).toBe(true);
-
-    // Verified wire params: comp.info {comp?} (empty = active), layer.tree {comp, layer, depth}.
-    expect(world.calls.queries[0]).toEqual({ command: "comp.info", params: {} });
-    expect(world.calls.queries[1]).toEqual({
-      command: "layer.tree",
-      params: { comp: 1, layer: 1, depth: 3 },
-    });
-    expect(world.calls.queries[2]).toEqual({ command: "comp.info", params: { comp: "Main" } });
-    expect(world.calls.queries[3]).toEqual({
-      command: "layer.tree",
-      params: { comp: 1, layer: 1, depth: 2 },
-    });
-
-    // Unknown comp → whole-tool failure result (the primary query), still posted.
-    const third = resultOf(world.events[2] as PostedEvent);
-    expect(third.error).toBe("TOOL_FAILED");
-    expect(String(third.message)).toContain("no composition Nope");
-  });
-
-  it("studio.get_properties: per {layer, path} reads with per-item NOT_FOUND", async () => {
-    const world = await makeWorld();
-    await executeClientTool(
-      toolCall("studio.get_properties", {
-        layerIds: ["1", "99"],
-        paths: ["transform/opacity", "text/sourceText"],
-      }),
-      world.deps,
-    );
-
-    expect(world.events).toHaveLength(1);
-    const result = resultOf(world.events[0] as PostedEvent);
-    const layers = result.layers as Record<string, Record<string, unknown>>;
-    expect(layers["1"]?.["transform/opacity"]).toMatchObject({ layer: 1, value: 100 });
-    expect(layers["1"]?.["text/sourceText"]).toMatchObject({ value: "Hello" });
-    // Missing layer/path → per-item NOT_FOUND entries, never an abort.
-    expect(layers["99"]?.["transform/opacity"]).toEqual({ error: "NOT_FOUND" });
-    expect(world.calls.queries).toContainEqual({
-      command: "prop.get",
-      params: { layer: "99", path: "transform/opacity" },
-    });
-  });
-
-  it("studio.get_properties: curated default paths when none are given", async () => {
-    const world = await makeWorld();
-    await executeClientTool(toolCall("studio.get_properties", { layerIds: ["1"] }), world.deps);
-    const layers = (
-      resultOf(world.events[0] as PostedEvent).layers as Record<string, Record<string, unknown>>
-    )["1"];
-    if (layers === undefined) throw new Error("layer entry missing");
-    expect(Object.keys(layers).sort()).toEqual([
-      "text/sourceText",
-      "transform/anchor",
-      "transform/opacity",
-      "transform/position",
-      "transform/rotation",
-      "transform/scale",
-    ]);
-  });
-
-  it("studio.render_preview: maps maxWidth → max_side (cap 1200) and posts the frame", async () => {
-    const world = await makeWorld();
-    await executeClientTool(
-      toolCall("studio.render_preview", { compId: "Main", timeSeconds: 1.5, maxWidth: 800 }),
-      world.deps,
-    );
-    await executeClientTool(toolCall("studio.render_preview", {}, "call_test_2"), world.deps);
-
-    expect(world.calls.renderFrames[0]).toEqual({ comp: "Main", time: 1.5, max_side: 800 });
-    expect(world.calls.renderFrames[1]).toEqual({ max_side: 1200 });
-
-    const first = resultOf(world.events[0] as PostedEvent);
-    expect(first).toMatchObject({ comp: 1, time: 1.5, width: 800, height: 450 });
-    expect(first.pngBase64).toBe(FAKE_PNG_BASE64);
-
-    const second = resultOf(world.events[1] as PostedEvent);
-    expect(second).toMatchObject({ width: 1200, height: 675 });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Gates: invalid args, write tools, server tools
-// ---------------------------------------------------------------------------
-
-describe("executeClientTool gating", () => {
-  it("invalid args → RUN_INVALID_TOOL posted, no bridge call", async () => {
-    const world = await makeWorld();
-    await executeClientTool(toolCall("studio.get_properties", { layerIds: [] }), world.deps);
-    await executeClientTool(
-      toolCall("studio.list_layers", { depth: 99 }, "call_test_2"),
-      world.deps,
-    );
-
-    expect(world.events).toHaveLength(2);
-    expect(resultOf(world.events[0] as PostedEvent)).toMatchObject({ error: "RUN_INVALID_TOOL" });
-    expect(String(resultOf(world.events[0] as PostedEvent).message)).toContain("layerIds");
-    expect(resultOf(world.events[1] as PostedEvent).error).toBe("RUN_INVALID_TOOL");
-    expect(world.calls.inspect).toBe(0);
-    expect(world.calls.queries).toHaveLength(0);
-    expect(world.calls.renderFrames).toHaveLength(0);
-  });
-
-  it("write tools → TOOL_FORBIDDEN, never executed (M5 resolves them server-side)", async () => {
-    const world = await makeWorld();
-    await executeClientTool(
-      toolCall("studio.set_properties", {
-        layers: [{ name: "Hello" }],
-        properties: [{ path: "transform/opacity", value: 50 }],
-      }),
-      world.deps,
-    );
-    await executeClientTool(
-      toolCall("studio.create_composition", { name: "X" }, "call_test_2"),
-      world.deps,
-    );
-
-    expect(world.events).toHaveLength(2);
-    expect(resultOf(world.events[0] as PostedEvent)).toEqual({
-      error: "TOOL_FORBIDDEN",
-      message: "Write tools are not available yet.",
-    });
-    expect(resultOf(world.events[1] as PostedEvent).error).toBe("TOOL_FORBIDDEN");
-    expect(world.calls.inspect).toBe(0);
-    expect(world.calls.queries).toHaveLength(0);
-    expect(world.calls.renderFrames).toHaveLength(0);
-    // The editor is untouched: the setup newText is the only journaled command.
-    expect(world.fake.state.history.undo).toHaveLength(1);
-  });
-
-  it("raw engine command ids as tool names → TOOL_FORBIDDEN, zero bridge calls (law #6 backstop)", async () => {
-    const world = await makeWorld();
-    await executeClientTool(
-      toolCall("engine.batch", { steps: [{ command: "comp.new", params: {} }] }),
-      world.deps,
-    );
-    await executeClientTool(toolCall("engine.execute", {}), world.deps);
-    await executeClientTool(toolCall("edit.undo", {}), world.deps);
-    await executeClientTool(toolCall("edit.redo", {}), world.deps);
-
-    expect(world.events).toHaveLength(4);
-    for (const event of world.events) {
-      expect(resultOf(event)).toEqual({
-        error: "TOOL_FORBIDDEN",
-        message:
-          "Raw engine commands are not tools. Use the curated Studio tools; apply a plan to make changes.",
-      });
-    }
-    expect(world.calls.inspect).toBe(0);
-    expect(world.calls.queries).toHaveLength(0);
-    expect(world.calls.renderFrames).toHaveLength(0);
-  });
-
-  it("server-side tools and unknown names → nothing posted (no 400 on unregistered ids)", async () => {
-    const world = await makeWorld();
-    await executeClientTool(toolCall("studio.plan_edit", { goal: "make it blue" }), world.deps);
-    await executeClientTool(toolCall("studio.nope", {}), world.deps);
-
-    expect(world.events).toHaveLength(0);
-    expect(world.postCalls()).toBe(0);
-    expect(world.calls.inspect).toBe(0);
-    expect(world.calls.queries).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Degradation: per-item bridge failures, flags filtering, timeout guard
-// ---------------------------------------------------------------------------
-
-describe("executeClientTool degradation", () => {
-  it("bridge failures mid-batch → per-item nulls/NOT_FOUND, the result still posts", async () => {
-    const world = await makeWorld({ failOn: { "layer.tree": "boom" } });
-    await executeClientTool(toolCall("studio.list_layers", {}), world.deps);
-
-    expect(world.events).toHaveLength(1);
-    const layers = resultOf(world.events[0] as PostedEvent).layers as Array<
-      Record<string, unknown>
-    >;
-    expect(layers[0]?.name).toBe("Hello");
-    expect(layers[0]?.tree).toBeNull();
-    expect(resultOf(world.events[0] as PostedEvent).error).toBeUndefined();
-
-    const world2 = await makeWorld({ failOn: { "prop.get": "boom" } });
-    await executeClientTool(toolCall("studio.get_context", {}), world2.deps);
-    const props = (
-      resultOf(world2.events[0] as PostedEvent).selectedProperties as Record<string, unknown>
-    ).properties as Record<string, unknown>;
-    expect(Object.keys(props)).toHaveLength(6);
-    for (const value of Object.values(props)) expect(value).toBeNull();
-  });
-
-  it("user-removed flags are reported as removed, include-limiting drops blocks entirely", async () => {
-    const world = await makeWorld({ flags: { playhead: false, recentCommands: false } });
-    await executeClientTool(toolCall("studio.get_context", {}), world.deps);
-    const result = resultOf(world.events[0] as PostedEvent);
-    expect(result.playhead).toBe("removed by user");
-    expect(result.recentCommands).toBe("removed by user");
-    expect(typeof result.projectSummary).toBe("object");
-    // No bridge call was spent on removed blocks.
-    expect(world.calls.queries).not.toContainEqual({ command: "edit.history.list", params: {} });
-
-    const world2 = await makeWorld();
-    await executeClientTool(
-      toolCall("studio.get_context", { include: ["selection", "playhead"] }, "call_test_2"),
-      world2.deps,
-    );
-    const limited = resultOf(world2.events[0] as PostedEvent);
-    expect(Object.keys(limited).sort()).toEqual(["playhead", "selection"]);
-    expect(world2.calls.queries[0]?.command).toBe("layer.tree");
-  });
-
-  it("a hanging editor trips the 20s-style guard and posts TOOL_TIMEOUT", async () => {
-    const world = await makeWorld({ hang: true, guardTimeoutMs: 20 });
-    await executeClientTool(toolCall("studio.get_context", {}), world.deps);
-    expect(world.events).toHaveLength(1);
-    expect(resultOf(world.events[0] as PostedEvent)).toEqual({
-      error: "TOOL_TIMEOUT",
-      message: "The editor did not finish the tool call in time.",
-    });
-
-    const world2 = await makeWorld({ hang: true, guardTimeoutMs: 20 });
-    await executeClientTool(toolCall("studio.render_preview", {}), world2.deps);
-    expect(resultOf(world2.events[0] as PostedEvent).error).toBe("TOOL_TIMEOUT");
-  });
-
-  it("a late result after the guard never double-posts (single result per call)", async () => {
-    let release: (() => void) | undefined;
-    const world = await makeWorld();
-    const slow: EditorBridge = {
-      ...world.deps.bridge,
-      query: <T>(command: string, params?: unknown) =>
-        new Promise<T>((resolve) => {
-          release = () => {
-            void world.deps.bridge.query<T>(command, params).then(resolve);
-          };
-        }),
-    };
-    const settled = executeClientTool(toolCall("studio.get_context", {}), {
+    const deps: ClientToolExecutorDeps = {
       ...world.deps,
-      bridge: slow,
-      guardTimeoutMs: 10,
-    });
-    await settled;
-    expect(resultOf(world.events[0] as PostedEvent).error).toBe("TOOL_TIMEOUT");
+      flags: { ...ALL_TRUE_FLAGS, projectSummary: false, focusedPanel: false },
+    };
+    const executor = createClientToolExecutor(deps);
+    const result = (await executor.execute("studio.get_context", {})) as Record<string, unknown>;
+    expect(result.projectSummary).toBe("removed by user");
+    expect(result.focusedPanel).toBe("removed by user");
+  });
 
-    release?.();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(world.events).toHaveLength(1);
+  it("studio.list_layers assembles comp.info + per-layer trees at the asked depth", async () => {
+    const world = await makeWorld();
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.list_layers", { depth: 3 })) as Record<
+      string,
+      unknown
+    >;
+    expect(result.comp).toMatchObject({ id: 1, name: "Main", width: 1920 });
+    const layers = result.layers as Array<Record<string, unknown>>;
+    expect(layers).toHaveLength(1);
+    const tree = layers[0]?.tree as Record<string, unknown>;
+    expect(tree.name).toBe("Hello");
+  });
+
+  it("studio.get_properties degrades per-item NOT_FOUND; dunder ids are refused at the boundary", async () => {
+    const world = await makeWorld();
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.get_properties", {
+      layerIds: ["1", "Nope"],
+    })) as Record<string, unknown>;
+    const layers = result.layers as Record<string, Record<string, unknown>>;
+    expect(layers["1"]?.["transform/opacity"]).toMatchObject({ value: 100 });
+    // A missing layer is a per-item NOT_FOUND entry, never an abort.
+    expect(layers.Nope?.["transform/opacity"]).toEqual({ error: "NOT_FOUND" });
+
+    // F-1: dunder keys are refused by the args schema at the boundary — the
+    // null-prototype accumulators behind it stay the second line of defense.
+    const dunder = await failureOf(
+      executor.execute("studio.get_properties", { layerIds: ["__proto__"] }),
+    );
+    expect(dunder.code).toBe("RUN_INVALID_TOOL");
+    expect(dunder.message).toContain("dunder");
+  });
+
+  it("studio.render_preview passes the capped long side and returns the frame", async () => {
+    const world = await makeWorld();
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.render_preview", {
+      compId: "Main",
+    })) as Record<string, unknown>;
+    expect(result.pngBase64).toBe(FAKE_PNG_BASE64);
+    expect(world.calls.renderFrames[0]?.max_side).toBe(1200);
+
+    const small = (await executor.execute("studio.render_preview", {
+      compId: "Main",
+      maxWidth: 800,
+    })) as Record<string, unknown>;
+    expect(small.pngBase64).toBe(FAKE_PNG_BASE64);
+    expect(world.calls.renderFrames[1]?.max_side).toBe(800);
+  });
+
+  it("bridge disconnects surface as EDITOR_DISCONNECTED; other failures as TOOL_FAILED", async () => {
+    const disconnected = await makeWorld({
+      failQuery: {
+        command: "comp.info",
+        error: new BridgeError("EDITOR_DISCONNECTED", "the iframe window is gone"),
+      },
+    });
+    const executor = createClientToolExecutor(disconnected.deps);
+    const error = await failureOf(executor.execute("studio.list_layers", {}));
+    expect(error.code).toBe("EDITOR_DISCONNECTED");
+
+    const broken = await makeWorld({
+      failQuery: { command: "comp.info", error: new Error("bad shape") },
+    });
+    const executor2 = createClientToolExecutor(broken.deps);
+    const error2 = await failureOf(executor2.execute("studio.list_layers", {}));
+    expect(error2.code).toBe("TOOL_FAILED");
+    expect(error2.message).toContain("bad shape");
+  });
+
+  it("a hanging editor fails the whole-call guard with TOOL_TIMEOUT", async () => {
+    const world = await makeWorld({ hang: true, guardTimeoutMs: 20 });
+    const executor = createClientToolExecutor(world.deps);
+    const error = await failureOf(executor.execute("studio.get_context", {}));
+    expect(error.code).toBe("TOOL_TIMEOUT");
   });
 });
 
 // ---------------------------------------------------------------------------
-// createToolExecutor: idempotent toolCallId guard + post retries
+// studio.list_commands / studio.describe_command (catalog discovery)
 // ---------------------------------------------------------------------------
 
-describe("createToolExecutor", () => {
-  it("guards the same toolCallId across concurrent and replayed dispatches", async () => {
+describe("studio.list_commands", () => {
+  it("live: filters the engine registry to ALLOWED ids, grouped by category", async () => {
     const world = await makeWorld();
-    const execute = createToolExecutor(world.deps);
-    const call = toolCall("studio.get_context", {});
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.list_commands", {})) as {
+      source: string;
+      categories: Array<{ category: string; count: number; commands: Array<{ id: string }> }>;
+    };
 
-    const first = execute(call);
-    const duplicate = execute(call); // replay / double dispatch
-    await Promise.all([first, duplicate]);
-    expect(world.postCalls()).toBe(1);
-
-    await execute(call); // SSE-replayed tool.started after completion
-    expect(world.postCalls()).toBe(1);
-    expect(world.events).toHaveLength(1);
-
-    await execute(toolCall("studio.get_context", {}, "call_other"));
-    expect(world.postCalls()).toBe(2);
+    expect(result.source).toBe("live");
+    const ids = result.categories.flatMap((group) => group.commands.map((row) => row.id));
+    // Mutating ALLOWED registry ids survive…
+    for (const id of [
+      "comp.new",
+      "layer.newText",
+      "layer.newSolid",
+      "layer.rename",
+      "prop.set",
+      "edit.undo",
+      "edit.redo",
+    ]) {
+      expect(ids).toContain(id);
+    }
+    // …the RAW batch id, meta ids, query ids (never batchable — the catalog
+    // is mutating-only) and unlisted ids never reach the model.
+    for (const denied of [
+      "engine.batch",
+      "command.list",
+      "project.summary",
+      "editor.state",
+      "prop.get",
+    ]) {
+      expect(ids).not.toContain(denied);
+    }
+    const layerGroup = result.categories.find((group) => group.category === "layer");
+    // Fake-registry order preserved inside the group.
+    expect(layerGroup?.commands.map((row) => row.id)).toEqual([
+      "layer.newSolid",
+      "layer.newText",
+      "layer.rename",
+    ]);
+    expect(world.calls.queries).toContainEqual({ command: "command.list", params: {} });
   });
 
-  it("retries a transient postEvent failure exactly twice, then succeeds", async () => {
-    const world = await makeWorld({ clientOpts: { failTimes: 2 } });
-    await executeClientTool(toolCall("studio.get_context", {}), world.deps);
-
-    expect(world.postCalls()).toBe(3);
-    expect(world.events).toHaveLength(1);
-    // Same logical mutation on every attempt (law #4 idempotency).
-    const keys = new Set(world.attempts);
-    expect(keys.size).toBe(1);
-    expect(world.attempts[0]).toBe("toolresult:run_test:call_test_1");
+  it("live + category: narrows to the asked prefix", async () => {
+    const world = await makeWorld();
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.list_commands", {
+      category: "prop",
+    })) as {
+      categories: Array<{ category: string }>;
+    };
+    expect(result.categories.map((group) => group.category)).toEqual(["prop"]);
   });
 
-  it("gives up silently after the retries are exhausted — never throws", async () => {
-    const world = await makeWorld({ clientOpts: { failTimes: 5 } });
-    await expect(
-      executeClientTool(toolCall("studio.list_layers", {}), world.deps),
-    ).resolves.toBeUndefined();
-    expect(world.postCalls()).toBe(3);
-    expect(world.events).toHaveLength(0);
+  it("degrades to the local ALLOWED ids when the engine lacks command.list", async () => {
+    const world = await makeWorld({
+      failQuery: { command: "command.list", error: new Error("unknown command") },
+    });
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.list_commands", {
+      category: "camera",
+    })) as {
+      source: string;
+      categories: Array<{ category: string; count: number; commands: Array<{ id: string }> }>;
+    };
+    expect(result.source).toBe("local");
+    expect(result.categories).toHaveLength(1);
+    expect(result.categories[0]?.category).toBe("camera");
+    expect(result.categories[0]?.commands.length).toBeGreaterThan(3);
+    expect(result.categories[0]?.commands.every((row) => row.id.startsWith("camera."))).toBe(true);
+  });
+});
+
+describe("studio.describe_command", () => {
+  it("returns the live params doc for an allowed id", async () => {
+    const world = await makeWorld();
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.describe_command", {
+      command: "layer.newText",
+    })) as Record<string, unknown>;
+    expect(result.command).toBe("layer.newText");
+    expect(typeof result.paramsDoc).toBe("string");
+    expect((result.paramsDoc as string).length).toBeGreaterThan(0);
+    expect(world.calls.queries).toContainEqual({
+      command: "command.describe",
+      params: { command: "layer.newText" },
+    });
   });
 
-  it("does not retry a permanent (4xx) postEvent failure", async () => {
-    const world = await makeWorld({ clientOpts: { failTimes: 1, failureStatus: 400 } });
-    await executeClientTool(toolCall("studio.list_layers", {}), world.deps);
-    expect(world.postCalls()).toBe(1);
-    expect(world.events).toHaveLength(0);
+  it("unknown or denied ids are typed UNKNOWN_COMMAND with closest allowed hints", async () => {
+    const world = await makeWorld();
+    const executor = createClientToolExecutor(world.deps);
+    const unknown = await failureOf(
+      executor.execute("studio.describe_command", { command: "layer.newTxt" }),
+    );
+    expect(unknown.code).toBe("UNKNOWN_COMMAND");
+    expect(unknown.message).toContain("layer.newText");
+    expect(unknown.message).toContain("studio.list_commands");
+
+    const denied = await failureOf(
+      executor.execute("studio.describe_command", { command: "script.run" }),
+    );
+    expect(denied.code).toBe("UNKNOWN_COMMAND");
+    // Zero describe traffic for non-members (never fabricated docs).
+    expect(world.calls.queries.filter((call) => call.command === "command.describe")).toHaveLength(
+      0,
+    );
+  });
+
+  it("a dead editor is an honest typed failure, never a fabricated doc", async () => {
+    const dead = await makeWorld({
+      failQuery: {
+        command: "command.describe",
+        error: new BridgeError("EDITOR_TIMEOUT", "timed out"),
+      },
+    });
+    const executor = createClientToolExecutor(dead.deps);
+    const error = await failureOf(
+      executor.execute("studio.describe_command", { command: "layer.newText" }),
+    );
+    expect(error.code).toBe("EDITOR_DISCONNECTED");
+
+    const broken = await makeWorld({
+      failQuery: { command: "command.describe", error: new Error("bad shape") },
+    });
+    const executor2 = createClientToolExecutor(broken.deps);
+    const error2 = await failureOf(
+      executor2.execute("studio.describe_command", { command: "layer.newText" }),
+    );
+    expect(error2.code).toBe("TOOL_FAILED");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// studio.web_search / studio.generate_image (the gateway tool endpoints)
+// ---------------------------------------------------------------------------
+
+describe("studio.web_search", () => {
+  it("POSTs the pinned path + headers and resolves the results", async () => {
+    const { world, calls } = await makeTransportWorld([
+      {
+        status: 200,
+        body: { data: { results: [{ title: "T", url: "https://x", content: "c" }] } },
+      },
+    ]);
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.web_search", {
+      query: "tone.js offline",
+      maxResults: 3,
+    })) as { results: Array<Record<string, unknown>> };
+
+    expect(result.results).toEqual([{ title: "T", url: "https://x", content: "c" }]);
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (call === undefined) throw new Error("no fetch call");
+    expect(call.path).toBe("/v1/threads/th_test/tools/web_search");
+    expect(call.init?.method).toBe("POST");
+    const headers = call.init?.headers as Record<string, string>;
+    expect(headers["x-workspace-id"]).toBe("ws_test");
+    expect(String(headers["Idempotency-Key"])).toMatch(/^tool:run_test:web_search:[0-9a-f]+$/);
+    expect(postedBody(call)).toEqual({ query: "tone.js offline", maxResults: 3 });
+  });
+
+  it("the same logical call mints the SAME idempotency key (replay, not double charge)", async () => {
+    const { world, calls } = await makeTransportWorld([
+      { status: 200, body: { data: { results: [] } } },
+      { status: 200, body: { data: { results: [] } } },
+    ]);
+    const executor = createClientToolExecutor(world.deps);
+    await executor.execute("studio.web_search", { query: "same", maxResults: 1 });
+    await executor.execute("studio.web_search", { query: "same", maxResults: 1 });
+    const first = calls[0]?.init?.headers as Record<string, string>;
+    const second = calls[1]?.init?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(second["Idempotency-Key"]);
+  });
+
+  it("503 / network / 5xx map to the graceful WEB_SEARCH_UNAVAILABLE", async () => {
+    for (const script of [
+      [
+        {
+          status: 503,
+          body: {
+            error: {
+              code: "WEB_SEARCH_UNAVAILABLE",
+              message: "no",
+              retryable: true,
+              requestId: "r",
+            },
+          },
+        },
+      ],
+      [{ throw: true }],
+      [
+        {
+          status: 500,
+          body: {
+            error: { code: "INTERNAL_ERROR", message: "boom", retryable: true, requestId: "r" },
+          },
+        },
+      ],
+    ] as const) {
+      const { world } = await makeTransportWorld(script);
+      const executor = createClientToolExecutor(world.deps);
+      const error = await failureOf(executor.execute("studio.web_search", { query: "q" }));
+      expect(error.code).toBe("WEB_SEARCH_UNAVAILABLE");
+    }
+  });
+
+  it("402 and 429 keep their honest wire codes", async () => {
+    const low = await makeTransportWorld([
+      {
+        status: 402,
+        body: {
+          error: {
+            code: "INSUFFICIENT_CREDITS",
+            message: "out of credits",
+            retryable: false,
+            requestId: "r",
+          },
+        },
+      },
+    ]);
+    const executorLow = createClientToolExecutor(low.world.deps);
+    expect((await failureOf(executorLow.execute("studio.web_search", { query: "q" }))).code).toBe(
+      "INSUFFICIENT_CREDITS",
+    );
+
+    const throttled = await makeTransportWorld([
+      {
+        status: 429,
+        body: {
+          error: { code: "RATE_LIMITED", message: "slow down", retryable: true, requestId: "r" },
+        },
+      },
+    ]);
+    const executorThrottled = createClientToolExecutor(throttled.world.deps);
+    expect(
+      (await failureOf(executorThrottled.execute("studio.web_search", { query: "q" }))).code,
+    ).toBe("RATE_LIMITED");
+  });
+
+  it("a malformed success body is TOOL_FAILED, never a silent pass-through", async () => {
+    const { world } = await makeTransportWorld([{ status: 200, body: { data: { nope: 1 } } }]);
+    const executor = createClientToolExecutor(world.deps);
+    const error = await failureOf(executor.execute("studio.web_search", { query: "q" }));
+    expect(error.code).toBe("TOOL_FAILED");
+  });
+});
+
+describe("studio.generate_image", () => {
+  it("returns the base64 image plus the import hint", async () => {
+    const { world, calls } = await makeTransportWorld([
+      { status: 200, body: { data: { imageBase64: "AAAA" } } },
+    ]);
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.generate_image", {
+      prompt: "a red cube",
+      size: "1024x1024",
+    })) as Record<string, unknown>;
+    expect(result.imageBase64).toBe("AAAA");
+    expect(String(result.hint)).toContain("imported as an asset");
+    expect(postedBody(calls[0] as FetchCall)).toEqual({
+      prompt: "a red cube",
+      size: "1024x1024",
+    });
+  });
+
+  it("returns the url variant", async () => {
+    const { world } = await makeTransportWorld([
+      { status: 200, body: { data: { imageUrl: "https://img.example/1.png" } } },
+    ]);
+    const executor = createClientToolExecutor(world.deps);
+    const result = (await executor.execute("studio.generate_image", { prompt: "x" })) as Record<
+      string,
+      unknown
+    >;
+    expect(result.imageUrl).toBe("https://img.example/1.png");
+  });
+
+  it("501 (not configured) maps to the graceful IMAGE_GENERATION_UNAVAILABLE", async () => {
+    const { world } = await makeTransportWorld([
+      {
+        status: 501,
+        body: {
+          error: {
+            code: "IMAGE_GENERATION_UNAVAILABLE",
+            message: "Image generation is not configured for this workspace's deployment.",
+            retryable: false,
+            requestId: "r",
+          },
+        },
+      },
+    ]);
+    const executor = createClientToolExecutor(world.deps);
+    const error = await failureOf(executor.execute("studio.generate_image", { prompt: "x" }));
+    expect(error.code).toBe("IMAGE_GENERATION_UNAVAILABLE");
+    expect(error.message).toContain("not configured");
+  });
+
+  it("an empty image body is TOOL_FAILED", async () => {
+    const { world } = await makeTransportWorld([{ status: 200, body: { data: {} } }]);
+    const executor = createClientToolExecutor(world.deps);
+    const error = await failureOf(executor.execute("studio.generate_image", { prompt: "x" }));
+    expect(error.code).toBe("TOOL_FAILED");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// studio.render_audio (injected harness — Tone.js never loads here)
+// ---------------------------------------------------------------------------
+
+describe("studio.render_audio", () => {
+  it("renders → descriptor + signed PUT + verify + url → {assetId, url, durationSeconds}", async () => {
+    const world = await makeWorld({
+      audioHarness: fakeAudioHarness({ wav: [1, 2, 3, 4], durationSeconds: 4.25 }),
+    });
+    const putCalls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const deps: ClientToolExecutorDeps = {
+      ...world.deps,
+      fetchImpl: async (url: string, init?: RequestInit): Promise<Response> => {
+        putCalls.push({ url, init });
+        return { ok: true, status: 200, statusText: "", text: async () => "" } as Response;
+      },
+    };
+    const executor = createClientToolExecutor(deps);
+    const result = (await executor.execute("studio.render_audio", {
+      name: "riser",
+      code: "const s = new Tone.PolySynth().toDestination(); s.triggerAttackRelease('C4','8n',0);",
+      duration: 4.25,
+    })) as Record<string, unknown>;
+
+    expect(result.assetId).toBe("ast_1");
+    expect(result.url).toBe("https://cdn.example/ast_1.wav");
+    expect(result.durationSeconds).toBe(4.25);
+    expect(result.sampleRate).toBe(44_100);
+
+    // The two-phase seam, exactly: descriptor (sha256 + ns duration) → PUT
+    // the bytes to the signed URL → complete (verify) → short-lived url.
+    const descriptor = world.assets.calls.descriptors[0] as Record<string, unknown>;
+    expect(descriptor.name).toBe("riser.wav");
+    expect(descriptor.mime).toBe("audio/wav");
+    expect(descriptor.sizeBytes).toBe(4);
+    expect(descriptor.durationTicks).toBe(4_250_000_000);
+    expect(String(descriptor.sha256)).toMatch(/^[0-9a-f]{64}$/);
+    expect(putCalls).toHaveLength(1);
+    expect(putCalls[0]?.url).toBe("https://storage.example/signed?token=abc");
+    expect(putCalls[0]?.init?.method).toBe("PUT");
+    expect(new Uint8Array(putCalls[0]?.init?.body as unknown as ArrayBufferLike)).toEqual(
+      new Uint8Array([1, 2, 3, 4]),
+    );
+    expect(world.assets.calls.completes).toEqual(["ast_1"]);
+    expect(world.assets.calls.urls).toEqual(["ast_1"]);
+  });
+
+  it("harness failures map to RENDER_AUDIO_FAILED with the honest message", async () => {
+    const world = await makeWorld({
+      audioHarness: fakeAudioHarness({ reject: "Tone.PolySynth is not a constructor" }),
+    });
+    const executor = createClientToolExecutor(world.deps);
+    const error = await failureOf(
+      executor.execute("studio.render_audio", { name: "x", code: "new Tone.Nope()" }),
+    );
+    expect(error.code).toBe("RENDER_AUDIO_FAILED");
+    expect(error.message).toContain("Tone.PolySynth is not a constructor");
+  });
+
+  it("a render that exceeds the (injectable) timeout is RENDER_AUDIO_FAILED", async () => {
+    const world = await makeWorld({
+      audioHarness: fakeAudioHarness({ hang: true }),
+      audioRenderTimeoutMs: 25,
+    });
+    const executor = createClientToolExecutor(world.deps);
+    const error = await failureOf(
+      executor.execute("studio.render_audio", { name: "x", code: "while(true){}" }),
+    );
+    expect(error.code).toBe("RENDER_AUDIO_FAILED");
+  });
+
+  it("an upload failure is RENDER_AUDIO_FAILED; nothing was half-applied", async () => {
+    const world = await makeWorld({ audioHarness: fakeAudioHarness() });
+    const assets = makeAssetsClient({ failDescriptor: true });
+    const executor = createClientToolExecutor({ ...world.deps, client: assets.client });
+    const error = await failureOf(
+      executor.execute("studio.render_audio", { name: "x", code: "Tone.start()" }),
+    );
+    expect(error.code).toBe("RENDER_AUDIO_FAILED");
+    expect(error.message).toContain("storage quota exceeded");
+  });
+
+  it("a duplicate descriptor skips the PUT and verifies nothing", async () => {
+    const world = await makeWorld({ audioHarness: fakeAudioHarness() });
+    const assets = makeAssetsClient({ duplicate: true });
+    const putCalls: string[] = [];
+    const deps: ClientToolExecutorDeps = {
+      ...world.deps,
+      client: assets.client,
+      fetchImpl: async (url: string): Promise<Response> => {
+        putCalls.push(url);
+        return { ok: true, status: 200, statusText: "", text: async () => "" } as Response;
+      },
+    };
+    const executor = createClientToolExecutor(deps);
+    const result = (await executor.execute("studio.render_audio", {
+      name: "x",
+      code: "Tone.start()",
+    })) as Record<string, unknown>;
+    expect(result.assetId).toBe("ast_dup");
+    expect(putCalls).toHaveLength(0);
+    expect(assets.calls.completes).toHaveLength(0);
   });
 });
