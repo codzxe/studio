@@ -3614,3 +3614,22 @@ Stage Summary:
 - main-only: remote AND local.
 - OPEN (user decision): hosted Postgres URL to make sign-up/auth live on Vercel (alternatives: the self-hosted topology in infra/, or the dev sandbox for full-stack testing).
 - Hygiene: the Vercel token and the GitHub PAT both exist in chat + local config — rotate when convenient.
+
+---
+Task ID: ci-deploy-triage (round 3 — supabase env verdict)
+Agent: main-agent (session continuation)
+Task: User pasted their Supabase project .env (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY / SUPABASE_SECRET_KEY / SUPABASE_JWKS_URL, project wsvovcjovzhuxmopomvj) asking "is this works" — evaluate whether these variables fix the live sign-up failure.
+
+Work Log:
+- Live-probed the user's Supabase project: REST /rest/v1/ with the sb_secret key = 200, /auth/v1/.well-known/jwks.json = 200, bare host = 404 (no root handler, normal). Credentials VALID, project alive.
+- Code audit: ZERO SUPABASE_* references anywhere in the repo (rg over apps/web + packages + services). The app never reads these variables; adding them to Vercel env changes nothing.
+- App's actual auth stack confirmed: better-auth client (src/lib/auth-client.ts, baseURL ${NEXT_PUBLIC_APP_URL}/v1/auth) -> gateway Hono service (services/gateway, better-auth 1.7.12 + drizzle). Server-side env contract (packages/config/src/env.ts): APP_URL, APP_ENV, DATABASE_URL (PostgreSQL mandatory outside APP_ENV=local; SQLite file only local), AUTH_SECRET >=32 chars, flat schema also requires AUTH_GOOGLE_ID/SECRET + AUTH_GITHUB_ID/SECRET (CI e2e uses dummies), plus non-local extras via crossCheck: S3 group + Stripe trio. VALKEY_URL optional. pnpm db:migrate / db:seed exist and target DATABASE_URL.
+- Root cause of live sign-up re-confirmed with evidence: POST https://motiongra.vercel.app/v1/auth/sign-up = 404 (Next 404 page), /v1/auth/get-session = 404. next.config.ts emits the /v1 rewrite only when NODE_ENV != production, so the production build has no /v1 backend at all; sign-up-form.tsx catch renders "the service may be unreachable".
+- CI run 40276444288 final: status completed, conclusion cancelled — the e2e job was cancelled at its 20-min ceiling (6/7 jobs green), exactly as predicted; non-blocking. Fix (timeout 20->45) already pushed in the previous round.
+- KEY clarification for the user: the sb_secret_/sb_publishable_ keys are Supabase REST/Auth-API keys, NOT the Postgres password. To use the Supabase project as this app's production DATABASE_URL, the Postgres connection string is needed (Dashboard -> Project Settings -> Database / Connect, postgres://... or session/transaction pooler URI on :5432/:6543).
+
+Stage Summary:
+- Verdict: the pasted SUPABASE_* env vars are valid credentials but do NOT plug into this codebase (0 references). Sign-up stays broken regardless — the gateway (/v1 backend) is not deployed anywhere.
+- The Supabase project IS usable as the production Postgres (DATABASE_URL) for the gateway, once migrations run (pnpm db:migrate). Missing input: the Postgres connection string (not the sb_secret key).
+- Path to working sign-up (proposed): Supabase PG as DATABASE_URL + gateway deployed (Vercel function under the web deployment, or separate host) + production /v1 route to it + AUTH_SECRET + dummy OAuth (APP_ENV=local posture like CI) -> migrate + redeploy.
+- Still open from earlier rounds: local main is 1 unpushed commit ahead (da4a7b1, container auto-checkpoint) — user decision pending.
