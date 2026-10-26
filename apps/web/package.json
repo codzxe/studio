@@ -6,7 +6,7 @@
   "description": "Studio web app — Next.js marketing site, auth pages and (later) the SaaS shell (docs/UI_DESIGN_SYSTEM.md §8)",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node ../../scripts/fetch-web-fonts.mjs && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
