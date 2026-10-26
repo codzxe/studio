@@ -3535,3 +3535,23 @@ Stage Summary:
 - Problem 4 is dead: legacy poison keys are wiped on boot and this build's breaker was already sessionStorage-only (per-tab, self-healing, "Try WebGPU again" reset).
 - Problem 3 is diagnosable from the page (effectcraftLoad.gpu.adapter + console line) with the high-performance preference already enforced on every adapter request.
 - Problem 1's download+compile is off the critical path (app-start prewarm + streaming compile + progress UI); the remaining main-thread instantiation tail is documented and needs dist-side/upstream work.
+
+---
+Task ID: git-identity-rewrite
+Agent: main-agent (session continuation)
+Task: User request — rewrite ALL commits from the container identity "Z User <z@container>" to the user's GitHub identity (codzxe), no "z" anywhere.
+
+Work Log:
+- Inspected history: 340 commits on main, every author+committer was "Z User <z@container>"; origin = github.com/codzxe/studio.git (token-embedded URL); tags pre-effectcraft-baseline + v0.1.0-beta.0 (tagger studio-agent <226558024+codzxe@users.noreply.github.com>); worktree clean.
+- Resolved target identity via api.github.com/users/codzxe -> id 226558024 -> noreply email 226558024+codzxe@users.noreply.github.com (ID-prefixed form guarantees GitHub attribution).
+- Attempt 1 FAILED: git-filter-repo (0.17, ~/.local/bin, installed --break-system-packages) crashed with "TypeError: %b requires ... NoneType" (self.branch None) during fast-import re-insert — known incompatibility with this container's git fast-export stream. Crash REMOVED the origin remote during its setup phase before dying (discovered later at push time).
+- Attempt 2 SUCCEEDED: stateful fast-export stream filter (scripts/rewrite_authors.py, persisted): parses the stream, rewrites ONLY author/committer/tagger header lines whose name==b"Z User" or email==b"z@container"; `data N` blob payloads copied byte-exact so file contents containing the identity string could never be corrupted. Pipeline: git fast-export --signed-tags=strip --tag-of-filtered-object=rewrite --branches --tags | python3 scripts/rewrite_authors.py | git fast-import --force. 338 headers rewritten.
+- Second normalization pass extended OLD_EMAIL set with codzxe@users.noreply.github.com (non-ID form found on some commits) -> 28 more headers rewritten; now every commit is uniformly codzxe <226558024+codzxe@users.noreply.github.com> (author+committer); studio-agent tagger on the 2 tags left as-is.
+- Post-rewrite: git reset --hard (worktree byte-identical), git config user.name/email = codzxe identity (repo + GLOBAL so every future commit is theirs), reflog expire --expire=now --all + git gc --prune=now (old z-identity objects purged), commit count verified 340.
+- Push BLOCKED: origin remote gone (filter-repo setup) and the embedded token was unrecoverable — checked .git/config (rewritten), FETCH_HEAD (plain URL only), bash history (none), other clones (none), ~/.ssh (no ssh client), gh CLI (absent), env tokens (none). Re-added origin as plain https://github.com/codzxe/studio.git. User must supply a fresh PAT to force-push main + both tags.
+
+Stage Summary:
+- ALL 340 local commits + worktree state rewritten to codzxe <226558024+codzxe@users.noreply.github.com>; z@container fully eradicated from history and from git config (local+global).
+- History hashes changed (e.g. HEAD e105541 -> 34bbcc5); tree contents identical; dependabot branches on origin untouched (not rewritten, still at old hashes until next sync).
+- scripts/rewrite_authors.py kept as the reproducible tool.
+- PENDING USER: fresh GitHub PAT (classic repo scope or fine-grained Contents:rw on codzxe/studio); then `git push --force origin main v0.1.0-beta.0 pre-effectcraft-baseline`. Old token should be revoked on GitHub since its only copy was deleted with the remote config.
