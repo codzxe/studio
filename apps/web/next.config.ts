@@ -47,15 +47,6 @@ const GATEWAY_INTERNAL_URL = (
     : (process.env.GATEWAY_INTERNAL_URL ?? "http://127.0.0.1:8787")
 )?.replace(/\/+$/, "");
 
-// Production `/v1` proxy (W5-01 serverless shape): the gateway runs as its own
-// Vercel project (services/gateway/api/gateway.ts — zero-config function), and
-// the web deployment proxies every /v1/* request to it. Baked at BUILD time —
-// set GATEWAY_PUBLIC_URL on the web project (e.g. https://studio-gateway.vercel.app).
-// The rewrite carries the gateway path in the `p` query parameter; the
-// function rebuilds the full /v1 URL from it (see its upstreamUrl()).
-// Unset → no rewrite (self-hosted boxes keep using the infra/caddy shape).
-const GATEWAY_PUBLIC_URL = process.env.GATEWAY_PUBLIC_URL?.replace(/\/+$/, "");
-
 // W3-I: Turbopack still lacks webpack's `extensionAlias` (".js" → ".ts"),
 // so the NodeNext workspace packages (`@studio/config` via the vendor shim,
 // `@studio/contracts` via tsconfig paths — see README "Turbopack and NodeNext
@@ -138,14 +129,7 @@ const nextConfig: NextConfig = {
     const v1Rewrites =
       GATEWAY_INTERNAL_URL !== undefined
         ? [{ source: "/v1/:path*", destination: `${GATEWAY_INTERNAL_URL}/v1/:path*` }]
-        : GATEWAY_PUBLIC_URL !== undefined
-          ? [
-              {
-                source: "/v1/:path*",
-                destination: `${GATEWAY_PUBLIC_URL}/api/gateway?p=:path*`,
-              },
-            ]
-          : [];
+        : [];
     if (!EDITOR_DEV_SERVER_URL) {
       return [
         ...v1Rewrites,

@@ -6,7 +6,7 @@
   "description": "Studio web app \u2014 Next.js marketing site, auth pages and (later) the SaaS shell (docs/UI_DESIGN_SYSTEM.md \u00a78)",
   "scripts": {
     "dev": "next dev",
-    "build": "node ../../scripts/fetch-web-fonts.mjs && next build && esbuild --bundle api-src/gateway.ts --tsconfig=api-src/tsconfig.json --platform=node --format=esm --target=node22 --banner:js=\"import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);\" --outfile=api/gateway.mjs",
+    "build": "node ../../scripts/fetch-web-fonts.mjs && esbuild --bundle api-src/gateway.ts --tsconfig=api-src/tsconfig.json --platform=node --format=esm --target=node22 --banner:js=\"import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);\" --outfile=api/gateway.mjs && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

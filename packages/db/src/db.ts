@@ -98,6 +98,16 @@ type DrizzleSqliteModule = typeof import("drizzle-orm/better-sqlite3");
 
 const SQLITE_TX_DEPTH = new WeakMap<object, number>();
 
+// Non-foldable specifiers so static analyzers cannot trace these DEV-ONLY
+// modules through bundles that embed this file (e.g. the apps/web gateway
+// bundle, where they are unresolvable and would fail the outer Turbopack
+// build). esbuild (no --minify) does not fold multi-element join(), and
+// Turbopack cannot statically evaluate it, so the reference stays opaque at
+// every bundling stage. tsx/Node resolve them at runtime identically to the
+// literal form; only the sqlite branches ever call them.
+const SQLITE_MODULE = ["better-sqlite", "-3"].join("");
+const DRIZZLE_SQLITE_MODULE = ["drizzle-orm", "/better-sqlite3"].join("");
+
 /**
  * Make the drizzle better-sqlite3 handle's `transaction()` ASYNC-CALLBACK
  * capable (W1-03 dev-server completion).
@@ -204,8 +214,8 @@ export async function createSqliteDb(
  */
 function createSqliteDbSync(path: string, bootstrap: boolean): StudioSqliteDb {
   const require = createRequire(import.meta.url);
-  const Database = require("better-sqlite3") as BetterSqlite3Module;
-  const { drizzle: drizzleSqlite } = require("drizzle-orm/better-sqlite3") as DrizzleSqliteModule;
+  const Database = require(SQLITE_MODULE) as BetterSqlite3Module;
+  const { drizzle: drizzleSqlite } = require(DRIZZLE_SQLITE_MODULE) as DrizzleSqliteModule;
   const client = new Database(path);
   applyPragmas(client);
   if (bootstrap) bootstrapSqliteDatabase(client);
@@ -257,7 +267,7 @@ export function bootstrapSqlite(urlOrDb: string | StudioSqliteDb): void {
       );
     }
     const require = createRequire(import.meta.url);
-    const Database = require("better-sqlite3") as BetterSqlite3Module;
+    const Database = require(SQLITE_MODULE) as BetterSqlite3Module;
     const client = new Database(sqlitePathFromUrl(urlOrDb));
     try {
       applyPragmas(client);

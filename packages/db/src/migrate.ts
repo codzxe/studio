@@ -13,7 +13,16 @@ import * as schema from "./schema.js";
  * Drizzle migrations are forward-only; the folder is produced by
  * `pnpm --filter @studio/db generate` (drizzle-kit generate, offline-safe).
  */
-export const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
+// The migrations folder only exists at MIGRATION-CLI runtime. Bundles that
+// embed this file (the apps/web gateway bundle) must not resolve it as a
+// build-time asset — but magic comments (turbopackIgnore) are STRIPPED by the
+// inner esbuild pass before the outer Turbopack ever sees the artifact, and a
+// plain string constant gets const-folded back into the literal. The
+// two-element join() is neither folded by esbuild (no --minify) nor
+// statically evaluable by Turbopack, so the outer bundler gives up on the
+// reference entirely — the only reliable shield that survives bundling.
+const DRIZZLE_DIR = ["..", "drizzle"].join("/");
+export const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL(DRIZZLE_DIR, import.meta.url));
 
 export async function migrateDatabase(
   db: StudioDb,
