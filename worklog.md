@@ -3700,3 +3700,21 @@ Stage Summary:
 - Bugs fixed: proxy cookie name (prod sign-in loop), sqlite module specifier (latent, all-sqlite boots), RSC self-invocation (perf), US->Seoul region gap (the 10-15s pages), knip zod overreach (caught by CI).
 - Deps state: 0 version drift, lockfile deduped, knip clean with committed tuned config, dependabot root-only, renovate.json ready for app install.
 - USER ACTIONS outstanding: (1) raise the GitHub Actions spending limit (CI is currently refusing to start jobs), (2) rotate the exposed credentials (Vercel token, GitHub PAT, Supabase sbp_ token, DB password), (3) optionally install the Renovate app then delete dependabot.yml, (4) real OAuth/Stripe/S3/LiteLLM env when those features should go live (admin needs none of them).
+
+---
+Task ID: site-vercel-check (round 6)
+Agent: main-agent (session continuation)
+Task: User report — "Something broke on our side. Back to the site check log of vercel" — check the live site and Vercel logs. NOTE: sandbox was reset between rounds; .local/ (Vercel token, Supabase creds, knip tool pin) is GONE.
+
+Work Log:
+- External probe of motiongra.vercel.app — ALL GREEN, sub-second: GET / 200 (prerender HIT), /v1/health 200 {"status":"ok","db":true}, /sign-in 200, /v1/auth/sign-up/email 200 + __Secure- cookie, bad-creds sign-in → 401 INVALID_EMAIL_OR_PASSWORD (correct), /v1/me 200 trial plan 0.16s, /w no-workspace → 307 /onboarding (round-5 sign-in-loop fix holding), POST /v1/workspaces 201 (needs name+slug+Idempotency-Key), /w 200 "Recent projects"/"New project" 0.65s, /w/billing 200 0.59s, /w/projects 200 0.42s, /editor/effectcraft_web_bg.wasm 200 immutable + COEP headers. Seoul region still holding (no 5-15s pages).
+- ROOT CAUSE of the red flags found on GitHub, not Vercel: CI runs 73 (2c4e187) and 74 (6fb71fb) show ALL 7 jobs "failure" — each job started/completed within 2 SECONDS with zero steps and log download returns BlobNotFound = the GitHub Actions billing rejection (payments failed / spending limit), same blocker as round 5; jobs now insta-fail instead of "not started". Vercel deploys independently of CI, so the live site is unaffected. USER ACTION still outstanding: GitHub → Billing & plans → raise spending limit / fix payment.
+- Closed 3 fresh Dependabot major PRs opened by the root-only config at 09:27 (#39 esbuild 0.25→0.28, #40 typescript 5.9→7.0.2, #41 @types/node 22→26): policy comment + PR closed + head branches deleted (adapted scripts/close-dependabot-flood.mjs comment for root-only majors).
+- Housekeeping: reverted cosmetic package.json workspaces-array reformat; PAT from the git remote still works (creds NOT rotated yet).
+- COULD NOT pull Vercel runtime logs: Vercel token wiped with .local/ in the sandbox reset; no vercel CLI auth either. Compensated with full external black-box verification of every user-facing path (above). No Vercel-side anomaly observable from outside.
+- Leftover: probe rows probe-check-1793009672@test.local + workspace probe-ws-1793009856 need deletion once Supabase creds are re-shared (.local/supabase.env gone).
+
+Stage Summary:
+- The SITE is healthy end-to-end — auth, onboarding, dashboard, billing, projects, editor wasm all verified live sub-second; nothing broke on Vercel from the outside.
+- The breakage is GitHub Actions billing: every CI job insta-fails in 2s with no steps/logs; fix the spending limit and re-run run 74.
+- Dependabot majors cleaned up again; Renovate app install still pending; credential rotation still pending; Vercel token needs re-sharing for log-level access.

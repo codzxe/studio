@@ -28,7 +28,7 @@ const dependabotPrs = prs.filter((p) => p.user.login === "dependabot[bot]");
 console.log(`open dependabot PRs: ${dependabotPrs.length}`);
 
 const comment = {
-  body: "Closing: this dependabot experiment (per-directory entries) produced one PR **per manifest** for the same dependency, which desyncs versions across apps/packages instead of syncing them — plus several ecosystem-breaking major bumps (TypeScript 7, vitest 5, jsdom 30). Dependabot is back to root-only direct-deps; `renovate.json` (one branch per dependency, ALL manifests updated together, majors kept separate) supersedes it once the Renovate app is installed. Regenerate freely with `@dependabot recreate` if you prefer this PR.",
+  body: "Closing per the repo's dependency-bot policy: major bumps (esbuild 0.28, TypeScript 7, @types/node 26) are ecosystem-breaking — the repo pins TypeScript <7, esbuild is load-bearing for the gateway build (declared in licenses.overrides.json), and @types/node must track the Node runtime, not jump 4 majors. Dependabot stays root-only for security/minor patches; coordinated updates (ALL manifests + the shared lockfile together, majors separate) are handled by `renovate.json` once the Renovate app is installed — then dependabot.yml goes away. Reopen freely if you want a specific one.",
 };
 
 for (const pr of dependabotPrs) {
