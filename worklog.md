@@ -3572,3 +3572,22 @@ Stage Summary:
 - DONE: entire GitHub history now authored/committed by codzxe; main + tags pushed; future commits use codzxe (local+global config).
 - Outstanding user hygiene: revoke the OLD lost PAT; rotate the current PAT when convenient (it lives in .git/config and was pasted in chat).
 - Note: 4 dependabot/* branches on origin still reference the pre-rewrite hash lineage (disconnected from new main) — close/delete when convenient; dependabot will re-create them against the new main.
+
+---
+Task ID: ci-deploy-triage
+Agent: main-agent (session continuation)
+Task: User report — "check why deployment and all CI pipelines failed" + "remove all other branches, keep main only".
+
+Work Log:
+- Diagnosed the failed CI run 40181797991 (old main e9e46d4, 2026-10-25): 2 of 7 jobs failed. (a) editor-cargo: 'couldn't read crates/text/src/../../../assets/fonts/*.ttf' — the 7 editor .ttf are NEVER committed (spec §1.5 rule 9, .gitignore editor/assets/fonts/) and nothing automated the CRAFT_FONTS_DIR fetch (worklog line 3011 pre-flagged this exact gap). (b) web: next build died on next/font/google's BUILD-time fonts.googleapis.com fetch ("next/font/google queries have exactly one entry", instrument_sans) — confirmed FLAKY (runner-side): the identical tree passed run 40272414826 but failed 40181797991 and 40273495101 (jetbrains_mono) — 2 of 3.
+- Fix 1 (editor-cargo, commit 4293e9c): CI step fetches the 7 .ttf from the upstream pin storytold/effectcraft@9db7f3b2 (our exact vendored pin; craft-fonts pin bfcbf714 holds the CJK set, not these) with embedded sha256 verification. Result: editor-cargo GREEN on the very next run.
+- Fix 2 (web + all builders, commits e96dc76 + 07fa9a5): layout.tsx switched next/font/google -> next/font/local, same variable names (globals.css unchanged). New scripts/fetch-web-fonts.mjs (pnpm fonts:web): pinned google/fonts@e7db6ca6 fetch, sha256-verified, idempotent (hash-ok files never re-downloaded -> offline-friendly). Wired into CI web + e2e jobs, dev:ready stage [3/4] (fatal without fonts), and apps/web "build" script itself (node ../../scripts/fetch-web-fonts.mjs && next build) so Vercel/turbo/any fresh clone self-provisions. Local gates all GREEN: biome, tsc, licence gate PASS (0 font binaries committed — walker scans tracked files only), next build exit 0 (hermetic, zero Google dependency), vitest 1581/1581.
+- Branches: deleted all 4 dependabot/* remote branches (PRs auto-close); remote now has main ONLY (verified via ls-remote). Local was already main-only.
+- CI run 40275064531 (e96dc76): all 6 blocking jobs GREEN (gateway, worker, packages, licence, editor-cargo, web). e2e was still running when the 07fa9a5 push cancelled it (concurrency latest-wins); new run spinning for 07fa9a5.
+- Vercel: user asked to inspect deployment dpl_BbHFFUhW5mRQcZx7RVFFxVL51JaC — CLI has NO credentials in this container (checked .env*: no VERCEL token); awaiting a token from the user to read the logs. Known: any pre-fix Vercel build from main likely hit the same google-fonts fetch flake; post-07fa9a5 builds are hermetic + self-provisioning.
+
+Stage Summary:
+- CI root causes found AND fixed; both previously-failing jobs green on GitHub. Repo down to main-only (dependabot branches deleted).
+- New invariant: every build path (CI, Vercel, dev:ready, fresh clone) provisions fonts itself — pinned sources, sha256-verified, never committed (rule 9 intact, licence gate PASS).
+- dev:ready stack restarted and healthy (web :3000, gateway :8787, fonts stage 2ms offline path).
+- PENDING USER: VERCEL_TOKEN to read dpl_BbHFFUhW5mRQcZx7RVFFxVL51JaC logs (or paste the log tail); old-token revocation reminder stands.
