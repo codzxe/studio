@@ -20,6 +20,24 @@
 import type { PlanId } from "@studio/contracts";
 import type { Subscription } from "@studio/db";
 
+/**
+ * Staff-admin entitlement (round 5): the TOP catalog tier, granted by USER
+ * role — a better-auth user with role='admin' (set via the DB / the admin
+ * grant script) always gates as `studio`, in every workspace, regardless of
+ * the subscription row. No payment path can ever demote it.
+ */
+export const TOP_TIER_PLAN: PlanId = "studio";
+
+/** `true` only for the better-auth staff role 'admin'. */
+export function isAdminRole(role: string | null | undefined): boolean {
+  return role === "admin";
+}
+
+/** Caller-side override the plan seams accept (admin ⇒ top tier). */
+export interface PlanOverride {
+  readonly admin?: boolean;
+}
+
 /** Reads the workspace's subscription row (repos.subscriptions.getByOrganization). */
 export type SubscriptionReader = (workspaceId: string) => Promise<Subscription | null>;
 
@@ -51,7 +69,11 @@ async function readSubscription(workspaceId: string): Promise<Subscription | nul
  * The EFFECTIVE plan a subscription row gates as (D-4; see the module header).
  * Pure — also the single source `GET /v1/billing/state` reports as `plan`.
  */
-export function effectivePlan(row: Subscription | null): PlanId {
+export function effectivePlan(row: Subscription | null, override?: PlanOverride): PlanId {
+  if (override?.admin === true) {
+    // Staff admin: the top tier, independent of the subscription row.
+    return TOP_TIER_PLAN;
+  }
   if (row === null) return "trial";
   switch (row.status) {
     case "trialing":
@@ -74,6 +96,7 @@ export function effectivePlan(row: Subscription | null): PlanId {
  * Reads the workspace's subscription row through the installed seam; a
  * missing row (legacy workspaces) resolves to `trial`. Never throws.
  */
-export async function resolvePlan(workspaceId: string): Promise<PlanId> {
+export async function resolvePlan(workspaceId: string, override?: PlanOverride): Promise<PlanId> {
+  if (override?.admin === true) return TOP_TIER_PLAN;
   return effectivePlan(await readSubscription(workspaceId));
 }

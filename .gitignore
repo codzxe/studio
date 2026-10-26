@@ -126,3 +126,4 @@ packages/*/src/**/*.d.ts
 # — regenerable test output, untracked 2026-10-23 (97 files, ~20MB). Deliberately
 # the ONLY apps/ path ignored; kept on disk (hard rule: never rm under apps/).
 /apps/web/e2e/.results/
+db/

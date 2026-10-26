@@ -139,6 +139,7 @@ const DEMO_USER = {
   id: DEMO_USER_ID,
   name: "Maya Okafor",
   email: "maya@northlight.example",
+  role: "user",
 } as const satisfies MeResponse["user"];
 
 const WORKSPACE_NORTHLIGHT: Workspace = {

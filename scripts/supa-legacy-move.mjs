@@ -40,7 +40,10 @@ for (const e of enums) {
 const after = await sql`
   select c.relname as name from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public' and c.relkind in ('r','e')`;
-console.log("\npublic after move:", after.length === 0 ? "(EMPTY — ready for Studio)" : after.map((t) => t.name).join(", "));
+console.log(
+  "\npublic after move:",
+  after.length === 0 ? "(EMPTY — ready for Studio)" : after.map((t) => t.name).join(", "),
+);
 
 const legacyCount = await sql`
   select count(*)::int as n from pg_tables where schemaname = 'legacy'`;

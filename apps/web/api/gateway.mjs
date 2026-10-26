@@ -120484,7 +120484,7 @@ function applyPragmas(client) {
   client.pragma("busy_timeout = 5000");
 }
 var SQLITE_TX_DEPTH = /* @__PURE__ */ new WeakMap();
-var SQLITE_MODULE = ["better-sqlite", "-3"].join("");
+var SQLITE_MODULE = ["better-sqlite", "3"].join("");
 var DRIZZLE_SQLITE_MODULE = ["drizzle-orm", "/better-sqlite3"].join("");
 function makeSqliteTransactionAsyncAware(handle) {
   const client = handle.$client;
@@ -134682,6 +134682,10 @@ async function requireLeaseForMutation(deps, c5, projectId) {
 }
 
 // ../../services/gateway/src/plan.ts
+var TOP_TIER_PLAN = "studio";
+function isAdminRole(role2) {
+  return role2 === "admin";
+}
 var reader = null;
 function installSubscriptionReader(candidate) {
   reader = typeof candidate === "function" ? candidate : null;
@@ -134695,7 +134699,10 @@ async function readSubscription(workspaceId) {
     return null;
   }
 }
-function effectivePlan(row) {
+function effectivePlan(row, override) {
+  if (override?.admin === true) {
+    return TOP_TIER_PLAN;
+  }
   if (row === null) return "trial";
   switch (row.status) {
     case "trialing":
@@ -134707,7 +134714,8 @@ function effectivePlan(row) {
       return row.planId;
   }
 }
-async function resolvePlan(workspaceId) {
+async function resolvePlan(workspaceId, override) {
+  if (override?.admin === true) return TOP_TIER_PLAN;
   return effectivePlan(await readSubscription(workspaceId));
 }
 
@@ -135040,7 +135048,12 @@ function projectsRoutes(deps) {
         requestId: c5.get("requestId")
       });
     }
-    await assertProjectQuota(deps, workspace.id, c5.get("requestId"));
+    await assertProjectQuota(
+      deps,
+      workspace.id,
+      c5.get("requestId"),
+      isAdminRole(c5.get("auth").user.role)
+    );
     const project = await deps.repos.projects.create(workspace.id, {
       name: parsed.data.name,
       description: parsed.data.description,
@@ -135149,7 +135162,12 @@ function projectsRoutes(deps) {
       const workspace = c5.get("workspace");
       const sourceId = pathParam(c5, "id");
       const source = await deps.repos.projects.get(workspace.id, sourceId);
-      await assertProjectQuota(deps, workspace.id, c5.get("requestId"));
+      await assertProjectQuota(
+        deps,
+        workspace.id,
+        c5.get("requestId"),
+        isAdminRole(c5.get("auth").user.role)
+      );
       const target = await deps.repos.projects.create(workspace.id, {
         name: duplicateName(source.name),
         description: source.description ?? void 0,
@@ -135189,12 +135207,12 @@ function projectsRoutes(deps) {
   );
   return app;
 }
-async function planEntitlements(workspaceId) {
-  return entitlementsFor(await resolvePlan(workspaceId));
+async function planEntitlements(workspaceId, admin2 = false) {
+  return entitlementsFor(await resolvePlan(workspaceId, { admin: admin2 }));
 }
-async function assertProjectQuota(deps, workspaceId, requestId) {
+async function assertProjectQuota(deps, workspaceId, requestId, admin2) {
   const [entitlements, liveProjects] = await Promise.all([
-    planEntitlements(workspaceId),
+    planEntitlements(workspaceId, admin2),
     deps.repos.projects.countActive(workspaceId)
   ]);
   if (liveProjects >= entitlements.maxProjects) {
@@ -135703,7 +135721,8 @@ function assetsRoutes(deps) {
       return ok2(c5, dedupeBody, 200);
     }
     const [entitlements, usage] = await Promise.all([
-      planEntitlements(workspace.id),
+      // Round 5: staff admins upload against the top tier's storageBytes.
+      planEntitlements(workspace.id, isAdminRole(c5.get("auth").user.role)),
       deps.repos.assets.quota(workspace.id)
     ]);
     if (usage.totalBytes + descriptor.sizeBytes > entitlements.storageBytes) {
@@ -136389,7 +136408,9 @@ function creditsRoutes(deps) {
     const workspaceId = c5.get("workspace").id;
     const balance = await deps.repos.ledger.balance(workspaceId);
     const reserved = await outstandingReserveForWorkspace(deps, workspaceId);
-    const plan = await resolvePlan(workspaceId);
+    const plan = await resolvePlan(workspaceId, {
+      admin: isAdminRole(c5.get("auth").user.role)
+    });
     const body = {
       balance,
       includedCredits: entitlementsFor(plan).monthlyCreditAllowance,
@@ -136916,7 +136937,7 @@ function billingRoutes(deps) {
     async (c5) => {
       const workspaceId = c5.get("workspace").id;
       const row = subscriptions3 !== null ? await subscriptions3.getByOrganization(workspaceId) : null;
-      const plan = effectivePlan(row);
+      const plan = effectivePlan(row, { admin: isAdminRole(c5.get("auth").user.role) });
       const catalogEntitlements = entitlementsFor(plan);
       const balance = await deps.repos.ledger.balance(workspaceId);
       const reserved = await outstandingReserveForWorkspace(deps, workspaceId);
@@ -156320,7 +156341,9 @@ function chatRoutes(deps) {
       if (existing !== null) {
         return sseResponse(c5, existing.log, c5.req.header("last-event-id"));
       }
-      const plan = await resolvePlan(workspace.id);
+      const plan = await resolvePlan(workspace.id, {
+        admin: isAdminRole(c5.get("auth").user.role)
+      });
       const model = resolveChatModel({ requested: request.model, plan, requestId });
       const history = await loadHistory(deps, workspace.id, threadId);
       await deps.repos.threads.addMessage(workspace.id, {
@@ -156857,7 +156880,9 @@ function healthRoutes(deps) {
 
 // ../../services/gateway/src/routes/invites.ts
 async function assertSeatAvailable(deps, c5, context) {
-  const plan = await resolvePlan(context.id);
+  const plan = await resolvePlan(context.id, {
+    admin: isAdminRole(c5.get("auth").user.role)
+  });
   if (!isPaidPlan(plan)) {
     return;
   }
@@ -157209,9 +157234,9 @@ function meRoutes(deps) {
         subscription = null;
       }
     }
-    const plan = effectivePlan(subscription);
+    const plan = effectivePlan(subscription, { admin: isAdminRole(user3.role) });
     const body = {
-      user: { id: user3.id, name: user3.name, email: user3.email },
+      user: { id: user3.id, name: user3.name, email: user3.email, role: user3.role ?? null },
       memberships,
       plan: {
         plan,
@@ -157601,7 +157626,9 @@ function modelsRoutes(deps) {
   app.use("/v1/models", requireAuth());
   app.get("/v1/models", requireWorkspace("viewer"), async (c5) => {
     const workspaceId = c5.get("workspace").id;
-    const plan = await resolvePlan(workspaceId);
+    const plan = await resolvePlan(workspaceId, {
+      admin: isAdminRole(c5.get("auth").user.role)
+    });
     const models = allowedModelsForPlan(plan).map((id) => {
       const descriptor = MODEL_CATALOG[id];
       return {
@@ -157910,7 +157937,9 @@ function rendersRoutes(deps) {
       request,
       request.settings
     );
-    const plan = await resolvePlan(workspace.id);
+    const plan = await resolvePlan(workspace.id, {
+      admin: isAdminRole(c5.get("auth").user.role)
+    });
     const entitlements = entitlementsFor(plan);
     if (!isRenderFormatEnabled(request.format)) {
       throw new StudioError("RENDER_UNSUPPORTED_FORMAT", { requestId });
@@ -159439,7 +159468,8 @@ function adaptBetterAuth(auth) {
         user: {
           id: asString2(user3.id) ?? "",
           name: asString2(user3.name),
-          email: asString2(user3.email) ?? ""
+          email: asString2(user3.email) ?? "",
+          role: asString2(user3.role)
         },
         session: {
           id: asString2(session3.id) ?? "",

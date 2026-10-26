@@ -56,6 +56,16 @@ function hasMembership(value: unknown): boolean {
   return false;
 }
 
+/**
+ * Same wire guard family as hasMembership, reduced to the round-5 admin
+ * check: `GET /v1/me` user.role === "admin" means the gateway already grants
+ * the TOP tier (plan.ts override) — the trial step is skipped (no paywall
+ * for the platform admin).
+ */
+function isAdminUser(value: unknown): boolean {
+  return isRecord(value) && isRecord(value.user) && value.user.role === "admin";
+}
+
 export default async function OnboardingPage() {
   let me: unknown;
   try {
@@ -75,7 +85,7 @@ export default async function OnboardingPage() {
 
   return (
     <main id="main" className="flex min-h-svh items-center justify-center bg-app px-5 py-16">
-      <OnboardingFlow />
+      <OnboardingFlow admin={isAdminUser(me)} />
     </main>
   );
 }

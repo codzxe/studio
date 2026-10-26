@@ -71,7 +71,7 @@ import type {
 import { GatewayError } from "../errors.js";
 import { ok, page } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
-import { effectivePlan, installSubscriptionReader } from "../plan.js";
+import { effectivePlan, installSubscriptionReader, isAdminRole } from "../plan.js";
 import { outstandingReserveForWorkspace } from "./credits.js";
 
 /**
@@ -759,7 +759,8 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
         subscriptions !== null ? await subscriptions.getByOrganization(workspaceId) : null;
       // D-4: the EFFECTIVE plan (a trialing row gates as the trial catalog
       // tier); entitlements always come from the catalog, never hardcoded.
-      const plan = effectivePlan(row);
+      // Round 5: staff admins report the top tier regardless of the row.
+      const plan = effectivePlan(row, { admin: isAdminRole(c.get("auth").user.role) });
       const catalogEntitlements = entitlementsFor(plan);
       const balance = await deps.repos.ledger.balance(workspaceId);
       const reserved = await outstandingReserveForWorkspace(deps, workspaceId);

@@ -77,7 +77,7 @@ import { microcreditsToDisplayCredits } from "../credits-display.js";
 import { GatewayError } from "../errors.js";
 import { ok, page, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
-import { resolvePlan } from "../plan.js";
+import { isAdminRole, resolvePlan } from "../plan.js";
 import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
 import { renderKey } from "../storage.js";
 import { audit } from "./projects.js";
@@ -393,7 +393,9 @@ export function rendersRoutes(deps: GatewayDeps): Hono<AppBindings> {
     // Entitlement gates, in order — each a typed StudioError (plan comes from
     // the workspace's subscription row via the resolvePlan seam; entitlements
     // from the catalog, never inlined).
-    const plan = await resolvePlan(workspace.id);
+    const plan = await resolvePlan(workspace.id, {
+      admin: isAdminRole(c.get("auth").user.role),
+    });
     const entitlements = entitlementsFor(plan);
 
     // (a) D-2: only MP4 + PNG sequence are enabled in v1; the other declared

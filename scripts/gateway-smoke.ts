@@ -7,7 +7,12 @@ import { gatewayFetch } from "../services/gateway/src/handler.js";
 
 const APP_URL = process.env.APP_URL ?? "http://127.0.0.1:3999";
 
-async function call(method: string, path: string, body?: unknown, cookie?: string): Promise<{ status: number; json: any; setCookie: string | null; text: string }> {
+async function call(
+  method: string,
+  path: string,
+  body?: unknown,
+  cookie?: string,
+): Promise<{ status: number; json: unknown; setCookie: string | null; text: string }> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (cookie) headers.cookie = cookie;
   const response = await gatewayFetch(
@@ -18,9 +23,9 @@ async function call(method: string, path: string, body?: unknown, cookie?: strin
     }),
   );
   const text = await response.text();
-  let json: any = null;
+  let json: unknown = null;
   try {
-    json = JSON.parse(text);
+    json = JSON.parse(text) as unknown;
   } catch {
     /* keep text */
   }

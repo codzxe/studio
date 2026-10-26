@@ -24,7 +24,8 @@ for (const r of tables) {
   byTable.get(r.table_name).push(`${r.column_name}:${r.data_type}`);
 }
 console.log("=== EXISTING public tables ===");
-for (const [t, cols] of byTable) console.log(`  ${t} (${cols.length} cols): ${cols.join(", ").slice(0, 180)}`);
+for (const [t, cols] of byTable)
+  console.log(`  ${t} (${cols.length} cols): ${cols.join(", ").slice(0, 180)}`);
 
 console.log("\n=== drizzle migrations folder ===");
 const dir = "/home/z/my-project/packages/db/drizzle";
@@ -32,7 +33,12 @@ try {
   const files = readdirSync(dir);
   for (const f of files) console.log("  ", f);
   const journal = readFileSync(`${dir}/meta/_journal.json`, "utf8");
-  console.log("journal entries:", JSON.parse(journal).entries.map((e) => e.tag).join(" → "));
+  console.log(
+    "journal entries:",
+    JSON.parse(journal)
+      .entries.map((e) => e.tag)
+      .join(" → "),
+  );
 } catch (e) {
   console.log("  (none)", String(e.message).slice(0, 80));
 }

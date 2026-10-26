@@ -105,7 +105,11 @@ const SQLITE_TX_DEPTH = new WeakMap<object, number>();
 // Turbopack cannot statically evaluate it, so the reference stays opaque at
 // every bundling stage. tsx/Node resolve them at runtime identically to the
 // literal form; only the sqlite branches ever call them.
-const SQLITE_MODULE = ["better-sqlite", "-3"].join("");
+// Round 5 bugfix: the second element was "-3", so the joined specifier read
+// "better-sqlite-3" — `require()` ALWAYS failed and every sqlite-mode boot
+// through createSqliteDbSync crashed (the vitest suites booted Postgres in CI,
+// which is why this never surfaced there). "3" is the correct suffix.
+const SQLITE_MODULE = ["better-sqlite", "3"].join("");
 const DRIZZLE_SQLITE_MODULE = ["drizzle-orm", "/better-sqlite3"].join("");
 
 /**

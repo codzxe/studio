@@ -26,6 +26,12 @@ export interface AuthUser {
   readonly id: string;
   readonly name: string | null;
   readonly email: string;
+  /**
+   * Staff role from better-auth (the admin plugin's column): 'admin' marks a
+   * platform admin and gates the TOP pricing tier everywhere (plan.ts). null /
+   * 'user' for regular accounts. Optional so test fakes stay valid.
+   */
+  readonly role?: string | null;
 }
 
 export interface AuthSession {
@@ -319,6 +325,7 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
           id: asString(user.id) ?? "",
           name: asString(user.name),
           email: asString(user.email) ?? "",
+          role: asString(user.role),
         },
         session: {
           id: asString(session.id) ?? "",

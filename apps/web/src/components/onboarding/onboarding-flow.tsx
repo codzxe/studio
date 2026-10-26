@@ -145,6 +145,13 @@ export interface OnboardingFlowProps {
   readonly api?: OnboardingPort;
   /** Injectable navigation (tests). Production routes via useRouter. */
   readonly navigate?: (to: string) => void;
+  /**
+   * Round 5: the caller is a platform admin (GET /v1/me user.role ===
+   * "admin" — the gateway grants the TOP pricing tier to admins, no
+   * payment path). The trial step is skipped entirely: there is nothing to
+   * start and no card to take from a plan that is already maximal.
+   */
+  readonly admin?: boolean;
 }
 
 /** The created workspace as the flow carries it from step 1 to step 3. */
@@ -154,7 +161,7 @@ interface CreatedWorkspace {
   readonly slug: string;
 }
 
-export function OnboardingFlow({ api, navigate }: OnboardingFlowProps) {
+export function OnboardingFlow({ api, navigate, admin }: OnboardingFlowProps) {
   const router = useRouter();
   const port = useMemo<OnboardingPort>(() => api ?? createOnboardingPort(), [api]);
   const go = useCallback(
@@ -194,7 +201,18 @@ export function OnboardingFlow({ api, navigate }: OnboardingFlowProps) {
         />
       ) : null}
 
-      {step === 2 ? <UseCaseStep onNext={() => setStep(3)} /> : null}
+      {step === 2 ? (
+        <UseCaseStep
+          onNext={() => {
+            // Staff admins already hold the top tier — no trial/payment step.
+            if (admin === true) {
+              go("/w");
+              return;
+            }
+            setStep(3);
+          }}
+        />
+      ) : null}
 
       {step === 3 && workspace !== null ? (
         <TrialStep

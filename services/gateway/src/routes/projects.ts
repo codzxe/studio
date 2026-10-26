@@ -28,7 +28,7 @@ import { GatewayError } from "../errors.js";
 import { ok, page, pathParam } from "../http.js";
 import { requireLeaseForMutation } from "../lease-guard.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
-import { resolvePlan } from "../plan.js";
+import { isAdminRole, resolvePlan } from "../plan.js";
 import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
 import { snapshotKey } from "../storage.js";
 
@@ -97,7 +97,12 @@ export function projectsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     // is not atomic across concurrent creates (documented deviation — the
     // worker-wave usage counters tighten it); a plan at the cap refuses new
     // projects with 429 before any row is written.
-    await assertProjectQuota(deps, workspace.id, c.get("requestId"));
+    await assertProjectQuota(
+      deps,
+      workspace.id,
+      c.get("requestId"),
+      isAdminRole(c.get("auth").user.role),
+    );
     const project = await deps.repos.projects.create(workspace.id, {
       name: parsed.data.name,
       description: parsed.data.description,
@@ -231,7 +236,12 @@ export function projectsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       // §12.1 first: the repo get is tenant-scoped — cross-tenant ids read as
       // 404 before any quota state is probed.
       const source = await deps.repos.projects.get(workspace.id, sourceId);
-      await assertProjectQuota(deps, workspace.id, c.get("requestId"));
+      await assertProjectQuota(
+        deps,
+        workspace.id,
+        c.get("requestId"),
+        isAdminRole(c.get("auth").user.role),
+      );
 
       const target = await deps.repos.projects.create(workspace.id, {
         name: duplicateName(source.name),
@@ -288,8 +298,8 @@ export function projectsRoutes(deps: GatewayDeps): Hono<AppBindings> {
  * to trial per D-4 — the most restrictive tier, so quota gates fail CLOSED).
  * Exported for the assets route (the storageBytes gate shares this seam).
  */
-export async function planEntitlements(workspaceId: string): Promise<Entitlements> {
-  return entitlementsFor(await resolvePlan(workspaceId));
+export async function planEntitlements(workspaceId: string, admin = false): Promise<Entitlements> {
+  return entitlementsFor(await resolvePlan(workspaceId, { admin }));
 }
 
 /** 429 QUOTA_EXCEEDED when the workspace is at its plan's maxProjects cap. */
@@ -297,9 +307,10 @@ async function assertProjectQuota(
   deps: GatewayDeps,
   workspaceId: string,
   requestId: string,
+  admin: boolean,
 ): Promise<void> {
   const [entitlements, liveProjects] = await Promise.all([
-    planEntitlements(workspaceId),
+    planEntitlements(workspaceId, admin),
     deps.repos.projects.countActive(workspaceId),
   ]);
   if (liveProjects >= entitlements.maxProjects) {

@@ -20,7 +20,7 @@ import type { AppBindings, AppContext, GatewayDeps, WorkspaceContext } from "../
 import { GatewayError } from "../errors.js";
 import { ok, pathParam } from "../http.js";
 import { requireAuth, resolveWorkspaceContext } from "../middleware.js";
-import { resolvePlan } from "../plan.js";
+import { isAdminRole, resolvePlan } from "../plan.js";
 import { countPendingInvites } from "./billing.js";
 
 /**
@@ -54,7 +54,10 @@ async function assertSeatAvailable(
   c: AppContext,
   context: WorkspaceContext,
 ): Promise<void> {
-  const plan = await resolvePlan(context.id);
+  // Round 5: staff admins seat-limit (and report) from the top tier.
+  const plan = await resolvePlan(context.id, {
+    admin: isAdminRole(c.get("auth").user.role),
+  });
   if (!isPaidPlan(plan)) {
     return; // trial-state workspace — policed at checkout conversion
   }

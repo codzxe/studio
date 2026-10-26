@@ -63,7 +63,7 @@ function freeState(options: { readonly canAcquire?: boolean } = {}): LeaseStateR
 }
 
 const ME: MeResponse = {
-  user: { id: "u_me", name: "Me", email: "me@studio.test" },
+  user: { id: "u_me", name: "Me", email: "me@studio.test", role: "user" },
   memberships: [],
   plan: { plan: "trial", creditsBalance: 1, includedCredits: 1, renewsAt: null },
 };

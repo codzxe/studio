@@ -12,14 +12,23 @@ import { type NextRequest, NextResponse } from "next/server";
  * - x-pathname is stamped for request-scoped logging/debugging.
  *
  * The session cookie name is better-auth's default (see
- * src/lib/auth-client.ts SESSION_COOKIE_NAME).
+ * src/lib/auth-client.ts SESSION_COOKIE_NAME) — but better-auth PREFIXES it
+ * with `__Secure-` whenever the auth origin is HTTPS (its secure-cookie
+ * default). Local dev over http sets `better-auth.session_token`; production
+ * (motiongra.vercel.app, HTTPS) sets `__Secure-better-auth.session_token`.
+ * A presence-only check that names JUST the bare form redirects every
+ * authenticated production visit back to /sign-in — the sign-in loop the
+ * round-5 fix closed. Both names are accepted; nothing else changes.
  */
-const SESSION_COOKIE_NAME = "better-auth.session_token";
+const SESSION_COOKIE_NAMES = [
+  "better-auth.session_token",
+  "__Secure-better-auth.session_token",
+] as const;
 
 export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (!request.cookies.has(SESSION_COOKIE_NAME)) {
+  if (!SESSION_COOKIE_NAMES.some((name) => request.cookies.has(name))) {
     const url = request.nextUrl.clone();
     url.pathname = "/sign-in";
     url.search = `next=${encodeURIComponent(pathname)}`;

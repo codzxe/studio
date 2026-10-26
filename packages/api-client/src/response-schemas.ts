@@ -123,6 +123,7 @@ export const ME_RESPONSE_SCHEMA = z.object({
     id: idSchema,
     name: z.string().nullable(),
     email: z.string(),
+    role: z.string().nullable(),
   }),
   memberships: z.array(MEMBERSHIP_SCHEMA),
   plan: PLAN_SUMMARY_SCHEMA,

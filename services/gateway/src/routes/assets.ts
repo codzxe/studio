@@ -50,6 +50,7 @@ import { GatewayError } from "../errors.js";
 import { ok, page, pathParam } from "../http.js";
 import { requireLeaseForMutation } from "../lease-guard.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
+import { isAdminRole } from "../plan.js";
 import { SIGNED_URL_TTL_SECONDS } from "../signing.js";
 import { assetKey, sanitizeName } from "../storage.js";
 import { audit, planEntitlements } from "./projects.js";
@@ -191,7 +192,8 @@ export function assetsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     // sizeBytes is the projection input; the verify step true-ups against
     // the object HEAD afterwards.
     const [entitlements, usage] = await Promise.all([
-      planEntitlements(workspace.id),
+      // Round 5: staff admins upload against the top tier's storageBytes.
+      planEntitlements(workspace.id, isAdminRole(c.get("auth").user.role)),
       deps.repos.assets.quota(workspace.id),
     ]);
     if (usage.totalBytes + descriptor.sizeBytes > entitlements.storageBytes) {

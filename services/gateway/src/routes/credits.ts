@@ -21,7 +21,7 @@ import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { GatewayError } from "../errors.js";
 import { ok, page } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
-import { resolvePlan } from "../plan.js";
+import { isAdminRole, resolvePlan } from "../plan.js";
 import {
   RECONCILE_REQUEST_SCHEMA,
   createRepoReconcileSources,
@@ -81,7 +81,9 @@ export function creditsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     // catalog — never a route-local table. `purchasedCredits` stays summed at
     // the ledger level (top-up grants raise `balance`); `renewsAt` is null
     // here — `GET /v1/billing/state` carries the period end.
-    const plan = await resolvePlan(workspaceId);
+    const plan = await resolvePlan(workspaceId, {
+      admin: isAdminRole(c.get("auth").user.role),
+    });
     const body: CreditsSummary = {
       balance,
       includedCredits: entitlementsFor(plan).monthlyCreditAllowance,

@@ -31,6 +31,28 @@ import { cookies } from "next/headers";
 
 const DEFAULT_GATEWAY_INTERNAL_URL = "http://127.0.0.1:8787";
 
+// ── Round 5: the in-process gateway seam ────────────────────────────────────
+//
+// Production-on-Vercel posture: the gateway is mounted INSIDE this Next
+// runtime (src/app/v1/[...path]/route.ts serves the prebuilt api/gateway.mjs
+// bundle). With GATEWAY_INLINE=true this seam calls THAT SAME bundle
+// in-process — `gatewayFetch(new Request(…))` — instead of a full HTTPS
+// round-trip to GATEWAY_INTERNAL_URL (the deployment's own public URL),
+// which cold-started a SECOND serverless invocation and roughly doubled
+// every RSC page's latency (measured: /onboarding ≈ 3.4 s cold, /w ≈ 0.75 s
+// per hop). One module specifier on both sides ⇒ the bundler resolves both
+// imports to ONE module instance ⇒ one memoized app + one db pool.
+//
+// Dev (`pnpm dev`) and the self-hosted topology (infra/caddy fronts a
+// separate gateway process) keep the HTTP path — GATEWAY_INLINE is unset.
+const INLINE_GATEWAY = process.env.GATEWAY_INLINE === "true";
+
+/** Cosmetic absolute origin for the synthesized in-process Request (Hono routes on the pathname). */
+function inlineOrigin(): string {
+  const url = process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://127.0.0.1:3000";
+  return url.replace(/\/+$/, "");
+}
+
 /** Per-request options for {@link gatewayCall}. */
 export interface GatewayRequestInit {
   /** Workspace id or slug → `x-workspace-id` (requireWorkspace reads it). */
@@ -175,7 +197,16 @@ export async function gatewayCall<T = unknown>(
     request.body = JSON.stringify(init.body);
   }
 
-  const response = await fetch(url, request);
+  let response: Response;
+  if (INLINE_GATEWAY) {
+    // In-process: same specifier as src/app/v1/[...path]/route.ts (one module
+    // instance). Headers/body below (cookie, x-workspace-id, Idempotency-Key)
+    // are forwarded verbatim — the gateway validates the session itself.
+    const { gatewayFetch } = await import("../../api/gateway.mjs");
+    response = await gatewayFetch(new Request(`${inlineOrigin()}${path}`, request));
+  } else {
+    response = await fetch(url, request);
+  }
   const status = response.status;
   let bodyText = "";
   try {

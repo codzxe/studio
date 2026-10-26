@@ -96,7 +96,7 @@ function createFakeRegionClient(
       get: async () => {
         meCalls += 1;
         return {
-          user: { id: VIEWER_ID, name: "Me", email: "me@example.com" },
+          user: { id: VIEWER_ID, name: "Me", email: "me@example.com", role: "user" },
           memberships: [],
           plan: { plan: "starter", creditsBalance: 10, includedCredits: 10, renewsAt: null },
         };

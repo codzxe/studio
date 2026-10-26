@@ -14,7 +14,7 @@ import { MODEL_CATALOG, type ModelsResponse, allowedModelsForPlan } from "@studi
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { ok } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
-import { resolvePlan } from "../plan.js";
+import { isAdminRole, resolvePlan } from "../plan.js";
 
 export function modelsRoutes(deps: GatewayDeps): Hono<AppBindings> {
   // `deps` is intentionally unused today: the route reads static catalog data
@@ -28,7 +28,9 @@ export function modelsRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
   app.get("/v1/models", requireWorkspace("viewer"), async (c: AppContext): Promise<Response> => {
     const workspaceId = c.get("workspace").id;
-    const plan = await resolvePlan(workspaceId);
+    const plan = await resolvePlan(workspaceId, {
+      admin: isAdminRole(c.get("auth").user.role),
+    });
     const models = allowedModelsForPlan(plan).map((id) => {
       const descriptor = MODEL_CATALOG[id];
       return {

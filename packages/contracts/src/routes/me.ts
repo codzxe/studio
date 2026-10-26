@@ -29,6 +29,12 @@ export interface MeResponse {
     readonly id: Id;
     readonly name: string | null;
     readonly email: string;
+    /**
+     * Staff role from better-auth (round 5): "admin" = platform admin — gates
+     * the TOP pricing tier everywhere without a payment path; "user"/null for
+     * regular accounts. The web onboarding uses it to skip the trial step.
+     */
+    readonly role: string | null;
   };
   readonly memberships: readonly Membership[];
   readonly plan: PlanSummary;

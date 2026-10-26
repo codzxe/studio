@@ -44,7 +44,9 @@ for (const c of candidates) {
   try {
     const info = await sql`select version(), current_user, count(*)::int as n_tables
       from information_schema.tables where table_schema = 'public'`;
-    console.log(`[OK]   ${c.name} → ${info[0].version.split(" ").slice(0, 2).join(" ")} | user=${info[0].current_user} | public tables=${info[0].n_tables}`);
+    console.log(
+      `[OK]   ${c.name} → ${info[0].version.split(" ").slice(0, 2).join(" ")} | user=${info[0].current_user} | public tables=${info[0].n_tables}`,
+    );
   } catch (error) {
     console.log(`[FAIL] ${c.name} → ${String(error.message).slice(0, 140)}`);
   } finally {

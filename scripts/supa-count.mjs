@@ -13,7 +13,16 @@ const sql = postgres(
   `postgres://postgres.${SUPA_REF}:${SUPA_DB_PASS}@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres`,
   { max: 1, connect_timeout: 10 },
 );
-for (const t of ["_prisma_migrations", "agent_run", "agent_step", "audit_log", "call_log", "document", "knowledge_chunk", "session"]) {
+for (const t of [
+  "_prisma_migrations",
+  "agent_run",
+  "agent_step",
+  "audit_log",
+  "call_log",
+  "document",
+  "knowledge_chunk",
+  "session",
+]) {
   const n = await sql.unsafe(`select count(*)::int as n from public."${t}"`);
   console.log(`  ${t}: ${n[0].n} rows`);
 }

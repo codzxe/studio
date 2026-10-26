@@ -27,6 +27,7 @@
       "scripts/ai-sdk-probe.mjs",
       "scripts/check-mock-plan.ts",
       "scripts/perf/results/**",
+      "apps/web/api/gateway.mjs",
       "packages/*/src/**/*.js",
       "packages/*/src/**/*.js.map",
       "packages/*/src/**/*.d.ts"

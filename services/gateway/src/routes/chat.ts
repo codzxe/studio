@@ -48,7 +48,7 @@ import { pathParam } from "../http.js";
 import { TOOL_RESULT_TIMEOUT_MS } from "../litellm/runner.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
 import type { CompilePlanResult } from "../plan-compiler.js";
-import { resolvePlan } from "../plan.js";
+import { isAdminRole, resolvePlan } from "../plan.js";
 import {
   type AgentRun,
   type AgentRunHistoryTurn,
@@ -233,8 +233,11 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
       }
 
       // Model selection with plan entitlements (§8.2/§10.1): resolvePlan is the
-      // M6 swap point; MODEL_NOT_ENTITLED never starts a run.
-      const plan = await resolvePlan(workspace.id);
+      // M6 swap point; MODEL_NOT_ENTITLED never starts a run. Round 5: staff
+      // admins select from the top tier's model list.
+      const plan = await resolvePlan(workspace.id, {
+        admin: isAdminRole(c.get("auth").user.role),
+      });
       const model = resolveChatModel({ requested: request.model, plan, requestId });
 
       // §8.3 "last 6 turns" — loaded BEFORE this run's user turn is persisted,

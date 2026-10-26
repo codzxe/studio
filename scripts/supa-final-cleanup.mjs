@@ -15,7 +15,8 @@ const sql = postgres(
 );
 const rows = await sql`select id, email, name from "user"`;
 console.log("current users:", JSON.stringify(rows));
-const del = await sql`delete from "user" where email like '%@test.local' or email like '%test.local%'`;
+const del =
+  await sql`delete from "user" where email like '%@test.local' or email like '%test.local%'`;
 console.log("users deleted:", del.count);
 const left = await sql`select id, email from "user"`;
 console.log("remaining users:", JSON.stringify(left));

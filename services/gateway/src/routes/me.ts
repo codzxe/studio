@@ -27,7 +27,7 @@ import type { Repos, Subscription } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { ok } from "../http.js";
 import { requireAuth } from "../middleware.js";
-import { effectivePlan } from "../plan.js";
+import { effectivePlan, isAdminRole } from "../plan.js";
 
 /**
  * Stub boots wire fake repos without the billing tables; absence degrades
@@ -87,10 +87,12 @@ export function meRoutes(deps: GatewayDeps): Hono<AppBindings> {
         subscription = null;
       }
     }
-    const plan = effectivePlan(subscription);
+    // Round 5: a staff admin (role='admin') always reports the top tier —
+    // plan.ts applies the same override at every enforcement seam.
+    const plan = effectivePlan(subscription, { admin: isAdminRole(user.role) });
 
     const body: MeResponse = {
-      user: { id: user.id, name: user.name, email: user.email },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role ?? null },
       memberships,
       plan: {
         plan,

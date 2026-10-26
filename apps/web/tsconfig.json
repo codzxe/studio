@@ -2,11 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "target": "ES2022",
-    "lib": [
-      "DOM",
-      "DOM.Iterable",
-      "ES2022"
-    ],
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -24,37 +20,14 @@
       }
     ],
     "paths": {
-      "@/*": [
-        "./src/*"
-      ],
-      "@studio/config": [
-        "./src/vendor/studio-config.ts"
-      ],
-      "@studio/contracts": [
-        "../../packages/contracts/src/index.ts"
-      ],
-      "@studio/ui": [
-        "../../packages/ui/src/index.ts"
-      ],
-      "@studio/editor-bridge": [
-        "../../packages/editor-bridge/src/index.ts"
-      ],
-      "@studio/db": [
-        "../../packages/db/src/index.ts"
-      ]
+      "@/*": ["./src/*"],
+      "@studio/config": ["./src/vendor/studio-config.ts"],
+      "@studio/contracts": ["../../packages/contracts/src/index.ts"],
+      "@studio/ui": ["../../packages/ui/src/index.ts"],
+      "@studio/editor-bridge": ["../../packages/editor-bridge/src/index.ts"],
+      "@studio/db": ["../../packages/db/src/index.ts"]
     }
   },
-  "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    "e2e",
-    "playwright.config.ts",
-    "api",
-    "api-src"
-  ]
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", "e2e", "playwright.config.ts", "api", "api-src"]
 }

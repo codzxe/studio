@@ -108,7 +108,7 @@ describe("barrel: @studio/contracts public surface", () => {
       updatedAt: "2026-01-01T00:00:00Z",
     };
     const me: MeResponse = {
-      user: { id: "u", name: null, email: "a@b.co" },
+      user: { id: "u", name: null, email: "a@b.co", role: "user" },
       memberships: [],
       plan: { plan: "starter", creditsBalance: 900, includedCredits: 1000, renewsAt: null },
     };

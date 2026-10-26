@@ -13,9 +13,11 @@ const sql = postgres(
   `postgres://postgres.${SUPA_REF}:${SUPA_DB_PASS}@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres`,
   { max: 1, connect_timeout: 10 },
 );
-const tables = await sql`select table_name from information_schema.tables where table_schema='public' order by table_name`;
+const tables =
+  await sql`select table_name from information_schema.tables where table_schema='public' order by table_name`;
 console.log(`public tables (${tables.length}):`, tables.map((t) => t.table_name).join(", "));
-const mig = await sql`select hash, created_at from drizzle.__drizzle_migrations order by created_at`;
+const mig =
+  await sql`select hash, created_at from drizzle.__drizzle_migrations order by created_at`;
 console.log(`drizzle journal entries: ${mig.length}`);
 const user = await sql`select count(*)::int as n from "user"`;
 console.log(`"user" rows: ${user[0].n}`);
