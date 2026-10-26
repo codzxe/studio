@@ -46,7 +46,14 @@
       "project": ["src/**/*.ts", "tests/**/*.ts"]
     },
     "packages/db": {
-      "entry": ["src/index.ts", "src/db.ts", "src/auth.ts", "src/migrate.ts", "src/ids.ts"],
+      "entry": [
+        "src/index.ts",
+        "src/db.ts",
+        "src/auth.ts",
+        "src/migrate.ts",
+        "src/ids.ts",
+        "scripts/seed.ts"
+      ],
       "ignoreDependencies": ["better-sqlite3", "@types/better-sqlite3"],
       "project": ["src/**/*.ts"]
     },
