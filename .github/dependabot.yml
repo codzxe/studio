@@ -1,11 +1,16 @@
 # Dependabot — spec §16.1 ("enable Dependabot + private vulnerability reporting").
-# Keep updates weekly + direct-only so the 2-person fleet can review them in one sitting.
+#
+# Round 5: per-workspace coverage (the W1-M TODO) — every pnpm workspace
+# manifest gets its own entry so a dependency used by SEVERAL apps/packages is
+# proposed against each manifest that declares it, and grouped updates keep
+# the PR queue reviewable in one sitting. All entries share the single root
+# pnpm-lock.yaml; grouped bumps + the PR limit keep lockfile conflicts rare.
+#
+# §16 policy reminder: AGPL/SSPL/BUSL/RSALv2/Elastic deps fail the license
+# gate (scripts/check-licenses.mjs, run via pnpm check:licenses) even if
+# Dependabot proposes them — the gate is the final arbiter, not this file.
 version: 2
 updates:
-  # npm — root manifest (direct dependencies only; transitive deps are pinned by
-  # the lockfile and surface through the weekly lockfile refresh).
-  # TODO(W1-M): pnpm workspaces need one entry per package dir (apps/*, packages/*)
-  # once per-package dependencies stabilize; root-only for now, per task W1-M.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
@@ -20,8 +25,174 @@ updates:
       - "codzxe"
     labels:
       - "dependencies"
-    # §16 policy reminder: AGPL/SSPL/BUSL/RSALv2/Elastic deps fail the
-    # license gate (scripts/check-licenses.mjs, run via pnpm check:licenses)
-    # even if Dependabot proposes them. No GitHub Actions workflows exist in
-    # .github/workflows yet (W5-08 removed the inert github-actions stanza;
-    # re-add it when CI workflows land).
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+      development-dependencies:
+        dependency-type: "development"
+
+  - package-ecosystem: "npm"
+    directory: "/apps/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+      development-dependencies:
+        dependency-type: "development"
+
+  - package-ecosystem: "npm"
+    directory: "/services/gateway"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+      development-dependencies:
+        dependency-type: "development"
+
+  - package-ecosystem: "npm"
+    directory: "/services/worker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+      development-dependencies:
+        dependency-type: "development"
+
+  # ── packages/* — one entry per workspace manifest (W1-M) ───────────────────
+  - package-ecosystem: "npm"
+    directory: "/packages/api-client"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/config"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/contracts"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/db"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/editor-bridge"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/storage"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/ui"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"

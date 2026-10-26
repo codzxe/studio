@@ -1,0 +1,78 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "ignore": [
+    "editor/**",
+    "archive/**",
+    "download/**",
+    "docs/**",
+    "scripts/perf/results/**",
+    "apps/web/api/gateway.mjs"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/**/*.{mjs,ts,js}"],
+      "ignoreDependencies": [
+        "postgres",
+        "playwright",
+        "@playwright/test",
+        "ai",
+        "@ai-sdk/openai-compatible",
+        "zod",
+        "@studio/contracts"
+      ]
+    },
+    "apps/web": {
+      "entry": [
+        "next.config.ts",
+        "postcss.config.mjs",
+        "src/proxy.ts",
+        "src/app/**/*.{ts,tsx}",
+        "e2e/**/*.ts",
+        "tests/**/*.ts",
+        "tests/**/*.tsx",
+        "vitest.config.ts",
+        "vitest.setup.ts",
+        "playwright.config.ts"
+      ],
+      "ignoreDependencies": ["tailwindcss", "postcss"],
+      "project": ["src/**/*.{ts,tsx}", "e2e/**/*.ts", "tests/**/*.{ts,tsx}", "*.ts", "*.mjs"]
+    },
+    "packages/config": {
+      "entry": ["src/**/*.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/contracts": {
+      "entry": ["src/**/*.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts"]
+    },
+    "packages/db": {
+      "entry": ["src/index.ts", "src/db.ts", "src/auth.ts", "src/migrate.ts", "src/ids.ts"],
+      "ignoreDependencies": ["better-sqlite3", "@types/better-sqlite3"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/api-client": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/storage": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/ui": {
+      "entry": ["src/**/*.tsx", "src/**/*.ts"],
+      "project": ["src/**/*.tsx", "src/**/*.ts"]
+    },
+    "packages/editor-bridge": {
+      "entry": ["src/**/*.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "services/gateway": {
+      "entry": ["src/index.ts", "src/handler.ts", "src/app.ts", "tests/**/*.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts"]
+    },
+    "services/worker": {
+      "entry": ["src/index.ts", "src/cli.ts", "tests/**/*.ts", "scripts/**/*.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
+    }
+  }
+}
