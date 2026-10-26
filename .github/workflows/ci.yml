@@ -191,6 +191,35 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: editor
+      # Fonts are NEVER committed (spec §1.5 rule 9, licence gate enforced) — but
+      # crates/text/src/fonts.rs `include_bytes!`s editor/assets/fonts/*.ttf at
+      # compile time, so a fresh checkout cannot compile effectcraft-text at all
+      # (the 2026-10-25 + 2026-10-26 editor-cargo failures; worklog "fresh CI
+      # checkouts no longer contain the fonts"). Fetch the exact bytes our
+      # vendored pin ships — upstream storytold/effectcraft @ 9db7f3b2, the pin
+      # in editor/UPSTREAM.md — sha256-verified, so the fetch is integrity-pinned
+      # even though raw.githubusercontent is not content-addressed. No font
+      # binary ever lands in THIS repo's history; the files live only on the
+      # runner workspace for this job.
+      - name: "Provision editor fonts (from the upstream pin, sha256-verified)"
+        run: |
+          set -euo pipefail
+          mkdir -p editor/assets/fonts
+          cd editor/assets/fonts
+          base="https://raw.githubusercontent.com/storytold/effectcraft/9db7f3b21700fd821f215782ed1c82afe077880f/assets/fonts"
+          while read -r sum name; do
+            printf '%s  %s\n' "$sum" "$name" >> SHA256SUMS
+            curl -fsSL --retry 3 --max-time 60 -o "$name" "$base/$name"
+          done <<'FONTS'
+          40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82  Inter-Regular.ttf
+          97ad806f526e41546d46365bb3a393145f75b7b1568913db74549ad8b8dba872  Inter-Medium.ttf
+          78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3  Inter-SemiBold.ttf
+          288316099b1e0a47a4716d159098005eef7c0066921f34e3200393dbdb01947f  Inter-Bold.ttf
+          bbc051dd204b5019a1aa0bc0ae2aa8a05ab13e7a3f979fa357631dc7feb6833a  Inter-Italic.ttf
+          e6fd0d7e91550b3ed2b735d4312474362c4716edc4fc0577a0f61ed782d5aed1  JetBrainsMono-Regular.ttf
+          a15cfbbc1539d707115111d672d590a3d70d4f74b4c0a315956da20ae19a14e1  NotoSerif-Regular.ttf
+          FONTS
+          sha256sum -c SHA256SUMS
       - name: "cargo check (release, cli crate only)"
         working-directory: editor
         run: cargo check --release -p effectcraft-cli
