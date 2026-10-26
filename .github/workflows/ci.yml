@@ -242,7 +242,7 @@ jobs:
   e2e:
     name: "e2e: playwright chromium (full stack boot)"
     runs-on: ubuntu-latest
-    timeout-minutes: 20 # 20 not 15: README recipe adds a cargo fixture build + cold `next dev` compiles on top of the house 10–15 min guidance; first green run will tell if this sticks.
+    timeout-minutes: 45 # 20→45 (2026-10-26, first real e2e run on 07fa9a5): everything before the suite is cheap — rust-cache (workspaces: editor) collapses the fixture build to ~10s, the GH runner image ships chromium (browsers step 24s), pnpm store cache makes install 4s — but the playwright step itself burned 18m44s (cold `next dev` compiles + retries:2 on runner-visual diffs, README §5: baselines are runner-image-dependent) and got CANCELLED at 20m. A cancelled job taints the whole RUN's conclusion (continue-on-error covers failure, not cancellation), so the budget must let the suite finish so it can fail/succeed on its own.
     # OWED: first green run. The boot recipe (apps/web/e2e/README.md) has never
     # been exercised on a GH runner: visual baselines are runner-image-dependent
     # (README §5: WebGL output is GPU/driver-dependent; the committed
