@@ -3555,3 +3555,20 @@ Stage Summary:
 - History hashes changed (e.g. HEAD e105541 -> 34bbcc5); tree contents identical; dependabot branches on origin untouched (not rewritten, still at old hashes until next sync).
 - scripts/rewrite_authors.py kept as the reproducible tool.
 - PENDING USER: fresh GitHub PAT (classic repo scope or fine-grained Contents:rw on codzxe/studio); then `git push --force origin main v0.1.0-beta.0 pre-effectcraft-baseline`. Old token should be revoked on GitHub since its only copy was deleted with the remote config.
+
+---
+Task ID: git-identity-rewrite (completion)
+Agent: main-agent (session continuation)
+Task: Finish the identity rewrite — force-push rewritten history + tags to origin, verify GitHub-side attribution.
+
+Work Log:
+- User supplied a fresh classic PAT; re-embedded in origin URL (same convention as the original setup) and force-pushed main.
+- Hash discrepancy resolved: the container's auto-checkpointer committed scripts/rewrite_authors.py + worklog.md as UUID checkpoint 9bde2489 (e98220b) on top of the rewrite — using the NEW codzxe config, so it's correct too. Local main == remote main == e98220b.
+- Tags: pre-effectcraft-baseline (65a1efb) and v0.1.0-beta.0 (tag object a72c4bc) predate the z identity / were already correct — verified present on remote, unchanged.
+- scripts/audit_remote_authors.py (NEW, persisted): paginates the GitHub commits API, tallies git author identity + attributed account for every commit.
+- AUDIT PASS: 341/341 commits on GitHub attributed to codzxe (226558024+codzxe@users.noreply.github.com); zero Z User/z@container remaining; breakdown {'codzxe': 341}.
+
+Stage Summary:
+- DONE: entire GitHub history now authored/committed by codzxe; main + tags pushed; future commits use codzxe (local+global config).
+- Outstanding user hygiene: revoke the OLD lost PAT; rotate the current PAT when convenient (it lives in .git/config and was pasted in chat).
+- Note: 4 dependabot/* branches on origin still reference the pre-rewrite hash lineage (disconnected from new main) — close/delete when convenient; dependabot will re-create them against the new main.
