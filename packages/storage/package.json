@@ -8,6 +8,6 @@
     ".": "./src/validate.ts",
     "./validate": "./src/validate.ts"
   },
-  "devDependencies": { "@types/node": "^22.10.0", "vitest": "^2.1.8" },
+  "devDependencies": { "@types/node": "^26.6.5", "vitest": "^2.1.8" },
   "scripts": { "typecheck": "tsc --noEmit", "lint": "biome check src tests", "test": "vitest run" }
 }
