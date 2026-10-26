@@ -33,7 +33,8 @@
     "editor:serve": "cd editor && cargo xtask web --serve 8765",
     "editor:cli": "cd editor && cargo build -p effectcraft-cli",
     "editor:test": "cd editor && cargo test --workspace",
-    "check:licenses": "node scripts/check-licenses.mjs"
+    "check:licenses": "node scripts/check-licenses.mjs",
+    "fonts:web": "node scripts/fetch-web-fonts.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
@@ -41,9 +42,5 @@
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },
-  "workspaces": [
-    "apps/*",
-    "services/*",
-    "packages/*"
-  ]
+  "workspaces": ["apps/*", "services/*", "packages/*"]
 }

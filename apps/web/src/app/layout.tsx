@@ -1,32 +1,33 @@
 import { Brand } from "@studio/config";
 import type { Metadata, Viewport } from "next";
-import { Instrument_Sans, Instrument_Serif, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
 /**
- * Fonts (§4.1): display serif + UI sans + mono, loaded with next/font so
- * there is no layout shift. The next/font variables are mapped onto the
- * design-system stacks in globals.css (see packages/ui/README.md §2).
- * If Google Fonts is unreachable at build time, switch to the documented
- * @fontsource fallback (apps/web/README.md) — same variable names.
+ * Fonts (§4.1): display serif + UI sans + mono, self-hosted with next/font so
+ * there is no layout shift. Hermetic build: the .ttf binaries under ./fonts/
+ * are provisioned by `pnpm fonts:web` (scripts/fetch-web-fonts.mjs) from the
+ * pinned google/fonts commit, sha256-verified — NEVER committed (spec §1.5
+ * rule 9). CI (web + e2e jobs) and `pnpm dev:ready` run the same fetch. This
+ * replaced `next/font/google`, whose BUILD-time fonts.googleapis.com fetch
+ * flaked on GitHub runners (2026-10-25/26: "next/font/google queries have
+ * exactly one entry", 2 of 3 runs). The next/font variables keep the SAME
+ * names as the google variant, so the globals.css stacks are unchanged.
  */
-const instrumentSerif = Instrument_Serif({
-  weight: "400",
-  subsets: ["latin"],
+const instrumentSerif = localFont({
+  src: [{ path: "./fonts/InstrumentSerif-Regular.ttf", weight: "400", style: "normal" }],
   display: "swap",
   variable: "--font-instrument-serif",
 });
 
-const instrumentSans = Instrument_Sans({
-  weight: ["400", "500", "600"],
-  subsets: ["latin"],
+const instrumentSans = localFont({
+  src: [{ path: "./fonts/InstrumentSans-Variable.ttf", weight: "400 700", style: "normal" }],
   display: "swap",
   variable: "--font-instrument-sans",
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  weight: ["400", "500"],
-  subsets: ["latin"],
+const jetbrainsMono = localFont({
+  src: [{ path: "./fonts/JetBrainsMono-Variable.ttf", weight: "100 800", style: "normal" }],
   display: "swap",
   variable: "--font-jetbrains-mono",
 });

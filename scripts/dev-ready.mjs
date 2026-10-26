@@ -21,7 +21,10 @@
  *   [3/4] editor    — verifies the WASM editor dist in apps/web/public/editor:
  *                     `\0asm` magic bytes, size floor, and every boot file the
  *                     iframe needs (effectcraft_web.js, worker.js,
- *                     audio-worklet.js, index.html, sw.js, manifest).
+ *                     audio-worklet.js, index.html, sw.js, manifest) + the
+ *                     three next/font/local .ttf files (scripts/fetch-web-fonts.mjs
+ *                     — pinned google/fonts fetch, sha256-verified, offline-friendly
+ *                     once fetched; `next dev` cannot compile layout.tsx without them).
  *   [4/4] boot+warm — spawns gateway (tsx watch, PORT=<gw>) then web
  *                     (`next dev`, PORT=<web>), each detached in its own
  *                     process group, waits for /v1/health, signs in as the
@@ -52,6 +55,8 @@ import fs from "node:fs";
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { ensureWebFonts } from "./fetch-web-fonts.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LOCAL_DIR = path.join(REPO, ".local");
@@ -253,7 +258,7 @@ async function stopStack({ quiet = false, includeStrays = true } = {}) {
   if (state?.gateway?.pid) tracked.push(state.gateway.pid);
   if (state?.web?.pid) tracked.push(state.web.pid);
   if (tracked.length > 0 && !quiet)
-    say(dim('                  previous dev:ready stack found (state file)'));
+    say(dim("                  previous dev:ready stack found (state file)"));
   await killPids(tracked, { label: "dev:ready stack" });
   if (includeStrays) await killPids(findRepoServers(), { label: "repo-owned dev servers" });
   clearState();
@@ -531,7 +536,7 @@ function printLogTails() {
 // ── commands ─────────────────────────────────────────────────────────────────
 async function cmdStart(opts) {
   const t0 = Date.now();
-  say(bold('dev:ready — studio stack (Option 1: next dev + route warmup, HMR live)'));
+  say(bold("dev:ready — studio stack (Option 1: next dev + route warmup, HMR live)"));
   say("");
 
   // [1/4] ports -------------------------------------------------------------
@@ -585,6 +590,21 @@ async function cmdStart(opts) {
         `      all ${EDITOR_BOOT_FILES.length} boot files present (WebGL2 fallback stays runtime-negotiated: ?gpu=webgl2)`,
       ),
     );
+  }
+  // Web fonts (next/font/local — layout.tsx): provisioned from the pinned
+  // google/fonts commit, sha256-verified; a file with the right hash is kept
+  // (no network on warm boots). Missing/unfetchable fonts are FATAL —
+  // `next dev` fails compiling layout.tsx without them.
+  const fontsT0 = Date.now();
+  try {
+    const fonts = await ensureWebFonts({ log: (line) => say(dim(`      ${line}`)) });
+    say(
+      `      ${fonts.total} web fonts — ${green(`${fonts.kept} hash-ok`)}, ${cyan(`${fonts.fetched} fetched`)} (${fmtMs(Date.now() - fontsT0)})`,
+    );
+  } catch (e) {
+    say(red(`      ✗ web fonts: ${e instanceof Error ? e.message : String(e)}`));
+    say(dim("      next dev cannot compile layout.tsx without them — pnpm fonts:web, then retry"));
+    process.exit(1);
   }
   say("");
 
@@ -717,7 +737,7 @@ async function cmdStart(opts) {
   say("");
   say(dim(`  ready in ${fmtMs(warmMs)} · logs .local/web-dev.log · .local/gateway-dev.log`));
   say(
-    dim('  stop: pnpm dev:ready:stop   status: pnpm dev:ready:status   logs: pnpm dev:ready:logs'),
+    dim("  stop: pnpm dev:ready:stop   status: pnpm dev:ready:status   logs: pnpm dev:ready:logs"),
   );
 }
 
@@ -815,7 +835,7 @@ try {
   else if (opts.cmd === "logs") await cmdLogs(opts);
   else {
     say(
-      'usage: node scripts/dev-ready.mjs [start|stop|status|logs [gateway|web|all]] [--timeout=N] [--keep] [--no-seed] [--follow]',
+      "usage: node scripts/dev-ready.mjs [start|stop|status|logs [gateway|web|all]] [--timeout=N] [--keep] [--no-seed] [--follow]",
     );
     process.exit(2);
   }

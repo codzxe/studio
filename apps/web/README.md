@@ -22,23 +22,31 @@ it — see `next.config.ts`.
 
 ## Fonts
 
-Loaded with `next/font/google` (Instrument Serif, Instrument Sans, JetBrains
-Mono) and wired into the `@studio/ui` font contract by overriding the three
-stack variables in `src/app/globals.css` (`--font-display-stack`,
-`--font-sans-stack`, `--font-mono-stack` → the `--font-*` variables exported
-by `next/font` in `src/app/layout.tsx`).
+Loaded with `next/font` (Instrument Serif, Instrument Sans, JetBrains Mono) and
+wired into the `@studio/ui` font contract by overriding the three stack
+variables in `src/app/globals.css` (`--font-display-stack`, `--font-sans-stack`,
+`--font-mono-stack` → the `--font-*` variables exported by `next/font` in
+`src/app/layout.tsx`).
 
-**Fallback (documented per task spec):** if `next build` cannot reach Google
-Fonts (sandboxed/offline network), switch to the `@fontsource` packages:
+**Self-hosted, hermetic (canonical since 2026-10-26):** `layout.tsx` uses
+`next/font/local` against `src/app/fonts/*.ttf`. Font binaries are NEVER
+committed (spec §1.5 rule 9); `pnpm fonts:web` (scripts/fetch-web-fonts.mjs)
+provisions them from the pinned `google/fonts` commit with embedded sha256
+verification. CI (web + e2e jobs) and `pnpm dev:ready` run the same fetch, and
+a file whose hash already matches is never re-downloaded (offline-friendly on
+warm boots). This replaced `next/font/google`, whose BUILD-time
+`fonts.googleapis.com` fetch flaked on GitHub runners ("next/font/google
+queries have exactly one entry" — 2 of 3 runs on 2026-10-25/26); the build now
+has no Google dependency at all, and the `next/font` variable names are
+unchanged.
 
-```sh
-pnpm --filter @studio/web add @fontsource/instrument-serif @fontsource/instrument-sans @fontsource/jetbrains-mono
-```
-
-then in `src/app/layout.tsx` remove the three `next/font/google` imports and
-the `variable` classes, and in `src/app/globals.css` replace the `:root`
-override block with direct family names — the SAME three `--font-*-stack`
-variable names are kept, only their values change:
+**Legacy fallback (@fontsource, documented per task spec):** kept only for a
+network so locked down that even `raw.githubusercontent.com` is unreachable —
+`pnpm --filter @studio/web add @fontsource/instrument-serif
+@fontsource/instrument-sans @fontsource/jetbrains-mono`, then in
+`src/app/layout.tsx` drop the three `next/font/local` definitions and the
+`variable` classes, and in `src/app/globals.css` point the SAME three
+`--font-*-stack` variables at direct family names:
 
 ```css
 :root {

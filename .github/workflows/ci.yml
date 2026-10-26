@@ -55,6 +55,16 @@ jobs:
           cache: pnpm
       - name: Install dependencies (frozen lockfile)
         run: corepack pnpm install --frozen-lockfile
+      # Self-hosted fonts: layout.tsx compiles against apps/web/src/app/fonts/*.ttf
+      # (next/font/local). Font binaries are NEVER committed (spec §1.5 rule 9);
+      # `pnpm fonts:web` fetches them from the pinned google/fonts commit with
+      # embedded sha256 verification. This replaced the BUILD-time
+      # fonts.googleapis.com fetch (`next/font/google`), which flaked on
+      # runners (2026-10-25/26: "next/font/google queries have exactly one
+      # entry" — 2 of 3 runs); the build is now hermetic. Idempotent and
+      # offline-friendly once the files exist with the right hash.
+      - name: "Web fonts (self-hosted, sha256-pinned fetch)"
+        run: corepack pnpm fonts:web
       - name: "next typegen (route/typed-routes types — tsc depends on the generated .next/types)"
         run: corepack pnpm --filter @studio/web exec next typegen
       - name: "typecheck: tsc --noEmit"
@@ -268,6 +278,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies (frozen lockfile)
         run: corepack pnpm install --frozen-lockfile
+      # Same as the web job: `next dev` (the playwright webServer) compiles
+      # layout.tsx, so the next/font/local binaries must be provisioned — the
+      # e2e boot is no longer hostage to fonts.googleapis.com either.
+      - name: "Web fonts (self-hosted, sha256-pinned fetch)"
+        run: corepack pnpm fonts:web
       - name: "Playwright browsers: chromium only (README §1b — single deterministic engine)"
         run: corepack pnpm --filter @studio/web exec playwright install --with-deps chromium
       - name: "Write .env per README §4 (template + the seven overrides)"
