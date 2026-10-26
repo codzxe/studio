@@ -304,6 +304,18 @@ export const ENV_VAR_SPECS: readonly EnvVarMeta[] = [
     example: "sk-virtual-replace-me",
     condition: "Optional in v1 — platform keys only.",
   },
+  {
+    name: "LITELLM_MODEL_MAP",
+    purpose:
+      "JSON alias→provider-model-id map for direct OpenAI-compatible providers (unset = aliases pass through to the LiteLLM proxy).",
+    group: "litellm",
+    required: false,
+    secret: false,
+    hasDefault: false,
+    example: '{"studio-fast":"provider-fast-model","studio-smart":"provider-smart-model"}',
+    condition:
+      "Optional — set only when the gateway talks to a provider directly instead of a LiteLLM proxy.",
+  },
   // ── editor ────────────────────────────────────────────────────────────────
   {
     name: "EDITOR_PUBLIC_PATH",
@@ -594,6 +606,34 @@ const stripePriceIds = z
   })
   .pipe(z.record(z.string(), z.string()));
 
+/**
+ * JSON object mapping the studio model aliases (studio-fast/smart/vision) to
+ * provider model ids — the direct-OpenAI-compatible-provider seam. UNSET (the
+ * default, the LiteLLM-proxy posture) = aliases pass through to the gateway
+ * unchanged; SET = the wire request carries the mapped provider id instead,
+ * while every internal seam (plan entitlements, run rows, credit rates) keeps
+ * speaking aliases.
+ */
+const litellmModelMap = z
+  .string()
+  .transform((raw: string, ctx: z.RefinementCtx): unknown => {
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      ctx.addIssue({
+        code: "custom",
+        message: "must be valid JSON mapping studio model aliases to provider model ids",
+      });
+      return z.NEVER;
+    }
+  })
+  .pipe(z.record(z.string(), z.string()))
+  .refine(
+    (map: Record<string, string>) =>
+      Object.entries(map).every(([alias, id]) => alias.length > 0 && id.length > 0),
+    "keys and values must be non-empty strings",
+  );
+
 // ───────────────────────────────────────────────────────────────────────────
 // The flat schema — one key per declared var. Defaults are OUTPUT-typed under
 // zod v4 (`.default(n)` returns `n` unparsed), so numeric/boolean defaults are
@@ -635,6 +675,7 @@ export const envSchema = z.object({
   LITELLM_BASE_URL: httpUrl,
   LITELLM_API_KEY: z.string().min(1),
   LITELLM_VIRTUAL_KEY: z.string().min(1).optional(),
+  LITELLM_MODEL_MAP: litellmModelMap.optional(),
   // editor
   EDITOR_PUBLIC_PATH: editorPublicPath.default("/editor"),
   EDITOR_DEV_SERVER_URL: httpUrl.optional(),
@@ -702,6 +743,8 @@ export interface StudioEnv {
     readonly baseUrl: string;
     readonly apiKey: string;
     readonly virtualKey: string | undefined;
+    /** Alias→provider-model-id wire map; undefined = pass aliases through. */
+    readonly modelMap: Readonly<Record<string, string>> | undefined;
   };
   readonly editor: {
     readonly publicPath: string;
@@ -941,6 +984,7 @@ function groupEnv(flat: FlatEnv): StudioEnv {
       baseUrl: flat.LITELLM_BASE_URL,
       apiKey: flat.LITELLM_API_KEY,
       virtualKey: flat.LITELLM_VIRTUAL_KEY,
+      modelMap: flat.LITELLM_MODEL_MAP,
     },
     editor: {
       publicPath: flat.EDITOR_PUBLIC_PATH,

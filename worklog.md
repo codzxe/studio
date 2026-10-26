@@ -3756,3 +3756,28 @@ Work Log:
 Stage Summary:
 - vcp_ token structurally valid but rejected by Vercel (likely the known Hobby PAT bug); pivoted to CLI device flow — user click-to-approve, no tokens pasted.
 - Token Harbor wiring plan fully staged; execution blocked only on Vercel auth.
+
+---
+Task ID: tokenharbor-live-wiring (round 9)
+Agent: main-agent (session continuation)
+Task: User authorized Vercel access and ordered the Token Harbor production key (thk_live_…) wired into the product for real-user testing; single batch commit after all gates pass.
+
+Work Log:
+- Device-flow CLI auth landed (codzxe, team codzxes-projects); project settings verified: rootDirectory=apps/web, buildCommand=pnpm build, node 22.x, functions in icn1 (Seoul — TH-allowed region; sandbox egress is region-blocked, so all TH verification had to run FROM the deployed function).
+- Wire-only model mapping seam, end-to-end: LITELLM_MODEL_MAP (optional JSON record env) added to packages/config env schema + ENV_VARS catalog + StudioEnv group + toStudioEnv; OpenAIClientDeps.modelMap + wireModelOf() in services/gateway/src/litellm/openai.ts rewrite the studio alias to a provider model id AT THE WIRE ONLY — every internal seam (plan entitlements, run rows, credit rates) keeps speaking aliases; unmapped aliases pass through unchanged (LiteLLM-proxy posture). Plumbed through litellm/runner.ts deps + runner.ts createRunnerForEnv.
+- Tests: 3 env-parse (config) + 3 wire-mapping (gateway) + 5 reconciliation fixtures modelMap:undefined. Gates: typecheck 10/10, config 153/153, gateway 816/816 (--maxWorkers=1), biome clean, pnpm build regenerated apps/web/api/gateway.mjs (committed artifact, repo precedent).
+- gen-env.ts EXTRA_NOTES + .env.example regenerated; root .gitignore switched to explicit .env / .env.* + !.env.example (the Vercel CLI had appended a glob that would swallow the example file).
+- Vercel production env (verified by env pull): LITELLM_BASE_URL=https://tokenharbor.ai (client appends /v1), LITELLM_API_KEY=thk_live_… (secret), LITELLM_MODEL_MAP={"studio-fast":"deepseek-v4.1-flash:free","studio-smart":"deepseek-v4.1-flash:free","studio-vision":"mimo-v2.6-flash:free"}, MOCK_MODEL=false.
+- FREE-TIER VERIFIED PROPERLY (diag route v6, since-deleted, run from the icn1 function with the live key): GET /v1/models → 200, 73 models, exactly 4 carry TH's ":free" tier suffix (deepseek-v4-flash:free, deepseek-v4.1-flash:free, mimo-v2.6-flash:free, mimo-v2.5:free) — all three ids in our map exist in TH's own catalog; chat completions 200 ("BANANA") on deepseek-v4.1-flash:free AND mimo-v2.6-flash:free; th-rudder does not exist (404 model_not_found — the earlier map idea with th-rudder would have been broken).
+- The user-facing "The model service is unavailable right now." episodes ROOT-CAUSED: TH account-level rolling throttle (HTTP 429 server_busy "Requests from this account are being slowed down for a few minutes") triggered by probing bursts; the gateway correctly retries 3× (1s/2s backoff) then maps to RUN_MODEL_UNAVAILABLE (retryable) — fail-fast is the right product behavior, no code change. Region icn1 fine, ids valid, key valid; throttle lifts by itself.
+- E2E PROBE GREEN (scripts/th-live-probe.mjs vs motiongra.vercel.app): sign-up → workspace → project → thread → chat SSE 200 → run.started model=studio-fast → run.completed 4.4s → assistant text "The capital city of France is Paris." — REAL DeepSeek output streamed via Token Harbor (the offline mock can only emit the canned "Agent Demo" journey; "Paris" is the discriminator). THE CHAT PIPELINE IS LIVE ON REAL MODELS.
+- Billing path seeded: scripts/studio-credit-grant.mjs (pg advisory lock, led_+uuid idempotency, repo-faithful semantics) granted admin workspaces 10,000 credits; probe self-grants 50 trial credits per run (chat §8.8 reads the ledger SUM, not plan allowances).
+- Cleanup EXECUTED: scripts/probe-cleanup.mjs (strict marker-regex guards: probe-r9-*/probe-r9-dbg-*/probe-check-*@test.local + probe-ws-*/probe-r9-ws-* org slugs only) deleted 9 users + 8 orgs with all cascaded threads/messages/runs/ledger rows incl. the round-6 leftovers; re-list verified 0/0. Vercel scratch project th-diag + accidental stray project web deleted (locality note: deploys must run from the repo root — apps/web linkage created the stray with default npm build that cannot resolve workspace:*). Temporary diag route removed from tree AND production (now 404; /v1/health 200 db:true intact).
+- Post-amend hygiene: this round-9 batch amends the accidental UUID-message commit (c5006e7, unpushed) — same tree plus thdiag route/jsons REMOVED and ops scripts biome-cleaned (29 warnings = ops-console posture, 0 errors).
+
+Stage Summary:
+- PRODUCTION IS LIVE ON REAL TOKEN HARBOR FREE-TIER MODELS: map uses only ":free" ids verified against TH's own /v1/models → $0 TH billing; live key + MOCK_MODEL=false; E2E "Paris" probe green through the real gateway.
+- "Model unavailable" = transient TH account throttle (429 server_busy), not a config bug — all three mapped ids and the key are proven good from icn1.
+- Admin confirmed in prod DB: codzxe@gmail.com role=admin.
+- Committed ops scripts: studio-credit-grant.mjs, th-live-probe.mjs, probe-cleanup.mjs (guards never touch non-marker rows).
+- Outstanding user actions (unchanged): rotate the still-live exposed credentials; GitHub Actions free minutes reset Nov 1; Renovate app install optional.

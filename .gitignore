@@ -127,3 +127,7 @@ packages/*/src/**/*.d.ts
 # the ONLY apps/ path ignored; kept on disk (hard rule: never rm under apps/).
 /apps/web/e2e/.results/
 db/
+.vercel
+.env
+.env.*
+!.env.example

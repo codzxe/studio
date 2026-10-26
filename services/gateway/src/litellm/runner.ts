@@ -92,6 +92,12 @@ export interface LiteLLMRunnerDeps {
   readonly apiKey: string;
   /** Workspace virtual key (env LITELLM_VIRTUAL_KEY) — bearer when set. */
   readonly virtualKey?: string | undefined;
+  /**
+   * Alias→provider-model-id wire map (env LITELLM_MODEL_MAP, optional) —
+   * applied in the OpenAI client at the wire only. Unset = aliases pass
+   * through to the proxy unchanged (the default posture).
+   */
+  readonly modelMap?: Readonly<Record<string, string>> | undefined;
   /** Model round cap (env CHAT_MAX_STEPS). */
   readonly maxSteps: number;
   /** Injectable fetch (tests: fake OpenAI SSE server). */
@@ -564,6 +570,7 @@ export function createLiteLLMRunner(deps: LiteLLMRunnerDeps): AgentRunner {
   const clientDeps = {
     baseUrl: deps.baseUrl,
     bearer,
+    modelMap: deps.modelMap,
     fetch: deps.fetch,
     sleep: deps.sleep,
   };

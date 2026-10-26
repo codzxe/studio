@@ -1,7 +1,8 @@
 // M4-A — LiteLLM openai client unit tests (fake in-process OpenAI SSE
 // server; deterministic, no network). Covers the SSE line parser, streamed
-// tool_calls fragment aggregation, usage capture, bearer selection, abort
-// and the 2-retry (1s/2s) policy with an injectable sleep.
+// tool_calls fragment aggregation, usage capture, bearer selection, abort,
+// the 2-retry (1s/2s) policy with an injectable sleep, and the wire
+// tool-name seam (dots ⇄ underscores).
 
 import { describe, expect, it } from "vitest";
 
@@ -380,5 +381,131 @@ describe("streamChatCompletion", () => {
         }),
       ),
     ).rejects.toBeInstanceOf(ModelUnavailableError);
+  });
+
+  // -------------------------------------------------------------------------
+  // Wire model-id seam (env LITELLM_MODEL_MAP): the request keeps speaking
+  // studio aliases; only the wire body's model field is rewritten.
+  // -------------------------------------------------------------------------
+
+  it("rewrites the wire model id via modelMap while the alias stays internal", async () => {
+    const fetchStub = scriptedFetch([sseResponse([finish("stop"), DONE])]);
+    await collect(
+      streamChatCompletion(
+        clientDeps({
+          fetch: fetchStub,
+          modelMap: { "studio-fast": "deepseek-v4.1-flash", "studio-smart": "th-rudder" },
+        }),
+        { model: "studio-smart", messages, signal: new AbortController().signal },
+      ),
+    );
+    expect(fetchStub.calls[0]?.body.model).toBe("th-rudder");
+  });
+
+  it("passes an unmapped alias through unchanged when modelMap is set", async () => {
+    const fetchStub = scriptedFetch([sseResponse([finish("stop"), DONE])]);
+    await collect(
+      streamChatCompletion(
+        clientDeps({ fetch: fetchStub, modelMap: { "studio-fast": "deepseek-v4.1-flash" } }),
+        { model: "studio-smart", messages, signal: new AbortController().signal },
+      ),
+    );
+    expect(fetchStub.calls[0]?.body.model).toBe("studio-smart");
+  });
+
+  it("sends the raw alias when modelMap is unset (the LiteLLM-proxy default)", async () => {
+    const fetchStub = scriptedFetch([sseResponse([finish("stop"), DONE])]);
+    await collect(
+      streamChatCompletion(clientDeps({ fetch: fetchStub }), {
+        model: "studio-fast",
+        messages,
+        signal: new AbortController().signal,
+      }),
+    );
+    expect(fetchStub.calls[0]?.body.model).toBe("studio-fast");
+  });
+
+  // -------------------------------------------------------------------------
+  // Wire tool-name seam: registry ids carry dots (studio.get_context), the
+  // OpenAI-compatible grammar ^[a-zA-Z0-9_-]{1,64}$ forbids them — strict
+  // providers (Token Harbor) 400 on tools.N.function.name. Registrations go
+  // out sanitized; echoes come back in either form and restore the registry
+  // id (the prompt speaks dotted ids, so models may echo those verbatim).
+  // -------------------------------------------------------------------------
+
+  it("registers sanitized wire tool names and restores registry ids from sanitized echoes", async () => {
+    const fetchStub = scriptedFetch([
+      sseResponse([
+        toolCallStart(0, "call_a", "studio_get_context"),
+        toolCallArgs(0, "{}"),
+        finish("tool_calls"),
+        DONE,
+      ]),
+    ]);
+    const events = await collect(
+      streamChatCompletion(clientDeps({ fetch: fetchStub }), {
+        model: "studio-fast",
+        messages,
+        tools: [
+          {
+            type: "function",
+            function: { name: "studio.get_context", description: "d", parameters: {} },
+          },
+        ],
+        signal: new AbortController().signal,
+      }),
+    );
+    // Outbound: the registration carries the sanitized wire name.
+    expect(fetchStub.calls[0]?.body.tools).toEqual([
+      {
+        type: "function",
+        function: { name: "studio_get_context", description: "d", parameters: {} },
+      },
+    ]);
+    // Inbound: the sanitized echo restores the registry's dotted id.
+    expect(events).toEqual([
+      {
+        type: "tool_call",
+        call: { index: 0, id: "call_a", name: "studio.get_context", arguments: "{}" },
+      },
+      { type: "finish", reason: "tool_calls" },
+    ]);
+  });
+
+  it("restores registry ids from dotted echoes and passes unknown names through", async () => {
+    const fetchStub = scriptedFetch([
+      sseResponse([
+        toolCallStart(0, "call_a", "studio.list_layers"),
+        toolCallArgs(0, "{}"),
+        toolCallStart(1, "call_b", "mystery_tool"),
+        toolCallArgs(1, "{}"),
+        finish("tool_calls"),
+        DONE,
+      ]),
+    ]);
+    const events = await collect(
+      streamChatCompletion(clientDeps({ fetch: fetchStub }), {
+        model: "studio-fast",
+        messages,
+        tools: [
+          {
+            type: "function",
+            function: { name: "studio.list_layers", description: "d", parameters: {} },
+          },
+        ],
+        signal: new AbortController().signal,
+      }),
+    );
+    // Dotted echo (the prompt-mentioned form) → the registry id.
+    expect(events[0]).toEqual({
+      type: "tool_call",
+      call: { index: 0, id: "call_a", name: "studio.list_layers", arguments: "{}" },
+    });
+    // An unknown echoed name is NOT invented into a registry id — the
+    // runner's §8.9 unknown-tool repair turn owns it.
+    expect(events[1]).toEqual({
+      type: "tool_call",
+      call: { index: 1, id: "call_b", name: "mystery_tool", arguments: "{}" },
+    });
   });
 });

@@ -501,6 +501,10 @@ export function createRunnerForEnv(env: StudioEnv, logger: Logger = nullLogger):
     baseUrl: env.litellm.baseUrl,
     apiKey: env.litellm.apiKey,
     virtualKey: env.litellm.virtualKey,
+    // Wire-only alias→provider-model-id rewrite (env LITELLM_MODEL_MAP):
+    // undefined = pass aliases to the proxy unchanged; every internal seam
+    // (entitlements, run rows, credit rates) keeps speaking aliases either way.
+    modelMap: env.litellm.modelMap,
     maxSteps: env.agent.chatMaxSteps,
     logger,
   });

@@ -45,6 +45,7 @@ import {
 } from "@studio/contracts";
 import type { AgentRun } from "@studio/db";
 
+import { wireToolName } from "../src/litellm/openai.js";
 import { createRunnerForEnv, estimateRunCredits, reserveAmountFor } from "../src/runner.js";
 import {
   CookieJar,
@@ -111,10 +112,12 @@ function usageChunk(promptTokens: number, completionTokens: number): string {
 }
 const DONE = "data: [DONE]\n\n";
 
-/** The 13 curated tool ids on the provider wire (M5.1: 5 read + 8 write). */
+/** The 13 curated tools on the provider wire (M5.1: 5 read + 8 write).
+ * Registry ids carry dots; the wire grammar ^[a-zA-Z0-9_-]{1,64}$ forbids
+ * them, so registrations are sanitized (openai.ts toolSeam). */
 const WIRE_TOOL_IDS = [
-  ...TOOL_LIST.filter((tool) => tool.kind === "read").map((tool) => tool.id),
-  ...WRITE_TOOL_IDS.map((id) => `studio.${id}`),
+  ...TOOL_LIST.filter((tool) => tool.kind === "read").map((tool) => wireToolName(tool.id)),
+  ...WRITE_TOOL_IDS.map((id) => wireToolName(`studio.${id}`)),
 ].sort();
 
 class FakeOpenAIServer {

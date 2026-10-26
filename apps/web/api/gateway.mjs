@@ -130886,6 +130886,16 @@ var ENV_VAR_SPECS = [
     example: "sk-virtual-replace-me",
     condition: "Optional in v1 \u2014 platform keys only."
   },
+  {
+    name: "LITELLM_MODEL_MAP",
+    purpose: "JSON alias\u2192provider-model-id map for direct OpenAI-compatible providers (unset = aliases pass through to the LiteLLM proxy).",
+    group: "litellm",
+    required: false,
+    secret: false,
+    hasDefault: false,
+    example: '{"studio-fast":"provider-fast-model","studio-smart":"provider-smart-model"}',
+    condition: "Optional \u2014 set only when the gateway talks to a provider directly instead of a LiteLLM proxy."
+  },
   // ── editor ────────────────────────────────────────────────────────────────
   {
     name: "EDITOR_PUBLIC_PATH",
@@ -131117,6 +131127,20 @@ var stripePriceIds = external_exports.string().transform((raw2, ctx) => {
     return external_exports.NEVER;
   }
 }).pipe(external_exports.record(external_exports.string(), external_exports.string()));
+var litellmModelMap = external_exports.string().transform((raw2, ctx) => {
+  try {
+    return JSON.parse(raw2);
+  } catch {
+    ctx.addIssue({
+      code: "custom",
+      message: "must be valid JSON mapping studio model aliases to provider model ids"
+    });
+    return external_exports.NEVER;
+  }
+}).pipe(external_exports.record(external_exports.string(), external_exports.string())).refine(
+  (map5) => Object.entries(map5).every(([alias, id]) => alias.length > 0 && id.length > 0),
+  "keys and values must be non-empty strings"
+);
 var envSchema = external_exports.object({
   // app
   APP_URL: httpUrl2,
@@ -131152,6 +131176,7 @@ var envSchema = external_exports.object({
   LITELLM_BASE_URL: httpUrl2,
   LITELLM_API_KEY: external_exports.string().min(1),
   LITELLM_VIRTUAL_KEY: external_exports.string().min(1).optional(),
+  LITELLM_MODEL_MAP: litellmModelMap.optional(),
   // editor
   EDITOR_PUBLIC_PATH: editorPublicPath.default("/editor"),
   EDITOR_DEV_SERVER_URL: httpUrl2.optional(),
@@ -131331,7 +131356,8 @@ function groupEnv(flat) {
     litellm: {
       baseUrl: flat.LITELLM_BASE_URL,
       apiKey: flat.LITELLM_API_KEY,
-      virtualKey: flat.LITELLM_VIRTUAL_KEY
+      virtualKey: flat.LITELLM_VIRTUAL_KEY,
+      modelMap: flat.LITELLM_MODEL_MAP
     },
     editor: {
       publicPath: flat.EDITOR_PUBLIC_PATH,
@@ -155225,6 +155251,9 @@ function usageOf(usage) {
   if (inputTokens <= 0 && outputTokens <= 0) return null;
   return { inputTokens, outputTokens };
 }
+function wireModelOf(deps, alias) {
+  return deps.modelMap?.[alias] ?? alias;
+}
 async function* streamOnce(deps, doFetch, request) {
   const provider = createOpenAICompatible({
     name: "litellm",
@@ -155236,7 +155265,7 @@ async function* streamOnce(deps, doFetch, request) {
   const { instructions, messages: messages2 } = toSdkPrompt(request.messages);
   const withTools = request.tools !== void 0 && request.tools.length > 0;
   const result = streamText({
-    model: provider.chatModel(request.model),
+    model: provider.chatModel(wireModelOf(deps, request.model)),
     // maxRetries: 0 — §8.9's injectable-backoff retry loop lives HERE (the
     // SDK's own backoff is real-time; the test seam needs instant sleeps).
     maxRetries: 0,
@@ -155647,6 +155676,7 @@ function createLiteLLMRunner(deps) {
   const clientDeps = {
     baseUrl: deps.baseUrl,
     bearer,
+    modelMap: deps.modelMap,
     fetch: deps.fetch,
     sleep: deps.sleep
   };
@@ -156256,6 +156286,10 @@ function createRunnerForEnv(env3, logger3 = nullLogger) {
     baseUrl: env3.litellm.baseUrl,
     apiKey: env3.litellm.apiKey,
     virtualKey: env3.litellm.virtualKey,
+    // Wire-only alias→provider-model-id rewrite (env LITELLM_MODEL_MAP):
+    // undefined = pass aliases to the proxy unchanged; every internal seam
+    // (entitlements, run rows, credit rates) keeps speaking aliases either way.
+    modelMap: env3.litellm.modelMap,
     maxSteps: env3.agent.chatMaxSteps,
     logger: logger3
   });

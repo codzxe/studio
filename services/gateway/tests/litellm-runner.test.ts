@@ -15,6 +15,7 @@ import {
   WRITE_TOOL_RESULT_SCHEMA,
 } from "@studio/contracts";
 
+import { wireToolName } from "../src/litellm/openai.js";
 import {
   EDITOR_PRIMER_BULLETS,
   SYSTEM_PROMPT,
@@ -979,7 +980,12 @@ describe("LiteLLM runner — tool registry + redaction (M4.6 → M5.1 / M4.3)", 
     await runToOutcome(runner, makeRun(), stream);
 
     const tools = fetchStub.calls[0]?.body.tools ?? [];
-    expect(tools.map((tool) => tool.function.name)).toEqual(RUNNER_TOOLS.map((tool) => tool.id));
+    // The wire carries sanitized names (dots → underscores, openai.ts
+    // toolSeam — the OpenAI-compatible grammar forbids dots); the registry
+    // keeps the dotted ids.
+    expect(tools.map((tool) => tool.function.name)).toEqual(
+      RUNNER_TOOLS.map((tool) => wireToolName(tool.id)),
+    );
     expect(RUNNER_READ_TOOLS.length).toBe(5);
     expect(RUNNER_READ_TOOLS.every((tool) => tool.kind === "read")).toBe(true);
     // The write slice is exactly contracts WRITE_TOOL_IDS under its wire ids.
