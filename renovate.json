@@ -1,0 +1,45 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "description": "Studio dependency bot — one branch per dependency updates EVERY workspace manifest that declares it (pnpm lockfile + all package.json files together), which is exactly the same-version-everywhere policy dependabot's per-directory mode cannot express. Enable by installing the Renovate GitHub App on codzxe/studio (github.com/apps/renovate); then DELETE .github/dependabot.yml so the two bots don't duplicate work.",
+  "schedule": ["after 5am on monday"],
+  "timezone": "Asia/Kolkata",
+  "labels": ["dependencies"],
+  "reviewers": ["codzxe"],
+  "rangeStrategy": "bump",
+  "prConcurrentLimit": 10,
+  "ignoreUnstable": true,
+  "separateMajorMinor": true,
+  "packageRules": [
+    {
+      "description": "Group all non-major bumps into ONE weekly PR — keeps the apps/packages in lockstep without PR noise.",
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-minor-patch"
+    },
+    {
+      "description": "Major bumps stay INDIVIDUAL (migration-sized: typescript 7 is the Go rewrite, vitest 5, next 17...). Humans merge these deliberately.",
+      "matchUpdateTypes": ["major"],
+      "enabled": true
+    },
+    {
+      "description": "Ecosystem-breaking majors this repo has NOT migrated to yet — never propose automatically.",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
+    },
+    {
+      "description": "Workspace-internal packages are never bot-updatable.",
+      "matchPackagePatterns": ["^@studio/"],
+      "enabled": false
+    },
+    {
+      "description": "The editor's Rust workspace is managed by cargo, not Renovate.",
+      "matchFileNames": ["editor/**", "editor/**/Cargo.toml"],
+      "enabled": false
+    }
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  }
+}
