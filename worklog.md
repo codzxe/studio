@@ -3739,3 +3739,20 @@ Stage Summary:
 - Vercel is HEALTHY (status page + live probes); the failures are GitHub Actions billing — free minutes exhausted by e2e-on-every-push + docs-only commits burning full runs.
 - CI spend fixed: docs pushes = 0 minutes, code pushes ≈ 12 min, e2e = manual + weekly only. No spending-limit raise needed; free minutes reset Nov 1.
 - User actions: (1) run the provided curl to verify the TH key from their machine, (2) fix GitHub payment OR simply wait for Nov 1 free-minutes reset (nothing is blocked — all gates verified locally), (3) re-share Vercel token if I should wire Token Harbor into the deployment.
+
+---
+Task ID: vercel-token-triage (round 8)
+Agent: main-agent (session continuation)
+Task: User shared a "full access" Vercel token (vcp_…, 56-char tail) to unblock the Token Harbor wiring.
+
+Work Log:
+- Token REJECTED by Vercel API: GET /v2/user → 403 {"invalidToken":true}; slices (24/32/40/48/55) all invalid too.
+- Researched (not guessed): vcp_ IS Vercel's personal-access-token prefix (Feb 2026 token-format change: vcp_ personal / vci_ integration / vca_ app). Pasted tail is 56 chars — EXACTLY the documented length (matches the vca_ docs example) → structure valid.
+- Root-cause candidates: (1) KNOWN Vercel bug — community thread "Personal access tokens return 404/invalidToken on every API call (Hobby plan)": fresh Hobby PATs rejected while CLI device-flow logins work fine on the same accounts; (2) manual re-typing corruption (user may have typed rather than copied); (3) auto-revocation (Vercel secret-scans public surfaces — repo is private, chat is not a scanned surface, so unlikely).
+- WORKAROUND deployed: vercel CLI 65.2.0 device flow started in the sandbox (nohup, /tmp/vercel-login.log) — user approves via browser link https://vercel.com/oauth/device?user_code=XPQX-KNLC; device-flow sessions are documented to work even where Hobby PATs fail. No secret copying involved at all.
+- Verification plan once auth lands: (1) vercel whoami, (2) deployments list (answer "vercel problem?" with data), (3) read project env (MOCK_MODEL / LITELLM_* / DATABASE_URL current state), (4) wire Token Harbor: LITELLM_BASE_URL=https://tokenharbor.ai/v1 + LITELLM_API_KEY=thk_live_… + alias→model-id seam (deploy/litellm/config.yaml pattern; gateway sends studio-fast/smart/vision aliases, TH serves real ids like deepseek-v4.1-flash — needs the small env-mapping seam in the gateway + pnpm build regenerates api/gateway.mjs), (5) live chat probe from Seoul (allowed TH region) = the end-to-end "test how properly it is working".
+- This commit is docs-only: with the round-7 paths-ignore, it must trigger ZERO CI runs (free verification of the spend fix).
+
+Stage Summary:
+- vcp_ token structurally valid but rejected by Vercel (likely the known Hobby PAT bug); pivoted to CLI device flow — user click-to-approve, no tokens pasted.
+- Token Harbor wiring plan fully staged; execution blocked only on Vercel auth.
