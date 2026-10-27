@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::icons::{self, Icon};
 use crate::panels::{DragPayload, PresetRef};
 use crate::theme::Tokens;
-use crate::{EffectcraftApp, widgets};
+use crate::{StudioEngineApp, widgets};
 
 const ROW_H: f32 = 21.0;
 const RECENT_MAX: usize = 8;
@@ -115,7 +115,7 @@ enum Apply {
 /// A folder row; returns whether it is open.
 #[allow(clippy::too_many_arguments)]
 fn folder_row(
-    app: &mut EffectcraftApp,
+    app: &mut StudioEngineApp,
     ui: &mut egui::Ui,
     lp: &egui::Painter,
     list: Rect,
@@ -160,7 +160,7 @@ fn folder_row(
 /// An effect row (fx icon, highlighted name, favourite star, 32 bpc badge).
 #[allow(clippy::too_many_arguments)]
 fn effect_row(
-    app: &mut EffectcraftApp,
+    app: &mut StudioEngineApp,
     ui: &mut egui::Ui,
     lp: &egui::Painter,
     list: Rect,
@@ -217,7 +217,7 @@ fn effect_row(
 /// A preset row: double-click applies to the selected layers; drag it onto a layer to apply it there.
 #[allow(clippy::too_many_arguments)]
 fn preset_row(
-    app: &mut EffectcraftApp,
+    app: &mut StudioEngineApp,
     ui: &mut egui::Ui,
     lp: &egui::Painter,
     list: Rect,
@@ -264,7 +264,7 @@ fn user_presets(ctx: &egui::Context, force: bool, scan: impl FnOnce() -> Vec<Pre
     v
 }
 
-pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
+pub fn show(app: &mut StudioEngineApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let ctx = ui.ctx().clone();
     let p = ui.painter().clone();

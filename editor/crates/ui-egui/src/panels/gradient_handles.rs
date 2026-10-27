@@ -15,7 +15,7 @@ use egui::{Color32, Rect, Sense, Stroke, vec2};
 use serde_json::json;
 
 use super::fx_widgets as fw;
-use crate::EffectcraftApp;
+use crate::StudioEngineApp;
 
 /// Gradient Fill / Gradient Stroke groups in shape contents `g`, through nested groups.
 fn gradient_paints<'a>(g: &'a PropGroup, depth: usize, out: &mut Vec<&'a PropGroup>) {
@@ -43,7 +43,7 @@ pub(crate) fn selected_in(g: &PropGroup, layer: LayerId, selected: &[(LayerId, u
 /// matrix (it knows the 3D view). Called after the viewer's own gestures, so a handle takes the
 /// press before the layer would move.
 pub fn viewer_hook(
-    app: &mut EffectcraftApp,
+    app: &mut StudioEngineApp,
     ui: &mut egui::Ui,
     painter: &egui::Painter,
     map: &super::viewer::ViewerMap,

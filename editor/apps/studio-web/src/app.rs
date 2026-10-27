@@ -214,7 +214,9 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(
                 eframe::egui_wgpu::WgpuSetupCreateNew {
-                    instance_descriptor: Default::default(),
+                    // wgpu 30's InstanceDescriptor has no Default impl — build it from
+                    // the documented constructor (default backends/flags/thresholds).
+                    instance_descriptor: eframe::egui_wgpu::wgpu::InstanceDescriptor::new_without_display_handle(),
                     display_handle: None,
                     power_preference: eframe::egui_wgpu::wgpu::PowerPreference::HighPerformance,
                     native_adapter_selector: None,

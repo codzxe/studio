@@ -336,7 +336,12 @@ fn dist_files(dist: &std::path::Path) -> Vec<String> {
 fn service_worker(dist: &std::path::Path) -> Result<(), String> {
     let sw = dist.join("sw.js");
     let text = std::fs::read_to_string(&sw).map_err(|e| format!("sw.js: {e}"))?;
-    let files: Vec<String> = dist_files(dist).into_iter().filter(|f| f != "sw.js").collect();
+    // The wasm is excluded from the SW precache list (too large to precache
+    // reliably); it lazy-caches on first fetch. It still hashes into VERSION.
+    let files: Vec<String> = dist_files(dist)
+        .into_iter()
+        .filter(|f| f != "sw.js" && !f.ends_with(".wasm"))
+        .collect();
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for f in &files {
         for b in f.bytes().chain(std::fs::read(dist.join(f)).map_err(|e| format!("{f}: {e}"))?) {

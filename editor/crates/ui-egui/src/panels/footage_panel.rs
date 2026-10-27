@@ -10,10 +10,10 @@ use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
 use super::panel_kit as kit;
-use crate::EffectcraftApp;
+use crate::StudioEngineApp;
 use crate::theme::Tokens;
 
-pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
+pub fn show(app: &mut StudioEngineApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let ctx = ui.ctx().clone();
     let p = ui.painter().with_clip_rect(rect);

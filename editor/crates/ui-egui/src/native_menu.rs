@@ -18,7 +18,7 @@ use std::hash::{Hash, Hasher};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::EffectcraftApp;
+use crate::StudioEngineApp;
 use studio_engine::menus::{MenuNode, menu_bar};
 
 /// What macOS performs itself (no command dispatch).
@@ -127,8 +127,8 @@ impl NativeMenu {
 }
 
 /// Build the native menu spec for the app's current state.
-pub fn build(app: &EffectcraftApp) -> NativeMenu {
-    fn rec(app: &EffectcraftApp, nodes: &[MenuNode], path: &str, out: &mut Vec<NativeNode>) {
+pub fn build(app: &StudioEngineApp) -> NativeMenu {
+    fn rec(app: &StudioEngineApp, nodes: &[MenuNode], path: &str, out: &mut Vec<NativeNode>) {
         let mut services_added = false;
         for (i, n) in nodes.iter().enumerate() {
             let id = format!("{path}.{i}");
@@ -296,7 +296,7 @@ pub fn accelerator(shortcut: &str) -> Option<String> {
 
 /// Cheap per-frame fingerprint of everything menu labels, check marks and enabled state depend
 /// on (project revision, selection, history, settings, executed commands, viewer toggles).
-pub fn state_key(app: &EffectcraftApp) -> u64 {
+pub fn state_key(app: &StudioEngineApp) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     let s = &app.session;
     s.revision.hash(&mut h);
@@ -353,7 +353,7 @@ fn text_field_event(command: &str, clipboard: Option<String>) -> Option<Vec<egui
 
 /// Run a native menu item (by id) the way the in-window menu bar does. While a text field has
 /// the keyboard, Edit ▸ Cut/Copy/Paste/Select All/Undo/Redo edit the text instead.
-pub fn activate(app: &mut EffectcraftApp, ctx: &egui::Context, menu: &NativeMenu, id: &str) -> Result<Value, String> {
+pub fn activate(app: &mut StudioEngineApp, ctx: &egui::Context, menu: &NativeMenu, id: &str) -> Result<Value, String> {
     let item = menu.find(id).ok_or_else(|| format!("no native menu item `{id}`"))?;
     let (command, params) = (item.command.clone(), item.params.clone());
     // The menu bar takes Cmd+D and Cmd+R before the window sees them: while a confirmation that
@@ -389,10 +389,10 @@ pub fn activate(app: &mut EffectcraftApp, ctx: &egui::Context, menu: &NativeMenu
 mod tests {
     use super::*;
 
-    fn app() -> EffectcraftApp {
+    fn app() -> StudioEngineApp {
         let mut s = studio_engine::Session::default();
         s.execute("file.openDemoProject", json!({})).unwrap();
-        EffectcraftApp::new(s)
+        StudioEngineApp::new(s)
     }
 
     #[test]
@@ -441,7 +441,7 @@ mod tests {
         app.session.config = Some(std::sync::Arc::new(studio_engine::config::MemoryConfig::default()));
         let ctx = egui::Context::default();
         crate::menus::invoke(&mut app, &ctx, "window.saveWorkspaceAs", json!({"name": "My Layout"})).unwrap();
-        let entry = |app: &EffectcraftApp| build(app).items().into_iter().find(|i| i.label == "My Layout").cloned();
+        let entry = |app: &StudioEngineApp| build(app).items().into_iter().find(|i| i.label == "My Layout").cloned();
         let it = entry(&app).expect("the saved workspace is listed");
         assert_eq!((it.command.as_str(), &it.params, it.checked), ("window.workspace", &json!({"name": "My Layout"}), Some(true)));
         crate::menus::invoke(&mut app, &ctx, "window.workspace", json!({"name": "Default"})).unwrap();
@@ -453,7 +453,7 @@ mod tests {
         if !cfg!(target_os = "macos") {
             return;
         }
-        let mut app = EffectcraftApp::new(studio_engine::Session::default());
+        let mut app = StudioEngineApp::new(studio_engine::Session::default());
         app.session.execute("prefs.set", json!({"key": "general.language", "value": "uk"})).unwrap();
         fn labels(nodes: &[NativeNode], out: &mut Vec<String>) {
             for node in nodes {
@@ -474,7 +474,7 @@ mod tests {
         if !cfg!(target_os = "macos") {
             return;
         }
-        let mut app = EffectcraftApp::new(studio_engine::Session::default());
+        let mut app = StudioEngineApp::new(studio_engine::Session::default());
         app.session.execute("prefs.set", json!({"key": "general.language", "value": "cs"})).unwrap();
         fn labels(nodes: &[NativeNode], out: &mut Vec<String>) {
             for node in nodes {
@@ -571,7 +571,7 @@ mod tests {
     fn window_menu_checks_the_panels_on_screen() {
         use crate::dock::PanelKind;
         let mut app = app();
-        let checked = |app: &EffectcraftApp, panel: &str| {
+        let checked = |app: &StudioEngineApp, panel: &str| {
             build(app).items().into_iter().find(|i| i.command == "window.panel" && i.params["panel"] == panel).and_then(|i| i.checked)
         };
         assert_eq!(checked(&app, "timeline"), Some(true));
@@ -619,7 +619,7 @@ mod tests {
         use crate::dock::PanelKind;
         let mut app = app();
         let ctx = egui::Context::default();
-        let choose = |app: &mut EffectcraftApp| {
+        let choose = |app: &mut StudioEngineApp| {
             let spec = build(app);
             let id = spec.items().into_iter().find(|i| i.command == "window.panel" && i.params["panel"] == "align").unwrap().id.clone();
             activate(app, &ctx, &spec, &id).unwrap();

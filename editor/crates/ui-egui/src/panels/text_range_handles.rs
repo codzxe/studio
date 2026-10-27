@@ -23,14 +23,14 @@ use serde_json::json;
 
 use super::fx_widgets as fw;
 use super::gradient_handles::selected_in;
-use crate::EffectcraftApp;
+use crate::StudioEngineApp;
 use crate::state::Tool;
 
 /// Draw the selected Range Selectors' bars and, with the Selection tool, drag them. `l2c` is the
 /// viewer's layer→comp matrix. Called after the viewer's own gestures, so a bar takes the press
 /// before the layer would move.
 pub fn viewer_hook(
-    app: &mut EffectcraftApp,
+    app: &mut StudioEngineApp,
     ui: &mut egui::Ui,
     painter: &egui::Painter,
     map: &super::viewer::ViewerMap,

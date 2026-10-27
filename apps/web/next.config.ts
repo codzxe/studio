@@ -95,8 +95,8 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // The editor is served at `/editor/` (trailing slash). Next would otherwise
   // 308 `/editor/` → `/editor`, which breaks the editor's relative asset URLs
-  // (`effectcraft_web_bg.wasm` resolves against `/editor` as a *file*, landing
-  // on `/effectcraft_web_bg.wasm`). Keeping both forms lets the iframe keep
+  // (`studio_web_bg.wasm` resolves against `/editor` as a *file*, landing
+  // on `/studio_web_bg.wasm`). Keeping both forms lets the iframe keep
   // the trailing slash so every relative URL in the upstream dist works.
   skipTrailingSlashRedirect: true,
   async headers() {
@@ -135,7 +135,7 @@ const nextConfig: NextConfig = {
         ...v1Rewrites,
         // Bare `/editor` + `/editor/` → the committed dist's index.html
         // (public/editor/). Next's public handler serves the dist's files
-        // verbatim (`/editor/effectcraft_web.js` → 200) but does NOT resolve
+        // verbatim (`/editor/studio_web.js` → 200) but does NOT resolve
         // a directory index for `/editor/`, so the iframe URL `/editor/?empty`
         // 404s and the editor-host parks on "booting" — the e2e suite's
         // editor never loads. Both bare forms rewrite to the index so the

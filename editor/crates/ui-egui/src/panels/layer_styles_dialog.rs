@@ -12,7 +12,7 @@ use egui::vec2;
 use serde_json::{Value, json};
 
 use crate::theme::Tokens;
-use crate::{Dialog, EffectcraftApp};
+use crate::{Dialog, StudioEngineApp};
 
 /// Dialog state: layer, selected list entry and the undo depth when it opened.
 #[derive(Clone, Debug, Default)]
@@ -35,14 +35,14 @@ impl std::fmt::Debug for Checkpoint {
     }
 }
 
-fn checkpoint(app: &mut EffectcraftApp) -> Checkpoint {
+fn checkpoint(app: &mut StudioEngineApp) -> Checkpoint {
     app.session.history.merge_key = None;
     Checkpoint { project: app.session.project.clone(), history: app.session.history.clone() }
 }
 
 /// Open the dialog on the first selected (or given) layer, showing `style` (a style id;
 /// Blending Options when none).
-pub fn open(app: &mut EffectcraftApp, params: &Value) -> Result<(), String> {
+pub fn open(app: &mut StudioEngineApp, params: &Value) -> Result<(), String> {
     let comp = app.session.active_comp().ok_or("no composition is open")?;
     let layer = params
         .get("layer")
@@ -62,7 +62,7 @@ pub fn open(app: &mut EffectcraftApp, params: &Value) -> Result<(), String> {
 
 /// Menu routing: choosing one of the Layer ▸ Layer Styles ▸ <style> items (no parameters) adds
 /// the style as usual and opens the dialog on it.
-pub fn route(app: &mut EffectcraftApp, id: &str, params: &Value) -> Result<bool, String> {
+pub fn route(app: &mut StudioEngineApp, id: &str, params: &Value) -> Result<bool, String> {
     let Some(style) = id.strip_prefix("layer.style.").filter(|s| STYLES.iter().any(|x| x.0 == *s)) else { return Ok(false) };
     if !params.as_object().is_none_or(|m| m.is_empty()) {
         return Ok(false);
@@ -77,7 +77,7 @@ pub fn route(app: &mut EffectcraftApp, id: &str, params: &Value) -> Result<bool,
     Ok(true)
 }
 
-fn layer(app: &EffectcraftApp) -> Option<Layer> {
+fn layer(app: &StudioEngineApp) -> Option<Layer> {
     app.session.active_comp()?.layer(LayerId(app.dialog_state.layer_style.layer)).cloned()
 }
 
@@ -126,7 +126,7 @@ fn control(ui: &mut egui::Ui, p: &Property, v: &KV) -> Option<Value> {
     }
 }
 
-pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
+pub fn show(app: &mut StudioEngineApp, ctx: &egui::Context, t: &Tokens) {
     let Some(l) = layer(app) else {
         app.dialog = None;
         return;
@@ -248,12 +248,12 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
 }
 
 /// Show another entry of the list (`blendingOptions` or a style id).
-pub fn select(app: &mut EffectcraftApp, style: &str) {
+pub fn select(app: &mut StudioEngineApp, style: &str) {
     app.dialog_state.layer_style.selected = style.to_string();
 }
 
 /// Close the dialog: OK keeps the edits, Cancel undoes everything done since it opened.
-pub fn finish(app: &mut EffectcraftApp, ok: bool) {
+pub fn finish(app: &mut StudioEngineApp, ok: bool) {
     if let Some(checkpoint) = app.dialog_state.layer_style.checkpoint.take()
         && !ok
     {

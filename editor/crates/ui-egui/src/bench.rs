@@ -6,20 +6,20 @@
 use studio_engine::Session;
 use studio_engine::perf::Measure;
 
-use crate::EffectcraftApp;
+use crate::StudioEngineApp;
 use crate::dock::PanelKind;
 
-/// A headless egui driver for [`EffectcraftApp`].
+/// A headless egui driver for [`StudioEngineApp`].
 pub struct Driver {
     pub ctx: egui::Context,
-    pub app: EffectcraftApp,
+    pub app: StudioEngineApp,
     frame: eframe::Frame,
     time: f64,
     size: egui::Vec2,
 }
 
 impl Driver {
-    pub fn new(app: EffectcraftApp, size: egui::Vec2) -> Driver {
+    pub fn new(app: StudioEngineApp, size: egui::Vec2) -> Driver {
         Driver { ctx: egui::Context::default(), app, frame: eframe::Frame::_new_kittest(), time: 0.0, size }
     }
 
@@ -45,7 +45,7 @@ impl Driver {
     }
 
     /// Mean and max of `n` frames, calling `before` ahead of each.
-    pub fn frames(&mut self, n: usize, mut before: impl FnMut(&mut EffectcraftApp, usize)) -> (f64, f64) {
+    pub fn frames(&mut self, n: usize, mut before: impl FnMut(&mut StudioEngineApp, usize)) -> (f64, f64) {
         let (mut sum, mut max) = (0.0, 0.0f64);
         for i in 0..n {
             before(&mut self.app, i);
@@ -65,7 +65,7 @@ pub fn ui_ops(open: impl FnOnce() -> Session) -> Vec<Measure> {
     let session = open();
     let opened = t0.elapsed().as_secs_f64() * 1000.0;
     let t1 = web_time::Instant::now();
-    let app = EffectcraftApp::new(session);
+    let app = StudioEngineApp::new(session);
     let built = t1.elapsed().as_secs_f64() * 1000.0;
     let mut d = Driver::new(app, egui::vec2(1680.0, 1020.0));
     // The first pass installs the theme and fonts; the second draws the workspace.

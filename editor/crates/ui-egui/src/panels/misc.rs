@@ -7,9 +7,9 @@ use serde_json::json;
 use crate::dock::PanelKind;
 use crate::icons::Icon;
 use crate::theme::Tokens;
-use crate::{EffectcraftApp, widgets};
+use crate::{StudioEngineApp, widgets};
 
-pub fn placeholder(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, p: PanelKind) {
+pub fn placeholder(app: &mut StudioEngineApp, ui: &mut egui::Ui, rect: Rect, p: PanelKind) {
     let t = app.tokens;
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, tr_args("{} — coming soon", &[&(p.title())]), Tokens::ui(12.0), t.text_faint);
 }
@@ -17,7 +17,7 @@ pub fn placeholder(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, p: P
 /// Preview panel: transport controls, the shortcut whose options are shown, and that
 /// shortcut's options (each Preview shortcut keeps its own; see `studio_engine::preview`).
 /// Every change runs `playback.settings.set`.
-pub fn preview(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
+pub fn preview(app: &mut StudioEngineApp, ui: &mut egui::Ui, rect: Rect) {
     use studio_engine::preview::{PlayFrom, PreviewRange, PreviewResolution, PreviewShortcut};
     let t = app.tokens;
     let ctx = ui.ctx().clone();
@@ -237,7 +237,7 @@ fn fmt_rate(r: f64) -> String {
 }
 
 /// A checkbox with its label; returns true when clicked.
-fn check_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, at: egui::Pos2, key: &str, text: &str, on: bool) -> bool {
+fn check_row(app: &mut StudioEngineApp, ui: &mut egui::Ui, p: &egui::Painter, at: egui::Pos2, key: &str, text: &str, on: bool) -> bool {
     let t = app.tokens;
     let r = Rect::from_min_size(pos2(at.x, at.y - 8.0), vec2(16.0, 16.0));
     let clicked = widgets::checkbox(ui, r, on, &t, egui::Id::new(("pv-check", key))).clicked();
@@ -248,7 +248,7 @@ fn check_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, at:
 
 /// A dropdown with its popup list (automation ids `preview.<key>` and `preview.<key>.<i>`);
 /// returns the chosen index.
-fn dropdown_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, r: Rect, key: &str, text: &str, items: &[String], current: Option<usize>) -> Option<usize> {
+fn dropdown_row(app: &mut StudioEngineApp, ui: &mut egui::Ui, r: Rect, key: &str, text: &str, items: &[String], current: Option<usize>) -> Option<usize> {
     let t = app.tokens;
     let pid = egui::Id::new(("pv-pop", key));
     if widgets::dropdown(ui, r, text, &t, pid.with("btn")).clicked() {
@@ -275,7 +275,7 @@ fn dropdown_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, r: Rect, key: &str,
 
 /// Audio panel: L/R VU meters (dBFS, 0 to -48) with peak hold and clip indicators, fed by the
 /// audio preview; the selected layer's Audio Levels on the right.
-pub fn audio(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
+pub fn audio(app: &mut StudioEngineApp, ui: &mut egui::Ui, rect: Rect) {
     use crate::audio::METER_FLOOR;
     let t = app.tokens;
     let p = ui.painter().with_clip_rect(rect);
@@ -362,7 +362,7 @@ pub fn audio(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 }
 
-pub fn history(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
+pub fn history(app: &mut StudioEngineApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let p = ui.painter().with_clip_rect(rect);
     // The branching history (Studio's History panel): every state, branches indented under
@@ -419,7 +419,7 @@ pub fn history(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
 }
 
-pub fn markers(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
+pub fn markers(app: &mut StudioEngineApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let p = ui.painter().with_clip_rect(rect);
     let Some(c) = app.session.active_comp_arc() else { return };
