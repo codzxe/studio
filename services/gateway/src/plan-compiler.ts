@@ -31,6 +31,27 @@
 //   save_version       → NO engine command — a compile-time annotation
 //                        (result.saveVersion) consumed by the apply flow.
 //
+// Round-12 "Tool catalog v3" additions (propose-only, same ONE-batch law):
+//   engine_commands    → VERBATIM {command, params} steps — every id must
+//                        pass the ALLOWED engine catalog (contracts
+//                        isAllowedEngineCommand; unknown/denied id ⇒ typed
+//                        `command_not_allowed` fatal), 1..50 input steps,
+//                        params ride unchanged (the engine validates params
+//                        at execute time; the strict live schema bounds them
+//                        to dunder-free JSON records)
+//   run_script          → EXACTLY ONE {command: "script.run", params: {code}}
+//                        CLIENT-SPECIAL step (the engine refuses script.run
+//                        inside engine.batch — NOT_IN_BATCH; the client apply
+//                        seam executes it via bridge.execute with ONE undo
+//                        group) — gated by the static guard (no require(/
+//                        fetch(/XMLHttpRequest/import(/eval( outside
+//                        comments ⇒ typed `unsafe_script` fatal)
+//   add_asset           → EXACTLY ONE {command: "asset.importSvg", params:
+//                        {name, svg}} CLIENT-SPECIAL step (no direct engine
+//                        id; the client apply seam imports the inline SVG) —
+//                        svg must be <svg or <?xml markup (≤ 50 000 chars,
+//                        external hrefs rejected ⇒ typed `invalid_svg` fatal)
+//
 // Ambiguity rulings (documented for the integrator — see the M5-B worklog):
 //   * apply_preset NEVER compiles to `anim.applyPreset`: that command takes a
 //     filesystem `path` (or an inline preset OBJECT), and a model-supplied
@@ -48,9 +69,12 @@
 //     `candidates` — SEAMS wins per its own precedence rule). It carries the
 //     plan's own `change` strings for that layer name.
 //   * Risk and credits are RECOMPUTED from the compiled commands (never the
-//     model's numbers). "High" is currently unreachable via the curated
-//     tools (they compile to additive/property commands only) — it becomes
-//     reachable when the registry widens past the eight write tools.
+//     model's numbers). "High" stays unreachable through the curated tools
+//     AND the round-12 widening: engine_commands ids come from the ALLOWED
+//     catalog (destructive/denied ids never compile), so the command floors
+//     (delete-ish, render-ish, history) plus the medium tool-catalog floor
+//     cap every compiled plan at medium — D-28: the reversible-command wall
+//     (auto-apply.ts) is the actual safety.
 //
 // Purity: idempotent, deterministic, no IO, no clocks (law #1: the result is
 // a typed envelope and compilePlan NEVER throws, even on hostile input).
@@ -65,12 +89,16 @@ import {
   MAX_BATCH_BYTES,
   MAX_BATCH_LABEL_LENGTH,
   MAX_BATCH_STEPS,
+  MAX_ENGINE_COMMAND_STEPS,
   MAX_PLAN_AFFECTED_LAYERS,
+  MAX_SCRIPT_CODE_LENGTH,
+  MAX_SVG_LENGTH,
   PLAN_RISK_ORDER,
   type PlanRisk,
   WRITE_TOOLS,
   checkBatchCommands,
   estimateCredits,
+  isAllowedEngineCommand,
   validateBatchRefs,
 } from "@studio/contracts";
 import type { ZodTypeAny } from "zod";
@@ -87,7 +115,7 @@ export type PlanIssueCode =
   | "plan_schema" // EditPlan failed its §8.6 schema (defense-in-depth re-check)
   | "plan_too_large" // serialized plan over the internal pre-flight cap
   | "internal" // unexpected failure — never leaks details (law #1)
-  | "unknown_tool" // step.tool is not one of the 8 write tools
+  | "unknown_tool" // step.tool is not one of the 11 write tools
   | "invalid_args" // args failed the tool's Zod schema (§8.9 repair turn)
   | "unusable_args" // typed-but-unusable field under a weak (stub) schema
   | "empty_step" // the step translated to zero commands
@@ -103,7 +131,10 @@ export type PlanIssueCode =
   | "undo_run_target" // undo_run named a run; the engine reverts the latest batch
   | "duplicate_save_version" // an earlier save_version step was superseded
   | "undeclared_layer" // a referenced layer is missing from affectedLayers
-  | "resolver_error"; // an injected layerResolver threw (treated as unresolved)
+  | "resolver_error" // an injected layerResolver threw (treated as unresolved)
+  | "command_not_allowed" // engine_commands step id is unknown or denied for agents
+  | "unsafe_script" // run_script code hits the static guard outside comments
+  | "invalid_svg"; // add_asset svg markup/size/external-href validation
 
 /** One compile problem: severity, stable code, human-safe message (law #1:
  * no stack traces, no internal ids, clipped length) and typed pointers. */
@@ -151,6 +182,12 @@ export interface SaveVersionAnnotation {
  * compiler never fabricates ids). Throwing resolvers are contained. */
 export type LayerResolver = (layerName: string) => string | number | undefined;
 
+/** Round-12 widening predicate: vouches for an engine command id as ALLOWED
+ * for agents (the contracts catalog membership, isAllowedEngineCommand).
+ * Injecting a custom one keeps hostile-args fixture tests deterministic;
+ * a throwing predicate fails closed (compilePlan never throws — law #1). */
+export type AllowedEngineCommandPredicate = (id: string) => boolean;
+
 /** Tolerant write-tool entry: the M5-A seam may inject bare Zod schemas
  * (WRITE_TOOL_ARGS_SCHEMAS) or richer defs with risk metadata (WRITE_TOOLS). */
 export interface WriteToolDef {
@@ -166,10 +203,15 @@ export type WriteToolsDep = Readonly<Record<string, ZodTypeAny | WriteToolDef>>;
 export interface CompileDeps {
   /** Curated agent command allowlist (M5-J) — id → descriptor. */
   readonly registry: CommandSchema;
-  /** The 8 write tools (M5-A) — Zod args schemas (± risk metadata). */
+  /** The 11 write tools (M5-A + round-12 v3) — Zod args schemas (± risk metadata). */
   readonly writeTools: WriteToolsDep;
   /** Optional authoritative name → id resolver (see LayerResolver). */
   readonly layerResolver?: LayerResolver;
+  /** Round-12 widening seam: vouches for ALLOWED engine command ids compiled
+   * from studio.engine_commands steps (the live wiring is the contracts
+   * catalog membership, isAllowedEngineCommand — see defaultCompileDeps).
+   * Absent ⇒ the contracts predicate stands in (fail-closed on throws). */
+  readonly allowsEngineCommand?: AllowedEngineCommandPredicate;
 }
 
 /** SEAMS input shape ({plan} + future resolution context). compilePlan also
@@ -228,6 +270,32 @@ const HISTORY_COMMANDS: ReadonlySet<string> = new Set(["edit.undo", "edit.redo"]
 /** A preset string that looks like a filesystem path (law #5 hazard). */
 const PRESET_PATH_LIKE = /(?:[\\/]|\.ecpreset$)/;
 
+/** CLIENT-SPECIAL compiled step ids (round-12): the two steps the engine
+ * cannot take through engine.batch — `script.run` (NOT_IN_BATCH; the client
+ * apply seam executes it via bridge.execute with ONE undo group) and
+ * `asset.importSvg` (no direct engine id; the client imports the inline SVG
+ * string). They are emitted ONLY by the guarded run_script / add_asset
+ * translations — a model can never inject them directly (engine_commands
+ * rejects both: script.run is code-exec DENIED in the catalog, asset.importSvg
+ * is not an engine id at all), so the registry gate below admits them
+ * unconditionally. */
+const CLIENT_SPECIAL_STEP_COMMANDS: ReadonlySet<string> = new Set([
+  "script.run",
+  "asset.importSvg",
+]);
+
+/** run_script static guard: runtime APIs an agent script may never touch
+ * (network, module loading, dynamic eval). The engine's boa sandbox has no
+ * network or require anyway — the guard is the server-side defense-in-depth
+ * and the repairable §8.9 message. Searched as LITERAL substrings. */
+const FORBIDDEN_SCRIPT_TOKENS: readonly string[] = [
+  "require(",
+  "fetch(",
+  "XMLHttpRequest",
+  "import(",
+  "eval(",
+];
+
 // ---------------------------------------------------------------------------
 // Small pure helpers
 // ---------------------------------------------------------------------------
@@ -253,6 +321,21 @@ function readString(source: Record<string, unknown>, key: string): string | unde
  * through the prototype chain (M4-N F-1 defense, applied to the registry). */
 function registryHas(registry: CommandSchema, id: string): boolean {
   return Object.prototype.hasOwnProperty.call(registry, id);
+}
+
+/** The round-12 ALLOWED-catalog seam: deps.allowsEngineCommand when injected,
+ * else the contracts predicate (isAllowedEngineCommand). Throwing predicates
+ * fail closed — compilePlan never throws (law #1). */
+function predicateAllows(
+  predicate: AllowedEngineCommandPredicate | undefined,
+  id: string,
+): boolean {
+  const check = predicate ?? isAllowedEngineCommand;
+  try {
+    return check(id) === true;
+  } catch {
+    return false;
+  }
 }
 
 /** Deterministic, depth-capped canonical JSON (sorted object keys) used to
@@ -320,6 +403,110 @@ function engineColor(value: unknown): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// run_script static guard (round-12) — comment-aware token scan
+// ---------------------------------------------------------------------------
+
+/**
+ * Replace JS comment bodies with spaces (newlines preserved) so the static
+ * guard never flags commented-out code, while STRING LITERALS stay intact —
+ * a `//` or `/*` INSIDE a string is not a comment, and code after such a
+ * string is still scanned (a naive strip would mask a real call: e.g.
+ * `const u = "http://x"; fetch(u)` must still FAIL). Template literal `${…}`
+ * interpolations are scanned as code via a brace-depth stack. Known
+ * limitation: regex literals are not tokenized (a regex containing `//` can
+ * mask the rest of its line) — such code is either a parse error at the
+ * engine or fails closed elsewhere; the sandbox itself has no network.
+ */
+function stripJsComments(code: string): string {
+  const out: string[] = [];
+  const interpolationDepth: number[] = []; // open-brace depth per `${` frame
+  let mode: "code" | "string" = "code";
+  let quote = ""; // "'", '"', or '`'
+  let i = 0;
+  while (i < code.length) {
+    const ch = code[i] ?? "";
+    const next = code[i + 1] ?? "";
+    if (mode === "string") {
+      if (ch === "\\") {
+        out.push(ch, next);
+        i += 2;
+        continue;
+      }
+      if (ch === quote) {
+        mode = "code";
+        out.push(ch);
+        i += 1;
+        continue;
+      }
+      if (quote === "`" && ch === "$" && next === "{") {
+        interpolationDepth.push(1);
+        mode = "code";
+        out.push(ch, next);
+        i += 2;
+        continue;
+      }
+      out.push(ch);
+      i += 1;
+      continue;
+    }
+    if (ch === "/" && next === "/") {
+      while (i < code.length && code[i] !== "\n") {
+        out.push(" ");
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      out.push(" ", " ");
+      i += 2;
+      while (i < code.length && !(code[i] === "*" && code[i + 1] === "/")) {
+        out.push(code[i] === "\n" ? "\n" : " ");
+        i += 1;
+      }
+      if (i < code.length) {
+        out.push(" ", " ");
+        i += 2;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      mode = "string";
+      quote = ch;
+      out.push(ch);
+      i += 1;
+      continue;
+    }
+    if (interpolationDepth.length > 0) {
+      const top = interpolationDepth.length - 1;
+      const depth = interpolationDepth[top] ?? 0;
+      if (ch === "{") {
+        interpolationDepth[top] = depth + 1;
+      } else if (ch === "}") {
+        if (depth <= 1) {
+          interpolationDepth.pop();
+          mode = "string"; // the `}` closed the `${` interpolation
+        } else {
+          interpolationDepth[top] = depth - 1;
+        }
+      }
+    }
+    out.push(ch);
+    i += 1;
+  }
+  return out.join("");
+}
+
+/** The first forbidden runtime-API token found OUTSIDE comments (after
+ * comment-aware stripping), or `undefined` when the code is clean. */
+function forbiddenScriptToken(code: string): string | undefined {
+  const stripped = stripJsComments(code);
+  for (const token of FORBIDDEN_SCRIPT_TOKENS) {
+    if (stripped.includes(token)) return token;
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Risk recompute (brief: from compiled commands — never the model's number)
 // ---------------------------------------------------------------------------
 
@@ -378,7 +565,10 @@ class Compiler {
    * no-layers fallback. Set by compilePlanInner before the step loop. */
   planLayerNames: readonly string[] = [];
 
-  constructor(private readonly depsRegistry: CommandSchema) {}
+  constructor(
+    private readonly depsRegistry: CommandSchema,
+    private readonly allowsEnginePredicate: AllowedEngineCommandPredicate | undefined = undefined,
+  ) {}
 
   private pushIssue(issue: PlanIssue): void {
     const target = issue.severity === "fatal" ? this.fatals : this.warnings;
@@ -731,6 +921,145 @@ class Compiler {
         break;
       }
 
+      case "engine_commands": {
+        // Round-12 "Tool catalog v3": the model's steps ARE the batch payload.
+        // Every command id must pass the ALLOWED engine catalog — an unknown
+        // or denied id is a typed `command_not_allowed` fatal (§8.9 repair
+        // turn). Valid steps ride VERBATIM (params unchanged); the input is
+        // bounded to 1..50 steps (the strict live schema enforces the same
+        // bound — this is the weak-schema defense-in-depth).
+        const stepsIn = argsObj.steps;
+        if (!Array.isArray(stepsIn)) {
+          unusable("steps", "is not an array");
+          compilesToNothing();
+          break;
+        }
+        if (stepsIn.length === 0) {
+          unusable("steps", "is empty");
+          compilesToNothing();
+          break;
+        }
+        if (stepsIn.length > MAX_ENGINE_COMMAND_STEPS) {
+          unusable("steps", `exceeds the ${MAX_ENGINE_COMMAND_STEPS}-step bound`);
+          compilesToNothing();
+          break;
+        }
+        let denied = false;
+        for (const [index, entry] of stepsIn.entries()) {
+          if (!isPlainObject(entry)) {
+            unusable("steps", `entry ${index + 1} is not an object (skipped)`);
+            continue;
+          }
+          const command = readString(entry, "command");
+          if (command === undefined) {
+            unusable("steps", `entry ${index + 1} has no command id (skipped)`);
+            continue;
+          }
+          if (!predicateAllows(this.allowsEnginePredicate, command)) {
+            this.fatal(
+              "command_not_allowed",
+              `engine command "${clip(command, 64)}" is not allowed for agents`,
+              { step: planStep, tool, command },
+            );
+            denied = true;
+            continue;
+          }
+          const params = entry.params;
+          if (!isPlainObject(params)) {
+            unusable("steps", `entry ${index + 1} has no params record (skipped)`);
+            continue;
+          }
+          add(command, { ...params });
+        }
+        if (steps.length === 0 && !denied) compilesToNothing();
+        break;
+      }
+
+      case "run_script": {
+        // Round-12: the code executes at APPLY time through the client's
+        // special bridge.execute("script.run") seam (the engine refuses
+        // script.run inside engine.batch — NOT_IN_BATCH), wrapped in ONE undo
+        // group. The compile emits EXACTLY ONE client-special step after the
+        // static guard; the code length bound mirrors MAX_SCRIPT_CODE_LENGTH
+        // for weak (stub) schemas — the strict live schema caps it anyway.
+        const code = argsObj.code;
+        const codeText = typeof code === "string" ? code : "";
+        if (codeText.length === 0) {
+          unusable("code", "is not a non-empty string");
+          compilesToNothing();
+          break;
+        }
+        if (codeText.length > MAX_SCRIPT_CODE_LENGTH) {
+          unusable("code", `exceeds the ${MAX_SCRIPT_CODE_LENGTH}-character bound`);
+          compilesToNothing();
+          break;
+        }
+        const forbidden = forbiddenScriptToken(codeText);
+        if (forbidden !== undefined) {
+          this.fatal(
+            "unsafe_script",
+            `script code uses "${clip(forbidden, 24)}" — network, module-loading and eval APIs are not allowed in agent scripts`,
+            { step: planStep, tool, param: "code" },
+          );
+          break;
+        }
+        add("script.run", { code: codeText });
+        break;
+      }
+
+      case "add_asset": {
+        // Round-12: inline SVG → vector import at APPLY time through the
+        // client's apply seam. `asset.importSvg` is a CLIENT-SPECIAL step id
+        // (no direct engine command — the client imports the SVG string and
+        // folds it into the batch's one undo). The svg must be markup
+        // (leading whitespace tolerated), bounded, and free of EXTERNAL
+        // references (href="http… / xlink:href="http… — any *href= attribute).
+        const kind = argsObj.kind;
+        if (kind !== "svg") {
+          unusable("kind", 'is not "svg" (the only supported asset kind)');
+          compilesToNothing();
+          break;
+        }
+        const name = readString(argsObj, "name");
+        if (name === undefined) {
+          unusable("name", "is not a non-empty string");
+          compilesToNothing();
+          break;
+        }
+        const svg = argsObj.svg;
+        const svgText = typeof svg === "string" ? svg : "";
+        if (svgText.length === 0) {
+          unusable("svg", "is not a non-empty string");
+          compilesToNothing();
+          break;
+        }
+        if (svgText.length > MAX_SVG_LENGTH) {
+          unusable("svg", `exceeds the ${MAX_SVG_LENGTH}-character bound`);
+          compilesToNothing();
+          break;
+        }
+        const trimmed = svgText.trim();
+        if (!trimmed.startsWith("<svg") && !trimmed.startsWith("<?xml")) {
+          this.fatal(
+            "invalid_svg",
+            "the svg payload must be inline markup starting with <svg or <?xml",
+            { step: planStep, tool, param: "svg" },
+          );
+          break;
+        }
+        const lowered = svgText.toLowerCase();
+        if (lowered.includes('href="http') || lowered.includes("href='http")) {
+          this.fatal(
+            "invalid_svg",
+            "the svg payload references an external href — external references are not allowed",
+            { step: planStep, tool, param: "svg" },
+          );
+          break;
+        }
+        add("asset.importSvg", { name, svg: svgText });
+        break;
+      }
+
       default: {
         // Exhaustiveness guard — lookupWriteTool already rejected unknown ids.
         this.fatal("unknown_tool", `tool \`${clip(tool, 64)}\` is not a write tool`, {
@@ -915,7 +1244,7 @@ function isCompileInput(value: unknown): value is CompilePlanInput {
 // ---------------------------------------------------------------------------
 
 function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
-  const compiler = new Compiler(deps.registry);
+  const compiler = new Compiler(deps.registry, deps.allowsEngineCommand);
 
   // -- 0. pre-flight: the plan must serialize (cycle-hostile) and be sane.
   let serializedPlan: string;
@@ -961,7 +1290,7 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
     if (tool === undefined) {
       compiler.fatal(
         "unknown_tool",
-        `tool \`${clip(planStep.tool, 64)}\` is not one of the 8 write tools`,
+        `tool \`${clip(planStep.tool, 64)}\` is not one of the 11 write tools`,
         {
           step: position,
           tool: planStep.tool,
@@ -1025,6 +1354,19 @@ function compilePlanInner(plan: unknown, deps: CompileDeps): CompilePlanResult {
   }
   for (const issue of checkBatchCommands({ steps }, deps.registry)) {
     if (issue.reason === "unknown_command") {
+      // Round-12 widening: a compiled command outside the CURATED registry is
+      // admitted when it is (a) a CLIENT-SPECIAL step id — script.run /
+      // asset.importSvg, emitted ONLY by the guarded run_script / add_asset
+      // translations, never model-chosen — or (b) an ALLOWED engine catalog id
+      // (studio.engine_commands steps, validated per id at translate time).
+      // Anything else stays a fatal (defense-in-depth — the model's proposed
+      // batches never reach this gate as compiled steps).
+      if (
+        CLIENT_SPECIAL_STEP_COMMANDS.has(issue.command) ||
+        predicateAllows(deps.allowsEngineCommand, issue.command)
+      ) {
+        continue;
+      }
       compiler.fatal(
         "unknown_command",
         `compiled command \`${issue.command}\` is not in the agent registry`,
@@ -1214,16 +1556,23 @@ export function compilePlan(
  * Live deps from the M5-A/M5-J contract surfaces, read at CALL time (ESM live
  * bindings) so peer stubs landing mid-wave are picked up. The registry is the
  * REAL curated command allowlist (M5-J); the write tools are the REAL M5-A
- * catalog projected into the WriteToolDef shape (F-S2): each entry carries its
- * args schema AND its risk badge, so lookupWriteTool's per-tool risk floor
- * works on the live wire path (defaultCompileDeps previously passed the bare
- * WRITE_TOOL_ARGS_SCHEMAS and the catalog badges never reached the recomputed
- * risk). Built once — the catalog is frozen.
+ * catalog (now 11 tools — the round-12 v3 additions ride the same projection,
+ * F-S2): each entry carries its args schema AND its risk badge, so
+ * lookupWriteTool's per-tool risk floor works on the live wire path
+ * (defaultCompileDeps previously passed the bare WRITE_TOOL_ARGS_SCHEMAS and
+ * the catalog badges never reached the recomputed risk). The round-12
+ * widening seam is the contracts ALLOWED-catalog predicate
+ * (isAllowedEngineCommand — every studio.engine_commands step id must pass
+ * it at translate time). Built once — the catalog is frozen.
  */
 const CATALOG_WRITE_TOOLS: WriteToolsDep = Object.fromEntries(
   WRITE_TOOLS.map((tool) => [tool.id, { args: tool.inputSchema, risk: tool.risk }]),
 );
 
 export function defaultCompileDeps(): CompileDeps {
-  return { registry: AGENT_COMMAND_REGISTRY, writeTools: CATALOG_WRITE_TOOLS };
+  return {
+    registry: AGENT_COMMAND_REGISTRY,
+    writeTools: CATALOG_WRITE_TOOLS,
+    allowsEngineCommand: isAllowedEngineCommand,
+  };
 }

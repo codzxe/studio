@@ -22,7 +22,6 @@ import { apiKeysRoutes } from "./routes/api-keys.js";
 import { applyRoutes } from "./routes/apply.js";
 import { assetsRoutes } from "./routes/assets.js";
 import { billingRoutes } from "./routes/billing.js";
-import { chatRoutes } from "./routes/chat.js";
 import { commentsRoutes } from "./routes/comments.js";
 import { creditsRoutes } from "./routes/credits.js";
 import { healthRoutes } from "./routes/health.js";
@@ -39,6 +38,8 @@ import { runsRoutes } from "./routes/runs.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { shareAuthedRoutes, sharePublicRoutes } from "./routes/share.js";
 import { threadsRoutes } from "./routes/threads.js";
+import { registerToolRoutes } from "./routes/tools.js";
+import { turnRoutes } from "./routes/turn.js";
 import { versionsRoutes } from "./routes/versions.js";
 import { workspaceAuditRoutes } from "./routes/workspace-audit.js";
 import { workspacesRoutes } from "./routes/workspaces.js";
@@ -153,7 +154,12 @@ export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
   app.route("/", leasesRoutes(deps));
   app.route("/", assetsRoutes(deps));
   app.route("/", threadsRoutes(deps));
-  app.route("/", chatRoutes(deps));
+  // ROUND 12: the client-driven agent loop — the stateless turn route
+  // (research/round12-design.md) replaces the retired in-request /chat loop.
+  app.route("/", turnRoutes(deps));
+  // ROUND 12: agent generative tools (web_search / generate_image) — keyless
+  // Tavily by default, env-configured image provider when set.
+  app.route("/", registerToolRoutes(deps));
   app.route("/", runsRoutes(deps));
   app.route("/", applyRoutes(deps));
   app.route("/", modelsRoutes(deps));

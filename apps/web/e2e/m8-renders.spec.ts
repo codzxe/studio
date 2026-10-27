@@ -647,7 +647,12 @@ test.describe("M8 live estimate — debounced, keyed to the inputs, pure read", 
     const servedCodes: string[] = [];
     let servedCalls = 0;
     await installScriptedEstimate(page, () => {
-      const shape = ESTIMATE_ERROR_SHAPES[Math.min(servedCalls, ESTIMATE_ERROR_SHAPES.length - 1)];
+      // Math.min clamps the index into range; the ?? fallback only satisfies
+      // noUncheckedIndexedAccess (never taken).
+      const shape =
+        ESTIMATE_ERROR_SHAPES[Math.min(servedCalls, ESTIMATE_ERROR_SHAPES.length - 1)] ??
+        ESTIMATE_ERROR_SHAPES[0];
+      if (shape === undefined) throw new Error("estimate error fixture is empty");
       servedCalls += 1;
       servedCodes.push(shape.code);
       return errEnvelope(shape.status, shape.code, shape.message);

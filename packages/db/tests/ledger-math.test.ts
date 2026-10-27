@@ -37,15 +37,19 @@ describe("foldBalance", () => {
 });
 
 describe("outstandingReserve", () => {
-  it("reserves add holds; refunds and commits consume them", () => {
+  it("reserves add holds; refunds release them; commits never ghost-consume (12-w7 BUG-1 fix)", () => {
+    // ROUND-12: settle() refunds the FULL outstanding hold while charging
+    // −M on top, so a commit is NOT a hold consumption — counting it left a
+    // −M ghost after every settle that the next same-scope reserve inherited
+    // as a short refund (1 credit overcharged per multi-turn run).
     const entries: { kind: LedgerKind; amount: number }[] = [
       { kind: "grant", amount: 1000 },
       { kind: "reserve", amount: -24 },
     ];
     expect(outstandingReserve(entries)).toBe(24);
     entries.push({ kind: "commit", amount: -20 });
-    expect(outstandingReserve(entries)).toBe(4);
-    entries.push({ kind: "refund", amount: 4 });
+    expect(outstandingReserve(entries)).toBe(24); // the commit charges on top; the hold stands until its refund
+    entries.push({ kind: "refund", amount: 24 });
     expect(outstandingReserve(entries)).toBe(0);
   });
 

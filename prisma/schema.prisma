@@ -1,0 +1,330 @@
+// Studio domain schema — mirrors PRODUCT_ARCHITECTURE.md §9.1
+// Driver note: SQLite on this build box (waiver in docs/phases/M0.md); Postgres/Drizzle
+// swap is prod debt. SQLite has no enums/Json: kind/role/status fields are Strings
+// validated by Zod (packages/contracts) at the repository boundary; JSON payloads are
+// Strings parsed by Zod there too. Forward-only migrations when swapping to PG.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth (Better-Auth-shaped tables; swap is prod debt) ────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  accounts     Account[]
+  sessions      Session[]
+  memberships   Member[]
+}
+
+model Account {
+  id                  String  @id @default(cuid())
+  userId              String
+  providerId          String // "credential" | "google" | "github"
+  accountId           String
+  accessToken        String?
+  refreshToken       String?
+  accessTokenExpiresAt DateTime?
+  user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([providerId, accountId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Workspaces (Better Auth organization plugin shape) ─────────────────────
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  logo        String?
+  plan        String   @default("trial") // plans.ts contract values; trial|starter|pro|studio
+  trialEndsAt DateTime?
+  useCase     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  members     Member[]
+  invitations Invitation[]
+  projects    Project[]
+  assets      Asset[]
+  credits     CreditLedger[]
+  auditLog    AuditLog[]
+  idempotency IdempotencyKey[]
+}
+
+model Member {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           String   @default("editor") // owner|admin|editor|viewer (contracts)
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, userId])
+}
+
+model Invitation {
+  id             String    @id @default(cuid())
+  organizationId String
+  email          String
+  role           String    @default("editor")
+  status         String    @default("pending") // pending|accepted|revoked
+  token          String    @unique
+  inviterId      String
+  expiresAt      DateTime
+  createdAt      DateTime  @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, email])
+}
+
+// ─── Projects, versions, leases (§9.1) ─────────────────────────────────────
+
+model Project {
+  id                String    @id @default(cuid())
+  organizationId    String
+  name              String
+  slug              String
+  description       String?
+  thumbnailUrl      String?
+  currentVersionId  String?
+  archivedAt        DateTime?
+  deletedAt         DateTime?
+  createdBy          String
+  createdAt         DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  organization      Organization  @relation(fields: [organizationId], references: [id])
+  versions          ProjectVersion[]
+  lease             ProjectLease?
+  threads           AgentThread[]
+  runs              AgentRun[]
+  renders           Render[]
+  comments          Comment[]
+  activity          ActivityEvent[]
+  @@unique([organizationId, slug])
+}
+
+model ProjectVersion {
+  id              String   @id @default(cuid())
+  projectId       String
+  version        Int // 1-based sequence within the project
+  parentVersionId String?
+  objectKey       String
+  sha256          String
+  sizeBytes       Int
+  label           String?
+  agentRunId      String?
+  createdBy       String
+  createdAt       DateTime @default(now())
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@unique([projectId, version])
+}
+
+model ProjectLease {
+  projectId  String   @id
+  userId     String
+  sessionId  String
+  expiresAt  DateTime
+  updatedAt  DateTime @updatedAt
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// ─── Assets (§9.1 + §M2) ────────────────────────────────────────────────────
+
+model Asset {
+  id             String   @id @default(cuid())
+  organizationId String
+  projectId      String?  // null = workspace-level
+  name           String
+  mime           String
+  sizeBytes      Int
+  sha256         String
+  objectKey      String
+  width          Int?
+  height         Int?
+  durationTicks  Int?
+  createdBy      String
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  @@index([organizationId, sha256])
+}
+
+// ─── Agent: threads / messages / runs / steps (§8, §9.1) ────────────────────
+
+model AgentThread {
+  id        String   @id @default(cuid())
+  projectId String
+  createdBy String
+  title     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  messages  AgentMessage[]
+  runs      AgentRun[]
+}
+
+model AgentMessage {
+  id          String   @id @default(cuid())
+  threadId    String
+  role        String // user|assistant|system
+  contentJson String // JSON per contracts.MessageContent (validated at boundary)
+  runId       String?
+  createdAt   DateTime @default(now())
+  thread      AgentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+}
+
+model AgentRun {
+  id              String    @id @default(cuid())
+  threadId        String
+  projectId       String
+  model           String
+  status          String    @default("running") // running|awaiting_approval|applied|undone|completed|failed|cancelled
+  planJson        String?   // JSON EditPlan (contracts)
+  reservedCredits Int       @default(0)
+  committedCredits Int      @default(0)
+  baseVersionId   String?
+  resultVersionId String?
+  errorCode       String?
+  seq             Int       @default(0) // SSE sequence counter
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+  thread          AgentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  project         Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  steps           AgentStep[]
+}
+
+model AgentStep {
+  id               String   @id @default(cuid())
+  runId            String
+  seq              Int
+  tool            String
+  argsJson        String?   // JSON (validated)
+  resultJson      String?   // JSON (validated)
+  commandBatchJson String?  // JSON AgentBatch (contracts)
+  status          String   @default("queued") // queued|running|done|failed|skipped
+  durationMs      Int?
+  createdAt       DateTime @default(now())
+  run              AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  @@unique([runId, seq])
+}
+
+// ─── Credits (§10) — append-only ledger ─────────────────────────────────────
+
+model CreditLedger {
+  id            String   @id @default(cuid())
+  organizationId String
+  kind          String // grant|reserve|commit|refund|adjust
+  amount        Int // signed: +grant/commit/refund, -reserve usage
+  balanceAfter  Int
+  runId         String?
+  idempotencyKey String   @unique
+  metadataJson  String?
+  createdAt     DateTime @default(now())
+  organization  Organization @relation(fields: [organizationId], references: [id])
+}
+
+// ─── Renders (§M8) ───────────────────────────────────────────────────────────
+
+model Render {
+  id          String    @id @default(cuid())
+  projectId   String
+  organizationId String
+  compId      String
+  format      String // mp4|png-sequence|gif|wav
+  settingsJson String
+  status      String    @default("queued") // queued|running|completed|failed|cancelled
+  objectKey   String?
+  error       String?
+  credits     Int       @default(0)
+  createdBy    String
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// ─── Comments (§11 / M7) ────────────────────────────────────────────────────
+
+model Comment {
+  id         String    @id @default(cuid())
+  projectId  String
+  compId     String?
+  layerId    String?
+  timeTicks  Int?
+  body       String
+  authorId   String
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// ─── Activity / audit (§9.1) ────────────────────────────────────────────────
+
+model ActivityEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  projectId      String?
+  actorId        String?
+  action         String // stable codes, e.g. project.created
+  targetType     String
+  targetId       String?
+  metadataJson   String?
+  createdAt      DateTime @default(now())
+  project        Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  actorId        String
+  action         String
+  targetType     String
+  targetId       String?
+  metadataJson   String?
+  ip             String?
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+// ─── Idempotency middleware (M1 task 3) ─────────────────────────────────────
+
+model IdempotencyKey {
+  id             String   @id @default(cuid())
+  organizationId String
+  key            String
+  endpoint       String
+  responseBodyJson String
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  @@unique([organizationId, key, endpoint])
+}
+
+// ─── Storage: signed-URL emulation (FS driver on this box) ───────────────────
+
+model SignedUrl {
+  id        String   @id @default(cuid())
+  objectKey String
+  workspaceId String
+  userId    String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}

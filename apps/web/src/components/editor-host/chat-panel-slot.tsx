@@ -63,8 +63,16 @@ import { ContextStrip } from "@/components/chat/context-strip";
 import { ClarifyCard, EditErrorCard } from "@/components/chat/edit-cards";
 import { ChatFooter } from "@/components/chat/footer";
 import { ChatHeader, modelDisplayName } from "@/components/chat/header";
-import { nextLayoutAction } from "@/components/chat/layout";
+import {
+  type ChatLayout,
+  DEFAULT_LAYOUT,
+  MIN_PANEL,
+  nextLayoutAction,
+} from "@/components/chat/layout";
 import { ChatCollapsedPill, ChatPanel } from "@/components/chat/panel";
+import { type ChatPanelSettingsStore, usePanelSettings } from "@/components/chat/panel-settings";
+import { PanelSettingsPopover } from "@/components/chat/panel-settings-popover";
+import { RunProgressStrip, deriveRunProgress } from "@/components/chat/progress-strip";
 import {
   CHAT_SEED_COMPOSER_EVENT,
   QuickActions,
@@ -72,11 +80,16 @@ import {
   selectionNamesOf,
 } from "@/components/chat/quick-actions";
 import { CHAT_QUICK_ACTION_EVENT, ChatThread } from "@/components/chat/thread";
+import { ThreadSwitcher } from "@/components/chat/thread-switcher";
 import { type ChatLayoutStore, useChatLayout } from "@/components/chat/use-layout";
+import type { MentionItem } from "@/lib/chat/mentions";
 import type { ChatContextApi } from "@/lib/chat/provider";
-import { LIVE_RUN_PHASES } from "@/lib/chat/run-state";
+import { LIVE_RUN_PHASES, applicablePlanFromRuntime } from "@/lib/chat/run-state";
+import type { SlashCommandName } from "@/lib/chat/slash-commands";
 import { formatTokenEstimate } from "@/lib/chat/tokens";
 import type { ChatUiMessage, ToolCardState } from "@/lib/chat/types";
+import { threadHistorySeamsFromClient, useThreadHistory } from "@/lib/chat/use-thread-history";
+import type { ApiClient } from "@studio/api-client";
 import type { EditPlan } from "@studio/contracts";
 import { Badge, Button } from "@studio/ui";
 import { X } from "lucide-react";
@@ -108,6 +121,30 @@ export interface ChatPanelSlotProps {
    * the app singleton. Production (the editor host) never passes it.
    */
   readonly layoutStore?: ChatLayoutStore;
+  /**
+   * Test/embedding seam for the ROUND-12 settings knobs (defaults to the
+   * module singleton — the useChatLayout(layoutStore?) pattern).
+   */
+  readonly settingsStore?: ChatPanelSettingsStore;
+  /**
+   * ROUND 12 (Chat UI v3): the live api-client slice powering the thread
+   * switcher + history on reload (`threads.list/messages` + `runs.get`).
+   * Absent (legacy mounts/tests) ⇒ no switcher, no history — everything
+   * else behaves exactly as before.
+   */
+  readonly client?: Pick<ApiClient, "threads" | "runs"> | null;
+  /** The project whose threads the switcher lists. */
+  readonly projectId?: string | null;
+  /**
+   * ROUND 12 (Chat UI v3): @-mention canvas candidates (layers/comps).
+   * Absent ⇒ the composer falls back to the context snapshot's names.
+   */
+  readonly getCanvasLayers?: () => Promise<readonly MentionItem[]>;
+  /**
+   * ROUND 12 (Chat UI v3): the host's thread-change hook — fires on
+   * auto-restore, switcher picks and New chat (`null`).
+   */
+  readonly onThreadChange?: (threadId: string | null) => void;
 }
 
 /**
@@ -212,8 +249,13 @@ export function ChatPanelSlot({
   api,
   onSidebarDock,
   layoutStore,
+  settingsStore,
+  client = null,
+  projectId = null,
+  getCanvasLayers,
+  onThreadChange,
 }: ChatPanelSlotProps): ReactElement {
-  const { layout, setMode, reset } = useChatLayout(layoutStore);
+  const { layout, setMode, reset, move, resize } = useChatLayout(layoutStore);
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -331,7 +373,42 @@ export function ChatPanelSlot({
   const { snapshot } = api;
   const streaming = LIVE_RUN_PHASES.has(snapshot.phase);
   const collapsed = layout.mode === "collapsed";
-  const messages = snapshot.messages;
+
+  // -- ROUND 12 (Chat UI v3) — panel settings knobs (the settings store) ------
+  const { settings, setSettings } = usePanelSettings(settingsStore);
+
+  // -- ROUND 12 (Chat UI v3) — history on reload + the thread switcher --------
+  //
+  // The narrow api-client seams feed the hook; the hook adopts threads (the
+  // provider's openThread recreates the controller) and reconstructs the
+  // transcript for ADOPTED threads only — lazily-created live threads never
+  // double-render. The merged list is what the thread renders.
+  const seams = useMemo(
+    () => (client !== null ? threadHistorySeamsFromClient(client) : null),
+    [client],
+  );
+  const onThreadChangeRef = useRef(onThreadChange);
+  onThreadChangeRef.current = onThreadChange;
+  const adoptAndOpen = useCallback(
+    (threadId: string, title: string | null): void => {
+      api.openThread(threadId, title);
+      onThreadChangeRef.current?.(threadId);
+    },
+    [api],
+  );
+  const { threads, threadsLoading, history, historyLoading, refreshThreads, adoptThread } =
+    useThreadHistory({
+      seams,
+      projectId,
+      threadId: api.threadId,
+      liveMessageCount: snapshot.messages.length,
+      onOpenThread: adoptAndOpen,
+    });
+
+  const messages = useMemo<readonly ChatUiMessage[]>(
+    () => (history.length === 0 ? snapshot.messages : [...history, ...snapshot.messages]),
+    [history, snapshot.messages],
+  );
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : undefined;
 
   // §4.4: the composer-row chips are the "after a selection" surface.
@@ -367,6 +444,166 @@ export function ChatPanelSlot({
   // same gate as the plan card's Undo button; null when nothing is applied).
   const undoableRun = undoableRunId(snapshot.messages);
   const undoGestureInFlight = editGestureInFlight(snapshot.messages);
+
+  // -- ROUND 12 (Chat UI v3): New chat (thread list refresh + host notice) ----
+  const startNewChat = useCallback((): void => {
+    api.newThread();
+    onThreadChangeRef.current?.(null);
+    refreshThreads();
+  }, [api, refreshThreads]);
+
+  // -- ROUND 12 (Chat UI v3): per-message re-send (Retry / Edit-and-resend) --
+  const resendFrom = useCallback(
+    (text: string): void => {
+      if (text.trim() === "") return;
+      if (LIVE_RUN_PHASES.has(api.snapshot.phase)) {
+        showNotice("The agent is still working — stop it first.");
+        return;
+      }
+      api.send({ message: text });
+    },
+    [api, showNotice],
+  );
+  const onRetryFrom = useCallback(
+    (messageId: string): void => {
+      const message = messages.find((entry) => entry.id === messageId);
+      if (message === undefined) return;
+      resendFrom(message.text);
+    },
+    [messages, resendFrom],
+  );
+  const onEditResend = useCallback(
+    (_messageId: string, nextText: string): void => {
+      resendFrom(nextText);
+    },
+    [resendFrom],
+  );
+
+  // -- ROUND 12 (Chat UI v3): the newest undone plan (the /redo gesture) -----
+  const reapplyable = useMemo(() => {
+    for (let index = snapshot.messages.length - 1; index >= 0; index -= 1) {
+      const message = snapshot.messages[index];
+      if (message === undefined || message.runId === undefined) continue;
+      const runtime = message.planRuntime;
+      if (runtime?.outcome === "undone") {
+        return { runId: message.runId, runtime };
+      }
+    }
+    return null;
+  }, [snapshot.messages]);
+
+  // -- ROUND 12 (Chat UI v3): double-click header = maximize/restore ---------
+  const [maximized, setMaximized] = useState(false);
+  const preMaxLayoutRef = useRef<ChatLayout | null>(null);
+  const toggleMaximize = useCallback((): void => {
+    if (!maximized) {
+      const vw = typeof window === "undefined" ? 0 : window.innerWidth;
+      const vh = typeof window === "undefined" ? 0 : window.innerHeight;
+      preMaxLayoutRef.current = layout;
+      if (layout.mode !== "floating") setMode("floating");
+      resize(Math.max(MIN_PANEL.w, vw - 32), Math.max(MIN_PANEL.h, vh - 32));
+      move(16, 16);
+      setMaximized(true);
+      return;
+    }
+    const pre = preMaxLayoutRef.current ?? DEFAULT_LAYOUT;
+    resize(pre.w, pre.h);
+    move(pre.x, pre.y);
+    setMaximized(false);
+  }, [layout, maximized, move, resize, setMode]);
+  const resetGeometry = useCallback((): void => {
+    reset();
+    setMaximized(false);
+  }, [reset]);
+
+  // -- ROUND 12 (Chat UI v3): slash commands → the existing gestures ----------
+  const onSlashCommand = useCallback(
+    (command: SlashCommandName): void => {
+      switch (command) {
+        case "undo": {
+          // The exact ⌘⇧U gating: the newest applied run, never mid-gesture.
+          if (undoableRun !== null && api.controller !== null) {
+            api.controller.undo(undoableRun);
+            break;
+          }
+          showNotice(undoGestureInFlight ? EDIT_IN_FLIGHT_NOTICE : NOTHING_TO_UNDO_NOTICE);
+          break;
+        }
+        case "redo": {
+          if (reapplyable !== null && api.controller !== null) {
+            api.controller.reapply(
+              applicablePlanFromRuntime(reapplyable.runId, reapplyable.runtime),
+            );
+            break;
+          }
+          showNotice("Nothing to re-apply yet.");
+          break;
+        }
+        case "save":
+          showNotice("Autosave is on — your project saves itself.");
+          break;
+        case "checkpoint":
+          showNotice("Every applied plan checkpoints the project.");
+          break;
+        case "clear":
+          startNewChat();
+          showNotice("Started a fresh chat.");
+          break;
+        case "reset-panel":
+          resetGeometry();
+          showNotice("Panel position reset.");
+          break;
+      }
+    },
+    [api, reapplyable, resetGeometry, showNotice, startNewChat, undoGestureInFlight, undoableRun],
+  );
+
+  // -- ROUND 12 (Chat UI v3): @-mention candidates ----------------------------
+  // Host getter first (fresh canvas names per thread); the context snapshot's
+  // selection/comp names are the fallback when the host wires nothing.
+  const [canvasMentionItems, setCanvasMentionItems] = useState<readonly MentionItem[]>([]);
+  const getCanvasLayersRef = useRef(getCanvasLayers);
+  getCanvasLayersRef.current = getCanvasLayers;
+  const activeThreadId = api.threadId;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate dep — the mention-candidate refresh re-runs when the panel api identity changes (thread switch).
+  useEffect(() => {
+    const fetcher = getCanvasLayersRef.current;
+    if (fetcher === undefined || fetcher === null) return;
+    let cancelled = false;
+    void fetcher().then(
+      (items) => {
+        if (!cancelled) setCanvasMentionItems(items);
+      },
+      () => undefined, // a failed canvas read never breaks the composer
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [activeThreadId]);
+  const contextMentionItems = useMemo<readonly MentionItem[]>(() => {
+    const items: MentionItem[] = [];
+    const activeCompName = contextDataName(api.context, "activeComp");
+    if (activeCompName !== null) {
+      items.push({ id: `comp:${activeCompName}`, label: activeCompName, kind: "comp" });
+    }
+    const selection = api.context?.blocks.find((block) => block.kind === "selection")?.data;
+    const layers = (selection as { readonly layers?: readonly unknown[] } | null | undefined)
+      ?.layers;
+    if (Array.isArray(layers)) {
+      for (const raw of layers) {
+        if (typeof raw !== "object" || raw === null) continue;
+        const name = (raw as { name?: unknown }).name;
+        if (typeof name === "string" && name !== "") {
+          items.push({ id: `layer:${name}`, label: name, kind: "layer" });
+        }
+      }
+    }
+    return items;
+  }, [api.context]);
+  const mentionItems = canvasMentionItems.length > 0 ? canvasMentionItems : contextMentionItems;
+
+  // -- ROUND 12 (Chat UI v3): the live progress strip's chips ----------------
+  const progress = useMemo(() => deriveRunProgress(snapshot), [snapshot]);
 
   const composerDisabled = useMemo(() => {
     if (snapshot.error?.code === "INSUFFICIENT_CREDITS") {
@@ -420,7 +657,7 @@ export function ChatPanelSlot({
           break;
         }
         case "newChat":
-          api.newThread();
+          startNewChat();
           setAgentMode(false); // a fresh thread starts unmoded
           break;
         case "stop":
@@ -464,6 +701,7 @@ export function ChatPanelSlot({
     openInlineEdit,
     undoableRun,
     undoGestureInFlight,
+    startNewChat,
   ]);
 
   // Visibility gates the provider's 1 Hz inspect poll + context collects (§11).
@@ -502,9 +740,30 @@ export function ChatPanelSlot({
       }}
       onToggleDock={() => setMode(layout.mode === "sidebar" ? "floating" : "sidebar")}
       onClose={() => setMode("collapsed")}
-      onNewChat={api.newThread}
-      onResetPosition={reset}
+      onNewChat={startNewChat}
+      onResetPosition={resetGeometry}
       onShortcuts={() => showNotice(SHORTCUTS_NOTICE)}
+      threadSwitcher={
+        seams !== null ? (
+          <ThreadSwitcher
+            threads={threads}
+            activeThreadId={api.threadId}
+            disabled={streaming}
+            loading={threadsLoading}
+            onOpenThread={adoptThread}
+            onNewThread={startNewChat}
+          />
+        ) : undefined
+      }
+      settings={
+        <PanelSettingsPopover
+          settings={settings}
+          onChange={setSettings}
+          onResetGeometry={resetGeometry}
+          maximized={maximized}
+          onToggleMaximize={toggleMaximize}
+        />
+      }
     />
   );
 
@@ -520,12 +779,15 @@ export function ChatPanelSlot({
 
   const thread = (
     <ChatThread
-      messages={snapshot.messages}
+      messages={messages}
       phase={snapshot.phase}
       activeRunId={snapshot.activeRunId}
       onRetry={api.retry}
       emptyQuickActions={EMPTY_QUICK_ACTIONS}
       error={snapshot.error}
+      onRetryFrom={onRetryFrom}
+      onEditResend={onEditResend}
+      density={settings.density}
     />
   );
 
@@ -595,8 +857,20 @@ export function ChatPanelSlot({
         disabled={composerDisabled}
         onSend={(message) => api.send({ message })}
         onStop={api.stop}
+        onSlashCommand={onSlashCommand}
+        mentionItems={mentionItems}
         creditHint={`${modelDisplayName(activeModel)} · ${formatTokenEstimate(contextTokens)}`}
       />
+
+      {/* ROUND 12 (Chat UI v3): the live progress strip — under the composer,
+          only while a run is live; folds from the store's tool-card state. */}
+      <RunProgressStrip phase={snapshot.phase} chips={progress.chips} />
+
+      {historyLoading ? (
+        <p data-testid="chat-history-loading" className="px-1 text-caption text-muted">
+          Loading conversation…
+        </p>
+      ) : null}
     </div>
   );
 
@@ -656,6 +930,8 @@ export function ChatPanelSlot({
             thread={thread}
             composer={composer}
             footer={footer}
+            settings={settings}
+            onHeaderDoubleClick={toggleMaximize}
             onCycleMode={() => {
               const action = nextLayoutAction(layout, "toggleChat");
               if (action.type === "setMode") setMode(action.mode);

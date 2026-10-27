@@ -174,7 +174,82 @@ export const RUN_CANCELLED_EVENT_SCHEMA = z.object({
   seq: seqField,
 });
 
-/** All 12 §7.4 event types, in wire order. */
+// ---------------------------------------------------------------------------
+// Round-12 turn events (client-driven loop — research/round12-design.md
+// "TURN WIRE CONTRACT"). Additive to the §7.4 set: the 12 original event
+// types are untouched; turn.* events ride the same union so ONE parser handles
+// the whole stream. The reducer stays PASSIVE for turn.* — the round-12
+// chat-controller owns turn state; these schemas exist so the wire is typed.
+// ---------------------------------------------------------------------------
+
+/**
+ * One tool call carried by `turn.completed` (TURN WIRE CONTRACT, pinned):
+ * `resultForModel` is what the next turn echoes as the tool_result (write
+ * tools: the propose-only "proposed batch" result; read/generative: the
+ * client's local execution result). `proposal` is OPTIONAL + NULLABLE —
+ * present with the compiled carrier for write tools, `null` for
+ * read/generative tools.
+ */
+export const TURN_TOOL_CALL_SCHEMA = z.object({
+  toolCallId: toolCallIdField,
+  tool: z.string().min(1),
+  args: z.unknown(),
+  resultForModel: z.unknown(),
+  proposal: z
+    .strictObject({
+      compiled: z.strictObject({
+        batch: AGENT_BATCH_SCHEMA,
+        risk: PLAN_RISK_SCHEMA,
+        estimatedCredits: z.number().nonnegative(),
+        resolutionRequests: z.array(LAYER_RESOLUTION_REQUEST_SCHEMA),
+      }),
+    })
+    .nullable()
+    .optional(),
+});
+
+export type TurnToolCall = z.infer<typeof TURN_TOOL_CALL_SCHEMA>;
+
+/** Why a turn ended: natural stop, tool calls to execute, or the step cap. */
+export const TURN_FINISH_REASON_SCHEMA = z.enum(["stop", "tool-calls", "step-limit"]);
+
+export type TurnFinishReason = z.infer<typeof TURN_FINISH_REASON_SCHEMA>;
+
+export const TURN_STARTED_EVENT_SCHEMA = z.object({
+  type: z.literal("turn.started"),
+  runId: runIdField,
+  seq: seqField,
+  stepIndex: z.number().int().nonnegative(),
+});
+
+export const TURN_COMPLETED_EVENT_SCHEMA = z.object({
+  type: z.literal("turn.completed"),
+  runId: runIdField,
+  seq: seqField,
+  stepIndex: z.number().int().nonnegative(),
+  finishReason: TURN_FINISH_REASON_SCHEMA,
+  usage: z.strictObject({
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+  }),
+  credits: z.strictObject({ committed: z.number().nonnegative() }),
+  assistantText: z.string().optional(),
+  toolCalls: z.array(TURN_TOOL_CALL_SCHEMA),
+});
+
+export const TURN_FAILED_EVENT_SCHEMA = z.object({
+  type: z.literal("turn.failed"),
+  runId: runIdField,
+  seq: seqField,
+  stepIndex: z.number().int().nonnegative(),
+  code: z.string().min(1),
+  message: z.string().min(1),
+  retryable: z.boolean(),
+  credits: z.strictObject({ committed: z.number().nonnegative() }),
+});
+
+/** All 12 §7.4 event types, in wire order — plus the round-12 turn trio
+ * (client-driven loop; additive — the §7.4 twelve keep their order). */
 export const STUDIO_STREAM_EVENT_TYPES = [
   "run.started",
   "message.delta",
@@ -188,6 +263,10 @@ export const STUDIO_STREAM_EVENT_TYPES = [
   "run.completed",
   "run.failed",
   "run.cancelled",
+  // round 12 (TURN WIRE CONTRACT — appended, never reordered):
+  "turn.started",
+  "turn.completed",
+  "turn.failed",
 ] as const satisfies readonly string[];
 
 export type StudioStreamEventType = (typeof STUDIO_STREAM_EVENT_TYPES)[number];
@@ -205,6 +284,9 @@ export const STUDIO_STREAM_EVENT_SCHEMA = z.discriminatedUnion("type", [
   RUN_COMPLETED_EVENT_SCHEMA,
   RUN_FAILED_EVENT_SCHEMA,
   RUN_CANCELLED_EVENT_SCHEMA,
+  TURN_STARTED_EVENT_SCHEMA,
+  TURN_COMPLETED_EVENT_SCHEMA,
+  TURN_FAILED_EVENT_SCHEMA,
 ]);
 
 export type StudioStreamEvent = z.infer<typeof STUDIO_STREAM_EVENT_SCHEMA>;
@@ -513,6 +595,14 @@ function applyEvent(state: RunState, event: StudioStreamEvent): RunState {
       next.approvalRequired = false;
       break;
     }
+    // Round-12 turn events (TURN WIRE CONTRACT): PASSIVE by design — the
+    // client-driven chat-controller v2 owns per-turn state (tool chips, step
+    // budget, retries); the reducer only records runId/seq so ordering and
+    // replay rules keep applying to the whole stream.
+    case "turn.started":
+    case "turn.completed":
+    case "turn.failed":
+      break;
   }
   return next;
 }

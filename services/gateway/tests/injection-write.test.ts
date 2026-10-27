@@ -261,12 +261,17 @@ function expectPrototypeClean(): void {
  * raw engine entrypoints (the M5-N write edition of the M4 scan). */
 const CURATED_TOOL_IDS = TOOL_LIST.map((tool) => tool.id);
 
+/** The WIRE form: openai.ts `toolSeam` rewrites dots to underscores (strict
+ * providers enforce ^[a-zA-Z0-9_-]{1,64}$ for tools[].function.name); the
+ * registry truth stays dotted. */
+const CURATED_TOOL_WIRE_IDS = CURATED_TOOL_IDS.map((id) => id.replace(/\./g, "_"));
+
 function expectExactlyCuratedToolsSent(calls: readonly RecordedCall[]): void {
   expect(calls.length).toBeGreaterThan(0);
   for (const call of calls) {
     const tools = call.body.tools;
     if (tools === undefined) continue; // structured-output calls carry no tools
-    expect(tools.map((tool) => tool.function.name)).toEqual(CURATED_TOOL_IDS);
+    expect(tools.map((tool) => tool.function.name)).toEqual(CURATED_TOOL_WIRE_IDS);
   }
   for (const call of calls) {
     const serialized = JSON.stringify(call.body.tools ?? []);

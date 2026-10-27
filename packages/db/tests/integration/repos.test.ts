@@ -294,6 +294,93 @@ describe.skipIf(!hasDb)("repos (integration)", { timeout: 30_000 }, () => {
     });
   });
 
+  it("round 12 agent loop: tool step lifecycle + heartbeat/stale/abandon + transcript (migration 0008)", async () => {
+    const project = await repos.projects.create(wsA, { name: "Looped", createdBy: userId });
+    const thread = await repos.threads.create(wsA, {
+      projectId: project.id,
+      createdBy: userId,
+    });
+    const run = await repos.runs.create(wsA, {
+      threadId: thread.id,
+      projectId: project.id,
+      model: "studio-fast",
+    });
+
+    // step lifecycle: issued → success, keyed by the model's toolCallId
+    const step = await repos.runs.insertToolCallStep({
+      runId: run.id,
+      threadId: thread.id,
+      stepIndex: 0,
+      toolCallId: `call_${randomUUID().slice(0, 8)}`,
+      tool: "studio.get_context",
+      argsJson: { comp: "comp_main" },
+    });
+    expect(step.status).toBe("issued");
+    expect(step.toolCallId).toBeTruthy();
+    const settled = await repos.runs.completeToolStep({
+      toolCallId: step.toolCallId ?? "",
+      resultJson: { ok: true },
+    });
+    expect(settled.status).toBe("success");
+    expect(settled.seq).toBe(step.seq);
+
+    // transcript rows + user-run link
+    const userRow = await repos.threads.addMessage(wsA, {
+      threadId: thread.id,
+      role: "user",
+      contentJson: { message: "make it blue" },
+    });
+    const linked = await repos.threads.linkUserMessageToRun({
+      messageId: userRow.id,
+      runId: run.id,
+    });
+    expect(linked.runId).toBe(run.id);
+    await repos.threads.insertToolMessageRow({
+      threadId: thread.id,
+      runId: run.id,
+      toolCallId: step.toolCallId ?? "",
+      tool: "studio.get_context",
+      payload: { ok: true },
+    });
+    await repos.threads.insertAssistantMessageRow({
+      threadId: thread.id,
+      runId: run.id,
+      text: "done",
+      status: "completed",
+    });
+
+    // heartbeat: running + last_step_index + credits; fresh ⇒ not stale
+    const touched = await repos.runs.touchRunHeartbeat({
+      runId: run.id,
+      lastStepIndex: 1,
+      creditsCommitted: 2,
+    });
+    expect(touched.status).toBe("running");
+    expect(touched.lastStepIndex).toBe(1);
+    expect(touched.committedCredits).toBe(2);
+    expect(touched.heartbeatAt).not.toBeNull();
+    expect((await repos.runs.getStaleRunningRuns()).some((r) => r.id === run.id)).toBe(false);
+
+    // backdate past the 5-minute default → stale → abandoned (cancelled)
+    await db
+      .update(schema.agentRuns)
+      .set({ heartbeatAt: new Date(Date.now() - 6 * 60_000) })
+      .where(eq(schema.agentRuns.id, run.id));
+    const stale = await repos.runs.getStaleRunningRuns();
+    const mine = stale.find((r) => r.id === run.id);
+    expect(mine?.workspaceId).toBe(wsA);
+    const abandoned = await repos.runs.markRunAbandoned({ runId: run.id });
+    expect(abandoned.status).toBe("cancelled");
+    expect(abandoned.errorCode).toBe("RUN_ABANDONED");
+    expect((await repos.runs.getStaleRunningRuns()).some((r) => r.id === run.id)).toBe(false);
+
+    // history: oldest-first transcript incl. the tool row
+    const history = await repos.threads.loadThreadHistory(thread.id);
+    expect(history.map((entry) => entry.role)).toEqual(["user", "tool", "assistant"]);
+    expect(history[0]?.runId).toBe(run.id);
+    expect(history[1]?.contentJson).toMatchObject({ kind: "tool" });
+  });
+
   it("comments resolve and unresolve idempotently", async () => {
     const project = await repos.projects.create(wsA, { name: "Commented", createdBy: userId });
     const comment = await repos.comments.create(wsA, {

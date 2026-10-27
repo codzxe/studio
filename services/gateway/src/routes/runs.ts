@@ -48,19 +48,26 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     model: (["studio-fast", "studio-smart", "studio-vision"] as const).includes(run.model as never)
       ? (run.model as RunRecord["model"])
       : "studio-fast",
-    status: (
-      [
-        "queued",
-        "streaming",
-        "awaiting_approval",
-        "applying",
-        "completed",
-        "failed",
-        "cancelled",
-      ] as const
-    ).includes(run.status as never)
-      ? (run.status as RunRecord["status"])
-      : "queued",
+    // ROUND-12 (12-w7-r1 BUG-2a fix): the turn world's DB rows speak
+    // "running" — the wire vocabulary never learned it, so every live run
+    // misread "queued". Map it to the wire's "streaming" (honest: a
+    // heartbeating turn-world run IS streaming from the client's view).
+    status:
+      run.status === "running"
+        ? "streaming"
+        : (
+              [
+                "queued",
+                "streaming",
+                "awaiting_approval",
+                "applying",
+                "completed",
+                "failed",
+                "cancelled",
+              ] as const
+            ).includes(run.status as never)
+          ? (run.status as RunRecord["status"])
+          : "queued",
     plan: null,
     steps: steps.map((step) => ({
       seq: step.seq,

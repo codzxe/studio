@@ -717,7 +717,12 @@ d("external spend source (LiteLLM seam)", () => {
     await withSpendKey("", async () => {
       expect(
         createSpendSource({
-          litellm: { baseUrl: SPEND_BASE_URL, apiKey: "x", virtualKey: undefined },
+          litellm: {
+            baseUrl: SPEND_BASE_URL,
+            apiKey: "x",
+            virtualKey: undefined,
+            modelMap: undefined,
+          },
         }),
       ).toBeNull();
     });
@@ -727,12 +732,24 @@ d("external spend source (LiteLLM seam)", () => {
     try {
       expect(
         createSpendSource({
-          litellm: { baseUrl: SPEND_BASE_URL, apiKey: "x", virtualKey: undefined },
+          litellm: {
+            baseUrl: SPEND_BASE_URL,
+            apiKey: "x",
+            virtualKey: undefined,
+            modelMap: undefined,
+          },
         }),
       ).toBeNull();
       expect(
         createSpendSource(
-          { litellm: { baseUrl: SPEND_BASE_URL, apiKey: "x", virtualKey: undefined } },
+          {
+            litellm: {
+              baseUrl: SPEND_BASE_URL,
+              apiKey: "x",
+              virtualKey: undefined,
+              modelMap: undefined,
+            },
+          },
           {
             spendApiKey: "sk-123",
           },
@@ -740,7 +757,14 @@ d("external spend source (LiteLLM seam)", () => {
       ).toBeNull();
       expect(
         createSpendSource(
-          { litellm: { baseUrl: SPEND_BASE_URL, apiKey: "x", virtualKey: undefined } },
+          {
+            litellm: {
+              baseUrl: SPEND_BASE_URL,
+              apiKey: "x",
+              virtualKey: undefined,
+              modelMap: undefined,
+            },
+          },
           {
             spendApiKey: SPEND_KEY,
           },
@@ -751,7 +775,12 @@ d("external spend source (LiteLLM seam)", () => {
     }
     await withSpendKey(SPEND_KEY, async () => {
       const source = createSpendSource({
-        litellm: { baseUrl: SPEND_BASE_URL, apiKey: "x", virtualKey: undefined },
+        litellm: {
+          baseUrl: SPEND_BASE_URL,
+          apiKey: "x",
+          virtualKey: undefined,
+          modelMap: undefined,
+        },
       });
       expect(source?.kind).toBe("litellm");
     });

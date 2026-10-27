@@ -140,13 +140,21 @@ describe("edit-plan: PlanRisk helpers (§6.2, §7.3)", () => {
     expect(needsConfirmCheckbox("low")).toBe(false);
   });
 
-  it("auto-apply (§7.3) only for low-risk, approval-free, in-place plans", () => {
+  it("auto-apply (§7.3 v2): approval-free, non-high-risk, create/edit/style/animate", () => {
     const base = validPlan() as EditPlan;
     expect(
       isAutoApplicable({ ...base, risk: "low", requiresApproval: false, intent: "edit" }),
     ).toBe(true);
+    // v2: MEDIUM (many layers/effects — normal creation work) passes.
     expect(
       isAutoApplicable({ ...base, risk: "medium", requiresApproval: false, intent: "edit" }),
+    ).toBe(true);
+    expect(
+      isAutoApplicable({ ...base, risk: "medium", requiresApproval: false, intent: "create" }),
+    ).toBe(true);
+    // HIGH still waits, approval still wins, render/organize still excluded.
+    expect(
+      isAutoApplicable({ ...base, risk: "high", requiresApproval: false, intent: "edit" }),
     ).toBe(false);
     expect(isAutoApplicable({ ...base, risk: "low", requiresApproval: true, intent: "edit" })).toBe(
       false,
@@ -155,9 +163,9 @@ describe("edit-plan: PlanRisk helpers (§6.2, §7.3)", () => {
       isAutoApplicable({ ...base, risk: "low", requiresApproval: false, intent: "render" }),
     ).toBe(false);
     expect(
-      isAutoApplicable({ ...base, risk: "low", requiresApproval: false, intent: "create" }),
+      isAutoApplicable({ ...base, risk: "low", requiresApproval: false, intent: "organize" }),
     ).toBe(false);
-    expect([...AUTO_APPLYABLE_INTENTS]).toEqual(["edit", "style", "animate"]);
+    expect([...AUTO_APPLYABLE_INTENTS]).toEqual(["create", "edit", "style", "animate"]);
   });
 });
 

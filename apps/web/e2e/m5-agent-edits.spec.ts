@@ -13,72 +13,68 @@
  * recipe — env, seed, the staged `.ecproj` fixture, baselines).
  *
  * ----------------------------------------------------------------------------
- * What is ACTIVE today vs WIRING-PENDING (fixme) — the honest split
+ * ROUND-12 TRUTH — the client-driven turn loop (research/round12-design.md)
  * ----------------------------------------------------------------------------
  *
- * The M5 wave-1 surfaces are all landed (M5-J command registry, M5-A/B write
- * tools + plan compiler, M5-C wire plan event with compiledBatch, M5-D/E
- * persistence + routes, M5-F ApplyController + planRuntime state machine,
- * M5-G plan card + confirm dialog, M5-H PlanPreview). ONE integrator-owned
- * link is still open — M5-G's follow-up #1: `message.tsx` still mounts the
- * M4 card shape (`<PlanCard plan={…} applied={false} />`), i.e. WITHOUT the
- * apply/undo callbacks, so the real thread renders the card's "proposed"
- * state with no action row. The runtime it will consume is already in state
- * (`ChatUiMessage.planRuntime`, `chat.plan.*` gestures, `applicablePlanOf` —
- * lib/chat/run-state.ts).
+ * The gateway is now STATELESS PER TURN: the run loop lives in the browser
+ * (apps/web/src/lib/chat/chat-controller.ts). One run =
+ *   POST /v1/threads/:id/turn (step 0)  → message.delta + TWO write-tool
+ *     proposals (studio.create_composition + studio.create_text, each with a
+ *     server-compiled proposal.compiled carrier — services/gateway/src/routes/
+ *     turn.ts `mockTurn` under MOCK_MODEL=true);
+ *   the client ACCUMULATES the carriers (never executes write tools mid-run),
+ *     echoes `resultForModel` and settles the tool chips via a synthesized
+ *     tool.result (the turn wire has no tool.result events — 12-w5-t1 pin);
+ *   POST /v1/threads/:id/turn (step 1)  → the mock's closing text
+ *     "Done — I created the Agent Demo composition with a text layer."
+ *     with toolCalls: [] ⇒ the run ENDS locally;
+ *   mergeEditPlans(carriers) → POST /v1/runs/:id/plan → the server VALIDATES +
+ *     re-compiles the plan authoritatively + stamps the §7.3 verdict
+ *     (the seeded demo user has NO settings row = auto-apply ON, and the
+ *     merged create plan is auto-eligible) → the plan card folds → the
+ *     round-10 AUTO-APPLY DRIVE fires at the client-synthesized run.completed.
  *
- * This spec therefore proves, against the LIVE app:
- *   1. (ACTIVE) the mock model's plan renders the FULL M5 card in the real
- *      thread — status/risk/steps/credits/affected-layers/disclosure, no
- *      preview slot (M5-H is not thread-mounted yet — asserted absent), no
- *      M4 "Apply arrives with M5" note, and ZERO action buttons (the M4.6
- *      read-only property restated for M5: no host callbacks ⇒ no apply
- *      control, stream or not);
- *   2. (ACTIVE) a scripted high-risk plan event (route-intercepted SSE —
- *      the mock model only ever emits a low-risk plan) renders the danger
- *      chrome and STILL cannot arm an apply control — the confirm checkbox
- *      exists only in host wiring, so no stream can conjure an ungated
- *      Apply (BUILD_PLAN §M5 exit criterion "high-risk actions always
- *      require confirmation" — the gate is structural, not data-driven);
- *   3. (fixme, WIRING-PENDING) the full journey: checkbox gate → confirm
- *      dialog → Apply → applied (one undo step) → Undo → undone →
- *      Re-apply blocked (drifted, per the fixture's version head) → editor
- *      chrome unchanged outside the canvas area. Written as real code
- *      against the real testids; flip `test.fixme` → `test` when the
- *      thread layer passes the callbacks (see the test's header note);
- *   4. (ACTIVE) the editor is visually unchanged by the read-only M5 chat
- *      journey (the M4 editor-unchanged mask approach — chat chrome masked,
- *      own baseline).
+ * Card facts asserted (all derived, no magic numbers unexplained):
+ *   merged summary  = `Create composition "Agent Demo" (+1 more changes)`
+ *     (mergeEditPlans — first carrier summary + the (+N) suffix);
+ *   intent "create" (both carriers agree), requiresApproval false;
+ *   risk "medium" — SERVER-recomputed (create_composition floors medium);
+ *   estimatedCredits = estimateCredits(medium, 2 steps) = (1 + 2×0.5) × 1.25
+ *     = 2.5 → the card renders "≈ 2.5 credits";
+ *   steps = the two carriers: `Create composition "Agent Demo"` /
+ *     studio.create_composition + `Add text layer "Agent Text"` /
+ *     studio.create_text; purely additive ⇒ NO affected-layers section.
  *
- * ----------------------------------------------------------------------------
- * Determinism contract (no real network, no real model)
- * ----------------------------------------------------------------------------
+ * KNOWN PRODUCT GAP (reported to the lead; the spec pins the INTENDED
+ * journey and stays RED until it lands): routes/apply.ts `applyable()`
+ * (line ~57/128) still requires run.status ∈ {awaiting_approval, completed},
+ * but the round-12 plan route (routes/turn.ts POST /v1/runs/:id/plan) stores
+ * plan_json WITHOUT transitioning the run out of "running" (the loop ends
+ * runs CLIENT-side; nothing server-side marks them terminal). Until the plan
+ * route writes the run status, the real POST /v1/runs/:id/apply 409s
+ * RUN_NOT_ACTIVE and the auto-applied assertions below fail honestly. Fix
+ * direction: runs.update(..., {planJson, status: "awaiting_approval"}) in
+ * the plan route (running → awaiting_approval is a legal transition).
  *
- * - Boot: the README recipe (seeded demo user → real /sign-in → real editor
- *   wasm opening the staged `.ecproj` fixture → chat overlay) with the
- *   gateway in MOCK_MODEL=true mode. The mock runner's answer is asserted
- *   from services/gateway/src/runner.ts `createMockRunner`/`mockEditPlan`
- *   (plan: SERVER-recomputed medium risk — create_composition floors it —
- *   intent "create", summary "Create an Agent Demo composition with a text
- *   layer", TWO steps "Create composition"/studio.create_composition +
- *   "Add text layer"/studio.create_text, NO affected layers (additive),
- *   estimatedCredits = estimateCredits(medium, 2 steps) = (1 + 1) × 1.25 =
- *   2.5 → the card renders "≈ 2.5 credits"). The plan event carries a
- *   compiledBatch (comp.new + layer.newText), so the card is APPLICABLE:
- *   preview slot + Apply/Cancel actions (no confirm checkbox — that is
- *   high-risk only).
- * - High-risk variant: the spec installs its OWN scripted gateway leg —
- *   `page.route` on the chat run POST (`…/v1/threads/<id>/chat`) fulfills it with
- *   byte-exact §7.4 frames (`id: <seq>\ndata: <json>\n\n`, gateway
- *   sseFrame format) that parse against STUDIO_STREAM_EVENT_SCHEMA: the
- *   client's real reader/reducer/thread fold them like any server stream.
- *   The scripted batch uses REAL curated command ids (layer.setBlendMode —
- *   packages/contracts command-registry) and the pinned $request resolution
- *   placeholder, mirroring what the real plan compiler (M5-B) emits.
+ * The scripted high-risk leg: MOCK_MODEL only ever proposes create carriers,
+ * and no real model is contacted — so the danger-chrome tests install their
+ * OWN scripted gateway leg via `page.route` on the TURN wire
+ * (`POST …/v1/threads/<id>/turn`) fulfilled with byte-exact §7.4 frames
+ * (`id: <seq>\ndata: <json>\n\n`, the turn route's sseFrame format) that
+ * parse against STUDIO_STREAM_EVENT_SCHEMA: the client's real reader folds
+ * them like any server stream. The scripted stream carries a `plan` event
+ * (still a first-class §7.4 type — the client itself synthesizes one from
+ * the plan POST response at run end) plus a terminal `turn.completed` with
+ * toolCalls: [] ⇒ NO carriers accumulate ⇒ NO plan POST fires for a run the
+ * gateway never created (which would honestly 404 RUN_NOT_FOUND). The
+ * scripted batch uses REAL curated command ids (layer.setBlendMode —
+ * packages/contracts command-registry) and the pinned $request resolution
+ * placeholder, mirroring what the plan compiler (M5-B) emits.
  *
  * ----------------------------------------------------------------------------
  * testid map driven by this spec (drift detector — every id verified against
- * the source when written)
+ * the source when written; plan-card.tsx / confirm-dialog.tsx unchanged in
+ * round 12)
  * ----------------------------------------------------------------------------
  *
  *   plan-card            (+ data-status, data-applied, data-risk,
@@ -86,17 +82,20 @@
  *   plan-risk, plan-intent, plan-requires-confirmation          plan-card.tsx
  *   plan-steps-toggle (BUTTON, aria-expanded), plan-steps       plan-card.tsx
  *   plan-affected, plan-credits                                 plan-card.tsx
- *   plan-preview (slot — absent until thread-mounted), plan-note (gone)
+ *   plan-preview (slot — proposed only), plan-diff (ditto), plan-note (gone)
  *   plan-actions, plan-confirm, plan-confirm-checkbox,         plan-card.tsx
  *   plan-apply, plan-cancel
  *   plan-applying, plan-applied, plan-undo, plan-undone,         plan-card.tsx
  *   plan-reapply, plan-reapply-blocked
+ *   tool-card (+ data-tool, data-status), tool-card-toggle,      tool-card.tsx
+ *   tool-card-details, tool-card-result
  *   chat-confirm-dialog, chat-confirm-title,                   confirm-dialog.tsx
  *   chat-confirm-cancel, chat-confirm-confirm
  *   editor-host (+ data-editor-phase), editor-iframe,           editor-host.tsx
  *   editor-viewport, chat-layer
  *   chat-header, chat-status (+ data-phase)                     header.tsx
  *   chat-thread-list, chat-composer (aria-label "Message the agent"),
+ *   chat-progress-strip (live phases only — progress-strip.tsx),
  *   chat-panel-layer, chat-collapsed-layer                      chat-panel-slot.tsx
  */
 
@@ -117,16 +116,29 @@ const SEEDED_EDITOR_PATH = "/w/demo-project/editor";
 const EDITOR_OPEN_TIMEOUT_MS = 120_000;
 /** Second bridge attach (chat layer) after the editor reports `open`. */
 const CHAT_MOUNT_TIMEOUT_MS = 30_000;
-/** The gateway's TOOL_RESULT_TIMEOUT_MS — a generous upper bound for runs. */
+/** Two mock turns + the plan POST — a generous upper bound for the run. */
 const RUN_SETTLE_TIMEOUT_MS = 30_000;
 /** ONE atomic engine.batch + version upload + applyRun report (M5-F). */
 const APPLY_SETTLE_TIMEOUT_MS = 30_000;
+/** ONE edit.undo + undoRun report — the §M5.5 escape hatch. */
+const UNDO_SETTLE_TIMEOUT_MS = 30_000;
 
 /**
  * The scripted run's id (any nonempty string binds the client's stream
  * normalizer; kept stable across the fixture's frames).
  */
 const SCRIPTED_RUN_ID = "run_m5_e2e_high_risk";
+
+/** The mock journey's created composition (routes/turn.ts `mockTurn`). */
+const MOCK_COMP = "Agent Demo";
+/** The mock journey's created text layer (mockTurn's studio.create_text). */
+const MOCK_TEXT_LAYER = "Agent Text";
+/** The mock's closing text (turn 1 — the run ends on this turn). */
+const MOCK_CLOSING_TEXT = "Done — I created the Agent Demo composition with a text layer.";
+
+type EffectcraftGlobal = {
+  execute: (command: string, params?: unknown) => Promise<unknown>;
+};
 
 // ---------------------------------------------------------------------------
 // Helpers — boot + the scripted-gateway leg
@@ -188,9 +200,40 @@ async function openSeededEditor(page: Page): Promise<void> {
   await expect(page.getByTestId("chat-header")).toBeVisible();
 }
 
+/** The editor iframe's frame (the only frame under /editor/). */
+function editorFrame(page: Page) {
+  const frame = page.frames().find((f) => f.url().includes("/editor/"));
+  if (frame === undefined) {
+    throw new Error("editor iframe not found");
+  }
+  return frame;
+}
+
+/** LIVE-engine proof: the names in `project.summary` (read-only query). */
+async function engineCompositionNames(page: Page): Promise<string[]> {
+  return editorFrame(page).evaluate(async () => {
+    const summary = (await (
+      window as unknown as { effectcraft: EffectcraftGlobal }
+    ).effectcraft.execute("project.summary", {})) as { items?: Array<{ name?: string }> };
+    return (summary.items ?? []).map((item) => String(item.name ?? ""));
+  });
+}
+
+/** LIVE-engine proof: the layer names of one comp (`comp.info`, by name). */
+async function engineLayerNames(page: Page, comp: string): Promise<string[]> {
+  return editorFrame(page).evaluate(async (compName) => {
+    const info = (await (
+      window as unknown as { effectcraft: EffectcraftGlobal }
+    ).effectcraft.execute("comp.info", { comp: compName })) as {
+      layers?: Array<{ name?: string }>;
+    };
+    return (info.layers ?? []).map((layer) => String(layer.name ?? ""));
+  }, comp);
+}
+
 /**
  * One §7.4 event → one SSE frame, byte-shaped like the gateway's `sseFrame`
- * (services/gateway/src/routes/chat.ts): `id: <seq>\ndata: <json>\n\n`.
+ * (services/gateway/src/routes/turn.ts): `id: <seq>\ndata: <json>\n\n`.
  * The client parses WHATWG frames and validates each payload against
  * STUDIO_STREAM_EVENT_SCHEMA (packages/api-client/src/sse.ts) — so every
  * fixture payload below must be schema-exact.
@@ -202,17 +245,18 @@ function sseFrames(events: ReadonlyArray<Record<string, unknown>>): string {
 }
 
 /**
- * The scripted-gateway leg: intercept the chat run POST
- * (`POST /v1/threads/:id/chat`, same-origin through the dev edge) and
- * fulfill it with a complete, deterministic SSE body. The REAL client
- * reader/reducer/thread fold the frames exactly like a server stream; the
- * real gateway (auth, threads, models, ledger) serves everything else.
+ * The scripted-gateway leg: intercept the TURN wire
+ * (`POST /v1/threads/:id/turn` — the round-12 SSE endpoint that replaced the
+ * retired `/chat` loop) and fulfill it with a complete, deterministic SSE
+ * body. The REAL client reader/reducer/thread fold the frames exactly like a
+ * server stream; the real gateway (auth, threads, models, ledger) serves
+ * everything else.
  */
 async function installScriptedRun(
   page: Page,
   events: ReadonlyArray<Record<string, unknown>>,
 ): Promise<void> {
-  await page.route("**/v1/threads/*/chat", async (route) => {
+  await page.route("**/v1/threads/*/turn", async (route) => {
     await route.fulfill({
       status: 200,
       headers: {
@@ -231,17 +275,16 @@ async function installScriptedRun(
  * APPLY_RESPONSE_SCHEMA / UNDO_RESPONSE_SCHEMA — response-schemas.ts).
  *
  * Why the report legs are scripted when nothing else on the apply path is:
- * the run ROW is created server-side by the chat POST this spec intercepts
- * (routes/chat.ts `runs.create`), so the run id never exists in the gateway
- * DB and the real apply/undo routes would honestly 404 RUN_NOT_FOUND — a
- * scripted-stream artifact, not an app bug. Everything the journey actually
- * proves stays REAL: the resolve → patch → ONE atomic engine.batch →
- * `saveNow("agent-apply")` chain, and the VERSION UPLOAD leg
- * (`POST /v1/projects/:id/versions` hits the real gateway — the W2-B8
- * triage's "zero version POSTs" symptom is this very leg), plus the local
- * `edit.undo` and the reapply-drift gate. The gateway's own apply/undo
- * semantics (ledger settle, lineage, lease guard) are covered by its suite
- * (services/gateway/tests), not by this browser journey.
+ * the run row only exists client-side (the turn POST this spec intercepts
+ * never reaches the gateway's `runs.create`), so the real apply/undo routes
+ * would honestly 404 RUN_NOT_FOUND — a scripted-stream artifact, not an app
+ * bug. Everything the journey actually proves stays REAL: the resolve →
+ * patch → ONE atomic engine.batch → `saveNow("agent-apply")` chain, and the
+ * VERSION UPLOAD leg (`POST /v1/projects/:id/versions` hits the real
+ * gateway), plus the local `edit.undo` and the reapply-drift gate. The
+ * gateway's own apply/undo semantics (ledger settle, lineage, lease guard)
+ * are covered by its suite (services/gateway/tests), not by this browser
+ * journey.
  */
 async function installScriptedApplyReport(page: Page): Promise<void> {
   await page.route("**/v1/runs/*/apply", async (route) => {
@@ -347,27 +390,43 @@ const HIGH_RISK_RESOLUTIONS: ReadonlyArray<Record<string, unknown>> = [
   { requestId: "req_bg", layerName: "Background", disambiguation: [] },
 ];
 
-/** The full scripted run: started → delta → high-risk plan → completed. */
-function highRiskRunEvents(): ReadonlyArray<Record<string, unknown>> {
+/**
+ * The full scripted turn: started → delta → high-risk plan → the TERMINAL
+ * `turn.completed` with toolCalls: [] (the run ends CLIENT-side — the loop
+ * synthesizes the §7.4 run.completed locally; no run.completed frame rides
+ * the turn wire). No carriers accumulate ⇒ no run-end plan POST fires.
+ */
+function highRiskTurnEvents(): ReadonlyArray<Record<string, unknown>> {
   return [
     { type: "run.started", runId: SCRIPTED_RUN_ID, seq: 1, model: "studio-fast" },
+    { type: "turn.started", runId: SCRIPTED_RUN_ID, seq: 2, stepIndex: 0 },
     {
       type: "message.delta",
       runId: SCRIPTED_RUN_ID,
-      seq: 2,
+      seq: 3,
       delta: "This restyle touches the comp background — planning it as high risk.",
     },
     {
       type: "plan",
       runId: SCRIPTED_RUN_ID,
-      seq: 3,
+      seq: 4,
       plan: HIGH_RISK_PLAN,
       compiledBatch: HIGH_RISK_COMPILED_BATCH,
       resolutionRequests: HIGH_RISK_RESOLUTIONS,
       risk: "high",
       estimatedCredits: 2.25,
     },
-    { type: "run.completed", runId: SCRIPTED_RUN_ID, seq: 4 },
+    {
+      type: "turn.completed",
+      runId: SCRIPTED_RUN_ID,
+      seq: 5,
+      stepIndex: 0,
+      finishReason: "stop",
+      usage: { inputTokens: 900, outputTokens: 200 },
+      credits: { committed: 1 },
+      assistantText: "This restyle touches the comp background — planning it as high risk.",
+      toolCalls: [],
+    },
   ];
 }
 
@@ -383,13 +442,15 @@ test.describe("M5 agent edits — plan card journey", () => {
     await openSeededEditor(page);
   });
 
-  test("the mock model's plan renders the full M5 card in the real thread (proposed, risk, steps, credits, preview, actions)", async ({
+  test("the mock loop auto-applies end-to-end: chips → plan card (mode auto) → applied → canvas changed → Undo works", async ({
     page,
   }) => {
-    // The MOCK_MODEL runner always streams the same script (runner.ts) —
-    // deltas + a compile-enriched CREATE EditPlan + one studio.get_context
-    // call — whatever the prompt says. A plan-flavored prompt keeps the
-    // scenario honest.
+    // ROUND-12: the seeded user has NO settings row = the schema default =
+    // auto-apply ON, and the mock's merged create plan (comp.new +
+    // layer.newText, no resolution requests) is auto-eligible — so at the
+    // client-synthesized run.completed the controller AUTO-DRIVES Apply
+    // through the REAL bridge (no click): the engine executes the ATOMIC
+    // batch, the save chain uploads a version and the applyRun report lands.
     const composer = page.getByLabel("Message the agent");
     await composer.click();
     await composer.fill("Set up a demo composition with a text layer");
@@ -400,87 +461,136 @@ test.describe("M5 agent edits — plan card journey", () => {
       { timeout: RUN_SETTLE_TIMEOUT_MS },
     );
 
-    // The card: the M5 status machine at rest (M5-G). The run settled, so
-    // the thread wiring armed the card — proposed + APPLICABLE.
+    // TURN 0's proposals: TWO tool chips light up from tool.started and
+    // settle via the loop's SYNTHESIZED tool.result (the turn wire has no
+    // tool.result — the carrier's propose-only resultForModel settles them;
+    // 12-w5-t1 pin). Write tools NEVER execute mid-run.
+    const compChip = page.locator(
+      '[data-testid="tool-card"][data-tool="studio.create_composition"]',
+    );
+    const textChip = page.locator('[data-testid="tool-card"][data-tool="studio.create_text"]');
+    await expect(compChip).toHaveCount(1, { timeout: RUN_SETTLE_TIMEOUT_MS });
+    await expect(textChip).toHaveCount(1, { timeout: RUN_SETTLE_TIMEOUT_MS });
+    await expect(compChip).toHaveAttribute("data-status", "done", {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
+    await expect(textChip).toHaveAttribute("data-status", "done", {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
+
+    // TURN 1 closes the run: the mock's final text REPLACES the streamed
+    // turn-0 text (turn.completed's assistantText is authoritative).
+    const answer = page.locator('[data-testid="chat-message"][data-role="assistant"]');
+    await expect(answer).toContainText(MOCK_CLOSING_TEXT, {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
+
+    // The card: the M5 status machine settles at APPLIED (auto-driven at
+    // the local run.completed; the settle wait covers the bridge batch,
+    // the save chain and the applyRun report). See the header's KNOWN
+    // PRODUCT GAP note — this is RED until the plan route marks the run.
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
-    await expect(plan).toHaveAttribute("data-status", "proposed");
-    await expect(plan).toHaveAttribute("data-applied", "false");
+    await expect(plan).toHaveAttribute("data-status", "applied", {
+      timeout: APPLY_SETTLE_TIMEOUT_MS,
+    });
+    await expect(plan).toHaveAttribute("data-applied", "true");
     // SERVER-recomputed risk (create_composition floors medium — never the
-    // model's declared "low") + intent "create" (structural, additive).
+    // model's declared "low") + intent "create" (both carriers agree).
     await expect(plan).toHaveAttribute("data-risk", "medium");
     await expect(plan).toHaveAttribute("data-intent", "create");
     await expect(plan).toHaveAttribute("data-requires-approval", "false");
 
-    // §6.2 surfaces: risk badge, intent badge, summary.
+    // §6.2 surfaces: risk badge, intent badge, MERGED summary
+    // (mergeEditPlans: first carrier summary + "(+1 more changes)").
     await expect(page.getByTestId("plan-risk")).toHaveText("Medium risk");
     await expect(page.getByTestId("plan-intent")).toHaveText("Create");
-    await expect(plan).toContainText("Create an Agent Demo composition with a text layer");
+    await expect(plan).toContainText('Create composition "Agent Demo" (+1 more changes)');
 
-    // Steps: the disclosure is a BUTTON (M5-G) — default expanded, two
-    // steps with their tool ids, and it toggles the ordered list.
+    // Steps: the disclosure persists in the applied state — the TWO carrier
+    // steps with their tool ids (client-built carriers, gateway-parity
+    // summaries — chat-controller.ts writeToolSummary).
     const stepsToggle = plan.getByTestId("plan-steps-toggle");
     await expect(stepsToggle).toBeVisible();
     await expect(stepsToggle).toHaveAttribute("aria-expanded", "true");
     await expect(stepsToggle).toContainText("2 steps");
     await expect(plan.getByTestId("plan-steps")).toBeVisible();
-    await expect(plan.getByTestId("plan-steps")).toContainText("Create composition");
+    await expect(plan.getByTestId("plan-steps")).toContainText('Create composition "Agent Demo"');
     await expect(plan.getByTestId("plan-steps")).toContainText("studio.create_composition");
-    await expect(plan.getByTestId("plan-steps")).toContainText("Add text layer");
+    await expect(plan.getByTestId("plan-steps")).toContainText('Add text layer "Agent Text"');
     await expect(plan.getByTestId("plan-steps")).toContainText("studio.create_text");
-    await stepsToggle.click();
-    await expect(stepsToggle).toHaveAttribute("aria-expanded", "false");
-    await expect(plan.getByTestId("plan-steps")).toBeHidden();
-    await stepsToggle.click();
-    await expect(plan.getByTestId("plan-steps")).toBeVisible();
 
     // The plan is purely ADDITIVE — no existing layers affected, so the
     // affected-layers section is absent. The server's credit estimate rides
     // VERBATIM (the card never recomputes credits client-side):
-    // estimateCredits(medium, 2 steps) = (1 + 1) × 1.25 = 2.5.
+    // estimateCredits(medium, 2 steps) = (1 + 2×0.5) × 1.25 = 2.5.
     await expect(page.getByTestId("plan-affected")).toHaveCount(0);
     await expect(page.getByTestId("plan-credits")).toHaveText("≈ 2.5 credits");
 
-    // The M5-H preview slot IS mounted now (message.tsx mounts it whenever
-    // the plan event carries a compiledBatch and the risk is below high):
-    // the probe executes the additive batch atomically, renders the after
-    // frame, then edit.undo reverts — the project is untouched at rest. A
-    // failed preview never disables Apply; here the real engine answers.
-    await expect(page.getByTestId("plan-preview")).toHaveCount(1);
+    // The preview/diff slots mount only while proposed (derivePlanCardProps) —
+    // after the auto-apply settles they are gone.
+    await expect(page.getByTestId("plan-preview")).toHaveCount(0);
+    await expect(page.getByTestId("plan-diff")).toHaveCount(0);
 
     // The M4 "Apply arrives with M5" note is GONE — apply is real (M5-G).
     await expect(page.getByTestId("plan-note")).toHaveCount(0);
 
-    // The card is armed: Apply + Cancel in the action row (medium risk ⇒
-    // NO confirm checkbox, NO dialog). This test never clicks them — the
-    // apply journey is the scripted high-risk test below, and the offline
-    // from-scratch CREATION journey is e2e/m5-mock-create.spec.ts.
+    // The applied action row: NO Apply/Cancel (the work already landed); the
+    // applied status + Undo instead. Medium risk ⇒ no checkbox, no dialog.
     await expect(plan.getByTestId("plan-confirm")).toHaveCount(0);
-    await expect(plan.getByTestId("chat-confirm-dialog")).toHaveCount(0);
-    await expect(plan.getByTestId("plan-apply")).toBeVisible();
-    await expect(plan.getByTestId("plan-apply")).toBeEnabled();
-    await expect(plan.getByTestId("plan-cancel")).toBeVisible();
+    await expect(page.getByTestId("chat-confirm-dialog")).toHaveCount(0);
+    await expect(plan.getByTestId("plan-apply")).toHaveCount(0);
+    await expect(plan.getByTestId("plan-cancel")).toHaveCount(0);
+    await expect(plan.getByTestId("plan-applied")).toBeVisible();
+    await expect(plan.getByTestId("plan-applied")).toContainText(/· one undo step\./);
+    await expect(plan.getByTestId("plan-undo")).toBeVisible();
+    await expect(plan.getByTestId("plan-undo")).toBeEnabled();
 
-    // The run completes normally (the mock's read tool answered through the
-    // real bridge; nothing PERMANENT was executed against the engine — the
-    // preview probe's batch+undo nets out to zero).
+    // The run completed (chat-status) — the loop synthesized run.completed
+    // after the empty-toolCalls turn.
     await expect(page.getByTestId("chat-status")).toHaveAttribute("data-phase", "done", {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
+
+    // CANVAS proof (the auto-apply really executed against the LIVE engine):
+    // the created composition + its text layer are in the project, and the
+    // new comp carries the layer (query commands ride the execute channel).
+    expect(await engineCompositionNames(page)).toContain(MOCK_COMP);
+    expect(await engineLayerNames(page, MOCK_COMP)).toContain(MOCK_TEXT_LAYER);
+
+    // UNDO works — the one-click escape hatch (§M5.5): ONE edit.undo
+    // reverts the WHOLE atomic batch (law #6), the card folds to undone,
+    // and the live engine loses the created composition.
+    await plan.getByTestId("plan-undo").click();
+    await expect(plan).toHaveAttribute("data-status", "undone", {
+      timeout: UNDO_SETTLE_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId("plan-undone")).toContainText(
+      "Undone — the batch reverted; the version stays in history.",
+    );
+    expect(await engineCompositionNames(page)).not.toContain(MOCK_COMP);
   });
 
   test("a scripted high-risk plan renders the danger chrome and keeps Apply gated (stream data alone never arms an apply)", async ({
     page,
   }) => {
-    // The high-risk variant needs the scripted-gateway leg: MOCK_MODEL's one
-    // plan is low-risk by construction, and no real model is contacted.
-    await installScriptedRun(page, highRiskRunEvents());
+    // The high-risk variant needs the scripted-gateway leg: MOCK_MODEL's
+    // carriers are create-only by construction, and no real model is
+    // contacted.
+    await installScriptedRun(page, highRiskTurnEvents());
 
-    // Wire-level honesty: a plan-only stream must not trigger ANY client
-    // tool execution (zero POSTs to /v1/runs/:id/events).
-    let toolResultPosts = 0;
-    await page.route("**/v1/runs/*/events", async (route) => {
-      toolResultPosts += 1;
+    // Wire-level honesty (round-12 shape): a plan-only turn must trigger
+    // NEITHER a client-executed tool POST (the /v1/threads/:id/tools/*
+    // endpoints serve web_search/generate_image) NOR the run-end plan POST
+    // (no carriers accumulated ⇒ the client never POSTs /v1/runs/:id/plan).
+    let toolEndpointPosts = 0;
+    await page.route("**/v1/threads/*/tools/*", async (route) => {
+      if (route.request().method() === "POST") toolEndpointPosts += 1;
+      await route.continue();
+    });
+    let planPosts = 0;
+    await page.route("**/v1/runs/*/plan", async (route) => {
+      if (route.request().method() === "POST") planPosts += 1;
       await route.continue();
     });
 
@@ -533,46 +643,17 @@ test.describe("M5 agent edits — plan card journey", () => {
 
     // The compiled batch rode the wire but executes NOTHING here: the
     // resolution + engine.batch live behind the confirmed Apply (checkbox →
-    // dialog), and neither was triggered.
-    expect(toolResultPosts).toBe(0);
+    // dialog), the client never executed a write tool mid-run, and neither
+    // network leg fired.
+    expect(toolEndpointPosts).toBe(0);
+    expect(planPosts).toBe(0);
   });
 
-  // -------------------------------------------------------------------------
-  // WIRING-PENDING (fixme): the full apply → undo → re-apply journey
-  // -------------------------------------------------------------------------
-  //
-  // NOT fixme because of CI ownership (CI runs this suite — README §Run):
-  // the only missing link is the thread-layer mount. `message.tsx` still
-  // renders `<PlanCard plan={message.plan} applied={false} />` with no
-  // callbacks (M5-G "Integrator follow-ups" #1), so the action row cannot
-  // exist in the real thread YET. Everything it needs IS landed: the card
-  // state machine + confirm dialog (M5-G), the ApplyController
-  // resolve→patch→ONE engine.batch→saveNow("agent-apply")→applyRun
-  // (lib/chat/apply.ts), the planRuntime state + chat.plan.* gestures +
-  // applicablePlanOf (lib/chat/run-state.ts), the M5-E apply/undo routes and
-  // the M5-D persistence.
-  //
-  // FLIPPED 2026-10-24: the thread wiring (M5-Q) + the host applyPorts mount
-  // (K-1 fix) landed; the journey below is ACTIVE. Original flip note:
-  // FLIP: change `test.fixme` → `test` when the thread layer maps the
-  // planRuntime outcome to the card's status props and passes
-  // onApply/onUndo/onReapply (+ reapplyDrifted per the session's version
-  // head). Every assertion below is written against the card's pinned
-  // contract (plan-card.tsx) so the flip is mechanical.
-  //
-  // Re-apply drift is the DETERMINISTIC fixture outcome: after apply, the
-  // session sits on the newly UPLOADED version (not the plan's base —
-  // lib/chat/apply.ts notes the session pointer restore is an unimplemented
-  // session-level concern, and PLAN_EVENT_SCHEMA does not carry
-  // baseVersionId on the wire — it is stripped by the SSE reader), so the
-  // reapply gate answers base-version-changed ⇒ Re-apply disabled + the
-  // §M5.5 explanation. If the wiring later restores the pointer, flip the
-  // two drifted assertions to the enabled + re-applied path.
   test("high-risk journey: checkbox gates Apply → confirm dialog → applied (one undo step) → Undo → undone → Re-apply blocked (drifted)", async ({
     page,
   }) => {
-    await installScriptedRun(page, highRiskRunEvents());
-    // The run row only exists client-side (the chat POST is scripted), so the
+    await installScriptedRun(page, highRiskTurnEvents());
+    // The run row only exists client-side (the turn POST is scripted), so the
     // apply/undo REPORT legs are scripted too — see the helper's header for
     // the split of real vs scripted legs on the apply path.
     await installScriptedApplyReport(page);
@@ -645,7 +726,8 @@ test.describe("M5 agent edits — plan card journey", () => {
     // whole journey (applied then undone): mask the chat chrome AND the
     // canvas viewport (editor-viewport hosts the wasm iframe where the
     // edit legitimately changed pixels) — the pinned shot is the editor
-    // chrome (timeline/panels/header), M4 mask approach.
+    // chrome (timeline/panels/header), M4 mask approach. The round-10
+    // baseline already masks the viewport; unchanged in round 12.
     await page.mouse.move(320, 400);
     await expect(page).toHaveScreenshot("editor-unchanged-m5-journey.png", {
       animations: "disabled",
@@ -659,28 +741,31 @@ test.describe("M5 agent edits — plan card journey", () => {
     });
   });
 
-  test("the editor is visually unchanged by the M5 read-only chat journey", async ({ page }) => {
-    // After a full plan-bearing run (mock plan card in the thread, nothing
-    // applied), the editor's pixels are the M3-baseline pixels — with one
-    // honest exception: the plan event now carries a compiledBatch (the mock
-    // runner compiles its plan), so the M5-H preview probe EXECUTES the
-    // additive batch atomically, renders the after frame and edit.undo reverts
-    // it — transiently touching the canvas/panels mid-run. The viewport is
-    // therefore MASKED exactly like the journey test above; everything else
-    // (timeline/panels/header) must be the baseline. First CI run:
-    // --update-snapshots (README §First run).
+  test("the auto-applied journey leaves the editor chrome at the M3 baseline (canvas masked — it legitimately CHANGED, round-10)", async ({
+    page,
+  }) => {
+    // ROUND-12: the two-turn mock loop AUTO-APPLIES — the canvas legitimately
+    // GAINS the "Agent Demo" composition + text layer (the whole point), so
+    // the old "editor unchanged" premise is dead: only the CHROME (header,
+    // timeline, panels — everything but the viewport and the chat chrome) is
+    // asserted against the baseline; the viewport stays masked because it now
+    // intentionally differs. First CI run after this change MUST use
+    // --update-snapshots (README §First run) to re-baseline.
     const composer = page.getByLabel("Message the agent");
     await composer.click();
     await composer.fill("Set up a demo composition with a text layer");
     await composer.press("Enter");
 
     await expect(page.getByTestId("plan-card")).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
+    await expect(page.getByTestId("plan-card")).toHaveAttribute("data-status", "applied", {
+      timeout: RUN_SETTLE_TIMEOUT_MS,
+    });
     await expect(page.getByTestId("chat-status")).toHaveAttribute("data-phase", "done", {
       timeout: RUN_SETTLE_TIMEOUT_MS,
     });
 
     await page.mouse.move(320, 400);
-    await expect(page).toHaveScreenshot("editor-unchanged-m5-readonly.png", {
+    await expect(page).toHaveScreenshot("editor-autoapplied-m5-readonly.png", {
       animations: "disabled",
       caret: "hide",
       maxDiffPixelRatio: 0.01,

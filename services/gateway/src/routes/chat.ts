@@ -88,18 +88,19 @@ export function resolveChatModel(input: {
 }
 
 // ---------------------------------------------------------------------------
-// M5.6 auto-apply wiring (BUILD_PLAN §M5 task 6, EDITOR_CHAT_UX §7.3 — off by
-// default; policy module: src/auto-apply.ts). The plan event is stamped with
-// the server-side verdict as it passes through this route's emit seam:
-// UI GUIDANCE ONLY in v1 — the client never executes a plan from the event
-// alone; `mode: "auto"` arms the card, Apply stays the user's click (D-22
-// candidate ruling, worklog M5-O).
+// M5.6 auto-apply wiring (BUILD_PLAN §M5 task 6, EDITOR_CHAT_UX §7.3 v2 —
+// round-10: ON by default, the agent does the work; policy module:
+// src/auto-apply.ts). The plan event is stamped with the server-side verdict
+// as it passes through this route's emit seam: a `mode: "auto"` verdict means
+// the CLIENT EXECUTES the plan automatically at run completion (round-10 v2
+// product ruling — supersedes the D-22 "UI guidance only" posture; Undo on
+// the applied card is the escape hatch).
 // ---------------------------------------------------------------------------
 
 /**
  * Pinned M6-D seam (packages/db/src/repos/settings.ts, this wave):
  * `repos.settings.getUserAutoApply(userId): Promise<boolean>` over the
- * userSettings table (autoApplyEnabled, default false). Structural — read
+ * userSettings table (autoApplyEnabled, default true — v2). Structural — read
  * through a guard so boots without the repo (stub suites, mid-flight test
  * trees) degrade to a propose verdict, never a crash.
  */

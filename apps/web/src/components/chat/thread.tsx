@@ -26,6 +26,7 @@ import type { ChatUiError, ChatUiMessage, RunPhase } from "@/lib/chat/types";
 import { type ReactElement, useContext, useEffect, useRef } from "react";
 import { ChatBanner, RunPausedBanner } from "./banners";
 import { ChatMessageView, type PlanMessageWiring } from "./message";
+import type { ChatPanelDensity } from "./panel-settings";
 
 export interface ChatThreadProps {
   messages: readonly ChatUiMessage[];
@@ -41,6 +42,15 @@ export interface ChatThreadProps {
    * retryable.
    */
   error?: ChatUiError;
+  /**
+   * ROUND 12 (Chat UI v3): re-send from a user message — per-message Retry
+   * (host maps the id to a re-send). Absent ⇒ the action hides.
+   */
+  onRetryFrom?: (messageId: string) => void;
+  /** ROUND 12 (Chat UI v3): edit-and-resend a user message. */
+  onEditResend?: (messageId: string, nextText: string) => void;
+  /** ROUND 12 (Chat UI v3): the settings knob's spacing mode. */
+  density?: ChatPanelDensity;
 }
 
 // Re-exported for the thread layer's consumers (the wiring type is part of the
@@ -64,6 +74,9 @@ export function ChatThread({
   onRetry,
   emptyQuickActions,
   error,
+  onRetryFrom,
+  onEditResend,
+  density = "normal",
 }: ChatThreadProps): ReactElement {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
@@ -122,7 +135,7 @@ export function ChatThread({
   return (
     <div data-testid="chat-thread" className="flex min-h-0 flex-1 flex-col">
       {error ? (
-        error.code === "RUN_PAUSED" ? (
+        error.code === "RUN_PAUSED" || error.code === "TURN_PAUSED" ? (
           <RunPausedBanner onRetry={onRetry} />
         ) : (
           <div className="px-3 pt-2">
@@ -175,7 +188,10 @@ export function ChatThread({
             ) : null}
           </div>
         ) : (
-          <div data-testid="chat-thread-list" className="flex flex-col gap-4 px-3 py-4">
+          <div
+            data-testid="chat-thread-list"
+            className={`flex flex-col px-3 py-4 ${density === "compact" ? "gap-2.5" : "gap-4"}`}
+          >
             {virtualize ? (
               <div
                 data-testid="chat-window-spacer"
@@ -192,6 +208,8 @@ export function ChatThread({
                 isStreaming={
                   liveStream && message.role === "assistant" && message.runId === activeRunId
                 }
+                onRetryFrom={onRetryFrom}
+                onEditResend={onEditResend}
               />
             ))}
           </div>

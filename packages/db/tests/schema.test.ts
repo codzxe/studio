@@ -1,9 +1,11 @@
 import { getSchema } from "better-auth/db";
 import { getTableColumns } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/pg-core";
+import { getTableConfig as getSqliteTableConfig } from "drizzle-orm/sqlite-core";
 import { describe, expect, it } from "vitest";
 
 import { createAuth } from "../src/auth.js";
+import * as sqliteSchema from "../src/schema-sqlite.js";
 import * as schema from "../src/schema.js";
 
 /**
@@ -55,6 +57,12 @@ function indexColumnNames(table: TableName, name: string): string[] {
   return columns.flatMap((column) =>
     "name" in column && typeof column.name === "string" ? [column.name] : [],
   );
+}
+
+function sqliteIndexByName(table: string, name: string) {
+  return getSqliteTableConfig(
+    sqliteSchema[table as keyof typeof sqliteSchema] as never,
+  ).indexes.find((index) => index.config.name === name);
 }
 
 describe("schema sanity (§9.1)", () => {
@@ -160,6 +168,42 @@ describe("schema sanity (§9.1)", () => {
   it("agent_runs indexed by thread; agent_steps unique per (run, seq)", () => {
     expect(indexColumnNames("agentRuns", "agent_runs_thread_idx")).toEqual(["thread_id"]);
     expect(indexByName("agentSteps", "agent_steps_run_seq_uniq")?.config.unique).toBe(true);
+  });
+
+  it("round 12 (migration 0008): agent_steps.tool_call_id + tool-call index", () => {
+    const toolCallId = getTableColumns(schema.agentSteps).toolCallId;
+    expect(toolCallId).toBeDefined();
+    expect(toolCallId.notNull).toBe(false); // legacy rows predate it
+    expect(indexColumnNames("agentSteps", "agent_steps_tool_call_idx")).toEqual(["tool_call_id"]);
+  });
+
+  it("round 12 (migration 0008): agent_runs heartbeat columns + (status, heartbeat_at) index", () => {
+    const columns = getTableColumns(schema.agentRuns);
+    expect(columns.lastStepIndex).toBeDefined();
+    expect(columns.lastStepIndex.notNull).toBe(true);
+    expect(columns.lastStepIndex.hasDefault).toBe(true);
+    expect(columns.heartbeatAt.notNull).toBe(true);
+    expect(columns.heartbeatAt.hasDefault).toBe(true);
+    expect(indexColumnNames("agentRuns", "agent_runs_status_heartbeat_idx")).toEqual([
+      "status",
+      "heartbeat_at",
+    ]);
+  });
+
+  it("sqlite twin lockstep: the four agent tables carry IDENTICAL column names (0008 in both dialects)", () => {
+    for (const name of ["agentThreads", "agentMessages", "agentRuns", "agentSteps"] as const) {
+      expect(Object.keys(getTableColumns(sqliteSchema[name])).sort()).toEqual(
+        Object.keys(getTableColumns(schema[name])).sort(),
+      );
+    }
+    // 0008 columns on the twin, with the same nullability + the twin indexes
+    const steps = getTableColumns(sqliteSchema.agentSteps);
+    expect(steps.toolCallId.notNull).toBe(false);
+    const runs = getTableColumns(sqliteSchema.agentRuns);
+    expect(runs.lastStepIndex.notNull).toBe(true);
+    expect(runs.heartbeatAt.notNull).toBe(true);
+    expect(sqliteIndexByName("agentSteps", "agent_steps_tool_call_idx")).toBeDefined();
+    expect(sqliteIndexByName("agentRuns", "agent_runs_status_heartbeat_idx")).toBeDefined();
   });
 
   it("comments: (projectId, resolvedAt) index per §9.1 note", () => {

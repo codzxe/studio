@@ -5,13 +5,20 @@
 // flag, a risk level and (by convention) a credit estimate in the plan.
 //
 // Doc note: §8.4 says "~12 curated tools" and then lists exactly 13 rows —
-// all 13 are implemented; the doc's "~" is the wiggle room.
+// all 13 are implemented (first, byte-compatible); the doc's "~" is the
+// wiggle room. ROUND 12 ("Tool catalog v3", research/round12-design.md)
+// appends EIGHT tools after them: three writes (engine_commands, run_script,
+// add_asset — auto-registered from write-tools.ts) and five client-executed
+// reads/generative tools (list_commands, describe_command, web_search,
+// render_audio, generate_image). Generative tools are kind "read": they
+// mutate NO canvas state — audio renders to an asset, images come back as
+// asset references, search hits return data.
 //
 // Write tools are PROPOSAL-ONLY (§8.4 rules 1-5, BUILD_PLAN §M5.1): each
 // returns a proposed batch (write-tools.ts WRITE_TOOL_RESULT_SCHEMA), the
 // client shows the plan/approval card, and on Apply the bridge calls
 // `engine.batch` with `atomic: true` and label `"Agent: <summary>"`. No write
-// tool ever executes anything by itself. The eight write-tool contracts
+// tool ever executes anything by itself. The write-tool contracts
 // (curated STRICT args, dunder-safe, layers BY NAME) live in ./write-tools.ts
 // (M5-SEAMS seam) and are registered here as `studio.<id>` entries.
 //
@@ -21,7 +28,7 @@
 import { z } from "zod";
 
 import type { PlanRisk } from "./edit-plan.js";
-import { WRITE_TOOLS, studioWriteToolId } from "./write-tools.js";
+import { WRITE_TOOLS, isDunderKey, studioWriteToolId } from "./write-tools.js";
 
 // ---------------------------------------------------------------------------
 // Tool identity
@@ -41,6 +48,17 @@ export const TOOL_IDS = [
   "studio.apply_preset",
   "studio.undo_run",
   "studio.save_version",
+  // Round-12 "Tool catalog v3" (appended — the 13 spec tools above stay
+  // byte-compatible, same order): writes first (they ride WRITE_TOOL_DEFS),
+  // then the client-executed reads/generative tools.
+  "studio.engine_commands",
+  "studio.run_script",
+  "studio.add_asset",
+  "studio.list_commands",
+  "studio.describe_command",
+  "studio.web_search",
+  "studio.render_audio",
+  "studio.generate_image",
 ] as const satisfies readonly string[];
 
 export type ToolId = (typeof TOOL_IDS)[number];
@@ -91,6 +109,31 @@ const CONTEXT_BLOCK_SCHEMA = z.enum([
   "recentCommands",
   "comments",
 ]);
+
+// -- round-12 bounds ("Tool catalog v3"; design-doc tool args) ----------------
+
+/** Catalog category filter bound (list_commands `category`). */
+export const MAX_COMMAND_CATEGORY_LENGTH = 80;
+/** describe_command id bound. */
+export const MAX_COMMAND_ID_LENGTH = 200;
+/** web_search query bound. */
+export const MAX_SEARCH_QUERY_LENGTH = 400;
+/** web_search result count bound (1..5, default 5). */
+export const MAX_WEB_SEARCH_RESULTS = 5;
+/** render_audio code bound (design doc: ≤ 20 000 chars — the sandbox cap). */
+export const MAX_AUDIO_CODE_LENGTH = 20_000;
+/** render_audio duration bounds, seconds (design doc: 0.1-60). */
+export const MIN_AUDIO_DURATION_SECONDS = 0.1;
+export const MAX_AUDIO_DURATION_SECONDS = 60;
+/** generate_image prompt bound. */
+export const MAX_IMAGE_PROMPT_LENGTH = 4000;
+/** generate_image sizes (OpenAI-compatible images API shapes). */
+export const IMAGE_SIZES = [
+  "1024x1024",
+  "1536x1024",
+  "1024x1536",
+] as const satisfies readonly string[];
+export const IMAGE_SIZE_SCHEMA = z.enum(IMAGE_SIZES);
 
 // ---------------------------------------------------------------------------
 // Catalog (§8.4 table, same order)
@@ -180,6 +223,103 @@ export const TOOL_LIST: readonly ToolDefinition[] = [
     }),
   },
   ...WRITE_TOOL_DEFS,
+  // -- round-12 reads + generative tools ("Tool catalog v3") -----------------
+  // Client-executed like the M4 read tools; generative tools are kind "read"
+  // because they mutate no canvas state (audio → asset, image → asset ref,
+  // search → data). Write tools NEVER appear here — the server resolves them.
+  {
+    id: "studio.list_commands",
+    kind: "read",
+    risk: "low",
+    returns: "data",
+    description:
+      "Browse the command catalog: the command ids available to the generic proposal tool, " +
+      "grouped by category with one-line titles. Optionally pass `category` to narrow the list " +
+      "to one group. Use this to discover the right command id, then fetch its full parameter " +
+      "documentation before proposing it.",
+    args: z.strictObject({
+      category: z
+        .string()
+        .min(1)
+        .max(MAX_COMMAND_CATEGORY_LENGTH)
+        .refine((v) => !isDunderKey(v), { message: "dunder keys are not valid categories" })
+        .optional(),
+    }),
+  },
+  {
+    id: "studio.describe_command",
+    kind: "read",
+    risk: "low",
+    returns: "data",
+    description:
+      "Fetch the full parameter documentation for one command id from the catalog: the parameter " +
+      "list with required/optional flags and type hints, a compact JSON shape, and whether the " +
+      "command is allowed in proposals. Call this after discovering an id so the exact params " +
+      "are right the first time.",
+    args: z.strictObject({
+      command: z
+        .string()
+        .min(1)
+        .max(MAX_COMMAND_ID_LENGTH)
+        .refine((v) => !isDunderKey(v), { message: "dunder keys are not valid ids" }),
+    }),
+  },
+  {
+    id: "studio.web_search",
+    kind: "read",
+    risk: "low",
+    returns: "data",
+    description:
+      "Search the web for up-to-date information the project cannot answer — documentation, " +
+      "examples, naming or troubleshooting facts. Pass a short `query` and optionally `maxResults` " +
+      "(1-5, default 5). Each result is a title, URL and a short content excerpt, metered at one " +
+      "credit per call; when search is unavailable the result says so.",
+    args: z.strictObject({
+      query: z.string().min(1).max(MAX_SEARCH_QUERY_LENGTH),
+      maxResults: z
+        .union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)])
+        .default(MAX_WEB_SEARCH_RESULTS),
+    }),
+  },
+  {
+    id: "studio.render_audio",
+    kind: "read",
+    risk: "low",
+    returns: "data",
+    description:
+      "Generate an audio clip locally from JavaScript synthesis code (up to 20000 characters) " +
+      "with a given `name` and an optional `duration` in seconds (0.1-60). The code renders " +
+      "offline into a WAV asset; the result is the asset id, url and duration, ready to drop on " +
+      "a layer. Nothing in the composition changes by itself.",
+    args: z.strictObject({
+      name: z
+        .string()
+        .min(1)
+        .max(120)
+        .refine((v) => !isDunderKey(v)),
+      code: z.string().min(1).max(MAX_AUDIO_CODE_LENGTH),
+      duration: z
+        .number()
+        .min(MIN_AUDIO_DURATION_SECONDS)
+        .max(MAX_AUDIO_DURATION_SECONDS)
+        .optional(),
+    }),
+  },
+  {
+    id: "studio.generate_image",
+    kind: "read",
+    risk: "low",
+    returns: "data",
+    description:
+      "Generate an image from a text `prompt` (optionally sized 1024x1024, 1536x1024 or 1024x1536 " +
+      "pixels). The result is an asset reference the next steps can place on a layer; when image " +
+      "generation is not configured the result says so honestly. This changes nothing in the " +
+      "composition by itself.",
+    args: z.strictObject({
+      prompt: z.string().min(1).max(MAX_IMAGE_PROMPT_LENGTH),
+      size: IMAGE_SIZE_SCHEMA.optional(),
+    }),
+  },
 ];
 
 export const TOOL_CATALOG: Readonly<Record<ToolId, ToolDefinition>> = Object.fromEntries(

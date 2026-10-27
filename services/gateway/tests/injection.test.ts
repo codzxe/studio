@@ -262,12 +262,22 @@ function makeRunner(
  * nothing else ever: no raw engine entrypoint, no invented id. */
 const CURATED_TOOL_IDS = TOOL_LIST.map((tool) => tool.id);
 
+/**
+ * The WIRE form of the same ids: openai.ts `toolSeam` rewrites dots to
+ * underscores because strict providers enforce the OpenAI tool-name
+ * grammar ^[a-zA-Z0-9_-]{1,64}$ (Token Harbor's edge validator among them)
+ * and reject `studio.*` with a 400. The registry/runner/prompt keep the
+ * dotted ids; only the `tools[].function.name` registrations are
+ * underscored, and the model's echoed name is normalized back.
+ */
+const CURATED_TOOL_WIRE_IDS = CURATED_TOOL_IDS.map((id) => id.replace(/\./g, "_"));
+
 function expectExactlyCuratedToolsSent(calls: readonly RecordedCall[]): void {
   expect(calls.length).toBeGreaterThan(0);
   for (const call of calls) {
     const tools = call.body.tools;
     if (tools === undefined) continue; // structured-output calls carry no tools
-    expect(tools.map((tool) => tool.function.name)).toEqual(CURATED_TOOL_IDS);
+    expect(tools.map((tool) => tool.function.name)).toEqual(CURATED_TOOL_WIRE_IDS);
   }
   // Belt and braces: nothing outside the curated 13 ever appears in a tools
   // array — in particular never the raw execution entrypoints.

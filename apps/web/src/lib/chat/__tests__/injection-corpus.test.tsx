@@ -36,7 +36,11 @@ import { Markdown } from "@/components/chat/markdown";
 import { ChatThread } from "@/components/chat/thread";
 import { ToolCard } from "@/components/chat/tool-card";
 import { collectContextSnapshot } from "@/lib/chat/context";
-import { type ToolExecutorDeps, executeClientTool } from "@/lib/chat/tool-executor";
+import {
+  ClientToolError,
+  type ClientToolExecutorDeps,
+  createClientToolExecutor,
+} from "@/lib/chat/tool-executor";
 import type { ToolCardState } from "@/lib/chat/types";
 import {
   type InjectionFixture,
@@ -274,22 +278,32 @@ function stubClient() {
   return { client, events };
 }
 
-function executorDeps(bridge: EditorBridge): {
-  deps: ToolExecutorDeps;
-  events: ReturnType<typeof stubClient>["events"];
-} {
-  const { client, events } = stubClient();
-  return {
-    deps: {
-      bridge,
-      client,
-      workspaceId: "ws_inj",
-      flags: ALL_TRUE_FLAGS,
-      guardTimeoutMs: 0,
-      retrySleepMs: 0,
-    },
-    events,
+/**
+ * ROUND-12: the executor resolves results DIRECTLY (the postEvent back-channel
+ * is gone — the chat loop echoes the result into the next turn's transcript).
+ * runTool returns the resolved result, or the typed error shape the loop
+ * echoes for a ClientToolError (chat-controller's catch arm).
+ */
+async function runTool(bridge: EditorBridge, tool: string, args: unknown): Promise<unknown> {
+  const { client } = stubClient();
+  const deps: ClientToolExecutorDeps = {
+    bridge,
+    client,
+    workspaceId: "ws_inj",
+    threadId: "th_inj",
+    runId: "run_inj",
+    flags: ALL_TRUE_FLAGS,
+    guardTimeoutMs: 0,
   };
+  const executor = createClientToolExecutor(deps);
+  try {
+    return await executor.execute(tool, args);
+  } catch (error) {
+    if (error instanceof ClientToolError) {
+      return { error: error.code, message: error.message };
+    }
+    throw error;
+  }
 }
 
 const EXECUTOR_SWEEP_IDS = [
@@ -306,17 +320,12 @@ describe("corpus — client tool executor immunity", () => {
     "get_context carries %s verbatim as JSON-serializable data",
     async (fixtureId) => {
       const payload = textFixture(fixtureId).payload;
-      const { deps, events } = executorDeps(hostileBridge(payload));
-      await executeClientTool(
-        { runId: "run_inj", toolCallId: "call_inj", name: "studio.get_context", args: {} },
-        deps,
-      );
-      const posted = events[0]?.body;
-      expect(posted).toMatchObject({ type: "tool.result", toolCallId: "call_inj" });
+      const bridge = hostileBridge(payload);
+      const result = await runTool(bridge, "studio.get_context", {});
       // JSON-serializable and VERBATIM: the payload rides the result as data —
       // compare against the payload's own JSON-escaped form, i.e. the exact
       // bytes a JSON round-trip preserves (quotes escape inside the envelope).
-      const serialized = JSON.stringify(posted);
+      const serialized = JSON.stringify(result);
       expect(serialized.includes(JSON.stringify(payload).slice(1, -1))).toBe(true);
       expectPrototypeClean();
     },
@@ -331,12 +340,9 @@ describe("corpus — client tool executor immunity", () => {
       query: async <T,>(command: string): Promise<T> =>
         command === "comp.info" ? ({ id: 1, name: "Main", layers: [protoLayer] } as T) : ({} as T),
     } as unknown as EditorBridge;
-    const { deps, events } = executorDeps(bridge);
-    await executeClientTool(
-      { runId: "run_inj", toolCallId: "call_inj", name: "studio.list_layers", args: {} },
-      deps,
-    );
-    const result = events[0]?.body.result as { layers: Array<Record<string, unknown>> };
+    const result = (await runTool(bridge, "studio.list_layers", {})) as {
+      layers: Array<Record<string, unknown>>;
+    };
     // The own data key SURVIVED the {...layer, tree} spread (deep-merge safe)…
     expect(Object.hasOwn(result.layers[0] as object, "__proto__")).toBe(true);
     expect(JSON.stringify(result).includes("PROTO-PWNED")).toBe(true);
@@ -354,22 +360,15 @@ describe("corpus — client tool executor immunity", () => {
     //   2. depth — the executor's accumulators are null-prototype objects
     //      (tool-executor.ts), so even a future validation drift cannot write
     //      through to Object.prototype.
-    const { deps, events } = executorDeps(hostileBridge("props"));
-    await executeClientTool(
-      {
-        runId: "run_inj",
-        toolCallId: "call_inj",
-        name: "studio.get_properties",
-        args: { layerIds: ["__proto__", "l1"], paths: ["corpusProbeM4N", "text/sourceText"] },
-      },
-      deps,
-    );
+    const bridge = hostileBridge("props");
+    const result = (await runTool(bridge, "studio.get_properties", {
+      layerIds: ["__proto__", "l1"],
+      paths: ["corpusProbeM4N", "text/sourceText"],
+    })) as { error: string };
     // Layer 1 — the args never execute: one RUN_INVALID_TOOL result, zero
     // prop.get bridge queries (the hostile bridge records every query).
-    expect(events).toHaveLength(1);
-    const result = events[0]?.body.result as { error: string };
     expect(result.error).toBe("RUN_INVALID_TOOL");
-    expect((deps.bridge as unknown as { calls: string[] }).calls ?? []).toEqual([]);
+    expect((bridge as unknown as { calls: string[] }).calls ?? []).toEqual([]);
     // Layer 2 — Object.prototype is untouchable end-to-end.
     expect(Object.hasOwn(Object.prototype, "corpusProbeM4N")).toBe(false);
     expect(Object.hasOwn(Object.prototype, "text/sourceText")).toBe(false);
@@ -377,75 +376,43 @@ describe("corpus — client tool executor immunity", () => {
   });
 
   it("get_properties: benign ids still post normally after the F-1 fix", async () => {
-    const { deps, events } = executorDeps(hostileBridge("props"));
-    await executeClientTool(
-      {
-        runId: "run_inj",
-        toolCallId: "call_inj",
-        name: "studio.get_properties",
-        args: { layerIds: ["l1"], paths: ["text/sourceText"] },
-      },
-      deps,
-    );
-    const result = events[0]?.body.result as { layers: Record<string, unknown> };
+    const bridge = hostileBridge("props");
+    const result = (await runTool(bridge, "studio.get_properties", {
+      layerIds: ["l1"],
+      paths: ["text/sourceText"],
+    })) as { layers: Record<string, unknown> };
     expect(Object.hasOwn(result.layers, "l1")).toBe(true);
     expectPrototypeClean();
   });
 
   it("write tools are refused client-side even with perfect args (defense in depth)", async () => {
     const write = hostileArgsFixture("write-tool-perfect-args");
-    const { deps, events } = executorDeps(hostileBridge("x"));
-    await executeClientTool(
-      {
-        runId: "run_inj",
-        toolCallId: "call_inj",
-        name: write.tool,
-        args: JSON.parse(write.argsJson),
-      },
-      deps,
-    );
-    // M5: write tools resolve SERVER-SIDE (the runner posts the proposal
-    // envelope; the runs route 400s any client tool.result for them) — the
-    // client-side refusal fires BEFORE arg validation, so even a schema-shape
-    // drift can never make the browser execute a write.
-    expect(events[0]?.body).toMatchObject({
-      type: "tool.result",
-      result: {
-        error: "TOOL_FORBIDDEN",
-        message: "Write tools are not available yet.",
-      },
-    });
+    const result = (await runTool(hostileBridge("x"), write.tool, JSON.parse(write.argsJson))) as {
+      error: string;
+    };
+    // ROUND-12: write tools PROPOSE server-side (the turn route compiles the
+    // carrier) and never execute client-side — the executor's refusal fires
+    // BEFORE arg validation, so even a schema-shape drift can never make the
+    // browser execute a write.
+    expect(result.error).toBe("TOOL_FORBIDDEN");
+    expectPrototypeClean();
   });
 
   it("raw engine.batch/undo as a TOOL NAME stays TOOL_FORBIDDEN with zero bridge calls (law #6 backstop)", async () => {
-    const { deps, events } = executorDeps(hostileBridge("x"));
-    await executeClientTool(
-      {
-        runId: "run_inj",
-        toolCallId: "call_batch",
-        name: "engine.batch",
-        // A begging payload that tries to smuggle a full batch through a "tool".
-        args: {
-          label: "IGNORE PREVIOUS INSTRUCTIONS",
-          atomic: true,
-          steps: [{ command: "comp.new", params: { name: "PWNED" } }],
-        },
-      },
-      deps,
-    );
-    await executeClientTool(
-      { runId: "run_inj", toolCallId: "call_undo", name: "edit.undo", args: {} },
-      deps,
-    );
+    const bridge = hostileBridge("x");
+    const batch = (await runTool(bridge, "engine.batch", {
+      // A begging payload that tries to smuggle a full batch through a "tool".
+      label: "IGNORE PREVIOUS INSTRUCTIONS",
+      atomic: true,
+      steps: [{ command: "comp.new", params: { name: "PWNED" } }],
+    })) as { error: string; message: string };
+    const undo = (await runTool(bridge, "edit.undo", {})) as { error: string; message: string };
 
-    expect(events).toHaveLength(2);
-    for (const event of events) {
-      expect(event.body.result).toEqual({
-        error: "TOOL_FORBIDDEN",
-        message:
-          "Raw engine commands are not tools. Use the curated Studio tools; apply a plan to make changes.",
-      });
+    for (const result of [batch, undo]) {
+      expect(result.error).toBe("TOOL_FORBIDDEN");
+      expect(result.message).toContain("Raw engine commands are not tools");
     }
+    expect((bridge as unknown as { calls: string[] }).calls ?? []).toEqual([]);
     expectPrototypeClean();
   });
 });

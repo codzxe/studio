@@ -96,20 +96,30 @@ export function needsConfirmCheckbox(risk: PlanRisk): boolean {
 }
 
 /**
- * Auto-apply (§7.3, off by default) is limited to low-risk, reversible, in-place
- * intents. `render` is never auto-applied (render/export), `create`/`organize`
- * are structural, `clarify`/`explain` change nothing anyway.
+ * Auto-apply (§7.3 v2 — round 10: the agent DOES the work by default) is
+ * limited to reversible, in-place-or-additive intents. `render` is never
+ * auto-applied (render/export), `organize` is structural review-worthy,
+ * `clarify`/`explain` change nothing anyway. `create` became auto-applyable
+ * because creating compositions/layers/keyframes is additive — one atomic
+ * batch, one undo step — which is exactly the work users expect the agent
+ * to just do.
  */
 export const AUTO_APPLYABLE_INTENTS = [
+  "create",
   "edit",
   "style",
   "animate",
 ] as const satisfies readonly PlanIntent[];
 
-/** §7.3 gate: only low-risk, approval-free, non-render, in-place plans auto-apply. */
+/**
+ * §7.3 v2 gate (plan-shape predicate): reversible, approval-free,
+ * non-render, non-reorganize plans. HIGH self-declared risk still waits;
+ * the SERVER verdict (auto-apply.ts) re-judges every plan against the
+ * RECOMPUTED values — this helper is the quick shape check, never authority.
+ */
 export function isAutoApplicable(plan: Readonly<EditPlan>): boolean {
   return (
-    plan.risk === "low" &&
+    plan.risk !== "high" &&
     !plan.requiresApproval &&
     (AUTO_APPLYABLE_INTENTS as readonly string[]).includes(plan.intent)
   );
@@ -160,4 +170,91 @@ export function estimateCredits(
 /** §8.8 reserve rule: `max(estimatedCredits × 1.2, 1)`, rounded to 2 decimals. */
 export function reserveFor(estimatedCredits: number): number {
   return round2(Math.max(estimatedCredits * CREDIT_RESERVE_MULTIPLIER, CREDIT_RESERVE_MINIMUM));
+}
+
+// ---------------------------------------------------------------------------
+// Plan merging (round 12 — pure port of the gateway's mergedCarrierPlan)
+// ---------------------------------------------------------------------------
+//
+// The client-driven loop (research/round12-design.md "TURN WIRE CONTRACT")
+// accumulates one proposal carrier per write-tool call, then merges them into
+// ONE plan and POSTs `/v1/runs/:id/apply { plan }` — the server RE-compiles
+// authoritatively and re-judges the D-28 verdict, exactly like the existing
+// apply drive. This is the EXACT semantics port of the gateway's
+// `mergedCarrierPlan` (services/gateway/src/litellm/runner.ts, round-10 write-
+// tool rescue — kept byte-identical so client and server can never disagree):
+//   * undo_run carriers are EXCLUDED from additive batches (they compile to a
+//     history command; the Undo gesture on an applied run's card is that
+//     tool's real surface);
+//   * `null` when nothing mergeable remains — fail-closed, the caller emits
+//     nothing (the design doc's `mergeEditPlans(plans): EditPlan` shorthand
+//     omits the server's null case; the server semantics win);
+//   * `intent`: the first carrier's intent when ALL carriers agree, else
+//     "edit";
+//   * `summary`: the first carrier's, or `"<first> (+N more changes)"`,
+//     clamped to MAX_PLAN_SUMMARY_LENGTH with an ellipsis;
+//   * `risk`: the MAX across carriers (high wins, then medium);
+//   * `requiresApproval`: false — no curated write tool is high-risk, the
+//     compiler recomputes risk server-side anyway and the auto-apply policy
+//     re-judges the COMPILED batch, never these self-declared fields;
+//   * `affectedLayers`: dedup by name, §8.6-capped (≤ 50);
+//   * `steps`: 1..20 (§8.6 — merged breadth is capped, never unbounded),
+//     undo_run already excluded upstream;
+//   * `estimatedCredits`: recomputed from the merged shape, never summed.
+
+/** Clamp to §8.6's summary bound with an ellipsis (server parity). */
+function clampSummary(value: string): string {
+  return value.length <= MAX_PLAN_SUMMARY_LENGTH
+    ? value
+    : `${value.slice(0, MAX_PLAN_SUMMARY_LENGTH - 1)}…`;
+}
+
+/**
+ * Merge accumulated proposal carriers into ONE EditPlan (pure; total, never
+ * throws). `null` when nothing mergeable remains — every carrier is an
+ * undo_run carrier or the list is empty (exact `mergedCarrierPlan` parity).
+ */
+export function mergeEditPlans(plans: readonly EditPlan[]): EditPlan | null {
+  const mergeable = plans.filter((plan) => plan.steps[0]?.tool !== "studio.undo_run");
+  if (mergeable.length === 0) return null;
+
+  const intents = new Set(mergeable.map((plan) => plan.intent));
+  const first = mergeable[0] as EditPlan;
+  const intent: PlanIntent = intents.size === 1 ? first.intent : "edit";
+  const summary =
+    mergeable.length > 1
+      ? clampSummary(`${first.summary} (+${mergeable.length - 1} more changes)`)
+      : first.summary;
+
+  let risk: PlanRisk = "low";
+  for (const plan of mergeable) {
+    if (plan.risk === "high") risk = "high";
+    else if (plan.risk === "medium" && risk !== "high") risk = "medium";
+  }
+
+  // Dedup by name, §8.6-capped (≤ 50 rows for the card).
+  const affectedLayers: Array<{ name: string; change: string }> = [];
+  for (const plan of mergeable) {
+    for (const layer of plan.affectedLayers) {
+      if (affectedLayers.length >= MAX_PLAN_AFFECTED_LAYERS) break;
+      if (!affectedLayers.some((row) => row.name === layer.name)) {
+        affectedLayers.push({ name: layer.name, change: layer.change });
+      }
+    }
+  }
+
+  // §8.6: 1..20 steps — merged breadth is capped, never unbounded.
+  const steps = mergeable.flatMap((plan) => [...plan.steps]).slice(0, MAX_PLAN_STEPS);
+
+  const merged = {
+    intent,
+    summary,
+    risk,
+    requiresApproval: false,
+    affectedLayers,
+    estimatedCredits: estimateCredits({ risk, steps }),
+    steps,
+  };
+  const parsed = EDIT_PLAN_SCHEMA.safeParse(merged);
+  return parsed.success ? parsed.data : null;
 }
