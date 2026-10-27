@@ -37,3 +37,12 @@ Every agent invocation is logged with its delivery state. Honest ledger, no padd
 | - | w1-a21 | W1-audit | S181-S188 chat components | DELIVERED (2 HIGH credits-chain bugs) |
 | - | w1-a22 | W1-audit | S189-S199 web api/e2e | DELIVERED (HIGH auto-apply run-status gap) |
 | - | w1-a23 | W1-audit | S202-S212 packages | DELIVERED (2 HIGH dead-contract files) |
+| - | WAVE-1 COMPLETE | | all 300 file scopes by 31 agents (25 full deliveries + 6 file-written) | DONE |
+| - | w1-a24 | W1-audit | S213-S222 contracts | DELIVERED (dead sse.ts, UTF-16 budget bugs) |
+| - | w1-a25 | W1-audit | S223-S234 api-client/storage/db | DELIVERED (HIGH broken SigV4 vectors, auto-apply doc contradiction) |
+| - | w1-a26 | W1-audit | S235-S246 ui+gateway routes p1 | DELIVERED (HIGH Stripe webhook dedup-before-apply) |
+| - | w1-a27 | W1-audit | S247-S258 litellm+gateway core | DELIVERED (4 HIGH billing bugs, S3 read null stub) |
+| - | w1-a28 | W1-audit | S259-S270 gateway tests+worker | DELIVERED (2 HIGH stale suite, µc-mask fixtures) |
+| - | w1-a29 | W1-audit | S271-S282 worker+infra | DELIVERED (HIGH SSRF Caddyfile, license gate gap, NV key) |
+| - | w1-a30 | W1-audit | S283-S294 CI+docs | DELIVERED (HIGH ghost BUILD_PROMPT, pricing trio) |
+| - | w1-a31 | W1-audit | S295-S300 security docs+root cfg | DELIVERED (4x HIGH pre-pivot ghosts) |
