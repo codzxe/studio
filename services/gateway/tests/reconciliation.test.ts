@@ -123,15 +123,17 @@ interface SeededRun {
 /**
  * Seeds the chat.ts finalize LEDGER path (M4-K/apply-flow precedent):
  * reserve → settle (commit + full-hold refund, D-20) → run-row update.
- * `reserve`/`actual` are RAW ledger magnitudes: the µc sections below pass
- * whole credits × 1_000_000 (the post-M6-K chat dialect, D-12); the
- * external-spend section deliberately keeps CREDIT magnitudes — the core's
- * external comparison is credit math (spendCreditsForModel) comparing raw
- * like-for-like. The run row is seeded in the LEDGER's dialect on purpose:
- * the recon core compares shared-dialect magnitudes, so its comparisons stay
- * exact here — while the REAL post-fix chat rows carry whole credits (D-12
- * row ruling) against µc ledger entries; that core-side µc↔credits conversion
- * is flagged to the reconciliation owner (M6-K finding, worklog).
+ *
+ * DIALECTS (W3-b02 — the fixture now seeds the REAL writers' dialects):
+ * `reserve`/`actual` are RAW ledger magnitudes in integer µc (the grant /
+ * reserve / settle calls below are exactly what routes/turn.ts writes),
+ * while the run ROW is seeded in WHOLE CREDITS per the D-12 row ruling
+ * (reservedCredits/committedCredits — routes/turn.ts heartbeats whole
+ * credits). The pre-fix fixture wrote µc INTO the row to mask the core's
+ * missing µc↔credits conversion (the M6-K finding the fixture's old
+ * comment admitted); the fixed core multiplies rows by 1_000_000 before
+ * folding them against the µc ledger sums, so the seeds must speak the
+ * row's true dialect.
  * `setRow: false` simulates a finalize that crashed after the settle —
  * the exact drift reconciliation exists to catch.
  */
@@ -144,7 +146,7 @@ async function seedCompletedRun(
     threadId: fx.threadId,
     projectId: fx.projectId,
     model: "studio-smart",
-    reservedCredits: input.reserve,
+    reservedCredits: Math.round(input.reserve / MICRO), // whole credits (D-12 row)
   });
   await server.deps.repos.runs.update(ws.id, run.id, { status: "running" });
   await server.deps.repos.ledger.reserve(ws.id, {
@@ -161,7 +163,7 @@ async function seedCompletedRun(
   if (input.setRow !== false) {
     await server.deps.repos.runs.update(ws.id, run.id, {
       status: "completed",
-      committedCredits: committed,
+      committedCredits: Math.round(committed / MICRO), // whole credits (D-12 row)
     });
   }
   return { runId: run.id, committed };
@@ -385,7 +387,7 @@ d("zombie reserve detection (D-19)", () => {
       threadId: fx.threadId,
       projectId: fx.projectId,
       model: "studio-smart",
-      reservedCredits: 10 * MICRO,
+      reservedCredits: 10, // whole credits (D-12 row dialect — W3-b02)
     });
     await server.deps.repos.runs.update(ws.id, run.id, { status: "running" });
     await server.deps.repos.ledger.reserve(ws.id, {
@@ -476,6 +478,35 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
     ]);
     expect(report.action).toMatchObject({ attempted: false, skippedReason: "report_only" });
     expect(await adjustEntries(ws)).toEqual([]);
+  });
+
+  it("W3-b02 regression pin: a turn-world run (whole-credit row vs µc ledger) is NOT a mismatch, and reconcile mode grants NOTHING back", async () => {
+    // The w1-a27 S255 HIGH bug: the core folded the run row's WHOLE-CREDIT
+    // committedCredits against µc ledger sums raw — every turn-world
+    // workspace reported a spurious ledger_usage_mismatch, and a
+    // reconcile-mode true-up adjustAmount ≈ +(commit − commit/10⁶) µc handed
+    // the whole commit back as balance. The fixed core converts rows ×
+    // 1_000_000 before folding (seedCompletedRun now seeds the row dialect
+    // the real writers use, so this pin cannot be masked again).
+    const ws = await newWorkspace();
+    const fx = await newFixture(ws);
+    const t0 = Date.now();
+    await grant(ws, 100);
+    await seedCompletedRun(ws, fx, { reserve: 20 * MICRO, actual: 12 * MICRO });
+
+    const report = await coreReport(ws, windowAround(t0));
+    expect(codes(report)).toEqual([]);
+    expect(report.usage).toMatchObject({
+      runs: { settledInWindow: 1, committedCredits: 12 * MICRO },
+      usageSum: 12 * MICRO,
+    });
+
+    // Reconcile mode on a CLEAN window must be a no-op — the pre-fix core
+    // would have "trued up" +(12M − 12) µc back into the balance.
+    const reconcile = await coreReport(ws, windowAround(t0), { mode: "reconcile" });
+    expect(reconcile.action).toMatchObject({ attempted: false, skippedReason: "no_mismatch" });
+    expect(await adjustEntries(ws)).toEqual([]);
+    expect(await server.deps.repos.ledger.balance(ws.id)).toBe(88 * MICRO);
   });
 
   it("true-ups once per (workspace, windowStart): same window replays, shifted window re-adjusts", async () => {
@@ -589,10 +620,10 @@ d("ledger-vs-usage mismatch and the true-up action", () => {
       actual: 2 * MICRO,
       setRow: false,
     });
-    // the run row claims 12M µc committed while the ledger committed 2M µc →
-    // the true-up would charge 10M µc on a balance of 3M µc → the ledger must
-    // refuse (D-12).
-    await server.deps.repos.runs.update(ws.id, run.runId, { committedCredits: 12 * MICRO });
+    // the run row claims 12 credits committed (12M µc, D-12 row dialect)
+    // while the ledger committed 2M µc → the true-up would charge 10M µc on
+    // a balance of 3M µc → the ledger must refuse (D-12).
+    await server.deps.repos.runs.update(ws.id, run.runId, { committedCredits: 12 });
 
     const report = await coreReport(ws, windowAround(t0), { mode: "reconcile" });
     expect(codes(report)).toEqual(["ledger_usage_mismatch"]);
@@ -704,13 +735,12 @@ function litellmSource(fetchImpl: typeof fetch, logger?: Logger): LiteLLMSpendSo
   });
 }
 
-// DIALECT NOTE (M6-K): this section deliberately keeps CREDIT-magnitude
-// ledger seeds (grant 100 = 100 µc etc.) — the core's EXTERNAL comparison is
-// credit math (spendCreditsForModel, the M4-A runner math) and it compares
-// raw like-for-like, so a matching spend (7 credits) needs a 7-magnitude
-// ledger commit. Once the reconciliation core converts ledger µc → credits
-// at its comparison surfaces (the M6-K worklog finding: real post-fix runs
-// write µc commits vs credit spend), these seeds should flip to µc.
+// DIALECT NOTE (W3-b02, flipped): this section now seeds µc ledger
+// magnitudes like every other section — the fixed core converts the
+// credit-denominated spend (spendCreditsForModel, the M4-A math) to µc
+// before comparing against the ledger commit sum, so a matching spend of
+// 7 credits needs a 7_000_000 µc commit. The old RAW-credit seeds (grant
+// 100 = 100 µc etc.) masked the unit mismatch the M6-K worklog flagged.
 
 d("external spend source (LiteLLM seam)", () => {
   it("createSpendSource is null without a spend credential (the local reality)", async () => {
@@ -799,7 +829,9 @@ d("external spend source (LiteLLM seam)", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 100);
-    await seedCompletedRun(ws, fx, { reserve: 12, actual: 7 });
+    // µc ledger magnitudes (W3-b02): 7 credits committed = 7_000_000 µc —
+    // what the fixed core compares the 7-credit spend against.
+    await seedCompletedRun(ws, fx, { reserve: 12 * MICRO, actual: 7 * MICRO });
     const calls: FetchCall[] = [];
     const source = litellmSource(
       fakeSpendFetch(
@@ -840,7 +872,7 @@ d("external spend source (LiteLLM seam)", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 100);
-    await seedCompletedRun(ws, fx, { reserve: 12, actual: 7 });
+    await seedCompletedRun(ws, fx, { reserve: 12 * MICRO, actual: 7 * MICRO });
     const { logger, records } = spyLogger();
     const source = litellmSource(
       fakeSpendFetch({
@@ -859,9 +891,10 @@ d("external spend source (LiteLLM seam)", () => {
     expect(codes(report)).toEqual(["external_spend_mismatch"]);
     expect(discrepancyOf(report, "external_spend_mismatch")).toMatchObject({
       code: "external_spend_mismatch",
-      ledgerCommitSum: 7,
+      // µc ledger sum vs the 13-credit spend (13M µc) — delta in µc (W3-b02).
+      ledgerCommitSum: 7 * MICRO,
       externalSpendCredits: 13,
-      delta: 6,
+      delta: 6 * MICRO,
     });
     expect(discrepancyOf(report, "external_spend_mismatch").byModel[0]).toMatchObject({
       model: "studio-smart",
@@ -883,7 +916,7 @@ d("external spend source (LiteLLM seam)", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 100);
-    await seedCompletedRun(ws, fx, { reserve: 12, actual: 7 });
+    await seedCompletedRun(ws, fx, { reserve: 12 * MICRO, actual: 7 * MICRO });
     const source = litellmSource(
       fakeSpendFetch({
         data: [
@@ -956,7 +989,7 @@ d("external spend source (LiteLLM seam)", () => {
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 30);
-    await seedCompletedRun(ws, fx, { reserve: 5, actual: 4 });
+    await seedCompletedRun(ws, fx, { reserve: 5 * MICRO, actual: 4 * MICRO });
     const report = await coreReport(ws, windowAround(t0)); // no spend source
     expect(report.external).toEqual({
       source: "none",

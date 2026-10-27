@@ -1,33 +1,34 @@
 // @studio/gateway — /v1/runs (§7.2, §8.7, §8.9): run record, cancel, and the
-// client event sink for editor tool results / apply results.
-//
-// §7.4 rule: tool results are accepted only with the run token (= the run id,
-// authorized by workspace membership) and only for the expected toolCallId
-// (the runner registered it in the run log). On a successful apply with a
-// sha256 the gateway creates the version through the repo (which owns the
-// PROJECT_VERSION_CONFLICT check) and commits the credits.
+// client event sink for apply results (the legacy §8.7 surface the wire
+// contracts still pin). On a successful apply with a sha256 the gateway
+// creates the version through the repo (which owns the PROJECT_VERSION_
+// CONFLICT check) and commits the credits.
 //
 // agent_steps SINGLE-WRITER (M4 tail #2, fixed by M5-C): the chat route's
-// finalize (recordSteps in routes/chat.ts) is the ONLY writer of run step
-// rows — every tool.started/tool.result in the run log becomes exactly one
-// row, keyed by the wire `seq`. THIS sink stores the client's tool-result
-// payload in the run log (the SSE/replay record + the runner's tool-result
-// wait) but inserts NO step row; server-resolved tools (studio.plan_edit,
-// the 8 M5 write tools) are additionally NOT client-reportable — the runner
-// emits their tool.result itself, so a client POST for them would put a
-// second, conflicting result on the wire for the same call.
+// finalize (recordSteps in routes/chat.ts) was the only writer of run step
+// rows in the round-10 world; the round-12 turn route (routes/turn.ts) now
+// persists its own tool-call steps per turn. THIS sink's apply.result arm
+// still writes exactly ONE "apply" step row per run (the client's §8.7
+// outcome); its tool.result arm is the honest 409 (see below).
+//
+// ROUND-12 TRUTH (w1-a27 S248/S255, W3-b02): the retired round-10 chat loop
+// was the ONLY RunRegistry.register caller and is not mounted — nothing in
+// the mounted app ever populates the registry, so this module no longer
+// consults it (deps.runs/deps.runner stay on GatewayDeps for other callers).
+// The DB run row is the single authority: cancel is a DB-only finalize, the
+// apply.result settle bills the run row's accumulated ACTUAL usage in the
+// turn world's µc dialect (D-12). The round-12 client's stop gesture is
+// POST /v1/runs/:id/abandon (routes/turn.ts); the tool-result round-trip
+// rides the next turn's BODY, so this sink's tool.result arm answers the
+// honest 409 below.
 
 import { Hono } from "hono";
 
-import {
-  CANCEL_RUN_SCHEMA,
-  RUN_EVENT_REQUEST_SCHEMA,
-  type RunRecord,
-  getTool,
-} from "@studio/contracts";
+import { CANCEL_RUN_SCHEMA, RUN_EVENT_REQUEST_SCHEMA, type RunRecord } from "@studio/contracts";
 
 import { type AgentRun, isTerminalRunStatus } from "@studio/db";
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
+import { creditsToLedgerMicrocredits, microcreditsToWholeCredits } from "../credits-display.js";
 import { GatewayError } from "../errors.js";
 import { ok, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
@@ -119,30 +120,24 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
         return ok(c, { runId, status: run.status, cancelled: false });
       }
 
-      const log = deps.runs.get(runId);
-      if (log === null) {
-        // No live stream (e.g. gateway restarted with a mid-flight run):
-        // finalize directly — cancel status + full refund (§8.9).
-        await deps.repos.runs.update(workspace.id, runId, {
-          status: "cancelled",
-          errorCode: "RUN_CANCELLED",
-        });
-        await deps.repos.ledger.refundAll(workspace.id, {
-          runId,
-          idempotencyKey: `chat:${runId}:refund`,
-        });
-        await audit(deps, c, workspace.id, "run.cancelled", runId);
-        return ok(c, { runId, status: "cancelled", cancelled: true });
-      }
-
-      const cancelled = deps.runs.cancel(runId);
-      deps.runner.cancel(runId);
-      if (!cancelled) {
-        return ok(c, { runId, status: run.status, cancelled: false });
-      }
+      // ROUND-12 TRUTH (w1-a27 S248/S255, W3-b02): the RunRegistry/runner
+      // consultation that used to sit here was the retired round-10 chat
+      // loop's seam — nothing in the mounted app ever registers a run, so the
+      // "no live stream" branch below was the ONLY live branch anyway. The
+      // DB row is the authority: finalize directly — cancel status + full
+      // refund (§8.9). A live turn's own settle/refund keys are idempotent,
+      // so a cancel racing a turn finalize fails safe (refundAll no-ops on a
+      // zero outstanding hold).
+      await deps.repos.runs.update(workspace.id, runId, {
+        status: "cancelled",
+        errorCode: "RUN_CANCELLED",
+      });
+      await deps.repos.ledger.refundAll(workspace.id, {
+        runId,
+        idempotencyKey: `chat:${runId}:refund`,
+      });
       await audit(deps, c, workspace.id, "run.cancelled", runId);
-      // The streaming finalize path emits run.cancelled and refunds.
-      return ok(c, { runId, status: "cancelling", cancelled: true });
+      return ok(c, { runId, status: "cancelled", cancelled: true });
     },
   );
 
@@ -164,7 +159,9 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
       }
       const event = parsed.data;
 
-      const { run } = await deps.repos.runs.get(workspace.id, runId);
+      // ONE fetch: the run row AND its steps (the second full fetch the old
+      // code made just to re-read `steps` is gone — w1-a27 S248 LOW).
+      const { run, steps } = await deps.repos.runs.get(workspace.id, runId);
       if (isTerminalRunStatus(run.status)) {
         throw new GatewayError("RUN_NOT_ACTIVE", "This run already finished.", {
           status: 409,
@@ -172,47 +169,19 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
           requestId,
         });
       }
-      const log = deps.runs.get(runId);
-      if (log === null) {
-        throw new GatewayError("RUN_NOT_ACTIVE", "This run is not accepting events right now.", {
-          status: 409,
-          hint: "The run must be streaming; reconnect via the chat route.",
-          requestId,
-        });
-      }
-
-      const { steps } = await deps.repos.runs.get(workspace.id, runId);
       const nextSeq = steps.length;
 
       if (event.type === "tool.result") {
-        // §7.4: only the expected toolCallId may report a result.
-        const tool = log.toolNameFor(event.toolCallId);
-        if (tool === null) {
-          throw new GatewayError("VALIDATION_FAILED", "Unknown toolCallId for this run.", {
-            status: 400,
-            hint: "Report results only for tool calls this run started.",
-            requestId,
-          });
-        }
-        // M5: server-resolved tools (studio.plan_edit + the 8 write tools)
-        // complete INSIDE the runner — the client never reports their
-        // results. Accepting a POST here would emit a second tool.result for
-        // an already-completed call (the M4 client executor's defensive
-        // TOOL_FORBIDDEN refusal used to do exactly that).
-        const definition = getTool(tool);
-        if (tool === "studio.plan_edit" || definition?.kind === "write") {
-          throw new GatewayError("VALIDATION_FAILED", "This tool call is resolved server-side.", {
-            status: 400,
-            hint: "The editor reports results for its own read tools only.",
-            requestId,
-          });
-        }
-        // M4 tail #2 single-writer fix: the payload is stored in the run log
-        // (SSE + replay + the runner's tool-result wait); the agent_steps row
-        // is written ONCE by the chat route's finalize, keyed by this event's
-        // seq. No addStep here.
-        log.emit({ type: "tool.result", toolCallId: event.toolCallId, result: event.result });
-        return ok(c, { runId, recorded: true });
+        // ROUND-12: the client tool round-trip rides the NEXT TURN's body —
+        // the round-10 run-log wait seam (the in-memory RunRegistry) is gone
+        // with the server loop, so there is no live log to accept a tool
+        // result into. The honest answer is the same 409 the registry miss
+        // always produced (never a silent drop).
+        throw new GatewayError("RUN_NOT_ACTIVE", "This run is not accepting events right now.", {
+          status: 409,
+          hint: "Tool results travel in the next turn's body; apply results use POST /v1/runs/:id/apply.",
+          requestId,
+        });
       }
 
       // apply.result (§8.7)
@@ -228,17 +197,10 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
         await deps.repos.runs.update(workspace.id, runId, {
           status: "failed",
           errorCode,
-          planJson: log.currentPlan ?? undefined,
         });
         await deps.repos.ledger.refundAll(workspace.id, {
           runId,
           idempotencyKey: `chat:${runId}:refund`,
-        });
-        log.emit({
-          type: "run.failed",
-          code: errorCode,
-          message: event.errorMessage ?? "The planned edit failed to apply.",
-          retryable: false,
         });
         return ok(c, { runId, recorded: true, status: "failed" });
       }
@@ -265,23 +227,36 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
           createdBy: c.get("auth").user.id,
         });
 
-        const committed = Math.min(
-          run.reservedCredits,
-          Math.max(1, Math.ceil(run.reservedCredits / 2)),
-        );
+        // §8.8 + D-12 (w1-a27 S248, the two HIGH billing bugs, W3-b02):
+        // bill the run's ACTUAL usage — the run row's committedCredits column
+        // IS the accumulated Σ committedCreditsFor per-turn usage the turn
+        // world heartbeats in (routes/turn.ts) — never the old half-the-
+        // reserve guess, and convert whole credits → integer µc at the ledger
+        // boundary exactly like routes/turn.ts:555 / routes/apply.ts:210
+        // (the pre-fix code passed whole credits straight to ledger.settle,
+        // a 10⁻⁶ undercharge). The §8.8 min-1 floor mirrors
+        // committedCreditsFor's contract; planSettlement caps the commit at
+        // the run's outstanding hold and releases the FULL hold (D-20), so
+        // per-turn settles that already committed never double-charge.
+        const committedUsage = Math.max(1, run.committedCredits);
         const settled = await deps.repos.ledger.settle(workspace.id, {
           runId,
-          actualCost: committed,
+          actualCost: creditsToLedgerMicrocredits(committedUsage),
           idempotencyKey: `chat:${runId}:settle`,
         });
         const balance = await deps.repos.ledger.balance(workspace.id);
-        const actualCommit = settled.commit !== null ? -settled.commit.amount : 0;
+        // D-12 row ruling: the committedCredits column is WHOLE credits. The
+        // settle's commit entry is µc — convert back for the row, and keep
+        // the row monotonic (never clobber the accumulated per-turn usage
+        // with a smaller settle-time commit when the holds already settled).
+        const settleCommit =
+          settled.commit !== null ? microcreditsToWholeCredits(-settled.commit.amount) : 0;
+        const committedRow = Math.max(run.committedCredits, settleCommit);
 
         await deps.repos.runs.update(workspace.id, runId, {
           status: "completed",
-          committedCredits: actualCommit,
+          committedCredits: committedRow,
           resultVersionId: version.id,
-          planJson: log.currentPlan ?? undefined,
         });
         await deps.repos.runs.addStep(workspace.id, {
           runId,
@@ -291,16 +266,11 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
           resultJson: { versionId: version.id, sha256: sha },
         });
 
-        log.emit({
-          type: "credits",
-          reserved: run.reservedCredits,
-          committed: actualCommit,
-          balance,
-        });
-        log.emit({ type: "run.completed", versionId: version.id });
         await audit(deps, c, workspace.id, "run.applied", run.projectId, {
           runId,
           versionId: version.id,
+          creditsCommitted: committedRow,
+          balanceMicrocredits: balance,
         });
         return ok(c, { runId, recorded: true, status: "completed", versionId: version.id });
       } catch (error) {
@@ -314,12 +284,6 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
         await deps.repos.ledger.refundAll(workspace.id, {
           runId,
           idempotencyKey: `chat:${runId}:refund`,
-        });
-        log.emit({
-          type: "run.failed",
-          code: "PROJECT_VERSION_CONFLICT",
-          message: "The project changed while you were working.",
-          retryable: false,
         });
         throw error;
       }

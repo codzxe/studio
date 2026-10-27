@@ -9,9 +9,12 @@
 //     cancel, cap 20 (repo-direct fill + one HTTP 429 QUOTA_EXCEEDED)
 //   * release-on-close → electNextHolder: the OLDEST queued requester is
 //     returned by DELETE /lease and the queue pops
-//   * expiry takeover: dead lease ⇒ holder null, canAcquire true, the oldest
-//     queued requester is popped by the first state poll past the TTL; a
-//     steal of the expired row acquires (atomic upsert unchanged)
+//   * expiry takeover: dead lease ⇒ holder null, canAcquire true — the state
+//     poll is a PURE READ and the queue stays INTACT (W3-b02/w1-a26 S244:
+//     the pre-fix poll elected-and-popped, so any viewer polling the banner
+//     drained the edit queue); the oldest requester takes the expired lease
+//     by ACQUIRING, which consumes their own entry; a steal of the expired
+//     row acquires (atomic upsert unchanged)
 //   * read-only enforcement per route: PATCH project / upload version /
 //     restore / apply / undo / project-scoped asset upload all 409 LEASE_HELD
 //     as a non-holder; the holder passes; after release the non-holder
@@ -623,23 +626,36 @@ d("lease UX: expiry takeover (short TTL)", () => {
     await leaseRequest(secondMember, projectId);
   }, 30_000);
 
-  it("past the TTL the first state poll shows no holder, canAcquire, and pops the oldest", async () => {
+  it("past the TTL the first state poll shows no holder, canAcquire, and the queue INTACT (a poll never drains)", async () => {
     await new Promise((resolve) => setTimeout(resolve, EXPIRY_WAIT_MS));
 
     const state = await leaseState(team.editor, projectId);
     expect(state.holder).toBeNull(); // the dead row is never a holder
     expect(state.canAcquire).toBe(true); // expired ⇒ anyone may take over
-    // The expiry election popped the OLDEST requester (the editor); only the
-    // second member still waits.
-    expect(state.queue).toHaveLength(1);
-    expect(state.queue[0]?.displayName).toBe("LeaseUxFiveSecond Editor");
-    expect(state.youAre).toBe("viewer"); // popped = no longer queued
+    // W3-b02 FLIP (w1-a26 S244): the state poll must NEVER consume the edit
+    // queue — the pre-fix first-poll election popped the OLDEST requester on
+    // EVERY GET, so a viewer polling the banner drained the whole queue
+    // while nobody acquired. Both requesters still wait, in order.
+    expect(state.queue).toHaveLength(2);
+    expect(state.queue[0]?.displayName).toBe("LeaseUxFiveEditor Editor");
+    expect(state.queue[1]?.displayName).toBe("LeaseUxFiveSecond Editor");
+    expect(state.youAre).toBe("queued"); // still queued — nothing was popped
+
+    // Repeated polls keep draining NOTHING (the banner is polled often).
+    const again = await leaseState(team.editor, projectId);
+    expect(again.queue).toHaveLength(2);
   }, 30_000);
 
-  it("the popped user takes over the expired lease instantly", async () => {
+  it("the oldest requester takes over the expired lease instantly; the ACQUIRE consumes their wait", async () => {
     const stolen = await acquire(team.editor, projectId, "session-expiry-take-1");
     expect(stolen.acquired).toBe(true);
     expect(stolen.holderName).toBe("LeaseUxFiveEditor Editor");
+    // The winner's own queue entry is consumed by the acquire; the second
+    // member still waits for the NEXT real transition (release/expiry).
+    const state = await leaseState(secondMember, projectId);
+    expect(state.queue).toHaveLength(1);
+    expect(state.queue[0]?.displayName).toBe("LeaseUxFiveSecond Editor");
+    expect(state.youAre).toBe("queued");
   }, 30_000);
 
   it("electNextHolder pops strictly oldest-first until the queue is empty (repo pin)", async () => {

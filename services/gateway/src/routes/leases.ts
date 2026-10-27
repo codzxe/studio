@@ -157,16 +157,17 @@ export function leasesRoutes(deps: GatewayDeps): Hono<AppBindings> {
       const now = new Date();
 
       const snapshot = await deps.repos.leases.get(workspace.id, projectId);
-      let queue = await deps.repos.leases.requestQueue(workspace.id, projectId);
+      const queue = await deps.repos.leases.requestQueue(workspace.id, projectId);
 
       // §M7 task 3 "expiry": a lease row that has gone dead is observed HERE
-      // (lazily — there is no sweeper). The first state poll past the expiry
-      // elects the OLDEST queued requester: their entry pops (they are the
-      // notified next holder) and everyone can see the project is free.
-      if (snapshot !== null && !snapshot.isHeld && queue.length > 0) {
-        await deps.repos.leases.electNextHolder(workspace.id, projectId);
-        queue = await deps.repos.leases.requestQueue(workspace.id, projectId);
-      }
+      // (lazily — there is no sweeper): holder reads null, canAcquire turns
+      // true, everyone sees the project is free. W3-b02 (w1-a26 S244): the
+      // state poll is a PURE READ — it never elects. The old
+      // electNextHolder-on-poll popped the OLDEST queued entry on EVERY GET,
+      // so any viewer polling the banner drained the whole edit queue while
+      // nobody acquired. Election happens only on real transitions: the
+      // release path (DELETE /lease elects and pops) and the takeover itself
+      // (acquire consumes the winner's own queue entry).
 
       const active = snapshot?.isHeld ? snapshot.lease : null;
       const holder =

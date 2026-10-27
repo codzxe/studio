@@ -12,8 +12,10 @@
 //    middleware), unknown pack, missing pack price (second boot).
 //  - portal: session + customer reuse.
 //  - state: none/trialing/active snapshots, entitlements from the catalog.
-//  - webhook: signature fail 400, replay (durable AND in-memory guards,
-//    cross-seam restart proof), out-of-order past_due-before-renewal,
+//  - webhook: signature fail 400, replay (durable guard, cross-seam
+//    restart proof, record-after-apply — W3-b02/S241: a handler crash is
+//    never recorded, so Stripe's retry re-applies instead of reading
+//    "duplicate"), out-of-order past_due-before-renewal,
 //    guarded concurrent transitions (exactly one applies), invoice paid
 //    (idempotent record + µc grant + dunning heal), invoice voided, unknown
 //    event 200, hostile topup metadata, cancel → STATUS ONLY (no work
@@ -704,7 +706,7 @@ d("POST /v1/webhooks/stripe", () => {
     expect(missing.status).toBe(400);
   });
 
-  it("replay is a duplicate through BOTH guards: the durable repo (cross-seam restart) and the seam's in-memory set", async () => {
+  it("replay is a duplicate through the DURABLE guard (cross-seam restart); record-after-apply never loses a paid event", async () => {
     const ws = await newWorkspace();
     const fake = freshFake();
     setStripe(server, fake);
@@ -728,7 +730,9 @@ d("POST /v1/webhooks/stripe", () => {
     expect(first.data).toMatchObject({ handled: "topup.granted" });
     expect(await balanceOf(ws.id)).toBe(25_000_000);
 
-    // (a) Same event, same seam → durable seenOrRecord reports the replay.
+    // (a) Same event, same seam: the durable record answers the replay. The
+    // handler re-run underneath (record-after-apply, W3-b02) is idempotent —
+    // the ledger's `stripe:{eventId}` grant key replays, no second grant.
     fake.requeueWebhook(event);
     const replayed = await deliver(fake, event);
     expect(replayed.status).toBe(200);
@@ -743,10 +747,14 @@ d("POST /v1/webhooks/stripe", () => {
     expect(afterRestart.status).toBe(200);
     expect(afterRestart.data).toMatchObject({ received: true, duplicate: true });
     expect(await balanceOf(ws.id)).toBe(25_000_000);
-    setStripe(server, fake);
 
-    // (c) The in-memory layer alone also guards: an event id pre-marked via
-    // markEventSeen is a duplicate even though the DB has never recorded it.
+    // (c) W3-b02 FLIP (w1-a26 S241): an event id pre-marked in the seam's
+    // in-memory set (never applied, never durably recorded) no longer
+    // suppresses the apply. The pre-fix route consulted the in-memory mark
+    // BEFORE the handler, so the same mark-after-crash window could swallow
+    // Stripe's retry and permanently lose a paid top-up. The durable record
+    // is the ONLY dedup authority; the in-memory mark is post-apply
+    // observability. The delivery below APPLIES (that is the recovery).
     const premarked = script(freshSeam, "checkout.session.completed", {
       id: `cs_premarked_${unique("s")}`,
       object: "checkout_session",
@@ -763,8 +771,67 @@ d("POST /v1/webhooks/stripe", () => {
     freshSeam.seam.markEventSeen(premarked.id);
     const inMemory = await deliver(freshSeam, premarked);
     expect(inMemory.status).toBe(200);
-    expect(inMemory.data).toMatchObject({ received: true, duplicate: true });
-    expect(await balanceOf(ws.id)).toBe(25_000_000);
+    expect(inMemory.data).toMatchObject({ handled: "topup.granted" });
+    expect(await balanceOf(ws.id)).toBe(26_000_000); // granted EXACTLY once
+    // …and the NEXT delivery of that id is a durable duplicate.
+    const premarkedAgain = await deliver(freshSeam, premarked);
+    expect(premarkedAgain.data).toMatchObject({ received: true, duplicate: true });
+    expect(await balanceOf(ws.id)).toBe(26_000_000);
+    setStripe(server, fake);
+  });
+
+  it("W3-b02/S241: a handler crash records NOTHING — Stripe's retry re-applies the same event id and succeeds (no lost subscription transition)", async () => {
+    const ws = await newWorkspace();
+    const fake = freshFake();
+    setStripe(server, fake);
+    // A REAL subscription checkout in the fake's store (the handler's resync
+    // fetch needs a live subscription to snapshot).
+    const checkout = await billingPost("/v1/billing/checkout", ws, { planId: "starter" });
+    expect(checkout.status).toBe(201);
+    const session = (await okData(checkout)) as { sessionId: string };
+    const events = reid(fake.completeCheckout(session.sessionId));
+    expect(events).toHaveLength(2);
+    const created = await deliver(fake, at(events, 0)); // unhandled-type, 200
+    expect(created.status).toBe(200);
+    const completed = at(events, 1);
+
+    // The flaky seam: the handler's provider resync BLOWS UP on the first
+    // delivery only (a transient upstream blip — the S241 scenario). Injected
+    // directly (setStripe wraps a FakeStripe; this is a raw StripeSeam).
+    let resyncCalls = 0;
+    const flaky: StripeSeam = {
+      ...fake.seam,
+      subscription: (customerId: string) => {
+        resyncCalls += 1;
+        if (resyncCalls === 1) {
+          return Promise.reject(new Error("transient provider blip"));
+        }
+        return fake.seam.subscription(customerId);
+      },
+    };
+    (server.deps as unknown as { stripe: StripeSeam | null }).stripe = flaky;
+
+    // Delivery 1: the handler throws → 500 → NOTHING is durably recorded
+    // (pre-fix, the seenOrRecord happened first and this event was LOST).
+    const first = await deliver(fake, completed);
+    expect(first.status).toBe(500);
+    expect(resyncCalls).toBe(1);
+
+    // Stripe retries the SAME event id: the retry re-runs the idempotent
+    // handler and succeeds — the subscription row lands, the answer is the
+    // HANDLED outcome, never { duplicate: true }.
+    const retry = await deliver(fake, completed);
+    expect(retry.status).toBe(200);
+    expect(retry.data).toMatchObject({ received: true, handled: "subscription.synced" });
+    const row = await subscriptionRow(ws.id);
+    expect(row).not.toBeNull();
+    expect(row?.status).toBe("trialing");
+
+    // NOW the durable record exists — a third delivery is the duplicate.
+    const third = await deliver(fake, completed);
+    expect(third.status).toBe(200);
+    expect(third.data).toMatchObject({ received: true, duplicate: true });
+    setStripe(server, fake);
   });
 
   it("out-of-order delivery: a stale renewal after past_due is guarded off (never resurrects dunning)", async () => {

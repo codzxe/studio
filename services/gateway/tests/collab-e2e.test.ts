@@ -1295,7 +1295,7 @@ d(
       expect(viewerOf(bBeat, team.bId)?.self).toBe(true);
     });
 
-    it("the expired lease reads as free: B's state poll pops the queue and B takes over", async () => {
+    it("the expired lease reads as free: B's state poll KEEPS the queue and B takes over by acquiring", async () => {
       // Time travel (share.test force-expiry precedent): the lease row's
       // expires_at is 1s in the past — lease-logic classifies it as free.
       await db()
@@ -1303,15 +1303,22 @@ d(
         .set({ expiresAt: new Date(Date.now() - 1000) })
         .where(eq(t().projectLeases.projectId, projectId));
 
+      // W3-b02 FLIP (w1-a26 S244): the state poll is a PURE READ — the
+      // pre-fix poll elected-and-popped B's queue entry on every GET (a
+      // viewer polling the banner drained the edit queue). B stays queued.
       const bState = await leaseState(team.bJar, team.wsId, projectId);
       expect(bState.holder).toBeNull(); // the dead row is never a holder
       expect(bState.canAcquire).toBe(true); // expired ⇒ takeover is allowed
-      expect(bState.queue).toEqual([]); // the expiry election popped B
-      expect(bState.youAre).toBe("viewer");
+      expect(bState.queue).toHaveLength(1); // the poll consumed NOTHING
+      expect(bState.youAre).toBe("queued");
 
+      // The takeover itself: B acquires, and the ACQUIRE consumes B's own
+      // queue entry (the only legitimate consumer besides a real release).
       const taken = await acquireLease(team.bJar, team.wsId, projectId, "session-j2-b-000001");
       expect(taken.acquired).toBe(true);
       expect(taken.holderName).toBe(team.bName);
+      const after = await leaseState(team.aJar, team.wsId, projectId);
+      expect(after.queue).toEqual([]);
     });
 
     it("A's OLD session attempting a mutation now gets 409 LEASE_HELD", async () => {

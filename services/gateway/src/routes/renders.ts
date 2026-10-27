@@ -232,9 +232,9 @@ async function resolveRenderQuote(
   const bytes = await deps.storage.read(version.objectKey);
   if (bytes === null) {
     // The version bytes are missing from storage — an infrastructure fault,
-    // never the client's project. (LocalFS serves reads; the S3 driver's
-    // read() is a documented null — S3 estimate/queue pricing needs a
-    // signed-URL fetch seam, flagged to the worker wave.)
+    // never the client's project. Both drivers serve reads (LocalFS from
+    // disk; S3 via a full-object GET — W3-b02), so null here really means
+    // the object is gone.
     throw new StudioError("RENDER_INTERNAL", { requestId });
   }
   let ecproj: unknown;

@@ -3,6 +3,8 @@
 //
 // Flow (§5.1 trust boundaries — the browser is never trusted for credits):
 //   auth + workspace(editor, runAgent) → thread+project checks →
+//   duplicate-POST replay lookup FIRST (§8.4 same-key reconnect — a retried
+//   POST replays even at a zero balance; the run already paid) →
 //   balance precheck (INSUFFICIENT_CREDITS before anything) → create run →
 //   reserve credits (ceil(estimate × 1.2), min 1 whole credits; converted to
 //   integer MICROcredits at the ledger boundary, D-12 — credits-display.ts)
@@ -218,19 +220,22 @@ export function chatRoutes(deps: GatewayDeps): Hono<AppBindings> {
       const thread = await deps.repos.threads.get(workspace.id, threadId);
       const project = await deps.repos.projects.get(workspace.id, thread.projectId);
 
+      // Duplicate POST (network retry): replay the same run's log. This
+      // lookup runs BEFORE the balance precheck (W3-b02, w1-a26 S241): a
+      // retried POST whose original run consumed the last credits must
+      // REPLAY (§8.4 same-key reconnect), not 402 — the run already paid.
+      const replayKey = `${workspace.id}:${threadId}:${request.idempotencyKey}`;
+      const existing = deps.chatReplay.lookup(replayKey);
+      if (existing !== null) {
+        return sseResponse(c, existing.log, c.req.header("last-event-id"));
+      }
+
       // §8.8: never start a run on a zero balance (the ledger balance is
       // integer µc, D-12; the reserve below refuses anything smaller than
       // the hold — no explicit magnitude compare is needed here).
       const balance = await deps.repos.ledger.balance(workspace.id);
       if (balance < 1) {
         throw new StudioError("INSUFFICIENT_CREDITS", { requestId });
-      }
-
-      // Duplicate POST (network retry): replay the same run's log.
-      const replayKey = `${workspace.id}:${threadId}:${request.idempotencyKey}`;
-      const existing = deps.chatReplay.lookup(replayKey);
-      if (existing !== null) {
-        return sseResponse(c, existing.log, c.req.header("last-event-id"));
       }
 
       // Model selection with plan entitlements (§8.2/§10.1): resolvePlan is the

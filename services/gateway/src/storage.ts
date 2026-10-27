@@ -301,18 +301,26 @@ export class S3Driver implements StorageDriver {
   private readonly client: S3Client;
   private readonly bucket: string;
 
-  constructor(env: { storage: S3StorageEnv }) {
+  /**
+   * The optional `client` is an injection point for unit tests (a structural
+   * S3Client stand-in whose `send` answers in-memory — no network). Production
+   * callers go through createStorage(), which always constructs the real
+   * client from the env.
+   */
+  constructor(env: { storage: S3StorageEnv }, client?: S3Client) {
     this.bucket = env.storage.bucket;
-    this.client = new S3Client({
-      region: env.storage.region,
-      endpoint: env.storage.endpoint,
-      credentials: {
-        accessKeyId: env.storage.accessKeyId,
-        secretAccessKey: env.storage.secretAccessKey,
-      },
-      // MinIO/R2 style deployments serve buckets on the path, not the host.
-      forcePathStyle: true,
-    });
+    this.client =
+      client ??
+      new S3Client({
+        region: env.storage.region,
+        endpoint: env.storage.endpoint,
+        credentials: {
+          accessKeyId: env.storage.accessKeyId,
+          secretAccessKey: env.storage.secretAccessKey,
+        },
+        // MinIO/R2 style deployments serve buckets on the path, not the host.
+        forcePathStyle: true,
+      });
   }
 
   private object(key: string): { Bucket: string; Key: string } {
@@ -433,8 +441,28 @@ export class S3Driver implements StorageDriver {
   }
 
   async read(key: string): Promise<Buffer | null> {
-    // S3 objects are fetched via signed URLs; the gateway never buffers them.
-    return null;
+    // W3-b02 (w1-a27 S255): the FULL-object GET behind the small-metadata
+    // reads — the .ecproj snapshot the render quote parses (renders.ts) is
+    // the only production caller, and the interface contract already scopes
+    // read() to "local driver + small files only" (PROJECT_MAX_BYTES caps
+    // the snapshot uploads). Large blobs (renders/assets) still stream via
+    // signed URLs — they never route through here.
+    try {
+      const out = await this.client.send(new GetObjectCommand(this.object(key)));
+      const body = out.Body;
+      if (body === undefined) return null;
+      const chunks: Buffer[] = [];
+      for await (const chunk of body as AsyncIterable<Buffer | Uint8Array>) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      return Buffer.concat(chunks);
+    } catch (error) {
+      // Only "the object is absent" reads as null (mirrors readRange);
+      // transport/config failures propagate so the error boundary maps them
+      // honestly — never a silent false "not uploaded".
+      if ((error as { name?: string }).name === "NoSuchKey") return null;
+      throw error;
+    }
   }
 }
 

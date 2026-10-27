@@ -8,16 +8,26 @@
 //                  through repos.ledger.list (tenant-scoped, §8.8; D-20:
 //                  reserve −N · commit −M · refund +N ⇒ a settled run nets
 //                  exactly −M; amount/balance_after are bigint mode:"number",
-//                  M6-E — exact ≤ 2^53).
+//                  M6-E — exact ≤ 2^53). LEDGER ROWS ARE INTEGER µc (D-12).
 //   (b) usage    — agent_runs.committedCredits for runs that committed in the
 //                  window (the runs-table view of the same settles) plus
-//                  renders.credits for renders created in the window.
+//                  renders.credits for renders created in the window. D-12
+//                  row ruling: the run ROW speaks WHOLE CREDITS (the turn
+//                  world's writers — routes/turn.ts heartbeats — never µc),
+//                  so the core converts rows × MICROCREDITS_PER_CREDIT before
+//                  folding them against the µc ledger sums (W3-b02 fix: the
+//                  pre-fix raw mix made every turn-world workspace report a
+//                  spurious ledger_usage_mismatch and a reconcile-mode
+//                  true-up handed the whole commit back as balance).
 //   (c) external — OPTIONAL LiteLLM spend (per-model token totals → credits
 //                  via MODEL_CATALOG, the same rates the runner bills with).
 //                  When no spend credential is configured the job DEGRADES to
 //                  local-ledger-only reconciliation (this box's reality:
 //                  LiteLLM is not deployed locally and the spend API is
 //                  master-key protected — docs/deploy/LITELLM.md §3/§7).
+//                  The comparison converts the credit-denominated spend to µc
+//                  before comparing against the ledger commit sum (same
+//                  W3-b02 unit normalization).
 //
 // DISCREPANCY TAXONOMY (typed; report carries facts, never secrets):
 //   ledger_usage_mismatch   ledgerCommitSum ≠ usageSum (runs+renders). The
@@ -100,6 +110,7 @@ import {
 } from "@studio/db";
 import { z } from "zod";
 
+import { MICROCREDITS_PER_CREDIT } from "./credits-display.js";
 import type { Logger } from "./logger.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,17 +192,19 @@ export type DiscrepancyCode =
 /** One run whose committedCredits row disagrees with its own ledger commits. */
 export interface RunRowDrift {
   readonly runId: string;
+  /** Σ |commit| over the run's ledger entries — integer µc (D-12). */
   readonly ledgerCommits: number;
+  /** The run row's committedCredits converted to µc (row is whole credits). */
   readonly rowCommitted: number;
 }
 
 export interface LedgerUsageMismatch {
   readonly code: "ledger_usage_mismatch";
-  /** Σ |commit| over in-window ledger entries. */
+  /** Σ |commit| over in-window ledger entries (integer µc, D-12). */
   readonly ledgerCommitSum: number;
-  /** runs-table committed usage + renders-table credits for the window. */
+  /** runs-table committed usage + renders-table credits for the window (µc). */
   readonly usageSum: number;
-  /** usageSum − ledgerCommitSum (positive: usage beyond what the ledger charged). */
+  /** usageSum − ledgerCommitSum in µc (positive: usage beyond what the ledger charged). */
   readonly delta: number;
   readonly runsUsage: number;
   readonly rendersUsage: number;
@@ -221,8 +234,11 @@ export interface ModelSpendRow {
 
 export interface ExternalSpendMismatch {
   readonly code: "external_spend_mismatch";
+  /** Σ |commit| over in-window ledger entries (integer µc, D-12). */
   readonly ledgerCommitSum: number;
+  /** The provider-derived spend in WHOLE CREDITS (spendCreditsForModel math). */
   readonly externalSpendCredits: number;
+  /** spend µc − ledgerCommitSum (integer µc). */
   readonly delta: number;
   readonly byModel: readonly ModelSpendRow[];
 }
@@ -467,7 +483,11 @@ export function createSpendSource(
 // Injectable sources (pure-ish core; the default adapter walks the repos)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Minimal run-row view the core needs (AgentRun satisfies it structurally). */
+/**
+ * Minimal run-row view the core needs (AgentRun satisfies it structurally).
+ * D-12 row ruling: committedCredits is WHOLE CREDITS on the row — the core
+ * converts to µc before folding it against ledger sums (W3-b02).
+ */
 export interface ReconcileRunView {
   readonly committedCredits: number;
   readonly status: string;
@@ -642,9 +662,11 @@ export interface ReconcileUsageSums {
   readonly runs: {
     readonly discovered: number;
     readonly settledInWindow: number;
+    /** Σ run-row committedCredits converted to integer µc (D-12 row ruling). */
     readonly committedCredits: number;
   };
   readonly renders: { readonly count: number; readonly credits: number };
+  /** runs + renders usage, integer µc — same dialect as the ledger sums. */
   readonly usageSum: number;
 }
 
@@ -785,9 +807,16 @@ export async function reconcileWorkspace(
       .filter((entry) => entry.kind === "commit")
       .reduce((total, entry) => total + entry.amount, 0);
     if (settledInWindow.has(runId)) {
-      usageByRun.set(runId, row?.committedCredits ?? 0);
-      if ((row?.committedCredits ?? 0) !== ledgerCommits) {
-        runDrift.push({ runId, ledgerCommits, rowCommitted: row?.committedCredits ?? 0 });
+      // W3-b02 (w1-a27 S255 HIGH): the run row speaks WHOLE CREDITS (D-12 row
+      // ruling — routes/turn.ts heartbeats the Σ committedCreditsFor usage
+      // into it), while the ledger sums above are integer µc. Convert the row
+      // BEFORE folding: the pre-fix raw mix reported a spurious
+      // ledger_usage_mismatch on every turn-world workspace, and a
+      // reconcile-mode true-up then granted the whole commit back as balance.
+      const rowCommittedMicro = Math.round((row?.committedCredits ?? 0) * MICROCREDITS_PER_CREDIT);
+      usageByRun.set(runId, rowCommittedMicro);
+      if (rowCommittedMicro !== ledgerCommits) {
+        runDrift.push({ runId, ledgerCommits, rowCommitted: rowCommittedMicro });
       }
     }
     if (outstanding > 0) {
@@ -811,7 +840,11 @@ export async function reconcileWorkspace(
     }
   }
 
-  // (b) usage side — runs table + renders table
+  // (b) usage side — runs table + renders table. usageByRun already holds the
+  // run rows converted to µc (D-12 row ruling — whole credits on disk); the
+  // renders table's credits column is µc natively (the render reserve/commit
+  // dialect). usageSum therefore speaks µc, like the ledger side it is
+  // compared against.
   const renderScan = await deps.sources.renderScan(workspaceId, window, scanLimit);
   const rendersUsage = renderScan.entries.reduce((total, render) => total + render.credits, 0);
   const runsUsage = [...usageByRun.values()].reduce((total, value) => total + value, 0);
@@ -865,12 +898,16 @@ export async function reconcileWorkspace(
       external.perModel = perModel;
       external.spendCredits = spendTotal;
       external.unknownModels = unknown;
-      if (spendTotal !== sums.commits) {
+      // W3-b02: spendCreditsForModel yields WHOLE CREDITS while sums.commits
+      // is integer µc — compare like-for-like by converting the spend to µc
+      // (the pre-fix raw compare flagged every configured deployment).
+      const spendMicro = spendTotal * MICROCREDITS_PER_CREDIT;
+      if (spendMicro !== sums.commits) {
         discrepancies.push({
           code: "external_spend_mismatch",
           ledgerCommitSum: sums.commits,
           externalSpendCredits: spendTotal,
-          delta: spendTotal - sums.commits,
+          delta: spendMicro - sums.commits,
           byModel: perModel,
         });
       }

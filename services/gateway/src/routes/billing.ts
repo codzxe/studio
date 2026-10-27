@@ -940,9 +940,19 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
   // ── POST /v1/webhooks/stripe — signature + durable idempotency + switch ──
   //
   // Excluded from the Idempotency-Key middleware (events carry their own ids).
-  // Law #4 layering: the M6-D webhookEvents repo (durable, restart-safe,
-  // race-arbitrated by the UNIQUE index) guards FIRST; the seam's in-memory
-  // seenEvent set layers after it as the fast path.
+  // Law #4 layering: RECORD-AFTER-APPLY (W3-b02, w1-a26 S241). The durable
+  // webhookEvents row and the seam's in-memory mark are written only AFTER
+  // the handler succeeds. The previous order (seenOrRecord → seenEvent →
+  // handleStripeEvent) marked the event seen BEFORE the apply, so any handler
+  // exception (a ledger.grant DB blip, a resync failure) returned 500, and
+  // Stripe's retry hit `{ duplicate: true }` and was SKIPPED — the paid
+  // top-up / subscription transition was permanently lost. Every handler
+  // effect is independently idempotent (ledger keys `stripe:{eventId}` /
+  // `stripe:invoice:{id}:topup`; upserts and guarded repo transitions), so a
+  // redelivery that re-runs an already-applied handler cannot double-apply —
+  // the reorder trades a rare idempotent re-run for crash-recoverability.
+  // The post-apply seenOrRecord answers `duplicate: true` for every delivery
+  // after the first (the racing-loser UNIQUE violation reads as `seen`).
 
   app.post("/v1/webhooks/stripe", async (c: AppContext): Promise<Response> => {
     const stripe = deps.stripe;
@@ -963,22 +973,28 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
     }
     const event = verified.event;
 
+    // APPLY FIRST — the handlers are the idempotent money/state writers.
+    const outcome = await handleStripeEvent(stripe, event);
+
+    // RECORD AFTER — the durable store is the dedup authority: the first
+    // delivery inserts the row (`seen: false`); a redelivery (or a racing
+    // concurrent first delivery, whose insert loses the UNIQUE arbitration)
+    // reads `seen: true` and answers duplicate. A handler that THREW above
+    // never reaches this point — nothing is recorded, so Stripe's retry
+    // re-runs the idempotent handler and can succeed.
+    let duplicate = false;
     const webhookEvents = webhookEventsRepo(deps.repos);
     if (webhookEvents !== null) {
       const durable = await webhookEvents.seenOrRecord("stripe", event.id, {
         type: event.type,
         payload: event,
       });
-      if (durable.seen) {
-        return ok(c, { received: true, duplicate: true });
-      }
+      duplicate = durable.seen;
     }
-    if (stripe.seenEvent(event.id)) {
-      return ok(c, { received: true, duplicate: true });
-    }
+    // Post-apply in-memory mark (same-seam observability; never a pre-guard).
+    stripe.markEventSeen(event.id);
 
-    const outcome = await handleStripeEvent(stripe, event);
-    return ok(c, { received: true, ...outcome });
+    return ok(c, duplicate ? { received: true, duplicate: true } : { received: true, ...outcome });
   });
 
   // ── the typed event switch (§M6 task 2 lifecycle) ─────────────────────────
