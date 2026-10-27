@@ -1,0 +1,39 @@
+{
+  "region": "icn1",
+  "modelsRaw": {
+    "status": 429,
+    "headers": null,
+    "body": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shortly.\",\"type\":\"rate_limit_error\",\"code\":\"server_busy\"}}",
+    "len": 194
+  },
+  "chat_deepseek-v4.1-flash:free": {
+    "status": 200,
+    "headers": null,
+    "body": "{\"id\":\"chatcmpl-3a3dd0167aa849199ed5bbf3af10f967\",\"object\":\"chat.completion\",\"created\":1793017754,\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"BANANA\",\"reasoning_content\":\"We need answer user: \\\"Say BANANA.\\\" Need comply. Just say BANANA. But maybe exact. We can output BANANA. Need no extra. \"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":35,\"completion_tokens\":40,\"total_tokens\":75}}",
+    "len": 439
+  },
+  "chat_deepseek-v4-flash:free": {
+    "status": 200,
+    "headers": null,
+    "body": "{\"id\":\"chatcmpl-8cc1e00681be4c70833044c8dd5689bb\",\"object\":\"chat.completion\",\"created\":1793017759,\"model\":\"deepseek-v4-flash\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"BANANA\",\"reasoning_content\":\"1.  **Analyze the User's Request**:\\n    *   The user says: \\\"Say BANANA.\\\"\\n    *   This is a direct instruction/command to output the word \\\"BANANA\\\".\\n\\n2.  **Determine the appropriate response**:\\n    *   The simplest and most direct response is to repeat the word exactly as requested.\\n    *   No need for fluff, explanations, or extra text. Just output the word.\\n\\n3.  **Fin",
+    "len": 856
+  },
+  "chat_mimo-v2.6-flash:free": {
+    "status": 429,
+    "headers": null,
+    "body": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shortly.\",\"type\":\"rate_limit_error\",\"code\":\"server_busy\"}}",
+    "len": 194
+  },
+  "chat_mimo-v2.5:free": {
+    "status": 429,
+    "headers": null,
+    "body": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shortly.\",\"type\":\"rate_limit_error\",\"code\":\"server_busy\"}}",
+    "len": 194
+  },
+  "chat_deepseek-v4.1-flash": {
+    "status": 429,
+    "headers": null,
+    "body": "{\"error\":{\"message\":\"Token Harbor is under heavy load. Requests from this account are being slowed down for a few minutes; please retry shortly.\",\"type\":\"rate_limit_error\",\"code\":\"server_busy\"}}",
+    "len": 194
+  }
+}

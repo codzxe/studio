@@ -57,6 +57,7 @@
  */
 
 import {
+  type CSSProperties,
   Fragment,
   type ReactElement,
   type ReactNode,
@@ -67,6 +68,11 @@ import { type ChatLayout, MIN_PANEL } from "./layout";
 // Convenience re-export: M4-J's slot imports the pill from the panel module
 // (the pinned canonical home is pill.tsx — both import paths work).
 export { ChatCollapsedPill, type ChatCollapsedPillProps } from "./pill";
+import {
+  type ChatPanelDensity,
+  type ChatPanelSettings,
+  panelSettingsStyle,
+} from "./panel-settings";
 import { useChatLayout } from "./use-layout";
 
 export interface ChatPanelProps {
@@ -77,6 +83,17 @@ export interface ChatPanelProps {
   thread: ReactNode;
   composer: ReactNode;
   footer?: ReactNode;
+  /**
+   * ROUND 12 (Chat UI v3): panel settings — background alpha (opacity < 1
+   * paints a color-mix background), density attribute, font-size var.
+   * Absent ⇒ byte-identical M4 render.
+   */
+  settings?: ChatPanelSettings;
+  /**
+   * ROUND 12 (Chat UI v3): double-click the header chrome = the host's
+   * maximize/restore toggle (the slot owns the geometry memory).
+   */
+  onHeaderDoubleClick?: () => void;
   /**
    * Pinned contract seam — mode-cycle/close callbacks. The header SLOT
    * (M4-G2) renders its own buttons wired by M4-J; the shell consumes
@@ -164,6 +181,8 @@ export function ChatPanel({
   thread,
   composer,
   footer,
+  settings,
+  onHeaderDoubleClick,
   onClose,
 }: ChatPanelProps): ReactElement | null {
   // Shared store actions: the panel mutates the SAME singleton M4-J reads.
@@ -300,6 +319,17 @@ export function ChatPanel({
   };
 
   const floating = layout.mode === "floating";
+  // ROUND 12 (Chat UI v3): the settings knobs — background alpha + the
+  // font-size var ride the aside's inline style (absent/default settings =
+  // no style, byte-identical M4); density rides a data attribute the
+  // thread layer reads for its gap classes.
+  const density: ChatPanelDensity = settings?.density ?? "normal";
+  const style: CSSProperties = {
+    ...(floating
+      ? { left: layout.x, top: layout.y, width: layout.w, height: layout.h }
+      : { width: Math.max(MIN_PANEL.w, layout.w) }),
+    ...(settings !== undefined ? panelSettingsStyle(settings) : {}),
+  };
   // --- Esc dismissal (ECUX §9.1, pinned order: popovers → panel) ---------
   // Peer popovers/menus portal to <body>, so their own Esc handling never
   // bubbles through this tree: they close FIRST by construction. Only an
@@ -334,6 +364,7 @@ export function ChatPanel({
         tabIndex={-1}
         data-testid="chat-panel"
         data-chat-mode={layout.mode}
+        data-chat-density={density}
         data-streaming={streaming}
         data-dragging={dragging}
         onKeyDown={onKeyDown}
@@ -345,11 +376,7 @@ export function ChatPanel({
             : // Sidebar: the §2.2 right rail — docked flat, 100% height.
               "absolute top-0 right-0 bottom-0 z-[35] flex flex-col overflow-hidden border-l border-border bg-panel"
         }
-        style={
-          floating
-            ? { left: layout.x, top: layout.y, width: layout.w, height: layout.h }
-            : { width: Math.max(MIN_PANEL.w, layout.w) }
-        }
+        style={style}
       >
         {/* Header + grab bar — the drag region in BOTH open modes (ECUX
          * §2.1 floating move; sidebar drag-out detach). The visible handle
@@ -362,6 +389,18 @@ export function ChatPanel({
           onPointerUp={onGripPointerEnd}
           onPointerCancel={onGripPointerEnd}
           onLostPointerCapture={onGripPointerEnd}
+          onDoubleClick={(event) => {
+            // ROUND 12 (Chat UI v3): double-click the header chrome =
+            // maximize/restore (floating only; a docked rail maximizes
+            // nothing). Interactive children (buttons/menus) never toggle.
+            if (
+              onHeaderDoubleClick !== undefined &&
+              layout.mode === "floating" &&
+              !isInteractiveTarget(event.target)
+            ) {
+              onHeaderDoubleClick();
+            }
+          }}
         >
           <div
             data-testid="chat-drag-grip"

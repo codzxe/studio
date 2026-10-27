@@ -24,10 +24,26 @@
 // decimals (4) while every ledger row stays the exact integer; a cancelled run
 // refunds the FULL µc hold and nets exactly 0.
 //
+// ROUND-12 RE-POINT (12-w7-r1): the server chat loop is DELETED — the
+// billing unit is now the TURN (POST /v1/threads/:id/turn, MOCK_MODEL: every
+// turn reserves its own hold and settles it at turn end). Each journey here
+// is the proposal-less single-turn run shape (turn step 0 → the client's
+// {end:true} end marker on POST /v1/runs/:id/plan), which is the SAME money
+// shape the retired single chat run had: reserve −R → commit −1_000_000 →
+// refund +R (the FULL hold released, D-20) → the run nets exactly −1 µc
+// credit. The executed two-turn carrier loop (step 0 → step 1 → plan) has a
+// DIFFERENT multi-turn ledger fingerprint (the run-scoped hold fold — pinned
+// honestly in tests/apply-flow.test.ts test 1); this file pins the clean
+// per-turn conservation the D-12/D-20 exit criteria describe. The per-turn
+// reserve R is prompt-size-derived (routes/turn.ts §8.8: clamp(1..12,
+// ceil(prompt JSON / 4000)) credits → ceil(estimate × 1.2)); the tests compute
+// it with the SAME formula (buildTurnMessages + reserveAmountFor) so the µc
+// magnitudes stay exact, not magic numbers. The MockRunner's fixed usage
+// commits exactly 1 credit per turn.
+//
 // Boot: the full gateway (buildApp + real Postgres + Better Auth) with the
-// DEFAULT MockRunner (MOCK_MODEL=true — deterministic, no fake model server
-// needed): a short message estimates 1.5 credits → the §8.8 reserve is
-// ceil(1.5 × 1.2) = 2 credits; the MockRunner commits ceil(2 / 2) = 1 credit.
+// DEFAULT mock model (MOCK_MODEL=true — deterministic, no fake model server
+// needed).
 
 import { createHash } from "node:crypto";
 
@@ -41,6 +57,8 @@ import {
   microcreditsToDisplayCredits,
   microcreditsToWholeCredits,
 } from "../src/credits-display.js";
+import { buildTurnMessages } from "../src/litellm/turn-engine.js";
+import { reserveAmountFor } from "../src/runner.js";
 import {
   CookieJar,
   HAS_DATABASE,
@@ -197,12 +215,36 @@ async function newFixture(microcredits: number): Promise<Fixture> {
   return { jar: ws.jar, workspaceId: ws.id, threadId: thread.data.id };
 }
 
-/** POST /v1/threads/:id/chat and read the whole SSE stream (MockRunner is fast). */
-async function chatToCompletion(
+/**
+ * The exact §8.8 per-turn reserve the route will take for a turn-0 POST whose
+ * history is `history` (mirrors routes/turn.ts:231-246 — the same formula, so
+ * the µc magnitudes below are exact rather than magic numbers).
+ */
+function expectedTurnReserve(
+  history: Parameters<typeof buildTurnMessages>[0]["history"],
+  runId: string,
+  message: string,
+): number {
+  const prompt = buildTurnMessages({
+    history,
+    transcript: [{ role: "user", text: message }],
+    canvas: null,
+    currentRunId: runId,
+  });
+  const estimate = Math.max(1, Math.min(12, Math.ceil(JSON.stringify(prompt).length / 4000)));
+  return creditsToLedgerMicrocredits(reserveAmountFor(estimate));
+}
+
+/**
+ * POST /v1/threads/:id/turn (step 0) and read the whole SSE stream (the mock
+ * model is fast). The wire is TURN-terminal: one turn.completed at the end.
+ */
+async function postTurn(
   fx: Fixture,
+  runId: string,
   message: string,
 ): Promise<readonly StudioStreamEvent[]> {
-  const response = await fetch(`${server.base}/v1/threads/${fx.threadId}/chat`, {
+  const response = await fetch(`${server.base}/v1/threads/${fx.threadId}/turn`, {
     method: "POST",
     headers: {
       origin: TEST_APP_ORIGIN,
@@ -210,20 +252,80 @@ async function chatToCompletion(
       accept: "text/event-stream",
       cookie: fx.jar.header,
       "x-workspace-id": fx.workspaceId,
+      "idempotency-key": `${runId}:0`,
     },
-    body: JSON.stringify({ message, context: {}, idempotencyKey: unique("chat"), pinned: [] }),
+    body: JSON.stringify({
+      runId,
+      stepIndex: 0,
+      messages: [{ role: "user", text: message }],
+    }),
     redirect: "manual",
   });
   expect(response.status).toBe(200);
   const frames = await readSse(response);
   const events = frames.map((frame) => STUDIO_STREAM_EVENT_SCHEMA.parse(frame.data));
-  // Every event parses against the §7.4 wire schema (law #1/#2) and the stream
-  // is terminal.
+  // Every event parses against the §7.4 wire schema (law #1/#2) and the turn
+  // stream is terminal in turn.completed.
   const last = events.at(-1);
-  if (last === undefined || last.type !== "run.completed") {
-    throw new Error(`expected a completed run, got: ${JSON.stringify(events.map((e) => e.type))}`);
+  if (last === undefined || last.type !== "turn.completed") {
+    throw new Error(`expected a completed turn, got: ${JSON.stringify(events.map((e) => e.type))}`);
   }
   return events;
+}
+
+/**
+ * The client's proposal-less stop gesture: the {end:true} end marker on
+ * POST /v1/runs/:id/plan (routes/turn.ts) — lands the run row completed.
+ */
+async function endRun(fx: Fixture, runId: string): Promise<void> {
+  const response = await api(server.base, `/v1/runs/${runId}/plan`, {
+    method: "POST",
+    jar: fx.jar,
+    headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("end") },
+    body: { end: true },
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ runId, ended: true });
+  await waitFor("the run row to complete", async () => {
+    const runResponse = await api(server.base, `/v1/runs/${runId}`, {
+      jar: fx.jar,
+      headers: { "x-workspace-id": fx.workspaceId },
+    });
+    return ((await runResponse.json()) as { data: { status: string } }).data.status === "completed";
+  });
+}
+
+/**
+ * One single-turn journey: history snapshot → the exact expected reserve →
+ * POST the turn (the mock proposes its carriers) → end the run with the
+ * marker. Returns the wire events + the computed reserve (µc).
+ */
+async function singleTurnJourney(
+  fx: Fixture,
+  message: string,
+): Promise<{ runId: string; events: readonly StudioStreamEvent[]; reserve: number }> {
+  const history = await server.deps.repos.threads.loadThreadHistory(fx.threadId);
+  const runId = unique("run");
+  const reserve = expectedTurnReserve(history, runId, message);
+  const events = await postTurn(fx, runId, message);
+  await endRun(fx, runId);
+  return { runId, events, reserve };
+}
+
+/** Poll until probe() is true (the end marker writes the run row after 200). */
+async function waitFor(
+  description: string,
+  probe: () => Promise<boolean>,
+  timeoutMs = 4000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await probe()) return;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${description}`);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 25);
+    });
+  }
 }
 
 function ledgerOfRun(workspaceId: string, runId: string) {
@@ -240,25 +342,15 @@ function kindsOf(entries: readonly { kind: string; amount: number }[]): Record<s
   return byKind;
 }
 
-function creditsEventOf(events: readonly StudioStreamEvent[]): StudioStreamEvent & {
-  type: "credits";
-} {
-  const found = events.find(
-    (event): event is Extract<StudioStreamEvent, { type: "credits" }> => event.type === "credits",
-  );
-  if (found === undefined) throw new Error("no credits event on the wire");
-  return found;
-}
-
 d("M6-K mixed-unit journey — µc ledger, whole-credit display, exact conservation", () => {
   it("a topup-scale µc grant funds a run whose ledger rows are EXACT µc while every display surface stays whole credits", async () => {
     const GRANT = 100_000_000; // 100 credits, integer µc (D-12, topup scale)
     const fx = await newFixture(GRANT);
-    const events = await chatToCompletion(fx, "rename the headline");
+    const { runId, events, reserve } = await singleTurnJourney(fx, "rename the headline");
 
-    // The run row first: WHOLE CREDITS (the D-12 row ruling — M6-E).
-    const runId = events[0]?.runId;
-    if (runId === undefined) throw new Error("no run.started");
+    // The run row first: WHOLE CREDITS (the D-12 row ruling — M6-E). The
+    // reserve no longer rides the row (round-12: the hold is per-TURN in the
+    // ledger); the committed usage is the mock turn's fixed 1 credit.
     const runResponse = await api(server.base, `/v1/runs/${runId}`, {
       jar: fx.jar,
       headers: { "x-workspace-id": fx.workspaceId },
@@ -266,36 +358,33 @@ d("M6-K mixed-unit journey — µc ledger, whole-credit display, exact conservat
     const record = (
       (await runResponse.json()) as { data: { reservedCredits: number; committedCredits: number } }
     ).data;
-    expect(record.reservedCredits).toBe(2); // ceil(1.5 × 1.2), whole credits
-    expect(record.committedCredits).toBe(1); // MockRunner: ceil(reserve / 2)
+    expect(record.reservedCredits).toBe(0); // per-turn holds live in the ledger
+    expect(record.committedCredits).toBe(1); // the mock turn's fixed usage commit
 
-    // LEDGER ROWS: exact integer MICROcredits (the F-J1 fix) — reserve
-    // −2_000_000, commit −1_000_000, refund +2_000_000 (D-20: full hold
-    // released), run nets exactly −1_000_000 µc. A pre-fix whole-credit
-    // commit of "1" would have charged 1 µc — the ~1,000,000× undercharge.
+    // LEDGER ROWS: exact integer MICROcredits (the F-J1 fix) — reserve −R,
+    // commit −1_000_000, refund +R (D-20: the FULL hold released), the run
+    // nets exactly −1_000_000 µc. A pre-fix whole-credit commit of "1" would
+    // have charged 1 µc — the ~1,000,000× undercharge. R is the exact §8.8
+    // per-turn reserve computed with the route's own formula.
     const entries = await ledgerOfRun(fx.workspaceId, runId);
     const byKind = kindsOf(entries);
-    expect(byKind.reserve).toEqual([-2 * 1_000_000]);
+    expect(byKind.reserve).toEqual([-reserve]);
     expect(byKind.commit).toEqual([-1 * 1_000_000]);
-    expect(byKind.refund).toEqual([2 * 1_000_000]);
+    expect(byKind.refund).toEqual([reserve]);
     expect(entries.reduce((total, entry) => total + entry.amount, 0)).toBe(-1_000_000);
     for (const entry of entries) {
       expect(Number.isInteger(entry.amount)).toBe(true); // D-12: no floats
       expect(entry.balanceAfter).toBeGreaterThanOrEqual(0);
     }
 
-    // SSE `credits` event: WHOLE-CREDIT EXACT display units (reserved 2,
-    // committed 1) and the balance is the D-12 2-decimal display conversion
-    // of the µc ledger balance: 99_000_000 µc → exactly 99 credits.
-    const credits = creditsEventOf(events);
-    expect(credits).toEqual({
-      type: "credits",
-      runId,
-      seq: credits.seq,
-      reserved: 2,
-      committed: 1,
-      balance: 99,
-    });
+    // Turn-wire display surface: WHOLE-CREDIT display units — the terminal
+    // turn.completed carries the turn's committed 1 credit (the retired
+    // single-`credits`-event surface is gone with the server loop).
+    const terminal = events.at(-1);
+    if (terminal === undefined || terminal.type !== "turn.completed") {
+      throw new Error("no turn.completed on the wire");
+    }
+    expect(terminal.credits).toEqual({ committed: 1 });
 
     // The raw µc balance — what the ledger actually holds.
     const balance = await server.deps.repos.ledger.balance(fx.workspaceId);
@@ -316,36 +405,31 @@ d("M6-K mixed-unit journey — µc ledger, whole-credit display, exact conservat
     expect(summary.reserved).toBe(0); // D-20: no live holds after settle
 
     // THE UNIT-CONSERVATION PROOF: the D-12 display conversion of the raw µc
-    // balance equals the SSE event's balance — the two surfaces cannot
-    // disagree, and both are derived from the SAME µc ledger row.
-    expect(microcreditsToDisplayCredits(summary.balance)).toBe(credits.balance);
+    // balance is the whole-credit view every display surface shows — the two
+    // display surfaces cannot disagree, and both derive from the SAME µc row.
+    expect(microcreditsToDisplayCredits(summary.balance)).toBe(99);
     expect(microcreditsToDisplayCredits(balance)).toBe(99);
   });
 
   it("an odd-µc balance displays rounded to 2 decimals while the ledger keeps the exact integer", async () => {
-    // 5 credits minus 1 µc — enough for the 2-credit hold, NOT a whole credit.
+    // 5 credits minus 1 µc — enough for the 3-credit hold, NOT a whole credit.
     const GRANT = 5_000_000 - 1;
     const fx = await newFixture(GRANT);
-    const events = await chatToCompletion(fx, "tweak the sub");
-    const runId = events[0]?.runId;
-    if (runId === undefined) throw new Error("no run.started");
+    const { runId } = await singleTurnJourney(fx, "tweak the sub");
 
     // Exact µc rows again (D-12 integers).
     const entries = await ledgerOfRun(fx.workspaceId, runId);
     const byKind = kindsOf(entries);
-    expect(byKind.reserve).toEqual([-2 * 1_000_000]);
+    const reserveRows = byKind.reserve ?? [];
+    expect(reserveRows).toHaveLength(1);
     expect(byKind.commit).toEqual([-1 * 1_000_000]);
-    expect(byKind.refund).toEqual([2 * 1_000_000]);
+    expect(byKind.refund).toEqual(reserveRows.map((amount) => -amount));
 
     // The raw balance keeps every µc; the DISPLAY converts at 2 decimals:
-    // 3_999_999 µc = 3.999999 credits → 4.00 on the wire event.
+    // 3_999_999 µc = 3.999999 credits → 4.00 on the whole-credit surface.
     const balance = await server.deps.repos.ledger.balance(fx.workspaceId);
     expect(balance).toBe(3_999_999);
-    const credits = creditsEventOf(events);
-    expect(credits.reserved).toBe(2);
-    expect(credits.committed).toBe(1);
-    expect(credits.balance).toBe(4);
-    expect(microcreditsToDisplayCredits(balance)).toBe(credits.balance);
+    expect(microcreditsToDisplayCredits(balance)).toBe(4);
 
     // /v1/credits keeps the exact integer µc — no rounding on the raw wire.
     const creditsSummaryResponse = await api(server.base, "/v1/credits", {
@@ -357,17 +441,18 @@ d("M6-K mixed-unit journey — µc ledger, whole-credit display, exact conservat
   });
 
   it("N sequential runs each release the FULL µc hold — the balance conserved across the whole journey", async () => {
-    const GRANT = 5_000_000; // 5 credits, µc — three runs at 1 credit each
+    // 10 credits, µc — three single-turn runs at 1 committed credit each; sized
+    // so every per-turn hold (which grows with the thread history) still
+    // clears the §8.8 reserve gate without ever dipping below zero.
+    const GRANT = 10_000_000;
     const fx = await newFixture(GRANT);
     for (const message of ["first tweak", "second tweak", "third tweak"]) {
-      const events = await chatToCompletion(fx, message);
-      const runId = events[0]?.runId;
-      if (runId === undefined) throw new Error("no run.started");
+      const { runId, reserve } = await singleTurnJourney(fx, message);
       const entries = await ledgerOfRun(fx.workspaceId, runId);
       const byKind = kindsOf(entries);
-      expect(byKind.reserve).toEqual([-2 * 1_000_000]);
+      expect(byKind.reserve).toEqual([-reserve]);
       expect(byKind.commit).toEqual([-1 * 1_000_000]);
-      expect(byKind.refund).toEqual([2 * 1_000_000]); // the FULL hold, every time
+      expect(byKind.refund).toEqual([reserve]); // the FULL hold, every time
       // D-12: every row an exact integer, the chain never negative.
       for (const entry of entries) {
         expect(Number.isInteger(entry.amount)).toBe(true);
@@ -375,11 +460,13 @@ d("M6-K mixed-unit journey — µc ledger, whole-credit display, exact conservat
       }
     }
 
-    // Three completed runs charged EXACTLY 3_000_000 µc (3 credits). Under
-    // the pre-fix whole-credit ledger writes the same journey would have
-    // charged 3 µc total — the ~1,000,000× undercharge F-J1 pinned. (The
-    // cancelled-run µc refund is pinned in chat-loop test 4 and billing-e2e
-    // journey 3 against the LiteLLM fake, where a mid-run cancel is reachable.)
+    // Three completed turns charged EXACTLY 3_000_000 µc (3 credits) — Σ rows
+    // = balance, the run nets = its commit, the FULL hold released every
+    // time. Under the pre-fix whole-credit ledger writes the same journey
+    // would have charged 3 µc total — the ~1,000,000× undercharge F-J1
+    // pinned. (The multi-turn carrier loop's ledger fingerprint — the
+    // run-scoped hold fold — is apply-flow test 1's subject; the cancelled-run
+    // µc refund is pinned in billing-e2e journey 3 and chat-loop test 4.)
     expect(await server.deps.repos.ledger.balance(fx.workspaceId)).toBe(GRANT - 3 * 1_000_000);
   });
 });

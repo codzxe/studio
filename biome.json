@@ -22,6 +22,7 @@
       "skills/**",
       ".turbo/**",
       ".local/**",
+      ".vercel/**",
       "apps/web/e2e/.results/**",
       "apps/web/e2e/zz-*",
       "scripts/ai-sdk-probe.mjs",

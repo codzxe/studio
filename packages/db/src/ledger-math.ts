@@ -47,7 +47,15 @@ export function outstandingReserve(
     if (entry.kind === "reserve")
       outstanding -= entry.amount; // amount is −N
     else if (entry.kind === "refund") outstanding -= entry.amount;
-    else if (entry.kind === "commit") outstanding += entry.amount; // amount is −M
+    // ROUND-12 (12-w7-r1 BUG-1 fix): commits are NOT subtracted. settle()
+    // always refunds the FULL outstanding hold while charging −M on top, so
+    // a commit never "consumes" a hold — counting it left a −M ghost after
+    // every settle, and the NEXT reserve on the same scope inherited a
+    // short refund (1 credit overcharged per multi-turn run; the turn
+    // loop settles per turn on one run scope). For the single-settle-per-
+    // run world the results are identical (the ghost clamped to 0 either
+    // way); for the multi-turn world Σ(reserve−refund) stays exactly 0
+    // between turns, so each settle refunds precisely its own hold.
   }
   return Math.max(0, outstanding);
 }

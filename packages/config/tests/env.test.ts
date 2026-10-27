@@ -96,6 +96,7 @@ describe("env: valid parse", () => {
       baseUrl: "http://localhost:4000",
       apiKey: "sk-litellm-local",
       virtualKey: undefined,
+      modelMap: undefined,
     });
     expect(env.queue.url).toBeUndefined();
     expect(env.obs.otelEndpoint).toBeUndefined();
@@ -161,6 +162,35 @@ describe("env: valid parse", () => {
     expect(env.obs.otelEndpoint).toBe("http://localhost:4318");
     expect(env.editor.devServerUrl).toBe("http://localhost:8765");
     expect(env.stripe.secretKey).toBe("sk_test_123");
+  });
+
+  it("parses LITELLM_MODEL_MAP JSON into the wire map (unset = undefined)", () => {
+    const env = parseEnv(localFixture);
+    expect(env.litellm.modelMap).toBeUndefined();
+    const mapped = parseEnv({
+      ...localFixture,
+      LITELLM_MODEL_MAP:
+        '{"studio-fast":"deepseek-v4.1-flash","studio-smart":"th-rudder","studio-vision":"th-rudder"}',
+    });
+    expect(mapped.litellm.modelMap).toEqual({
+      "studio-fast": "deepseek-v4.1-flash",
+      "studio-smart": "th-rudder",
+      "studio-vision": "th-rudder",
+    });
+  });
+
+  it("rejects a malformed LITELLM_MODEL_MAP with the variable named", () => {
+    const notJson = expectFatal({ ...localFixture, LITELLM_MODEL_MAP: "{studio-fast:oops}" });
+    expect(notJson.problems[0]?.name).toBe("LITELLM_MODEL_MAP");
+    expect(notJson.problems[0]?.reason).toContain("valid JSON");
+    const wrongShape = expectFatal({ ...localFixture, LITELLM_MODEL_MAP: '["studio-fast"]' });
+    expect(wrongShape.problems[0]?.name).toBe("LITELLM_MODEL_MAP");
+    const emptyValue = expectFatal({
+      ...localFixture,
+      LITELLM_MODEL_MAP: '{"studio-fast":""}',
+    });
+    expect(emptyValue.problems[0]?.name).toBe("LITELLM_MODEL_MAP");
+    expect(emptyValue.problems[0]?.reason).toContain("non-empty");
   });
 
   it("ignores unrelated keys like PATH", () => {

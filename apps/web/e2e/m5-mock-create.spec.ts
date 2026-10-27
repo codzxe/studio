@@ -3,24 +3,30 @@
  * (MOCK_MODEL=true — no LiteLLM, no OpenAI, no API key anywhere), a
  * brand-new project created from the dashboard can be driven end to end:
  * blank editor (the no-version start-from-scratch flow) → chat ask → the
- * mock model's compile-enriched CREATE plan → ONE click Apply → the real
- * engine.batch (comp.new + layer.newText) → the real version upload (v1,
- * baseVersionId null — the first-snapshot path) → the applied card with the
- * one-undo-step promise, and the created composition verifiably present in
- * the engine AND on the server.
+ * round-12 client-driven turn loop (POST /v1/threads/:id/turn ×2: turn 0
+ * proposes the two write carriers studio.create_composition +
+ * studio.create_text; turn 1 closes with the final text) → the client
+ * merges the carriers (mergeEditPlans) → POST /v1/runs/:id/plan (the
+ * server re-compiles authoritatively + stamps the §7.3 verdict) → the
+ * AUTO-APPLY drive executes the real engine.batch (comp.new +
+ * layer.newText) → the real version upload (v1, baseVersionId null — the
+ * first-snapshot path) → the applied card with the one-undo-step promise,
+ * and the created composition verifiably present in the engine AND on the
+ * server. NO manual Apply click anywhere — round-10 v2 made the drive
+ * automatic and round-12 kept it.
  *
  * This is the user-facing guarantee behind "make sure the project should be
  * able to make something without any API": the entire create loop runs on
- * the local stack. The mock plan's wire shape is asserted in
+ * the local stack. The loop's wire shape is asserted in
  * e2e/chat.spec.ts + m5-agent-edits.spec.ts; this spec proves the JOURNEY.
  *
  * Boot: the README recipe (seeded demo user → real /sign-in → dashboard) —
  * identical to e2e/chat.spec.ts's sign-in helpers (duplicated per the
  * gateway-tests precedent: e2e specs never import sibling spec files).
  *
- * Determinism contract: the run goes to the REAL gateway (MOCK_MODEL=true),
+ * Determinism contract: the turns go to the REAL gateway (MOCK_MODEL=true),
  * the apply to the REAL engine bridge, the save to the REAL versions route.
- * The only route watcher is passive (it records, never fulfills).
+ * The route watchers are passive (they record, never fulfill).
  */
 
 import { type Page, expect, test } from "@playwright/test";
@@ -152,8 +158,25 @@ test.describe("M5 mock-create — zero-API-key creation: fresh project → chat 
       await route.continue();
     });
 
-    // Ask the agent — the mock model (MOCK_MODEL=true, zero keys) streams its
-    // compile-enriched CREATE plan through the real gateway.
+    // ROUND-12 wire pins (passive counters, never fulfilled): the run rides
+    // the TURN wire — step 0 (the two write-tool proposals) + step 1 (the
+    // closing text) — and ends with exactly ONE plan POST
+    // (`POST /v1/runs/:id/plan`, the merged carriers). The retired /chat
+    // loop must stay retired.
+    let turnPosts = 0;
+    await page.route("**/v1/threads/*/turn", async (route) => {
+      if (route.request().method() === "POST") turnPosts += 1;
+      await route.continue();
+    });
+    let planPosts = 0;
+    await page.route("**/v1/runs/*/plan", async (route) => {
+      if (route.request().method() === "POST") planPosts += 1;
+      await route.continue();
+    });
+
+    // Ask the agent — the mock model (MOCK_MODEL=true, zero keys) runs the
+    // two-turn loop through the real gateway and auto-applies the merged
+    // plan (no click; the seeded user has no settings row = auto ON).
     const composer = page.getByLabel("Message the agent");
     await composer.click();
     await composer.fill("Make me a demo composition with a text layer");
@@ -161,23 +184,24 @@ test.describe("M5 mock-create — zero-API-key creation: fresh project → chat 
 
     const plan = page.getByTestId("plan-card");
     await expect(plan).toBeVisible({ timeout: RUN_SETTLE_TIMEOUT_MS });
-    await expect(plan).toHaveAttribute("data-status", "proposed");
     await expect(plan).toHaveAttribute("data-intent", "create");
-    // Medium risk (server-recomputed) needs NO confirm checkbox — one click.
-    await expect(plan.getByTestId("plan-apply")).toBeEnabled({
-      timeout: RUN_SETTLE_TIMEOUT_MS,
-    });
-
-    // ONE click Apply: the client allowlist passes (comp.new + layer.newText
-    // are curated), the real engine executes the ATOMIC batch, the autosave
-    // chain saveAs-es the never-saved project (baseVersionId null → v1) and
-    // the applyRun report lands.
-    await plan.getByTestId("plan-apply").click();
-
+    // ROUND-10 v2: no click — the seeded user has no settings row (schema
+    // default ON) and the mock plan is auto-eligible, so the controller's
+    // AUTO-DRIVE executes it at run.completed: the client allowlist passes
+    // (comp.new + layer.newText are curated), the real engine executes the
+    // ATOMIC batch, the autosave chain saveAs-es the never-saved project
+    // (baseVersionId null → v1) and the applyRun report lands.
     await expect(plan).toHaveAttribute("data-status", "applied", {
       timeout: APPLY_SETTLE_TIMEOUT_MS,
     });
+    await expect(plan.getByTestId("plan-apply")).toHaveCount(0);
     await expect(page.getByTestId("plan-applied")).toContainText(/· one undo step\./);
+
+    // WIRE proof: the round-12 turn loop — exactly TWO turn POSTs (step 0
+    // with the two proposals, step 1 with the closing text) and exactly ONE
+    // plan POST (the merged carriers) — no /chat anywhere.
+    expect(turnPosts).toBe(2);
+    expect(planPosts).toBe(1);
 
     // SERVER proof: exactly one version upload answered 201 — the project's
     // FIRST version (the from-scratch path; baseVersionId null on the wire).

@@ -64,6 +64,15 @@ const EXTRA_NOTES: Readonly<Record<string, readonly string[]>> = {
     "# (repo-root docker-compose.litellm.yml), a venv (`litellm --config deploy/litellm/config.yaml`)",
     "# or the infra/compose `litellm` service. Runbook: docs/deploy/LITELLM.md.",
   ],
+  LITELLM_MODEL_MAP: [
+    "# Direct OpenAI-compatible provider (no LiteLLM proxy): point LITELLM_BASE_URL",
+    "# at the hosted gateway and map the studio aliases to provider model ids.",
+    "# Unset (the default) = aliases pass through to the proxy unchanged.",
+    "# Token Harbor free-tier example — free variants of paid models need the",
+    "# provider's `:free` suffix (bare ids route to the PAID model and 402 on a",
+    "# zero balance); tool names are sanitized on the wire automatically:",
+    '#   LITELLM_MODEL_MAP={"studio-fast":"deepseek-v4.1-flash:free","studio-smart":"th-rudder","studio-vision":"th-rudder"}',
+  ],
   EDITOR_DEV_SERVER_URL: [
     "# Local default: `cargo xtask web --serve 8765` from editor/, proxied under the editor path.",
   ],

@@ -4,7 +4,11 @@
     // Fleet normalization (W2-Q precedent): no rootDir/outDir; tests/ sit next
     // to src/ and `tsc --noEmit` is the gate. Base sets NodeNext; relative
     // imports use the .js extension, which vitest resolves back to .ts.
-    "noEmit": true
+    "noEmit": true,
+    // Round 12: the generated engine catalog artifacts are committed JSON
+    // (src/generated/*.json) imported with import attributes (ESM-spec;
+    // esbuild/webpack/Node ≥20.10 all accept `with { type: "json" }`).
+    "resolveJsonModule": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
 }

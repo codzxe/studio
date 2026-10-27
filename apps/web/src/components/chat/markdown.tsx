@@ -215,12 +215,17 @@ export function renderMarkdown(text: string): ReactNode[] {
 /**
  * The chat markdown renderer (14px/1.55 per EDITOR_CHAT_UX §10; the message
  * component constrains the 72ch width).
+ *
+ * ROUND 12 (Chat UI v3): the panel settings' font-size knob cascades as the
+ * `--chat-font-size` var (set on the panel root); the var's 14px fallback is
+ * the pinned §10 base, so an unset knob renders byte-identical.
  */
 export function Markdown({ text }: { text: string }): ReactElement {
   return (
     <div
       data-testid="chat-markdown"
       className="flex min-w-0 flex-col gap-2 text-sm leading-[1.55] text-primary"
+      style={{ fontSize: "var(--chat-font-size, 0.875rem)" }}
     >
       {renderMarkdown(text)}
     </div>

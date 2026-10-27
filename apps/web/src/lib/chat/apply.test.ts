@@ -70,6 +70,9 @@ interface HarnessOptions {
   undoRunError?: ApiError;
   /** The session's current version id (reapply gate). */
   currentVersionId?: string | null;
+  /** Round-12: wraps the (recorded) bridge the controller sees — the
+   * client-special seam fakes (script.run / edit.pasteSvg). */
+  wrapBridge?: (inner: EditorBridge, fake: FakeEditor) => EditorBridge;
 }
 
 interface Harness {
@@ -151,8 +154,14 @@ async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
     },
   };
 
+  // Round-12: the controller's bridge may be a wrapper over the recorded one
+  // (the client-special seams script.run / edit.pasteSvg delegate through it, so
+  // their calls stay recorded in execution order).
+  const controllerBridge =
+    options.wrapBridge === undefined ? recorded.bridge : options.wrapBridge(recorded.bridge, fake);
+
   const controllerOptions: CreateApplyControllerOptions = {
-    bridge: recorded.bridge,
+    bridge: controllerBridge,
     autosave,
     api,
     ...(options.currentVersionId !== undefined
@@ -484,6 +493,211 @@ describe("createApplyController.apply — failure mapping", () => {
     });
     const outcome = await harness.controller.apply(helloPlan());
     expect(outcome).toMatchObject({ ok: false, reason: "failed", code: "RATE_LIMITED" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// round-12 CLIENT-SPECIAL compiled steps (script.run / asset.importSvg) + the
+// ALLOWED_COMMAND_IDS gate — pinned by the gateway plan compiler (12-w3-i3):
+// run_script compiles to EXACTLY ONE {command:"script.run", params:{code}};
+// add_asset to EXACTLY ONE {command:"asset.importSvg", params:{name, svg}}.
+// ---------------------------------------------------------------------------
+
+/** A client-special bridge: delegates EVERYTHING to the recorded inner bridge
+ * (so calls stay in `executeCalls` in order), but answers the two convention
+ * seams the fake editor does not implement (the engine's real dist does). */
+function clientSpecialBridge(inner: EditorBridge): EditorBridge {
+  return {
+    ...inner,
+    execute: async <T>(command: string, params?: unknown) => {
+      if (command === "script.run") {
+        try {
+          return await inner.execute<T>(command, params);
+        } catch {
+          return { ok: true, result: "script-ran" } as T;
+        }
+      }
+      if (command === "edit.pasteSvg") {
+        try {
+          return await inner.execute<T>(command, params);
+        } catch {
+          return { layer: 7, skipped: 0 } as T;
+        }
+      }
+      return await inner.execute<T>(command, params);
+    },
+  };
+}
+
+/** A plan whose compiled batch carries ONE script.run pre-step + ONE batch step. */
+function scriptPlan(): ApplicablePlan {
+  return {
+    runId: "run_1",
+    compiledBatch: {
+      label: "Agent: script it",
+      atomic: true,
+      steps: [
+        {
+          command: "script.run",
+          params: { code: 'app.run("layer.newText", {text: "From script"})' },
+        },
+        {
+          command: "prop.set",
+          params: { layer: "$request:r1", path: "transform/opacity", value: 10 },
+        },
+      ],
+    },
+    resolutionRequests: [
+      { requestId: "r1", layerName: "Hello", disambiguation: ["the text layer"] },
+    ],
+  };
+}
+
+describe("createApplyController.apply — round-12 client-special steps", () => {
+  it("script.run executes via bridge BEFORE engine.batch (NOT_IN_BATCH), wrapped in ONE undo group; ONE saveNow, one applyRun", async () => {
+    const harness = await makeHarness({ wrapBridge: clientSpecialBridge });
+    const outcome = await harness.controller.apply(scriptPlan());
+
+    expect(outcome).toMatchObject({ ok: true, versionId: "ver_applied_1" });
+
+    // Execution order: the script ran FIRST, then the (script-free) batch.
+    expect(harness.recorded.executeCalls.map((call) => call.command)).toEqual([
+      "script.run",
+      "engine.batch",
+    ]);
+
+    // The code rode wrapped in ONE labeled undo group (the engine recipe:
+    // beginUndoGroup/try/finally:app.endUndoGroup), closed even on throw.
+    const scriptCall = harness.recorded.executeCalls[0];
+    const scriptParams = scriptCall?.params as Record<string, unknown>;
+    expect(Object.keys(scriptParams)).toEqual(["code"]); // no name: the plan named none
+    const code = scriptParams.code as string;
+    expect(code).toContain('app.beginUndoGroup("Agent: script it");');
+    expect(code).toContain('app.run("layer.newText", {text: "From script"})');
+    expect(code).toContain("} finally {");
+    expect(code).toContain("app.endUndoGroup();");
+
+    // The batch carries ONLY the prop.set step — the engine refuses script.run
+    // inside engine.batch (NOT_IN_BATCH), so it must never ride it.
+    const batch = harness.recorded.executeCalls[1] as {
+      params: { steps: Array<{ command: string }> };
+    };
+    expect(batch.params.steps.map((step) => step.command)).toEqual(["prop.set"]);
+
+    // Law #6 held: ONE saveNow(agent-apply), awaited BEFORE the applyRun.
+    expect(harness.timeline).toEqual(["markDirty:agent-apply", "saveNow:agent-apply", "applyRun"]);
+    expect(harness.autosaveReasons).toEqual(["agent-apply"]);
+    expect(harness.applyCalls).toHaveLength(1);
+  });
+
+  it("asset.importSvg maps to the engine's edit.pasteSvg string import seam, before the batch", async () => {
+    const harness = await makeHarness({ wrapBridge: clientSpecialBridge });
+    const outcome = await harness.controller.apply({
+      runId: "run_1",
+      compiledBatch: {
+        label: "Agent: badge it",
+        atomic: true,
+        steps: [
+          {
+            command: "asset.importSvg",
+            params: {
+              name: "Badge",
+              svg: '<svg xmlns="http://www.w3.org/2000/svg"><circle/></svg>',
+            },
+          },
+          {
+            command: "prop.set",
+            params: { layer: "$request:r1", path: "transform/opacity", value: 10 },
+          },
+        ],
+      },
+      resolutionRequests: [
+        { requestId: "r1", layerName: "Hello", disambiguation: ["the text layer"] },
+      ],
+    });
+
+    expect(outcome).toMatchObject({ ok: true, versionId: "ver_applied_1" });
+    expect(harness.recorded.executeCalls.map((call) => call.command)).toEqual([
+      "edit.pasteSvg",
+      "engine.batch",
+    ]);
+    // The pinned import params: the inline svg STRING + name — never a path.
+    expect(harness.recorded.executeCalls[0]?.params).toEqual({
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"><circle/></svg>',
+      name: "Badge",
+    });
+    // The convention id never reaches the engine verbatim.
+    expect(harness.recorded.executeCalls.some((call) => call.command === "asset.importSvg")).toBe(
+      false,
+    );
+    expect(harness.autosaveReasons).toEqual(["agent-apply"]);
+  });
+
+  it("an editor dist without the string SVG import answers the honest svg-import-unavailable; nothing else runs", async () => {
+    // NO wrapBridge: the fake editor lacks edit.pasteSvg → "unknown command".
+    const harness = await makeHarness();
+    const outcome = await harness.controller.apply({
+      runId: "run_1",
+      compiledBatch: {
+        label: "Agent: badge it",
+        atomic: true,
+        steps: [
+          { command: "asset.importSvg", params: { name: "Badge", svg: "<svg><circle/></svg>" } },
+          {
+            command: "prop.set",
+            params: { layer: "$request:r1", path: "transform/opacity", value: 10 },
+          },
+        ],
+      },
+      resolutionRequests: [
+        { requestId: "r1", layerName: "Hello", disambiguation: ["the text layer"] },
+      ],
+    });
+
+    expect(outcome).toMatchObject({ ok: false, reason: "svg-import-unavailable" });
+    if (!outcome.ok) expect(outcome.message).toContain("SVG_IMPORT_UNAVAILABLE");
+
+    // The gesture leaves NOTHING: only the refused import was attempted — no
+    // batch, no save, no report.
+    expect(harness.recorded.executeCalls.map((call) => call.command)).toEqual(["edit.pasteSvg"]);
+    expect(harness.timeline).toEqual([]);
+    expect(harness.applyCalls).toHaveLength(0);
+    expect(harness.fake.state.dirty).toBe(true); // only the harness setup's own edit
+  });
+
+  it("F-6 widened: a DENIED catalog id in a hand-built batch is refused by the client gate; NOTHING executes", async () => {
+    const harness = await makeHarness();
+    // file.import is a real catalog id, deny-tagged "filesystem" (paths) —
+    // outside ALLOWED_COMMAND_IDS (tier-2, packages/contracts).
+    const outcome = await harness.controller.apply({
+      runId: "run_1",
+      compiledBatch: {
+        label: "Agent: smuggle a file import",
+        atomic: true,
+        steps: [
+          {
+            command: "prop.set",
+            params: { layer: "$request:r1", path: "transform/opacity", value: 10 },
+          },
+          { command: "file.import", params: { paths: ["/etc/hosts"] } },
+        ],
+      },
+      resolutionRequests: [
+        { requestId: "r1", layerName: "Hello", disambiguation: ["the text layer"] },
+      ],
+    });
+
+    expect(outcome).toMatchObject({ ok: false, reason: "invalid-batch" });
+    if (!outcome.ok) {
+      expect(outcome.message).toContain('"file.import"');
+      expect(outcome.message).toContain("may not run");
+    }
+
+    // Zero engine traffic, no save, no report — the gate runs FIRST.
+    expect(harness.recorded.executeCalls).toEqual([]);
+    expect(harness.recorded.queryCalls).toEqual([]);
+    expect(harness.timeline).toEqual([]);
+    expect(harness.applyCalls).toHaveLength(0);
   });
 });
 

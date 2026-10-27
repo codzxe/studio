@@ -13,9 +13,12 @@
 // contracts wherever they exist (ids, slugs, roles, enums, ISO-8601, EditPlan).
 
 import {
+  AGENT_BATCH_SCHEMA,
   API_KEY_SCOPE_SCHEMA,
+  AUTO_APPLY_MODE_SCHEMA,
   type AcceptedInvite,
   type ActivityEntry,
+  type AgentBatch,
   type ApiKey,
   type ApplyResponse,
   type Asset,
@@ -31,13 +34,16 @@ import {
   type CreatedApiKey,
   type CreditsSummary,
   EDIT_PLAN_SCHEMA,
+  type EditPlan,
   type EstimateResult,
   ID_SCHEMA,
   INVOICE_STATUS_SCHEMA,
   ISO8601_SCHEMA,
   type Invite,
   type InvoiceRecord,
+  LAYER_RESOLUTION_REQUEST_SCHEMA,
   LEDGER_KIND_SCHEMA,
+  type LayerResolutionRequest,
   type LedgerEntry,
   MODEL_ID_SCHEMA,
   type ManifestAsset,
@@ -49,7 +55,9 @@ import {
   type OwnershipTransferred,
   PATCH_MEMBER_ROLE_SCHEMA,
   PLAN_ID_SCHEMA,
+  PLAN_RISK_SCHEMA,
   type Page,
+  type PlanRisk,
   type PlanSummary,
   type PortalResponse,
   type Project,
@@ -441,6 +449,43 @@ export const APPLY_RESPONSE_SCHEMA = z.object({
 export const UNDO_RESPONSE_SCHEMA = z.object({
   undone: z.literal(true),
 }) satisfies z.ZodType<UndoResponse>;
+
+// ---------------------------------------------------------------------------
+// Round 12 — POST /v1/runs/:id/plan (the client-driven loop's run-end fold)
+// ---------------------------------------------------------------------------
+
+/**
+ * The run-end plan decision (TURN WIRE CONTRACT): the browser merges the
+ * run's write-tool proposal carriers into ONE EditPlan and POSTs it; the
+ * server re-validates + RE-COMPILES it authoritatively, stamps the §7.3
+ * auto-apply verdict and stores `plan_json`. `compiledBatch` & friends are
+ * present only when the re-compile succeeded (a failed compile still returns
+ * 200 + the verdict `compile-failed` — the plan card then renders M4-style).
+ */
+export interface RunPlanResponse {
+  readonly runId: string;
+  readonly plan: EditPlan;
+  readonly autoApply: { readonly mode: "auto" | "propose"; readonly reason: string };
+  readonly baseVersionId?: string;
+  readonly compiledBatch?: AgentBatch;
+  readonly risk?: PlanRisk;
+  readonly estimatedCredits?: number;
+  readonly resolutionRequests?: readonly LayerResolutionRequest[];
+}
+
+export const RUN_PLAN_RESPONSE_SCHEMA = z.object({
+  runId: idSchema,
+  plan: EDIT_PLAN_SCHEMA,
+  autoApply: z.object({
+    mode: AUTO_APPLY_MODE_SCHEMA,
+    reason: z.string().min(1).max(120),
+  }),
+  baseVersionId: idSchema.optional(),
+  compiledBatch: AGENT_BATCH_SCHEMA.optional(),
+  risk: PLAN_RISK_SCHEMA.optional(),
+  estimatedCredits: z.number().nonnegative().optional(),
+  resolutionRequests: z.array(LAYER_RESOLUTION_REQUEST_SCHEMA).optional(),
+}) satisfies z.ZodType<RunPlanResponse>;
 
 // ---------------------------------------------------------------------------
 // Models — GET /v1/models (§8.2/§10.1 entitlement read)

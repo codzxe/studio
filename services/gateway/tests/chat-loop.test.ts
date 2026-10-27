@@ -1,31 +1,54 @@
-// M4-K — the gateway FULL-ROUTE chat-loop E2E (BUILD_PLAN §M4 task 7 + exit
-// criteria; PRODUCT_ARCHITECTURE §7.4/§8.8/§8.9). Real buildApp over real
-// Postgres, the REAL LiteLLM runner (MOCK_MODEL=false via createRunnerForEnv)
-// against an in-process fake OpenAI-compatible SSE server on an ephemeral
-// localhost port (sanctioned: not a dev server), the real SSE wire both ways,
-// and real client tool-result POSTs to /v1/runs/:id/events.
+// M4-K — the gateway FULL-ROUTE agent-loop E2E, RE-POINTED to the ROUND-12
+// client-driven TURN wire (BUILD_PLAN §M4 task 7 + exit criteria;
+// PRODUCT_ARCHITECTURE §7.4/§8.8/§8.9). Real buildApp over real Postgres,
+// the REAL turn engine (MOCK_MODEL=false, LITELLM_BASE_URL = the in-process
+// fake OpenAI-compatible SSE server on an ephemeral localhost port —
+// sanctioned: not a dev server), the real SSE wire per turn, and the client
+// driving the loop: POST /v1/threads/:id/turn (Idempotency-Key
+// `${runId}:${stepIndex}`) once per step, the tool round-trip riding the
+// NEXT turn's transcript, POST /v1/runs/:id/plan {end:true} as the
+// proposal-less stop, POST /v1/runs/:id/abandon as the give-up gesture.
 //
-// Scenarios: happy loop with client tool round-trip (+§7.4 toolCallId rule),
-// idempotency replay, Last-Event-ID reconnect, client-abort semantics, cancel
-// + full refund, model entitlements (403), zero credits (402), invalid tool
-// (repair turn → RUN_INVALID_TOOL), the §7.4 SSE frame contract, cross-tenant
-// 404. All deterministic — no real network beyond the loopback fake server.
+// Scenarios: the happy loop with the client tool round-trip (+§7.4 frame
+// contract), the durable idempotency replay, the mid-turn client abort, the
+// abandon stop + full refund, model entitlements (403), zero credits (402),
+// an invalid tool call resolving fail-closed, the §7.4 SSE frame contract,
+// cross-tenant 404. All deterministic — no real network beyond the loopback
+// fake server.
+//
+// ROUND-12 DELETIONS (the subject no longer exists server-side; one-line
+// reasons, worklog Task ID 12-w7-r1):
+//   * old test 3a (Last-Event-ID reconnect + a tool result landing
+//     mid-reconnect) — the SSE replay/wait seam (the in-memory RunLog
+//     registry, Last-Event-ID cursors, POST /v1/runs/:id/events) is DELETED
+//     with the server loop; the turn wire is stateless per turn, and the
+//     durable same-key replay (test 2) is its reconnect story.
+//   * the old test 1/2 §7.4 "only the expected toolCallId may report a
+//     result" 400 pin — that guard lived on the deleted events route; the
+//     round-12 tool round-trip echoes results in the next turn's BODY.
+//   * the run.cancelled-on-the-wire arm of old test 4 — nothing server-side
+//     emits run.* terminals anymore; the stop gesture is the ABANDON route
+//     (flat JSON), pinned below.
+//   * the §8.9 server-side repair-turn protocol (unknown tool twice →
+//     run.failed RUN_INVALID_TOOL) — re-pointed to the round-12 truth: the
+//     turn resolves the bad call fail-closed into resultForModel, the client
+//     mediates the "repair" by echoing the error with its next turn.
+//   * the old test 5 "tool timeout" scenario had already been folded away
+//     (TOOL_RESULT_TIMEOUT_MS pinned at the seam, M4-A); nothing remained.
 //
 // UNITS (M6-K µc unification, D-12): the ledger rows this file pins are
-// integer MICROcredits — every chat-path hold/commit/refund magnitude is the
-// whole-credit number × 1_000_000 (fixture grants included); the SSE `credits`
-// event and the run ROW stay whole credits (display units).
-//
-// PINNED DECISION (scenario "tool timeout", documented for M4 closeout):
-// TOOL_RESULT_TIMEOUT_MS is a 30_000 ms CONSTANT in src/litellm/runner.ts —
-// not env-injectable, and the chat route wires it directly
-// (log.waitToolResult(id, TOOL_RESULT_TIMEOUT_MS)). A real-time E2E would
-// sleep 30s in CI. The timeout→EDITOR_DISCONNECTED mapping is unit-proven by
-// M4-A's litellm-runner.test.ts (FakeStream waitMode "timeout"); this file
-// pins the CANCEL path's full reserve refund instead — the same ledger
-// refundAll code path the timeout failure settles through. Do NOT add a 30s
-// sleep here; an env knob (TOOL_RESULT_TIMEOUT_MS) would be a src/ change
-// this task does not own (report, never fix).
+// integer MICROcredits — every turn-path hold/commit/refund magnitude is the
+// whole-credit number × 1_000_000 (fixture grants included); the turn wire's
+// turn.completed `credits` and the run ROW stay whole credits (display
+// units). The per-turn reserve is prompt-size-derived (§8.8), so the ledger
+// pins here are the per-run fingerprint: one commit row per turn (−1_000_000
+// each), one hold per turn, and — CURRENT-TRUTH (12-w7-r1 BUG-1, pinned the
+// same way in tests/apply-flow.test.ts test 1) — Σrefund = Σreserve − C₀ on
+// a multi-turn run: the ledger hold is RUN-scoped while routes/turn.ts
+// reserves + settles PER TURN, so the first turn's settle refunds the full
+// outstanding hold and the second turn's settle strands the first turn's
+// commit (the workspace overcharges by C₀ per two-turn run). A product fix
+// (turn-scoped holds) flips those pins loudly.
 
 import { createHash } from "node:crypto";
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
@@ -33,19 +56,18 @@ import type { AddressInfo } from "node:net";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import type { z } from "zod";
-
 import {
-  CONTEXT_SELECTION_SCHEMA,
   type RunRecord,
   STUDIO_STREAM_EVENT_SCHEMA,
   type StudioStreamEvent,
   TOOL_LIST,
+  type TurnMessage,
   WRITE_TOOL_IDS,
 } from "@studio/contracts";
 import type { AgentRun } from "@studio/db";
 
-import { createRunnerForEnv, estimateRunCredits, reserveAmountFor } from "../src/runner.js";
+import { wireToolName } from "../src/litellm/openai.js";
+import { createRunnerForEnv } from "../src/runner.js";
 import {
   CookieJar,
   HAS_DATABASE,
@@ -111,10 +133,12 @@ function usageChunk(promptTokens: number, completionTokens: number): string {
 }
 const DONE = "data: [DONE]\n\n";
 
-/** The 13 curated tool ids on the provider wire (M5.1: 5 read + 8 write). */
+/** The 13 curated tools on the provider wire (M5.1: 5 read + 8 write).
+ * Registry ids carry dots; the wire grammar ^[a-zA-Z0-9_-]{1,64}$ forbids
+ * them, so registrations are sanitized (openai.ts toolSeam). */
 const WIRE_TOOL_IDS = [
-  ...TOOL_LIST.filter((tool) => tool.kind === "read").map((tool) => tool.id),
-  ...WRITE_TOOL_IDS.map((id) => `studio.${id}`),
+  ...TOOL_LIST.filter((tool) => tool.kind === "read").map((tool) => wireToolName(tool.id)),
+  ...WRITE_TOOL_IDS.map((id) => wireToolName(`studio.${id}`)),
 ].sort();
 
 class FakeOpenAIServer {
@@ -205,6 +229,9 @@ function getContextRound(toolCallId: string): ScriptEntry {
   return () => [
     toolCallStart(0, toolCallId, "studio.get_context"),
     toolCallArgs(0, JSON.stringify({ include: ["activeComp"] })),
+    // usageChunk(40, 8) — the same deterministic usage as textRound, so the
+    // §8.8 commit for this turn is the pinned 1 credit.
+    usageChunk(40, 8),
     finishReason("tool_calls"),
     DONE,
   ];
@@ -370,15 +397,30 @@ class SseStream {
 // Shared §7.4 wire-contract checks
 // ---------------------------------------------------------------------------
 
-const TERMINAL_TYPES = new Set(["run.completed", "run.failed", "run.cancelled"]);
+// The turn wire's terminals (§7.4): one turn.completed | turn.failed per
+// stream; the run.* terminals left with the deleted server loop.
+const TERMINAL_TYPES = new Set(["turn.completed", "turn.failed"]);
 
-type CreditsEvent = Extract<StudioStreamEvent, { type: "credits" }>;
+type TurnCompletedEvent = Extract<StudioStreamEvent, { type: "turn.completed" }>;
 type DeltaEvent = Extract<StudioStreamEvent, { type: "message.delta" }>;
 
-function findCredits(events: readonly StudioStreamEvent[]): CreditsEvent {
-  const credits = events.find((event): event is CreditsEvent => event.type === "credits");
-  if (credits === undefined) throw new Error("no credits event on the wire");
-  return credits;
+function completedOf(events: readonly StudioStreamEvent[]): TurnCompletedEvent {
+  const terminal = events.find(
+    (event): event is TurnCompletedEvent => event.type === "turn.completed",
+  );
+  if (terminal === undefined) throw new Error("no turn.completed event on the wire");
+  return terminal;
+}
+
+function failedOf(
+  events: readonly StudioStreamEvent[],
+): Extract<StudioStreamEvent, { type: "turn.failed" }> {
+  const terminal = events.find(
+    (event): event is Extract<StudioStreamEvent, { type: "turn.failed" }> =>
+      event.type === "turn.failed",
+  );
+  if (terminal === undefined) throw new Error("no turn.failed event on the wire");
+  return terminal;
 }
 
 function joinedText(events: readonly StudioStreamEvent[]): string {
@@ -562,67 +604,62 @@ async function newFixture(prefix: string, credits = 100): Promise<Fixture> {
   };
 }
 
-interface ChatBody {
-  readonly message: string;
-  /** ContextSelection BEFORE schema defaults (the chat route parses it). */
-  readonly context: z.input<typeof CONTEXT_SELECTION_SCHEMA>;
-  readonly idempotencyKey: string;
-  readonly pinned: unknown[];
+interface TurnCall {
+  readonly runId: string;
+  readonly stepIndex: number;
+  readonly messages: readonly TurnMessage[];
   readonly model?: "studio-fast" | "studio-smart" | "studio-vision";
-}
-
-interface ChatCallOptions {
-  readonly lastEventId?: string;
   readonly signal?: AbortSignal;
 }
 
-/** Raw chat POST (the api() helper has no abort/signal seam). */
-async function chatStream(
-  fx: Fixture,
-  body: ChatBody,
-  options: ChatCallOptions = {},
-): Promise<Response> {
-  const headers: Record<string, string> = {
-    origin: TEST_APP_ORIGIN,
-    "content-type": "application/json",
-    accept: "text/event-stream",
-    cookie: fx.jar.header,
-    "x-workspace-id": fx.workspaceId,
-  };
-  if (options.lastEventId !== undefined) headers["last-event-id"] = options.lastEventId;
-  return fetch(`${server.base}/v1/threads/${fx.threadId}/chat`, {
+/** Raw turn POST (the api() helper has no abort/signal seam). */
+async function turnStream(fx: Fixture, input: TurnCall): Promise<Response> {
+  return fetch(`${server.base}/v1/threads/${fx.threadId}/turn`, {
     method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal: options.signal,
+    headers: {
+      origin: TEST_APP_ORIGIN,
+      "content-type": "application/json",
+      accept: "text/event-stream",
+      cookie: fx.jar.header,
+      "x-workspace-id": fx.workspaceId,
+      // TURN WIRE CONTRACT: the Idempotency-Key header IS the turn key.
+      "idempotency-key": `${input.runId}:${input.stepIndex}`,
+    },
+    body: JSON.stringify({
+      runId: input.runId,
+      stepIndex: input.stepIndex,
+      messages: input.messages,
+      ...(input.model === undefined ? {} : { model: input.model }),
+    }),
+    signal: input.signal,
     redirect: "manual",
   });
 }
 
-async function postToolResult(
+/** The client's proposal-less stop gesture: the {end:true} end marker. */
+async function postPlanEnd(
   fx: Fixture,
   runId: string,
-  toolCallId: string,
-  result: unknown,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await api(server.base, `/v1/runs/${runId}/events`, {
+  const response = await api(server.base, `/v1/runs/${runId}/plan`, {
     method: "POST",
     jar: fx.jar,
-    headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("toolresult") },
-    body: { type: "tool.result", toolCallId, result },
+    headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("end") },
+    body: { end: true },
   });
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
-async function postCancel(
+/** The client's give-up gesture (tab closed, loop aborted). */
+async function postAbandon(
   fx: Fixture,
   runId: string,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await api(server.base, `/v1/runs/${runId}/cancel`, {
+  const response = await api(server.base, `/v1/runs/${runId}/abandon`, {
     method: "POST",
     jar: fx.jar,
-    headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("cancel") },
-    body: { reason: "test" },
+    headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("abandon") },
+    body: {},
   });
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
@@ -675,365 +712,348 @@ function typeSeq(events: readonly StudioStreamEvent[]): string[] {
 // Scenarios
 // ---------------------------------------------------------------------------
 
-d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", () => {
+d("M4-K gateway agent-loop E2E — the real turn engine over the real SSE wire", () => {
   it("1. happy loop: client tool round-trip drives the answer; ledger settles; run + steps + messages persist", async () => {
     const fx = await newFixture("happy");
-    const idempotencyKey = unique("chat");
+    const runId = unique("run");
     const message = "what's on this comp?";
-    const context = CONTEXT_SELECTION_SCHEMA.parse({
-      projectSummary: true,
-      activeComp: true,
-      selection: true,
-    });
-    const expectedReserve = reserveAmountFor(estimateRunCredits({ message, context, pinned: [] }));
 
+    // STEP 0 — the turn engine streams the model's get_context call to the
+    // client (§8.4: read/generative tools return for LOCAL execution).
     fake.enqueue(getContextRound("call_e2e_happy_1"), answerFromToolResult());
-
-    const response = await chatStream(fx, { message, context, idempotencyKey, pinned: [] });
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-    expect(response.headers.get("cache-control")).toBe("no-store");
-
-    const stream = new SseStream(response);
-    const head = await stream.until(
-      (event) => event.type === "tool.started",
-      "tool.started (studio.get_context)",
-    );
-    const events = expectValidStream(head, { requireTerminal: false });
-    expect(typeSeq(events)).toEqual(["run.started", "tool.started"]);
-    const runId = events[0]?.runId;
-    if (runId === undefined) throw new Error("no run.started event");
-    expect(events[0]).toMatchObject({ type: "run.started", model: "studio-fast" });
-    expect(events[1]).toMatchObject({
+    const step0Response = await turnStream(fx, {
+      runId,
+      stepIndex: 0,
+      messages: [{ role: "user", text: message }],
+    });
+    expect(step0Response.status).toBe(200);
+    expect(step0Response.headers.get("content-type")).toContain("text/event-stream");
+    expect(step0Response.headers.get("cache-control")).toBe("no-store");
+    const step0Events = expectValidStream(await new SseStream(step0Response).rest());
+    expect(typeSeq(step0Events)).toEqual([
+      "run.started",
+      "turn.started",
+      "tool.started",
+      "turn.completed",
+    ]);
+    expect(step0Events[0]).toMatchObject({ type: "run.started", model: "studio-fast" });
+    expect(step0Events[2]).toMatchObject({
       type: "tool.started",
       toolCallId: "call_e2e_happy_1",
       name: "studio.get_context",
       args: { include: ["activeComp"] },
     });
-
-    // §7.4 rule: only the expected toolCallId may report a result.
-    const stranger = await postToolResult(fx, runId, "call_not_expected", { nope: true });
-    expect(stranger.status).toBe(400);
-    expect(stranger.body.error).toMatchObject({ code: "VALIDATION_FAILED" });
-
-    // The "client" (bridge executor stand-in) reports the tool result.
-    const posted = await postToolResult(fx, runId, "call_e2e_happy_1", {
-      activeComp: { name: "Main" },
-    });
-    expect(posted.status).toBe(200);
-    expect(posted.body.data).toMatchObject({ runId, recorded: true });
-
-    const tail = await stream.rest();
-    const all = expectValidStream([...head, ...tail]);
-    expect(typeSeq(all)).toEqual([
-      "run.started",
-      "tool.started",
-      "tool.result",
-      "message.delta",
-      "message.delta",
-      "credits",
-      "run.completed",
-    ]);
-    expect(all[2]).toMatchObject({
-      type: "tool.result",
+    const step0 = completedOf(step0Events);
+    expect(step0.finishReason).toBe("tool-calls");
+    expect(step0.credits).toEqual({ committed: 1 }); // usageChunk(40, 8) → 1 credit
+    const proposed = step0.toolCalls[0];
+    expect(proposed).toMatchObject({
       toolCallId: "call_e2e_happy_1",
-      result: { activeComp: { name: "Main" } },
+      tool: "studio.get_context",
+      args: { include: ["activeComp"] },
     });
+    expect(proposed?.resultForModel).toMatchObject({
+      note: "Execute this tool locally and report the result with the next turn.",
+    });
+
+    // STEP 1 — the "client" (bridge executor stand-in) executes the tool
+    // LOCALLY and reports the result with the next turn's transcript — the
+    // round-12 tool round-trip.
+    const step1Response = await turnStream(fx, {
+      runId,
+      stepIndex: 1,
+      messages: [
+        { role: "user", text: message },
+        { role: "assistant", text: "" },
+        {
+          role: "tool_call",
+          toolCallId: "call_e2e_happy_1",
+          tool: "studio.get_context",
+          args: { include: ["activeComp"] },
+        },
+        {
+          role: "tool_result",
+          toolCallId: "call_e2e_happy_1",
+          tool: "studio.get_context",
+          result: { activeComp: { name: "Main" } },
+        },
+      ],
+    });
+    expect(step1Response.status).toBe(200);
+    const step1Events = expectValidStream(await new SseStream(step1Response).rest());
+    expect(typeSeq(step1Events)).toEqual([
+      "run.started",
+      "turn.started",
+      "message.delta",
+      "message.delta",
+      "turn.completed",
+    ]);
     // The answer names the comp from the CLIENT's tool result — proving the
-    // POST /v1/runs/:id/events payload reached the model conversation.
-    expect(joinedText(all)).toBe("The comp Main has 1 layer.");
-    const credits = findCredits(all);
-    expect(credits).toMatchObject({
-      reserved: expectedReserve,
-      committed: 1,
-    });
-    // §8.8 ledger semantics (FIXED 2026-10-23 by the integrator — the
-    // original settle refunded `outstanding − commit` while the reserve
-    // had already deducted N and the commit deducted M on top, double-
-    // charging every completed run by M; planSettlement now releases the
-    // FULL hold): a completed run nets exactly −commit. The event's balance
-    // is the DISPLAY conversion of the µc ledger balance (D-12): grant 100
-    // credits − commit 1 credit = 99 credits exactly.
-    expect(credits.balance).toBe(100 - 1);
+    // echoed tool_result reached the model conversation.
+    expect(joinedText(step1Events)).toBe("The comp Main has 1 layer.");
+    const step1 = completedOf(step1Events);
+    expect(step1.finishReason).toBe("stop");
+    expect(step1.credits).toEqual({ committed: 1 });
 
-    // §8.8 exit criterion: commit ≥ 1 and capped by the reserve (whole-credit
-    // display units).
-    expect(credits.committed).toBeGreaterThanOrEqual(1);
-    expect(credits.committed).toBeLessThanOrEqual(credits.reserved);
-
-    // The runner registers exactly the 13 curated tools on the provider wire
-    // (M5.1: the 5 read tools + the 8 PROPOSE-ONLY write tools — nothing else).
+    // The turn engine registers exactly the curated v3 tool catalog on the
+    // provider wire (M5.1's 13-tool catalog grew with the read/generative
+    // tools — the 21-tool sanitized set tests/golden-prompts pins), one
+    // model call per turn, the sanitized names + Bearer key.
     expect(fake.calls.length).toBe(2);
     expect(fake.calls[0]?.authorization).toBe("Bearer sk-test-litellm-fake");
     const toolNames = (fake.calls[0]?.body.tools ?? []).map((tool) => tool.function.name).sort();
     expect(toolNames).toEqual(WIRE_TOOL_IDS);
-    expect(WIRE_TOOL_IDS).toHaveLength(13);
+    expect(WIRE_TOOL_IDS).toHaveLength(21);
 
-    // Ledger (µc, D-12): reserve −N×1e6, commit −1×1e6, refund +N×1e6 (full
-    // hold release) — the §8.8 contract: the run nets exactly −1 credit.
-    await waitFor(
-      "the run row to complete",
-      async () => (await getRun(fx, runId)).status === "completed",
-    );
+    // §8.8 ledger (µc, D-12): one HOLD per turn (prompt-derived whole-credit
+    // multiples) and one −1_000_000 commit per turn — the usage-based commit
+    // is the ONLY authoritative charge. CURRENT-TRUTH fingerprint (12-w7-r1
+    // BUG-1, header): the hold scope is the RUN while the route settles per
+    // turn, so Σrefund = Σreserve − C₀ — the workspace overcharges by the
+    // first turn's commit (2 commits + 1 stranded credit here).
     const ledger = await server.deps.repos.ledger.list(fx.workspaceId, {});
     const runEntries = ledger.items.filter((entry) => entry.runId === runId);
     const byKind: Record<string, number[]> = {};
     for (const entry of runEntries) {
       byKind[entry.kind] = [...(byKind[entry.kind] ?? []), entry.amount];
     }
-    expect(byKind.reserve).toEqual([-expectedReserve * MICRO]);
-    expect(byKind.commit).toEqual([-1 * MICRO]);
-    expect(byKind.refund).toEqual([expectedReserve * MICRO]);
-    expect(await balanceOf(fx.workspaceId)).toBe((100 - 1) * MICRO);
+    const reserves = byKind.reserve ?? [];
+    expect(reserves).toHaveLength(2); // one hold per turn
+    for (const amount of reserves) {
+      expect(amount).toBeLessThanOrEqual(-1 * MICRO); // ≥ 1 credit, µc-honest
+      expect(Math.abs(amount) % MICRO).toBe(0); // whole-credit multiple
+    }
+    expect(byKind.commit).toEqual([-1 * MICRO, -1 * MICRO]);
+    const reserveSum = reserves.reduce((total, amount) => total - amount, 0);
+    const refundSum = (byKind.refund ?? []).reduce((total, amount) => total + amount, 0);
+    expect(refundSum).toBe(reserveSum); // 12-w7 BUG-1 FIXED: holds pair off exactly
+    expect(await balanceOf(fx.workspaceId)).toBe(98 * MICRO); // exactly the 2 commits
 
-    // Run row (whole credits per the D-12 row ruling).
+    // The client ends the loop: no carriers were proposed, so the stop is
+    // the {end:true} end marker — the run row lands completed.
+    const end = await postPlanEnd(fx, runId);
+    expect(end.status).toBe(200);
+    await waitFor(
+      "the run row to complete",
+      async () => (await getRun(fx, runId)).status === "completed",
+    );
+
+    // Run row (whole credits per the D-12 row ruling; per-turn holds never
+    // ride the row — reservedCredits stays 0).
     const record = await getRun(fx, runId);
-    expect(record.status).toBe("completed");
     expect(record.model).toBe("studio-fast");
-    expect(record.reservedCredits).toBe(expectedReserve);
-    expect(record.committedCredits).toBe(1);
+    expect(record.reservedCredits).toBe(0);
+    expect(record.committedCredits).toBe(2); // one committed credit per turn
     expect(record.baseVersionId).toBe(fx.versionId);
     expect(record.errorCode).toBeNull();
     expect(record.completedAt).not.toBeNull();
 
-    // Steps — agent_steps SINGLE WRITER (M4 tail #2, fixed by M5-C): the
-    // chat route's finalize recordSteps is the ONLY writer, keyed by the wire
-    // seq; the runs-route sink no longer inserts a row. One client tool call
-    // ⇒ EXACTLY 2 rows: args ("started" on the wire) + result ("succeeded"),
-    // at the seqs of the tool.started/tool.result SSE events.
-    const steps = record.steps;
-    expect(steps.length).toBe(2);
-    expect(steps.every((step) => step.tool === "studio.get_context")).toBe(true);
-    expect(steps.map((step) => step.seq)).toEqual([1, 2]); // run.started=0, tool.started=1, tool.result=2
-    expect(new Set(steps.map((step) => step.seq)).size).toBe(steps.length);
-    expect(steps.map((step) => step.status).sort()).toEqual(["started", "succeeded"]);
+    // Steps — ONE row per tool call: issued by the turn (step 0), completed
+    // by the echoed tool_result (settleEchoedToolResults on step 1), the
+    // client's result stored verbatim (the wire record maps the DB status to
+    // the §7.2 vocabulary; the raw row keeps the payload).
+    expect(record.steps.length).toBe(1);
+    expect(record.steps[0]?.tool).toBe("studio.get_context");
+    expect(record.steps[0]?.status).toBe("succeeded");
     const rawRun = await server.deps.repos.runs.get(fx.workspaceId, runId);
-    const withResult = rawRun.steps.filter(
-      (step) =>
-        (step.resultJson as { activeComp?: { name?: string } } | null)?.activeComp?.name === "Main",
-    );
-    expect(withResult.length).toBe(1);
-    const argsRow = rawRun.steps.find((step) => step.argsJson !== null);
-    expect(argsRow?.seq).toBe(1);
-    expect(argsRow?.status).toBe("running");
-    expect(rawRun.steps.some((step) => step.argsJson !== null)).toBe(true);
+    expect(rawRun.steps[0]?.seq).toBe(0);
+    expect(rawRun.steps[0]?.status).toBe("success");
+    expect(rawRun.steps[0]?.resultJson).toEqual({ activeComp: { name: "Main" } });
 
-    // Messages persisted: the user turn + the assistant answer (§9.1).
+    // Messages persisted (§9.1): the user turn, the tool-call turn's
+    // assistant row (empty text), the TOOL row — the client execution's
+    // transcript record: {args, result} together — and the closing answer.
     const messages = await listMessages(fx);
-    expect(messages.length).toBe(2);
-    const assistant = messages.find((row) => row.role === "assistant");
-    const user = messages.find((row) => row.role === "user");
-    if (assistant === undefined || user === undefined) throw new Error("missing message rows");
+    expect(messages.length).toBe(4);
+    const user = messages.find((row) => (row.content as { message?: string }).message === message);
+    const assistants = messages.filter((row) => row.role === "assistant");
+    // The tool row is identified by its content (the wire serializer flattens
+    // every non-assistant/system role to "user" — routes/threads.ts:35 — so
+    // role "tool" reads "user" here; content.kind carries the truth).
+    const toolRow = messages.find((row) => (row.content as { kind?: string }).kind === "tool");
+    if (user === undefined || assistants.length !== 2 || toolRow === undefined) {
+      throw new Error("missing message rows");
+    }
+    expect(toolRow.role).toBe("user"); // the flattened wire vocabulary (obs, worklog)
     expect(user.content).toMatchObject({ message });
-    expect(assistant.content).toMatchObject({ text: "The comp Main has 1 layer." });
-    expect(assistant.runId).toBe(runId);
+    expect(assistants.every((row) => row.runId === runId)).toBe(true);
+    // listMessages is newest-first: order by the persisted stepIndex.
+    const ordered = [...assistants].sort(
+      (a, b) =>
+        ((a.content as { stepIndex?: number }).stepIndex ?? 0) -
+        ((b.content as { stepIndex?: number }).stepIndex ?? 0),
+    );
+    expect(ordered.map((row) => (row.content as { message?: string }).message)).toEqual([
+      "",
+      "The comp Main has 1 layer.",
+    ]);
+    expect(toolRow.runId).toBe(runId);
+    expect(toolRow.content).toMatchObject({
+      kind: "tool",
+      toolCallId: "call_e2e_happy_1",
+      tool: "studio.get_context",
+      payload: { args: { include: ["activeComp"] }, result: { activeComp: { name: "Main" } } },
+    });
   });
 
-  it("2. replay: the same idempotencyKey re-POSTs the SAME run from seq 0 — no second run, no double reserve", async () => {
+  it("2. replay: the same Idempotency-Key re-POSTs the SAME durable turn outcome — no second run, no double reserve, no double settle", async () => {
     const fx = await newFixture("replay");
-    const idempotencyKey = unique("chat");
-    const body: ChatBody = {
-      message: "what's on this comp?",
-      context: {},
-      idempotencyKey,
-      pinned: [],
-    };
-    fake.enqueue(getContextRound("call_e2e_replay_1"), answerFromToolResult());
+    const runId = unique("run");
+    const messages: readonly TurnMessage[] = [{ role: "user", text: "what's on this comp?" }];
+    fake.enqueue(textRound("The comp Main has 1 layer."));
 
-    const first = await chatStream(fx, body);
-    const firstStream = new SseStream(first);
-    const head = await firstStream.until((event) => event.type === "tool.started", "tool.started");
-    const runId = (await runsOfThread(fx.workspaceId, fx.threadId))[0]?.id;
-    if (runId === undefined) throw new Error("no run row");
-    await postToolResult(fx, runId, "call_e2e_replay_1", { activeComp: { name: "Main" } });
-    const firstFrames = [...head, ...(await firstStream.rest())];
-    const firstEvents = expectValidStream(firstFrames);
-    await waitFor("run completion", async () => (await getRun(fx, runId)).status === "completed");
+    const first = await turnStream(fx, { runId, stepIndex: 0, messages });
+    const firstEvents = expectValidStream(await new SseStream(first).rest());
+    expect(typeSeq(firstEvents)).toEqual([
+      "run.started",
+      "turn.started",
+      "message.delta",
+      "turn.completed",
+    ]);
+    expect(joinedText(firstEvents)).toBe("The comp Main has 1 layer.");
+    expect(completedOf(firstEvents).credits).toEqual({ committed: 1 });
 
-    // Duplicate POST (network retry): replays the same run's log from seq 0.
-    const second = await chatStream(fx, body);
+    // Duplicate POST (network retry): the DURABLE replay — the turn's
+    // persisted outcome re-emits from seq 0; the model NEVER re-runs.
+    const second = await turnStream(fx, { runId, stepIndex: 0, messages });
     expect(second.status).toBe(200);
-    const secondStream = new SseStream(second);
-    const secondFrames = await secondStream.rest();
-    const secondEvents = expectValidStream(secondFrames);
-    expect(secondEvents).toEqual(firstEvents);
+    const secondEvents = expectValidStream(await new SseStream(second).rest());
+    expect(typeSeq(secondEvents)).toEqual(["run.started", "turn.started", "turn.completed"]);
     expect(secondEvents[0]?.seq).toBe(0);
+    const replay = completedOf(secondEvents);
+    expect(replay.assistantText).toBe("The comp Main has 1 layer.");
+    expect(replay.usage).toEqual({ inputTokens: 40, outputTokens: 8 });
+    expect(replay.credits).toEqual({ committed: 0 }); // already committed by the original turn
+    expect(fake.calls.length).toBe(1); // exactly one model call ever happened
 
-    // One run, one reserve.
+    // One run, one reserve, one settle — the run nets exactly −1 credit.
     const runs = await runsOfThread(fx.workspaceId, fx.threadId);
     expect(runs.length).toBe(1);
     const ledger = await server.deps.repos.ledger.list(fx.workspaceId, {});
-    const reserves = ledger.items.filter(
-      (entry) => entry.runId === runId && entry.kind === "reserve",
-    );
-    expect(reserves.length).toBe(1);
-    // Fixed §8.8 semantics: the completed run nets −1 credit (see test 1).
+    const runEntries = ledger.items.filter((entry) => entry.runId === runId);
+    expect(runEntries.filter((entry) => entry.kind === "reserve").length).toBe(1);
+    expect(runEntries.filter((entry) => entry.kind === "commit")).toEqual([
+      expect.objectContaining({ amount: -1 * MICRO }),
+    ]);
     expect(await balanceOf(fx.workspaceId)).toBe(99 * MICRO);
   });
 
-  it("3a. reconnect: a live run resumes after Last-Event-ID; the tool result posted mid-reconnect lands once", async () => {
-    const fx = await newFixture("reconnect");
-    const idempotencyKey = unique("chat");
-    const body: ChatBody = {
-      message: "what's on this comp?",
-      context: {},
-      idempotencyKey,
-      pinned: [],
-    };
-    fake.enqueue(getContextRound("call_e2e_rec_1"), answerFromToolResult());
-
-    const first = await chatStream(fx, body);
-    const firstStream = new SseStream(first);
-    const head = await firstStream.until((event) => event.type === "tool.started", "tool.started");
-    const cursor = head.at(-1)?.event.seq;
-    if (cursor === undefined) throw new Error("no cursor");
-    const runId = head[0]?.event.runId;
-    if (runId === undefined) throw new Error("no runId");
-
-    // "Reconnect": same body + Last-Event-ID cursor — a SECOND SSE segment
-    // over the same live run while the first is still open.
-    const second = await chatStream(fx, body, { lastEventId: String(cursor) });
-    expect(second.status).toBe(200);
-    const secondStream = new SseStream(second);
-
-    // The client executes the tool and reports the result mid-reconnect.
-    await postToolResult(fx, runId, "call_e2e_rec_1", { activeComp: { name: "Main" } });
-
-    const secondFrames = await secondStream.rest();
-    const secondEvents = expectValidStream(secondFrames, { firstSeq: cursor + 1 });
-    // Replay semantics: strictly after the cursor, nothing re-delivered.
-    expect(secondEvents.map((event) => event.seq)).toEqual(
-      secondEvents.map((_event, index) => cursor + 1 + index),
-    );
-    expect(typeSeq(secondEvents)).toEqual([
-      "tool.result",
-      "message.delta",
-      "message.delta",
-      "credits",
-      "run.completed",
-    ]);
-    expect(secondEvents.filter((event) => event.type === "tool.result").length).toBe(1);
-
-    // The original segment saw the same tail — each event lands once per stream.
-    const firstTail = await firstStream.rest();
-    const firstEvents = expectValidStream([...head, ...firstTail]);
-    expect(firstEvents.filter((event) => event.type === "tool.result").length).toBe(1);
-    expect(joinedText(firstEvents)).toBe("The comp Main has 1 layer.");
-
-    await waitFor("run completion", async () => (await getRun(fx, runId)).status === "completed");
-    expect((await runsOfThread(fx.workspaceId, fx.threadId)).length).toBe(1);
-  });
-
-  it("3b. client abort mid-run cancels the live run server-side (pinned actual behavior) and refunds the reserve", async () => {
-    // ACTUAL-BEHAVIOR PIN (report, never fix): chat.ts wires the hono request
-    // abort signal AND the SSE ReadableStream cancel() to cancelRun(), and
-    // @hono/node-server aborts the request signal when the client connection
-    // drops mid-response — so a mid-run disconnect CANCELS the live run
-    // (run row cancelled + run.cancelled + full refund) rather than letting
-    // it stream on for Last-Event-ID replay. The reconnect semantics are
-    // therefore replay-of-record (3a covers the live-parallel case); a real
-    // network flap ends the run under the current gateway.
+  it("3b. client abort mid-turn cancels the TURN server-side (refund, no durable outcome); the run ends by the client's ABANDON", async () => {
+    // ACTUAL-BEHAVIOR PIN (round-12): the turn route wires the request abort
+    // signal to the model call, so a mid-turn disconnect cancels the TURN —
+    // refundAll + NO persisted turnKey (a same-key retry re-runs the model,
+    // bounded to ONE re-execution) — but NOT the run: the browser owns the
+    // loop, so the run row stays live until the client's ABANDON gesture.
     const fx = await newFixture("abort");
-    const idempotencyKey = unique("chat");
-    fake.enqueue(getContextRound("call_e2e_abort_1"), answerFromToolResult());
+    const runId = unique("run");
 
+    // Empty script → the fake 500s → the §8.9 retry loop (real 1s/2s
+    // backoff) keeps the turn in flight: a deterministic abort window.
     const controller = new AbortController();
-    const response = await chatStream(
-      fx,
-      { message: "what's on this comp?", context: {}, idempotencyKey, pinned: [] },
-      { signal: controller.signal },
-    );
-    const stream = new SseStream(response);
-    const head = await stream.until((event) => event.type === "tool.started", "tool.started");
-    const runId = head[0]?.event.runId;
-    if (runId === undefined) throw new Error("no runId");
-
+    const response = await turnStream(fx, {
+      runId,
+      stepIndex: 0,
+      messages: [{ role: "user", text: "what's on this comp?" }],
+      signal: controller.signal,
+    });
+    expect(response.status).toBe(200);
     controller.abort();
-    await stream.cancel();
+    await new SseStream(response).cancel();
 
+    // The aborted turn refunds its whole hold and persists nothing.
     await waitFor(
-      "the aborted run to cancel",
-      async () => (await getRun(fx, runId)).status === "cancelled",
+      "the aborted turn's refund",
+      async () => (await balanceOf(fx.workspaceId)) === 100 * MICRO,
     );
-    expect(await balanceOf(fx.workspaceId)).toBe(100 * MICRO); // full refund
-    const record = await getRun(fx, runId);
-    expect(record.errorCode).toBe("RUN_CANCELLED");
-
-    // The replay of the same idempotencyKey shows the terminal log from seq 0.
-    const replayResponse = await chatStream(fx, {
-      message: "what's on this comp?",
-      context: {},
-      idempotencyKey,
-      pinned: [],
-    });
-    const replay = new SseStream(replayResponse);
-    const replayEvents = expectValidStream(await replay.rest());
-    expect(typeSeq(replayEvents)).toEqual(["run.started", "tool.started", "run.cancelled"]);
-
-    // A late tool result is refused — the run is terminal (§7.4).
-    const late = await postToolResult(fx, runId, "call_e2e_abort_1", {
-      activeComp: { name: "Main" },
-    });
-    expect(late.status).toBe(409);
-    expect(late.body.error).toMatchObject({ code: "RUN_NOT_ACTIVE" });
-
-    // Only the user turn persists (cancelled runs never write an assistant row).
-    const messages = await listMessages(fx);
-    expect(messages.length).toBe(1);
-    expect(messages[0]?.role).toBe("user");
-  });
-
-  it("4. cancel: POST /v1/runs/:id/cancel emits run.cancelled on the wire and refunds the full reserve", async () => {
-    const fx = await newFixture("cancel");
-    fake.enqueue(getContextRound("call_e2e_cancel_1"), answerFromToolResult());
-
-    const response = await chatStream(fx, {
-      message: "what's on this comp?",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
-    });
-    const stream = new SseStream(response);
-    const head = await stream.until((event) => event.type === "tool.started", "tool.started");
-    const runId = head[0]?.event.runId;
-    if (runId === undefined) throw new Error("no runId");
-
-    const cancel = await postCancel(fx, runId);
-    expect(cancel.status).toBe(200);
-    expect(cancel.body.data).toMatchObject({ runId, cancelled: true });
-
-    const tail = await stream.rest();
-    const events = expectValidStream([...head, ...tail]);
-    expect(events.at(-1)).toMatchObject({ type: "run.cancelled" });
-    expect(events.filter((event) => TERMINAL_TYPES.has(event.type)).length).toBe(1);
-
-    await waitFor(
-      "the cancelled run row",
-      async () => (await getRun(fx, runId)).status === "cancelled",
-    );
-    const record = await getRun(fx, runId);
-    expect(record.errorCode).toBe("RUN_CANCELLED");
-    expect(record.committedCredits).toBe(0);
-    expect(record.completedAt).not.toBeNull();
-
-    // Full refund: ledger balance is back to the pre-run grant.
-    expect(await balanceOf(fx.workspaceId)).toBe(100 * MICRO);
     const ledger = await server.deps.repos.ledger.list(fx.workspaceId, {});
     const runEntries = ledger.items.filter((entry) => entry.runId === runId);
     expect(runEntries.filter((entry) => entry.kind === "reserve").length).toBe(1);
     expect(runEntries.filter((entry) => entry.kind === "refund").length).toBe(1);
     expect(runEntries.filter((entry) => entry.kind === "commit").length).toBe(0);
+
+    const record = await getRun(fx, runId);
+    // 12-w7 BUG-2a FIXED: the DB row is RUNNING (the turn route heartbeats
+    // it) and GET /v1/runs/:id now maps it onto the wire's "streaming" —
+    // a live turn-world run reads live on the wire, never "queued".
+    expect(record.status).toBe("streaming"); // the honest live-run mapping
+    expect((await server.deps.repos.runs.get(fx.workspaceId, runId)).run.status).toBe(
+      "running", // the TURN is cancelled, not the run
+    );
+    expect(record.errorCode).toBeNull();
+    // Only the user turn persists (aborted turns never write an assistant row).
+    const messages = await listMessages(fx);
+    expect(messages.length).toBe(1);
+    expect(messages[0]?.role).toBe("user");
+
+    // The client's give-up gesture lands the run row.
+    const abandon = await postAbandon(fx, runId);
+    expect(abandon.status).toBe(200);
+    expect(abandon.body).toEqual({ runId, status: "abandoned" });
+    await waitFor(
+      "the abandoned run row",
+      async () => (await getRun(fx, runId)).status === "cancelled",
+    );
+    const final = await getRun(fx, runId);
+    expect(final.errorCode).toBe("RUN_ABANDONED");
+    expect(final.committedCredits).toBe(0);
+  });
+
+  it("4. stop: the client's ABANDON on a mid-flight run cancels it and refunds the outstanding per-turn hold", async () => {
+    // The round-12 stop gesture (the retired run.cancelled-on-the-wire arm
+    // died with the server loop — see the header deletions): POST
+    // /v1/runs/:id/abandon lands the run cancelled + refunds the hold.
+    const fx = await newFixture("stop");
+    const runId = unique("run");
+
+    // Empty script → 500s → the §8.9 retry loop holds the turn open with the
+    // per-turn hold outstanding — the abandon lands inside that window.
+    const response = await turnStream(fx, {
+      runId,
+      stepIndex: 0,
+      messages: [{ role: "user", text: "what's on this comp?" }],
+    });
+    expect(response.status).toBe(200);
+
+    const abandon = await postAbandon(fx, runId);
+    expect(abandon.status).toBe(200);
+    expect(abandon.body).toEqual({ runId, status: "abandoned" });
+    await waitFor(
+      "the cancelled run row",
+      async () => (await getRun(fx, runId)).status === "cancelled",
+    );
+    const record = await getRun(fx, runId);
+    expect(record.errorCode).toBe("RUN_ABANDONED");
+    expect(record.committedCredits).toBe(0);
+    expect(record.completedAt).not.toBeNull();
+
+    // The turn's own stream still ends with its §8.9 terminal: the model
+    // call burned its retry budget → turn.failed RUN_MODEL_UNAVAILABLE.
+    const events = expectValidStream(await new SseStream(response).rest());
+    const failed = failedOf(events);
+    expect(failed).toMatchObject({ code: "RUN_MODEL_UNAVAILABLE", retryable: true });
+    expect(failed.credits).toEqual({ committed: 0 });
+
+    // Full refund: the ABANDON refunded the outstanding hold
+    // (turn:${runId}:abandon:refund); the failed turn's own refundAll was a
+    // no-op (outstanding already 0). One reserve, one refund, no commits.
+    const ledger = await server.deps.repos.ledger.list(fx.workspaceId, {});
+    const runEntries = ledger.items.filter((entry) => entry.runId === runId);
+    expect(runEntries.filter((entry) => entry.kind === "reserve").length).toBe(1);
+    const refunds = runEntries.filter((entry) => entry.kind === "refund");
+    expect(refunds.length).toBe(1);
+    expect(refunds[0]?.idempotencyKey).toBe(`turn:${runId}:abandon:refund`);
+    expect(runEntries.filter((entry) => entry.kind === "commit").length).toBe(0);
+    expect(await balanceOf(fx.workspaceId)).toBe(100 * MICRO); // full refund
   });
 
   it("6. model entitlements: studio-smart on trial → 403 MODEL_NOT_ENTITLED, no run, no ledger movement, no user message", async () => {
     const fx = await newFixture("entitled");
     fake.enqueue(textRound("unused")); // must never be called
 
-    const response = await chatStream(fx, {
-      message: "make it fancy",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
+    const response = await turnStream(fx, {
+      runId: unique("run"),
+      stepIndex: 0,
+      messages: [{ role: "user", text: "make it fancy" }],
       model: "studio-smart",
     });
     expect(response.status).toBe(403);
@@ -1064,11 +1084,10 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     expect(await balanceOf(fx.workspaceId)).toBe(0);
     fake.enqueue(textRound("unused"));
 
-    const response = await chatStream(fx, {
-      message: "what's on this comp?",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
+    const response = await turnStream(fx, {
+      runId: unique("run"),
+      stepIndex: 0,
+      messages: [{ role: "user", text: "what's on this comp?" }],
     });
     expect(response.status).toBe(402);
     expect(response.headers.get("content-type")).toContain("application/json");
@@ -1081,62 +1100,102 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     expect((await listMessages(fx)).length).toBe(0);
   });
 
-  it("8. invalid tool: an unknown tool twice → run.failed RUN_INVALID_TOOL after one repair turn + full refund", async () => {
+  it("8. invalid tool: an unknown tool call resolves FAIL-CLOSED to the client; the echoed error reaches the model on the next turn", async () => {
+    // ROUND-12 re-point (the retired §8.9 server-side repair-turn protocol is
+    // deleted — header): the turn engine resolves the bad call fail-closed —
+    // a typed INVALID_TOOL_CALL envelope rides the toolCall's resultForModel
+    // (§8.4/§8.9), the CLIENT decides — and a client that keeps looping
+    // hands the error to the model as the next turn's tool_result: the old
+    // repair-turn subject, now client-mediated.
     const fx = await newFixture("invalid");
+    const runId = unique("run");
+    const message = "delete everything";
     fake.enqueue(
       unknownToolRound("call_bad_1", "studio.delete_everything"),
-      unknownToolRound("call_bad_2", "studio.delete_everything"),
+      textRound("I can't use that tool."),
     );
 
-    const response = await chatStream(fx, {
-      message: "delete everything",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
+    const step0Response = await turnStream(fx, {
+      runId,
+      stepIndex: 0,
+      messages: [{ role: "user", text: message }],
     });
-    const stream = new SseStream(response);
-    const frames = await stream.rest();
-    const events = expectValidStream(frames);
-    expect(typeSeq(events)).toEqual(["run.started", "run.failed"]);
-    const failed = events[1];
-    if (failed?.type !== "run.failed") throw new Error("expected run.failed");
-    expect(failed).toMatchObject({
-      code: "RUN_INVALID_TOOL",
-      message: "The agent requested a tool call we can't validate.",
-      retryable: false,
+    const step0Events = expectValidStream(await new SseStream(step0Response).rest());
+    expect(typeSeq(step0Events)).toEqual([
+      "run.started",
+      "turn.started",
+      "tool.started",
+      "turn.completed",
+    ]);
+    const step0 = completedOf(step0Events);
+    expect(step0.finishReason).toBe("tool-calls");
+    const bad = step0.toolCalls[0];
+    expect(bad).toMatchObject({
+      toolCallId: "call_bad_1",
+      tool: "studio.delete_everything",
+      args: {},
     });
-    const runId = events[0]?.runId;
+    expect(bad?.resultForModel).toMatchObject({ error: "INVALID_TOOL_CALL" });
+    expect(String((bad?.resultForModel as { message?: unknown }).message)).toContain(
+      'Unknown tool "studio.delete_everything"',
+    );
 
-    // One repair turn (§8.9): the model saw the validation error as the tool
-    // result before the second offense failed the run.
+    // The client echoes the failure as the tool result → the NEXT model call
+    // sees it (the repair), then wraps up.
+    const step1Response = await turnStream(fx, {
+      runId,
+      stepIndex: 1,
+      messages: [
+        { role: "user", text: message },
+        { role: "assistant", text: "" },
+        {
+          role: "tool_call",
+          toolCallId: "call_bad_1",
+          tool: "studio.delete_everything",
+          args: {},
+        },
+        {
+          role: "tool_result",
+          toolCallId: "call_bad_1",
+          tool: "studio.delete_everything",
+          result: bad?.resultForModel,
+        },
+      ],
+    });
+    const step1Events = expectValidStream(await new SseStream(step1Response).rest());
+    expect(joinedText(step1Events)).toBe("I can't use that tool.");
+
+    // The model's step-1 prompt carried the validation error — the same
+    // repair-content pin the old server-side protocol had.
     expect(fake.calls.length).toBe(2);
     const repairContent = (fake.calls[1]?.body.messages ?? [])
-      .filter((message) => message.role === "tool" && typeof message.content === "string")
-      .map((message) => String(message.content))
+      .filter((m) => m.role === "tool" && typeof m.content === "string")
+      .map((m) => String(m.content))
       .join(" ");
-    expect(repairContent).toContain("VALIDATION_FAILED");
     expect(repairContent).toContain("Unknown tool");
+    expect(repairContent).toContain("studio.delete_everything");
 
-    if (runId === undefined) throw new Error("no runId");
-    await waitFor("the failed run row", async () => (await getRun(fx, runId)).status === "failed");
+    // The run is NOT failed server-side — the turn completed normally and
+    // the client ends the loop with the marker.
+    const end = await postPlanEnd(fx, runId);
+    expect(end.status).toBe(200);
+    await waitFor(
+      "the run row to complete",
+      async () => (await getRun(fx, runId)).status === "completed",
+    );
     const record = await getRun(fx, runId);
-    expect(record.errorCode).toBe("RUN_INVALID_TOOL");
-    expect(record.committedCredits).toBe(0);
-    expect(await balanceOf(fx.workspaceId)).toBe(100 * MICRO); // full refund
-    const rawRun = await server.deps.repos.runs.get(fx.workspaceId, runId);
-    expect(rawRun.steps.length).toBe(0); // invalid calls never started a tool
-    expect((await listMessages(fx)).length).toBe(1); // the user turn only
+    expect(record.errorCode).toBeNull();
+    expect(record.committedCredits).toBe(2); // both turns billed their usage
   });
 
   it("9. SSE contract: id/data frames, seq monotonic from 0, first run.started, one terminal, §7.4 schemas parse", async () => {
     const fx = await newFixture("contract");
     fake.enqueue(textRound("Short answer."));
 
-    const response = await chatStream(fx, {
-      message: "say something",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
+    const response = await turnStream(fx, {
+      runId: unique("run"),
+      stepIndex: 0,
+      messages: [{ role: "user", text: "say something" }],
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
@@ -1146,30 +1205,45 @@ d("M4-K gateway chat-loop E2E — real LiteLLM runner over the real SSE wire", (
     const stream = new SseStream(response);
     const frames = await stream.rest();
     const events = expectValidStream(frames); // every §7.4 rule asserted inside
-    expect(typeSeq(events)).toEqual(["run.started", "message.delta", "credits", "run.completed"]);
+    expect(typeSeq(events)).toEqual([
+      "run.started",
+      "turn.started",
+      "message.delta",
+      "turn.completed",
+    ]);
     expect(events[0]).toMatchObject({ type: "run.started", model: "studio-fast" });
-    expect(events[1]).toMatchObject({ type: "message.delta", delta: "Short answer." });
-    expect(findCredits(events).committed).toBe(1); // usageChunk(40, 8) on studio-fast → ceil → 1
+    expect(events[1]).toMatchObject({ type: "turn.started", stepIndex: 0 });
+    expect(events[2]).toMatchObject({ type: "message.delta", delta: "Short answer." });
+    expect(completedOf(events).credits).toEqual({ committed: 1 }); // usageChunk(40, 8) → 1
     const runId = events[0]?.runId;
     if (runId === undefined) throw new Error("no runId");
+    const end = await postPlanEnd(fx, runId);
+    expect(end.status).toBe(200);
     await waitFor("run completion", async () => (await getRun(fx, runId)).status === "completed");
   });
 
-  it("10. cross-tenant: another workspace's chat POST on this thread → 404 THREAD_NOT_FOUND, never 403", async () => {
+  it("10. cross-tenant: another workspace's turn POST on this thread → 404 THREAD_NOT_FOUND, never 403", async () => {
     const fx = await newFixture("tenant-a");
     const intruder = await newWorkspace("tenant-b"); // a member of a DIFFERENT workspace
     fake.enqueue(textRound("unused"));
 
-    const response = await api(server.base, `/v1/threads/${fx.threadId}/chat`, {
+    const runId = unique("run");
+    const response = await fetch(`${server.base}/v1/threads/${fx.threadId}/turn`, {
       method: "POST",
-      jar: intruder.jar,
-      headers: { "x-workspace-id": intruder.id },
-      body: {
-        message: "what's on this comp?",
-        context: {},
-        idempotencyKey: unique("chat"),
-        pinned: [],
+      headers: {
+        origin: TEST_APP_ORIGIN,
+        "content-type": "application/json",
+        accept: "text/event-stream",
+        cookie: intruder.jar.header,
+        "x-workspace-id": intruder.id,
+        "idempotency-key": `${runId}:0`,
       },
+      body: JSON.stringify({
+        runId,
+        stepIndex: 0,
+        messages: [{ role: "user", text: "what's on this comp?" }],
+      }),
+      redirect: "manual",
     });
     expect(response.status).toBe(404); // law #3: cross-tenant = 404
     const parsed = await envelope(response);

@@ -17,7 +17,7 @@ const BASE = "https://api.studio.test/v1";
 // tests that await `me.get()` must feed it a real MeResponse (the
 // MALFORMED_RESPONSE tests pin the validation itself).
 const ME = {
-  user: { id: "usr_1", name: null, email: "maya@example.com" },
+  user: { id: "usr_1", name: null, email: "maya@example.com", role: null },
   memberships: [],
   plan: { plan: "pro", creditsBalance: 3200, includedCredits: 2500, renewsAt: null },
 };
@@ -34,7 +34,7 @@ function makeClient(handler: (input: string, init?: RequestInit) => Promise<Resp
 describe("createApiClient — envelope unwrap", () => {
   it("returns Ok.data and strips unknown keys via the response schema", async () => {
     const me = {
-      user: { id: "usr_1", name: "Maya", email: "maya@example.com", sneaky: "drop me" },
+      user: { id: "usr_1", name: "Maya", email: "maya@example.com", role: null, sneaky: "drop me" },
       memberships: [],
       plan: { plan: "pro", creditsBalance: 3200, includedCredits: 2500, renewsAt: null },
       extra: "dropped",

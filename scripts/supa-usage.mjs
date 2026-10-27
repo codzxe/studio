@@ -24,13 +24,15 @@ const tables = await sql`
   select relname as table, n_live_tup as rows, pg_total_relation_size(relid) as bytes
   from pg_stat_user_tables where schemaname = 'public' order by pg_total_relation_size(relid) desc limit 12`;
 console.log("\ntop tables (rows, size):");
-for (const t of tables) console.log(`  ${t.table.padEnd(24)} ${String(t.rows).padStart(8)}  ${mb(t.bytes)}`);
+for (const t of tables)
+  console.log(`  ${t.table.padEnd(24)} ${String(t.rows).padStart(8)}  ${mb(t.bytes)}`);
 
 const legacy = await sql`
   select count(*)::int as legacy_tables from pg_stat_user_tables where schemaname = 'legacy'`;
 console.log(`\nlegacy schema tables preserved: ${legacy[0].legacy_tables}`);
 
-const [users] = await sql`select count(*)::int as n, count(*) filter (where role = 'admin')::int as admins from "user"`;
+const [users] =
+  await sql`select count(*)::int as n, count(*) filter (where role = 'admin')::int as admins from "user"`;
 console.log(`users: ${users.n} (admins: ${users.admins})`);
 const [orgs] = await sql`select count(*)::int as n from organization`;
 console.log(`workspaces: ${orgs.n}`);

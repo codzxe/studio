@@ -7,11 +7,35 @@
  * typed union the plan card (M5-G) renders:
  *
  *  `apply(plan)`:
- *    1. validate the `compiledBatch` shape AND allowlist every step id
- *       against the curated agent registry (F-6: `isAgentCommand` via the
- *       api-client runtime-contracts seam) — a non-member id is a typed
- *       `invalid-batch` BEFORE any engine traffic (the engine's registry +
- *       NOT_IN_BATCH rejections stay the defense-in-depth backstop);
+ *    0. ROUND-12 CLIENT-SPECIAL STEPS (pinned by the gateway plan compiler):
+ *       the compiled batch may carry two convention ids the ENGINE batch
+ *       cannot or must not run itself —
+ *         * `script.run` — the engine refuses it inside `engine.batch`
+ *           (NOT_IN_BATCH, batch.rs), so each script step executes via
+ *           `bridge.execute("script.run", …)` BEFORE the batch, wrapped in
+ *           ONE labeled undo group (`app.beginUndoGroup(label)`/`endUndoGroup`
+ *           around the code, closed by a `finally` even when the script
+ *           throws) so its edits are one undo entry; a FAILED script's
+ *           partial edits are reverted (one label-verified `edit.undo`);
+ *         * `asset.importSvg` — the local SVG import seam: the engine's
+ *           string-based vector import command `edit.pasteSvg {svg, name?,
+ *           comp?}` (allowed in the tier-2 catalog, journal:true, law-#5-clean
+ *           — inline markup, never a filesystem path). An editor dist without
+ *           it answers the typed `svg-import-unavailable` failure.
+ *       BOTH run before layer resolution so steps can reference the layers
+ *       they create BY NAME, and every later failure (resolution, batch)
+ *       reverts what the pre-phase executed (best-effort, label-verified,
+ *       bounded) — a failed gesture leaves NOTHING (§M5 exit criterion).
+ *       ONE `saveNow` + ONE applyRun cover the whole gesture.
+ *    1. validate the `compiledBatch` shape AND gate every step id:
+ *       batch steps against ALLOWED_COMMAND_IDS (tier-2 ids-only list from
+ *       `@studio/contracts` — a strict superset of the curated 37; the
+ *       server compile already validated against the full catalog, this is
+ *       defense in depth), the two client-special conventions against their
+ *       pinned shapes (script code ≤ 20 000 chars, svg ≤ 50 000) — a
+ *       non-member id is a typed `invalid-batch` BEFORE any engine traffic
+ *       (the engine's registry + NOT_IN_BATCH rejections stay the
+ *       defense-in-depth backstop);
  *    2. resolve each `resolutionRequests` entry against the LIVE layer list
  *       (the executor's list_layers path: `comp.info {}` → `layers`) — a name
  *       matching exactly one layer binds it; ambiguous or unknown names fail
@@ -87,8 +111,8 @@
 
 import type { SaveOutcome } from "@/lib/editor-session";
 import { isReadOnlyLeaseError, sha256Hex } from "@/lib/editor-session";
-import { isAgentCommand } from "@studio/api-client/chat-tools";
 import type { AgentBatch, BatchStep } from "@studio/contracts";
+import { ALLOWED_COMMAND_IDS, isAllowedEngineCommand } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { isBridgeError, messageOf } from "@studio/editor-bridge";
 
@@ -222,12 +246,23 @@ export type ApplyOutcome =
       readonly message: string;
     }
   | {
+      /** The engine build has no string-based SVG import seam (the
+       * `edit.pasteSvg` catalog id is unknown to the live editor) — nothing
+       * executed beyond the steps the engine already reverted. */
+      readonly ok: false;
+      readonly reason: "svg-import-unavailable";
+      readonly message: string;
+    }
+  | {
       /** Anything else (typed failure; `code` carries the §7.3 wire code when known). */
       readonly ok: false;
       readonly reason: "failed";
       readonly message: string;
       readonly code?: string;
     };
+
+/** The failure arms of {@link ApplyOutcome} (the ok:false subset). */
+export type ApplyFailure = Extract<ApplyOutcome, { ok: false }>;
 
 export type UndoOutcome =
   | { readonly ok: true; readonly undone: true }
@@ -474,7 +509,7 @@ async function resolveRequests(
   requests: readonly LayerResolutionRequest[],
   bridge: EditorBridge,
 ): Promise<
-  { ok: true; resolved: readonly ResolvedLayer[] } | { ok: false; outcome: ApplyOutcome }
+  { ok: true; resolved: readonly ResolvedLayer[] } | { ok: false; outcome: ApplyFailure }
 > {
   let layers: readonly CompLayerEntry[];
   try {
@@ -595,6 +630,190 @@ function validCompiledBatch(batch: unknown): AgentBatch | null {
 }
 
 // ---------------------------------------------------------------------------
+// Round-12 client-special compiled steps (script.run / asset.importSvg)
+// ---------------------------------------------------------------------------
+
+/** Engine `NOT_IN_BATCH` id — executes via `bridge.execute`, never in-batch. */
+const SCRIPT_RUN_COMMAND = "script.run";
+/** The gateway plan-compiler's convention id for the inline SVG import step. */
+const ASSET_IMPORT_SVG_COMMAND = "asset.importSvg";
+/** The engine's string-based vector import command (tier-2-allowed, journal:true). */
+const SVG_IMPORT_ENGINE_COMMAND = "edit.pasteSvg";
+
+/** write-tools.ts MAX_SCRIPT_CODE_LENGTH mirror (the compiled provenance bound). */
+const MAX_SCRIPT_STEP_CODE_CHARS = 20_000;
+/** write-tools.ts MAX_SVG_LENGTH mirror. */
+const MAX_SVG_STEP_CHARS = 50_000;
+
+/** The engine's own "no such command" rejection (commands/mod.rs `find`). */
+const UNKNOWN_COMMAND_RE = /unknown command/i;
+
+/** One compiled step split by execution surface: pre-phase vs engine batch. */
+interface PartitionedSteps {
+  /** script.run + asset.importSvg steps, in compiled order. */
+  readonly preSteps: readonly BatchStep[];
+  /** Everything else — the atomic `engine.batch` payload. */
+  readonly batchSteps: readonly BatchStep[];
+}
+
+function partitionCompiledSteps(steps: readonly BatchStep[]): PartitionedSteps {
+  const preSteps: BatchStep[] = [];
+  const batchSteps: BatchStep[] = [];
+  for (const step of steps) {
+    if (step.command === SCRIPT_RUN_COMMAND || step.command === ASSET_IMPORT_SVG_COMMAND) {
+      preSteps.push(step);
+    } else {
+      batchSteps.push(step);
+    }
+  }
+  return { preSteps, batchSteps };
+}
+
+/** Narrow shape check for one pre-phase step's params (compiled upstream). */
+function preStepParamsError(step: BatchStep): string | null {
+  const params = step.params as Record<string, unknown>;
+  if (step.command === SCRIPT_RUN_COMMAND) {
+    if (typeof params.code !== "string" || params.code.length === 0) {
+      return `the script step's code is missing`;
+    }
+    if (params.code.length > MAX_SCRIPT_STEP_CODE_CHARS) {
+      return "the script step's code is too long";
+    }
+    if (params.name !== undefined && typeof params.name !== "string") {
+      return "the script step's name is not a string";
+    }
+    return null;
+  }
+  if (typeof params.svg !== "string" || params.svg.length === 0) {
+    return "the SVG import step's svg markup is missing";
+  }
+  if (params.svg.length > MAX_SVG_STEP_CHARS) {
+    return "the SVG import step's markup is too long";
+  }
+  for (const key of ["name", "comp"] as const) {
+    if (params[key] !== undefined && typeof params[key] !== "string") {
+      return `the SVG import step's ${key} is not a string`;
+    }
+  }
+  return null;
+}
+
+/** Closest allowed id to a denied one (the repairable-error pattern). */
+function closestAllowedHint(id: string): string {
+  const dot = id.indexOf(".");
+  const prefix = dot > 0 ? id.slice(0, dot + 1) : "";
+  const near =
+    prefix === ""
+      ? []
+      : ALLOWED_COMMAND_IDS.filter((allowed) => allowed.startsWith(prefix)).slice(0, 3);
+  return near.length > 0 ? ` Closest allowed ids: ${near.join(", ")}.` : "";
+}
+
+/** Marks a script whose code ran but reported a script-level failure. */
+class ScriptStepError extends Error {}
+
+/** The engine's script.run failure shape: {ok:false, error:{message,line,column}}. */
+function scriptFailureMessage(
+  error:
+    | { readonly message?: unknown; readonly line?: unknown; readonly column?: unknown }
+    | null
+    | undefined,
+): string {
+  const message =
+    error !== null && typeof error === "object" && typeof error.message === "string"
+      ? error.message
+      : "the script reported an error";
+  const line =
+    error !== null && typeof error === "object" && typeof error.line === "number"
+      ? ` at line ${error.line}`
+      : "";
+  return `The script failed: ${message}${line}. Nothing else from this plan ran.`;
+}
+
+/**
+ * Wraps the model's script in ONE labeled undo group (the engine's documented
+ * recipe: a script that throws KEEPS its prior edits, so scripts must wrap
+ * themselves — the `finally` closes the group even on throw, which is what
+ * makes a failed script's partial edits a single revertible entry).
+ */
+function wrapScriptInUndoGroup(label: string, code: string): string {
+  return `app.beginUndoGroup(${JSON.stringify(label)});\ntry {\n${code}\n} finally {\n  app.endUndoGroup();\n}\n`;
+}
+
+/** What a pre-phase execution left on the undo stack (bottom → top order). */
+interface PrePhaseLedger {
+  /** The expected undo-entry label per executed step (`null` = unverifiable). */
+  readonly labels: readonly (string | null)[];
+  /** Whether the atomic `engine.batch` also ran (its folded entry is on top). */
+  readonly batchRan: boolean;
+}
+
+/** Result of the best-effort pre-phase revert. */
+interface RevertResult {
+  readonly revertedAll: boolean;
+  /** Honest continuation for the failure message when not everything reverted. */
+  readonly note: string;
+}
+
+const REVERT_ALL: RevertResult = { revertedAll: true, note: "" };
+
+/**
+ * Pops the pre-phase entries that already executed — TOP FIRST, every pop
+ * label-verified against the expected sequence (`null` expected = the entry's
+ * label could not be known, accepted by count), stopping at the FIRST
+ * foreign/unnamed pop or any undo failure: NEVER touch an edit that is not
+ * this gesture's (F-L4 discipline). Never throws.
+ */
+async function revertPrePhaseEntries(
+  bridge: EditorBridge,
+  expectedBottomToTop: readonly (string | null)[],
+): Promise<RevertResult> {
+  for (let index = expectedBottomToTop.length - 1; index >= 0; index--) {
+    const expected = expectedBottomToTop[index] ?? null;
+    let popped: { undone?: unknown } | undefined;
+    try {
+      popped = await bridge.execute<{ undone?: unknown }>("edit.undo");
+    } catch {
+      return {
+        revertedAll: false,
+        note: " Some of the provisional edits this plan made could not be reverted automatically — undo them from the editor's History panel.",
+      };
+    }
+    const poppedLabel =
+      popped !== null && typeof popped === "object" && typeof popped.undone === "string"
+        ? popped.undone
+        : undefined;
+    if (poppedLabel === undefined) {
+      return {
+        revertedAll: false,
+        note: " The editor undid an unnamed edit while reverting this plan, so the remaining provisional edits were left in place — undo them from the editor's History panel.",
+      };
+    }
+    if (expected !== null && poppedLabel !== expected) {
+      return {
+        revertedAll: false,
+        note: " A different edit was on top of the undo stack while reverting this plan, so its remaining provisional edits were left in place — undo them from the editor's History panel.",
+      };
+    }
+  }
+  return REVERT_ALL;
+}
+
+/** The pasteSvg undo-entry label (via `command.describe`), or null when unverifiable. */
+async function svgEntryLabel(bridge: EditorBridge): Promise<string | null> {
+  try {
+    const described = await bridge.query<{ label?: unknown }>("command.describe", {
+      command: SVG_IMPORT_ENGINE_COMMAND,
+    });
+    return typeof described?.label === "string" && described.label.length > 0
+      ? described.label
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // sha256 of the exact engine payload
 // ---------------------------------------------------------------------------
 
@@ -647,6 +866,10 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
   /** Retained per-run applied-batch labels (F-L4) — they OUTLIVE a successful
    * apply (undo needs them) and are spent by a VERIFIED pop. */
   const appliedLabels = new Map<string, string>();
+  /** Round-12: retained per-run pre-phase ledgers (script/SVG undo entries)
+   * so `undo` can revert the WHOLE gesture, label-verified, not just the
+   * folded batch entry. Cleared with the labels on a verified undo. */
+  const prePhaseRecords = new Map<string, PrePhaseLedger>();
 
   const notify = (event: ApplyEngineEvent): void => {
     const callback = options.onEvent;
@@ -786,15 +1009,28 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
         message: "The plan's compiled batch is malformed. Ask the agent to plan again.",
       });
     }
-    // F-6 — the client allowlist gate: every step id must be a curated agent
-    // command BEFORE anything reaches the engine (bounds/shape checks alone
-    // let hostile ids through to the engine's own registry, the finding).
-    if (compiled.steps.some((step) => !isAgentCommand(step.command))) {
+
+    // F-6 (round-12 widened) — the client gate, BEFORE anything reaches the
+    // engine: every BATCH step id must be an ALLOWED engine command (the
+    // tier-2 ids-only list from @studio/contracts — a strict superset of the
+    // curated 37; the server compile already validated against the full
+    // catalog, this is the client's defense in depth), and the two
+    // client-special conventions must match their pinned shapes.
+    const { preSteps, batchSteps } = partitionCompiledSteps(compiled.steps);
+    const denied = batchSteps.find((step) => !isAllowedEngineCommand(step.command));
+    if (denied !== undefined) {
       return failApply(plan.runId, {
         ok: false,
         reason: "invalid-batch",
-        message:
-          "The plan's compiled batch contains a command the agent may not run. Ask the agent to plan again.",
+        message: `The plan's compiled batch contains a command the agent may not run ("${denied.command}").${closestAllowedHint(denied.command)} Ask the agent to plan again.`,
+      });
+    }
+    const malformed = preSteps.find((step) => preStepParamsError(step) !== null);
+    if (malformed !== undefined) {
+      return failApply(plan.runId, {
+        ok: false,
+        reason: "invalid-batch",
+        message: `The plan's ${malformed.command} step is malformed (${preStepParamsError(malformed)}). Ask the agent to plan again.`,
       });
     }
 
@@ -805,14 +1041,101 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
     const retained = runRecords.get(plan.runId);
     const idempotencyKey = retained?.idempotencyKey ?? crypto.randomUUID();
 
-    // 1. Resolve layer names against the live list — read-only; on any
-    //    ambiguity NOTHING executes (no engine.batch, no save, no applyRun).
+    // 1. ROUND-12 PRE-PHASE — script.run + asset.importSvg steps, in compiled
+    //    order, BEFORE resolution so later steps can reference the layers
+    //    they create BY NAME. Every pre-phase undo entry is ledgered for the
+    //    revert below + the gesture undo. $request: tokens are BATCH-step
+    //    params only (the compiler never puts them in pre-phase params —
+    //    scripts/SVG strings reference layers by name inside their own text).
+    const preLabels: (string | null)[] = [];
+    if (preSteps.length > 0) {
+      const svgLabel = preSteps.some((step) => step.command === ASSET_IMPORT_SVG_COMMAND)
+        ? await svgEntryLabel(bridge)
+        : null;
+      for (const step of preSteps) {
+        const isScript = step.command === SCRIPT_RUN_COMMAND;
+        const params = step.params as Record<string, unknown>;
+        try {
+          if (isScript) {
+            const result = await bridge.execute<{
+              ok?: unknown;
+              error?: { message?: unknown; line?: unknown } | null;
+            }>("script.run", {
+              code: wrapScriptInUndoGroup(compiled.label, params.code as string),
+              ...(typeof params.name === "string" ? { name: params.name } : {}),
+            });
+            if (result !== null && typeof result === "object" && result.ok === false) {
+              // The wrapper's `finally` closed the group around the partial
+              // edits — ledger it, then fail into the revert below.
+              preLabels.push(compiled.label);
+              throw new ScriptStepError(scriptFailureMessage(result.error));
+            }
+            preLabels.push(compiled.label);
+          } else {
+            await bridge.execute(SVG_IMPORT_ENGINE_COMMAND, {
+              svg: params.svg,
+              ...(typeof params.name === "string" ? { name: params.name } : {}),
+              ...(typeof params.comp === "string" ? { comp: params.comp } : {}),
+            });
+            preLabels.push(svgLabel);
+          }
+        } catch (error) {
+          // Revert what already executed so a failed gesture leaves NOTHING
+          // (§M5), then map the failure honestly. When the FIRST pre-step is
+          // the failure there is nothing to revert — no "reverted" claim.
+          const revert = await revertPrePhaseEntries(bridge, preLabels);
+          const suffix = revert.revertedAll
+            ? preLabels.length > 0
+              ? " The provisional edits this plan made were reverted."
+              : ""
+            : revert.note;
+          if (isReadOnlyLeaseError(error)) {
+            return failApply(plan.runId, {
+              ok: false,
+              reason: "lease-held",
+              message: `${error.message} The plan was not applied — request edit access, or take the lease when it is free, then apply again.`,
+            });
+          }
+          if (error instanceof ScriptStepError) {
+            return failApply(plan.runId, {
+              ok: false,
+              reason: "engine-failed",
+              message: `${(error as Error).message}${suffix}`,
+            });
+          }
+          if (!isScript && UNKNOWN_COMMAND_RE.test(messageOf(error))) {
+            return failApply(plan.runId, {
+              ok: false,
+              reason: "svg-import-unavailable",
+              message: `This editor build cannot import SVG markup (SVG_IMPORT_UNAVAILABLE).${suffix}`,
+            });
+          }
+          const failure = bridgeOutcome(error);
+          return failApply(plan.runId, {
+            ok: false,
+            reason: failure.reason,
+            message: `${failure.message}${suffix}`,
+          });
+        }
+      }
+    }
+
+    // 2. Resolve layer names against the live list (read-only, but AFTER the
+    //    pre-phase so its created layers resolve) — on any ambiguity the
+    //    pre-phase entries are REVERTED (nothing survives the gesture).
+    const failAfterPrePhase = async (outcome: ApplyFailure): Promise<ApplyOutcome> => {
+      const revert = await revertPrePhaseEntries(bridge, preLabels);
+      return failApply(
+        plan.runId,
+        revert.revertedAll ? outcome : { ...outcome, message: `${outcome.message}${revert.note}` },
+      );
+    };
     let resolvedById: Readonly<Record<string, number>> = {};
     let resolvedForWire: readonly PostedResolvedLayer[] = [];
     const requests = plan.resolutionRequests ?? [];
     if (requests.length > 0) {
       const resolution = await resolveRequests(requests, bridge);
-      if (!resolution.ok) return failApply(plan.runId, resolution.outcome);
+      if (!resolution.ok) return await failAfterPrePhase(resolution.outcome);
       notify({ type: "apply.resolved", runId: plan.runId, resolved: resolution.resolved });
       // Null-prototype accumulator (M4-N F-1): request ids are model-adjacent
       // strings — on a plain `{}` a `__proto__` id would hit the accessor.
@@ -827,11 +1150,12 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
       }));
     }
 
-    // 2. Patch the placeholders with the resolved ids (deterministic clone).
-    //    An unbound `$request:` token must never reach the engine as a string.
+    // 3. Patch the placeholders with the resolved ids (deterministic clone,
+    //    batch steps only). An unbound `$request:` token must never reach the
+    //    engine as a string.
     const patchedSteps: BatchStep[] = [];
     const unresolved: string[] = [];
-    for (const step of compiled.steps) {
+    for (const step of batchSteps) {
       const patch = patchPlaceholders(step.params, resolvedById);
       unresolved.push(...patch.unresolved);
       patchedSteps.push({
@@ -840,7 +1164,7 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
       });
     }
     if (unresolved.length > 0) {
-      return failApply(plan.runId, {
+      return await failAfterPrePhase({
         ok: false,
         reason: "resolution-failed",
         message: `The plan still references unresolved layers (${unresolved.join(", ")}). Ask the agent to name the layer explicitly.`,
@@ -850,39 +1174,91 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
     const payload = engineBatchPayload({ ...compiled, steps: patchedSteps });
     const batchSha256 = await batchSha256Hex(payload);
 
-    // 3. ONE engine.batch — law #6 (ONE call, atomic, one undo step).
-    try {
-      await bridge.execute("engine.batch", payload);
-    } catch (error) {
-      // M7/D-23 (additive): the LOCAL read-only gate (lib/editor-session
-      // read-only.ts) rejects the batch with the typed LEASE_HELD outcome
-      // BEFORE it reaches the engine — nothing executed, nothing saved, the
-      // gateway was never told. Honest copy names the holder (never an id).
-      if (isReadOnlyLeaseError(error)) {
-        return failApply(plan.runId, {
+    // 4. ONE engine.batch — law #6 (ONE call, atomic, one undo step). Skipped
+    //    when the whole plan was pre-phase steps (there is no batch to run).
+    const batchRan = batchSteps.length > 0;
+    if (batchRan) {
+      try {
+        await bridge.execute("engine.batch", payload);
+      } catch (error) {
+        // M7/D-23 (additive): the LOCAL read-only gate (lib/editor-session
+        // read-only.ts) rejects the batch with the typed LEASE_HELD outcome
+        // BEFORE it reaches the engine — the pre-phase entries are still
+        // reverted so the gesture leaves nothing.
+        if (isReadOnlyLeaseError(error)) {
+          return await failAfterPrePhase({
+            ok: false,
+            reason: "lease-held",
+            message: `${error.message} The plan was not applied — request edit access, or take the lease when it is free, then apply again.`,
+          });
+        }
+        const failure = bridgeOutcome(error);
+        return await failAfterPrePhase({
           ok: false,
-          reason: "lease-held",
-          message: `${error.message} The plan was not applied — request edit access, or take the lease when it is free, then apply again.`,
+          reason: failure.reason,
+          message: failure.message,
         });
       }
-      const failure = bridgeOutcome(error);
-      return failApply(plan.runId, {
-        ok: false,
-        reason: failure.reason,
-        message: failure.message,
-      });
     }
 
-    // The batch executed: retain the gesture key + report pieces for retries
-    // (F-L1/F-L2) and the batch label for the undo verification (F-L4).
+    // The gesture executed: retain the key + report pieces for retries
+    // (F-L1/F-L2), the label for the undo verification (F-L4), and the
+    // pre-phase ledger so undo reverts the WHOLE gesture.
     const record: RunApplyRecord = { idempotencyKey, batchSha256, resolvedForWire };
     runRecords.set(plan.runId, record);
     appliedLabels.set(plan.runId, compiled.label);
+    if (preLabels.length > 0) {
+      prePhaseRecords.set(plan.runId, { labels: [...preLabels], batchRan });
+    }
 
-    // 4. D-6: upload the applied state as a NEW version, then report (the
+    // 5. D-6: upload the applied state as a NEW version, then report (the
     // shared steps 5+6 — also the whole of the F-L1 re-save-only retry).
     autosave.markDirty?.(AGENT_APPLY_SAVE_REASON);
     return await saveAndReport(plan.runId, record);
+  };
+
+  /** The verified-pops → gateway-report tail shared by both undo paths. */
+  const reportUndo = async (runId: string): Promise<UndoOutcome> => {
+    try {
+      await api.runs.undoRun(runId, { idempotencyKey: crypto.randomUUID() });
+      notify({ type: "undo.completed", runId });
+      return { ok: true, undone: true };
+    } catch (error) {
+      const failure = apiFailure(error);
+      let outcome: UndoOutcome;
+      if (failure.status === 409 && failure.code === "LEASE_HELD") {
+        // M7/D-23 (additive conflict arm): the server-side lease guard
+        // refused the undo report (someone else holds the lease). The undo
+        // DID happen in the engine; the gateway row was not touched —
+        // honest copy, no re-attempt while blocked.
+        outcome = {
+          ok: false,
+          reason: "lease-held",
+          message:
+            failure.message !== ""
+              ? `${failure.message} The undo happened in the editor, but the server could not record it — take the edit lease to finish reporting it.`
+              : "Another member is editing this project right now. The undo happened in the editor, but the server could not record it — take the edit lease to finish reporting it.",
+        };
+      } else if (failure.status === 409) {
+        outcome = {
+          ok: false,
+          reason: "conflict",
+          message: "The server says this run was not applied, so there is nothing to undo there.",
+        };
+      } else {
+        outcome = {
+          ok: false,
+          reason: "failed",
+          message:
+            failure.message !== ""
+              ? failure.message
+              : "The undo happened in the editor but could not be reported.",
+          code: failure.code,
+        };
+      }
+      notify({ type: "undo.failed", runId, outcome });
+      return outcome;
+    }
   };
 
   return {
@@ -915,6 +1291,81 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
       // optional hint (the thread layer passes the planRuntime's
       // compiledBatch label) covers a controller that never saw the apply.
       const expectedLabel = appliedLabels.get(runId) ?? hint?.batchLabel;
+
+      // ROUND-12 — a gesture with pre-phase entries (script groups + SVG
+      // imports) reverts as a SEQUENCE of label-verified pops: the folded
+      // batch first (when it ran), then the pre-phase entries, top-first.
+      // Every pop is verified (F-L4 discipline: never touch another edit);
+      // a partial revert is surfaced honestly and the gateway is NOT told.
+      const ledger = prePhaseRecords.get(runId);
+      if (ledger !== undefined) {
+        const pops: (string | null)[] = [];
+        if (ledger.batchRan) pops.push(expectedLabel ?? null);
+        pops.push(...[...ledger.labels].reverse());
+        let poppedAny = false;
+        for (const expected of pops) {
+          let popped: { undone?: unknown } | undefined;
+          try {
+            popped = await bridge.execute<{ undone?: unknown }>("edit.undo");
+          } catch (error) {
+            if (isReadOnlyLeaseError(error)) {
+              const outcome: UndoOutcome = {
+                ok: false,
+                reason: "lease-held",
+                message: `${error.message} The undo was not performed — take the edit lease first.`,
+              };
+              notify({ type: "undo.failed", runId, outcome });
+              return outcome;
+            }
+            const failure = bridgeOutcome(error);
+            const outcome: UndoOutcome = NOTHING_TO_UNDO_RE.test(failure.message)
+              ? { ok: false, reason: "nothing-to-undo", message: "There is nothing to undo." }
+              : {
+                  ok: false,
+                  reason: failure.reason,
+                  message: poppedAny
+                    ? `${failure.message} Part of this run's edits were already undone in the editor, but the server was not told — redo restores them.`
+                    : failure.message,
+                };
+            if (poppedAny) {
+              appliedLabels.delete(runId);
+              prePhaseRecords.delete(runId);
+            }
+            notify({ type: "undo.failed", runId, outcome });
+            return outcome;
+          }
+          const poppedLabel =
+            popped !== undefined && typeof popped.undone === "string" ? popped.undone : undefined;
+          if (poppedLabel === undefined || (expected !== null && poppedLabel !== expected)) {
+            if (poppedLabel !== undefined) {
+              for (const [id, label] of appliedLabels) {
+                if (label === poppedLabel) {
+                  appliedLabels.delete(id);
+                  runRecords.delete(id);
+                }
+              }
+            }
+            appliedLabels.delete(runId);
+            prePhaseRecords.delete(runId);
+            const outcome: UndoOutcome = {
+              ok: false,
+              reason: "undo-stack-mismatch",
+              message:
+                poppedLabel === undefined
+                  ? "The editor undid an unnamed edit, so this run's undo could not be verified. The server was not told — redo restores it."
+                  : "A different edit was on top of the undo stack, so this run was not marked undone. Undo that edit first, or redo to restore it.",
+            };
+            notify({ type: "undo.failed", runId, outcome });
+            return outcome;
+          }
+          poppedAny = true;
+        }
+        // The whole gesture verified-popped: the retained state is spent.
+        appliedLabels.delete(runId);
+        prePhaseRecords.delete(runId);
+        return await reportUndo(runId);
+      }
+
       // ONE edit.undo reverts the WHOLE run (batch.rs folds the steps); the
       // engine answers {undone: label} (edit.rs undo).
       let popped: { undone?: unknown } | undefined;
@@ -974,46 +1425,7 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
       }
       // Verified: THE RUN'S batch popped — the retained label is spent.
       appliedLabels.delete(runId);
-      try {
-        await api.runs.undoRun(runId, { idempotencyKey: crypto.randomUUID() });
-        notify({ type: "undo.completed", runId });
-        return { ok: true, undone: true };
-      } catch (error) {
-        const failure = apiFailure(error);
-        let outcome: UndoOutcome;
-        if (failure.status === 409 && failure.code === "LEASE_HELD") {
-          // M7/D-23 (additive conflict arm): the server-side lease guard
-          // refused the undo report (someone else holds the lease). The undo
-          // DID happen in the engine; the gateway row was not touched —
-          // honest copy, no re-attempt while blocked.
-          outcome = {
-            ok: false,
-            reason: "lease-held",
-            message:
-              failure.message !== ""
-                ? `${failure.message} The undo happened in the editor, but the server could not record it — take the edit lease to finish reporting it.`
-                : "Another member is editing this project right now. The undo happened in the editor, but the server could not record it — take the edit lease to finish reporting it.",
-          };
-        } else if (failure.status === 409) {
-          outcome = {
-            ok: false,
-            reason: "conflict",
-            message: "The server says this run was not applied, so there is nothing to undo there.",
-          };
-        } else {
-          outcome = {
-            ok: false,
-            reason: "failed",
-            message:
-              failure.message !== ""
-                ? failure.message
-                : "The undo happened in the editor but could not be reported.",
-            code: failure.code,
-          };
-        }
-        notify({ type: "undo.failed", runId, outcome });
-        return outcome;
-      }
+      return await reportUndo(runId);
     },
 
     async reapply(plan: ApplicablePlan): Promise<ApplyOutcome> {

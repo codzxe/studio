@@ -78,9 +78,10 @@ import type { ChatUiMessage, PlanRuntime, RunPhase } from "@/lib/chat/types";
 import type { AgentBatch, EditPlan } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { usePathname } from "next/navigation";
-import { type ReactElement, type ReactNode, useEffect, useRef } from "react";
+import { type ReactElement, type ReactNode, useEffect, useRef, useState } from "react";
 import { PlanDiffCard } from "./diff-card";
 import { Markdown } from "./markdown";
+import { MessageActions, MessageEditBox } from "./message-actions";
 import {
   PlanCard,
   type PlanCardProps,
@@ -116,6 +117,13 @@ export interface ChatMessageViewProps {
   isStreaming: boolean;
   /** M5-Q: the plan-card wiring (absent ⇒ the M4 read-only card). */
   planWiring?: PlanMessageWiring | null;
+  /**
+   * ROUND 12 (Chat UI v3): re-send from THIS user message (host maps the
+   * id to a fresh send). Absent ⇒ the Retry action hides (read-only mounts).
+   */
+  onRetryFrom?: (messageId: string) => void;
+  /** ROUND 12 (Chat UI v3): edit-and-resend (absent ⇒ Edit hides). */
+  onEditResend?: (messageId: string, nextText: string) => void;
 }
 
 /**
@@ -433,12 +441,16 @@ export function ChatMessageView({
   message,
   isStreaming,
   planWiring,
+  onRetryFrom,
+  onEditResend,
 }: ChatMessageViewProps): ReactElement {
   const isUser = message.role === "user";
   const showCaret = isStreaming && !isUser;
   const plan = message.plan;
   const cardRef = useRef<HTMLDivElement | null>(null);
   const armedOnceRef = useRef(false);
+  // ROUND 12: the inline edit-and-resend state (user messages only).
+  const [editing, setEditing] = useState(false);
 
   // W1-07 (M5.7b): the applied card's version-history link — derived from the
   // app-router pathname (see historyHrefFromPathname). usePathname is mocked
@@ -469,7 +481,7 @@ export function ChatMessageView({
     <article
       data-testid="chat-message"
       data-role={message.role}
-      className="flex min-w-0 flex-col items-start gap-1.5"
+      className={`flex min-w-0 flex-col items-start gap-1.5 ${isUser ? "group" : ""}`}
     >
       {isUser ? (
         <p data-testid="chat-message-label" className="text-label text-muted uppercase">
@@ -484,10 +496,30 @@ export function ChatMessageView({
         </p>
       )}
       {isUser ? (
-        // §9 letter-spec: surface + radius only — no border hairline.
-        <div className="max-w-[72ch] rounded-[var(--chat-message-radius)] bg-elevated px-3 py-2">
-          <Markdown text={message.text} />
-        </div>
+        editing ? (
+          <MessageEditBox
+            initialText={message.text}
+            onSave={(next) => {
+              setEditing(false);
+              onEditResend?.(message.id, next);
+            }}
+            onCancel={() => setEditing(false)}
+          />
+        ) : (
+          // §9 letter-spec: surface + radius only — no border hairline. The
+          // ROUND-12 hover action row sits beside the bubble (opacity-0 →
+          // group-hover/focus-within 100 — keyboard users reach it too).
+          <div className="flex min-w-0 max-w-full items-center gap-1.5">
+            <div className="max-w-[72ch] rounded-[var(--chat-message-radius)] bg-elevated px-3 py-2">
+              <Markdown text={message.text} />
+            </div>
+            <MessageActions
+              text={message.text}
+              onRetry={onRetryFrom !== undefined ? () => onRetryFrom(message.id) : undefined}
+              onEdit={onEditResend !== undefined ? () => setEditing(true) : undefined}
+            />
+          </div>
+        )
       ) : (
         <div className="flex max-w-[72ch] min-w-0 flex-col items-start">
           {message.text.length > 0 ? (

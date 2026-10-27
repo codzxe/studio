@@ -1,5 +1,12 @@
-// @studio/contracts — the eight WRITE tool contracts (BUILD_PLAN §M5.1,
+// @studio/contracts — the WRITE tool contracts (BUILD_PLAN §M5.1,
 // PRODUCT_ARCHITECTURE §8.4/§8.7, M5-SEAMS "write-tools" seam).
+//
+// M5.1 pinned EIGHT write tools; round 12 ("Tool catalog v3",
+// research/round12-design.md) adds THREE more, appended in this file so the
+// original eight stay first and byte-compatible: engine_commands (the generic
+// catalog-validated escape hatch), run_script (the approval-time scripting
+// seam — script.run is never batchable, the engine's NOT_IN_BATCH refuses it)
+// and add_asset (inline SVG → vector import).
 //
 // Write tools are PROPOSAL-ONLY (§8.4 rules 1-5, law #6): every result is a
 // proposed batch (WRITE_TOOL_RESULT_SCHEMA) that the plan/approval card
@@ -21,7 +28,7 @@
 
 import { z } from "zod";
 
-import type { PlanRisk } from "./edit-plan.js";
+import type { PlanIntent, PlanRisk } from "./edit-plan.js";
 import {
   BATCH_STEP_SCHEMA,
   MAX_BATCH_BYTES,
@@ -31,10 +38,13 @@ import {
 
 // ---------------------------------------------------------------------------
 // Identity (M5-SEAMS: the pinned 8 ids, unprefixed; tools.ts registers them
-// under their wire ids `studio.<id>` — see studioWriteToolId below)
+// under their wire ids `studio.<id>` — see studioWriteToolId below; round-12
+// additions are appended after the eight)
 // ---------------------------------------------------------------------------
 
-/** The eight write-tool ids (BUILD_PLAN §M5.1), in §8.4 table order. */
+/**
+ * The write-tool ids (the §M5.1 eight, then the round-12 additions, in order).
+ */
 export const WRITE_TOOL_IDS = [
   "create_composition",
   "create_text",
@@ -44,6 +54,10 @@ export const WRITE_TOOL_IDS = [
   "apply_preset",
   "undo_run",
   "save_version",
+  // Round-12 "Tool catalog v3" (appended — the eight above stay untouched):
+  "engine_commands",
+  "run_script",
+  "add_asset",
 ] as const satisfies readonly string[];
 
 export type WriteToolId = (typeof WRITE_TOOL_IDS)[number];
@@ -100,6 +114,17 @@ export const MAX_RESULT_NOTE_LENGTH = 1000;
  * — the §8.5 2 MB batch payload cap applied at the tool-args boundary.
  */
 export const MAX_WRITE_TOOL_ARGS_BYTES = MAX_BATCH_BYTES;
+
+// ---------------------------------------------------------------------------
+// Round-12 bounds ("Tool catalog v3")
+// ---------------------------------------------------------------------------
+
+/** engine_commands steps per call (design doc: 1..50, tighter than the §8.5 100). */
+export const MAX_ENGINE_COMMAND_STEPS = 50;
+/** run_script code bound (design doc: ≤ 20 000 chars). */
+export const MAX_SCRIPT_CODE_LENGTH = 20_000;
+/** add_asset inline SVG markup bound (design doc: ≤ 50 000 chars). */
+export const MAX_SVG_LENGTH = 50_000;
 
 // ---------------------------------------------------------------------------
 // Dunder-safe helpers (M4-SAFETY F-1 — shared with M5 peers)
@@ -419,6 +444,69 @@ export const SAVE_VERSION_ARGS_SCHEMA = z.strictObject({
   label: z.string().min(1).max(MAX_TOOL_NAME_LENGTH).optional(),
 });
 
+// -- round-12 additions ("Tool catalog v3") ----------------------------------
+
+/**
+ * Engine command-id shape (mirrors the command-registry id grammar): a
+ * lowercase-prefixed dotted identifier like `comp.new` — sanity only; the
+ * ALLOWED catalog is the authority and is checked server-side at turn time.
+ */
+const ENGINE_COMMAND_ID_SCHEMA = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9]+)+$/, {
+    message: "command must be a dotted engine command id (e.g. category.action)",
+  })
+  .refine((v) => !isDunderKey(v), { message: "dunder keys are not valid ids" });
+
+/**
+ * `studio.engine_commands` steps: the model's steps ARE the batch payload.
+ * Command ids are validated against the generated ALLOWED catalog server-side
+ * at turn time (unknown/denied id → typed repairable tool error naming the
+ * closest catalog id); params are the bounded dunder-safe passthrough. Risk
+ * floor medium (design doc); HIGH (destructive/denied) never enters the list.
+ */
+export const ENGINE_COMMANDS_ARGS_SCHEMA = withArgsSizeBound(
+  z.strictObject({
+    steps: z
+      .array(
+        z.strictObject({
+          command: ENGINE_COMMAND_ID_SCHEMA,
+          params: PASSTHROUGH_RECORD_SCHEMA,
+        }),
+      )
+      .min(1)
+      .max(MAX_ENGINE_COMMAND_STEPS),
+  }),
+);
+
+/**
+ * `studio.run_script`: JavaScript editing code executed at APPLY time via the
+ * engine's sandboxed script seam (never inside a batch — the engine's
+ * NOT_IN_BATCH refuses script.run there). Bounds: ≤ 20 000 chars; the
+ * server adds the static guard (no require/fetch/eval outside comments);
+ * risk floor medium, intent `animate` (the scripting object model is the
+ * animation/rig seam).
+ */
+export const RUN_SCRIPT_ARGS_SCHEMA = withArgsSizeBound(
+  z.strictObject({
+    code: z.string().min(1).max(MAX_SCRIPT_CODE_LENGTH),
+  }),
+);
+
+/**
+ * `studio.add_asset`: inline SVG markup → engine vector import (the string-based
+ * seam only — no filesystem ids ever). `kind` pins the v1 shape to "svg".
+ */
+export const ADD_ASSET_ARGS_SCHEMA = withArgsSizeBound(
+  z.strictObject({
+    kind: z.literal("svg"),
+    name: SAFE_NAME_SCHEMA,
+    svg: z.string().min(1).max(MAX_SVG_LENGTH),
+  }),
+);
+
 export type CreateCompositionArgs = z.infer<typeof CREATE_COMPOSITION_ARGS_SCHEMA>;
 export type CreateTextArgs = z.infer<typeof CREATE_TEXT_ARGS_SCHEMA>;
 export type SetPropertiesArgs = z.infer<typeof SET_PROPERTIES_ARGS_SCHEMA>;
@@ -426,6 +514,9 @@ export type AddEffectArgs = z.infer<typeof ADD_EFFECT_ARGS_SCHEMA>;
 export type SetKeyframesArgs = z.infer<typeof SET_KEYFRAMES_ARGS_SCHEMA>;
 export type ApplyPresetArgs = z.infer<typeof APPLY_PRESET_ARGS_SCHEMA>;
 export type SaveVersionArgs = z.infer<typeof SAVE_VERSION_ARGS_SCHEMA>;
+export type EngineCommandsArgs = z.infer<typeof ENGINE_COMMANDS_ARGS_SCHEMA>;
+export type RunScriptArgs = z.infer<typeof RUN_SCRIPT_ARGS_SCHEMA>;
+export type AddAssetArgs = z.infer<typeof ADD_ASSET_ARGS_SCHEMA>;
 
 // ---------------------------------------------------------------------------
 // Registry: id → args schema (M5-SEAMS seam; every entry is a STRICT ZodObject)
@@ -440,6 +531,9 @@ export const WRITE_TOOL_ARGS_SCHEMAS = {
   apply_preset: APPLY_PRESET_ARGS_SCHEMA,
   undo_run: UNDO_RUN_ARGS_SCHEMA,
   save_version: SAVE_VERSION_ARGS_SCHEMA,
+  engine_commands: ENGINE_COMMANDS_ARGS_SCHEMA,
+  run_script: RUN_SCRIPT_ARGS_SCHEMA,
+  add_asset: ADD_ASSET_ARGS_SCHEMA,
 } as const satisfies Readonly<Record<WriteToolId, z.ZodObject>>;
 
 // ---------------------------------------------------------------------------
@@ -449,7 +543,8 @@ export const WRITE_TOOL_ARGS_SCHEMAS = {
 export interface WriteToolDefinition {
   readonly id: WriteToolId;
   readonly kind: "write";
-  /** Risk badge for the plan card (EDITOR_CHAT_UX §6.2). */
+  /** Risk badge for the plan card (EDITOR_CHAT_UX §6.2) — the plan compiler's
+   * per-tool risk FLOOR (riskMax never lowers it). */
   readonly risk: PlanRisk;
   /** Model-facing description. No command ids, no engine internals, and it
    * always states the result is a PROPOSED batch, never an execution. */
@@ -457,9 +552,16 @@ export interface WriteToolDefinition {
   /** STRICT ZodObject the gateway validates before the tool runs (law #2). */
   readonly inputSchema: z.ZodObject;
   readonly returns: "proposed-batch";
+  /**
+   * Round-12 optional plan-intent HINT (§8.6 vocabulary). Absent ⇒ the
+   * gateway's WRITE_TOOL_INTENTS fallback ("edit") applies — that server map
+   * stays authoritative; this field only lets a tool pin its natural intent
+   * (run_script → animate) at the contract source.
+   */
+  readonly intent?: PlanIntent;
 }
 
-/** The eight write tools, in §8.4 table order. */
+/** The write tools: the §M5.1 eight, then the round-12 additions, in order. */
 export const WRITE_TOOLS: readonly WriteToolDefinition[] = [
   {
     id: "create_composition",
@@ -556,6 +658,48 @@ export const WRITE_TOOLS: readonly WriteToolDefinition[] = [
       "never modify project content and always remain in history. The result is a PROPOSED batch " +
       "for the user to review — never executed until the user applies the plan.",
     inputSchema: WRITE_TOOL_ARGS_SCHEMAS.save_version,
+  },
+  // -- round-12 additions ("Tool catalog v3") ------------------------------
+  {
+    id: "engine_commands",
+    kind: "write",
+    risk: "medium",
+    returns: "proposed-batch",
+    description:
+      "Propose a sequence of engine commands as one atomic change: 1-50 steps, each a command id " +
+      "(discover ids with the catalog tools) plus its JSON params. Every id is validated against " +
+      "the allowed catalog before anything is proposed, and unknown or denied ids come back as a " +
+      "repairable error naming the closest allowed id. The result is a PROPOSED batch for the " +
+      "user to review — never executed until the user applies the plan, and the applied change " +
+      "lands as one undo step.",
+    inputSchema: WRITE_TOOL_ARGS_SCHEMAS.engine_commands,
+  },
+  {
+    id: "run_script",
+    kind: "write",
+    risk: "medium",
+    returns: "proposed-batch",
+    intent: "animate",
+    description:
+      "Propose running a JavaScript editing script (up to 20000 characters) against the project at " +
+      "apply time — the escape hatch for loops, rigs and generators the per-command tools cannot " +
+      "express. The code runs sandboxed with no network or filesystem access and its edits land " +
+      "as one undo step. The result is a PROPOSED batch for the user to review — never executed " +
+      "until the user applies the plan.",
+    inputSchema: WRITE_TOOL_ARGS_SCHEMAS.run_script,
+  },
+  {
+    id: "add_asset",
+    kind: "write",
+    risk: "medium",
+    returns: "proposed-batch",
+    description:
+      "Propose adding a vector asset to the active composition from inline SVG markup (up to " +
+      "50000 characters) with a given name — no files or paths, the markup itself becomes a " +
+      "shape layer that later steps can reference. The result is a PROPOSED batch for the user " +
+      "to review — never executed until the user applies the plan, and the applied change lands " +
+      "as one undo step.",
+    inputSchema: WRITE_TOOL_ARGS_SCHEMAS.add_asset,
   },
 ];
 

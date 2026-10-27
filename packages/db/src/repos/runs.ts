@@ -1,13 +1,19 @@
 import { and, asc, desc, eq, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
-import type { StudioDb } from "../db.js";
+import type { Executor, StudioDb } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
 import type { AgentRun, AgentStep, RunStatus, StepStatus } from "../schema.js";
 import { assertRunTransition, isTerminalRunStatus } from "../statuses.js";
 import { tablesFor } from "../tables.js";
-import { type WorkspaceId, isUniqueViolation, requireNonEmpty } from "./shared.js";
+import {
+  type WorkspaceId,
+  isUniqueViolation,
+  requireNonEmpty,
+  requireNonNegativeInt,
+  requirePositiveInt,
+} from "./shared.js";
 
 /** Runs repository — one agent turn from prompt to applied result (§3.1, §7.4). */
 export interface RunCreateInput {
@@ -17,6 +23,13 @@ export interface RunCreateInput {
   readonly baseVersionId?: string | null;
   readonly reservedCredits?: number;
   readonly planJson?: unknown;
+  /**
+   * Round 12 (client-driven loop): the CLIENT owns the run id — it must
+   * mint it BEFORE the first turn's response so (runId, stepIndex) can key
+   * turn idempotency. Optional: omitted = server-generated `run_` id (the
+   * legacy /chat flow).
+   */
+  readonly runId?: string;
 }
 
 export interface RunUpdateInput {
@@ -79,6 +92,67 @@ export interface StepCreateInput {
   readonly durationMs?: number | null;
 }
 
+// ── Round 12: client-driven agent loop (migration 0008) ───────────────────────
+//
+// The browser owns the turn loop; the gateway persists per turn. These seams
+// are TRUSTED-INTERNAL and workspace-free by design (RendersRepo.claimNext /
+// requeueStale precedent): the turn route resolves thread → workspace and
+// authenticates BEFORE calling them, and run/thread ids are cross-checked
+// against each other so a foreign pairing still reads as CONFLICT/404.
+
+/** `insertToolCallStep` input — one model-emitted tool call (round 12). */
+export interface ToolCallStepInput {
+  readonly runId: string;
+  /** Optional cross-check: when given it must equal the run's thread_id. */
+  readonly threadId?: string;
+  /**
+   * The turn's model-call index (idempotency-key component); validated but NOT
+   * persisted as a column — one turn may emit several tool calls, so the step
+   * row orders by a per-run allocation seq instead; the durable turn index is
+   * agent_runs.last_step_index via `touchRunHeartbeat`.
+   */
+  readonly stepIndex: number;
+  /** The model's stable tool call id — the key `completeToolStep` settles on. */
+  readonly toolCallId: string;
+  readonly tool: string;
+  readonly argsJson?: unknown;
+}
+
+/** `completeToolStep` input — the locally-executed tool result. */
+export interface CompleteToolStepInput {
+  readonly toolCallId: string;
+  readonly resultJson: unknown;
+  /**
+   * 12-w8 audit hardening: optional run cross-check — when given, the step's
+   * run_id must match, so a client can never settle another run's toolCallId
+   * by guessing ids (toolCallIds are model-generated, but the gate is free).
+   */
+  readonly runId?: string;
+}
+
+/** `touchRunHeartbeat` input — one turn's worth of run progress. */
+export interface TouchRunHeartbeatInput {
+  readonly runId: string;
+  readonly lastStepIndex: number;
+  readonly creditsCommitted?: number;
+}
+
+/** `markRunAbandoned` input. */
+export interface MarkRunAbandonedInput {
+  readonly runId: string;
+}
+
+/** A stale `running` run + the workspace it scopes to (sweep resolution). */
+export interface StaleRun extends AgentRun {
+  readonly workspaceId: WorkspaceId;
+}
+
+/** A `running` run whose heartbeat is older than this reads as abandoned. */
+export const RUN_STALE_AFTER_MS = 5 * 60 * 1000;
+
+/** errorCode written by `markRunAbandoned` (cancelled, not a model failure). */
+export const RUN_ABANDONED_ERROR_CODE = "RUN_ABANDONED";
+
 export interface ListOptions {
   readonly limit?: number;
   readonly cursor?: string | null;
@@ -105,6 +179,19 @@ export interface RunsRepo {
   recordUndone(workspaceId: WorkspaceId, input: RecordUndoneInput): Promise<AgentRun>;
   /** Plan lifecycle projection of a run — cross-tenant reads as NOT_FOUND. */
   getPlanState(workspaceId: WorkspaceId, runId: string): Promise<PlanState>;
+
+  // ── Round 12 client-driven agent loop (trusted-internal; see ToolCallStepInput) ──
+
+  /** Insert one model-emitted tool call as an agent_steps row, status "issued". */
+  insertToolCallStep(input: ToolCallStepInput): Promise<AgentStep>;
+  /** Settle an issued tool call by its toolCallId: status "success" + result. */
+  completeToolStep(input: CompleteToolStepInput): Promise<AgentStep>;
+  /** Per-turn heartbeat: status running + last_step_index + heartbeat_at. */
+  touchRunHeartbeat(input: TouchRunHeartbeatInput): Promise<AgentRun>;
+  /** Terminal cancel of a zombie run (errorCode RUN_ABANDONED); idempotent. */
+  markRunAbandoned(input: MarkRunAbandonedInput): Promise<AgentRun>;
+  /** running rows whose heartbeat is older than `staleAfterMs` (default 5min). */
+  getStaleRunningRuns(staleAfterMs?: number): Promise<StaleRun[]>;
 }
 
 const SHA256_HEX = /^[a-f0-9]{64}$/;
@@ -150,6 +237,13 @@ export function createRunsRepo(db: StudioDb): RunsRepo {
     return row.run;
   }
 
+  /** Trusted-internal run lookup by id alone (round 12 — see ToolCallStepInput). */
+  async function requireRunById(exec: Executor, runId: string): Promise<AgentRun> {
+    const [run] = await exec.select().from(agentRuns).where(eq(agentRuns.id, runId)).limit(1);
+    if (!run) throw DbError.notFound("run");
+    return run;
+  }
+
   /** A version id that must exist AND belong to the run's project (§9.3 scope). */
   async function requireProjectVersion(
     projectId: string,
@@ -188,7 +282,7 @@ export function createRunsRepo(db: StudioDb): RunsRepo {
       const [run] = await db
         .insert(agentRuns)
         .values({
-          id: createId("run"),
+          id: input.runId !== undefined && input.runId !== "" ? input.runId : createId("run"),
           threadId: input.threadId,
           projectId: input.projectId,
           model,
@@ -405,6 +499,130 @@ export function createRunsRepo(db: StudioDb): RunsRepo {
     async getPlanState(workspaceId, runId) {
       const run = await requireRun(workspaceId, requireNonEmpty(runId, "runId"));
       return toPlanState(run);
+    },
+
+    // ── Round 12 client-driven agent loop (trusted-internal) ──────────────────
+
+    async insertToolCallStep(input) {
+      const runId = requireNonEmpty(input.runId, "runId");
+      const toolCallId = requireNonEmpty(input.toolCallId, "toolCallId");
+      const tool = requireNonEmpty(input.tool, "tool");
+      requireNonNegativeInt(input.stepIndex, "stepIndex");
+
+      const run = await requireRunById(db, runId);
+      if (input.threadId !== undefined && input.threadId !== run.threadId) {
+        throw DbError.conflict("Run does not belong to this thread");
+      }
+
+      // seq: per-run monotonic allocation (UNIQUE(run_id, seq) stays intact —
+      // one turn may emit SEVERAL tool calls, so stepIndex alone cannot key
+      // the row). The client-driven loop is a single serial writer per run;
+      // a racing duplicate insert still degrades to the typed CONFLICT below.
+      const [last] = await db
+        .select({ seq: agentSteps.seq })
+        .from(agentSteps)
+        .where(eq(agentSteps.runId, run.id))
+        .orderBy(desc(agentSteps.seq))
+        .limit(1);
+      const seq = (last?.seq ?? -1) + 1;
+
+      try {
+        const [step] = await db
+          .insert(agentSteps)
+          .values({
+            id: createId("stp"),
+            runId: run.id,
+            seq,
+            tool,
+            argsJson: input.argsJson,
+            status: "issued",
+            durationMs: null,
+            toolCallId,
+          })
+          .returning();
+        if (!step) throw DbError.conflict("Could not insert step");
+        return step;
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          throw DbError.conflict(`Step ${seq} already exists for this run`);
+        }
+        throw error;
+      }
+    },
+
+    async completeToolStep(input) {
+      const toolCallId = requireNonEmpty(input.toolCallId, "toolCallId");
+      // 12-w8 audit hardening: an optional run scope rides the UPDATE's WHERE
+      // clause — a foreign run's toolCallId simply matches no row (typed
+      // NOT_FOUND), never a cross-run settle.
+      const scope =
+        input.runId !== undefined && input.runId !== ""
+          ? and(eq(agentSteps.toolCallId, toolCallId), eq(agentSteps.runId, input.runId))
+          : eq(agentSteps.toolCallId, toolCallId);
+      const [settled] = await db
+        .update(agentSteps)
+        .set({ status: "success", resultJson: input.resultJson })
+        .where(scope)
+        .returning();
+      if (settled) return settled;
+      throw DbError.notFound("step");
+    },
+
+    async touchRunHeartbeat(input) {
+      const runId = requireNonEmpty(input.runId, "runId");
+      const lastStepIndex = requireNonNegativeInt(input.lastStepIndex, "lastStepIndex");
+      const creditsCommitted =
+        input.creditsCommitted === undefined
+          ? undefined
+          : requireNonNegativeInt(input.creditsCommitted, "creditsCommitted");
+
+      const run = await requireRunById(db, runId);
+      assertRunTransition(run.status, "running");
+      const [updated] = await db
+        .update(agentRuns)
+        .set({
+          status: "running",
+          lastStepIndex,
+          heartbeatAt: new Date(),
+          ...(creditsCommitted === undefined ? {} : { committedCredits: creditsCommitted }),
+        })
+        .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, run.status)))
+        .returning();
+      if (!updated) throw DbError.conflict("Run state changed concurrently");
+      return updated;
+    },
+
+    async markRunAbandoned(input) {
+      const runId = requireNonEmpty(input.runId, "runId");
+      const run = await requireRunById(db, runId);
+      if (run.status === "cancelled") return run; // idempotent re-sweep
+      assertRunTransition(run.status, "cancelled");
+      const [updated] = await db
+        .update(agentRuns)
+        .set({
+          status: "cancelled",
+          errorCode: RUN_ABANDONED_ERROR_CODE,
+          completedAt: new Date(),
+        })
+        .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, run.status)))
+        .returning();
+      if (updated) return updated;
+      const [current] = await db.select().from(agentRuns).where(eq(agentRuns.id, run.id)).limit(1);
+      if (current?.status === "cancelled") return current;
+      throw DbError.conflict("Run state changed concurrently");
+    },
+
+    async getStaleRunningRuns(staleAfterMs) {
+      const afterMs = staleAfterMs === undefined ? RUN_STALE_AFTER_MS : staleAfterMs;
+      requirePositiveInt(afterMs, "staleAfterMs");
+      const cutoff = new Date(Date.now() - afterMs);
+      const rows = await db
+        .select({ run: agentRuns, workspaceId: projects.workspaceId })
+        .from(agentRuns)
+        .innerJoin(projects, eq(agentRuns.projectId, projects.id))
+        .where(and(eq(agentRuns.status, "running"), lt(agentRuns.heartbeatAt, cutoff)))
+        .orderBy(asc(agentRuns.heartbeatAt), asc(agentRuns.id));
+      return rows.map((row) => ({ ...row.run, workspaceId: row.workspaceId }));
     },
   };
 }

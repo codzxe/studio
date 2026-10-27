@@ -87,6 +87,26 @@ const REQUIRED_EXPORTS: readonly string[] = [
   "AUDIT_QUERY_SCHEMA",
   "AUDIT_ENTRY_SCHEMA",
   "RECONCILE_REQUEST_SCHEMA",
+  // Round-12 "Tool catalog v3": generated catalog tier-2 accessors (the FULL
+  // catalog lives behind the `@studio/contracts/catalog` subpath, NOT here).
+  "ALLOWED_COMMAND_IDS",
+  "ALLOWED_COMMAND_COUNT",
+  "isAllowedEngineCommand",
+  // Round-12 TURN WIRE CONTRACT: request body + message union + tool-call
+  // carrier + the turn.* SSE events (all additive to the §7.4 set).
+  "TURN_REQUEST_SCHEMA",
+  "TURN_MESSAGE_SCHEMA",
+  "TURN_TOOL_CALL_SCHEMA",
+  "TURN_FINISH_REASON_SCHEMA",
+  "TURN_STARTED_EVENT_SCHEMA",
+  "TURN_COMPLETED_EVENT_SCHEMA",
+  "TURN_FAILED_EVENT_SCHEMA",
+  // Round-12 pure merge (client-side mirror of the gateway's mergedCarrierPlan).
+  "mergeEditPlans",
+  // Round-12 write tools: args schemas join the existing per-tool exports.
+  "ENGINE_COMMANDS_ARGS_SCHEMA",
+  "RUN_SCRIPT_ARGS_SCHEMA",
+  "ADD_ASSET_ARGS_SCHEMA",
 ] as const;
 
 describe("barrel: @studio/contracts public surface", () => {
@@ -94,6 +114,14 @@ describe("barrel: @studio/contracts public surface", () => {
     for (const name of REQUIRED_EXPORTS.filter((n) => n !== "")) {
       expect(contracts, `missing export: ${name}`).toHaveProperty(name);
     }
+  });
+
+  it("does NOT export the full engine catalog (tier split — browser safety)", () => {
+    // The full catalog + digest live on the `@studio/contracts/catalog`
+    // subpath only; the barrel must never pull the ~100 KB params docs into
+    // the browser bundle through the api-client re-export seam (round-12 law).
+    expect((contracts as Record<string, unknown>).ENGINE_COMMAND_CATALOG).toBeUndefined();
+    expect((contracts as Record<string, unknown>).ENGINE_CATALOG_DIGEST).toBeUndefined();
   });
 
   it("exports only named members (no default export)", () => {

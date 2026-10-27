@@ -50,6 +50,21 @@
 //
 // Bearer token = `LITELLM_VIRTUAL_KEY ?? LITELLM_API_KEY` (workspace virtual
 // keys map to LiteLLM budgets; the platform key is the fallback).
+//
+// Wire model id (direct-provider seam): `modelMap` optionally rewrites the
+// request's studio alias (studio-fast/smart/vision) to a provider model id
+// AT THE WIRE ONLY — every internal seam (plan entitlements, run rows,
+// credit rates) keeps speaking aliases. Unset/miss = pass-through, the
+// LiteLLM-proxy posture (the proxy owns alias→model resolution there).
+//
+// Wire tool names (same seam): the OpenAI-compatible tool-name grammar is
+// ^[a-zA-Z0-9_-]{1,64}$ — the studio.* registry ids carry dots, which strict
+// providers (Token Harbor's edge validator among them) reject with a 400 on
+// `tools.N.function.name`. `toolSeam` rewrites dots to underscores for the
+// registrations and normalizes the model's echoed name back to the registry
+// id — the prompt speaks dotted ids, so the echo may arrive in EITHER form;
+// both collapse through the same sanitizer. The runner, conversation history
+// and every internal seam keep speaking the dotted ids.
 
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { type JSONValue, type ModelMessage, type ToolSet, jsonSchema, streamText, tool } from "ai";
@@ -115,6 +130,12 @@ export interface OpenAIClientDeps {
   readonly baseUrl: string;
   /** Bearer token: virtual key when set, else the platform key. */
   readonly bearer: string;
+  /**
+   * Optional alias→provider-model-id wire map (env LITELLM_MODEL_MAP) — the
+   * direct-OpenAI-compatible-provider seam. Unset or a miss passes the alias
+   * through unchanged (the LiteLLM-proxy default).
+   */
+  readonly modelMap?: Readonly<Record<string, string>> | undefined;
   /** Injectable for tests (deterministic fake OpenAI SSE server). */
   readonly fetch?: typeof fetch;
   /** Injectable sleep so the 1s/2s retry backoff is instant in tests. */
@@ -332,10 +353,33 @@ function toSdkPrompt(messages: readonly OpenAIChatMessage[]): {
 // Tool registrations: OpenAIToolSpec[] → execute-less ToolSet
 // ---------------------------------------------------------------------------
 
-function toSdkTools(specs: readonly OpenAIToolSpec[]): ToolSet {
+/**
+ * OpenAI-compatible wire tool name: providers require
+ * `^[a-zA-Z0-9_-]{1,64}$` — the studio.* registry ids' dots are rewritten to
+ * underscores at the wire (the runner's registry ids keep their dots).
+ */
+export function wireToolName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/**
+ * Wire-name seam for one request: registers each spec under its sanitized
+ * wire name and restores the registry id from the model's echoed tool name.
+ * Both echo forms (sanitized — what the model saw registered; dotted — what
+ * the prompt mentions) normalize through the SAME sanitizer, so the lookup
+ * key matches either. Unknown names pass through untouched: the runner owns
+ * the §8.9 unknown-tool repair turn and its 400-style validation reply.
+ */
+function toolSeam(specs: readonly OpenAIToolSpec[]): {
+  readonly tools: ToolSet;
+  readonly originalOf: (echoedName: string) => string;
+} {
+  const originalOfWire = new Map<string, string>();
   const set: ToolSet = {};
   for (const spec of specs) {
-    set[spec.function.name] = tool({
+    const wireName = wireToolName(spec.function.name);
+    originalOfWire.set(wireName, spec.function.name);
+    set[wireName] = tool({
       description: spec.function.description,
       // The contracts' JSON Schema passes through untouched on the wire.
       inputSchema: jsonSchema(spec.function.parameters as Parameters<typeof jsonSchema>[0]),
@@ -343,7 +387,10 @@ function toSdkTools(specs: readonly OpenAIToolSpec[]): ToolSet {
       // auto-loops on these — the runner drives rounds itself (§8.4).
     });
   }
-  return set;
+  return {
+    tools: set,
+    originalOf: (echoedName) => originalOfWire.get(wireToolName(echoedName)) ?? echoedName,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +415,11 @@ function usageOf(
   return { inputTokens, outputTokens };
 }
 
+/** Wire model id for a request: the mapped provider id, else the alias as-is. */
+function wireModelOf(deps: Pick<OpenAIClientDeps, "modelMap">, alias: string): string {
+  return deps.modelMap?.[alias] ?? alias;
+}
+
 async function* streamOnce(
   deps: OpenAIClientDeps,
   doFetch: typeof fetch,
@@ -382,8 +434,9 @@ async function* streamOnce(
   });
   const { instructions, messages } = toSdkPrompt(request.messages);
   const withTools = request.tools !== undefined && request.tools.length > 0;
+  const seam = withTools ? toolSeam(request.tools ?? []) : null;
   const result = streamText({
-    model: provider.chatModel(request.model),
+    model: provider.chatModel(wireModelOf(deps, request.model)),
     // maxRetries: 0 — §8.9's injectable-backoff retry loop lives HERE (the
     // SDK's own backoff is real-time; the test seam needs instant sleeps).
     maxRetries: 0,
@@ -394,7 +447,7 @@ async function* streamOnce(
     onError: () => undefined,
     ...(instructions !== undefined ? { instructions } : {}),
     messages,
-    ...(withTools ? { tools: toSdkTools(request.tools ?? []), toolChoice: "auto" as const } : {}),
+    ...(seam !== null ? { tools: seam.tools, toolChoice: "auto" as const } : {}),
   });
   // The aggregate result promise must never reject unhandled — every failure
   // below is surfaced through the parts (or the catch), not by awaiting it.
@@ -420,7 +473,8 @@ async function* streamOnce(
           call: {
             index: toolIndex,
             id: part.toolCallId,
-            name: part.toolName,
+            // Echoed wire name → registry id (dotted), see toolSeam.
+            name: seam !== null ? seam.originalOf(part.toolName) : part.toolName,
             arguments:
               typeof part.input === "string" ? part.input : JSON.stringify(part.input ?? {}),
           },

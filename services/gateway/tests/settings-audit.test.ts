@@ -148,11 +148,11 @@ d("GET/PATCH /v1/me/settings (W3-G2)", () => {
     expect(patched.code).toBe("AUTH_REQUIRED");
   });
 
-  it("reads false for a fresh user (absent row = the schema default, D-22)", async () => {
+  it("reads TRUE for a fresh user (absent row = the v2 schema default: auto-apply on)", async () => {
     const jar = await signUp();
     const result = await getSettings(jar);
     expect(result.status).toBe(200);
-    expect(result.body).toEqual({ autoApplyEnabled: false });
+    expect(result.body).toEqual({ autoApplyEnabled: true });
   });
 
   it("PATCH upserts and echoes; the stored value survives a fresh GET", async () => {
@@ -177,9 +177,9 @@ d("GET/PATCH /v1/me/settings (W3-G2)", () => {
       expect(result.status).toBe(400);
       expect(result.code).toBe("VALIDATION_FAILED");
     }
-    // Nothing was written — the read stays at the documented default.
+    // Nothing was written — the read stays at the documented v2 default.
     const read = await getSettings(jar);
-    expect(read.body).toEqual({ autoApplyEnabled: false });
+    expect(read.body).toEqual({ autoApplyEnabled: true });
   });
 
   it("is user-scoped, not workspace-scoped: one user's flag never crosses to another", async () => {
@@ -187,7 +187,7 @@ d("GET/PATCH /v1/me/settings (W3-G2)", () => {
     const b = await signUp();
     await patchSettings(a, { autoApplyEnabled: true });
     const readB = await getSettings(b);
-    expect(readB.body).toEqual({ autoApplyEnabled: false });
+    expect(readB.body).toEqual({ autoApplyEnabled: true });
   });
 });
 

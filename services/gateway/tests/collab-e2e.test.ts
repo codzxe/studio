@@ -27,32 +27,31 @@
 //     elects the queued reviewer; the OLD holder's writes now bounce.
 //
 // Harness (duplicated per the M5-K/M6-J house precedent — gateway tests
-// never import sibling test files): FakeOpenAIServer + SseStream +
-// expectValidStream + the scripted plan rounds (chat-loop/apply-flow) so
-// journey 1's read-only reviewer runs a REAL chat that PRODUCES a plan
-// (MOCK_MODEL=false → createRunnerForEnv → the in-process fake OpenAI SSE
-// server; no real network — the fake listens on an ephemeral 127.0.0.1
-// port). Lease expiry is time-traveled with a direct old-timestamp update
-// (the share.test force-expiry precedent); presence staleness with an
-// injected old last_seen_at (the presence.test sweep precedent). No sleeps
-// beyond bounded 25ms waitFor polls.
+// never import sibling test files): SseStream + expectValidStream (the
+// turn-wire form) so journey 1's read-only reviewer runs a REAL agent loop
+// that PRODUCES a plan (ROUND-12: the client-driven turn wire — step 0 POST
+// /v1/threads/:id/turn proposes the MOCK carriers, step 1 echoes the client's
+// tool results and closes the loop, POST /v1/runs/:id/plan stores the merged
+// plan + marks the run completed; MOCK_MODEL=true, the helpers default — no
+// fake model server, no server runner). Lease expiry is time-traveled with a
+// direct old-timestamp update (the share.test force-expiry precedent);
+// presence staleness with an injected old last_seen_at (the presence.test
+// sweep precedent). No sleeps beyond bounded 25ms waitFor polls.
 
 import { createHash } from "node:crypto";
-import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   EDIT_PLAN_SCHEMA,
   type RunRecord,
   STUDIO_STREAM_EVENT_SCHEMA,
   type StudioStreamEvent,
+  type TurnMessage,
 } from "@studio/contracts";
 import { createDb, tablesFor } from "@studio/db";
 import { eq } from "drizzle-orm";
 
-import { createRunnerForEnv } from "../src/runner.js";
 import {
   CookieJar,
   DATABASE_URL,
@@ -63,7 +62,6 @@ import {
   bootServer,
   closeDb,
   envelope,
-  testEnv,
   unique,
   uniqueEmail,
 } from "./helpers.js";
@@ -71,126 +69,8 @@ import {
 const d = describe.skipIf(!HAS_DATABASE);
 
 // ---------------------------------------------------------------------------
-// Fake OpenAI-compatible SSE server (scripted; M4-K/M5-K harness pattern,
-// duplicated per its precedent — gateway tests never import test files).
+// SSE wire reader (M5-K pattern, duplicated — keep-alive comment frames skip)
 // ---------------------------------------------------------------------------
-
-const encoder = new TextEncoder();
-
-type ChatCompletionBody = {
-  readonly model: string;
-  readonly messages: Array<Record<string, unknown>>;
-  readonly tools?: Array<{ readonly function: { readonly name: string } }>;
-};
-
-type ScriptEntry = (body: ChatCompletionBody) => string[];
-
-function frame(data: unknown): string {
-  return `data: ${JSON.stringify(data)}\n\n`;
-}
-function textDelta(content: string): string {
-  return frame({ choices: [{ delta: { content } }] });
-}
-function toolCallStart(index: number, id: string, name: string): string {
-  return frame({
-    choices: [
-      {
-        delta: {
-          tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }],
-        },
-      },
-    ],
-  });
-}
-function toolCallArgs(index: number, args: string): string {
-  return frame({
-    choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }],
-  });
-}
-function finishReason(reason: string): string {
-  return frame({ choices: [{ delta: {}, finish_reason: reason }] });
-}
-function usageChunk(promptTokens: number, completionTokens: number): string {
-  return frame({
-    choices: [],
-    usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
-  });
-}
-const DONE = "data: [DONE]\n\n";
-
-class FakeOpenAIServer {
-  private readonly queue: ScriptEntry[] = [];
-  private server: Server | null = null;
-  url = "";
-
-  enqueue(...entries: ScriptEntry[]): void {
-    this.queue.push(...entries);
-  }
-
-  reset(): void {
-    this.queue.length = 0;
-  }
-
-  async start(): Promise<void> {
-    const server = createServer((request, response) => {
-      void this.handle(request, response);
-    });
-    this.server = server;
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    const address = server.address() as AddressInfo;
-    this.url = `http://127.0.0.1:${address.port}`;
-  }
-
-  async stop(): Promise<void> {
-    const server = this.server;
-    if (server === null) return;
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
-  }
-
-  private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    // Swallow socket errors from aborted runs (the runner's fetch tears down).
-    response.on("error", () => undefined);
-    request.on("error", () => undefined);
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) {
-      chunks.push(chunk as Buffer);
-      if (response.destroyed) return;
-    }
-    let body: ChatCompletionBody = { model: "", messages: [] };
-    try {
-      body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as ChatCompletionBody;
-    } catch {
-      body = { model: "", messages: [] };
-    }
-    const next = this.queue.shift();
-    if (next === undefined) {
-      response.writeHead(500, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: { message: "fake script exhausted" } }));
-      return;
-    }
-    response.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    for (const wireFrame of next(body)) {
-      if (response.destroyed) return;
-      response.write(encoder.encode(wireFrame));
-      await new Promise<void>((resolveTick) => {
-        setImmediate(resolveTick);
-      });
-    }
-    response.end();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// SSE wire reader (M5-K pattern, duplicated)
-// ---------------------------------------------------------------------------
-
 interface WireFrame {
   readonly raw: string;
   readonly id: number;
@@ -235,7 +115,7 @@ class SseStream {
       if (boundary !== -1) {
         const raw = this.buffer.slice(0, boundary);
         this.buffer = this.buffer.slice(boundary + 2);
-        if (raw.trim() === "") continue;
+        if (raw.trim() === "" || raw.startsWith(":")) continue; // keep-alives
         return parseFrame(raw);
       }
       const remaining = deadline - Date.now();
@@ -282,9 +162,27 @@ class SseStream {
 // §7.4 wire-contract checks (M5-K pattern, duplicated)
 // ---------------------------------------------------------------------------
 
-const TERMINAL_TYPES = new Set(["run.completed", "run.failed", "run.cancelled"]);
+const TERMINAL_TYPES = new Set(["turn.completed", "turn.failed"]);
 
-type PlanEvent = Extract<StudioStreamEvent, { type: "plan" }>;
+/** The plan route's 200 payload (compile-enriched, authoritative). */
+interface PlanRoutePayload {
+  readonly runId: string;
+  readonly plan: { readonly summary: string };
+  readonly autoApply: unknown;
+  readonly baseVersionId?: string;
+  readonly compiledBatch?: {
+    readonly label: string;
+    readonly atomic: boolean;
+    readonly steps: readonly unknown[];
+  };
+  readonly risk?: string;
+  readonly estimatedCredits?: number;
+  readonly resolutionRequests?: readonly {
+    readonly requestId: string;
+    readonly layerName: string;
+    readonly disambiguation: readonly string[];
+  }[];
+}
 
 function expectValidStream(frames: readonly WireFrame[]): StudioStreamEvent[] {
   expect(frames.length).toBeGreaterThan(0);
@@ -320,25 +218,11 @@ function expectValidStream(frames: readonly WireFrame[]): StudioStreamEvent[] {
 }
 
 // ---------------------------------------------------------------------------
-// Scripted model rounds + the plan fixture (M5-K pattern, duplicated)
+// The plan fixture — the client's MERGED plan for the mock carriers, posted
+// to /v1/runs/:id/plan at run end (the route re-validates + RE-COMPILES it
+// authoritatively; the apply-flow precedent). Hostile declared risk/credits:
+// the server recomputes both from the compiled commands, never the model's.
 // ---------------------------------------------------------------------------
-
-function planEditRound(toolCallId: string, goal: string): ScriptEntry {
-  return () => [
-    toolCallStart(0, toolCallId, "studio.plan_edit"),
-    toolCallArgs(0, JSON.stringify({ goal })),
-    finishReason("tool_calls"),
-    DONE,
-  ];
-}
-
-function planJsonRound(plan: unknown): ScriptEntry {
-  return () => [textDelta(JSON.stringify(plan)), usageChunk(50, 12), finishReason("stop"), DONE];
-}
-
-function finalAnswerRound(text: string): ScriptEntry {
-  return () => [textDelta(text), usageChunk(40, 8), finishReason("stop"), DONE];
-}
 
 const PLAN_SUMMARY = "Add two text layers";
 
@@ -379,17 +263,16 @@ const PLAN = {
 EDIT_PLAN_SCHEMA.parse(PLAN);
 
 /** sha256 of the exact engine payload (mirrors the client's saveNow path). */
-function shaOfCompiledBatch(batch: { label: string; steps: unknown[] }): string {
+function shaOfCompiledBatch(batch: { label: string; steps: readonly unknown[] }): string {
   const payload = { label: batch.label, atomic: true, steps: batch.steps };
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
 // ---------------------------------------------------------------------------
-// Server boot: real app + real Postgres + the real LiteLLM runner against
-// the in-process fake OpenAI server (MOCK_MODEL=false, apply-flow precedent).
+// Server boot: real app + real Postgres with the ROUND-12 mock model
+// (MOCK_MODEL=true, the helpers default) — the deterministic two-carrier
+// journey; no fake model server, no server runner.
 // ---------------------------------------------------------------------------
-
-const openai = new FakeOpenAIServer();
 
 let server: RunningTestServer;
 /** Raw db handle for the time-travel updates (expiry pins). */
@@ -409,15 +292,7 @@ function t(): ReturnType<typeof tablesFor> {
 }
 
 beforeAll(async () => {
-  await openai.start();
-  const envSource = {
-    MOCK_MODEL: "false",
-    LITELLM_BASE_URL: openai.url,
-    LITELLM_API_KEY: "sk-test-litellm-fake",
-    CHAT_MAX_STEPS: "6",
-  };
-  const env = testEnv(envSource);
-  server = await bootServer({ env: envSource, runner: createRunnerForEnv(env) });
+  server = await bootServer();
   if (DATABASE_URL !== null) {
     rawDb = createDb(DATABASE_URL, { max: 2 });
     tables = tablesFor(rawDb);
@@ -431,11 +306,6 @@ afterAll(async () => {
   } catch {
     // already closed
   }
-  await openai.stop();
-});
-
-afterEach(() => {
-  openai.reset();
 });
 
 // ---------------------------------------------------------------------------
@@ -617,13 +487,19 @@ async function createThread(
   return body.data.id;
 }
 
-async function chatStream(
+/**
+ * POST /v1/threads/:id/turn (the ROUND-12 wire — the idempotency header IS
+ * the turn key `${runId}:${stepIndex}`).
+ */
+async function turnStream(
   jar: CookieJar,
   workspaceId: string,
   threadId: string,
-  message: string,
+  runId: string,
+  stepIndex: number,
+  messages: readonly TurnMessage[],
 ): Promise<Response> {
-  return fetch(`${server.base}/v1/threads/${threadId}/chat`, {
+  return fetch(`${server.base}/v1/threads/${threadId}/turn`, {
     method: "POST",
     headers: {
       origin: TEST_APP_ORIGIN,
@@ -631,13 +507,9 @@ async function chatStream(
       accept: "text/event-stream",
       cookie: jar.header,
       "x-workspace-id": workspaceId,
+      "idempotency-key": `${runId}:${stepIndex}`,
     },
-    body: JSON.stringify({
-      message,
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
-    }),
+    body: JSON.stringify({ runId, stepIndex, messages }),
     redirect: "manual",
   });
 }
@@ -653,37 +525,97 @@ async function getRun(jar: CookieJar, workspaceId: string, runId: string): Promi
 
 const PLAN_MESSAGE = "Add the two text layers we discussed";
 
+type TurnCompletedEvent = Extract<StudioStreamEvent, { type: "turn.completed" }>;
+
+function completedOf(events: readonly StudioStreamEvent[]): TurnCompletedEvent {
+  const terminal = events.find(
+    (event): event is TurnCompletedEvent => event.type === "turn.completed",
+  );
+  if (terminal === undefined) throw new Error("no turn.completed event on the wire");
+  return terminal;
+}
+
+/** POST /v1/runs/:id/plan — the client's merged plan at run end. */
+async function postPlan(
+  jar: CookieJar,
+  workspaceId: string,
+  runId: string,
+  plan: unknown,
+): Promise<PlanRoutePayload> {
+  const response = await api(server.base, `/v1/runs/${runId}/plan`, {
+    method: "POST",
+    jar,
+    headers: { "x-workspace-id": workspaceId, "idempotency-key": unique("plan") },
+    body: { plan },
+  });
+  expect(response.status).toBe(200);
+  return (await response.json()) as PlanRoutePayload;
+}
+
 /**
- * Drives ONE full planning chat through the real route (M5-K planRun): the
- * model calls plan_edit, the server-side structured round returns the plan,
- * the model wraps up. Returns the full valid stream + the plan event.
+ * Drives ONE full agent loop through the real turn route (the ROUND-12
+ * mock journey): step 0 proposes the two write carriers, step 1 echoes the
+ * client's tool results and closes with text, then the client posts its
+ * MERGED plan — the route re-compiles it authoritatively, stores plan_json
+ * and marks the run completed (the D-11 applyable gate).
  */
 async function planRun(
   jar: CookieJar,
   workspaceId: string,
   threadId: string,
   message = PLAN_MESSAGE,
-) {
-  openai.enqueue(
-    planEditRound("call_collab_plan", message),
-    planJsonRound(PLAN),
-    finalAnswerRound("Planned — apply it from the card whenever you're ready."),
+): Promise<{ runId: string; payload: PlanRoutePayload; first: TurnCompletedEvent }> {
+  const runId = unique("run");
+
+  const firstResponse = await turnStream(jar, workspaceId, threadId, runId, 0, [
+    { role: "user", text: message },
+  ]);
+  expect(firstResponse.status).toBe(200);
+  expect(firstResponse.headers.get("content-type")).toContain("text/event-stream");
+  const firstEvents = expectValidStream(await new SseStream(firstResponse).rest());
+  const first = completedOf(firstEvents);
+  expect(first.finishReason).toBe("tool-calls");
+  expect(first.toolCalls.map((call) => call.tool)).toEqual([
+    "studio.create_composition",
+    "studio.create_text",
+  ]);
+
+  const closingResponse = await turnStream(jar, workspaceId, threadId, runId, 1, [
+    { role: "user", text: message },
+    { role: "assistant", text: "" },
+    ...first.toolCalls.map(
+      (call): TurnMessage => ({
+        role: "tool_call",
+        toolCallId: call.toolCallId,
+        tool: call.tool,
+        args: call.args,
+      }),
+    ),
+    ...first.toolCalls.map(
+      (call): TurnMessage => ({
+        role: "tool_result",
+        toolCallId: call.toolCallId,
+        tool: call.tool,
+        result: { ok: true },
+      }),
+    ),
+  ]);
+  expect(closingResponse.status).toBe(200);
+  const closingEvents = expectValidStream(await new SseStream(closingResponse).rest());
+  const closing = completedOf(closingEvents);
+  expect(closing.finishReason).toBe("stop");
+  expect(closing.toolCalls).toEqual([]);
+  expect(closing.assistantText).toBe(
+    "Done — I created the Agent Demo composition with a text layer.",
   );
-  const response = await chatStream(jar, workspaceId, threadId, message);
-  expect(response.status).toBe(200);
-  expect(response.headers.get("content-type")).toContain("text/event-stream");
-  const stream = new SseStream(response);
-  const frames = await stream.rest();
-  const events = expectValidStream(frames);
-  const runId = events[0]?.runId;
-  if (runId === undefined) throw new Error("no run.started event");
+
+  const payload = await postPlan(jar, workspaceId, runId, PLAN);
+  expect(payload.runId).toBe(runId);
   await waitFor("the run row to complete", async () => {
     const run = await getRun(jar, workspaceId, runId);
     return run.status === "completed";
   });
-  const plan = events.find((event): event is PlanEvent => event.type === "plan");
-  if (plan === undefined) throw new Error("no plan event on the wire");
-  return { runId, events, plan };
+  return { runId, payload, first };
 }
 
 /**
@@ -696,14 +628,14 @@ async function applyPlan(
   workspaceId: string,
   projectId: string,
   runId: string,
-  plan: PlanEvent,
+  plan: PlanRoutePayload,
   transportKey: string,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const batch = plan.compiledBatch;
-  if (batch === undefined) throw new Error("the plan event carried no compiledBatch");
+  if (batch === undefined) throw new Error("the plan payload carried no compiledBatch");
   const baseVersionId = plan.baseVersionId;
   if (typeof baseVersionId !== "string" || baseVersionId === null) {
-    throw new Error("the plan event carried no baseVersionId");
+    throw new Error("the plan payload carried no baseVersionId");
   }
   const upload = await uploadVersion(jar, workspaceId, projectId, {
     baseVersionId,
@@ -1116,7 +1048,7 @@ d("journey 1 — two users review one project; only the lease holder edits", () 
   let baseVersionId: string;
   let threadId: string;
   let bPlanRunId = "";
-  let bPlan: PlanEvent | undefined;
+  let bPlan: PlanRoutePayload | undefined;
 
   beforeAll(async () => {
     team = await newTeam("J1TwoUsers");
@@ -1216,30 +1148,23 @@ d("journey 1 — two users review one project; only the lease holder edits", () 
   });
 
   it("B's chat is ALLOWED (D-23): the read-only reviewer's agent proposes a real plan", async () => {
-    const { runId, events, plan } = await planRun(team.bJar, team.wsId, threadId);
+    const { runId, payload } = await planRun(team.bJar, team.wsId, threadId);
     bPlanRunId = runId;
-    bPlan = plan;
-    expect(events.map((event) => event.type)).toEqual([
-      "run.started",
-      "tool.started",
-      "plan",
-      "tool.result",
-      "message.delta",
-      "credits",
-      "run.completed",
-    ]);
-    // The plan is real: server-compiled batch, resolution requests, and the
-    // base version the client was on (M5-Q) — built while B was read-only.
-    expect(plan.plan.summary).toBe(PLAN_SUMMARY);
-    expect(plan.compiledBatch).toMatchObject({ label: `Agent: ${PLAN_SUMMARY}`, atomic: true });
-    expect(plan.resolutionRequests).toHaveLength(2);
-    expect(plan.baseVersionId).toBe(baseVersionId);
+    bPlan = payload;
+    // The plan is real: the plan route re-compiled the merged batch
+    // server-side (authoritative), derived the layer resolution requests,
+    // and echoed the base version the client was on (M5-Q) — all proposed
+    // while B was read-only (the two-carrier journey is planRun's own pins).
+    expect(payload.plan.summary).toBe(PLAN_SUMMARY);
+    expect(payload.compiledBatch).toMatchObject({ label: `Agent: ${PLAN_SUMMARY}`, atomic: true });
+    expect(payload.resolutionRequests).toHaveLength(2);
+    expect(payload.baseVersionId).toBe(baseVersionId);
   });
 
   it("B's apply of its OWN plan is still gated: 409 LEASE_HELD (the gate follows the lease, not the author)", async () => {
     expect(bPlan).toBeDefined();
-    const batch = (bPlan as PlanEvent).compiledBatch;
-    if (batch === undefined) throw new Error("no compiledBatch on the plan event");
+    const batch = (bPlan as PlanRoutePayload).compiledBatch;
+    if (batch === undefined) throw new Error("no compiledBatch on the plan payload");
     const response = await api(server.base, `/v1/runs/${bPlanRunId}/apply`, {
       method: "POST",
       jar: team.bJar,
@@ -1285,7 +1210,7 @@ d("journey 1 — two users review one project; only the lease holder edits", () 
       team.wsId,
       projectId,
       bPlanRunId,
-      bPlan as PlanEvent,
+      bPlan as PlanRoutePayload,
       unique("apply"),
     );
     // The apply gesture includes the version upload, which now passes too.
@@ -2255,9 +2180,11 @@ d("journey 6 — the read-only gate map (M7-C) as a table while A holds", () => 
     expect(state.canAcquire).toBe(false);
   });
 
-  it("chat POST is the ONE allowed agent POST (D-23): the read-only reviewer's agent still runs", async () => {
-    openai.enqueue(finalAnswerRound("Read-only review note: the comp looks good to me."));
-    const response = await chatStream(team.bJar, team.wsId, threadId, "Quick look at this comp");
+  it("the turn POST is the ONE allowed agent POST (D-23): the read-only reviewer's agent still runs", async () => {
+    const runId = unique("run");
+    const response = await turnStream(team.bJar, team.wsId, threadId, runId, 0, [
+      { role: "user", text: "Quick look at this comp" },
+    ]);
     expect(response.status).toBe(200); // NOT a LEASE_HELD 409
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     const stream = new SseStream(response);
@@ -2265,8 +2192,23 @@ d("journey 6 — the read-only gate map (M7-C) as a table while A holds", () => 
     const events = expectValidStream(frames);
     const types = events.map((event) => event.type);
     expect(types[0]).toBe("run.started");
-    expect(types.at(-1)).toBe("run.completed");
-    expect(types).not.toContain("plan"); // a look-only round: no plan, no writes
+    expect(types.at(-1)).toBe("turn.completed");
+    // The propose-only envelope: plans never ride the SSE wire (the client
+    // merges + POSTs them separately) — and no lease error ever does.
+    expect(types).not.toContain("plan");
     expect(types).not.toContain("LEASE_HELD");
+    // The read-only reviewer declines to execute the proposals: the
+    // end-marker gesture lands the run completed without any write.
+    const end = await api(server.base, `/v1/runs/${runId}/plan`, {
+      method: "POST",
+      jar: team.bJar,
+      headers: { "x-workspace-id": team.wsId, "idempotency-key": unique("end") },
+      body: { end: true },
+    });
+    expect(end.status).toBe(200);
+    await waitFor("the ended run row", async () => {
+      const run = await getRun(team.bJar, team.wsId, runId);
+      return run.status === "completed";
+    });
   });
 });

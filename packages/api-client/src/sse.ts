@@ -54,7 +54,9 @@ import {
   type RunStatus,
   STUDIO_STREAM_EVENT_SCHEMA,
   type StudioStreamEvent,
+  TURN_REQUEST_SCHEMA,
   type ToolCallState,
+  type TurnRequestBody,
   applyEvents,
   isErr,
 } from "@studio/contracts";
@@ -241,6 +243,17 @@ export class StreamEventNormalizer {
   #lastServerSeq = -1;
   #localSeq = -1;
   #ignored = 0;
+
+  /**
+   * Optional starting cursors (round-12 turn transport): `localSeq` continues
+   * a RUN's monotonic local seq across turns (the §7.4 per-turn seqs restart
+   * at 0 on every POST), `serverSeq` carries a paused attempt's replay cursor
+   * so a resumed call drops the frames it already emitted.
+   */
+  constructor(start?: { readonly localSeq?: number; readonly serverSeq?: number }) {
+    if (start?.localSeq !== undefined) this.#localSeq = start.localSeq;
+    if (start?.serverSeq !== undefined) this.#lastServerSeq = start.serverSeq;
+  }
 
   /** `runId` once a §7.4 event bound the stream to a run. */
   get runId(): string | null {
@@ -944,4 +957,447 @@ export function streamChat(options: StreamChatOptions): ChatStreamController {
     finish("aborted");
   });
   return Object.freeze(controller);
+}
+
+// ---------------------------------------------------------------------------
+// streamTurn — the round-12 client-driven turn transport (TURN WIRE CONTRACT)
+// ---------------------------------------------------------------------------
+//
+// POST /v1/threads/:id/turn with header `Idempotency-Key: ${runId}:${stepIndex}`
+// (the key rides the HEADER, derived from the body — never invented here).
+// One call = ONE turn: run.started → turn.started → message.delta/tool.started
+// → turn.completed | turn.failed. The loop between turns lives in the browser
+// chat-controller, NOT here.
+//
+// BOUNDED recovery posture (deliberately unlike chat.stream's §8.4 loop):
+//   * transport drop mid-turn (network error, non-SSE 200, clean close
+//     without a terminal event) → re-POST the SAME step, SAME idempotency key
+//     (the server replays/continues idempotently — NEVER a second run), backoff
+//     1s → 2s, at most TURN_MAX_ATTEMPTS attempts total, then
+//     onError {code: "TURN_PAUSED"} and the handle parks for a manual resume
+//     (the controller re-POSTs the same step on user retry);
+//   * a retryable turn.failed → ONE same-key retry (the failed turn never
+//     persisted its turnKey, so the retry re-runs the model exactly once),
+//     then the failure surfaces through onError with its own code.
+// User aborts (signal / abort()) never auto-retry.
+
+/** Turn transport: backoff between same-key re-POSTs (1s → 2s). */
+export const TURN_RETRY_SCHEDULE_MS: readonly number[] = [1000, 2000];
+/** Turn transport: POST attempts per turn, including the first (bounded). */
+export const TURN_MAX_ATTEMPTS = 3;
+/** Turn transport: retries allowed for a retryable turn.failed (ONE). */
+export const TURN_FAILED_MAX_RETRIES = 1;
+/** Turn transport: the parked-turn error code (the controller maps it to §8.4). */
+export const TURN_PAUSED_ERROR_CODE = "TURN_PAUSED";
+
+/** The api-client error for a turn whose bounded same-key retries all dropped. */
+export function turnPausedError(): ApiError {
+  return new ApiError({
+    code: TURN_PAUSED_ERROR_CODE,
+    message: "Run paused. Check your connection.",
+    hint: "Retry to resume this step of the run.",
+    retryable: true,
+    status: 0,
+  });
+}
+
+/** Why a turn call ended. */
+export type TurnStreamDoneReason = "terminal" | "aborted" | "paused" | "error";
+
+export interface TurnStreamSummary {
+  readonly reason: TurnStreamDoneReason;
+  /** The run the turn belongs to (the body's runId once validated). */
+  readonly runId: string | null;
+  /** The terminal turn.failed code/message when `reason === "error"`. */
+  readonly failure: ApiError | null;
+}
+
+export interface TurnStreamHandlers {
+  /** Every normalized §7.4 event (turn.* included), in order. */
+  readonly onEvent?: (event: StudioStreamEvent) => void;
+  /** Fatal outcome: the surfaced turn.failed, or TURN_PAUSED when parked. */
+  readonly onError?: (error: ApiError) => void;
+  /** Fired before every same-key re-POST (transport drop / retryable failure). */
+  readonly onReconnect?: (info: { readonly attempt: number; readonly delayMs: number }) => void;
+  /** Fired exactly once per turn call, whatever the reason. */
+  readonly onDone?: (summary: TurnStreamSummary) => void;
+}
+
+export interface TurnStreamReconnectConfig {
+  /** Same-key re-POST schedule; default TURN_RETRY_SCHEDULE_MS (1s → 2s). */
+  readonly scheduleMs?: readonly number[];
+  /** Total POST attempts incl. the first; default TURN_MAX_ATTEMPTS (3). */
+  readonly maxAttempts?: number;
+  /** Retries for a retryable turn.failed; default TURN_FAILED_MAX_RETRIES (1). */
+  readonly maxFailedRetries?: number;
+  /** Zero-delay backoff seam for tests. */
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+export interface StreamTurnOptions extends TurnStreamHandlers {
+  readonly threadId: string;
+  /** TURN_REQUEST_SCHEMA body; validated client-side before the POST. */
+  readonly body: unknown;
+  /** Includes the version segment; default `/v1`. */
+  readonly baseUrl?: string;
+  /** Injectable fetch (client.ts passes its own). */
+  readonly fetchImpl?: (input: string, init?: RequestInit) => Promise<Response>;
+  /** Extra headers (auth) merged into the POST. */
+  readonly extraHeaders?: Record<string, string>;
+  readonly signal?: AbortSignal;
+  readonly reconnect?: TurnStreamReconnectConfig;
+  /**
+   * The run's NEXT local seq (the controller's monotonic counter — §7.4
+   * per-turn seqs restart at 0 per POST; the normalizer rewrites them so the
+   * reducer's `lastSeq` cursor keeps working across turns). Default 0.
+   */
+  readonly seqBase?: number;
+  /**
+   * A PAUSED attempt's highest server seq (its `handle.lastServerSeq`) — a
+   * resumed call drops the frames it already emitted instead of double-folding.
+   */
+  readonly replayCursor?: number;
+}
+
+/** The live view of ONE turn POST (bounded retry state lives inside). */
+export interface TurnStreamHandle {
+  /** Resolves exactly once with the turn call's outcome. */
+  readonly done: Promise<TurnStreamSummary>;
+  /** The runId the turn belongs to (the body's, once validated). */
+  readonly runId: string;
+  /** Highest §7.4 server seq seen THIS call (the resume `replayCursor`). */
+  readonly lastServerSeq: number;
+  /** True while parked on TURN_PAUSED (re-POST via a NEW call + cursor). */
+  readonly paused: boolean;
+  /** Aborts the in-flight fetch/reader; `done` settles with `aborted`. */
+  abort(): void;
+}
+
+/**
+ * Streams ONE turn of the client-driven loop. Client-side validation failures
+ * throw synchronously (ApiError VALIDATION_FAILED, status 0). Everything else
+ * is surfaced through `onError`/`onDone` — never a throw after return.
+ */
+export function streamTurn(options: StreamTurnOptions): TurnStreamHandle {
+  let parsedBody: TurnRequestBody;
+  try {
+    parsedBody = TURN_REQUEST_SCHEMA.parse(options.body);
+  } catch (error) {
+    if (isApiError(error)) throw error;
+    throw new ApiError({
+      code: "VALIDATION_FAILED",
+      message: "That request didn't look right.",
+      hint: "A runId, stepIndex and at least one transcript part are required.",
+      retryable: false,
+      status: 0,
+      cause: error,
+    });
+  }
+
+  const baseUrl = (options.baseUrl ?? "/v1").replace(/\/+$/, "");
+  const fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
+  const extraHeaders = options.extraHeaders ?? {};
+  const sleep = options.reconnect?.sleep ?? defaultSleep;
+  const schedule = options.reconnect?.scheduleMs ?? TURN_RETRY_SCHEDULE_MS;
+  const maxAttempts = options.reconnect?.maxAttempts ?? TURN_MAX_ATTEMPTS;
+  const maxFailedRetries = options.reconnect?.maxFailedRetries ?? TURN_FAILED_MAX_RETRIES;
+
+  // TURN WIRE CONTRACT: the idempotency header IS the turn key — the same key
+  // replays/continues the SAME step, never a second run.
+  const turnKey = `${parsedBody.runId}:${parsedBody.stepIndex}`;
+  const turnUrl = `${baseUrl}/threads/${encodeURIComponent(options.threadId)}/turn`;
+
+  const normalizer = new StreamEventNormalizer({
+    localSeq: (options.seqBase ?? 0) - 1,
+    serverSeq: options.replayCursor ?? -1,
+  });
+  const internalAbort = new AbortController();
+  let attempt = 1; // the first POST counts
+  let failedRetries = 0;
+  let userStopped = false;
+  let terminalSeen = false;
+  let terminalFailure: ApiError | null = null;
+  let paused = false;
+  let settled = false;
+  let resolveDone: (summary: TurnStreamSummary) => void = () => {};
+  const done: Promise<TurnStreamSummary> = new Promise<TurnStreamSummary>((resolve) => {
+    resolveDone = resolve;
+  });
+
+  const handleMessage = (message: SseMessage): void => {
+    const { data } = message;
+    if (data === "" || data === "[DONE]") return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      normalizer.recordJunk();
+      return;
+    }
+    // Terminal detection is PRE-dedupe: a resumed attempt's replayed terminal
+    // (seq ≤ the cursor) still ends the turn call — the normalizer would drop
+    // the frame, terminalSeen must not.
+    if (typeof parsed === "object" && parsed !== null) {
+      const type = (parsed as { type?: unknown }).type;
+      if (type === "turn.completed" || type === "turn.failed") terminalSeen = true;
+      if (type === "turn.failed") {
+        const failure = parsed as { code?: unknown; message?: unknown; retryable?: unknown };
+        terminalFailure = new ApiError({
+          code: typeof failure.code === "string" ? failure.code : "INTERNAL",
+          message: typeof failure.message === "string" ? failure.message : "The turn failed.",
+          retryable: failure.retryable === true,
+          status: 0,
+        });
+      }
+    }
+    for (const event of normalizer.ingest(parsed)) options.onEvent?.(event);
+  };
+
+  const finish = (reason: TurnStreamDoneReason): void => {
+    if (settled) return;
+    settled = true;
+    const summary: TurnStreamSummary = {
+      reason,
+      runId: parsedBody.runId,
+      failure: terminalFailure,
+    };
+    resolveDone(summary);
+    options.onDone?.(summary);
+  };
+
+  /** Surfaces the failure; a parked turn reports TURN_PAUSED instead. */
+  const surfaceFailure = (error: ApiError): void => {
+    terminalFailure = error;
+    options.onError?.(error);
+    finish(error.code === TURN_PAUSED_ERROR_CODE ? "paused" : "error");
+  };
+
+  const waitThen = async (delayMs: number, retry: () => Promise<void>): Promise<void> => {
+    options.onReconnect?.({ attempt, delayMs });
+    try {
+      await sleepWithAbort(sleep, delayMs, internalAbort.signal);
+    } catch {
+      finish("aborted");
+      return;
+    }
+    await retry();
+  };
+
+  const pump = async (body: ReadableStream<Uint8Array>): Promise<"terminal" | "closed"> => {
+    const parser = createSseParser(handleMessage);
+    const reader = body.getReader();
+    const rejectOnAbort = new Promise<never>((_, reject) => {
+      if (internalAbort.signal.aborted) {
+        reject(getAbortError(internalAbort.signal));
+        return;
+      }
+      internalAbort.signal.addEventListener(
+        "abort",
+        () => {
+          reject(getAbortError(internalAbort.signal));
+        },
+        { once: true },
+      );
+    });
+    rejectOnAbort.catch(() => {});
+    for (;;) {
+      let chunk: Uint8Array | undefined;
+      try {
+        const read = await Promise.race([reader.read(), rejectOnAbort]);
+        if (read.done) break;
+        chunk = read.value;
+      } catch (error) {
+        if (isAbortError(error) || internalAbort.signal.aborted) throw error;
+        throw networkError(error); // dropped mid-stream
+      }
+      if (chunk !== undefined) parser.push(chunk);
+      if (terminalSeen) {
+        void reader.cancel().catch(() => {});
+        return "terminal";
+      }
+    }
+    parser.end();
+    return terminalSeen ? "terminal" : "closed";
+  };
+
+  const loop = async (): Promise<void> => {
+    for (;;) {
+      if (userStopped) {
+        finish("aborted");
+        return;
+      }
+      if (terminalSeen) {
+        finish("terminal");
+        return;
+      }
+
+      let response: Response;
+      try {
+        const headers = new Headers(extraHeaders);
+        headers.set("Accept", "text/event-stream");
+        headers.set("Content-Type", "application/json");
+        headers.set("Idempotency-Key", turnKey);
+        response = await fetchImpl(turnUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(parsedBody),
+          signal: internalAbort.signal,
+        });
+      } catch (error) {
+        if (isAbortError(error) || internalAbort.signal.aborted) {
+          finish("aborted");
+          return;
+        }
+        await retryTransportDrop(networkError(error));
+        return;
+      }
+
+      if (!response.ok) {
+        const apiError = await fromResponse(response);
+        if (apiError.code === "TURN_CANCELLED" && userStopped) {
+          finish("aborted");
+          return;
+        }
+        await retryTransportDrop(apiError);
+        return;
+      }
+
+      // §7.3: a 200 may still carry an Err envelope where a stream was expected.
+      const contentType = response.headers?.get("content-type") ?? "";
+      if (!contentType.includes("text/event-stream")) {
+        let json: unknown = null;
+        try {
+          json = JSON.parse(await response.text());
+        } catch {
+          json = null;
+        }
+        if (isErr(json)) {
+          const error = json.error;
+          const apiError = new ApiError({
+            code: error.code,
+            message: error.message,
+            hint: error.hint,
+            retryable: error.retryable,
+            requestId: error.requestId,
+            status: response.status,
+          });
+          await retryTransportDrop(apiError);
+          return;
+        }
+        // Ok envelope or junk where SSE was promised: bounded same-key retry.
+        await retryTransportDrop(networkError(new Error("turn response was not an event stream")));
+        return;
+      }
+
+      if (response.body === null) {
+        await retryTransportDrop(networkError(new Error("turn response had no body")));
+        return;
+      }
+
+      let outcome: "terminal" | "closed";
+      try {
+        outcome = await pump(response.body);
+      } catch (error) {
+        if (isApiError(error)) {
+          await retryTransportDrop(error);
+          return;
+        }
+        if (isAbortError(error) || internalAbort.signal.aborted) {
+          finish("aborted");
+          return;
+        }
+        await retryTransportDrop(networkError(error));
+        return;
+      }
+
+      if (outcome === "terminal") {
+        const failure = terminalFailure;
+        if (failure?.retryable && failedRetries < maxFailedRetries) {
+          // A retryable turn.failed: ONE same-key retry, then surface. The
+          // failed turn never persisted its turnKey — the retry re-runs the
+          // model exactly once.
+          failedRetries += 1;
+          attempt += 1;
+          terminalSeen = false;
+          terminalFailure = null;
+          await waitThen(schedule[0] ?? 1000, loop);
+          return;
+        }
+        if (failure !== null) {
+          surfaceFailure(failure);
+          return;
+        }
+        finish("terminal");
+        return;
+      }
+
+      // Clean close without a terminal event: the connection dropped.
+      await retryTransportDrop(networkError(new Error("turn stream closed before the turn ended")));
+      return;
+    }
+  };
+
+  /** Bounded same-key re-POST; exhausted ⇒ TURN_PAUSED (never a second run). */
+  const retryTransportDrop = async (error: ApiError): Promise<void> => {
+    if (userStopped) {
+      finish("aborted");
+      return;
+    }
+    if (error.retryable === false) {
+      surfaceFailure(error);
+      return;
+    }
+    if (attempt >= maxAttempts) {
+      paused = true;
+      surfaceFailure(turnPausedError());
+      return;
+    }
+    const delayMs = schedule[attempt - 1] ?? schedule[schedule.length - 1] ?? 1000;
+    attempt += 1;
+    await waitThen(delayMs, loop);
+  };
+
+  const wireSignal = (): void => {
+    const signal = options.signal;
+    if (signal === undefined) return;
+    if (signal.aborted) {
+      userStopped = true;
+      internalAbort.abort(signal.reason);
+      return;
+    }
+    signal.addEventListener(
+      "abort",
+      () => {
+        userStopped = true;
+        internalAbort.abort(signal.reason);
+      },
+      { once: true },
+    );
+  };
+
+  wireSignal();
+  void loop().catch((error) => {
+    if (!isAbortError(error) && internalAbort.signal.aborted === false) {
+      surfaceFailure(networkError(error));
+      return;
+    }
+    finish("aborted");
+  });
+
+  return Object.freeze({
+    done,
+    get runId() {
+      return parsedBody.runId;
+    },
+    get lastServerSeq() {
+      return normalizer.lastServerSeq;
+    },
+    get paused() {
+      return paused;
+    },
+    abort() {
+      userStopped = true;
+      internalAbort.abort();
+    },
+  });
 }

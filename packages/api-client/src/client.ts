@@ -58,6 +58,7 @@ import {
   type CreateWorkspaceRequest,
   type CreatedApiKey,
   type CreditsSummary,
+  type EditPlan,
   type Err,
   type EstimateResult,
   IDEMPOTENCY_KEY_SCHEMA,
@@ -218,7 +219,9 @@ import {
   RENDER_JOB_SCHEMA,
   REQUEST_ACCESS_RESPONSE_SCHEMA,
   REVOKED_API_KEY_SCHEMA,
+  RUN_PLAN_RESPONSE_SCHEMA,
   RUN_RECORD_SCHEMA,
+  type RunPlanResponse,
   SETTINGS_RESPONSE_SCHEMA,
   SHARE_COMMENT_SCHEMA,
   SHARE_INFO_SCHEMA,
@@ -241,7 +244,11 @@ import {
   type ChatStreamController,
   type ChatStreamHandlers,
   type ChatStreamReconnectConfig,
+  type TurnStreamHandle,
+  type TurnStreamHandlers,
+  type TurnStreamReconnectConfig,
   streamChat,
+  streamTurn,
 } from "./sse";
 import { isAbortError, sleepWithAbort } from "./utils";
 
@@ -450,6 +457,68 @@ class ApiClientImpl {
       return error.retryable;
     }
     return false;
+  }
+
+  /**
+   * Round-12 seam: ONE JSON POST whose 2xx body may be a RAW payload (the
+   * turn route family returns plain JSON) OR the §7.3 Ok envelope — both
+   * accepted, `isErr` always the failure arm. No retry (mutations), the
+   * caller's idempotency key rides the header. Without a response schema the
+   * parsed payload returns as-is (best-effort surfaces like abandon).
+   */
+  async rawJsonPost<T>(plan: {
+    readonly path: string;
+    readonly body: unknown;
+    readonly responseSchema?: z.ZodType<T>;
+    readonly idempotencyKey: string;
+    readonly signal?: AbortSignal;
+  }): Promise<T> {
+    const url = `${this.core.baseUrl}${plan.path}`;
+    const headers = new Headers(this.core.extraHeaders);
+    headers.set("Accept", "application/json");
+    headers.set("Content-Type", "application/json");
+    headers.set("Idempotency-Key", plan.idempotencyKey);
+    let response: Response;
+    try {
+      response = await this.core.fetchImpl(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(plan.body),
+        signal: plan.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      throw networkError(error);
+    }
+    if (!response.ok) {
+      throw await fromResponse(response);
+    }
+    const text = await response.text();
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw malformedResponseError(response.status);
+    }
+    if (isErr(json)) {
+      const error = json.error;
+      throw new ApiError({
+        code: error.code,
+        message: error.message,
+        hint: error.hint,
+        retryable: error.retryable,
+        requestId: error.requestId,
+        status: response.status,
+        cause: json,
+      });
+    }
+    const payload = isOk(json) ? json.data : json;
+    if (plan.responseSchema === undefined) return payload as T;
+    try {
+      return plan.responseSchema.parse(payload);
+    } catch (error) {
+      throw malformedResponseError(response.status, error);
+    }
   }
 
   private backoff(plan: RequestPlan<unknown>, attempt: number): Promise<void> {
@@ -789,6 +858,27 @@ export interface ApiClient {
         readonly reconnect?: ChatStreamReconnectConfig;
       },
     ): ChatStreamController;
+    /**
+     * POST /v1/threads/:id/turn — ONE turn of the round-12 client-driven
+     * loop (TURN WIRE CONTRACT): `Idempotency-Key: ${runId}:${stepIndex}`
+     * rides the header, the response is a bounded SSE stream (run.started →
+     * turn.started → message.delta/tool.started → turn.completed |
+     * turn.failed). Transport drops re-POST the SAME key up to 3 attempts
+     * then park with `TURN_PAUSED`; a retryable turn.failed retries once.
+     * See ./sse.ts (`streamTurn`).
+     */
+    turn(
+      threadId: string,
+      body: unknown,
+      handlers?: TurnStreamHandlers & {
+        readonly signal?: AbortSignal;
+        readonly reconnect?: TurnStreamReconnectConfig;
+        /** The run's next local §7.4 seq (monotonic across turns; default 0). */
+        readonly seqBase?: number;
+        /** A paused attempt's `handle.lastServerSeq` (resume dedupe). */
+        readonly replayCursor?: number;
+      },
+    ): TurnStreamHandle;
   };
   readonly runs: {
     get(runId: string, options?: CallOptions): Promise<RunRecord>;
@@ -807,6 +897,27 @@ export interface ApiClient {
      * free after a committed apply (no ledger mutation).
      */
     undoRun(runId: string, body: UndoRequest, options?: CallOptions): Promise<UndoResponse>;
+    /**
+     * POST /v1/runs/:id/plan (round-12 TURN WIRE CONTRACT) — the client-driven
+     * loop's run-end fold: the browser merges the run's write-tool proposal
+     * carriers into ONE EditPlan and POSTs it here; the server re-validates,
+     * RE-COMPILES authoritatively, stamps the §7.3 auto-apply verdict and
+     * stores `plan_json`. The default idempotency key is STABLE per run
+     * (`plan:<runId>`) — a network retry replays the same decision, never
+     * double work.
+     */
+    submitPlan(
+      runId: string,
+      body: { readonly plan: EditPlan } | { readonly end: true },
+      options?: CallOptions,
+    ): Promise<RunPlanResponse | { runId: string; ended: true }>;
+    /**
+     * POST /v1/runs/:id/abandon (round-12) — the client gives up mid-run
+     * (stop / dispose): the run is marked abandoned + outstanding holds
+     * refunded. Idempotent; the stable default key is `abandon:<runId>`.
+     * Fire-and-forget at the call site — callers swallow failures.
+     */
+    abandon(runId: string, options?: CallOptions): Promise<null>;
   };
   readonly models: {
     /** GET /v1/models — workspace plan + the models selectable on it (§8.2). */
@@ -1416,6 +1527,25 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           onPause: handlers?.onPause,
           onDone: handlers?.onDone,
         }),
+      turn: (threadId, body, handlers) =>
+        streamTurn({
+          threadId,
+          body,
+          baseUrl: core.baseUrl,
+          fetchImpl: core.fetchImpl,
+          extraHeaders: core.extraHeaders,
+          signal: handlers?.signal,
+          reconnect: {
+            ...(handlers?.reconnect ?? {}),
+            sleep: handlers?.reconnect?.sleep ?? core.sleep,
+          },
+          seqBase: handlers?.seqBase,
+          replayCursor: handlers?.replayCursor,
+          onEvent: handlers?.onEvent,
+          onError: handlers?.onError,
+          onReconnect: handlers?.onReconnect,
+          onDone: handlers?.onDone,
+        }),
     },
     runs: {
       get: async (runId, options) =>
@@ -1450,6 +1580,28 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           idempotencyKey: mutationKey(options) ?? impl.autoKey(),
           signal: options?.signal,
         }),
+      submitPlan: async (runId, body, options) =>
+        impl.rawJsonPost({
+          path: `/runs/${encodeId(runId)}/plan`,
+          body,
+          responseSchema: RUN_PLAN_RESPONSE_SCHEMA,
+          // STABLE per run: a network retry replays the stored decision — the
+          // server's re-compile + verdict happen exactly once per run.
+          idempotencyKey: options?.idempotencyKey ?? `plan:${runId}`,
+          signal: options?.signal,
+        }),
+      abandon: async (runId, options) => {
+        // The route's shape is `{runId, status}` — not a contracts surface; the
+        // payload is irrelevant to the caller. Errors propagate; the call site
+        // owns the fire-and-forget posture.
+        await impl.rawJsonPost<null>({
+          path: `/runs/${encodeId(runId)}/abandon`,
+          body: {},
+          idempotencyKey: options?.idempotencyKey ?? `abandon:${runId}`,
+          signal: options?.signal,
+        });
+        return null;
+      },
     },
     models: {
       list: async (options) =>

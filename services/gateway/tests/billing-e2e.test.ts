@@ -150,22 +150,6 @@ function frame(data: unknown): string {
 function textDelta(content: string): string {
   return frame({ choices: [{ delta: { content } }] });
 }
-function toolCallStart(index: number, id: string, name: string): string {
-  return frame({
-    choices: [
-      {
-        delta: {
-          tool_calls: [{ index, id, type: "function", function: { name, arguments: "" } }],
-        },
-      },
-    ],
-  });
-}
-function toolCallArgs(index: number, args: string): string {
-  return frame({
-    choices: [{ delta: { tool_calls: [{ index, function: { arguments: args } }] } }],
-  });
-}
 function finishReason(reason: string): string {
   return frame({ choices: [{ delta: {}, finish_reason: reason }] });
 }
@@ -259,44 +243,6 @@ class FakeOpenAIServer {
   }
 }
 
-/** Script: one get_context tool call round (aggregated fragments + finish). */
-function getContextRound(toolCallId: string): ScriptEntry {
-  return () => [
-    toolCallStart(0, toolCallId, "studio.get_context"),
-    toolCallArgs(0, JSON.stringify({ include: ["activeComp"] })),
-    finishReason("tool_calls"),
-    DONE,
-  ];
-}
-
-/** Script: final text round whose answer depends on the client's tool result. */
-function answerFromToolResult(): ScriptEntry {
-  return (body) => {
-    let compName = "Unknown";
-    for (const message of body.messages) {
-      if (
-        message.role === "tool" &&
-        typeof message.content === "string" &&
-        message.content.includes("activeComp")
-      ) {
-        try {
-          const parsed = JSON.parse(message.content) as { activeComp?: { name?: string } };
-          if (typeof parsed.activeComp?.name === "string") compName = parsed.activeComp.name;
-        } catch {
-          // not JSON — keep Unknown
-        }
-      }
-    }
-    return [
-      textDelta("The comp "),
-      textDelta(`${compName} has 1 layer.`),
-      usageChunk(50, 12),
-      finishReason("stop"),
-      DONE,
-    ];
-  };
-}
-
 /** Script: a plain text answer, no tools. */
 function textRound(text: string): ScriptEntry {
   return () => [textDelta(text), usageChunk(40, 8), finishReason("stop"), DONE];
@@ -350,7 +296,7 @@ class SseStream {
       if (boundary !== -1) {
         const raw = this.buffer.slice(0, boundary);
         this.buffer = this.buffer.slice(boundary + 2);
-        if (raw.trim() === "") continue;
+        if (raw.trim() === "" || raw.startsWith(":")) continue; // keep-alives
         return parseFrame(raw);
       }
       const remaining = deadline - Date.now();
@@ -409,15 +355,24 @@ class SseStream {
   }
 }
 
-const TERMINAL_TYPES = new Set(["run.completed", "run.failed", "run.cancelled"]);
+const TERMINAL_TYPES = new Set(["turn.completed", "turn.failed"]);
 
-type CreditsEvent = Extract<StudioStreamEvent, { type: "credits" }>;
+type TurnCompletedEvent = Extract<StudioStreamEvent, { type: "turn.completed" }>;
+type TurnFailedEvent = Extract<StudioStreamEvent, { type: "turn.failed" }>;
 type DeltaEvent = Extract<StudioStreamEvent, { type: "message.delta" }>;
 
-function findCredits(events: readonly StudioStreamEvent[]): CreditsEvent {
-  const credits = events.find((event): event is CreditsEvent => event.type === "credits");
-  if (credits === undefined) throw new Error("no credits event on the wire");
-  return credits;
+function findTurnCompleted(events: readonly StudioStreamEvent[]): TurnCompletedEvent {
+  const terminal = events.find(
+    (event): event is TurnCompletedEvent => event.type === "turn.completed",
+  );
+  if (terminal === undefined) throw new Error("no turn.completed event on the wire");
+  return terminal;
+}
+
+function findTurnFailed(events: readonly StudioStreamEvent[]): TurnFailedEvent {
+  const terminal = events.find((event): event is TurnFailedEvent => event.type === "turn.failed");
+  if (terminal === undefined) throw new Error("no turn.failed event on the wire");
+  return terminal;
 }
 
 function joinedText(events: readonly StudioStreamEvent[]): string {
@@ -884,55 +839,71 @@ async function newChatFixture(ws: Workspace): Promise<ChatFixture> {
   return { ws, projectId, versionId: version.data.id, threadId: thread.data.id };
 }
 
-interface ChatBody {
+interface TurnRequestBody {
+  readonly runId: string;
   readonly message: string;
-  readonly context: Record<string, never>;
-  readonly idempotencyKey: string;
-  readonly pinned: readonly unknown[];
   readonly model?: "studio-fast" | "studio-smart";
 }
 
-/** Raw chat POST (the api() helper has no signal seam). */
-async function chatStream(fx: ChatFixture, body: ChatBody): Promise<Response> {
+/**
+ * Raw TURN POST — the round-12 client entry wire (the retired /chat route is
+ * GONE): step 0 with the user's message; the Idempotency-Key header IS the
+ * turn key `${runId}:0` (TURN WIRE CONTRACT).
+ */
+async function turnStream(fx: ChatFixture, body: TurnRequestBody): Promise<Response> {
   const headers: Record<string, string> = {
     origin: TEST_APP_ORIGIN,
     "content-type": "application/json",
     accept: "text/event-stream",
     cookie: fx.ws.jar.header,
     "x-workspace-id": fx.ws.id,
+    "idempotency-key": `${body.runId}:0`,
   };
-  return fetch(`${server.base}/v1/threads/${fx.threadId}/chat`, {
+  return fetch(`${server.base}/v1/threads/${fx.threadId}/turn`, {
     method: "POST",
     headers,
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      runId: body.runId,
+      stepIndex: 0,
+      ...(body.model === undefined ? {} : { model: body.model }),
+      messages: [{ role: "user", text: body.message }],
+    }),
     redirect: "manual",
   });
 }
 
-async function postToolResult(
-  fx: ChatFixture,
-  runId: string,
-  toolCallId: string,
-  result: unknown,
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await api(server.base, `/v1/runs/${runId}/events`, {
+/**
+ * POST /v1/runs/:id/plan with the END marker — the real client's run-end
+ * gesture for a proposal-less run: the route is the run's terminal moment
+ * and marks the row completed (12-w6-e2 finding, landed).
+ */
+async function postPlanEnd(fx: ChatFixture, runId: string): Promise<void> {
+  const response = await api(server.base, `/v1/runs/${runId}/plan`, {
     method: "POST",
     jar: fx.ws.jar,
-    headers: { "x-workspace-id": fx.ws.id, "idempotency-key": unique("toolresult") },
-    body: { type: "tool.result", toolCallId, result },
+    headers: { "x-workspace-id": fx.ws.id, "idempotency-key": unique("plan") },
+    body: { end: true },
   });
-  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  expect(response.status).toBe(200);
+  const parsed = (await response.json()) as { runId: string; ended?: boolean };
+  expect(parsed.runId).toBe(runId);
+  expect(parsed.ended).toBe(true);
 }
 
-async function postCancel(
+/**
+ * POST /v1/runs/:id/abandon — the round-12 STOP gesture (the client aborts
+ * the stream and fires the abandon): the run row lands cancelled with
+ * RUN_ABANDONED and any outstanding hold is refunded. Idempotent.
+ */
+async function postAbandon(
   fx: ChatFixture,
   runId: string,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await api(server.base, `/v1/runs/${runId}/cancel`, {
+  const response = await api(server.base, `/v1/runs/${runId}/abandon`, {
     method: "POST",
     jar: fx.ws.jar,
-    headers: { "x-workspace-id": fx.ws.id, "idempotency-key": unique("cancel") },
-    body: { reason: "test" },
+    headers: { "x-workspace-id": fx.ws.id, "idempotency-key": unique("abandon") },
+    body: {},
   });
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
@@ -1111,21 +1082,22 @@ d("M6-J journey 1 — no permanent free path", () => {
 
     // (6) The RUN-level gate (the picker is advisory; this is the server-side
     // enforcement): studio-smart on the trial tier → 403 before any model
-    // call. The card-checkout grant left a 1 µc balance, so the credit
-    // precheck passes and the MODEL gate is what fires.
+    // call, any run row or any user message (the turn route resolves the
+    // model entitlement before it creates the run). The card-checkout grant
+    // left a 1 µc balance, so the credit precheck passes and the MODEL gate
+    // is what fires.
     const fx = await newChatFixture(ws);
-    const chat = await chatStream(fx, {
+    const chat = await turnStream(fx, {
+      runId: unique("run"),
       message: "make it cinematic",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
       model: "studio-smart",
     });
     expect(chat.status).toBe(403);
     const parsed = await envelope(chat);
     expect(parsed.err).toMatchObject({ code: "MODEL_NOT_ENTITLED", retryable: false });
     expect(openai.calls.length).toBe(0); // no model call was ever made
-    expect((await runsOfThread(ws.id, fx.threadId)).length).toBe(0);
+    expect((await runsOfThread(ws.id, fx.threadId)).length).toBe(0); // no run row
+    expect((await repos().threads.listMessages(ws.id, fx.threadId)).items).toEqual([]);
   });
 });
 
@@ -1180,15 +1152,14 @@ d("M6-J journey 2 — trial→paid conversion", () => {
     expect(credits.includedCredits).toBe(2_000_000_000);
 
     // The RUN-level gate flips with billing state: studio-smart — 403 on the
-    // trial tier (journey 1) — now streams and completes.
+    // trial tier (journey 1) — now streams and completes (the turn wire: the
+    // run row is created by the turn route; the loop ends client-side).
     await grantChatCredits(ws.id, 100);
     const fx = await newChatFixture(ws);
     openai.enqueue(textRound("Smart is online."));
-    const chat = await chatStream(fx, {
+    const chat = await turnStream(fx, {
+      runId: unique("run"),
       message: "plan a fancy intro",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
       model: "studio-smart",
     });
     expect(chat.status).toBe(200);
@@ -1196,7 +1167,14 @@ d("M6-J journey 2 — trial→paid conversion", () => {
     const frames = await stream.rest();
     const events = expectValidStream(frames);
     expect(events[0]).toMatchObject({ type: "run.started", model: "studio-smart" });
-    expect(typeSeq(events)).toEqual(["run.started", "message.delta", "credits", "run.completed"]);
+    expect(typeSeq(events)).toEqual([
+      "run.started",
+      "turn.started",
+      "message.delta",
+      "turn.completed",
+    ]);
+    expect(joinedText(events)).toBe("Smart is online.");
+    expect(findTurnCompleted(events).credits.committed).toBe(1); // usage-billed µc-honest commit
   });
 });
 
@@ -1206,7 +1184,7 @@ d("M6-J journey 2 — trial→paid conversion", () => {
 // ---------------------------------------------------------------------------
 
 d("M6-J journey 3 — money conservation across runs", () => {
-  it("grant 50 credits (µc) → a completed tool-round-trip run nets EXACTLY the usage commit (D-20 full-hold release); a cancelled run refunds fully; zero/near-zero runs 402 BEFORE run.started and the balance never goes negative", async () => {
+  it("grant 50 credits (µc) → a completed TURN nets EXACTLY the usage commit (D-20 full-hold release); a stopped run refunds fully; zero/near-zero runs 402 BEFORE run.started and the balance never goes negative", async () => {
     const ws = await newWorkspace();
     const GRANT = 50_000_000; // 50 credits, integer µc (D-12)
     const seeded = await repos().ledger.grant(ws.id, {
@@ -1217,77 +1195,72 @@ d("M6-J journey 3 — money conservation across runs", () => {
     expect(seeded.entry.balanceAfter).toBe(GRANT);
     const fx = await newChatFixture(ws);
 
-    // ── a completed run with a real client tool round-trip ────────────────
-    openai.enqueue(getContextRound("call_m6j_money_1"), answerFromToolResult());
-    const first = await chatStream(fx, {
-      message: "what's on this comp?",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
-    });
+    // ── a completed turn: ONE reserve → commit → full-hold release ────────
+    // (The per-turn reserve/settle cycle is the billing unit on the round-12
+    // wire — the old single chat run and the new single turn are the same
+    // money shape; the client tool round-trip itself is the turn loop's
+    // subject in tests/golden-prompts + tests/auto-apply. The reserve
+    // magnitude is prompt-size-derived: ceil(estimate × 1.2) µc-honest.)
+    openai.enqueue(textRound("The comp Main has 1 layer."));
+    const firstRunId = unique("run");
+    const first = await turnStream(fx, { runId: firstRunId, message: "what's on this comp?" });
     expect(first.status).toBe(200);
     const firstStream = new SseStream(first);
-    const head = await firstStream.until((event) => event.type === "tool.started", "tool.started");
-    const headEvents = expectValidStream(head, { requireTerminal: false });
-    const runId = headEvents[0]?.runId;
-    if (runId === undefined) throw new Error("no run.started event");
-    const posted = await postToolResult(fx, runId, "call_m6j_money_1", {
-      activeComp: { name: "Main" },
-    });
-    expect(posted.status).toBe(200);
-    const tail = await firstStream.rest();
-    const all = expectValidStream([...head, ...tail]);
-    expect(joinedText(all)).toBe("The comp Main has 1 layer.");
-    expect(findCredits(all)).toMatchObject({
-      reserved: 2,
-      committed: 1,
-      // DISPLAY units (D-12): the µc ledger balance (49_000_000) shown as
-      // whole credits — the SSE event conversion M6-K landed.
-      balance: 49,
-    });
-    await waitFor("run completion", async () => (await getRun(fx, runId)).status === "completed");
+    const firstEvents = expectValidStream(await firstStream.rest());
+    const firstTerminal = findTurnCompleted(firstEvents);
+    expect(joinedText(firstEvents)).toBe("The comp Main has 1 layer.");
+    expect(firstTerminal.credits.committed).toBe(1); // usage-billed commit (display units)
+    await postPlanEnd(fx, firstRunId);
+    await waitFor(
+      "the completed run row",
+      async () => (await getRun(fx, firstRunId)).status === "completed",
+    );
 
-    // D-20 settle semantics (µc, D-12): entries reserve −2_000_000 /
-    // commit −1_000_000 / refund +2_000_000 — the FULL hold is released, so
-    // the run nets exactly the usage commit (1 credit).
-    const runEntries = await ledgerOfRun(ws.id, runId);
+    // D-20 settle semantics (µc, D-12): entries reserve −R_000_000 /
+    // commit −1_000_000 / refund +R_000_000 — the FULL hold is released, so
+    // the turn nets exactly the usage commit (1 credit) and the balance is
+    // GRANT − 1_000_000. A pre-fix whole-credit ledger write would have
+    // charged 1 µc — the F-J1 undercharge this journey pins as fixed.
+    const runEntries = await ledgerOfRun(ws.id, firstRunId);
     const byKind = kindsOf(runEntries);
-    expect(byKind.reserve).toEqual([-2 * 1_000_000]);
+    const reserveRows = byKind.reserve ?? [];
+    expect(reserveRows).toHaveLength(1);
+    expect(reserveRows[0]).toBeLessThanOrEqual(-1_000_000); // ≥ 1 credit, µc
+    expect(Math.abs(reserveRows[0] ?? 0) % 1_000_000).toBe(0); // whole-credit multiple, µc-honest
     expect(byKind.commit).toEqual([-1 * 1_000_000]);
-    expect(byKind.refund).toEqual([2 * 1_000_000]);
+    expect(byKind.refund).toEqual(reserveRows.map((amount) => -amount)); // FULL hold
     expect(sumAmounts(runEntries)).toBe(-1 * 1_000_000);
     expect(await balanceOf(ws.id)).toBe(GRANT - 1 * 1_000_000);
 
-    // ── a cancelled run refunds fully (nets exactly 0) ────────────────────
-    openai.enqueue(getContextRound("call_m6j_money_2"), answerFromToolResult());
-    const second = await chatStream(fx, {
-      message: "and now?",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
-    });
+    // ── a stopped run refunds fully (nets exactly 0) ──────────────────────
+    // The round-12 stop gesture: the turn's model service fails (the script
+    // queue is empty — the fake answers 500) → turn.failed refunds the
+    // turn's whole hold; the client then fires the ABANDON (the stop
+    // gesture), landing the run row cancelled with RUN_ABANDONED.
+    const stoppedRunId = unique("run");
+    const second = await turnStream(fx, { runId: stoppedRunId, message: "and now?" });
+    expect(second.status).toBe(200);
     const secondStream = new SseStream(second);
-    const secondHead = await secondStream.until(
-      (event) => event.type === "tool.started",
-      "tool.started",
-    );
-    const cancelledRunId = expectValidStream(secondHead, { requireTerminal: false })[0]?.runId;
-    if (cancelledRunId === undefined) throw new Error("no run.started event");
-    const cancel = await postCancel(fx, cancelledRunId);
-    expect(cancel.status).toBe(200);
-    const secondTail = await secondStream.rest();
-    const secondAll = expectValidStream([...secondHead, ...secondTail]);
-    expect(secondAll.at(-1)).toMatchObject({ type: "run.cancelled" });
+    const secondEvents = expectValidStream(await secondStream.rest());
+    const failedTerminal = findTurnFailed(secondEvents);
+    expect(failedTerminal).toMatchObject({ code: "RUN_MODEL_UNAVAILABLE", retryable: true });
+    const abandon = await postAbandon(fx, stoppedRunId);
+    expect(abandon.status).toBe(200);
+    // The abandon route answers a flat JSON body (§7.4 row vocabulary: the
+    // row itself lands status "cancelled" with RUN_ABANDONED — pinned below).
+    expect(abandon.body).toEqual({ runId: stoppedRunId, status: "abandoned" });
     await waitFor(
       "the cancelled run row",
-      async () => (await getRun(fx, cancelledRunId)).status === "cancelled",
+      async () => (await getRun(fx, stoppedRunId)).status === "cancelled",
     );
-    const cancelEntries = await ledgerOfRun(ws.id, cancelledRunId);
+    const cancelEntries = await ledgerOfRun(ws.id, stoppedRunId);
     const cancelKinds = kindsOf(cancelEntries);
-    expect(cancelKinds.reserve).toEqual([-2 * 1_000_000]);
-    expect(cancelKinds.refund).toEqual([2 * 1_000_000]);
+    const cancelReserve = cancelKinds.reserve ?? [];
+    expect(cancelReserve).toHaveLength(1);
+    expect(cancelKinds.refund).toEqual(cancelReserve.map((amount) => -amount));
     expect(cancelKinds.commit).toBeUndefined(); // usage never committed
     expect(sumAmounts(cancelEntries)).toBe(0);
+    expect((await getRun(fx, stoppedRunId)).committedCredits).toBe(0);
     expect(await balanceOf(ws.id)).toBe(GRANT - 1 * 1_000_000); // unchanged: full refund
 
     // ── never negative, part 1: EXACT ZERO → the route gate 402s before any
@@ -1300,43 +1273,38 @@ d("M6-J journey 3 — money conservation across runs", () => {
     const runsBefore = (await runsOfThread(ws.id, fx.threadId)).length;
     const entriesBefore = (await repos().ledger.list(ws.id, {})).items.length;
     openai.enqueue(textRound("unused"));
-    const third = await chatStream(fx, {
-      message: "one more thing",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
-    });
+    const third = await turnStream(fx, { runId: unique("run"), message: "one more thing" });
     expect(third.status).toBe(402);
     expect((await envelope(third)).err).toMatchObject({
       code: "INSUFFICIENT_CREDITS",
       retryable: false,
     });
-    expect(openai.calls.length).toBe(3); // only the two settled runs above
+    // Only the turns above reached the model: 1 successful call, then the
+    // stopped turn spent its full §8.9 retry budget on the exhausted-script
+    // 500s (litellm/openai.ts MAX_ATTEMPTS = 3, real 1s/2s backoff) before
+    // turn.failed RUN_MODEL_UNAVAILABLE — no 4th call, none for the 402s.
+    expect(openai.calls.length).toBe(1 + 3);
     expect((await runsOfThread(ws.id, fx.threadId)).length).toBe(runsBefore);
     expect((await repos().ledger.list(ws.id, {})).items.length).toBe(entriesBefore);
     expect(await balanceOf(ws.id)).toBe(0);
 
-    // ── never negative, part 2: balance 1 credit < reserve 2 credits → the
-    // LEDGER reserve gate refuses the hold (1_000_000 µc < 2_000_000 µc) —
-    // 402, the run row records the failure, and the balance stays ≥ 0 ─────
+    // ── never negative, part 2: balance 1 credit < the per-turn reserve →
+    // the LEDGER reserve gate refuses the hold — 402, the balance stays ≥ 0.
+    // CURRENT-TRUTH PIN (BUG-2, 12-w7-r1 worklog — a product fix flips this
+    // loudly): the turn route creates + heartbeats the run row BEFORE it
+    // reserves, so the refused hold leaves a live `running` row (never a
+    // terminal failed+INSUFFICIENT_CREDITS row like the retired chat route's
+    // F-J5 fix landed) and the user message row persists too. No ledger row
+    // for the hold, still.
     await grantChatCredits(ws.id, 1);
-    openai.enqueue(textRound("unused"));
-    const fourth = await chatStream(fx, {
-      message: "still one more",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
-    });
+    const fourth = await turnStream(fx, { runId: unique("run"), message: "still one more" });
     expect(fourth.status).toBe(402);
     expect((await envelope(fourth)).err).toMatchObject({ code: "INSUFFICIENT_CREDITS" });
     const threadRuns = await runsOfThread(ws.id, fx.threadId);
     // listByThread is newest-first: the refused hold is the newest row.
     const refusedRun = at(threadRuns, 0);
-    // F-J5 FIXED (2026-10-24): queued→failed is legal, so the refused hold
-    // lands an HONEST terminal row (failed + INSUFFICIENT_CREDITS) instead of
-    // the pre-fix orphaned-queued drift. No ledger row for the hold, still.
-    expect(refusedRun.status).toBe("failed");
-    expect(refusedRun.errorCode).toBe("INSUFFICIENT_CREDITS");
+    expect(refusedRun.status).toBe("running"); // BUG-2 pin: the F-J5 regression
+    expect(refusedRun.errorCode).toBeNull();
     expect(await balanceOf(ws.id)).toBe(1 * 1_000_000); // never negative
 
     // The invariant across EVERY entry written by the journey so far.
@@ -1359,17 +1327,17 @@ d("M6-J journey 4 — top-up journey", () => {
     const fx = await newChatFixture(ws);
     expect(await balanceOf(ws.id)).toBe(0);
 
-    // (1) The would-be run is refused at zero balance (the before picture).
+    // (1) The would-be turn is refused at zero balance (the before picture):
+    // the turn route's §8.8 precheck fires BEFORE the run row is created.
     openai.enqueue(textRound("unused"));
-    const refused = await chatStream(fx, {
+    const refused = await turnStream(fx, {
+      runId: unique("run"),
       message: "what's on this comp?",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
     });
     expect(refused.status).toBe(402);
     expect((await envelope(refused)).err).toMatchObject({ code: "INSUFFICIENT_CREDITS" });
     expect(openai.calls.length).toBe(0);
+    expect((await runsOfThread(ws.id, fx.threadId)).length).toBe(0);
 
     // (2) Buy the pack through the real topup route + the fake Checkout.
     const fake = freshFake();
@@ -1402,20 +1370,18 @@ d("M6-J journey 4 — top-up journey", () => {
     const state = await billingState(ws);
     expect((state.credits as Record<string, unknown>).balance).toBe(100_000_000);
 
-    // (4) The journey's run now goes through — same request shape that 402'd.
+    // (4) The journey's turn now goes through — same request shape that 402'd.
     openai.enqueue(textRound("Back in business."));
-    const second = await chatStream(fx, {
+    const second = await turnStream(fx, {
+      runId: unique("run"),
       message: "what's on this comp?",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
     });
     expect(second.status).toBe(200);
     const stream = new SseStream(second);
     const frames = await stream.rest();
     const events2 = expectValidStream(frames);
-    expect(events2.at(-1)).toMatchObject({ type: "run.completed" });
-    expect(findCredits(events2).committed).toBe(1);
+    expect(events2.at(-1)).toMatchObject({ type: "turn.completed" });
+    expect(findTurnCompleted(events2).credits.committed).toBe(1);
     expect(await balanceOf(ws.id)).toBe(100_000_000 - 1_000_000);
   });
 });
@@ -1440,21 +1406,21 @@ d("M6-J journey 5 — past-due grace (test clock)", () => {
     expect((await subscriptionRow(ws.id))?.status).toBe("active");
 
     // (2) Real work exists before the dunning arc: a completed run + the
-    // project/version/thread rows.
+    // project/version/thread rows. (A proposal-less turn — the client ends
+    // the run with the plan route's END marker, the real stop-of-loop
+    // gesture for a read-only answer.)
     openai.enqueue(textRound("Pre-dunning answer."));
-    const seededRun = await chatStream(fx, {
+    const seededRunId = unique("run");
+    const seededRun = await turnStream(fx, {
+      runId: seededRunId,
       message: "describe the comp",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
       model: "studio-smart",
     });
     expect(seededRun.status).toBe(200);
     const seededStream = new SseStream(seededRun);
     const seededFrames = await seededStream.rest();
     expectValidStream(seededFrames);
-    const seededRunId = (seededFrames[0]?.event as { runId?: string }).runId;
-    if (seededRunId === undefined) throw new Error("no seeded runId");
+    await postPlanEnd(fx, seededRunId);
     await waitFor(
       "seed run completion",
       async () => (await getRun(fx, seededRunId)).status === "completed",
@@ -1488,20 +1454,18 @@ d("M6-J journey 5 — past-due grace (test clock)", () => {
     ]);
     expect((await modelsOf(ws)).models).toEqual(["studio-fast", "studio-smart"]);
     openai.enqueue(textRound("Dunning, but still editing."));
-    const duringGrace = await chatStream(fx, {
+    const graceRunId = unique("run");
+    const duringGrace = await turnStream(fx, {
+      runId: graceRunId,
       message: "one small tweak",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
       model: "studio-smart",
     });
     expect(duringGrace.status).toBe(200);
     const graceStream = new SseStream(duringGrace);
     const graceRunFrames = await graceStream.rest();
     const graceRunEvents = expectValidStream(graceRunFrames);
-    expect(graceRunEvents.at(-1)).toMatchObject({ type: "run.completed" });
-    const graceRunId = graceRunEvents[0]?.runId;
-    if (graceRunId === undefined) throw new Error("no grace runId");
+    expect(graceRunEvents.at(-1)).toMatchObject({ type: "turn.completed" });
+    await postPlanEnd(fx, graceRunId);
     await waitFor(
       "grace run completion",
       async () => (await getRun(fx, graceRunId)).status === "completed",
@@ -1557,16 +1521,14 @@ d("M6-J journey 5 — past-due grace (test clock)", () => {
     expect(await balanceOf(ws.id)).toBe(balanceBefore);
 
     // (7) No permanent free path: a canceled workspace gates as TRIAL —
-    // the picker narrows and a studio-smart RUN is 403 again.
+    // the picker narrows and a studio-smart TURN is 403 again.
     const afterState = await billingState(ws);
     expect(afterState).toMatchObject({ plan: "trial", status: "canceled" });
     expect((await modelsOf(ws)).models).toEqual(["studio-fast"]);
     openai.enqueue(textRound("unused"));
-    const refused = await chatStream(fx, {
+    const refused = await turnStream(fx, {
+      runId: unique("run"),
       message: "one more smart thing",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
       model: "studio-smart",
     });
     expect(refused.status).toBe(403);
@@ -1734,8 +1696,9 @@ d("M6-J journey 7 — reconciliation visibility", () => {
     const fake = freshFake();
     setStripe(server, fake);
 
-    // The journey: a top-up grant, one completed run, one cancelled run,
-    // one paid invoice.
+    // The journey: a top-up grant, one completed run (a turn + the plan
+    // route's end marker), one stopped run (a failed turn + the abandon
+    // gesture), one paid invoice.
     const topup = await billingPost("/v1/billing/topup", ws, { packId: "credits100" });
     expect(topup.status).toBe(201);
     const session = (await okData(topup)) as { sessionId: string };
@@ -1745,42 +1708,32 @@ d("M6-J journey 7 — reconciliation visibility", () => {
 
     const fx = await newChatFixture(ws);
 
-    // Completed run (actual usage commits).
+    // Completed run (actual usage commits): one turn, then the client's
+    // END-marker plan POST — the run row lands completed.
     openai.enqueue(textRound("Reconciliation run."));
-    const first = await chatStream(fx, {
-      message: "summarize the comp",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
-    });
+    const completedRunId = unique("run");
+    const first = await turnStream(fx, { runId: completedRunId, message: "summarize the comp" });
     expect(first.status).toBe(200);
     const firstStream = new SseStream(first);
     const firstFrames = await firstStream.rest();
     const firstEvents = expectValidStream(firstFrames);
-    const completedRunId = firstEvents[0]?.runId;
-    if (completedRunId === undefined) throw new Error("no completed runId");
-    expect(findCredits(firstEvents).committed).toBe(1);
+    expect(findTurnCompleted(firstEvents).credits.committed).toBe(1);
+    await postPlanEnd(fx, completedRunId);
     await waitFor(
       "completed run row",
       async () => (await getRun(fx, completedRunId)).status === "completed",
     );
 
-    // Cancelled run (full refund).
-    openai.enqueue(getContextRound("call_m6j_recon_1"), answerFromToolResult());
-    const second = await chatStream(fx, {
-      message: "what's on this comp?",
-      context: {},
-      idempotencyKey: unique("chat"),
-      pinned: [],
-    });
+    // Stopped run (full refund): the model service fails (empty script
+    // queue → 500) → turn.failed refunds the whole hold; the client fires
+    // the ABANDON stop gesture → the run row lands cancelled.
+    const cancelledRunId = unique("run");
+    const second = await turnStream(fx, { runId: cancelledRunId, message: "what's on this comp?" });
+    expect(second.status).toBe(200);
     const secondStream = new SseStream(second);
-    const secondHead = await secondStream.until(
-      (event) => event.type === "tool.started",
-      "tool.started",
-    );
-    const cancelledRunId = expectValidStream(secondHead, { requireTerminal: false })[0]?.runId;
-    if (cancelledRunId === undefined) throw new Error("no cancelled runId");
-    const cancel = await postCancel(fx, cancelledRunId);
+    const secondEvents = expectValidStream(await secondStream.rest());
+    expect(findTurnFailed(secondEvents).code).toBe("RUN_MODEL_UNAVAILABLE");
+    const cancel = await postAbandon(fx, cancelledRunId);
     expect(cancel.status).toBe(200);
     await waitFor(
       "cancelled run row",

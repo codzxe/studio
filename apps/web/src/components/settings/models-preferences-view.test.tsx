@@ -160,15 +160,16 @@ describe("ModelsPreferencesView — models & default model", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Auto-apply (D-22)
+// Auto-apply (round-10 v2 — the agent executes safe plans; opt-out here)
 // ---------------------------------------------------------------------------
 
-describe("ModelsPreferencesView — auto-apply (D-22)", () => {
-  it("carries the D-22 ruling copy VERBATIM", async () => {
+describe("ModelsPreferencesView — auto-apply (round-10 v2)", () => {
+  it("carries the v2 copy: the agent applies safe plans; Undo reverts", async () => {
     renderView(fakePort());
     await screen.findByTestId("auto-apply-toggle");
+    expect(screen.getByTestId("auto-apply-card")).toHaveTextContent("one Undo reverts a whole run");
     expect(screen.getByTestId("auto-apply-card")).toHaveTextContent(
-      "Apply is always your explicit click",
+      "Deleting, replacing or exporting always waits for your review",
     );
   });
 
@@ -195,7 +196,7 @@ describe("ModelsPreferencesView — auto-apply (D-22)", () => {
 
     resolveUpdate({ autoApplyEnabled: true });
     await waitFor(() => {
-      expect(screen.getByTestId("auto-apply-state")).toHaveTextContent("Pre-arm safe plans");
+      expect(screen.getByTestId("auto-apply-state")).toHaveTextContent("Auto-apply safe plans");
     });
     expect(port.updateSettings).toHaveBeenCalledWith({ autoApplyEnabled: true });
   });

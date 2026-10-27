@@ -10,10 +10,12 @@
  * services/; duplication accepted, needles IDENTICAL to the gateway corpus).
  *
  * Proves:
- *   1. EXECUTOR — hostile write-tool args never reach ANY bridge call: every
- *      write tool is refused client-side (TOOL_FORBIDDEN, zero bridge calls)
- *      with dunder/bounds/shadow payloads, and the raw engine entrypoint as a
- *      tool name stays refused (law #6 backstop).
+ *   1. EXECUTOR (round-12 re-point) — hostile write-tool args never reach ANY
+ *      bridge call: executor.execute(writeTool, args) THROWS ClientToolError
+ *      {code: TOOL_FORBIDDEN} (the old executeClientTool POSTed {error: …}
+ *      to the now-GONE /v1/runs/:id/events back channel) with zero bridge
+ *      calls, and the raw engine entrypoints as tool names stay refused
+ *      (engine.batch/execute + edit.undo/redo, law #6 backstop).
  *   2. APPLY — poisoned compiled-batch shapes are rejected as invalid-batch
  *      BEFORE engine.batch (no execute, no saveNow, no applyRun).
  *   3. AMBIGUITY — 50 identical "Twin" layers resolve to a typed ambiguous
@@ -53,7 +55,12 @@ import {
   createApplyController,
 } from "../apply";
 import { planRuntimeFromEvent } from "../run-state";
-import { type ToolExecutorDeps, executeClientTool } from "../tool-executor";
+import {
+  ClientToolError,
+  type ClientToolExecutor,
+  type ClientToolExecutorDeps,
+  createClientToolExecutor,
+} from "../tool-executor";
 
 // ---------------------------------------------------------------------------
 // The mirrored M5-N corpus slice (needles IDENTICAL to the gateway corpus:
@@ -378,7 +385,7 @@ function recordingBridge(): EditorBridge & { calls: string[] } {
 }
 
 function executorDeps(bridge: EditorBridge): {
-  deps: ToolExecutorDeps;
+  deps: ClientToolExecutorDeps;
   client: ReturnType<typeof stubClient>;
 } {
   const stubbed = stubClient();
@@ -387,6 +394,8 @@ function executorDeps(bridge: EditorBridge): {
       bridge,
       client: stubbed.client,
       workspaceId: "ws_m5n",
+      threadId: "th_m5n",
+      runId: "run_m5n",
       flags: {
         projectSummary: true,
         activeComp: true,
@@ -399,10 +408,28 @@ function executorDeps(bridge: EditorBridge): {
         comments: false,
       },
       guardTimeoutMs: 0,
-      retrySleepMs: 0,
     },
     client: stubbed,
   };
+}
+
+/**
+ * ROUND-12 re-point: `execute` THROWS the typed refusal (ClientToolError) —
+ * the sibling of injection-corpus.test.tsx's runTool, kept side-effect-throwing
+ * here so the code + message are asserted on the error object itself.
+ */
+async function expectRefusal(
+  executor: ClientToolExecutor,
+  tool: string,
+  args: unknown,
+): Promise<ClientToolError> {
+  try {
+    await executor.execute(tool, args);
+  } catch (error) {
+    if (error instanceof ClientToolError) return error;
+    throw new Error(`expected a ClientToolError refusal, got: ${String(error)}`);
+  }
+  throw new Error(`"${tool}" executed instead of refusing`);
 }
 
 describe("M5-N client — hostile write-tool args never reach a bridge call", () => {
@@ -413,18 +440,14 @@ describe("M5-N client — hostile write-tool args never reach a bridge call", ()
       if (fixture === undefined) throw new Error("mirror missing");
       const bridge = recordingBridge();
       const { deps, client } = executorDeps(bridge);
+      const executor = createClientToolExecutor(deps);
 
-      await executeClientTool(
-        { runId: "run_m5n", toolCallId: "call_m5n", name: fixture.tool, args: fixture.args },
-        deps,
-      );
+      const refusal = await expectRefusal(executor, fixture.tool, fixture.args);
 
       // The refusal fires BEFORE arg validation: even a schema-drifted write
       // tool can never make the browser execute anything.
-      expect(client.events[0]?.body).toMatchObject({
-        type: "tool.result",
-        result: { error: "TOOL_FORBIDDEN" },
-      });
+      expect(refusal.code).toBe("TOOL_FORBIDDEN");
+      expect(client.events).toEqual([]); // the /events back channel is GONE — zero POSTs
       expect(bridge.calls).toEqual([]); // zero bridge traffic, full stop
       expectPrototypeClean();
     },
@@ -433,22 +456,32 @@ describe("M5-N client — hostile write-tool args never reach a bridge call", ()
   it("the raw engine.batch TOOL with a fully-armed hostile batch payload stays refused (law #6 backstop)", async () => {
     const bridge = recordingBridge();
     const { deps, client } = executorDeps(bridge);
-    await executeClientTool(
-      {
-        runId: "run_m5n",
-        toolCallId: "call_batch",
-        name: "engine.batch",
-        args: WIRE_SHADOW_ENGINE_BATCH,
-      },
-      deps,
-    );
-    expect(client.events).toHaveLength(1);
-    expect(client.events[0]?.body).toMatchObject({
-      result: { error: "TOOL_FORBIDDEN", message: expect.stringContaining("Raw engine commands") },
-    });
+    const executor = createClientToolExecutor(deps);
+    const refusal = await expectRefusal(executor, "engine.batch", WIRE_SHADOW_ENGINE_BATCH);
+    expect(refusal.code).toBe("TOOL_FORBIDDEN");
+    expect(refusal.message).toContain("Raw engine commands");
+    expect(client.events).toEqual([]);
     expect(bridge.calls).toEqual([]);
     expectPrototypeClean();
   });
+
+  it.each(["engine.batch", "engine.execute", "edit.undo", "edit.redo"])(
+    "%s as a tool name: TOOL_FORBIDDEN before anything else, zero bridge calls",
+    async (rawTool) => {
+      const bridge = recordingBridge();
+      const { deps, client } = executorDeps(bridge);
+      const executor = createClientToolExecutor(deps);
+      const refusal = await expectRefusal(executor, rawTool, {
+        label: "Agent: raw surface probe",
+        atomic: true,
+        steps: [{ command: "evil.delete.everything", params: {} }],
+      });
+      expect(refusal.code).toBe("TOOL_FORBIDDEN");
+      expect(bridge.calls).toEqual([]);
+      expect(client.events).toEqual([]);
+      expectPrototypeClean();
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

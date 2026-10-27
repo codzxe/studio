@@ -573,3 +573,127 @@ describe("M6-H latestCreditsSnapshot", () => {
     expect(latestCreditsSnapshot(plusUser)?.balance).not.toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// ROUND 12: turn.* folds (TURN WIRE CONTRACT) — additive, passive, cursor-only
+// where the controller owns recovery. The turn transport rewrites per-turn
+// server seqs into the run's monotonic LOCAL seqs, so these tests use plain
+// increasing seqs like every other fold.
+// ---------------------------------------------------------------------------
+
+const RUN_T = "run_turn_local";
+
+function turnThread(): ChatUiState {
+  const started: StudioStreamEvent = {
+    type: "run.started",
+    runId: RUN_T,
+    seq: 0,
+    model: "gpt-5.2",
+  };
+  return foldEvent(withUserMessage(), started);
+}
+
+describe("foldEvent — round-12 turn.* events", () => {
+  it("turn.started is cursor-only: it resumes `sending` but mutates no message", () => {
+    const state = foldEvent(turnThread(), {
+      type: "turn.started",
+      runId: RUN_T,
+      seq: 1,
+      stepIndex: 0,
+    });
+    expect(state.phase).toBe("streaming");
+    expect(state.messages.at(-1)?.toolCards).toEqual([]);
+    expect(state.messages.at(-1)?.toolCalls).toBeUndefined();
+    expect(state.lastSeq).toBe(1);
+  });
+
+  it("turn.completed stores the toolCalls payload and completes the half-streamed bubble", () => {
+    let state = foldEvent(turnThread(), {
+      type: "message.delta",
+      runId: RUN_T,
+      seq: 1,
+      delta: "Keyfra",
+    });
+    state = foldEvent(state, {
+      type: "turn.completed",
+      runId: RUN_T,
+      seq: 2,
+      stepIndex: 0,
+      finishReason: "tool-calls",
+      usage: { inputTokens: 90, outputTokens: 12 },
+      credits: { committed: 1 },
+      assistantText: "Keyframing now.",
+      toolCalls: [
+        {
+          toolCallId: "call_t1",
+          tool: "studio.set_keyframes",
+          args: { propertyPath: "scale" },
+          resultForModel: { proposedBatch: { label: "Agent: keyframes", steps: [] } },
+          proposal: null,
+        },
+      ],
+    });
+    const message = state.messages.at(-1);
+    expect(message?.text).toBe("Keyframing now."); // the terminal is authoritative
+    expect(message?.toolCalls).toHaveLength(1);
+    expect(message?.toolCalls?.[0]?.tool).toBe("studio.set_keyframes");
+    expect(state.phase).toBe("streaming"); // turn ends ≠ run ends
+  });
+
+  it("a fully streamed turn.completed keeps the reference stable (replay repair is a no-op)", () => {
+    const before = foldEvent(turnThread(), {
+      type: "message.delta",
+      runId: RUN_T,
+      seq: 1,
+      delta: "Done.",
+    });
+    const after = foldEvent(before, {
+      type: "turn.completed",
+      runId: RUN_T,
+      seq: 2,
+      stepIndex: 0,
+      finishReason: "stop",
+      usage: { inputTokens: 9, outputTokens: 1 },
+      credits: { committed: 0 },
+      assistantText: "Done.",
+      toolCalls: [],
+    });
+    expect(after.messages.at(-1)?.text).toBe("Done.");
+  });
+
+  it("turn.failed is cursor-only: a transient failure never flaps the phase", () => {
+    const state = foldEvent(turnThread(), {
+      type: "turn.failed",
+      runId: RUN_T,
+      seq: 1,
+      stepIndex: 0,
+      code: "PROVIDER_5XX",
+      message: "The model hiccuped.",
+      retryable: true,
+      credits: { committed: 0 },
+    });
+    expect(state.phase).toBe("streaming");
+    expect(state.error).toBeUndefined();
+    expect(state.lastSeq).toBe(1); // the cursor still advances
+  });
+
+  it("turn events for a frozen (terminal) run change nothing but the cursor", () => {
+    let state = turnThread();
+    state = foldEvent(state, { type: "run.completed", runId: RUN_T, seq: 1 });
+    expect(state.phase).toBe("done");
+    const after = foldEvent(state, {
+      type: "turn.completed",
+      runId: RUN_T,
+      seq: 2,
+      stepIndex: 3,
+      finishReason: "stop",
+      usage: { inputTokens: 1, outputTokens: 1 },
+      credits: { committed: 1 },
+      assistantText: "late replay",
+      toolCalls: [],
+    });
+    expect(after.phase).toBe("done");
+    expect(after.messages.at(-1)?.text).toBe(""); // frozen — the late text never lands
+    expect(after.lastSeq).toBe(2);
+  });
+});

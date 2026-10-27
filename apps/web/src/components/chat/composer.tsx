@@ -1,17 +1,32 @@
 "use client";
 
 import { LowCreditBanner } from "@/components/billing/low-credit-banner";
+import {
+  type MentionItem,
+  type MentionQuery,
+  detectMentionAtCaret,
+  filterMentionItems,
+  insertMention,
+} from "@/lib/chat/mentions";
 import { ChatApiContext } from "@/lib/chat/provider";
 import { latestCreditsSnapshot } from "@/lib/chat/run-state";
+import {
+  type SlashCommandName,
+  parseSlashInput,
+  unknownSlashHint,
+} from "@/lib/chat/slash-commands";
 import { type ChatUiState, INSUFFICIENT_CREDITS_CODE } from "@/lib/chat/types";
 import { Button, Textarea, useAutoGrow } from "@studio/ui";
 import { ArrowUp, Square } from "lucide-react";
 import {
+  type ChangeEvent as ReactChangeEvent,
   type ReactElement,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type SyntheticEvent as ReactSyntheticEvent,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -93,6 +108,17 @@ export interface ChatComposerProps {
    * M6-F/G billing pages land.
    */
   topUpHref?: string;
+  /**
+   * ROUND 12 (Chat UI v3): a KNOWN leading /command executes locally and
+   * never hits the wire. Absent ⇒ slash drafts send as ordinary text
+   * (legacy mounts keep the exact M4 behavior).
+   */
+  onSlashCommand?: (command: SlashCommandName, rest: string) => void;
+  /**
+   * ROUND 12 (Chat UI v3): @-mention candidates (layers/comps). Absent or
+   * empty ⇒ typing "@" opens nothing (byte-identical M4 behavior).
+   */
+  mentionItems?: readonly MentionItem[];
   onSend(message: string): void;
   onStop(): void;
 }
@@ -176,10 +202,19 @@ export function ChatComposer({
   quickActions,
   creditHint,
   topUpHref = DEFAULT_TOP_UP_HREF,
+  onSlashCommand,
+  mentionItems,
   onSend,
   onStop,
 }: ChatComposerProps): ReactElement {
   const [value, setValue] = useState("");
+  // ROUND 12: the @-mention autocomplete state (null = closed).
+  const [mention, setMention] = useState<MentionQuery | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  // ROUND 12: the unknown-slash hint chip (cleared by the next edit).
+  const [slashHint, setSlashHint] = useState<string | null>(null);
+  // The caret restore pending after an insert (one-shot ref, not render state).
+  const pendingCaretRef = useRef<number | null>(null);
   // M6-H: the banner action consumes the CURRENT evidence — the block is
   // client-side UX only, so the re-check is the NEXT send (server re-enforces
   // the §8.8 gate); fresh evidence re-blocks.
@@ -223,6 +258,21 @@ export function ChatComposer({
     if (cap !== null) el.style.maxHeight = `${cap}px`;
   }, []);
 
+  // ROUND 12: restore the caret after a mention insert (React re-renders
+  // the controlled value first; the selection is a DOM side effect).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate dep — the caret restore must re-run after the value re-render (ref guards once-ness).
+  useEffect(() => {
+    const caret = pendingCaretRef.current;
+    if (caret === null) return;
+    pendingCaretRef.current = null;
+    const el = textareaRef.current;
+    if (el === null) return;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+    setMention(null);
+    setMentionIndex(0);
+  }, [value]);
+
   const trimmed = value.trim();
   // M6-H: the credits evidence locks the composer like §12 "No credits"; a
   // CONSUMED credits prop-lock (the user hit the banner CTA) re-arms sends.
@@ -233,15 +283,84 @@ export function ChatComposer({
   const canSend = !isLocked && !tooLong && trimmed.length > 0;
   const rows = rowsForValue(value);
 
+  // ROUND 12: the mention suggestions for the CURRENT segment. Bounded +
+  // empty-candidates closes the popup (typing a miss never lingers).
+  const mentionCandidates =
+    mention !== null && mentionItems !== undefined && mentionItems.length > 0
+      ? filterMentionItems(mentionItems, mention.query)
+      : [];
+  const mentionOpen = mention !== null && mentionCandidates.length > 0;
+  const activeMentionIndex =
+    mentionCandidates.length === 0 ? 0 : mentionIndex % mentionCandidates.length;
+
+  const applyDraft = useCallback((next: string, caret: number): void => {
+    setValue(next);
+    pendingCaretRef.current = caret;
+  }, []);
+
+  const insertMentionAt = useCallback(
+    (item: MentionItem): void => {
+      const el = textareaRef.current;
+      const caret = el !== null ? el.selectionStart : value.length;
+      const next = insertMention(value, caret, item);
+      setSlashHint(null);
+      applyDraft(next.value, next.caret);
+    },
+    [applyDraft, value],
+  );
+
   const send = useCallback((): void => {
     if (!canSend) return;
+    // ROUND 12 slash commands: a KNOWN leading command is a local gesture —
+    // it never reaches the model. An UNKNOWN slash never sends (the hint
+    // chip keeps the draft). Without the host wiring, drafts with a
+    // leading slash stay ordinary messages (legacy mounts unchanged).
+    const parsed = parseSlashInput(trimmed);
+    if (onSlashCommand !== undefined) {
+      if (parsed.kind === "command") {
+        onSlashCommand(parsed.command, parsed.rest);
+        setSlashHint(null);
+        setValue("");
+        textareaRef.current?.focus();
+        return;
+      }
+      if (parsed.kind === "unknown") {
+        setSlashHint(unknownSlashHint(parsed.token));
+        return;
+      }
+    }
     onSend(trimmed);
+    setSlashHint(null);
     setValue("");
     textareaRef.current?.focus();
-  }, [canSend, onSend, trimmed]);
+  }, [canSend, onSend, onSlashCommand, trimmed]);
 
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
+      // ROUND 12: the open mention list owns the navigation keys first.
+      if (mentionOpen) {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          setMentionIndex((index) => {
+            const size = mentionCandidates.length;
+            return event.key === "ArrowDown" ? (index + 1) % size : (index - 1 + size) % size;
+          });
+          return;
+        }
+        if (event.key === "Enter" || event.key === "Tab") {
+          if (event.nativeEvent.isComposing) return;
+          event.preventDefault();
+          const item = mentionCandidates[activeMentionIndex];
+          if (item !== undefined) insertMentionAt(item);
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation(); // do NOT collapse the panel (§9: Esc layering)
+          setMention(null);
+          return;
+        }
+      }
       if (event.key !== "Enter") return;
       // IME safety (§3.4): Enter mid-composition confirms the composition —
       // it must never send. keyCode 229 covers IME-fed legacy events.
@@ -252,7 +371,29 @@ export function ChatComposer({
       event.preventDefault();
       send();
     },
-    [send],
+    [mentionOpen, mentionCandidates, activeMentionIndex, insertMentionAt, send],
+  );
+
+  // ROUND 12: re-derive the mention segment on every edit + caret move.
+  const syncMention = useCallback((el: HTMLTextAreaElement): void => {
+    setMention(detectMentionAtCaret(el.value, el.selectionStart));
+    setMentionIndex(0);
+  }, []);
+
+  const onChange = useCallback(
+    (event: ReactChangeEvent<HTMLTextAreaElement>): void => {
+      setValue(event.target.value);
+      setSlashHint(null);
+      syncMention(event.target);
+    },
+    [syncMention],
+  );
+
+  const onSelect = useCallback(
+    (event: ReactSyntheticEvent<HTMLTextAreaElement>): void => {
+      syncMention(event.target as HTMLTextAreaElement);
+    },
+    [syncMention],
   );
 
   const dispatchQuickAction = (prompt: string): void => {
@@ -320,7 +461,43 @@ export function ChatComposer({
         </div>
       ) : null}
 
+      {slashHint !== null ? (
+        <div
+          data-testid="chat-slash-hint"
+          className="rounded-sm border border-border bg-elevated px-2 py-1 text-caption text-secondary"
+        >
+          {slashHint}
+        </div>
+      ) : null}
+
       <div className="relative w-full">
+        {mentionOpen ? (
+          <ul
+            data-testid="chat-mention-popover"
+            aria-label="Mention suggestions"
+            className="scrollbar-thin absolute right-0 bottom-full left-0 z-10 mb-1 max-h-44 overflow-y-auto rounded-sm border border-border bg-panel shadow-pop"
+          >
+            {mentionCandidates.map((item, index) => (
+              <li key={item.id} aria-selected={index === activeMentionIndex}>
+                <button
+                  type="button"
+                  data-testid="chat-mention-item"
+                  data-kind={item.kind}
+                  data-active={index === activeMentionIndex}
+                  className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-caption text-left ${
+                    index === activeMentionIndex ? "bg-elevated text-primary" : "text-secondary"
+                  }`}
+                  onClick={() => insertMentionAt(item)}
+                >
+                  <span aria-hidden="true" className="shrink-0 text-muted">
+                    {item.kind === "comp" ? "◐" : "▤"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <Textarea
           ref={attachTextarea}
           rows={rows}
@@ -328,7 +505,8 @@ export function ChatComposer({
           placeholder={PLACEHOLDER}
           value={value}
           disabled={isLocked}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={onChange}
+          onSelect={onSelect}
           onKeyDown={handleKeyDown}
           // §9 envelope (96–160px): the token classes carry the min/max; the
           // useAutoGrow hook sizes inside them (autoGrowCapPx clamps the cap).

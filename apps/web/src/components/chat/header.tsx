@@ -69,6 +69,16 @@ export interface ChatHeaderProps {
    * `null` to hide it (tests/legacy mounts); pass a node to swap it.
    */
   render?: ReactNode;
+  /**
+   * ROUND 12 (Chat UI v3): the thread-switcher dropdown node (the slot
+   * composes ThreadSwitcher). Absent ⇒ the header is byte-identical M4+.
+   */
+  threadSwitcher?: ReactNode;
+  /**
+   * ROUND 12 (Chat UI v3): the panel-settings popover node (the slot
+   * composes PanelSettingsPopover). Absent ⇒ no knob.
+   */
+  settings?: ReactNode;
 }
 
 /** §3.1 status dot tones: dim / live-pulse / ok / error (never colour-only — the title is the label). */
@@ -135,6 +145,12 @@ export function ChatHeader(props: ChatHeaderProps): ReactElement {
         onPick={props.onModelPick}
       />
 
+      {/* ROUND 12 (Chat UI v3): the thread switcher — an additive node slot
+          (absent on every legacy/test mount). */}
+      {props.threadSwitcher !== undefined ? (
+        <div className="min-w-0 shrink-0">{props.threadSwitcher}</div>
+      ) : null}
+
       {/* M8-I: the render entry — self-sufficient region (own scope resolution
           + live comp via the chat layer's bridge). Absent on legacy mounts. */}
       {props.render === null ? null : props.render === undefined ? <RenderRegion /> : props.render}
@@ -156,6 +172,7 @@ export function ChatHeader(props: ChatHeaderProps): ReactElement {
 
       <TooltipProvider>
         <div className="flex shrink-0 items-center gap-0.5">
+          {props.settings !== undefined ? <div className="shrink-0">{props.settings}</div> : null}
           <HeaderAction
             label="Cycle panel mode"
             tooltip="Cycle panel mode (⌘/Ctrl+L)"

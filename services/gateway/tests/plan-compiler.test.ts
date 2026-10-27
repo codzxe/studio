@@ -1,8 +1,14 @@
 // M5-B — the plan-compiler safety proofs (BUILD_PLAN §M5 task 2, PA §8.5–§8.7).
 //
 // Proves, per compile:
-//   1. GOLDEN translations: each of the 8 write tools compiles to the exact
-//      registry command steps + params (ids verified against the Rust source);
+//   1. GOLDEN translations: each of the 11 write tools (M5-A eight + the
+//      round-12 "Tool catalog v3" three) compiles to the exact registry
+//      command steps + params (ids verified against the Rust source);
+//   1b. round-12: engine_commands compiles VERBATIM catalog-validated steps,
+//      run_script to EXACTLY ONE client-special script.run step (static
+//      guard: require(/fetch(/XMLHttpRequest/import(/eval( outside comments),
+//      add_asset to EXACTLY ONE client-special asset.importSvg step (svg
+//      markup/size/external-href validation);
 //   2. merge: N plan steps ⇒ ONE atomic AgentBatch, label "Agent: <summary>",
 //      no $N refs, all §8.5 bounds (≤100 steps, ≤2 MB, schema-compatible);
 //   3. the model's proposed batches are advisory: unknown commands, bad refs
@@ -32,6 +38,7 @@ import {
   type PlanStep,
   collectRefs,
   estimateCredits,
+  isAllowedEngineCommand,
 } from "@studio/contracts";
 import { describe, expect, it } from "vitest";
 import { type ZodTypeAny, z } from "zod";
@@ -41,6 +48,7 @@ import {
   type CompilePlanResult,
   type WriteToolDef,
   compilePlan,
+  defaultCompileDeps,
   recomputePlanRisk,
 } from "../src/plan-compiler.js";
 
@@ -119,10 +127,10 @@ const REGISTRY: CommandSchema = {
   "layer.newSolid": { id: "layer.newSolid", title: "Solid…", params: [] },
 };
 
-// The M5-A write-tool surface — mirrors the LANDED schemas in
-// packages/contracts/src/write-tools.ts (deps are injected, never shared).
-// Typed as Record<ToolId, WriteToolDef> (required keys) so noUncheckedIndexedAccess
-// cannot smuggle `undefined` into fixture reads.
+// The M5-A write-tool surface + the round-12 additions — mirrors the LANDED
+// schemas in packages/contracts/src/write-tools.ts (deps are injected, never
+// shared). Typed as Record<ToolId, WriteToolDef> (required keys) so
+// noUncheckedIndexedAccess cannot smuggle `undefined` into fixture reads.
 const WRITE_TOOL_IDS = [
   "create_composition",
   "create_text",
@@ -132,6 +140,11 @@ const WRITE_TOOL_IDS = [
   "apply_preset",
   "undo_run",
   "save_version",
+  // Round-12 "Tool catalog v3" (real ALLOWED/denied ids from the generated
+  // catalog — packages/contracts/src/generated/engine-catalog.json):
+  "engine_commands",
+  "run_script",
+  "add_asset",
 ] as const;
 
 type FixtureToolId = (typeof WRITE_TOOL_IDS)[number];
@@ -236,6 +249,32 @@ const WRITE_TOOLS: Record<FixtureToolId, WriteToolDef> = {
   // the compiler's defensive undo_run_target warn stays exercisable here.
   undo_run: { args: z.object({ runId: z.string().min(1).optional() }), risk: "medium" },
   save_version: { args: z.object({ label: z.string().max(280).optional() }), risk: "low" },
+  // Round-12 mirrors (write-tools.ts): same arg NAMES + BOUNDS (50-step / 20k
+  // code / 50k svg caps included so the schema-side fatals are exercisable),
+  // deliberately NON-strict — hostile extra keys must reach translate().
+  engine_commands: {
+    args: z.object({
+      steps: z
+        .array(
+          z.object({
+            command: z.string().min(1).max(200),
+            params: z.record(z.string(), z.unknown()),
+          }),
+        )
+        .min(1)
+        .max(50),
+    }),
+    risk: "medium",
+  },
+  run_script: { args: z.object({ code: z.string().min(1).max(20_000) }), risk: "medium" },
+  add_asset: {
+    args: z.object({
+      kind: z.literal("svg"),
+      name: SAFE_NAME_FIXTURE,
+      svg: z.string().min(1).max(50_000),
+    }),
+    risk: "medium",
+  },
 };
 
 const DEPS: CompileDeps = { registry: REGISTRY, writeTools: WRITE_TOOLS };
@@ -647,6 +686,357 @@ describe("golden compiles per tool", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 1b. Round-12 golden compiles — "Tool catalog v3" (engine_commands /
+//     run_script / add_asset; ids read from the generated catalog JSON)
+// ---------------------------------------------------------------------------
+
+describe("round-12 golden compiles — studio.engine_commands", () => {
+  it("valid steps ride VERBATIM into the ONE atomic batch (real allowed catalog ids)", () => {
+    const verbatim = [
+      { command: "layer.newSolid", params: { name: "BG", width: 1920, height: 1080 } },
+      { command: "markers.set", params: { time: 1, name: "Beat" } },
+    ];
+    const result = expectOk(
+      compile(plan([step("engine_commands", { steps: verbatim }, [...verbatim])])),
+    );
+    // PINNED CONVENTION: compiled batch steps are the model's {command, params}
+    // entries, byte-for-byte (params unchanged, order preserved).
+    expect(result.batch.steps).toEqual(verbatim);
+    expect(result.batch.atomic).toBe(true);
+    expect(result.batch.label).toBe("Agent: Style the headline");
+    expect(AGENT_BATCH_SCHEMA.safeParse(result.batch).success).toBe(true);
+    // The tool-catalog risk floor is medium (D-28 badge).
+    expect(result.risk).toBe("medium");
+    expect(warningCodes(result)).not.toContain("batch_mismatch");
+  });
+
+  it("compiles through the LIVE deps (defaultCompileDeps: strict contracts schemas + isAllowedEngineCommand seam)", () => {
+    // keys.set takes a REQUIRED `time` per the curated registry (checkBatchCommands
+    // gates curated-known ids on required params — the live path proves it).
+    const verbatim = [
+      { command: "layer.newSolid", params: { name: "BG" } },
+      {
+        command: "keys.set",
+        params: { layer: "Headline", path: "transform/scale", time: 0, value: 100 },
+      },
+    ];
+    const live = defaultCompileDeps();
+    // The widening seam is wired to the contracts predicate exactly.
+    expect(live.allowsEngineCommand).toBe(isAllowedEngineCommand);
+    const result = expectOk(compile(plan([step("engine_commands", { steps: verbatim })]), live));
+    expect(result.batch.steps).toEqual(verbatim);
+  });
+
+  it("an unknown engine command id is a typed command_not_allowed fatal with the pinned message", () => {
+    const issues = expectFatal(
+      compile(
+        plan([
+          step("engine_commands", {
+            steps: [{ command: "layer.nukeEverything", params: { everything: true } }],
+          }),
+        ]),
+      ),
+      "command_not_allowed",
+    );
+    const issue = issues.find((entry) => entry.code === "command_not_allowed");
+    expect(issue?.message).toBe('engine command "layer.nukeEverything" is not allowed for agents');
+    expect(issue?.command).toBe("layer.nukeEverything");
+    expect(issue?.step).toBe(1);
+  });
+
+  it("DENIED catalog ids are the same typed fatal — real path-based excluded entries (hasPath: true)", () => {
+    // Read from packages/contracts/src/generated/engine-catalog.json:
+    // anim.applyRecentPreset {index? | path?, layers?} — deny "path-param";
+    // file.import {paths: [...]} — deny "filesystem". Both hasPath: true.
+    for (const denied of ["anim.applyRecentPreset", "file.import"]) {
+      const issues = expectFatal(
+        compile(
+          plan([
+            step("engine_commands", { steps: [{ command: denied, params: { path: "/etc" } }] }),
+          ]),
+        ),
+        "command_not_allowed",
+      );
+      expect(
+        issues.some(
+          (issue) =>
+            issue.code === "command_not_allowed" &&
+            issue.message === `engine command "${denied}" is not allowed for agents`,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("script.run can never ride engine_commands (code-exec DENIED — the client-special seam is its only source)", () => {
+    expectFatal(
+      compile(
+        plan([
+          step("engine_commands", { steps: [{ command: "script.run", params: { code: "1" } }] }),
+        ]),
+      ),
+      "command_not_allowed",
+    );
+  });
+
+  it("over 50 input steps is a fatal bound (the schema cap mirrors MAX_ENGINE_COMMAND_STEPS)", () => {
+    const fiftyOne = Array.from({ length: 51 }, () => ({
+      command: "comp.new",
+      params: { name: "X" },
+    }));
+    expectFatal(compile(plan([step("engine_commands", { steps: fiftyOne })])), "invalid_args");
+  });
+
+  it("non-object entries / id-less entries degrade typed under a weak schema (unusable warns, empty_step fatal)", () => {
+    const weakDeps: CompileDeps = {
+      registry: REGISTRY,
+      writeTools: { engine_commands: z.object({}).passthrough() },
+    };
+    expectFatal(
+      compile(plan([step("engine_commands", { steps: [42, { params: {} }] })]), weakDeps),
+      "empty_step",
+    );
+  });
+
+  it("an injected predicate that THROWS fails closed (compilePlan never throws — law #1)", () => {
+    expectFatal(
+      compile(
+        plan([
+          step("engine_commands", {
+            steps: [{ command: "comp.new", params: { name: "X" } }],
+          }),
+        ]),
+        {
+          ...DEPS,
+          allowsEngineCommand: () => {
+            throw new Error("boom");
+          },
+        },
+      ),
+      "command_not_allowed",
+    );
+  });
+
+  it("merges with curated steps into the ONE batch (plan order preserved, names + verbatim ids side by side)", () => {
+    const verbatim = [{ command: "layer.newSolid", params: { name: "BG" } }];
+    const result = expectOk(
+      compile(
+        plan([
+          step(
+            "set_properties",
+            {
+              layers: [{ name: "Headline" }],
+              properties: [{ path: "transform/opacity", value: 40 }],
+            },
+            [
+              {
+                command: "prop.set",
+                params: { layer: "Headline", path: "transform/opacity", value: 40 },
+              },
+            ],
+          ),
+          step("engine_commands", { steps: verbatim }),
+        ]),
+      ),
+    );
+    expect(result.batch.steps.map((s) => s.command)).toEqual(["prop.set", "layer.newSolid"]);
+    expect(result.resolutionRequests.map((r) => r.layerName)).toEqual(["Headline"]);
+  });
+
+  it("the §8.6 20-PLAN-step cap is UNCHANGED by the widening (20 steps compile; 21 fails the plan schema)", () => {
+    const twenty = Array.from({ length: 20 }, () =>
+      step("engine_commands", { steps: [{ command: "comp.new", params: { name: "X" } }] }),
+    );
+    expectOk(compile(plan(twenty)));
+    const twentyOne = [...twenty, step("engine_commands", { steps: [] })];
+    expectFatal(compile(plan(twentyOne)), "plan_schema");
+  });
+
+  it("the §8.5 100-COMMAND batch cap is UNCHANGED by the widening (100 pass; 120 fatal)", () => {
+    const at = (perStep: number) =>
+      Array.from({ length: 20 }, () =>
+        step(
+          "engine_commands",
+          // 1..50 input steps per call — 6×20 = 120 compiled commands
+          { steps: Array.from({ length: perStep }, () => ({ command: "comp.new", params: {} })) },
+        ),
+      );
+    const hundred = expectOk(compile(plan(at(5))));
+    expect(hundred.batch.steps).toHaveLength(100);
+    expectFatal(compile(plan(at(6))), "too_many_commands");
+  });
+});
+
+describe("round-12 golden compiles — studio.run_script", () => {
+  const CODE = "for (let i = 0; i < 10; i++) { app.execute('layer.duplicate', { }); }";
+
+  it("compiles to EXACTLY ONE client-special step {command:'script.run', params:{code}}", () => {
+    const result = expectOk(
+      compile(
+        plan([
+          step("run_script", { code: CODE }, [{ command: "script.run", params: { code: CODE } }]),
+        ]),
+      ),
+    );
+    // PINNED CONVENTION (the client apply seam executes this specially — NOT_IN_BATCH).
+    expect(result.batch.steps).toEqual([{ command: "script.run", params: { code: CODE } }]);
+    expect(AGENT_BATCH_SCHEMA.safeParse(result.batch).success).toBe(true);
+    expect(result.risk).toBe("medium");
+  });
+
+  it("commented-out guard tokens PASS (comments are stripped first: // and /* */)", () => {
+    const code = "// fetch(\nconst x = 1; /* require( the block */ const y = 2;";
+    const result = expectOk(compile(plan([step("run_script", { code })])));
+    expect(result.batch.steps).toEqual([{ command: "script.run", params: { code } }]);
+  });
+
+  it("every forbidden token in LIVE code is a typed unsafe_script fatal", () => {
+    const samples = [
+      "const u = require('fs');",
+      "const u = fetch('http://x');",
+      "const u = new XMLHttpRequest();",
+      "const u = import('fs');",
+      "const u = eval('1');",
+    ];
+    for (const code of samples) {
+      const issues = expectFatal(compile(plan([step("run_script", { code })])), "unsafe_script");
+      const issue = issues.find((entry) => entry.code === "unsafe_script");
+      expect(issue?.param).toBe("code");
+      expect(issue?.message).toMatch(/not allowed in agent scripts/);
+    }
+  });
+
+  it("a '//' INSIDE a string never starts a comment — the real call after it still fatals (masking probe)", () => {
+    expectFatal(
+      compile(plan([step("run_script", { code: `const u = "http://x"; fetch(u);` })])),
+      "unsafe_script",
+    );
+  });
+
+  it("a forbidden token inside a STRING literal still fatals (mission-literal fail-closed: only comments are stripped)", () => {
+    // The guard strips COMMENTS only — string contents ride the scan and are
+    // rejected too. A harmless string naming an API costs one repair turn; a
+    // masked real call would cost the sandbox boundary. Fail closed.
+    expectFatal(
+      compile(plan([step("run_script", { code: 'const note = "fetch("; const x = 1;' })])),
+      "unsafe_script",
+    );
+  });
+
+  it("template-literal interpolation is scanned as code (${fetch(…)}) → unsafe_script", () => {
+    expectFatal(
+      compile(plan([step("run_script", { code: "const t = `${fetch(u)}`;" })])),
+      "unsafe_script",
+    );
+  });
+
+  it("oversized code is rejected even under weak schemas (translate-level bound → empty_step fatal)", () => {
+    const weakDeps: CompileDeps = {
+      registry: REGISTRY,
+      writeTools: { run_script: z.object({}).passthrough() },
+    };
+    const result = compile(plan([step("run_script", { code: "x".repeat(20_001) })]), weakDeps);
+    expectFatal(result, "empty_step");
+  });
+
+  it("the LIVE strict schema rejects oversized code as invalid_args (≤ 20 000 chars)", () => {
+    expectFatal(
+      compile(plan([step("run_script", { code: "x".repeat(20_001) })]), defaultCompileDeps()),
+      "invalid_args",
+    );
+  });
+});
+
+describe("round-12 golden compiles — studio.add_asset", () => {
+  const SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#F00"/></svg>';
+
+  it("compiles to EXACTLY ONE client-special step {command:'asset.importSvg', params:{name, svg}} (svg verbatim)", () => {
+    const result = expectOk(
+      compile(
+        plan([
+          step("add_asset", { kind: "svg", name: "Badge", svg: SVG }, [
+            { command: "asset.importSvg", params: { name: "Badge", svg: SVG } },
+          ]),
+        ]),
+      ),
+    );
+    // PINNED CONVENTION (the client's apply seam imports the SVG string).
+    expect(result.batch.steps).toEqual([
+      { command: "asset.importSvg", params: { name: "Badge", svg: SVG } },
+    ]);
+    expect(AGENT_BATCH_SCHEMA.safeParse(result.batch).success).toBe(true);
+    expect(result.risk).toBe("medium");
+  });
+
+  it("leading whitespace + an <?xml prolog pass (trim before the markup check)", () => {
+    const svg = '  \n<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"/>';
+    const result = expectOk(compile(plan([step("add_asset", { kind: "svg", name: "X", svg })])));
+    expect(result.batch.steps[0]?.command).toBe("asset.importSvg");
+  });
+
+  it("non-markup svg is a typed invalid_svg fatal", () => {
+    const issues = expectFatal(
+      compile(plan([step("add_asset", { kind: "svg", name: "X", svg: "<div>hi</div>" })])),
+      "invalid_svg",
+    );
+    const issue = issues.find((entry) => entry.code === "invalid_svg");
+    expect(issue?.param).toBe("svg");
+    expect(issue?.message).toMatch(/must be inline markup/);
+  });
+
+  it("external href / xlink:href are typed invalid_svg fatals; INTERNAL hrefs pass", () => {
+    const external = [
+      '<svg><image href="http://evil.example/x.png"/></svg>',
+      '<svg><image xlink:href="http://evil.example/x.png"/></svg>',
+      `<svg><image href='http://evil.example/x.png'/></svg>`,
+    ];
+    for (const svg of external) {
+      expectFatal(
+        compile(plan([step("add_asset", { kind: "svg", name: "X", svg })])),
+        "invalid_svg",
+      );
+    }
+    const internal = '<svg><use href="#gradient"/></svg>';
+    const result = expectOk(
+      compile(plan([step("add_asset", { kind: "svg", name: "X", svg: internal })])),
+    );
+    expect(result.batch.steps[0]?.command).toBe("asset.importSvg");
+  });
+
+  it("oversized svg (50 001 chars) is rejected (strict schema → invalid_args)", () => {
+    const svg = `<svg><!--${"x".repeat(50_000)}--></svg>`;
+    expect(svg.length).toBeGreaterThan(50_000);
+    expectFatal(
+      compile(plan([step("add_asset", { kind: "svg", name: "X", svg })])),
+      "invalid_args",
+    );
+  });
+
+  it("oversized svg is rejected under weak schemas too (translate-level bound → empty_step fatal)", () => {
+    const weakDeps: CompileDeps = {
+      registry: REGISTRY,
+      writeTools: { add_asset: z.object({}).passthrough() },
+    };
+    const svg = `<svg>${"x".repeat(50_001)}</svg>`;
+    const result = compile(plan([step("add_asset", { kind: "svg", name: "X", svg })]), weakDeps);
+    expectFatal(result, "empty_step");
+  });
+
+  it("asset.importSvg can never ride engine_commands (not an engine id — client-special only)", () => {
+    expectFatal(
+      compile(
+        plan([
+          step("engine_commands", {
+            steps: [{ command: "asset.importSvg", params: { name: "X", svg: "<svg/>" } }],
+          }),
+        ]),
+      ),
+      "command_not_allowed",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2. Merge + §8.5 bounds
 // ---------------------------------------------------------------------------
 
@@ -826,10 +1216,14 @@ describe("allowlist + proposed-batch validation", () => {
     );
   });
 
-  it("a registry without the translated command fatals with the compiled step", () => {
+  it("a registry without the translated command fatals when the widening predicate does not vouch either (the gate is registry ∪ allowed-catalog)", () => {
     const trimmed: CommandSchema = Object.fromEntries(
       Object.entries(REGISTRY).filter(([id]) => id !== "layer.newText"),
     );
+    // Round-12: without the injected rejection the contracts ALLOWED catalog
+    // vouches for layer.newText (it IS an allowed id) and the widening lets the
+    // batch through; a predicate that refuses to vouch restores the curated
+    // registry as the ONLY authority — the trimmed registry then fatals.
     const issues = expectFatal(
       compile(
         plan([
@@ -837,7 +1231,7 @@ describe("allowlist + proposed-batch validation", () => {
             { command: "layer.newText", params: { text: "Hi" } },
           ]),
         ]),
-        { ...DEPS, registry: trimmed },
+        { ...DEPS, registry: trimmed, allowsEngineCommand: () => false },
       ),
       "unknown_command",
     );

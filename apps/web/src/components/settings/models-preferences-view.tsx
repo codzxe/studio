@@ -114,13 +114,14 @@ function TierGlyph({ tier, className }: { tier: string; className?: string }): R
 }
 
 // ---------------------------------------------------------------------------
-// D-22 copy (VERBATIM ruling fragment — pinned by tests, ruling in DECISIONS.md)
+// Auto-apply copy (round-10 v2 — pinned by tests; supersedes the D-22
+// "pre-arm" wording: the agent now EXECUTES eligible plans itself)
 // ---------------------------------------------------------------------------
 
-const AUTO_APPLY_HELPER = "Pre-arms safe agent plans. Apply is always your explicit click.";
+const AUTO_APPLY_HELPER = "The agent applies safe plans for you; one Undo reverts a whole run.";
 
 const AUTO_APPLY_POLICY =
-  "Server-gated: only low-risk, reversible plans inside the credit and step budget pre-arm. Everything else waits for you.";
+  "Reversible creation and edit plans apply automatically — one atomic batch, one undo step, one saved version. Deleting, replacing or exporting always waits for your review.";
 
 // ---------------------------------------------------------------------------
 // Fetch states
@@ -419,7 +420,9 @@ export function ModelsPreferencesView({
                   />
                 </button>
                 <span className="text-body-s text-secondary" data-testid="auto-apply-state">
-                  {settings.autoApplyEnabled ? "Pre-arm safe plans" : "Always ask before applying"}
+                  {settings.autoApplyEnabled
+                    ? "Auto-apply safe plans"
+                    : "Always ask before applying"}
                 </span>
               </div>
               <p className="text-caption text-muted">{AUTO_APPLY_POLICY}</p>

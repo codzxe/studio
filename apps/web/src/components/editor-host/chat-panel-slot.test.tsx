@@ -166,6 +166,7 @@ function makeApi(options: {
     stop: vi.fn(),
     retry,
     newThread: vi.fn(),
+    openThread: vi.fn(),
     setActiveModelId: vi.fn(),
     setFlag: vi.fn(),
     clearOptionalBlocks: vi.fn(),
