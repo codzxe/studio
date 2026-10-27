@@ -216,7 +216,7 @@ jobs:
           workspaces: editor
       # Fonts are NEVER committed (spec §1.5 rule 9, licence gate enforced) — but
       # crates/text/src/fonts.rs `include_bytes!`s editor/assets/fonts/*.ttf at
-      # compile time, so a fresh checkout cannot compile effectcraft-text at all
+      # compile time, so a fresh checkout cannot compile studio-text at all
       # (the 2026-10-25 + 2026-10-26 editor-cargo failures; worklog "fresh CI
       # checkouts no longer contain the fonts"). Fetch the exact bytes our
       # vendored pin ships — upstream storytold/effectcraft @ 9db7f3b2, the pin
@@ -337,18 +337,18 @@ jobs:
           edition = "2021"
 
           [dependencies]
-          effectcraft-project = { path = "REPO_PATH/editor/crates/project" }
-          effectcraft-time = { path = "REPO_PATH/editor/crates/time" }
-          effectcraft-keyframe = { path = "REPO_PATH/editor/crates/keyframe" }
-          effectcraft-color = { path = "REPO_PATH/editor/crates/color" }
+          studio-project = { path = "REPO_PATH/editor/crates/project" }
+          studio-time = { path = "REPO_PATH/editor/crates/time" }
+          studio-keyframe = { path = "REPO_PATH/editor/crates/keyframe" }
+          studio-color = { path = "REPO_PATH/editor/crates/color" }
           serde_json = "1.0.151"
           EOF
           sed -i "s|REPO_PATH|$REPO|g" /tmp/ecf-fixture/Cargo.toml
           cat > /tmp/ecf-fixture/src/main.rs <<'EOF'
-          use effectcraft_project::build;
-          use effectcraft_color::Label;
-          use effectcraft_project::{Comp, ItemId, ItemKind, LayerSource, Project, Solid};
-          use effectcraft_time::{FrameRate, Tick};
+          use studio_project::build;
+          use studio_color::Label;
+          use studio_project::{Comp, ItemId, ItemKind, LayerSource, Project, Solid};
+          use studio_time::{FrameRate, Tick};
 
           fn main() {
               let mut p = Project::default();
@@ -363,20 +363,20 @@ jobs:
               );
               let mut bg = build::layer(&mut p, &comp, "Background", LayerSource::Solid { item: solid }, (comp.width, comp.height), None);
               if let Some(prop) = bg.props.prop_mut("transform/position") {
-                  prop.value = effectcraft_keyframe::Value::Vec3([960.0, 540.0, 0.0]);
+                  prop.value = studio_keyframe::Value::Vec3([960.0, 540.0, 0.0]);
               }
               comp.layers.push(bg);
 
               let mut title = build::layer(&mut p, &comp, "Headline", LayerSource::Text, (comp.width, comp.height), None);
               if let Some(prop) = title.props.prop_mut("text/sourceText") {
-                  prop.value = effectcraft_keyframe::Value::Text(Box::new(effectcraft_keyframe::TextDoc {
+                  prop.value = studio_keyframe::Value::Text(Box::new(studio_keyframe::TextDoc {
                       text: "Studio".into(),
                       size: 120.0,
                       ..Default::default()
                   }));
               }
               if let Some(prop) = title.props.prop_mut("transform/position") {
-                  prop.value = effectcraft_keyframe::Value::Vec3([960.0, 540.0, 0.0]);
+                  prop.value = studio_keyframe::Value::Vec3([960.0, 540.0, 0.0]);
               }
               comp.layers.push(title);
 

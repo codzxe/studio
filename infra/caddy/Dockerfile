@@ -14,7 +14,7 @@
 # editor-dist/ is gitignored (infra/caddy/.gitignore) — the ~17MB wasm never
 # belongs in git. Optional: precompress for the best first-paint (Caddy's
 # `encode` serves sidecar files automatically):
-#   brotli -q 11 infra/caddy/editor-dist/effectcraft_web_bg.wasm
+#   brotli -q 11 infra/caddy/editor-dist/studio_web_bg.wasm
 
 ARG CADDY_VERSION=2.11
 
