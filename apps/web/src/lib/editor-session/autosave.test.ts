@@ -376,9 +376,12 @@ describe("createAutosaveController", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(h.fakeClient.calls.uploads).toHaveLength(1);
-    // a concurrent saveNow dedups onto the same promise
-    const deduped = controller.saveNow("manual");
-    expect(deduped).toBe(pending);
+    // a concurrent saveNow no longer ADOPTS the in-flight promise (w3-b06 —
+    // it read bytes before the caller's edits): it CHAINS a fresh save. The
+    // controller was disposed before the chain re-entered, so the chained
+    // save resolves the honest disposed outcome and never uploads.
+    const chained = controller.saveNow("manual");
+    expect(chained).not.toBe(pending);
 
     controller.dispose();
     expect(vi.getTimerCount()).toBe(0);
@@ -388,6 +391,9 @@ describe("createAutosaveController", () => {
     });
     const outcome = await pending; // an in-flight save still settles after dispose
     expect(outcome.saved).toBe(true);
+    const chainedOutcome = await chained; // the chain hit the disposed gate
+    expect(chainedOutcome.saved).toBe(false);
+    expect((chainedOutcome.error as EditorSessionError).code).toBe("disposed");
 
     // after dispose: no further ticks, no further uploads, honest outcome
     await vi.advanceTimersByTimeAsync(120_000);
@@ -396,6 +402,62 @@ describe("createAutosaveController", () => {
     const afterDispose = await controller.saveNow("manual");
     expect(afterDispose.saved).toBe(false);
     expect((afterDispose.error as EditorSessionError).code).toBe("disposed");
+  });
+
+  it("saveNow during an in-flight tick save CHAINS a fresh save — before-close never adopts stale bytes (w3-b06)", async () => {
+    // The regression: an explicit saveNow that landed while a tick save was
+    // uploading used to dedupe onto it — the tick had read the editor bytes
+    // BEFORE the user's latest edits, so before-close answered saved:true for
+    // STALE bytes, the page closed, and the newer edits were lost.
+    const secondVersion: VersionRef = {
+      id: "ver_upload_2",
+      label: null,
+      sha256: "1".repeat(64),
+      sizeBytes: 2,
+    };
+    const h = await openSession({
+      upload: (_call, index) => (index === 0 ? "hang" : { ok: true, version: secondVersion }),
+    });
+    vi.useFakeTimers();
+    const controller = makeController(h);
+
+    await edit(h, "Edit One");
+    // tick: the save reads + uploads the "Edit One" bytes, then hangs.
+    await vi.advanceTimersByTimeAsync(30_000);
+    for (let i = 0; i < 200 && h.fakeClient.calls.uploads.length === 0; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      await realSleep(1);
+    }
+    expect(h.fakeClient.calls.uploads).toHaveLength(1);
+    const staleBytes = h.fakeClient.calls.uploads[0]?.input.bytes;
+
+    // The user keeps editing WHILE the stale upload hangs.
+    await edit(h, "Edit Two");
+    expect(h.fake.state.dirty).toBe(true);
+
+    // before-close must not adopt the in-flight (stale) outcome.
+    const beforeClose = controller.saveNow("before-close");
+    h.fakeClient.resolveUpload(0, {
+      ok: true,
+      version: { id: "ver_upload_1", label: null, sha256: "0".repeat(64), sizeBytes: 1 },
+    });
+    const outcome = await beforeClose;
+
+    expect(outcome.saved).toBe(true);
+    // The chained save read the CURRENT bytes: a SECOND upload whose sha is
+    // the post-"Edit Two" file table (never the stale first sha), and the
+    // outcome's version is the fresh one — the honest "saved" for the bytes
+    // the page is closing with.
+    expect(h.fakeClient.calls.uploads).toHaveLength(2);
+    expect(h.fakeClient.calls.uploads[1]?.input.sha256).toBe(
+      shaOf(h.fake.readFile("/test-project.ecproj") as Uint8Array),
+    );
+    expect(h.fakeClient.calls.uploads[1]?.input.bytes).not.toEqual(staleBytes);
+    expect(h.fakeClient.calls.uploads[1]?.input.label).toBe("Save before close");
+    expect(outcome.version?.id).toBe("ver_upload_2");
+    expect(controller.currentVersion()?.id).toBe("ver_upload_2");
+    expect(h.hooks.saved).toHaveLength(2); // one per real upload — both honest
+    controller.dispose();
   });
 
   it("default cadence is 30 s (D-6)", async () => {

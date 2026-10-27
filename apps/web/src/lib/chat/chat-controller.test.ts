@@ -315,10 +315,12 @@ interface FakeDeps {
   readonly script: FakeScript;
   readonly planResponse?: (runId: string, plan: EditPlan) => Record<string, unknown>;
   readonly planFails?: boolean;
+  /** Blocks the plan POST until resolved (stop-vs-queue race tests, w3-b06). */
+  readonly planGate?: Promise<void>;
 }
 
 /** Builds the ChatControllerClient fake: turn transport + plan + abandon. */
-function makeClient({ script, planResponse, planFails }: FakeDeps) {
+function makeClient({ script, planResponse, planFails, planGate }: FakeDeps) {
   const posts: RecordedPost[] = [];
   const planPosts: Array<{ runId: string; plan: EditPlan }> = [];
   const abandons: string[] = [];
@@ -378,6 +380,7 @@ function makeClient({ script, planResponse, planFails }: FakeDeps) {
     runs: {
       submitPlan: async (runId: string, body: { plan: EditPlan }) => {
         planPosts.push({ runId, plan: body.plan }); // recorded even when it throws
+        if (planGate !== undefined) await planGate;
         if (planFails === true) {
           throw new ApiError({
             code: "RUN_GONE",
@@ -808,6 +811,115 @@ describe("createChatController v2 — the client-driven loop", () => {
     expect(abandons).toHaveLength(1); // dispose never double-abandons
   });
 
+  it("stop() clears the steer queue: a send racing the run's end is dropped + explained, never stranded (w3-b06)", async () => {
+    // The plan POST hangs: the run is ENDING (final turn completed) while the
+    // phase is still live — the exact window where send() queues + renders.
+    const release = { gate: (): void => {} };
+    const planGate = new Promise<void>((resolve) => {
+      release.gate = resolve;
+    });
+    const write = writeProposal("studio.create_text", { name: "T", text: "x" }, "call_q1");
+    const { client, posts, planPosts, abandons } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_q", 0),
+              turnCompleted("run_q", 1, 0, { assistantText: "", toolCalls: [write] }),
+            ],
+          },
+          1: {
+            frames: () => [
+              runStarted("run_q", 0),
+              turnCompleted("run_q", 1, 1, { assistantText: "Done.", toolCalls: [] }),
+            ],
+          },
+        },
+      },
+      planGate,
+    });
+    const errors: Array<{ code: string; message: string }> = [];
+    const controller = createChatController({
+      client,
+      workspaceId: "ws_1",
+      projectId: "prj_1",
+      threadId: THREAD,
+      onError: (error) => errors.push(error),
+    });
+
+    controller.send(input("Original ask."));
+    await until(controller, () => planPosts.length === 1, "plan POST in flight (run ending)");
+
+    // A send in the ending window: bubble rendered NOW, queued for a fresh run.
+    controller.send(input("Racing send."));
+    expect(
+      controller
+        .getSnapshot()
+        .messages.some((message) => message.role === "user" && message.text === "Racing send."),
+    ).toBe(true);
+
+    controller.stop();
+    expect(controller.getSnapshot().phase).toBe("cancelled");
+    // The queued send was DROPPED with an explanation — never silently stranded.
+    expect(errors).toEqual([
+      { code: "STOP_DROPPED_SENDS", message: "Run cancelled — 1 unsent message dropped." },
+    ]);
+
+    release.gate(); // the parked plan POST settles; finishRun must bail (stopped)
+    for (let i = 0; i < 20; i += 1) await tick();
+    // No fresh run ever POSTed the stranded send; the aborted run keeps its
+    // two turns and its single abandon.
+    expect(posts).toHaveLength(2);
+    expect(new Set(posts.map((post) => post.runId)).size).toBe(1);
+    expect(abandons).toHaveLength(1);
+    expect(controller.getSnapshot().phase).toBe("cancelled");
+    controller.dispose();
+  });
+
+  it("stop() drops un-ridden steers the same way (bubble stays, nothing auto-starts, w3-b06)", async () => {
+    const { client, posts, abandons } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_st", 0),
+              turnStarted("run_st", 1, 0),
+              delta("run_st", 2, "Wo"),
+            ],
+            hangAfter: 3, // the turn hangs: a steer lands but never rides a POST
+          },
+        },
+      },
+    });
+    const errors: Array<{ code: string; message: string }> = [];
+    const controller = createChatController({
+      client,
+      workspaceId: "ws_1",
+      projectId: "prj_1",
+      threadId: THREAD,
+      onError: (error) => errors.push(error),
+    });
+
+    controller.send(input("Base ask."));
+    await until(controller, (s) => s.phase === "streaming", "streaming");
+    controller.send(input("Unsent steer.")); // pendingSteers — never on the wire
+    expect(
+      controller
+        .getSnapshot()
+        .messages.some((message) => message.role === "user" && message.text === "Unsent steer."),
+    ).toBe(true);
+
+    controller.stop();
+    expect(errors).toEqual([
+      { code: "STOP_DROPPED_SENDS", message: "Run cancelled — 1 unsent message dropped." },
+    ]);
+
+    for (let i = 0; i < 20; i += 1) await tick();
+    expect(posts).toHaveLength(1); // the steer never rode a turn, never started a run
+    expect(abandons).toHaveLength(1);
+    controller.dispose();
+  });
+
   it("TURN_PAUSED parks; retry() re-POSTs the SAME step (same key) and the run finishes", async () => {
     const read = readCall("studio.get_context", {}, "call_p1");
     const { client, posts } = makeClient({
@@ -865,6 +977,90 @@ describe("createChatController v2 — the client-driven loop", () => {
     // carried the authoritative text.
     const last = controller.getSnapshot().messages.at(-1);
     expect(last?.text).toBe("Done.");
+    controller.dispose();
+  });
+
+  it("retry() escape hatch: an unexpected rejection during the resume folds failed — never parks on reconnecting (w3-b06)", async () => {
+    // The resume's runTurn call is NOT wrapped by startRun's catch — an
+    // unexpected escape (here: a throwing canvas seam) must fold the honest
+    // failure instead of leaving the phase on "reconnecting" forever.
+    // The variant serves the FIRST step-0 POST a park (TURN_PAUSED) and every
+    // later one the completing frames — the fake keys variants by step:nth,
+    // not runId, so the fresh run's step 0 hits the same "0:1" slot.
+    let firstStepZeroServed = false;
+    const { client, posts } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_esc", 0),
+              turnStarted("run_esc", 1, 0),
+              delta("run_esc", 2, "Hal"),
+            ],
+          },
+          1: {
+            frames: () => [
+              runStarted("run_esc", 0),
+              turnCompleted("run_esc", 1, 1, { assistantText: "Done.", toolCalls: [] }),
+            ],
+          },
+        },
+        variants: {
+          get "0:1"(): StepScript {
+            return firstStepZeroServed
+              ? {
+                  frames: () => [
+                    runStarted("run_esc", 0),
+                    turnCompleted("run_esc", 1, 0, { assistantText: "Fresh.", toolCalls: [] }),
+                  ],
+                }
+              : {
+                  frames: () => [runStarted("run_esc", 0), delta("run_esc", 1, "Ha")],
+                  pauseAfter: 2,
+                };
+          },
+        },
+      },
+    });
+    const errors: Array<{ code: string; message: string }> = [];
+    let throwOnCanvas = false;
+    const controller = createChatController({
+      client,
+      workspaceId: "ws_1",
+      projectId: "prj_1",
+      threadId: THREAD,
+      canvasSnapshot: () => {
+        if (throwOnCanvas) throw new Error("canvas bridge exploded");
+        return null;
+      },
+      onError: (error) => errors.push(error),
+    });
+
+    controller.send(input("Pause me."));
+    await until(
+      controller,
+      (s) => s.phase === "failed" && s.error?.code === "TURN_PAUSED",
+      "parked TURN_PAUSED",
+    );
+
+    throwOnCanvas = true; // the resumed runTurn now rejects unexpectedly
+    controller.retry();
+    await until(
+      controller,
+      (s) => s.phase === "failed" && s.error?.code === "NETWORK_ERROR",
+      "escape folded to failed",
+    );
+    expect(errors.at(-1)?.code).toBe("NETWORK_ERROR");
+
+    // The engine still serves a fresh send afterwards (the dead run is finished).
+    throwOnCanvas = false;
+    firstStepZeroServed = true;
+    controller.send(input("Fresh start."));
+    await until(controller, (s) => s.phase === "done", "fresh run done");
+    // parked attempt + the fresh run's step 0 (the escape itself never POSTed —
+    // the canvas seam threw before the transport), and the fresh run is NEW.
+    expect(posts).toHaveLength(2);
+    expect(posts[1]?.runId).not.toBe(posts[0]?.runId);
     controller.dispose();
   });
 
@@ -955,6 +1151,47 @@ describe("createChatController v2 — the client-driven loop", () => {
     // ROUND-12 end-marker pin (12-w7): no proposals ⇒ still ONE end-marker
     // POST to /v1/runs/:id/plan (never a merged-plan POST).
     expect(planPosts).toEqual([{ plan: undefined, runId: expect.any(String) }]);
+    controller.dispose();
+  });
+
+  it("all-undo_run carriers still POST the {end:true} marker (mergeEditPlans null is a designed value, w3-b06)", async () => {
+    // A run whose ONLY write tool is `studio.undo_run` (the model proposing
+    // "undo the previous run"): every carrier filters out of mergeEditPlans,
+    // the merge is null — the gateway row still needs the end marker or it
+    // rots as a stale "running" row (12-w6-e2, extended by w3-b06).
+    const undo = writeProposal("studio.undo_run", {}, "call_u1");
+    const { client, planPosts } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_undo", 0),
+              turnCompleted("run_undo", 1, 0, { assistantText: "", toolCalls: [undo] }),
+            ],
+          },
+          1: {
+            frames: () => [
+              runStarted("run_undo", 0),
+              turnCompleted("run_undo", 1, 1, { assistantText: "Undone.", toolCalls: [] }),
+            ],
+          },
+        },
+      },
+    });
+    const controller = createChatController({
+      client,
+      workspaceId: "ws_1",
+      projectId: "prj_1",
+      threadId: THREAD,
+    });
+
+    controller.send(input("Undo the last run."));
+    await until(controller, (s) => s.phase === "done", "run done");
+
+    // ONE end-marker POST (plan: undefined) — never ZERO (the old rot), never
+    // a merged plan (nothing mergeable existed).
+    expect(planPosts).toEqual([{ plan: undefined, runId: expect.any(String) }]);
+    expect(controller.getSnapshot().messages.at(-1)?.text).toBe("Undone.");
     controller.dispose();
   });
 

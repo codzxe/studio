@@ -295,6 +295,44 @@ describe("useThreadHistory — auto-restore + history load", () => {
     expect(result.current.history).toEqual([]);
   });
 
+  it("does not refetch the thread list on every live message or thread switch (w3-b06)", async () => {
+    // Every send/steer/run.started bumps liveMessageCount and every switch
+    // bumps threadId — the list effect must NOT depend on them (the old deps
+    // cancelled + refetched GET /threads mid-chat). Only the manual
+    // refreshThreads trigger re-lists.
+    const onOpenThread = vi.fn();
+    const { seams, spies } = makeSeams({
+      threads: [thread("thr_1", "Only", "2026-10-22T10:00:00.000Z")],
+    });
+    const { result, rerender } = renderHook(
+      ({ threadId, liveMessageCount }: { threadId: string | null; liveMessageCount: number }) =>
+        useThreadHistory({
+          seams,
+          projectId: "proj_1",
+          threadId,
+          liveMessageCount,
+          onOpenThread,
+        }),
+      { initialProps: { threadId: null as string | null, liveMessageCount: 0 } },
+    );
+    await waitFor(() => expect(spies.list).toHaveBeenCalledTimes(1));
+
+    // A whole live conversation (message bubbles landing, thread id arriving)
+    // and a thread switch — the list is fetched exactly ONCE.
+    rerender({ threadId: null, liveMessageCount: 1 });
+    rerender({ threadId: "thr_1", liveMessageCount: 2 });
+    rerender({ threadId: "thr_1", liveMessageCount: 3 });
+    rerender({ threadId: "thr_1", liveMessageCount: 4 });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(spies.list).toHaveBeenCalledTimes(1);
+
+    // The explicit refresh trigger still re-lists.
+    act(() => result.current.refreshThreads());
+    await waitFor(() => expect(spies.list).toHaveBeenCalledTimes(2));
+  });
+
   it("degrades silently when the seams are null (no client)", async () => {
     const { result } = renderHook(() =>
       useThreadHistory({

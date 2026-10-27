@@ -264,6 +264,19 @@ export function useThreadHistory(options: UseThreadHistoryOptions): ThreadHistor
   const autoOpenedRef = useRef(false);
   const onOpenThreadRef = useRef(onOpenThread);
   onOpenThreadRef.current = onOpenThread;
+  /**
+   * Latest-ref seams for the once-per-mount auto-restore guard (w3-b06):
+   * `threadId`/`liveMessageCount` exist ONLY to feed that guard, so the list
+   * effect must not depend on them — every live message (send/steer/
+   * run.started) and every thread switch would otherwise cancel + refetch
+   * `GET /v1/projects/:id/threads` mid-chat. Reading the refs AT RESOLUTION
+   * TIME is also the honest guard: it sees a message that landed while the
+   * list was in flight (the captured-closure read could not).
+   */
+  const threadIdRef = useRef(threadId);
+  threadIdRef.current = threadId;
+  const liveMessageCountRef = useRef(liveMessageCount);
+  liveMessageCountRef.current = liveMessageCount;
 
   const refreshThreads = useCallback((): void => {
     setRefreshSeq((seq) => seq + 1);
@@ -276,7 +289,7 @@ export function useThreadHistory(options: UseThreadHistoryOptions): ThreadHistor
   }, []);
 
   // -- thread list + the once-per-mount auto-restore -------------------------
-  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate dep — switching projects must reload the thread list (the once-guard makes extra runs no-ops).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deliberate dep — refreshSeq is the manual re-list trigger (never read in the body); threadId/liveMessageCount feed the auto-restore guard through refs so live traffic does NOT refetch the list (w3-b06).
   useEffect(() => {
     if (seams === null || projectId === null) return;
     let cancelled = false;
@@ -293,8 +306,8 @@ export function useThreadHistory(options: UseThreadHistoryOptions): ThreadHistor
         if (
           !autoOpenedRef.current &&
           newest !== undefined &&
-          threadId === null &&
-          liveMessageCount === 0
+          threadIdRef.current === null &&
+          liveMessageCountRef.current === 0
         ) {
           autoOpenedRef.current = true;
           adoptThread(newest.id, newest.title);
@@ -309,7 +322,7 @@ export function useThreadHistory(options: UseThreadHistoryOptions): ThreadHistor
     return () => {
       cancelled = true;
     };
-  }, [seams, projectId, threadId, liveMessageCount, refreshSeq, adoptThread]);
+  }, [seams, projectId, refreshSeq, adoptThread]);
 
   // -- transcript for the ADOPTED thread only --------------------------------
   useEffect(() => {

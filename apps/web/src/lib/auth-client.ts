@@ -10,8 +10,15 @@ import { organizationClient } from "better-auth/client/plugins";
  * (docs/PRODUCT_ARCHITECTURE.md §7.1/§7.2 — auth is mounted under /v1/auth).
  * better-auth validates the URL at module-evaluation time (new URL(...) —
  * it must be absolute even in the browser bundle), so a missing env var
- * falls back to the dev origin http://localhost:3000. Production builds set
+ * falls back to the dev origin below. Production builds set
  * NEXT_PUBLIC_APP_URL to the canonical origin.
+ *
+ * Fallback posture (seo.ts parity, w3-b06): LOCAL DEVELOPMENT stays silent —
+ * the env is intentionally optional there. ANY OTHER BUILD falls back but
+ * ERRORS LOUDLY once at module load: a prod build missing the env points
+ * every browser auth call at the user's own localhost, and that
+ * misconfiguration must be visible. It must NOT throw — auth is not worth
+ * taking the client bundle down for.
  *
  * The organization plugin is required for the invite flow
  * (organization.getInvitation / acceptInvitation / rejectInvitation — method
@@ -19,10 +26,25 @@ import { organizationClient } from "better-auth/client/plugins";
  * dist/plugins/organization/routes/crud-invites.d.mts).
  */
 
-const APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL && process.env.NEXT_PUBLIC_APP_URL.length > 0
-    ? process.env.NEXT_PUBLIC_APP_URL
-    : "http://localhost:3000";
+/** The dev fallback origin (better-auth needs an absolute URL at module-eval). */
+const FALLBACK_APP_URL = "http://localhost:3000";
+
+/** True only for local development boots (`next dev`, APP_ENV=local) — seo.ts parity. */
+function isLocalDevelopment(): boolean {
+  return process.env.APP_ENV === "local" || process.env.NODE_ENV === "development";
+}
+
+const APP_URL = (() => {
+  const configured = process.env.NEXT_PUBLIC_APP_URL;
+  if (configured !== undefined && configured.length > 0) return configured;
+  if (!isLocalDevelopment()) {
+    // biome-ignore lint/suspicious/noConsole: the loud non-local fallback error IS the product behavior here (deploy visibility), not debug logging
+    console.error(
+      `[auth] NEXT_PUBLIC_APP_URL is not set — browser auth calls fall back to the dev origin ${FALLBACK_APP_URL}. Fix the deployment: set NEXT_PUBLIC_APP_URL to the public origin (e.g. https://app.example.com) and rebuild (NEXT_PUBLIC_* vars are baked at build time). Detected APP_ENV=${process.env.APP_ENV ?? "unset"}, NODE_ENV=${process.env.NODE_ENV ?? "unset"}, NEXT_PUBLIC_APP_URL=${configured === undefined ? "unset" : "blank"}.`,
+    );
+  }
+  return FALLBACK_APP_URL;
+})();
 
 export const authClient = createAuthClient({
   baseURL: `${APP_URL}/v1/auth`,

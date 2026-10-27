@@ -116,10 +116,36 @@ export const toneAudioHarness: AudioRenderHarness = {
 
     // The model's code = the body of a Function whose only binding is `Tone`.
     // The async IIFE wrapper accepts both sync scheduling and `await` code.
-    const userProgram = new Function(
-      "Tone",
-      `"use strict";\nreturn (async () => {\n${input.code}\n})();`,
-    ) as (tone: unknown) => Promise<unknown>;
+    //
+    // ACCEPTED RISK (w3-b06, documented trade-off — do not "fix" silently):
+    // `new Function` compiles MODEL-AUTHORED JavaScript that runs on the
+    // PAGE's main thread inside the app realm — it can reach document,
+    // storage and same-origin fetch. This is a synthesis sandbox with bounds
+    // + timeout (code ≤ 20 000 chars, duration 0.1–60 s, the 20 s render
+    // race), NOT a security sandbox: a compromised/prompt-injected model
+    // gets same-origin script execution for the render's duration, and the
+    // race cannot preempt a synchronous busy-loop (the documented Worker-free
+    // trade-off). The future fix is a dedicated Worker (or sandboxed iframe
+    // with allow-scripts only) posting the WAV back; the harness seam
+    // (`AudioRenderHarness`) already isolates the swap to this function.
+    let userProgram: (tone: unknown) => Promise<unknown>;
+    try {
+      userProgram = new Function(
+        "Tone",
+        `"use strict";\nreturn (async () => {\n${input.code}\n})();`,
+      ) as (tone: unknown) => Promise<unknown>;
+    } catch (error) {
+      // A parse failure in model-authored code never reaches the render race
+      // — surface the honest typed failure at the construction site (the
+      // outer renderWithTimeout catch would otherwise report a generic
+      // "The audio code failed: …").
+      throw new ClientToolError(
+        "RENDER_AUDIO_FAILED",
+        error instanceof Error && error.message.length > 0
+          ? `The audio code could not be parsed: ${error.message}`
+          : "The audio code could not be parsed.",
+      );
+    }
 
     // Tone.Offline swaps the global context to the OfflineContext for the
     // callback, so the Tone namespace the code receives schedules into the

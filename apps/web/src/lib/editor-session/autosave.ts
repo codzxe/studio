@@ -252,9 +252,24 @@ export function createAutosaveController(
   /**
    * Single-flight entry for both the tick and `saveNow`.
    * Never rejects; conflicts/disposed resolve as outcomes.
+   *
+   * `explicit` (the saveNow path): when a save is already in flight, do NOT
+   * adopt its outcome — the in-flight save read the editor bytes BEFORE the
+   * caller's latest edits, so a before-close that dedupes onto it would
+   * answer `{ saved: true }` for STALE bytes and the page would close with
+   * the newer edits unuploaded (w3-b06). Instead chain a FRESH save behind
+   * the in-flight one: the `finally` below nulls `inFlight` before the chain
+   * re-enters, so the chained call reads the CURRENT bytes. The tick keeps
+   * the plain dedupe — the next tick re-reads the editor anyway.
    */
-  function startSave(reason: string): Promise<SaveOutcome> {
-    if (inFlight !== null) return inFlight; // skip/dedup while a save is in flight
+  function startSave(reason: string, explicit = false): Promise<SaveOutcome> {
+    if (inFlight !== null) {
+      if (!explicit) return inFlight; // dedup: the tick rides the running save
+      return inFlight.then(
+        () => startSave(reason, explicit),
+        () => startSave(reason, explicit),
+      );
+    }
     if (parkedConflict) return Promise.resolve({ saved: false, conflict: true });
     if (disposed) {
       return Promise.resolve({
@@ -291,7 +306,9 @@ export function createAutosaveController(
     saveNow(reason: string): Promise<SaveOutcome> {
       // Explicit saves (manual/agent-apply/before-close) are allowed while
       // parked on hard errors; a success un-parks. Conflict parks are terminal.
-      return startSave(reason);
+      // Explicit saves never ADOPT an in-flight save's outcome — see
+      // startSave (w3-b06): they chain a fresh save that reads current bytes.
+      return startSave(reason, true);
     },
 
     currentVersion(): VersionRef | null {

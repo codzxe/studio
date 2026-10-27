@@ -37,11 +37,13 @@
  *    three times → abort RUN_STEP_LIMIT;
  *  * wall-clock cap — CHAT_RUN_TIMEOUT_MS (10 min); abort code RUN_TIMEOUT.
  *
- * stop() aborts the in-flight fetch, folds `cancelled` locally and
- * fire-and-forget POSTs `/v1/runs/:id/abandon` (once per run). retry()
- * re-sends the CURRENT step with the SAME idempotency key (a parked
- * TURN_PAUSED run or a surfaced turn.failed) or starts a fresh run when the
- * old one ended (fresh runId — a new key, never a replay of the old log).
+ * stop() aborts the in-flight fetch, folds `cancelled` locally, cancels any
+ * undelivered §3.4 sends (queued racers + un-ridden steers — surfaced once
+ * through onError as STOP_DROPPED_SENDS, w3-b06) and fire-and-forget POSTs
+ * `/v1/runs/:id/abandon` (once per run). retry() re-sends the CURRENT step
+ * with the SAME idempotency key (a parked TURN_PAUSED run or a surfaced
+ * turn.failed) or starts a fresh run when the old one ended (fresh runId —
+ * a new key, never a replay of the old log).
  *
  * No React anywhere — pure TS. `useSyncExternalStore`-ready store over
  * `ChatUiState`; the provider (provider.tsx) wires the executor factory and
@@ -97,6 +99,13 @@ export const RUN_STEP_LIMIT_CODE = "RUN_STEP_LIMIT";
 
 /** The §7.3-style abort code when the wall-clock cap fires. */
 export const RUN_TIMEOUT_CODE = "RUN_TIMEOUT";
+
+/**
+ * w3-b06: the onError code for stop()'s dropped-sends notice — the ONE
+ * stop()-adjacent onError firing (a plain stop with nothing queued stays
+ * silent; see {@link CreateChatControllerOptions.onError}).
+ */
+export const STOP_DROPPED_SENDS_CODE = "STOP_DROPPED_SENDS";
 
 /** Repetition guard: the (tool, args) pair at this occurrence steers the nudge. */
 const REPETITION_NUDGE_AT = 2;
@@ -290,7 +299,10 @@ export interface CreateChatControllerOptions {
   readonly threadId: string;
   /**
    * Fired whenever the controller enters an error state — fatal send/stream
-   * errors, surfaced turn failures and TURN_PAUSED. Not fired for stop().
+   * errors, surfaced turn failures and TURN_PAUSED. stop() itself is not an
+   * error state and stays silent, EXCEPT the one-shot w3-b06 notice when it
+   * cancels undelivered sends (code {@link STOP_DROPPED_SENDS_CODE}, fired
+   * once with the dropped count).
    */
   readonly onError?: (error: { code: string; message: string }) => void;
   /**
@@ -335,6 +347,10 @@ export interface ChatController {
   /**
    * §8.3: folds `cancelled` locally at once, aborts the in-flight turn fetch
    * and fire-and-forget POSTs `/v1/runs/:id/abandon` (once per run).
+   * Undelivered sends — steers that never rode a POST and sends queued while
+   * the run was ending — are cancelled with it (w3-b06): their bubbles stay
+   * rendered and the drop fires onError once (STOP_DROPPED_SENDS); nothing
+   * auto-starts after a stop.
    */
   stop(): void;
   /**
@@ -823,64 +839,69 @@ export function createChatController(options: CreateChatControllerOptions): Chat
   const finishRun = async (run: ActiveRun): Promise<void> => {
     run.ending = true;
 
-    if (run.proposals.length === 0) {
-      // End marker (12-w6-e2 finding): a proposal-less run still tells the
-      // gateway it finished — the plan route marks the run completed so it
-      // never rots as a stale "running" row (and any late apply of a plan
-      // POST the run missed stays possible). Fire-and-forget, never blocks
-      // the local run.completed fold.
+    // mergeEditPlans is null for ZERO mergeable carriers — both a
+    // proposal-less run AND one whose every carrier is a `studio.undo_run`
+    // proposal (mergeEditPlans filters those out; null is a DESIGNED value,
+    // contracts/edit-plan.ts mergedCarrierPlan parity comment). Either way
+    // there is no plan to POST, but the gateway row still needs the end
+    // marker.
+    const merged = mergeEditPlans(run.proposals);
+    if (merged !== null) {
+      try {
+        // A plan-bearing submit always answers the RunPlanResponse arm —
+        // narrow past the {end:true} union member (12-w7).
+        const response = (await options.client.runs.submitPlan(run.runId, {
+          plan: merged,
+        })) as RunPlanResponse;
+        if (disposed || run.stopped) return; // stop() during the plan POST
+        // Fold the plan card: the SAME shape a `plan` §7.4 event carries —
+        // the run-state fold + PlanRuntime build stay untouched. The plan
+        // event schema carries every M5 runtime field, so the synthesized
+        // event is a first-class StudioStreamEvent.
+        const planEvent: StudioStreamEvent = {
+          type: "plan",
+          runId: run.runId,
+          seq: run.seqBase,
+          plan: response.plan,
+          ...(response.compiledBatch !== undefined
+            ? { compiledBatch: response.compiledBatch }
+            : {}),
+          // The response type is `readonly LayerResolutionRequest[]`; the
+          // §7.4 plan-event member carries the mutable array — copy once.
+          ...(response.resolutionRequests !== undefined
+            ? { resolutionRequests: [...response.resolutionRequests] }
+            : {}),
+          ...(response.baseVersionId !== undefined
+            ? { baseVersionId: response.baseVersionId }
+            : {}),
+          ...(response.risk !== undefined ? { risk: response.risk } : {}),
+          ...(response.estimatedCredits !== undefined
+            ? { estimatedCredits: response.estimatedCredits }
+            : {}),
+          autoApply: { mode: response.autoApply.mode, reason: response.autoApply.reason },
+        };
+        run.seqBase += 1;
+        emit(planEvent);
+      } catch (error) {
+        // The plan POST is the ONE run-end mutation that must never eat the
+        // run: the text/tool folds stand, the error surfaces, the phase
+        // still settles through the local run.completed below.
+        fireOnError({
+          code: toUiError(error).code,
+          message: "The plan could not be submitted.",
+        });
+      }
+    } else {
+      // End marker (12-w6-e2 finding; w3-b06 extends it past all-undo_run
+      // carriers): a run with no mergeable plan still tells the gateway it
+      // finished — the plan route marks the run completed so it never rots
+      // as a stale "running" row (and any late apply of a plan POST the run
+      // missed stays possible). Fire-and-forget, never blocks the local
+      // run.completed fold.
       void options.client.runs.submitPlan(run.runId, { end: true }).then(
         () => undefined,
         () => undefined,
       ); // fire-and-forget by design
-    } else {
-      const merged = mergeEditPlans(run.proposals);
-      if (merged !== null) {
-        try {
-          // A plan-bearing submit always answers the RunPlanResponse arm —
-          // narrow past the {end:true} union member (12-w7).
-          const response = (await options.client.runs.submitPlan(run.runId, {
-            plan: merged,
-          })) as RunPlanResponse;
-          if (disposed || run.stopped) return; // stop() during the plan POST
-          // Fold the plan card: the SAME shape a `plan` §7.4 event carries —
-          // the run-state fold + PlanRuntime build stay untouched. The plan
-          // event schema carries every M5 runtime field, so the synthesized
-          // event is a first-class StudioStreamEvent.
-          const planEvent: StudioStreamEvent = {
-            type: "plan",
-            runId: run.runId,
-            seq: run.seqBase,
-            plan: response.plan,
-            ...(response.compiledBatch !== undefined
-              ? { compiledBatch: response.compiledBatch }
-              : {}),
-            // The response type is `readonly LayerResolutionRequest[]`; the
-            // §7.4 plan-event member carries the mutable array — copy once.
-            ...(response.resolutionRequests !== undefined
-              ? { resolutionRequests: [...response.resolutionRequests] }
-              : {}),
-            ...(response.baseVersionId !== undefined
-              ? { baseVersionId: response.baseVersionId }
-              : {}),
-            ...(response.risk !== undefined ? { risk: response.risk } : {}),
-            ...(response.estimatedCredits !== undefined
-              ? { estimatedCredits: response.estimatedCredits }
-              : {}),
-            autoApply: { mode: response.autoApply.mode, reason: response.autoApply.reason },
-          };
-          run.seqBase += 1;
-          emit(planEvent);
-        } catch (error) {
-          // The plan POST is the ONE run-end mutation that must never eat the
-          // run: the text/tool folds stand, the error surfaces, the phase
-          // still settles through the local run.completed below.
-          fireOnError({
-            code: toUiError(error).code,
-            message: "The plan could not be submitted.",
-          });
-        }
-      }
     }
 
     if (disposed || run.stopped) return;
@@ -983,6 +1004,22 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     run.resumable = false;
     run.handle?.abort();
     abandonOnce(run);
+    // §3.4 (w3-b06): sends that raced the run's end (`queue`) and steers that
+    // never rode a POST (`run.pendingSteers`) are CANCELLED with the run —
+    // the user pressed stop, so no fresh run may auto-start after it. Their
+    // bubbles stay rendered (honest history — the stranded-bubble pattern:
+    // rendered at send time), and the drop is EXPLAINED once through onError
+    // (the provider's own queue-death posture: surface + drop), never a
+    // silent strand that leaks until dispose().
+    const dropped = queue.length + run.pendingSteers.length;
+    queue.length = 0;
+    run.pendingSteers = [];
+    if (dropped > 0) {
+      fireOnError({
+        code: STOP_DROPPED_SENDS_CODE,
+        message: `Run cancelled — ${dropped} unsent message${dropped === 1 ? "" : "s"} dropped.`,
+      });
+    }
   };
 
   const retry = (): void => {
@@ -995,8 +1032,15 @@ export function createChatController(options: CreateChatControllerOptions): Chat
       run.paused = false;
       run.resumable = false;
       commit(applyClientAction(snapshot, { type: "chat.reconnecting" }));
-      void runTurn(run).catch(() => {
-        /* the catch inside startRun owns unexpected escapes */
+      void runTurn(run).catch((error: unknown) => {
+        // Same escape hatch as startRun (w3-b06): runTurn is written never to
+        // reject, but this invocation is NOT wrapped by startRun's catch —
+        // an unexpected rejection here would otherwise park the phase on
+        // "reconnecting" forever. Fold the honest failure instead.
+        if (disposed || run.stopped) return;
+        raiseError(toUiError(error));
+        run.finished = true;
+        flushQueue();
       });
       return;
     }
