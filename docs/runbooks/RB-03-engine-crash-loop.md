@@ -1,5 +1,14 @@
 # RB-03 — Engine crash loop
 
+> **HISTORICAL (pre-pivot, 2026-10):** this document describes a PREVIOUS
+> architecture and is retained for reference only. It is written against the
+> PhotoCraft engine pool (`photocraft-cli serve`, `.pcraft` files) — no engine
+> pool exists. The current pipeline spawns the vendored `effectcraft-cli` per
+> render job (`services/worker/src/pipeline.ts`) with heartbeat-stale reclaim
+> (RENDER_HEARTBEAT_STALE_SECONDS) and requeue sweeps. Do not execute as-is;
+> see `docs/phases/m8-cli-spike.md` for the shipped CLI contract and
+> `docs/DECISIONS.md` for rulings.
+
 - **Alert (§22):** engine restarts > 3 per hour (metric: engine pool restarts /
   sessions active/idle).
 - **Owner:** on-call engineer · **Severity:** high · **Spec:** §22 alerts, §3.2 sessions, §17.4 engine pool crash, §3.4 crash recovery

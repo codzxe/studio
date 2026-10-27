@@ -1,5 +1,14 @@
 # Threat Model — STRIDE-lite
 
+> **HISTORICAL (pre-pivot, 2026-10):** this document describes a PREVIOUS
+> architecture and is retained for reference only. The trust boundaries and
+> mitigation pointers cite the deleted PhotoCraft tree
+> (`apps/engine-pool/src/wal.ts`, `packages/{agent,billing,engine-client}/…`,
+> `vendor/photocraft`). The live boundary is browser → gateway
+> (`services/gateway`) → Postgres renders queue (D-25) → `effectcraft-cli`
+> worker (`services/worker`) → object storage. Rebuild the model on current
+> files before relying on it. Current rulings: `docs/DECISIONS.md`.
+
 Prepared by **W10-Q** (`docs/security/**`). Method: STRIDE-lite per asset — for each of
 the five product assets we enumerate Spoofing (S), Tampering (T), Repudiation (R),
 Information disclosure (I), Denial of service (D), Elevation of privilege (E), and point

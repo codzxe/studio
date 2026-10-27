@@ -10,9 +10,10 @@
 // Wired as `pnpm check:licenses` (root package.json).
 //
 // What it enforces:
-//   1. Every external dependency of root + apps/*/ + packages/*/package.json is
-//      declared in `licenses.overrides.json` (repo root) with a license.
-//      Workspace-internal packages (@studio/*, workspace: protocol) are skipped.
+//   1. Every external dependency of root + apps/*/ + packages/*/ + services/*/
+//      package.json is declared in `licenses.overrides.json` (repo root) with a
+//      license. Workspace-internal packages (@studio/*, workspace: protocol) are
+//      skipped.
 //   2. Every declared license passes the §16.0 allowlist:
 //        ALLOW: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD,
 //               PostgreSQL, MPL-2.0* (* unmodified files + notice only, §16.0)
@@ -191,7 +192,7 @@ function classify(raw) {
 }
 
 // ---------------------------------------------------------------------------
-// Dependency collection (root + apps/* + packages/*)
+// Dependency collection (root + apps/* + packages/* + services/*)
 // ---------------------------------------------------------------------------
 
 const DEP_FIELDS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
@@ -204,7 +205,9 @@ function collectPackageManifests() {
   const manifests = [];
   const root = join(repoRoot, "package.json");
   if (existsSync(root)) manifests.push({ location: "(root)", path: root });
-  for (const dir of ["apps", "packages"]) {
+  // services/* joined the scan in w3-b04 (w1-a29 S275): the gateway's external
+  // deps (stripe, better-auth, @aws-sdk/*, …) previously bypassed this gate.
+  for (const dir of ["apps", "packages", "services"]) {
     let entries = [];
     try {
       entries = readdirSync(join(repoRoot, dir), { withFileTypes: true });
@@ -362,7 +365,7 @@ const counts = { ok: 0, conditional: 0, internal: 0, todoVerify: 0, unused: 0 };
 const manifests = collectPackageManifests();
 if (manifests.length === 0) {
   errors.push(
-    "no package.json found at root, apps/* or packages/* — nothing to check (is this the repo root?)",
+    "no package.json found at root, apps/*, packages/* or services/* — nothing to check (is this the repo root?)",
   );
 }
 
@@ -494,7 +497,7 @@ out(
   `manifest: ${rel(MANIFEST_PATH)} (${entries ? entries.size : 0} entries, strict mode: ${STRICT ? "on" : "off"})`,
 );
 out(
-  `scanned:  ${manifests.length} package.json (root + apps/* + packages/*), ${deps.size} external dependencies`,
+  `scanned:  ${manifests.length} package.json (root + apps/* + packages/* + services/*), ${deps.size} external dependencies`,
 );
 out(
   `deps:     ${counts.ok} allowed (${counts.conditional} conditional), ${counts.internal} workspace-internal skipped, ${counts.todoVerify} TODO-verify, ${counts.unused} unused manifest rows`,

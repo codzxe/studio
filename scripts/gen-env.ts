@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // scripts/gen-env.ts — regenerate the repo-root `.env.example` from the single
-// source of truth: @studio/config's ENV_VAR_SPECS (packages/config/src/env.ts,
-// 34 vars). Never hand-edit .env.example — run `pnpm dev:env` instead.
+// source of truth: @studio/config's ENV_VAR_SPECS (packages/config/src/env.ts;
+// the emitted var count is DERIVED from ENV_VAR_SPECS.length — never hardcode
+// it again, w1-a31 S300). Never hand-edit .env.example — run `pnpm dev:env`.
 //
 // The generator renders every declared var with its purpose, requirement rule
 // and secret flag (renderEnvExample), then applies the LOCAL dev defaults and
@@ -15,7 +16,7 @@ import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { renderEnvExample } from "../packages/config/src/env.ts";
+import { ENV_VAR_SPECS, renderEnvExample } from "../packages/config/src/env.ts";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -83,7 +84,7 @@ const HEADER = [
   "# ===========================================================================",
   "# Studio environment template — GENERATED FILE, do not edit by hand.",
   "#",
-  "# Source of truth : packages/config/src/env.ts (ENV_VAR_SPECS — 34 vars).",
+  `# Source of truth : packages/config/src/env.ts (ENV_VAR_SPECS — ${ENV_VAR_SPECS.length} vars).`,
   "# Regenerate       : pnpm dev:env   (scripts/gen-env.sh → scripts/gen-env.ts)",
   "#",
   "# Copy to .env for local runs:   cp .env.example .env && chmod 600 .env",

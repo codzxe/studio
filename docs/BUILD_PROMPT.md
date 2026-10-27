@@ -1,5 +1,17 @@
-Pasted Content_1792435589705.txt
 # Build Prompt — Agentic Design SaaS (codename `studio`)
+
+> **HISTORICAL (pre-pivot, 2026-10):** this document describes a PREVIOUS
+> architecture and is retained for reference only — do not build against it.
+> It was the pre-pivot “source of truth” for a SaaS on top of the PhotoCraft
+> editor (photocraft-cli, `.pcraft`, the engine pool, BullMQ queues,
+> $30/$60/$120 pricing, §16.1 storytold/photocraft clone pins); the ADR-0006
+> pivot (2026-10) replaced that product with the current one built on the
+> vendored EffectCraft editor. The same pivot flips this doc's core branding
+> rule: EffectCraft is now the credited upstream editor (ADR-0006), not a
+> forbidden name. Current authority: `docs/PRODUCT_ARCHITECTURE.md` (as-built),
+> `docs/DECISIONS.md` (rulings), `docs/BUILD_PLAN.md` + `docs/phases/M0.md`–`M9.md`
+> (build record), `docs/phases/gap/milestones.md` (the successor gap list).
+> Where this document disagrees with those, **they win**.
 
 > **Read this entire document before writing a single line of code.**
 >

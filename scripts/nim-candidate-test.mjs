@@ -2,8 +2,19 @@
 // Round 10 — NVIDIA NIM candidate test: chat sanity + TOOL CALLING (the
 // composition-creation path) + tool STREAMING, for the models shortlisted
 // from /v1/models. Direct sandbox calls (NIM is not region-blocked).
+//
+// SECURITY (w1-a29 S275): the key is NEVER hardcoded — a literal NVIDIA API key
+// was previously committed here and must be treated as compromised (rotate it at
+// the NVIDIA console). The script reads NVIDIA_API_KEY from the environment and
+// fails fast when it is missing.
 
-const KEY = "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";
+const KEY = process.env.NVIDIA_API_KEY;
+if (!KEY) {
+  console.error(
+    "nim-candidate-test: NVIDIA_API_KEY is not set — export it in your shell/.env (never commit it).",
+  );
+  process.exit(1);
+}
 const BASE = "https://integrate.api.nvidia.com/v1/chat/completions";
 
 const CANDIDATES = [

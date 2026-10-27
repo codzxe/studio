@@ -1,5 +1,14 @@
 # Security Checklist — OWASP-aligned audit
 
+> **HISTORICAL (pre-pivot, 2026-10):** this document describes a PREVIOUS
+> architecture and is retained for reference only. The control map audits the
+> deleted PhotoCraft tree (`apps/gateway`, `apps/worker`, `apps/engine-pool`,
+> `apps/mock-engine`, `packages/{agent,billing,tools,engine-client}`,
+> `vendor/photocraft`, `infra/obs/`) — those paths do not exist post-pivot.
+> The shipped product is `apps/web` + `services/{gateway,worker}` + the
+> vendored `editor/` + `packages/*`. Regenerate this pack against the current
+> tree before relying on any row. Current rulings: `docs/DECISIONS.md`.
+
 Task owner: **W10-Q** (owns `docs/security/**`). Audit basis: `docs/BUILD_PROMPT.md` §15
 (security & multi-tenancy; the §15.2 RBAC matrix is restated in §4 below), §5.7
 (prompt-injection stance), §21 Security row, §20 #11 (beta gate); and

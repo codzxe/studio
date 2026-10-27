@@ -1,5 +1,16 @@
 # Secrets policy — how credentials live, rotate, and die
 
+> **HISTORICAL (pre-pivot, 2026-10):** this document describes a PREVIOUS
+> architecture and is retained for reference only. The secret inventory (§2)
+> and procedure sources cite the deleted PhotoCraft tree — `STORAGE_SIGNING_SECRET`,
+> `GEMINI_API_KEY`/`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`DEEPSEEK_API_KEY`/
+> `FLUX_API_KEY`, `LANGFUSE_SECRET_KEY`, `GLITCHTIP_SECRET_KEY`, `METRICS_TOKEN`,
+> `MOCK_ENGINE_TOKEN` exist in no current env contract, and `infra/environments.md`,
+> `apps/worker/src/env.ts`, `infra/scripts/smoke.sh` are dead paths. The live
+> contract is `packages/config/src/env.ts` (ENV_VAR_SPECS; 11 secrets today),
+> rendered into `.env.example`. Regenerate §2 from the spec flags before
+> relying on it; current rulings: `docs/DECISIONS.md`.
+
 Owner: platform / env owner (`W10-N`) · Sources: spec §4, §15.2, §17.4, §17.5,
 ADR-0002, `infra/environments.md` ("Secret provisioning"), `.env.example`.
 

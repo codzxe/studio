@@ -22,6 +22,29 @@ updates:
       - "dependencies"
     # §16 policy reminder: AGPL/SSPL/BUSL/RSALv2/Elastic deps fail the
     # license gate (scripts/check-licenses.mjs, run via pnpm check:licenses)
-    # even if Dependabot proposes them. No GitHub Actions workflows exist in
-    # .github/workflows yet (W5-08 removed the inert github-actions stanza;
-    # re-add it when CI workflows land).
+    # even if Dependabot proposes them.
+  # GitHub Actions — CI workflows exist since W2-B7 (.github/workflows/ci.yml,
+  # pins actions/checkout@v4, pnpm/action-setup@v4, …). Weekly so action
+  # version bumps ride the same Monday review as the npm updates (re-added
+  # in w3-b04 per w1-a31 S300 — W5-08 had removed the stanza while no CI
+  # workflows existed).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "codzxe"
+    labels:
+      - "dependencies"
+      - "github-actions"
+# NOTE (unresolved, w1-a31 S300 — do NOT resolve by deleting either file
+# without an explicit ruling): renovate.json coexists at the repo root and
+# recommends deleting this file once the Renovate GitHub App is enabled (the
+# two bots duplicate work; a per-directory dependabot experiment already
+# flooded 18+ PRs — scripts/close-dependabot-flood.mjs). The npm TODO above
+# (one entry per workspace dir) is the exact setup that flooded — treat it as
+# a hazard, not a pending task. Ruling needed: keep exactly ONE bot.

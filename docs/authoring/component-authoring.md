@@ -1,5 +1,14 @@
 # Component authoring — the §8 mirror
 
+> **HISTORICAL (pre-pivot, 2026-10):** this document describes a PREVIOUS
+> architecture and is retained for reference only. The component system below
+> targets the PhotoCraft-era engine (`engine-patches/component_cmds/…`,
+> `evals/components/`, `packages/tools/…`, `PHOTOCRAFT_COMPONENTS_DIR`) — none
+> of those paths exist after the ADR-0006 pivot, and the vendored EffectCraft
+> engine ships no `component.*` commands. Do not author against it. Current
+> rulings: `docs/DECISIONS.md`; the shipped agent tool surface:
+> `packages/contracts/src/tools.ts` / `write-tools.ts`.
+
 How to author a reusable, versioned, variable-driven component. Components are spec §8's
 primitive for brand consistency and "more per token"; templates reference them
 (`component` slots), agents place them (`component.place`), and the start library is

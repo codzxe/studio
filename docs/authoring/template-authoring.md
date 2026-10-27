@@ -1,5 +1,13 @@
 # Template authoring — the complete flow
 
+> **HISTORICAL (pre-pivot, 2026-10):** this document describes a PREVIOUS
+> architecture and is retained for reference only. The template flow below
+> targets the PhotoCraft-era engine (`engine-patches/template_cmds/{manifest,
+> fill,validate}.rs`, `apps/gateway/src/services/catalog.ts`, `evals/templates/`)
+> — all deleted in the pivot; the current product has no `template.*` engine
+> commands and no `/v1/templates` route. Do not author against it. Current
+> rulings: `docs/DECISIONS.md`.
+
 How to author, validate, thumbnail, version and register a studio template. This is the
 §19 Phase-2 authoring flow (spec §19: *"Template authoring flow (JSON manifest + source
 `.pcraft`), validation, thumbnails"*), written against the shipped code, not aspiration:

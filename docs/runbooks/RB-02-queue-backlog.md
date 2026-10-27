@@ -1,5 +1,15 @@
 # RB-02 — Queue backlog
 
+> **HISTORICAL (pre-pivot, 2026-10):** this document describes a PREVIOUS
+> architecture and is retained for reference only. It is written against the
+> BullMQ/ADR-0004 topology (7 queues, `runs:quick|standard|complex|premium|max`,
+> `exports`, `images`) and `GET /v1/health/deep` — none of which exist. Per
+> D-25 the renders queue IS the Postgres `renders` table, claimed
+> `FOR UPDATE SKIP LOCKED` by `services/worker` (tune via
+> RENDER_WORKER_CONCURRENCY / RENDER_POLL_INTERVAL_MS); the gateway health
+> surface is `/v1/health` only. Do not execute as-is; see `docs/DECISIONS.md`
+> (D-25) for the current queue ruling.
+
 - **Alert (§22):** queue age > 2 minutes (metric: queue depth and age, per queue).
 - **Owner:** on-call engineer · **Severity:** high · **Spec:** §22 alerts, §5.2 tiers, ADR-0004
 

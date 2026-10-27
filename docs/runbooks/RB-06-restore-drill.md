@@ -1,5 +1,13 @@
 # RB-06 — Backup restore drill
 
+> **HISTORICAL (pre-pivot, 2026-10):** this document describes a PREVIOUS
+> architecture and is retained for reference only. The drill depends on
+> `infra/scripts/backup-v2.sh`, `verify-backup.sh`, `drill-restore.sh` and the
+> `postgres/_freshness.json` marker — `infra/scripts/` was deleted with the
+> pivot. The current backup/restore procedure lives in `infra/README.md` (see
+> `docs/release-checklist.md`); this page is unexecutable as written. Do not
+> run it; see `docs/DECISIONS.md` for current rulings.
+
 - **Alert trigger (§22):** backup older than 26 h (daily cadence slipped). The alert
   reads the `postgres/_freshness.json` marker object written by `backup-v2.sh`
   (`last_success_epoch` older than 26 h → page).
