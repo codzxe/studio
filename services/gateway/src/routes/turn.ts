@@ -329,7 +329,11 @@ export function turnRoutes(deps: GatewayDeps): Hono {
     const workspace = c.get("workspace");
     const runId = pathParam(c, "id");
     const body = (await c.req.json().catch(() => null)) as { plan?: unknown; end?: boolean } | null;
-    const rawPlan = body?.plan ?? (body !== null && "end" in body ? undefined : body);
+    // End-arm checks the VALUE, not key presence (round-12 lead TODO, closed
+    // round-13 w3-b03): only a literal {end:true} is the proposal-less end
+    // marker — {end:false} falls through to the plan arm and answers 400
+    // instead of silently completing the run.
+    const rawPlan = body?.plan ?? (body !== null && body.end === true ? undefined : body);
     const planChecked = rawPlan === undefined ? null : EDIT_PLAN_SCHEMA.safeParse(rawPlan);
     if (planChecked !== null && !planChecked.success) {
       throw new GatewayError("VALIDATION_FAILED", "That plan didn't look right.", {

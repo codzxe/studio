@@ -34,6 +34,13 @@
 //
 // Deterministic: no real sleeps beyond bounded stream waits, no fake timers;
 // DATABASE_URL is resolved by tests/helpers.js.
+//
+// ROUND-13 VERIFICATION (w3-b03): the round-12 known-debt note ("6 stale
+// 'chat wiring' boot tests against the retired /chat route") is RESOLVED —
+// Part C was rewritten to the turn wire by round-12 cd24d1d (the file you are
+// reading); no stale boot tests remained to re-point. Added here: the
+// {end:false} VALUE-check pin on the plan route's end arm (round-12 lead TODO).
+// No tests deleted in round-13.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -1157,6 +1164,51 @@ d("turn wiring — the plan route carries the §7.3 verdict (round-12 loop)", ()
         "VALIDATION_FAILED",
       );
     }
+  }, 15_000);
+
+  it("the end arm checks the VALUE: {end:false} is a malformed plan (400), never an end marker (w3-b03)", async () => {
+    const fx = await newFixture("m5o-end-value");
+    const runId = unique("run");
+
+    // A real step-0 turn first so the run row is LIVE ("running" — the
+    // heartbeat owns that transition; the seeded create alone stays queued).
+    // The turn-route {end:true} precedent: the marker only closes a run that
+    // actually ran.
+    const first = await postTurn(fx, {
+      runId,
+      stepIndex: 0,
+      messages: [{ role: "user", text: USER_TEXT }],
+    });
+    expect(first.status).toBe(200);
+    expectValidStream(await new SseStream(first).rest());
+
+    // {end:false} is NOT the marker (round-13 w3-b03: the arm checks the VALUE,
+    // not key presence): it falls through to the plan arm and fails the §8.6
+    // schema — 400, and critically NO run-status write happens.
+    const probe = await api(fx.base, `/v1/runs/${runId}/plan`, {
+      method: "POST",
+      jar: fx.jar,
+      headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("plan") },
+      body: { end: false },
+    });
+    expect(probe.status).toBe(400);
+    expect(((await probe.json()) as { error: { code: string } }).error.code).toBe(
+      "VALIDATION_FAILED",
+    );
+    const untouched = await server.deps.repos.runs.get(fx.workspaceId, runId);
+    expect(untouched.run.status).toBe("running"); // key-presence used to complete it
+
+    // The honest marker still ends the proposal-less run (same value check).
+    const marker = await api(fx.base, `/v1/runs/${runId}/plan`, {
+      method: "POST",
+      jar: fx.jar,
+      headers: { "x-workspace-id": fx.workspaceId, "idempotency-key": unique("plan") },
+      body: { end: true },
+    });
+    expect(marker.status).toBe(200);
+    expect(await marker.json()).toEqual({ runId, ended: true });
+    const after = await server.deps.repos.runs.get(fx.workspaceId, runId);
+    expect(after.run.status).toBe("completed");
   }, 15_000);
 
   it("default user ⇒ auto (v2: ON by default), on the enriched plan-route payload", async () => {

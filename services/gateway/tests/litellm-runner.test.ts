@@ -1,6 +1,16 @@
 // M4-A — LiteLLM runner loop + Seam 2 (run-log tool-result wait) tests.
 // Deterministic: fake OpenAI SSE server (injectable fetch) + a fake
 // AgentRunStream with scriptable tool-result waits. No network, no Postgres.
+//
+// ROUND-13 STATUS (w3-b03): the server-side loop under test here is RETIRED in
+// production (round-12 turn wire — routes/turn.ts + litellm/turn-engine.ts;
+// src/runner.ts createRunnerForEnv always answers the MockRunner) but the
+// module is NOT deleted: routes/chat.ts (unmounted, still compiled) imports
+// TOOL_RESULT_TIMEOUT_MS from it, and tests/injection{,-write}.test.ts drive
+// createLiteLLMRunner directly — deletion is a coordinated wave across those
+// files, so this suite is RE-PINNED to the live contracts catalog instead
+// (round-12 tool catalog v3: 10 read + 11 write = 21, the same truth
+// turn-engine.test.ts and golden-prompts.test.ts pin). No tests deleted.
 
 import { describe, expect, it } from "vitest";
 
@@ -1198,7 +1208,7 @@ describe("LiteLLM runner — cancellation", () => {
 // ---------------------------------------------------------------------------
 
 describe("LiteLLM runner — tool registry + redaction (M4.6 → M5.1 / M4.3)", () => {
-  it("registers exactly the 13 curated tools on the provider wire — 5 read + 8 write (ids from WRITE_TOOL_IDS)", async () => {
+  it("registers exactly the 21 v3 tools on the provider wire — 10 read + 11 write (ids from TOOL_LIST/WRITE_TOOL_IDS)", async () => {
     const { runner, fetchStub, stream } = makeRunner([
       sseResponse([textDelta("hi"), finish("stop"), DONE]),
     ]);
@@ -1211,15 +1221,21 @@ describe("LiteLLM runner — tool registry + redaction (M4.6 → M5.1 / M4.3)", 
     expect(tools.map((tool) => tool.function.name)).toEqual(
       RUNNER_TOOLS.map((tool) => wireToolName(tool.id)),
     );
-    expect(RUNNER_READ_TOOLS.length).toBe(5);
+    // Round-13 re-pin (w3-b03): the registry derives LIVE from contracts
+    // (TOOL_LIST.filter(read) + WRITE_TOOL_IDS), so the round-12 tool-catalog
+    // v3 grew it to 10 read + 11 write = 21 — the same truth turn-engine.test.ts
+    // and golden-prompts.test.ts pin. The retired-runner suite itself stays
+    // (see the file header): routes/chat.ts + injection*.test.ts still import
+    // this module, so deleting it is a coordinated wave, not this file's call.
+    expect(RUNNER_READ_TOOLS.length).toBe(10);
     expect(RUNNER_READ_TOOLS.every((tool) => tool.kind === "read")).toBe(true);
     // The write slice is exactly contracts WRITE_TOOL_IDS under its wire ids.
     expect(RUNNER_WRITE_TOOLS.map((tool) => tool.id).sort()).toEqual(
       [...WRITE_TOOL_IDS].map((id) => `studio.${id}`).sort(),
     );
-    expect(RUNNER_TOOLS).toHaveLength(13);
-    // 5 read + 8 write = 13, and nothing else (no invented id, no raw entrypoint).
-    expect(new Set(RUNNER_TOOLS.map((tool) => tool.id)).size).toBe(13);
+    expect(RUNNER_TOOLS).toHaveLength(21);
+    // 10 read + 11 write = 21, and nothing else (no invented id, no raw entrypoint).
+    expect(new Set(RUNNER_TOOLS.map((tool) => tool.id)).size).toBe(21);
     for (const call of fetchStub.calls) {
       const serialized = JSON.stringify(call.body);
       expect(serialized.includes("engine.execute")).toBe(false);
@@ -1339,10 +1355,10 @@ describe("prompt.ts (§8.3 / §5.4)", () => {
     expect(SYSTEM_PROMPT.toLowerCase()).toContain("motion-graphics");
   });
 
-  it("states the M5+ tool surface truth: 8 write tools, proposal→apply pipeline, agent DOES the work (AUD-2 / round-10 v2)", () => {
+  it("states the v3 tool surface truth: 11 write tools, proposal→apply pipeline, agent DOES the work (AUD-2 / round-10 v2)", () => {
     // The stale M4 line is GONE — the prompt may never deny the write tools the
-    // runner registers on the provider wire (runner.ts RUNNER_TOOLS: 5 read +
-    // 8 write = 13, tool_choice auto).
+    // runner registers on the provider wire (runner.ts RUNNER_TOOLS: 10 read +
+    // 11 write = 21, tool_choice auto; catalog v3, round-12).
     expect(SYSTEM_PROMPT).not.toContain("no write tools");
     expect(SYSTEM_PROMPT).not.toContain("cannot modify the project");
 
@@ -1350,9 +1366,10 @@ describe("prompt.ts (§8.3 / §5.4)", () => {
     for (const id of WRITE_TOOL_IDS) {
       expect(SYSTEM_PROMPT).toContain(`studio.${id}`);
     }
-    expect(SYSTEM_PROMPT).toContain("Write tools (8)");
-    expect(RUNNER_WRITE_TOOLS).toHaveLength(8);
-    expect(RUNNER_TOOLS).toHaveLength(13);
+    expect(SYSTEM_PROMPT).toContain("Write tools (11)");
+    expect(SYSTEM_PROMPT).toContain("Read tools (call them via the provided tool interface):");
+    expect(RUNNER_WRITE_TOOLS).toHaveLength(11);
+    expect(RUNNER_TOOLS).toHaveLength(21);
 
     // Round-10 v2 semantics: the agent is ordered to DO THE WORK (call the
     // write tools for the complete change), eligible plans APPLY THEMSELVES,
