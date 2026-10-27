@@ -29,3 +29,11 @@ Every agent invocation is logged with its delivery state. Honest ledger, no padd
 | - | w1-a18 | W1-audit | S163-164+200-201 rename map | KILLED server_shutdown - relaunch |
 | - | w1-a19 | W1-audit | S165-S172 web chat lib | DELIVERED (4 MED: end-marker rot, steer queue, new Function) |
 | - | w1-a20 | W1-audit | S173-S180 web lib+chat comp 1 | DELIVERED (MED autosave data-loss, hardcoded localhost+hash) |
+| - | w1-a13 | W1-audit | S121-S130 host/export/codec | DELIVERED (MED EffectCraft in exported WebM) |
+| - | w1-a14 | W1-audit | S131-S140 pdf/model/psd/lottie | DELIVERED (HIGH PDF uncapped alloc, MED lottie deflate) |
+| - | w1-a15 | W1-audit | S141-S150 web/cli/xtask | DELIVERED (HIGH bench debrand drift, MED auto-save misclass) |
+| - | w1-a16 | W1-audit | S151-155+162 censuses | DELIVERED (4 HIGH brand gaps, 20 stale JA i18n) |
+| - | w1-a18 | W1-audit | S163-164+200-201 rename map | DELIVERED (10,237 refs, 10 classes C1-C10) |
+| - | w1-a21 | W1-audit | S181-S188 chat components | DELIVERED (2 HIGH credits-chain bugs) |
+| - | w1-a22 | W1-audit | S189-S199 web api/e2e | DELIVERED (HIGH auto-apply run-status gap) |
+| - | w1-a23 | W1-audit | S202-S212 packages | DELIVERED (2 HIGH dead-contract files) |
