@@ -254,9 +254,11 @@ afterEach(() => {
 describe("EditorHost — boot", () => {
   it("shows the loading screen with the project name, then opens", async () => {
     const harness = renderHost();
-    // Loading state covers the iframe while the dist boots.
+    // Loading state covers the editor surface while the dist boots — but
+    // never the persistent bar: the way out stays visible (w3-b05).
     expect(screen.getByTestId("editor-boot-loading")).toBeInTheDocument();
     expect(screen.getByText(/Preparing “Test Project”/)).toBeInTheDocument();
+    expect(screen.getByTestId("editor-top-bar")).toHaveTextContent("Studio");
 
     await bootToOpen(harness);
 
@@ -265,6 +267,31 @@ describe("EditorHost — boot", () => {
     expect(screen.getByTestId("editor-iframe")).toHaveAttribute("src", "/editor/?empty");
     expect(screen.getByTestId("editor-iframe")).toHaveAttribute("title", "Studio editor");
     expect(screen.getByTestId("editor-iframe")).not.toHaveAttribute("allow");
+  });
+
+  it("mounts the persistent SaaS-brand bar ABOVE the editor surface (w3-b05)", () => {
+    renderHost();
+
+    // The bar: product mark → dashboard, breadcrumb project → its hub, and
+    // the explicit way back.
+    expect(screen.getByRole("link", { name: "Studio — dashboard" })).toHaveAttribute("href", "/w");
+    expect(screen.getByTestId("editor-breadcrumb-project")).toHaveTextContent("Test Project");
+    expect(screen.getByTestId("editor-breadcrumb-project")).toHaveAttribute(
+      "href",
+      "/w/test-project/history",
+    );
+    expect(screen.getByTestId("editor-breadcrumb-editor")).toHaveAttribute("aria-current", "page");
+    expect(screen.getByTestId("editor-dashboard-link")).toBeInTheDocument();
+
+    // Structure: the iframe (and every overlay) live INSIDE the editor
+    // surface, which FOLLOWS the bar — the editor only ever sees a viewport
+    // resize (D-18), and no overlay can ever cover the way out.
+    const bar = screen.getByTestId("editor-top-bar");
+    const surface = screen.getByTestId("editor-surface");
+    expect(bar.compareDocumentPosition(surface)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(surface).toContainElement(screen.getByTestId("editor-iframe"));
+    expect(surface).toContainElement(screen.getByTestId("editor-project-bar"));
+    expect(bar).not.toContainElement(screen.getByTestId("editor-iframe"));
   });
 
   it("renders the failure banner with the dist error and retries into a fresh iframe", async () => {

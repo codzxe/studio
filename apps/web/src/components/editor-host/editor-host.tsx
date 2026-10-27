@@ -29,6 +29,7 @@ import {
 } from "./banners";
 import { ChatPanelSlot } from "./chat-panel-slot";
 import { type ChatShortcutBus, editorChatShortcutBus } from "./chat-shortcut-bus";
+import { EditorTopBar } from "./editor-top-bar";
 import { LeaseBanner } from "./lease-banner";
 import { ProjectBar } from "./project-bar";
 import { createApiSession } from "./session-client";
@@ -39,11 +40,17 @@ import { useEditorSession } from "./use-editor-session";
  * `EditorHost` — the editor page body (M3.5/M3.6/M3.7, BUILD_PLAN §M3 tasks
  * 3–7): a full-bleed same-origin iframe of the frozen editor dist
  * (`/editor/?empty` — the `?empty` flag skips the dist's local-session
- * restore), a CSS-only floating project bar, additive banners, and the save
- * trigger wiring. HARD RULES 7/12: no injected CSS, no editor restyle, no
- * persistent top nav. The project bar's Share button is REAL (W4-KILL,
- * audit REPLACE-2): it opens the share dialog against the live share API
- * (issue/list/revoke) whenever a session api client exists.
+ * restore), additive banners, and the save trigger wiring. HARD RULES 7/12:
+ * no injected CSS, no editor restyle — and, since w3-b05 (seamless app+editor
+ * merge), a PERSISTENT host-side top bar (`EditorTopBar`) above the iframe:
+ * the M3.5 "no top nav" line is superseded by the round-13 product ask
+ * ("the editor and the app must feel like the same product — there must
+ * always be a way back to the dashboard"), while the bar keeps the D-18
+ * discipline: it lives OUTSIDE the iframe, and the editor surface below it
+ * is only ever RESIZED (like the docked chat sidebar), never restyled. The
+ * project bar's Share button is REAL (W4-KILL, audit REPLACE-2): it opens
+ * the share dialog against the live share API (issue/list/revoke) whenever
+ * a session api client exists.
  *
  * The iframe URL keeps its trailing slash (`skipTrailingSlashRedirect`) so
  * every relative asset URL in the upstream dist resolves; COOP/COEP come from
@@ -265,143 +272,162 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
       data-testid="editor-host"
       data-editor-phase={state.phase}
       data-editor-boot={state.boot}
-      className="fixed inset-0 overflow-hidden bg-app"
+      className="fixed inset-0 flex flex-col overflow-hidden bg-app"
     >
-      {/* The editor: full-bleed, same-origin, restyled by NOBODY (rule 7).
-          Keyed by bootAttempt so Retry remounts a fresh wasm boot.
-          M4-J: the wrapper div carries the sidebar-mode width (D-18 — the
-          editor only ever sees a viewport resize; its own styles are untouched).
-          M3 tail 6: `src` comes from the session hook — the plain `/editor/?empty`
-          boot, or the WebGL2 compatibility boot while the GPU circuit breaker
-          is armed (a lost device this tab session); stable per page load. */}
-      <div
-        data-testid="editor-viewport"
-        className="absolute inset-0"
-        style={chatSidebar.docked ? { width: `calc(100% - ${chatSidebar.widthPx}px)` } : undefined}
-      >
-        <iframe
-          key={session.bootAttempt}
-          ref={session.iframeRef}
-          src={session.iframeSrc}
-          title={`${Brand.productName} editor`}
-          data-testid="editor-iframe"
-          className="absolute inset-0 h-full w-full border-0"
-        />
-      </div>
+      {/* w3-b05 — the persistent SaaS-brand bar (host chrome, never editor
+          chrome): product mark, project › Editor breadcrumb and the way back
+          to the dashboard, on the shell TopBar's exact token pattern so the
+          editor reads as the same product as /w. Everything below it (the
+          iframe AND every overlay) anchors to the editor surface, so boot
+          screens and recovery overlays can never hide the way out. */}
+      <EditorTopBar projectName={projectName} projectSlug={payload.manifest.project.slug} />
 
-      {/* M3.5 chrome — floating, auto-hides via CSS (hover sliver / focus).
-          W4-KILL: Share is live — the dialog mounts whenever a session api
-          client exists (test sessions without one keep the bar chrome-only). */}
-      <ProjectBar
-        projectName={projectName}
-        readOnly={state.readOnly}
-        share={chatClient === undefined ? null : { projectId, client: chatClient }}
-      />
-
-      {/* M4-J chat overlay — additive layer over the editor (D-18). The layer
-          root swallows no editor clicks (pointer-events: none); the panel and
-          the collapsed pill re-enable pointer events on their own subtrees.
-          M7-G: the chat rides the GATE-WRAPPED bridge (read-only enforcement
-          lands in its execute/batch seams; reads + proposals pass — D-23). */}
-      {gatedChatBridge !== null && chatClient !== undefined ? (
-        <div className="pointer-events-none absolute inset-0 z-30" data-testid="chat-layer">
-          <ChatProvider
-            client={chatClient}
-            bridge={gatedChatBridge}
-            workspaceId={payload.workspaceId}
-            projectId={projectId}
-            shortcutBus={bus}
-            applyPorts={session.applyPorts}
-          >
-            {(api) => (
-              <ChatPanelSlot
-                api={api}
-                onSidebarDock={handleSidebarDock}
-                client={chatClient}
-                projectId={projectId}
-                getCanvasLayers={getCanvasLayers}
-              />
-            )}
-          </ChatProvider>
+      {/* The editor surface: everything the iframe and its floating chrome
+          occupy — bounded below the persistent bar, so the editor only ever
+          sees a viewport resize (D-18). */}
+      <div data-testid="editor-surface" className="relative min-h-0 flex-1">
+        {/* The editor: full-bleed, same-origin, restyled by NOBODY (rule 7).
+            Keyed by bootAttempt so Retry remounts a fresh wasm boot.
+            M4-J: the wrapper div carries the sidebar-mode width (D-18 — the
+            editor only ever sees a viewport resize; its own styles are untouched).
+            M3 tail 6: `src` comes from the session hook — the plain `/editor/?empty`
+            boot, or the WebGL2 compatibility boot while the GPU circuit breaker
+            is armed (a lost device this tab session); stable per page load. */}
+        <div
+          data-testid="editor-viewport"
+          className="absolute inset-0"
+          style={
+            chatSidebar.docked ? { width: `calc(100% - ${chatSidebar.widthPx}px)` } : undefined
+          }
+        >
+          <iframe
+            key={session.bootAttempt}
+            ref={session.iframeRef}
+            src={session.iframeSrc}
+            title={`${Brand.productName} editor`}
+            data-testid="editor-iframe"
+            className="absolute inset-0 h-full w-full border-0"
+          />
         </div>
-      ) : null}
 
-      {/* M7-G presence strip (§M7 task 2): who-is-viewing avatars, driven by
-          the shared heartbeat poller — additive floating chrome, auto-hidden
-          while nobody beats. */}
-      {state.phase === "open" && chatClient !== undefined ? (
-        <PresenceStrip viewers={presence.viewers} />
-      ) : null}
-
-      {/* M7-G lease banner (§M7 task 3): the "Alex is editing" state matrix,
-          request queue + expiry takeover; also drives the read-only gate.
-          Mounted only when a real api client exists (test sessions without
-          one keep the M3 chrome exactly as-is). */}
-      {state.phase === "open" && chatClient !== undefined ? (
-        <LeaseBanner
-          client={chatClient}
-          projectId={projectId}
-          gate={leaseGate.current}
-          onActiveChange={setLeaseBannerActive}
-          onAcquired={adoptLeaseInSession}
+        {/* M3.5 chrome — floating, auto-hides via CSS (hover sliver / focus).
+            W4-KILL: Share is live — the dialog mounts whenever a session api
+            client exists (test sessions without one keep the bar chrome-only). */}
+        <ProjectBar
+          projectName={projectName}
+          readOnly={state.readOnly}
+          share={chatClient === undefined ? null : { projectId, client: chatClient }}
         />
-      ) : null}
 
-      {/* M3.7 boot UI (covers the iframe while the wasm boots / fails). */}
-      {state.phase === "booting" && state.boot === "loading" ? (
-        <BootOverlay projectName={projectName} warmup={warmup} />
-      ) : null}
-      {bootFailed && <BootFailureBanner bootError={state.bootError} onRetry={session.retryBoot} />}
+        {/* M4-J chat overlay — additive layer over the editor (D-18). The layer
+            root swallows no editor clicks (pointer-events: none); the panel and
+            the collapsed pill re-enable pointer events on their own subtrees.
+            M7-G: the chat rides the GATE-WRAPPED bridge (read-only enforcement
+            lands in its execute/batch seams; reads + proposals pass — D-23). */}
+        {gatedChatBridge !== null && chatClient !== undefined ? (
+          <div className="pointer-events-none absolute inset-0 z-30" data-testid="chat-layer">
+            <ChatProvider
+              client={chatClient}
+              bridge={gatedChatBridge}
+              workspaceId={payload.workspaceId}
+              projectId={projectId}
+              shortcutBus={bus}
+              applyPorts={session.applyPorts}
+            >
+              {(api) => (
+                <ChatPanelSlot
+                  api={api}
+                  onSidebarDock={handleSidebarDock}
+                  client={chatClient}
+                  projectId={projectId}
+                  getCanvasLayers={getCanvasLayers}
+                />
+              )}
+            </ChatProvider>
+          </div>
+        ) : null}
 
-      {/* Hard load failure (manifest/download/open) — reload is the remedy. */}
-      {loadFailed && !bootFailed && (
-        <LoadFailedBanner loadError={state.loadError} onReload={() => window.location.reload()} />
-      )}
+        {/* M7-G presence strip (§M7 task 2): who-is-viewing avatars, driven by
+            the shared heartbeat poller — additive floating chrome, auto-hidden
+            while nobody beats. */}
+        {state.phase === "open" && chatClient !== undefined ? (
+          <PresenceStrip viewers={presence.viewers} />
+        ) : null}
 
-      {/* Graphics device lost (the dist's studio:deviceLost report): the
-          recovery owns the page — save now, then reload onto a fresh device;
-          the buttons appear only when the save can't land in time. */}
-      {state.deviceLost !== undefined ? (
-        <DeviceLostOverlay
-          deviceLost={state.deviceLost}
-          onRetry={session.retryDeviceLostSave}
-          onReload={session.reloadAfterDeviceLost}
-        />
-      ) : null}
+        {/* M7-G lease banner (§M7 task 3): the "Alex is editing" state matrix,
+            request queue + expiry takeover; also drives the read-only gate.
+            Mounted only when a real api client exists (test sessions without
+            one keep the M3 chrome exactly as-is). */}
+        {state.phase === "open" && chatClient !== undefined ? (
+          <LeaseBanner
+            client={chatClient}
+            projectId={projectId}
+            gate={leaseGate.current}
+            onActiveChange={setLeaseBannerActive}
+            onAcquired={adoptLeaseInSession}
+          />
+        ) : null}
 
-      {/* M3 tail 6 — GPU compatibility mode (WebGL2 + CPU workers) after a
-          device loss this tab session: says WHY the editor runs slower, and
-          offers the way back to WebGPU after a driver update. Dismissable. */}
-      {state.phase === "open" && session.gpuFallback ? (
-        <GpuFallbackBanner onTryWebGpu={session.retryWebGpu} />
-      ) : null}
+        {/* M3.7 boot UI (covers the editor surface while the wasm boots/fails). */}
+        {state.phase === "booting" && state.boot === "loading" ? (
+          <BootOverlay projectName={projectName} warmup={warmup} />
+        ) : null}
+        {bootFailed && (
+          <BootFailureBanner bootError={state.bootError} onRetry={session.retryBoot} />
+        )}
 
-      {/* §9.3 read-only (lease refused) — non-blocking, the iframe stays usable.
-          M7-G: while the richer lease banner shows its own read-only strip,
-          this M3 banner is suppressed (same verdict, more information). */}
-      {state.phase === "open" && state.readOnly && !leaseBannerActive ? (
-        <ReadOnlyBanner holderName={state.readOnlyHolder} />
-      ) : null}
+        {/* Hard load failure (manifest/download/open) — reload is the remedy. */}
+        {loadFailed && !bootFailed && (
+          <LoadFailedBanner loadError={state.loadError} onReload={() => window.location.reload()} />
+        )}
 
-      {/* Permissive lease-warning fallback (still saving). */}
-      {state.phase === "open" && state.leaseWarning && !state.conflict ? (
-        <LeaseWarningBanner />
-      ) : null}
+        {/* Graphics device lost (the dist's studio:deviceLost report): the
+            recovery owns the surface — save now, then reload onto a fresh
+            device; the buttons appear only when the save can't land in time. */}
+        {state.deviceLost !== undefined ? (
+          <DeviceLostOverlay
+            deviceLost={state.deviceLost}
+            onRetry={session.retryDeviceLostSave}
+            onReload={session.reloadAfterDeviceLost}
+          />
+        ) : null}
 
-      {/* 409 park (D-6/§9.3): blocking — never a silent overwrite. */}
-      {state.conflict ? <ConflictBanner onReload={session.reloadServerVersion} /> : null}
+        {/* M3 tail 6 — GPU compatibility mode (WebGL2 + CPU workers) after a
+            device loss this tab session: says WHY the editor runs slower, and
+            offers the way back to WebGPU after a driver update. Dismissable. */}
+        {state.phase === "open" && session.gpuFallback ? (
+          <GpuFallbackBanner onTryWebGpu={session.retryWebGpu} />
+        ) : null}
 
-      {/* M3.3: missing assets never block the open. */}
-      {state.phase !== "load-failed" ? <MissingAssetsBanner missing={state.missingAssets} /> : null}
+        {/* §9.3 read-only (lease refused) — non-blocking, the iframe stays usable.
+            M7-G: while the richer lease banner shows its own read-only strip,
+            this M3 banner is suppressed (same verdict, more information). */}
+        {state.phase === "open" && state.readOnly && !leaseBannerActive ? (
+          <ReadOnlyBanner holderName={state.readOnlyHolder} />
+        ) : null}
 
-      {/* §8.11 offline (W5-06) — the editor route's own arm (no shell here):
-          honest about the last saved version + the autosave retry, null while
-          online so the editor UI is unchanged. */}
-      <EditorOfflineBanner />
+        {/* Permissive lease-warning fallback (still saving). */}
+        {state.phase === "open" && state.leaseWarning && !state.conflict ? (
+          <LeaseWarningBanner />
+        ) : null}
 
-      {/* D-6 save feedback — transient, bottom-right. */}
-      {state.saveError && !state.conflict ? <SaveErrorBanner /> : null}
-      {!state.saveError && savedLabel !== null ? <SavedChip label={savedLabel} /> : null}
+        {/* 409 park (D-6/§9.3): blocking — never a silent overwrite. */}
+        {state.conflict ? <ConflictBanner onReload={session.reloadServerVersion} /> : null}
+
+        {/* M3.3: missing assets never block the open. */}
+        {state.phase !== "load-failed" ? (
+          <MissingAssetsBanner missing={state.missingAssets} />
+        ) : null}
+
+        {/* §8.11 offline (W5-06) — the editor route's own arm (no shell here):
+            honest about the last saved version + the autosave retry, null while
+            online so the editor UI is unchanged. */}
+        <EditorOfflineBanner />
+
+        {/* D-6 save feedback — transient, bottom-right. */}
+        {state.saveError && !state.conflict ? <SaveErrorBanner /> : null}
+        {!state.saveError && savedLabel !== null ? <SavedChip label={savedLabel} /> : null}
+      </div>
     </main>
   );
 }
