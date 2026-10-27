@@ -21,3 +21,11 @@ Every agent invocation is logged with its delivery state. Honest ledger, no padd
 | - | w1-a10 | W1-audit | S091-S100 gpu+render | DELIVERED (MED render cache Debug-hash) |
 | - | w1-a11 | W1-audit | S101-S110 render+script+text | DELIVERED (HIGH Inter default font) |
 | - | w1-a12 | W1-audit | S111-S120 small crates | DELIVERED (2 MED BUG, serde silent-loss) |
+| - | w1-a13 | W1-audit | S121-S130 host/export/codec | KILLED server_shutdown - relaunch |
+| - | w1-a14 | W1-audit | S131-S140 pdf/model/psd/lottie | KILLED server_shutdown - relaunch |
+| - | w1-a15 | W1-audit | S141-S150 web/cli/xtask | KILLED server_shutdown - relaunch |
+| - | w1-a16 | W1-audit | S151-S155+162 censuses | KILLED server_shutdown - relaunch |
+| - | w1-a17 | W1-audit | S156-S161 docs+deletion+license | DELIVERED (deletion map + license table) |
+| - | w1-a18 | W1-audit | S163-164+200-201 rename map | KILLED server_shutdown - relaunch |
+| - | w1-a19 | W1-audit | S165-S172 web chat lib | DELIVERED (4 MED: end-marker rot, steer queue, new Function) |
+| - | w1-a20 | W1-audit | S173-S180 web lib+chat comp 1 | DELIVERED (MED autosave data-loss, hardcoded localhost+hash) |
