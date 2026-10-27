@@ -93,9 +93,22 @@ function blockedCreditsFrom(error: {
 /**
  * M6-H: the NEWEST §7.4 `credits` snapshot on the thread — the terminal
  * `credits` event the gateway emits when it settles the run (reserved →
- * commit/refund), which carries the post-run `balance`. Values are integer
- * MICROcredits (D-12; the same units `GET /v1/credits` reports). Pure; `null`
- * when no run has reported credits yet.
+ * commit/refund), which carries the post-run `balance`.
+ *
+ * UNITS PIN (w3-b01): the §7.4 `credits` SSE event carries WHOLE-CREDIT
+ * DISPLAY units (gateway routes/chat.ts: "the SSE `credits` event carries
+ * whole-credit display units" — `microcreditsToDisplayCredits` at the
+ * emitter; e.g. `balance: 42.5`), NOT µc. `reserved`/`committed` ride the
+ * same display units on that emitter.
+ *
+ * UNKNOWN ≠ 0: in the round-12 turn wire `turn.completed` carries
+ * `credits: { committed }` ONLY (contracts events.ts) — the fold marks the
+ * unsaid `reserved`/`balance` as `Number.NaN` (the codebase's designed
+ * unknown for credit numbers — the usage-meters precedent), NEVER a
+ * fabricated 0. Consumers must treat non-finite as "unknown" (render
+ * nothing / never lock); `NaN === 0` is false, so a phony drained-wallet
+ * lock is impossible by construction. Pure; `null` when no run has
+ * reported credits yet.
  */
 export function latestCreditsSnapshot(
   state: ChatUiState,
@@ -711,6 +724,9 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
     }
     case "credits": {
       if (frozen) break;
+      // A REAL terminal §7.4 snapshot (whole-credit display units — see the
+      // latestCreditsSnapshot units pin): every field is server truth, so it
+      // replaces the message's snapshot wholesale (including the balance).
       next = {
         ...next,
         phase: resumeConfirm(next.phase),
@@ -749,11 +765,18 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
         messages: mapActiveMessage(next, (message) => ({
           ...message,
           // §8.8 display (12-w5-t1 pin): committed credits accumulate across
-          // the run's turns; reserved/balance carry over when already known.
+          // the run's turns — the ONLY credits number this payload carries
+          // (whole-credit display units; contracts events.ts
+          // `credits: z.strictObject({ committed })`). reserved/balance are
+          // NOT on the wire: carry the last REAL values forward, or mark
+          // UNKNOWN (NaN) when no §7.4 `credits` event ever set them — never
+          // fabricate 0 (the fabricated `balance: 0` used to lock the
+          // composer's M6-H gate and render "0.00 credits left" after every
+          // run; NaN ≠ 0 and formats as unknown everywhere).
           credits: {
-            reserved: message.credits?.reserved ?? 0,
+            reserved: message.credits?.reserved ?? Number.NaN,
             committed: (message.credits?.committed ?? 0) + event.credits.committed,
-            balance: message.credits?.balance ?? 0,
+            balance: message.credits?.balance ?? Number.NaN,
           },
           // The chips' authoritative payload (the chips themselves light up
           // from tool.started; this carries resultForModel + proposals).

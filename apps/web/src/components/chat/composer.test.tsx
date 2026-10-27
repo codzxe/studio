@@ -14,12 +14,16 @@
  */
 
 import { ChatApiContext, type ChatContextApi } from "@/lib/chat/provider";
-import { createInitialChatUiState } from "@/lib/chat/run-state";
+import { applyUserMessage, createInitialChatUiState, foldEvent } from "@/lib/chat/run-state";
 import type { ChatUiState } from "@/lib/chat/types";
+// Test-only VALUE import (the boundary law — "@studio/contracts is import
+// type ONLY" — binds RUNTIME web code, not the suite): the live schema pins
+// MAX_MESSAGE_CHARS below, so the mirror can never drift from the contract.
+import { CHAT_MESSAGE_SCHEMA } from "@studio/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatComposer, autoGrowCapPx } from "./composer";
+import { ChatComposer, MAX_MESSAGE_CHARS, autoGrowCapPx } from "./composer";
 import type { ChatComposerProps } from "./composer";
 
 afterEach(() => {
@@ -140,7 +144,10 @@ function snapshotError402(): ChatUiState {
   });
 }
 
-/** A drained wallet: the terminal credits event says balance 0 µc, no error. */
+/**
+ * A drained wallet: a REAL terminal §7.4 `credits` event says balance 0
+ * (whole-credit display units), no error — the honest zero-balance signal.
+ */
 function snapshotZeroBalance(): ChatUiState {
   return baseSnapshot({
     phase: "done",
@@ -157,6 +164,35 @@ function snapshotZeroBalance(): ChatUiState {
       },
     ],
   });
+}
+
+/**
+ * A COMPLETED round-12 turn run, folded through the REAL reducer: run.started
+ * → message.delta → turn.completed (`credits: { committed }` — the wire carries
+ * NO balance) → run.completed. This is the shape every production turn run
+ * produces; the pre-w3-b01 fold fabricated `balance: 0` here and locked the
+ * composer after the FIRST completed turn (w3-b01 regression base).
+ */
+function foldedCompletedTurnRun(): ChatUiState {
+  const runId = "run_turn_done";
+  let state = applyUserMessage(createInitialChatUiState(), {
+    id: "msg_user_turn",
+    text: "Go.",
+  });
+  state = foldEvent(state, { type: "run.started", runId, seq: 0, model: "studio-fast" });
+  state = foldEvent(state, { type: "message.delta", runId, seq: 1, delta: "Done." });
+  state = foldEvent(state, {
+    type: "turn.completed",
+    runId,
+    seq: 2,
+    stepIndex: 0,
+    finishReason: "stop",
+    usage: { inputTokens: 90, outputTokens: 12 },
+    credits: { committed: 1 },
+    assistantText: "Done.",
+    toolCalls: [],
+  });
+  return foldEvent(state, { type: "run.completed", runId, seq: 3 });
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +410,31 @@ describe("ChatComposer — M6-H credits block", () => {
 
     fireEvent.keyDown(box(), { key: "Enter", metaKey: true });
     expect(harness.onSend).not.toHaveBeenCalled();
+  });
+
+  it("a COMPLETED turn run (no §7.4 credits event) NEVER locks — the composer stays live for the next send (w3-b01)", () => {
+    // The REAL fold chain of the round-12 turn wire: turn.completed carries
+    // `credits: { committed }` only, so the folded snapshot's balance is
+    // UNKNOWN (NaN) — the old fold fabricated `balance: 0` here, locked the
+    // textarea and showed "You're out of credits." after the first turn.
+    const snapshot = foldedCompletedTurnRun();
+    expect(snapshot.phase).toBe("done");
+
+    const harness = renderComposerInChat(snapshot);
+    expect(box()).toBeEnabled();
+    expect(screen.queryByTestId("chat-credits-block")).not.toBeInTheDocument();
+    expect(screen.queryByText("You're out of credits.")).not.toBeInTheDocument();
+
+    // The post-run send the wire owes the user: type + Enter + the button.
+    fireEvent.change(box(), { target: { value: "one more thing" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    expect(harness.onSend).toHaveBeenCalledTimes(1);
+    expect(harness.onSend).toHaveBeenCalledWith("one more thing");
+
+    fireEvent.change(box(), { target: { value: "via the button" } });
+    fireEvent.click(sendButton());
+    expect(harness.onSend).toHaveBeenCalledTimes(2);
+    expect(harness.onSend).toHaveBeenCalledWith("via the button");
   });
 
   it("the 402 on snapshot.error (pre-block legacy path) blocks the same way with the §7.3 message", () => {
@@ -641,5 +702,16 @@ describe("ChatComposer — length guard", () => {
     fireEvent.change(textarea, { target: { value: "a".repeat(8000) } });
     expect(sendButton()).toBeEnabled();
     expect(screen.queryByText(/Message too long/)).not.toBeInTheDocument();
+  });
+
+  it("MAX_MESSAGE_CHARS is pinned to the LIVE CHAT_MESSAGE_SCHEMA — drift on either side fails here (w3-b01)", () => {
+    // The component mirrors the contract limit locally (apps/web's boundary
+    // law forbids value imports from @studio/contracts in runtime code), so
+    // this is the mechanism that makes the mirror non-magic: the schema
+    // accepts exactly MAX_MESSAGE_CHARS characters and rejects one more.
+    expect(MAX_MESSAGE_CHARS).toBeGreaterThan(0);
+    expect(CHAT_MESSAGE_SCHEMA.safeParse("a".repeat(MAX_MESSAGE_CHARS)).success).toBe(true);
+    expect(CHAT_MESSAGE_SCHEMA.safeParse("a".repeat(MAX_MESSAGE_CHARS + 1)).success).toBe(false);
+    expect(CHAT_MESSAGE_SCHEMA.safeParse("").success).toBe(false); // min(1) mirrors the trim guard
   });
 });

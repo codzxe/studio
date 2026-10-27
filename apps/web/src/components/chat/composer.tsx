@@ -68,10 +68,13 @@ import {
  * surface via `topUpHref`). Evidence sources, freshest first: the thread's
  * typed `blocked` state (402 INSUFFICIENT_CREDITS), the same code on
  * `snapshot.error`, the host's `disabled.reason === "credits"` prop, or a
- * KNOWN balance of exactly 0 (the terminal §7.4 `credits` event, µc). The
- * block is UX ONLY — the server already enforces (402) — so the banner CTA
- * consumes the evidence and re-arms sends: the next POST is the re-check,
- * and a still-empty wallet re-blocks with fresh evidence (never a permanent
+ * KNOWN balance of exactly 0 (the terminal §7.4 `credits` event —
+ * whole-credit display units; an UNKNOWN balance — NaN, what the round-12
+ * turn wire's `turn.completed`-only fold produces — can NEVER satisfy the
+ * gate, so a completed run never locks the composer). The block is UX ONLY
+ * — the server already enforces (402) — so the banner CTA consumes the
+ * evidence and re-arms sends: the next POST is the re-check, and a
+ * still-empty wallet re-blocks with fresh evidence (never a permanent
  * client lock, never a fabricated balance).
  *
  * Window events RETIRED (M6-H): "studio:chat-upgrade" — the M4 placeholder
@@ -80,11 +83,21 @@ import {
  *
  * Length guard: CHAT_MESSAGE_SCHEMA (packages/contracts/src/routes/chat.ts)
  * is `z.string().min(1).max(8000)` — sends are disabled (not sliced) beyond
- * 8,000 characters with a visible hint.
+ * 8,000 characters with a visible hint. The limit is MIRRORED below as
+ * {@link MAX_MESSAGE_CHARS} because apps/web imports `@studio/contracts`
+ * `import type` ONLY (the boundary law — see lib/chat/types.ts); drift is
+ * impossible by test: composer.test.tsx pins the mirror against the LIVE
+ * schema (safeParse at the exact boundary).
  */
 
-/** `CHAT_MESSAGE_SCHEMA` max length — sends are blocked (never sliced) beyond it. */
-const MAX_MESSAGE_CHARS = 8000;
+/**
+ * `CHAT_MESSAGE_SCHEMA`'s max length (packages/contracts/src/routes/chat.ts)
+ * — sends are blocked (never sliced) beyond it. Mirrored, not imported:
+ * apps/web's `@studio/contracts` boundary law is `import type` ONLY, so the
+ * number cannot ride a value import; composer.test.tsx pins it against the
+ * live schema so a change on either side fails the suite (w3-b01).
+ */
+export const MAX_MESSAGE_CHARS = 8000;
 /** §3.4: the textarea auto-grows 1–6 rows, then scrolls internally. */
 const MAX_ROWS = 6;
 const TOO_LONG_HINT = "Message too long — 8,000 characters max.";
@@ -160,7 +173,12 @@ function creditsBlockEvidence(
   }
   if (snapshot !== undefined) {
     const credits = latestCreditsSnapshot(snapshot);
-    if (credits !== null && credits.balance === 0) {
+    // REAL zero only (w3-b01): a terminal §7.4 `credits` event that says
+    // balance 0. An UNKNOWN balance — NaN, what the round-12 turn wire's
+    // `turn.completed`-only fold produces — can never satisfy the gate
+    // (`Number.isFinite(NaN) === false`, and `NaN !== 0` regardless), so a
+    // completed run without a real credits event NEVER locks the composer.
+    if (credits !== null && Number.isFinite(credits.balance) && credits.balance === 0) {
       return { source: "zero-balance", key: credits, message: OUT_OF_CREDITS_MESSAGE };
     }
   }

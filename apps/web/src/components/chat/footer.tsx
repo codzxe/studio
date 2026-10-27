@@ -14,17 +14,25 @@
  * metered"); real metering is the §8.8 reserve→commit ledger.
  *
  * M6-H (BUILD_PLAN §M6 task 4; D-12): the OPTIONAL balance segment shows the
- * CURRENT workspace balance — integer microcredits at the wire, converted to
- * whole credits with up to 2 decimals for display (the D-12 rule; `GET /v1/credits`
- * and `GET /v1/billing/state` report the same µc numbers). Two honest sources,
- * freshest wins:
+ * CURRENT workspace balance. UNITS PIN (w3-b01) — the two honest sources
+ * carry DIFFERENT units and are never mixed:
  *  1. The §7.4 terminal `credits` event the gateway emits when it settles a
- *     run (it carries the post-run `balance`) — read from the ChatProvider
- *     context, so the display refreshes after EVERY run with zero polling
- *     (no intervals, no extra fetch; the run-terminal refresh IS the event).
- *  2. The optional `credits` prop — the value a host fetched from
- *     billingState/credits (initial display before the first run, plus the
- *     plan's monthly allowance for the "of N/mo" context).
+ *     run (whole-credit DISPLAY units — gateway routes/chat.ts: "the SSE
+ *     `credits` event carries whole-credit display units";
+ *     `microcreditsToDisplayCredits` at the emitter, e.g. `42.5`), read from
+ *     the ChatProvider context. In the ROUND-12 TURN WIRE this event never
+ *     fires — `turn.completed` carries `credits: { committed }` only and the
+ *     fold marks the balance UNKNOWN (NaN), so this source is skipped and
+ *     the host prop below is the live truth. A host that wants a per-run
+ *     refresh refetches the credits endpoint on the run-terminal transition
+ *     (the app-shell `billing.state` pattern) and re-passes the prop — the
+ *     footer never trusts a fabricated snapshot number.
+ *  2. The optional `credits` prop — the value a host fetched from the
+ *     credits endpoint (billingState / `GET /v1/credits`): integer
+ *     MICROcredits on the wire (D-12), converted ONCE here, plus the plan's
+ *     monthly allowance for the "of N/mo" context.
+ * Unknown on both sides ⇒ the segment does not render (no fabricated
+ * "0.00 credits left").
  *
  * Null-tolerant context read (the thread.tsx pattern): a provider-less mount
  * (tests, embeds) renders the exact M4 three-segment line.
@@ -97,11 +105,22 @@ export function ChatFooter({
   // that throw, no client APIs — the data rides the provider's SSE folds).
   const chatApi = useContext(ChatApiContext);
   const streamCredits = chatApi === null ? null : latestCreditsSnapshot(chatApi.snapshot);
-  // Freshest wins: the terminal §7.4 credits event (post-run) beats the
-  // host-fetched prop (fetched at panel open, may be stale by a run).
-  const balanceMicro =
-    streamCredits !== null ? streamCredits.balance : (credits?.balanceMicro ?? null);
-  const balanceText = balanceMicro === null ? null : formatMicrocredits(balanceMicro);
+  // UNITS PIN (w3-b01): source 1 (the §7.4 `credits` event) carries
+  // whole-credit DISPLAY units — format DIRECTLY, never through the µc
+  // divider (the old code divided display credits by 10⁶, so a real 42.50
+  // printed "0.00"). Source 2 (the host prop) carries integer µc (D-12,
+  // the credits-endpoint contract) — convert ONCE here. The stream balance
+  // is UNKNOWN (NaN) in the round-12 turn wire, so the prop — the real
+  // credits-endpoint number — is the fallback; unknown on both sides
+  // renders NO segment (never a fabricated "0.00 credits left").
+  const streamBalanceCredits =
+    streamCredits !== null && Number.isFinite(streamCredits.balance) ? streamCredits.balance : null;
+  const propBalanceCredits = microcreditsToCreditsDisplay(credits?.balanceMicro ?? Number.NaN);
+  const balanceCredits = streamBalanceCredits ?? propBalanceCredits;
+  const balanceText =
+    balanceCredits === null || !Number.isFinite(balanceCredits)
+      ? null
+      : formatCreditsDisplay(balanceCredits);
   const allowanceText = formatAllowance(credits?.planAllowanceMicro);
 
   return (
@@ -130,7 +149,7 @@ export function ChatFooter({
           </span>
           <span
             data-testid="chat-footer-balance"
-            data-exhausted={balanceMicro === 0 ? "true" : undefined}
+            data-exhausted={balanceCredits === 0 ? "true" : undefined}
             title={balanceTitle(allowanceText)}
             className="min-w-0 truncate whitespace-nowrap"
           >

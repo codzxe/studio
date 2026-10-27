@@ -554,7 +554,17 @@ export function ChatMessageView({
       ) : null}
       {message.credits ? (
         <p data-testid="chat-credits" className="text-caption text-muted">
-          {message.credits.committed} credits used · balance {message.credits.balance}
+          {/*
+           * UNITS PIN (w3-b01): committed/balance are whole-credit DISPLAY
+           * units (the §7.4 emitters' documented units). `committed` is the
+           * one number turn.completed actually carries (accumulated by the
+           * fold); `balance` is UNKNOWN (NaN) in the round-12 turn wire — no
+           * terminal §7.4 credits event ever set it — so it renders ONLY
+           * when actually known, never as the fabricated "balance 0" the
+           * old fold printed under every reply.
+           */}
+          {`${message.credits.committed} credits used`}
+          {Number.isFinite(message.credits.balance) ? ` · balance ${message.credits.balance}` : ""}
         </p>
       ) : null}
     </article>

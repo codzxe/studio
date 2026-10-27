@@ -140,4 +140,21 @@ describe("ChatMessageView — cards, plan and credits", () => {
     );
     expect(screen.getByTestId("chat-credits")).toHaveTextContent("7 credits used · balance 42");
   });
+
+  it("renders credits-used WITHOUT a balance when the balance is unknown — the round-12 turn wire (w3-b01)", () => {
+    // turn.completed carries `credits: { committed }` only; the fold marks
+    // reserved/balance UNKNOWN (NaN). The old render printed the fabricated
+    // "balance 0" under every reply — the unknown balance must render nothing.
+    render(
+      <ChatMessageView
+        message={assistant({
+          credits: { reserved: Number.NaN, committed: 7, balance: Number.NaN },
+        })}
+        isStreaming={false}
+      />,
+    );
+    const credits = screen.getByTestId("chat-credits");
+    expect(credits).toHaveTextContent("7 credits used");
+    expect(credits).not.toHaveTextContent("balance");
+  });
 });

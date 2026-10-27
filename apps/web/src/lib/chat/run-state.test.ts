@@ -465,7 +465,8 @@ describe("applyClientAction", () => {
 
 // ---------------------------------------------------------------------------
 // M6-H — the typed zero-balance block (§8.8 INSUFFICIENT_CREDITS 402) + the
-// latest terminal credits snapshot (BP §M6 task 4; D-12 µc).
+// latest terminal credits snapshot (BP §M6 task 4; §7.4 event values are
+// whole-credit DISPLAY units — the gateway emitter's documented units).
 // ---------------------------------------------------------------------------
 
 describe("M6-H credits block — chat.error 402 fold", () => {
@@ -554,7 +555,7 @@ describe("M6-H credits block — run.failed / run.started / run.completed folds"
 });
 
 describe("M6-H latestCreditsSnapshot", () => {
-  it("returns the NEWEST terminal credits snapshot on the thread (µc balance)", () => {
+  it("returns the NEWEST terminal credits snapshot on the thread (display-unit balance)", () => {
     const done = APPLIED.reduce((state, event) => foldEvent(state, event), withUserMessage());
     const credits = latestCreditsSnapshot(done);
     const expected = APPLIED.filter((event) => event.type === "credits").at(-1);
@@ -695,5 +696,115 @@ describe("foldEvent — round-12 turn.* events", () => {
     expect(after.phase).toBe("done");
     expect(after.messages.at(-1)?.text).toBe(""); // frozen — the late text never lands
     expect(after.lastSeq).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// w3-b01 — the turn.completed credits fold: committed ONLY. The payload has
+// no balance (contracts events.ts `credits: z.strictObject({ committed })`),
+// so reserved/balance carry the last REAL values forward or are marked
+// UNKNOWN (NaN) — never a fabricated 0, which used to lock the composer's
+// zero-balance gate and render "0.00 credits left" after every run.
+// ---------------------------------------------------------------------------
+
+describe("turn.completed credits fold — committed only, never a fabricated balance (w3-b01)", () => {
+  it("marks reserved/balance UNKNOWN (NaN) when no §7.4 credits event ever ran", () => {
+    const state = foldEvent(turnThread(), {
+      type: "turn.completed",
+      runId: RUN_T,
+      seq: 2,
+      stepIndex: 0,
+      finishReason: "stop",
+      usage: { inputTokens: 9, outputTokens: 1 },
+      credits: { committed: 3 },
+      assistantText: "Done.",
+      toolCalls: [],
+    });
+    const credits = state.messages.at(-1)?.credits;
+    expect(credits).toBeDefined();
+    expect(credits?.committed).toBe(3); // the one number the wire carries
+    expect(Number.isNaN(credits?.reserved)).toBe(true); // unknown ≠ 0
+    expect(Number.isNaN(credits?.balance)).toBe(true); // unknown ≠ 0
+    // The chain the fabricated 0 used to break: the latest snapshot's
+    // balance can NEVER read as a drained wallet.
+    const latest = latestCreditsSnapshot(state);
+    expect(latest?.balance === 0).toBe(false);
+  });
+
+  it("accumulates committed across the run's turns while the balance stays unknown", () => {
+    let state = foldEvent(turnThread(), {
+      type: "turn.completed",
+      runId: RUN_T,
+      seq: 2,
+      stepIndex: 0,
+      finishReason: "tool-calls",
+      usage: { inputTokens: 90, outputTokens: 12 },
+      credits: { committed: 3 },
+      toolCalls: [],
+    });
+    state = foldEvent(state, {
+      type: "turn.completed",
+      runId: RUN_T,
+      seq: 3,
+      stepIndex: 1,
+      finishReason: "stop",
+      usage: { inputTokens: 20, outputTokens: 4 },
+      credits: { committed: 5 },
+      assistantText: "Done.",
+      toolCalls: [],
+    });
+    expect(state.messages.at(-1)?.credits).toEqual({
+      reserved: Number.NaN,
+      committed: 8,
+      balance: Number.NaN,
+    });
+  });
+
+  it("carries a REAL §7.4 credits balance forward over later turn.completed folds", () => {
+    let state = foldEvent(turnThread(), {
+      type: "credits",
+      runId: RUN_T,
+      seq: 2,
+      reserved: 36,
+      committed: 0,
+      balance: 42.5,
+    });
+    state = foldEvent(state, {
+      type: "turn.completed",
+      runId: RUN_T,
+      seq: 3,
+      stepIndex: 0,
+      finishReason: "stop",
+      usage: { inputTokens: 9, outputTokens: 1 },
+      credits: { committed: 7 },
+      assistantText: "Done.",
+      toolCalls: [],
+    });
+    expect(state.messages.at(-1)?.credits).toEqual({
+      reserved: 36,
+      committed: 7,
+      balance: 42.5,
+    });
+  });
+
+  it("a fully completed turn run folds to an UNKNOWN balance — no zero-balance lock is derivable", () => {
+    let state = turnThread();
+    state = foldEvent(state, {
+      type: "turn.completed",
+      runId: RUN_T,
+      seq: 2,
+      stepIndex: 0,
+      finishReason: "stop",
+      usage: { inputTokens: 9, outputTokens: 1 },
+      credits: { committed: 1 },
+      assistantText: "Done.",
+      toolCalls: [],
+    });
+    state = foldEvent(state, { type: "run.completed", runId: RUN_T, seq: 3 });
+    expect(state.phase).toBe("done");
+    const latest = latestCreditsSnapshot(state);
+    expect(latest).not.toBeNull();
+    expect(latest?.committed).toBe(1);
+    expect(Number.isNaN(latest?.balance)).toBe(true); // unknown — the composer gate reads ≠ 0
   });
 });
