@@ -14,9 +14,9 @@ pub const ISSUES: &str = "";
 /// which hides the start screen's cross-promotion rows.
 pub const SIBLINGS: &[(&str, &str)] = &[];
 
-pub fn github_of(slug: &str) -> String {
-    format!("https://github.com/storytold/{slug}")
+pub fn github_of(_slug: &str) -> String {
+    String::new()
 }
-pub fn page_of(slug: &str) -> String {
-    format!("https://getartcraft.com/apps/{slug}")
+pub fn page_of(_slug: &str) -> String {
+    String::new()
 }

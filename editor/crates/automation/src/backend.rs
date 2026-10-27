@@ -1,7 +1,7 @@
 //! Where tools run: an in-process session, or the desktop app over its control channel.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::time::Tick;
+use studio_engine::Session;
+use studio_engine::time::Tick;
 use serde_json::{Value, json};
 
 use crate::confine::Confinement;
@@ -140,4 +140,4 @@ fn no_comp(comp: Option<&Value>) -> Error {
 }
 
 pub const NEED_BRIDGE: &str =
-    "this tool drives the live app: start it with `effectcraft --control 9877` and run the MCP server as `effectcraft-cli mcp --bridge 9877`";
+    "this tool drives the live app: start it with `effectcraft --control 9877` and run the MCP server as `studio-cli mcp --bridge 9877`";

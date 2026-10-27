@@ -1,11 +1,11 @@
 //! Lumetri Scopes panel (Window ▸ Lumetri Scopes): waveform (RGB / Luma / YC), vectorscope
 //! (YUV / HLS), histogram and parade (RGB / YUV) of the active composition's frame at the current
 //! time, with the colour standard (Rec. 601 / 709 / 2020), 8-bit or float scale and clamp. The
-//! maths is `effectcraft_raster::scopes`; agents read the same numbers with `scopes.analyze`.
+//! maths is `studio_raster::scopes`; agents read the same numbers with `scopes.analyze`.
 
 use crate::i18n::tr;
-use effectcraft_engine::commands::panels_cmds::scope_frame;
-use effectcraft_engine::raster::scopes::{self, ColorStandard, Scope, ScopeKind, ScopeOpts};
+use studio_engine::commands::panels_cmds::scope_frame;
+use studio_engine::raster::scopes::{self, ColorStandard, Scope, ScopeKind, ScopeOpts};
 use egui::{Align2, Color32, Rect, Stroke, pos2, vec2};
 use serde::{Deserialize, Serialize};
 

@@ -1,15 +1,15 @@
 //! Layer ▸ Auto-trace…: masks from a layer's alpha, a colour channel or its luminance, at the
 //! current frame or over the work area (one Mask Path key per frame). The tracing is
-//! `effectcraft_path::trace` (marching squares, Douglas–Peucker, Bezier fitting).
+//! `studio_path::trace` (marching squares, Douglas–Peucker, Bezier fitting).
 
-use effectcraft_color::Label;
-use effectcraft_keyframe::{Interp, Keyframe};
-use effectcraft_path::trace::{TraceOpts, Traced, trace};
-use effectcraft_project::build::{self, Ids};
-use effectcraft_project::{ItemKind, LayerSource, MaskMode, Solid, Value as KV};
-use effectcraft_raster::Image;
-use effectcraft_render::{RenderOpts, Renderer};
-use effectcraft_time::Tick;
+use studio_color::Label;
+use studio_keyframe::{Interp, Keyframe};
+use studio_path::trace::{TraceOpts, Traced, trace};
+use studio_project::build::{self, Ids};
+use studio_project::{ItemKind, LayerSource, MaskMode, Solid, Value as KV};
+use studio_raster::Image;
+use studio_render::{RenderOpts, Renderer};
+use studio_time::Tick;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, b_p, bad, f_p, has_layers, layer_p, str_p};
@@ -59,7 +59,7 @@ pub fn channel_field(img: &Image, ch: Channel, invert: bool) -> Vec<f32> {
 
 /// Trace one frame: outlines in layer space.
 fn trace_frame(img: &Image, offset: [f64; 2], ch: Channel, invert: bool, blur: f64, o: &TraceOpts) -> Vec<Traced> {
-    let src = if blur > 0.0 { effectcraft_raster::gaussian_blur(img, blur / 2.0, blur / 2.0, false) } else { img.clone() };
+    let src = if blur > 0.0 { studio_raster::gaussian_blur(img, blur / 2.0, blur / 2.0, false) } else { img.clone() };
     let field = channel_field(&src, ch, invert);
     let mut out = trace(&field, img.width as usize, img.height as usize, o);
     for t in &mut out {
@@ -124,7 +124,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(c, "nothing to trace: no pixels pass the threshold"));
     }
     let new_layer = b_p(p, "applyToNewLayer").unwrap_or(false);
-    let (sw, sh) = effectcraft_render::source_size(&s.project, &layer);
+    let (sw, sh) = studio_render::source_size(&s.project, &layer);
     let layer_times: Vec<Tick> = times.iter().map(|t| layer.layer_time(*t)).collect();
     let target = s.edit("Auto-trace", None, |proj, st| {
         let target = if new_layer {
@@ -176,7 +176,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
                 if let Some(path) = g.get_mut("path") {
                     for (f, lt) in frames.iter().zip(&layer_times) {
                         if let Some(tr) = f.get(k) {
-                            effectcraft_keyframe::set_key(&mut path.keys, Keyframe::new(*lt, KV::Path(tr.path.clone())));
+                            studio_keyframe::set_key(&mut path.keys, Keyframe::new(*lt, KV::Path(tr.path.clone())));
                         }
                     }
                 }
@@ -187,7 +187,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
                         let mut key = Keyframe::new(*lt, KV::Scalar(if f.get(k).is_some() { 100.0 } else { 0.0 }));
                         key.in_interp = Interp::Hold;
                         key.out_interp = Interp::Hold;
-                        effectcraft_keyframe::set_key(&mut op.keys, key);
+                        studio_keyframe::set_key(&mut op.keys, key);
                     }
                 }
             }

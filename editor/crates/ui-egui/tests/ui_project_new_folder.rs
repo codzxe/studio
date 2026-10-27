@@ -3,10 +3,10 @@
 //! Effects: Enter keeps the typed name, Escape the default one. `engine.execute` (agents, MCP,
 //! scripts) keeps the headless default and only creates the folder.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::ItemId;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::control::{self, ControlRequest};
+use studio_engine::Session;
+use studio_engine::project::ItemId;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::control::{self, ControlRequest};
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, Rect, pos2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -132,7 +132,7 @@ fn the_file_menu_opens_the_name_in_view() {
     let list = rect(&h, "project.empty");
     let before = folders(&h);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "project.newFolder", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "project.newFolder", json!({})).unwrap();
     h.run_steps(3);
     let [folder] = new_folders(&h, &before)[..] else { panic!("one new folder") };
     assert!(renaming(&h, folder), "File ▸ New ▸ New Folder opens the name");

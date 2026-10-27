@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use effectcraft_av1enc::{Encoder, EncoderConfig, Frame, Packet};
+use studio_av1enc::{Encoder, EncoderConfig, Frame, Packet};
 
 /// A synthetic 4:2:0 picture.
 pub struct Pic {

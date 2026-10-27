@@ -350,7 +350,7 @@ describe("env: render worker variables (M8)", () => {
   it("honours explicit values over the defaults", () => {
     const env = parseEnv({
       ...localFixture,
-      EFFECTCRAFT_CLI_PATH: "/opt/builds/effectcraft-cli",
+      STUDIO_ENGINE_CLI_PATH: "/opt/builds/studio-cli",
       RENDER_WORKER_ENABLED: "false",
       RENDER_WORKER_CONCURRENCY: "8",
       RENDER_JOB_TIMEOUT_SECONDS: "900",
@@ -359,7 +359,7 @@ describe("env: render worker variables (M8)", () => {
       RENDER_POLL_INTERVAL_MS: "250",
     });
     expect(env.render).toEqual({
-      cliPath: "/opt/builds/effectcraft-cli",
+      cliPath: "/opt/builds/studio-cli",
       workerEnabled: false,
       workerConcurrency: 8,
       jobTimeoutSeconds: 900,
@@ -382,15 +382,15 @@ describe("env: render worker variables (M8)", () => {
     }
   });
 
-  it("EFFECTCRAFT_CLI_PATH is optional; blank or whitespace counts as unset", () => {
+  it("STUDIO_ENGINE_CLI_PATH is optional; blank or whitespace counts as unset", () => {
     expect(parseEnv(localFixture).render.cliPath).toBeUndefined();
-    expect(parseEnv({ ...localFixture, EFFECTCRAFT_CLI_PATH: "" }).render.cliPath).toBeUndefined();
+    expect(parseEnv({ ...localFixture, STUDIO_ENGINE_CLI_PATH: "" }).render.cliPath).toBeUndefined();
     expect(
-      parseEnv({ ...localFixture, EFFECTCRAFT_CLI_PATH: "   " }).render.cliPath,
+      parseEnv({ ...localFixture, STUDIO_ENGINE_CLI_PATH: "   " }).render.cliPath,
     ).toBeUndefined();
     expect(
-      parseEnv({ ...localFixture, EFFECTCRAFT_CLI_PATH: "./bins/effectcraft-cli" }).render.cliPath,
-    ).toBe("./bins/effectcraft-cli");
+      parseEnv({ ...localFixture, STUDIO_ENGINE_CLI_PATH: "./bins/studio-cli" }).render.cliPath,
+    ).toBe("./bins/studio-cli");
   });
 
   it("rejects non-boolean RENDER_WORKER_ENABLED without echoing the value", () => {
@@ -606,7 +606,7 @@ describe("env: metadata and .env.example generator", () => {
       "S3_BUCKET",
       "STRIPE_PRICE_IDS",
       "LOG_LEVEL",
-      "EFFECTCRAFT_CLI_PATH",
+      "STUDIO_ENGINE_CLI_PATH",
       "RENDER_WORKER_ENABLED",
       "RENDER_WORKER_CONCURRENCY",
       "RENDER_JOB_TIMEOUT_SECONDS",
@@ -629,8 +629,8 @@ describe("env: metadata and .env.example generator", () => {
     expect(text).toContain("AGENT_BATCH_MAX_BYTES=2097152");
     expect(text).toContain('Rejected when APP_ENV is "production"');
     // The M8 render rows, with their defaults and the CLI resolution order.
-    expect(text).toContain("EFFECTCRAFT_CLI_PATH=");
-    expect(text).toContain("# EFFECTCRAFT_CLI_PATH — ");
+    expect(text).toContain("STUDIO_ENGINE_CLI_PATH=");
+    expect(text).toContain("# STUDIO_ENGINE_CLI_PATH — ");
     expect(text).toContain("RENDER_WORKER_ENABLED=true");
     expect(text).toContain("RENDER_WORKER_CONCURRENCY=2");
     expect(text).toContain("RENDER_JOB_TIMEOUT_SECONDS=1800");

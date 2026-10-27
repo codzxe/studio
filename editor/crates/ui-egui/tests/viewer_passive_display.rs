@@ -1,6 +1,6 @@
 //! A passive Composition viewer applies the same monitor conversion as the active one (#547).
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::{EffectcraftApp, menus, panels::viewers};
+use studio_engine::Session;
+use studio_ui_egui::{EffectcraftApp, menus, panels::viewers};
 use egui::{Color32, Context, ImageData, RawInput, Rect, pos2, vec2};
 use serde_json::json;
 use std::collections::HashMap;

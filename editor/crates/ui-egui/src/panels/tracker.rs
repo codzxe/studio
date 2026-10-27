@@ -4,11 +4,11 @@
 //!
 //! Everything goes through `track.*` commands, so agents can do the same.
 
-use effectcraft_engine::geom::{Mat3, vec2 as gv2};
-use effectcraft_engine::project::tracking::{LowConfidence, TrackChannel, TrackKind, TrackerOptions};
-use effectcraft_engine::project::{Layer, LayerId, Uid};
-use effectcraft_engine::time::Tick;
-use effectcraft_engine::tracking::point_values;
+use studio_engine::geom::{Mat3, vec2 as gv2};
+use studio_engine::project::tracking::{LowConfidence, TrackChannel, TrackKind, TrackerOptions};
+use studio_engine::project::{Layer, LayerId, Uid};
+use studio_engine::time::Tick;
+use studio_engine::tracking::point_values;
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::json;
 
@@ -71,7 +71,7 @@ fn motion_source(app: &EffectcraftApp) -> Option<LayerId> {
 }
 
 fn trackable(l: &Layer) -> bool {
-    use effectcraft_engine::project::LayerSource;
+    use studio_engine::project::LayerSource;
     l.has_video() && !matches!(l.source, LayerSource::Text | LayerSource::Shape)
 }
 
@@ -157,7 +157,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         return;
     };
     // A selected mask switches the panel to mask tracking.
-    if let Some((ml, mu)) = effectcraft_engine::commands::mask_interp::selected_mask(&app.session) {
+    if let Some((ml, mu)) = studio_engine::commands::mask_interp::selected_mask(&app.session) {
         mask_mode(app, ui, &ctx, &p, rect, y, ml, mu);
         return;
     }
@@ -288,10 +288,10 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let running_dir = app.session.track_job.as_ref().map(|j| j.direction);
     let mut bx = field_x;
     for (dir, fwd, frame, id, tip) in [
-        (effectcraft_engine::tracking::Direction::FrameBackward, false, true, "frameBackward", "Analyze 1 frame backward"),
-        (effectcraft_engine::tracking::Direction::Backward, false, false, "backward", "Analyze backward"),
-        (effectcraft_engine::tracking::Direction::Forward, true, false, "forward", "Analyze forward"),
-        (effectcraft_engine::tracking::Direction::FrameForward, true, true, "frameForward", "Analyze 1 frame forward"),
+        (studio_engine::tracking::Direction::FrameBackward, false, true, "frameBackward", "Analyze 1 frame backward"),
+        (studio_engine::tracking::Direction::Backward, false, false, "backward", "Analyze backward"),
+        (studio_engine::tracking::Direction::Forward, true, false, "forward", "Analyze forward"),
+        (studio_engine::tracking::Direction::FrameForward, true, true, "frameForward", "Analyze 1 frame forward"),
     ] {
         let r = Rect::from_min_size(pos2(bx, y), vec2(30.0, 22.0));
         let resp = ui.interact(r, egui::Id::new(("tracker-analyze", id)), Sense::click()).on_hover_text(tip);
@@ -348,7 +348,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
 /// The Tracker panel in mask mode: Method and the four track buttons (◀| ◀ ▶ |▶).
 #[allow(clippy::too_many_arguments)]
 fn mask_mode(app: &mut EffectcraftApp, ui: &mut egui::Ui, ctx: &egui::Context, p: &egui::Painter, rect: Rect, mut y: f32, layer: LayerId, mask: Uid) {
-    use effectcraft_engine::mask_track::MaskMethod;
+    use studio_engine::mask_track::MaskMethod;
     let t = app.tokens;
     let x0 = rect.min.x + 10.0;
     let w = (rect.width() - 20.0).max(120.0);
@@ -381,10 +381,10 @@ fn mask_mode(app: &mut EffectcraftApp, ui: &mut egui::Ui, ctx: &egui::Context, p
     let running_dir = app.session.mask_job.as_ref().map(|j| j.direction);
     let mut bx = field_x;
     for (dir, fwd, frame, id, tip) in [
-        (effectcraft_engine::tracking::Direction::FrameBackward, false, true, "frameBackward", "Track selected masks 1 frame backward"),
-        (effectcraft_engine::tracking::Direction::Backward, false, false, "backward", "Track selected masks backward"),
-        (effectcraft_engine::tracking::Direction::Forward, true, false, "forward", "Track selected masks forward"),
-        (effectcraft_engine::tracking::Direction::FrameForward, true, true, "frameForward", "Track selected masks 1 frame forward"),
+        (studio_engine::tracking::Direction::FrameBackward, false, true, "frameBackward", "Track selected masks 1 frame backward"),
+        (studio_engine::tracking::Direction::Backward, false, false, "backward", "Track selected masks backward"),
+        (studio_engine::tracking::Direction::Forward, true, false, "forward", "Track selected masks forward"),
+        (studio_engine::tracking::Direction::FrameForward, true, true, "frameForward", "Track selected masks 1 frame forward"),
     ] {
         let r = Rect::from_min_size(pos2(bx, y), vec2(30.0, 22.0));
         let resp = ui.interact(r, egui::Id::new(("tracker-mask-track", id)), Sense::click()).on_hover_text(tip);
@@ -410,7 +410,7 @@ fn mask_mode(app: &mut EffectcraftApp, ui: &mut egui::Ui, ctx: &egui::Context, p
         .active_comp()
         .and_then(|c| c.layer(layer))
         .and_then(|l| l.effects())
-        .is_some_and(|fx| fx.groups().any(|g| g.match_id == effectcraft_engine::effects::face_track::POINTS_ID));
+        .is_some_and(|fx| fx.groups().any(|g| g.match_id == studio_engine::effects::face_track::POINTS_ID));
     if method == MaskMethod::FaceDetailed || has_points {
         let r = Rect::from_min_size(pos2(x0, y), vec2(w.min(260.0), 24.0));
         if button(app, ui, r, "Extract & Copy Face Measurements", has_points && !running, "tracker.mask.extractFace") {

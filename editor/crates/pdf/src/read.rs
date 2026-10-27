@@ -330,7 +330,7 @@ mod limit_tests {
                 assert_eq!((doc.width, doc.height), (40.0, 20.0));
                 assert_eq!(doc.flatten().len(), 1);
                 assert!(doc.skipped.is_empty(), "{:?}", doc.skipped);
-                assert_eq!(effectcraft_svg::rasterize(&doc, 40, 20, 1.0).get(20, 10), [1.0, 0.0, 0.0, 1.0]);
+                assert_eq!(studio_svg::rasterize(&doc, 40, 20, 1.0).get(20, 10), [1.0, 0.0, 0.0, 1.0]);
                 assert_eq!(crate::parse_page(&bytes, 1), Err(crate::Error::PageOutOfRange(1)));
             }
         }

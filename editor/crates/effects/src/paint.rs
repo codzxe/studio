@@ -26,11 +26,11 @@
 //! Source & Paint"), only earlier paint ("Paint Only"), or only the previous stroke ("Last
 //! Stroke Only").
 
-use effectcraft_color::{BlendMode, blend_pixel, luminance};
-use effectcraft_keyframe::{ShapePath, Value};
-use effectcraft_project::build::Ids;
-use effectcraft_project::{GroupKind, Node, ParamUi, PropGroup, Property};
-use effectcraft_raster::{Image, Px};
+use studio_color::{BlendMode, blend_pixel, luminance};
+use studio_keyframe::{ShapePath, Value};
+use studio_project::build::Ids;
+use studio_project::{GroupKind, Node, ParamUi, PropGroup, Property};
+use studio_raster::{Image, Px};
 use rayon::prelude::*;
 
 use crate::{Buf, EffectCtx, EffectSpec, Params, p, popup, slider};

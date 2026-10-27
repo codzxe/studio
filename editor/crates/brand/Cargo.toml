@@ -1,0 +1,9 @@
+[package]
+name = "studio-brand"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Single-source product identity (reads the repo-root brand.json at build time)."
+
+[dependencies]

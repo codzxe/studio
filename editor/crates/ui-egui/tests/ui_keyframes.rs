@@ -2,9 +2,9 @@
 //! in one gesture (the drag used to end after the first frame), Shift-snapping, Ctrl+C /
 //! Ctrl+V, which the windowing layer delivers as clipboard events rather than key presses.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::LayerId;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_engine::project::LayerId;
+use studio_ui_egui::EffectcraftApp;
 use egui::{Event, Pos2, pos2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -24,7 +24,7 @@ fn harness() -> (Harness<'static, EffectcraftApp>, LayerId, u64) {
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(s));
     h.run_steps(3);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.reveal.opacity", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.reveal.opacity", json!({})).unwrap();
     h.run_steps(4);
     (h, id, uid)
 }
@@ -73,7 +73,7 @@ fn a_key_drag_follows_the_pointer_for_its_whole_length() {
     let steps = h.state().session.history.undo.iter().filter(|(l, _)| l == "Move Keyframes").count();
     assert_eq!(steps, 1, "one undo step per drag");
     // Shift snaps it to the current time indicator (at 0.5 s), from a few pixels away.
-    h.state_mut().session.set_time(effectcraft_engine::time::Tick::from_seconds_f64(0.5));
+    h.state_mut().session.set_time(studio_engine::time::Tick::from_seconds_f64(0.5));
     h.run_steps(2);
     let ks = keys(&h, uid);
     let near = pos2(ks[0].x + px_per_s * 0.5 + 4.0, ks[1].y);
@@ -108,7 +108,7 @@ fn ctrl_c_and_ctrl_v_copy_and_paste_keys_at_the_current_time() {
     assert_eq!(copied, ["Studio: 1 keyframe"], "the system clipboard is filled, so Ctrl+V sends a paste event");
     assert!(h.state().session.state.clip_is_keys);
     // Move to 3 s, Ctrl+V: the key lands there.
-    h.state_mut().session.set_time(effectcraft_engine::time::Tick::from_seconds_f64(3.0));
+    h.state_mut().session.set_time(studio_engine::time::Tick::from_seconds_f64(3.0));
     h.input_mut().events.push(Event::Paste("Studio: 1 keyframe".into()));
     h.run_steps(2);
     assert_eq!(key_times(&h, id), vec![0.0, 1.0, 3.0]);
@@ -143,7 +143,7 @@ fn copy_and_paste_key_subsets_across_position_rotation_and_scale() {
         let uids: Vec<u64> = paths.iter().map(|path| h.state().session.active_comp().unwrap().layer(id).unwrap().props.prop(path).unwrap().uid).collect();
         let ctx = h.ctx.clone();
         for command in ["timeline.reveal.position", "timeline.revealAdd.rotation", "timeline.revealAdd.scale"] {
-            effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, command, json!({})).unwrap();
+            studio_ui_egui::menus::invoke(h.state_mut(), &ctx, command, json!({})).unwrap();
         }
         if graph {
             h.state_mut().session.execute("edit.deselectAll", json!({})).unwrap();
@@ -192,7 +192,7 @@ fn copy_and_paste_key_subsets_across_position_rotation_and_scale() {
             h.step();
             let note = format!("Studio: {count} keyframes");
             assert!(h.output().platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text == &note)));
-            h.state_mut().session.set_time(effectcraft_engine::time::Tick::from_seconds_f64(2.0));
+            h.state_mut().session.set_time(studio_engine::time::Tick::from_seconds_f64(2.0));
             let undo_steps = h.state().session.history.undo.len();
             h.input_mut().events.push(Event::Paste(note));
             h.run_steps(2);
@@ -238,10 +238,10 @@ fn shift_click_toggles_and_ctrl_click_switches_interpolation() {
     click_with(&mut h, ks[0], egui::Modifiers::COMMAND);
     assert!(key(&h).auto_bezier, "Auto Bezier");
     click_with(&mut h, ks[0], egui::Modifiers::COMMAND);
-    assert_eq!(key(&h).out_interp, effectcraft_engine::keyframe::Interp::Linear);
+    assert_eq!(key(&h).out_interp, studio_engine::keyframe::Interp::Linear);
     // Ctrl+Alt+click: Hold.
     click_with(&mut h, ks[0], egui::Modifiers { alt: true, ..egui::Modifiers::COMMAND });
-    assert_eq!(key(&h).out_interp, effectcraft_engine::keyframe::Interp::Hold);
+    assert_eq!(key(&h).out_interp, studio_engine::keyframe::Interp::Hold);
 }
 
 /// Clicking a key in the Timeline selects its property and layer too, as in After Effects, so
@@ -307,7 +307,7 @@ fn double_click_a_key_to_edit_its_value() {
     }
     h.step();
     h.run_steps(2);
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::Form), "the value dialog opened");
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::Form), "the value dialog opened");
     h.run_steps(2);
     assert!(h.state().auto.find("form.field.value").is_some(), "one Opacity field");
     // OK keeps the key where it is (the dialog edits the value only).
@@ -329,7 +329,7 @@ fn k_follows_the_revealed_properties_and_auto_select_picks_the_speed_graph_for_p
     let (mut h, id, _) = harness();
     // A Rotation key at 2 s on a property that isn't revealed: K skips it.
     h.state_mut().session.execute("prop.addKey", json!({"layer": id.0, "path": "transform/rotation", "time": 2.0, "value": 45})).unwrap();
-    h.state_mut().session.set_time(effectcraft_engine::time::Tick::from_seconds_f64(1.0));
+    h.state_mut().session.set_time(studio_engine::time::Tick::from_seconds_f64(1.0));
     h.run_steps(2);
     h.input_mut().events.push(Event::Key { key: egui::Key::K, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });
     h.run_steps(2);
@@ -464,7 +464,7 @@ fn properties_panel_edits_every_selected_layer() {
     let first = s.state.selected_layers[0];
     let uid = s.active_comp().unwrap().layer(first).unwrap().props.prop("transform/position").unwrap().uid;
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(s));
-    h.state_mut().show_panel(effectcraft_ui_egui::dock::PanelKind::Properties);
+    h.state_mut().show_panel(studio_ui_egui::dock::PanelKind::Properties);
     h.run_steps(4);
     assert_eq!(h.state().auto.find("properties.selectedObjects").map(|e| e.label.clone()), Some("(3) Selected Objects".into()));
     let pos = |h: &Harness<'_, EffectcraftApp>, l: u64| {
@@ -519,7 +519,7 @@ fn ctrl_alt_scrub_in_the_timeline_is_proportional() {
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(s));
     h.run_steps(3);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.reveal.position", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.reveal.position", json!({})).unwrap();
     h.run_steps(4);
     let x = |h: &Harness<'_, EffectcraftApp>, l: u64| {
         h.state().session.active_comp().unwrap().layer(LayerId(l)).unwrap().props.prop("transform/position").unwrap().value.components()[0]
@@ -576,7 +576,7 @@ fn speed_graph_fit_selection_frames_the_curve_between_the_keys() {
     s.execute("keys.easyEase", json!({})).unwrap();
     let keys = h.state().session.active_comp().unwrap().layer(id).unwrap().props.prop("transform/opacity").unwrap().keys.clone();
     let peak = (0..=100)
-        .map(|i| effectcraft_engine::keyframe::velocity(&keys, effectcraft_engine::time::Tick::from_seconds_f64(i as f64 / 100.0), false)[0].abs())
+        .map(|i| studio_engine::keyframe::velocity(&keys, studio_engine::time::Tick::from_seconds_f64(i as f64 / 100.0), false)[0].abs())
         .fold(0.0, f64::max);
     assert!(peak > 100.0, "the eased curve peaks above its average speed: {peak}");
     h.state_mut().ui.timeline.graph_mode = "speed".into();

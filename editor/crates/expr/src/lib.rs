@@ -3,7 +3,7 @@
 //! [`Expressions`] implements [`ExprHost`] so the renderer can evaluate property expressions:
 //!
 //! ```text
-//! let host = effectcraft_expr::Expressions;
+//! let host = studio_expr::Expressions;
 //! let mut r = Renderer::new(&project, &NoFootage, RenderOpts::default());
 //! r.expr = Some(&host);
 //! ```
@@ -35,10 +35,10 @@ pub mod rewrite;
 mod runtime;
 mod sample;
 
-use effectcraft_keyframe::Value;
-use effectcraft_project::{ItemId, Layer, LayerId, Project, Property};
-use effectcraft_render::{EvalCtx, ExprHost};
-use effectcraft_time::Tick;
+use studio_keyframe::Value;
+use studio_project::{ItemId, Layer, LayerId, Project, Property};
+use studio_render::{EvalCtx, ExprHost};
+use studio_time::Tick;
 
 use host::{Own, Req, Resolver, prop_dims, value_resp};
 use runtime::{Begin, FRAMES, Frame, Owner, RUNS, Run};

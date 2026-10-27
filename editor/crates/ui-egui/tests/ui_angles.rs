@@ -1,9 +1,9 @@
 //! Angle fields must cancel on Escape and reject non-finite numeric input.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::LayerId;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_engine::Session;
+use studio_engine::project::LayerId;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui::{Event, Key, Modifiers, Pos2, pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;

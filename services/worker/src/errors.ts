@@ -1,6 +1,6 @@
 // @studio/worker — typed render failure codes + sanitized copy (law #1).
 //
-// The worker NEVER forwards effectcraft-cli error text (it may contain absolute
+// The worker NEVER forwards studio-cli error text (it may contain absolute
 // paths and engine internals — docs/phases/m8-cli-spike.md §3) or object keys
 // across any boundary. Every failure maps to ONE of these codes; the human copy
 // comes from @studio/config's ERROR_CATALOG (the same sentences the API

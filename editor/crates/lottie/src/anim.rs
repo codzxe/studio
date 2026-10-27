@@ -15,8 +15,8 @@
 //! motion path (Δv = arc length, one dimension) and carry `to`/`ti` spatial tangents. Hold keys
 //! set `h: 1`.
 
-use effectcraft_keyframe::{self as kf, Ease, Interp, Keyframe, Value};
-use effectcraft_project::{Expression, Property};
+use studio_keyframe::{self as kf, Ease, Interp, Keyframe, Value};
+use studio_project::{Expression, Property};
 use serde_json::{Value as Json, json};
 
 use crate::Timebase;
@@ -52,7 +52,7 @@ impl Im {
     }
 }
 
-fn secs(t: effectcraft_time::Tick) -> f64 {
+fn secs(t: studio_time::Tick) -> f64 {
     t.seconds()
 }
 

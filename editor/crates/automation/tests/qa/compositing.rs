@@ -186,6 +186,6 @@ fn compositing_matte_blend_adjustment_3d_and_alpha_renders() {
 
 fn alpha_frame(qa: &mut Qa, comp: Value) -> Img {
     let c = qa.try_tool("render_frame", json!({"comp": comp, "time": 0, "max_side": 0, "transparent": true})).unwrap();
-    let png = effectcraft_automation::base64::decode(c[0]["data"].as_str().unwrap()).unwrap();
+    let png = studio_automation::base64::decode(c[0]["data"].as_str().unwrap()).unwrap();
     image::load_from_memory(&png).unwrap().to_rgba8()
 }

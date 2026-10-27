@@ -394,7 +394,7 @@ impl Keymaps {
         } else {
             self.presets.iter().find(|p| p.name == name).ok_or_else(|| format!("no shortcut preset `{name}`"))?.overrides.clone()
         };
-        Ok(json!({"format": "effectcraft-shortcuts", "version": 1, "name": name, "base": DEFAULT_PRESET, "overrides": overrides}))
+        Ok(json!({"format": "studio-shortcuts", "version": 1, "name": name, "base": DEFAULT_PRESET, "overrides": overrides}))
     }
 
     /// Import an exported preset (renamed if the name is taken) and activate it.

@@ -5,10 +5,10 @@
 //! burning film, bump-mapped glass / plastic surfaces lit by an effect light, hexagonal tiling,
 //! a colour map sampled from the image itself); the maths is our own.
 
-use effectcraft_color::rgb_to_hsl;
-use effectcraft_keyframe::Value;
-use effectcraft_project::ParamUi;
-use effectcraft_raster::{Image, Px};
+use studio_color::rgb_to_hsl;
+use studio_keyframe::Value;
+use studio_project::ParamUi;
+use studio_raster::{Image, Px};
 use rayon::prelude::*;
 
 use crate::noise::fbm;
@@ -196,7 +196,7 @@ fn height_field(ctx: &EffectCtx, b: &Buf) -> Plane {
             1 => c[1],
             2 => c[2],
             3 => return a,
-            4 => effectcraft_color::luminance(c[0], c[1], c[2]),
+            4 => studio_color::luminance(c[0], c[1], c[2]),
             _ => rgb_to_hsl(c[0], c[1], c[2]).2,
         };
         v * a
@@ -410,7 +410,7 @@ fn smoothie(ctx: &EffectCtx, mut b: Buf) -> Buf {
             1 => c[1],
             2 => c[2],
             3 => a,
-            4 => effectcraft_color::luminance(c[0], c[1], c[2]),
+            4 => studio_color::luminance(c[0], c[1], c[2]),
             5 => rgb_to_hsl(c[0], c[1], c[2]).2,
             6 => rgb_to_hsl(c[0], c[1], c[2]).0,
             _ => rgb_to_hsl(c[0], c[1], c[2]).1,

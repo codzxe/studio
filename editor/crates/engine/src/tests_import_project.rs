@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use effectcraft_project::{Footage, FootageKind, ItemId, ItemKind, LayerSource, Project};
+use studio_project::{Footage, FootageKind, ItemId, ItemKind, LayerSource, Project};
 use serde_json::json;
 
 use crate::Session;
@@ -23,12 +23,12 @@ fn all_ids(p: &Project) -> Vec<u64> {
         if let ItemKind::Comp(c) = &it.kind {
             for l in &c.layers {
                 v.push(l.id.0);
-                fn uids(g: &effectcraft_project::PropGroup, v: &mut Vec<u64>) {
+                fn uids(g: &studio_project::PropGroup, v: &mut Vec<u64>) {
                     v.push(g.uid);
                     for c in &g.children {
                         match c {
-                            effectcraft_project::Node::Prop(p) => v.push(p.uid),
-                            effectcraft_project::Node::Group(g) => uids(g, v),
+                            studio_project::Node::Prop(p) => v.push(p.uid),
+                            studio_project::Node::Group(g) => uids(g, v),
                         }
                     }
                 }

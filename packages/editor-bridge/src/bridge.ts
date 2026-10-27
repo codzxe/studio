@@ -1,18 +1,18 @@
 /**
  * `attachEditorBridge` — the typed wrapper around the frozen editor iframe's
- * `window.effectcraft` global (PRODUCT_ARCHITECTURE §6.2).
+ * `window.studioEngine` global (PRODUCT_ARCHITECTURE §6.2).
  *
  * Verified against the shipped dist (READ-ONLY sources, v0.13.0):
- * - `window.effectcraft` + `window.effectcraftLoad = {}` are defined synchronously
+ * - `window.studioEngine` + `window.studioEngineLoad = {}` are defined synchronously
  *   by the inline module script in `apps/web/public/editor/index.html` (from
- *   `editor/apps/effectcraft-web/web/index.html`) before the wasm runs.
- * - `effectcraftLoad.wasmMs` is set once the module compiles, `readyMs` once
- *   `ec.start()` returns; on failure the page sets `effectcraftLoad.error =
+ *   `editor/apps/studio-web/web/index.html`) before the wasm runs.
+ * - `studioEngineLoad.wasmMs` is set once the module compiles, `readyMs` once
+ *   `ec.start()` returns; on failure the page sets `studioEngineLoad.error =
  *   String(e)` (and never `readyMs`). The upstream smoke test
- *   (`editor/apps/effectcraft-web/tests/smoke.mjs`) waits for
- *   `effectcraftLoad.readyMs || effectcraftLoad.error`.
+ *   (`editor/apps/studio-web/tests/smoke.mjs`) waits for
+ *   `studioEngineLoad.readyMs || studioEngineLoad.error`.
  * - `effectcraft.request`/`execute` reject with plain STRINGS
- *   (`editor/apps/effectcraft-web/src/api.rs`): "Studio is not running yet"
+ *   (`editor/apps/studio-web/src/api.rs`): "Studio is not running yet"
  *   (de-branded dist string) when the control channel is not up (transient,
  *   retry), "request dropped" when it disconnects. Errors from the control
  *   channel itself reject with that channel's `error` message.
@@ -40,10 +40,10 @@ import {
   type EditorEventName,
   type EditorInfo,
   EditorInfoSchema,
-  type EffectcraftGlobal,
-  type EffectcraftLoad,
-  EffectcraftLoadInfoSchema,
-  type EffectcraftWindow,
+  type StudioEngineGlobal,
+  type StudioEngineLoad,
+  StudioEngineLoadInfoSchema,
+  type StudioEngineWindow,
   type RenderFrameParams,
   type RenderFrameResult,
   RenderFrameResultSchema,
@@ -110,9 +110,9 @@ class EventBus {
   }
 }
 
-function contentWindowOf(iframe: HTMLIFrameElement): EffectcraftWindow | null {
+function contentWindowOf(iframe: HTMLIFrameElement): StudioEngineWindow | null {
   // The upstream surface is unknown-shaped; the structural cast only adds optional members.
-  return iframe.contentWindow as EffectcraftWindow | null;
+  return iframe.contentWindow as StudioEngineWindow | null;
 }
 
 function delay(ms: number): Promise<void> {
@@ -179,13 +179,13 @@ function withTimeout<T>(label: string, promise: Promise<T>, timeoutMs: number): 
 }
 
 /**
- * Poll for `effectcraftLoad.readyMs` (the dist sets it once `ec.start()`
- * returns) or fail fast on `effectcraftLoad.error` — the exact two signals
+ * Poll for `studioEngineLoad.readyMs` (the dist sets it once `ec.start()`
+ * returns) or fail fast on `studioEngineLoad.error` — the exact two signals
  * the shipped host page writes (`apps/web/public/editor/index.html`), and the
  * same pair the upstream smoke test waits for.
  *
  * The handshake is the one place the bridge polls: the dist exposes no ready
- * event, and `window.effectcraft` exists before the app runs. The `on(…)`
+ * event, and `window.studioEngine` exists before the app runs. The `on(…)`
  * event bus below never polls.
  */
 async function waitForReady(iframe: HTMLIFrameElement, readyTimeoutMs: number): Promise<void> {
@@ -193,7 +193,7 @@ async function waitForReady(iframe: HTMLIFrameElement, readyTimeoutMs: number): 
   for (;;) {
     const w = contentWindowOf(iframe);
     const ec = w?.effectcraft;
-    const load = w?.effectcraftLoad;
+    const load = w?.studioEngineLoad;
     if (ec && load) {
       // Order matters: the dist sets `error` on any boot failure and never
       // `readyMs`; if both are somehow present, the failure wins.
@@ -228,12 +228,12 @@ async function waitForReady(iframe: HTMLIFrameElement, readyTimeoutMs: number): 
 // Editor load state — the M3.7 failure seam (BUILD_PLAN §M3 task 7)
 // ---------------------------------------------------------------------------
 
-/** The editor wasm's boot phase, read from the dist's `effectcraftLoad`. */
+/** The editor wasm's boot phase, read from the dist's `studioEngineLoad`. */
 export type EditorLoadStatus = "loading" | "ready" | "failed";
 
 /**
  * A snapshot of the editor's boot state, taken from the shipped dist's
- * `window.effectcraftLoad` (`apps/web/public/editor/index.html`):
+ * `window.studioEngineLoad` (`apps/web/public/editor/index.html`):
  * `{}` while loading, `wasmMs` once the module compiled, `readyMs` once
  * `ec.start()` returned, `error` when the wasm failed to boot.
  */
@@ -264,9 +264,9 @@ export interface EditorLoadState {
  * `BridgeError` code `EDITOR_LOAD_FAILED` carrying the same `error` string.
  */
 export function editorLoadState(iframe: HTMLIFrameElement): EditorLoadState {
-  let load: EffectcraftLoad | undefined;
+  let load: StudioEngineLoad | undefined;
   try {
-    load = (iframe.contentWindow as EffectcraftWindow | null)?.effectcraftLoad;
+    load = (iframe.contentWindow as StudioEngineWindow | null)?.studioEngineLoad;
   } catch {
     return { status: "loading" }; // cross-origin: the dist's globals are not readable
   }
@@ -294,7 +294,7 @@ export function sameOrigin(iframe: HTMLIFrameElement): boolean {
 /**
  * A stable, filesystem-safe asset name (§6.3). The path the editor actually
  * assigns is what callers must keep — upstream `addFile` basename-es the
- * request (`editor/apps/effectcraft-web/src/files.rs` `path_for`).
+ * request (`editor/apps/studio-web/src/files.rs` `path_for`).
  *
  * Exported (additive, M8-F) so the render worker writes hydrated asset files
  * under EXACTLY the name the browser editor assigned — the `.ecproj` it must
@@ -315,7 +315,7 @@ export function sanitizeAssetName(name: string): string {
  * Realm-safe `Uint8Array` check for values minted INSIDE the editor iframe.
  *
  * The iframe (§6.1) is same-origin but a SEPARATE JS realm, and
- * `wasm-bindgen`'s `readFile` (editor/apps/effectcraft-web/src/api.rs
+ * `wasm-bindgen`'s `readFile` (editor/apps/studio-web/src/api.rs
  * `read_file`) returns a `Uint8Array` constructed from the IFRAME's
  * intrinsics. The host page's `v instanceof Uint8Array` is therefore `false`
  * even when the bytes are real — which made the M3.4/M5 save path
@@ -330,11 +330,11 @@ function isUint8Array(value: unknown): value is Uint8Array {
 }
 
 /**
- * Attach to the editor iframe. Resolves once `window.effectcraft` exists and
- * reports ready (`effectcraftLoad.readyMs`, or an optional `ready()` hook).
+ * Attach to the editor iframe. Resolves once `window.studioEngine` exists and
+ * reports ready (`studioEngineLoad.readyMs`, or an optional `ready()` hook).
  *
  * Rejects with a `BridgeError` when the editor cannot boot:
- * - `EDITOR_LOAD_FAILED` — the dist's `effectcraftLoad.error` is set (the wasm
+ * - `EDITOR_LOAD_FAILED` — the dist's `studioEngineLoad.error` is set (the wasm
  *   failed to boot; the `error` string is in the message). Use
  *   {@link editorLoadState} to observe this without awaiting the handshake.
  * - `EDITOR_NOT_READY` — the handshake timed out (default 60 s).
@@ -374,7 +374,7 @@ export function attachEditorBridge(
 
   async function call<T>(
     label: string,
-    fn: (ec: EffectcraftGlobal, w: EffectcraftWindow) => T | Promise<T>,
+    fn: (ec: StudioEngineGlobal, w: StudioEngineWindow) => T | Promise<T>,
     timeoutMs: number = callTimeoutMs,
   ): Promise<T> {
     try {
@@ -393,7 +393,7 @@ export function attachEditorBridge(
       if (!ec) {
         throw new BridgeError(
           "EDITOR_NOT_READY",
-          `${label}: window.effectcraft is missing (editor reloading?)`,
+          `${label}: window.studioEngine is missing (editor reloading?)`,
           true,
         );
       }
@@ -425,17 +425,17 @@ export function attachEditorBridge(
     const w = contentWindowOf(iframe);
     const ec = w?.effectcraft;
     if (!w || !ec) {
-      throw new BridgeError("EDITOR_NOT_READY", "info(): window.effectcraft is missing", true);
+      throw new BridgeError("EDITOR_NOT_READY", "info(): window.studioEngine is missing", true);
     }
     // info() is synchronous upstream; validate the bits the bridge relies on.
     const parsed = parseOr(EditorInfoSchema, "info", ec.info());
-    const load = parseOr(EffectcraftLoadInfoSchema, "info.load", w.effectcraftLoad ?? {});
+    const load = parseOr(StudioEngineLoadInfoSchema, "info.load", w.studioEngineLoad ?? {});
     return { ...parsed, load };
   }
 
   // -- window event wiring (no DOM polling; §6.2 event bus) ----------------
 
-  function attachWindowEvents(w: EffectcraftWindow): void {
+  function attachWindowEvents(w: StudioEngineWindow): void {
     const onFocus = () => bus.emit("focus", { focused: true, window: w });
     const onBlur = () => bus.emit("focus", { focused: false, window: w });
     const onResize = () =>
@@ -463,8 +463,8 @@ export function attachEditorBridge(
 
     const info = rawInfo();
     bus.emit("ready", {
-      readyMs: w.effectcraftLoad?.readyMs,
-      wasmMs: w.effectcraftLoad?.wasmMs,
+      readyMs: w.studioEngineLoad?.readyMs,
+      wasmMs: w.studioEngineLoad?.wasmMs,
       version: info.version,
     });
     if (opts.version !== undefined && !info.version.startsWith(opts.version)) {

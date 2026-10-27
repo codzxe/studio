@@ -14,13 +14,13 @@
 //! Every change runs an engine command (`text.*`, `layer.setText`, `edit.*`), so it's undoable and
 //! agents can do the same over the control channel.
 
-use effectcraft_engine::commands::text_edit::layer_doc;
-use effectcraft_engine::geom::{Mat3, vec2 as gv2};
-use effectcraft_engine::keyframe::{Kerning, TextDoc};
-use effectcraft_engine::project::{Layer, LayerId, LayerSource};
-use effectcraft_engine::render::EvalCtx;
-use effectcraft_engine::text::kurbo::Point;
-use effectcraft_engine::text::{TextLayout, layout_doc};
+use studio_engine::commands::text_edit::layer_doc;
+use studio_engine::geom::{Mat3, vec2 as gv2};
+use studio_engine::keyframe::{Kerning, TextDoc};
+use studio_engine::project::{Layer, LayerId, LayerSource};
+use studio_engine::render::EvalCtx;
+use studio_engine::text::kurbo::Point;
+use studio_engine::text::{TextLayout, layout_doc};
 use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, vec2};
 use serde_json::{Value, json};
 
@@ -114,7 +114,7 @@ fn edited(app: &EffectcraftApp, ectx: &EvalCtx, lid: LayerId) -> Option<Edited> 
     let lay = layout_doc(&doc);
     let m = super::viewer::l2c(ectx, &layer).0;
     let inv = m.inverse()?;
-    let carets = effectcraft_engine::render::text::caret_maps(ectx, &layer, lay.chars);
+    let carets = studio_engine::render::text::caret_maps(ectx, &layer, lay.chars);
     Some(Edited { layer, doc, lay, m, inv, carets })
 }
 
@@ -331,7 +331,7 @@ pub fn hook(
         let cur2 = app.session.state.text_edit.clone().and_then(|s| edited(app, ectx, s.layer));
         match cur2 {
             Some(e) if e.contains(map, p) => {
-                let r = effectcraft_engine::keyframe::text_doc::word_at(&e.doc.text, e.hit(map, p));
+                let r = studio_engine::keyframe::text_doc::word_at(&e.doc.text, e.hit(map, p));
                 exec(app, "text.setSelection", json!({"anchor": r.start, "caret": r.end}));
                 owns = true;
             }

@@ -35,7 +35,7 @@ pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 /// Records kept in memory until the session log is attached.
 pub const MAX_PENDING: usize = 512;
 /// The filter when `RUST_LOG` is unset or empty.
-pub const DEFAULT_FILTER: &str = "warn,effectcraft=info";
+pub const DEFAULT_FILTER: &str = "warn,studio=info";
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 /// The filter for standard error and the session log: (target prefix or every target, level).
@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(level_for(&f, "eframe::native"), LevelFilter::Info);
         assert_eq!(level_for(&f, "wgpu_hal::metal"), LevelFilter::Warn);
         assert_eq!(level_for(&f, "wgpu_core::device"), LevelFilter::Debug, "the longest matching target wins");
-        assert_eq!(level_for(&f, "effectcraft_ui_egui"), LevelFilter::Trace, "a bare target: every level");
+        assert_eq!(level_for(&f, "studio_ui_egui"), LevelFilter::Trace, "a bare target: every level");
         assert_eq!(f.len(), 4, "an unknown level is skipped");
         assert_eq!(level_for(&parse_filter("wgpu=debug"), "winit"), LevelFilter::Off);
         assert!(parse_filter("").is_empty());
@@ -332,7 +332,7 @@ mod tests {
 
     fn temp_dir(tag: &str) -> PathBuf {
         static N: AtomicUsize = AtomicUsize::new(0);
-        let d = std::env::temp_dir().join(format!("effectcraft-logging-{tag}-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+        let d = std::env::temp_dir().join(format!("studio-logging-{tag}-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
         let _ = std::fs::remove_dir_all(&d);
         d
     }
@@ -346,7 +346,7 @@ mod tests {
     fn the_default_filter_shows_effectcraft_info_and_other_crates_warnings() {
         let f = parse_filter(DEFAULT_FILTER);
         assert_eq!(level_for(&f, "effectcraft"), LevelFilter::Info);
-        assert_eq!(level_for(&f, "effectcraft_ui_egui::app"), LevelFilter::Info);
+        assert_eq!(level_for(&f, "studio_ui_egui::app"), LevelFilter::Info);
         assert_eq!(level_for(&f, "wgpu_core::device"), LevelFilter::Warn);
         assert_eq!(level_for(&f, "naga"), LevelFilter::Warn);
     }
@@ -432,8 +432,8 @@ mod tests {
     #[test]
     fn a_line_carries_time_level_thread_target_and_message() {
         assert_eq!(
-            format_line("2026-10-08T07:59:17.728Z", log::Level::Warn, "main", "effectcraft_engine::autosave", "disk full\n"),
-            "2026-10-08T07:59:17.728Z WARN  [main] effectcraft_engine::autosave: disk full"
+            format_line("2026-10-08T07:59:17.728Z", log::Level::Warn, "main", "studio_engine::autosave", "disk full\n"),
+            "2026-10-08T07:59:17.728Z WARN  [main] studio_engine::autosave: disk full"
         );
     }
 }

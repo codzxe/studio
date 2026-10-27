@@ -8,9 +8,9 @@
 //!
 //! Automation ids: `viewer.gradientPoint.<uid>` (the Start Point / End Point property's uid).
 
-use effectcraft_engine::geom::Mat3;
-use effectcraft_engine::project::{Layer, LayerId, Node, PropGroup, Property};
-use effectcraft_engine::render::EvalCtx;
+use studio_engine::geom::Mat3;
+use studio_engine::project::{Layer, LayerId, Node, PropGroup, Property};
+use studio_engine::render::EvalCtx;
 use egui::{Color32, Rect, Sense, Stroke, vec2};
 use serde_json::json;
 
@@ -68,7 +68,7 @@ pub fn viewer_hook(
         let m = l2c(ectx, layer);
         for g in paints.into_iter().filter(|g| selected_in(g, layer.id, &selected_props)) {
             // Gradient (group) space → comp: the enclosing groups' transforms, then the layer's.
-            let pm = m * effectcraft_engine::render::shapes::item_matrix(ectx, layer, g.uid).unwrap_or(Mat3::IDENTITY);
+            let pm = m * studio_engine::render::shapes::item_matrix(ectx, layer, g.uid).unwrap_or(Mat3::IDENTITY);
             let pts: Vec<&Property> = ["start", "end"].iter().filter_map(|k| g.get(k)).collect();
             let screen: Vec<egui::Pos2> = pts.iter().map(|pr| map.to_screen(fw::layer_to_comp(&pm, ectx.value(layer, pr).as_vec2()))).collect();
             if let [a, b] = screen[..] {

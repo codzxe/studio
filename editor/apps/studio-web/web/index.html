@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#1b1c1f">
+  <meta name="description" content="Studio: motion graphics and visual effects in the browser">
+  <title>Studio</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-256.png">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1c1f; }
+    canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+    #loading {
+      position: absolute; inset: 0; display: flex; flex-direction: column; gap: 14px;
+      align-items: center; justify-content: center; color: #c9c9cc;
+      font: 14px/1.4 system-ui, sans-serif; pointer-events: none;
+    }
+    #loading img { width: 56px; height: 56px; }
+    #loading .err { color: #ff8a7a; white-space: pre-wrap; max-width: 70ch; pointer-events: auto; }
+    #device-lost {
+      position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px;
+      align-items: center; justify-content: center; padding: 16px; text-align: center;
+      background: rgb(18 18 18 / 0.85); color: #c8c8c8; font: 14px/1.4 system-ui, sans-serif;
+    }
+    #device-lost strong { color: #e3e3e3; font-size: 16px; }
+    #device-lost p { margin: 0; max-width: 60ch; }
+    #device-lost small { color: #8c8c8c; font-size: 12px; }
+    #device-lost div { display: flex; gap: 8px; }
+    #device-lost button {
+      padding: 6px 14px; border: 1px solid #3a3a3a; border-radius: 4px;
+      background: #232323; color: #e3e3e3; font: inherit; cursor: pointer;
+    }
+    #device-lost button:hover { background: #303030; }
+    #device-lost button:last-child { background: #2d8ceb; border-color: #2d8ceb; }
+    #device-lost button:last-child:hover { background: #4aa0f5; }
+    #device-lost button:disabled { opacity: 0.6; cursor: default; }
+  </style>
+</head>
+<body>
+  <canvas id="studio_canvas"></canvas>
+  <div id="loading"><img src="favicon.svg" alt=""><div id="status">Loading Studio…</div></div>
+  <script type="module">
+    import init, * as ec from "./studio_web.js";
+    const t0 = performance.now();
+    window.studioEngineLoad = {};
+    // Poison-pill hygiene (M3 tail 6): older local builds wrote a PERMANENT
+    // localStorage marker on device loss (`studio_force_webgl`), trapping every
+    // later boot in WebGL2 even after the machine's driver was fixed — and once
+    // WebGL2 itself failed, the boot died with "Neither WebGPU nor WebGL is
+    // available". THIS build's breaker is sessionStorage-only by design (a
+    // one-off crash must never become a machine-wide verdict; see
+    // apps/web/src/lib/editor-gpu-fallback.ts) and never reads that legacy
+    // key — remove it so a stale flag from an older build cannot leak back in.
+    try {
+      localStorage.removeItem("studio_force_webgl");
+      sessionStorage.removeItem("studio_force_webgl");
+    } catch {
+      // Storage blocked: nothing to wipe.
+    }
+    // The agent / test API: the desktop control channel as promises (docs/web.md).
+    window.studioEngine = {
+      request: (method, params) => ec.request(method, params ?? {}),
+      execute: (command, params) => ec.request("engine.execute", { command, params: params ?? {} }),
+      commands: () => ec.request("engine.commands", {}),
+      inspect: () => ec.request("ui.inspect", {}),
+      screenshot: (params) => ec.request("ui.screenshot", params ?? {}),
+      renderFrame: (params) => ec.request("render.frame", { base64: true, ...(params ?? {}) }),
+      files: () => ec.files(),
+      readFile: (path) => ec.readFile(path),
+      addFile: async (fileOrUrl, name) => {
+        let bytes;
+        if (typeof fileOrUrl === "string") {
+          bytes = new Uint8Array(await (await fetch(fileOrUrl)).arrayBuffer());
+          name = name ?? fileOrUrl.split("/").pop();
+        } else {
+          bytes = new Uint8Array(await fileOrUrl.arrayBuffer());
+          name = name ?? fileOrUrl.name;
+        }
+        return ec.addFile(name, bytes);
+      },
+      info: () => ({
+        ...ec.info(),
+        crossOriginIsolated: self.crossOriginIsolated,
+        webgpu: !!navigator.gpu,
+        serviceWorker: (() => {
+          try {
+            return !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+          } catch {
+            return false;
+          }
+        })(),
+        load: window.studioEngineLoad,
+      }),
+      // Browser storage (OPFS / IndexedDB): save without downloading, list, remove, wait for writes.
+      saveToBrowser: (path) => ec.saveToBrowser(path ?? undefined),
+      listStored: () => ec.listStored(),
+      removeStored: (path) => ec.removeStored(path),
+      flush: () => ec.flush(),
+      // A frame rendered in a frame worker (its GPU by default) vs the page's CPU: {maxDiff, meanDiff, over4, …}.
+      workerFrameCheck: (params) => ec.workerFrameCheck(params ?? {}).then(JSON.parse),
+    };
+    // Offline start and install (PWA): the service worker caches the app's files.
+    if (!new URLSearchParams(location.search).has("nosw")) {
+      try {
+        if ("serviceWorker" in navigator && navigator.serviceWorker) {
+          navigator.serviceWorker.register("sw.js").catch((e) => console.warn("service worker:", e));
+        }
+      } catch (e) {
+        console.warn("service worker:", e);
+      }
+    }
+    const gpu = navigator.gpu;
+    // GPU compatibility mode (M3 tail 6): a WebGPU device lost earlier in this
+    // tab session — Chrome's "A valid external Instance reference no longer
+    // exists" class, a Dawn/WebGPU failure that a reload cannot fix (WebGL2
+    // rides ANGLE/D3D11, a different driver path). The Studio host's recovery
+    // armed the marker in sessionStorage (shared with a same-origin iframe);
+    // `?gpu=webgl2` is the same switch for direct visits.
+    const gpuParams = new URLSearchParams(location.search);
+    let gpuFallback = gpuParams.get("gpu") === "webgl2";
+    try {
+      gpuFallback = gpuFallback || sessionStorage.getItem("studio:editor-gpu-fallback") === "1";
+    } catch {
+      // Storage blocked: boot the default way.
+    }
+    if (gpuFallback) {
+      // Normalize the URL so the engine AND any reload keep the mode:
+      // `nogpuworkers` makes the frame/job workers render on their CPU (their
+      // own WebGPU devices would die the same way the presentation device
+      // did). replaceState: no navigation, no history entry.
+      if (!gpuParams.has("nogpuworkers") && !gpuParams.has("noworkers")) {
+        gpuParams.set("gpu", "webgl2");
+        gpuParams.set("nogpuworkers", "");
+        history.replaceState(null, "", `?${gpuParams}${location.hash}`);
+      }
+      // "No WebGPU" for BOTH the pre-flight below and the engine's wgpu: the
+      // proven no-adapter path takes the WebGL2 context first and egui-wgpu
+      // falls back to its WebGL backend.
+      if (gpu && typeof gpu.requestAdapter === "function") {
+        gpu.requestAdapter = () => Promise.resolve(null);
+        gpu.__studioHighPerformance = true;
+      }
+    }
+    // Windows + Dawn/D3D12: the engine boots a WebGPU device on the page PLUS
+    // one per frame/job worker (app.rs defaults to 2 workers). Three concurrent
+    // devices on one adapter trip a Chromium-on-Windows concurrency bug —
+    // "GPU device lost (Unknown): A valid external Instance reference no
+    // longer exists", one worker's instance handle invalidating the parent's.
+    // macOS and Linux are unaffected. Boot Windows with NO GPU workers (the
+    // main device stays WebGPU on the discrete card — no WebGL2 downgrade)
+    // unless the URL explicitly opts back in with `?workers=2`.
+    const onWindows =
+      navigator.platform === "Win32" || /Windows/.test(navigator.userAgent);
+    if (
+      !gpuFallback &&
+      onWindows &&
+      !gpuParams.has("noworkers") &&
+      !gpuParams.has("nogpuworkers") &&
+      !gpuParams.has("workers")
+    ) {
+      // Same normalization as the fallback above: the engine reads its OWN
+      // URL (query_flag), and any reload keeps the safer boot. No `gpu`
+      // change — WebGPU itself is fine for the single presentation device.
+      gpuParams.set("noworkers", "");
+      history.replaceState(null, "", `?${gpuParams}${location.hash}`);
+    }
+    // Ask for the high-performance GPU on every WebGPU adapter request that does not
+    // name a preference: wgpu/eframe send none by default, so hybrid-graphics laptops
+    // (an iGPU plus a discrete card) boot the editor on the power-saving iGPU. The
+    // wrapper only fills in what the caller left unset.
+    if (gpu && typeof gpu.requestAdapter === "function" && !gpu.__studioHighPerformance) {
+      const originalRequestAdapter = gpu.requestAdapter.bind(gpu);
+      gpu.requestAdapter = (options) =>
+        originalRequestAdapter(
+          options && options.powerPreference ? options : { ...(options ?? {}), powerPreference: "high-performance" },
+        );
+      gpu.__studioHighPerformance = true;
+    }
+    try {
+      const status = document.getElementById("status");
+      const say = (text) => { if (status) status.textContent = text; };
+      // GPU pre-flight, before the engine download. This build prefers WebGPU at
+      // runtime and falls back to WebGL2:
+      // - A WebGPU adapter answers -> leave the canvas alone; the engine boots
+      //   WebGPU (the adapter shim above picks the discrete GPU).
+      // - No adapter -> the engine will run WebGL2: take the context FIRST with
+      //   wgpu's own attribute (antialias: false) plus the high-performance hint.
+      //   The first getContext decides the GPU; wgpu's later call reuses our
+      //   context instead of creating one without a preference.
+      // - WebGL2 unavailable too -> fail NOW with the remedy, not after the whole
+      //   engine download. On machines with a GPU this almost always means the
+      //   browser's hardware acceleration is off.
+      let webgpu = false;
+      let adapter = null;
+      try {
+        adapter = (await gpu?.requestAdapter?.({ powerPreference: "high-performance" })) ?? null;
+      } catch {
+        adapter = null;
+      }
+      webgpu = adapter != null;
+      const gpuInfo = { webgpu, webgl2: false, renderer: "", software: false, fallback: gpuFallback };
+      if (adapter) {
+        // Hybrid-graphics visibility: record WHICH adapter the engine got
+        // (`adapter.info` on Chromium 128+, the async requestAdapterInfo on
+        // older builds) so a laptop booting the power-saving iGPU instead of
+        // the discrete card is diagnosable from `studioEngineLoad.gpu.adapter`
+        // without opening chrome://gpu.
+        try {
+          const info =
+            adapter.info ?? (typeof adapter.requestAdapterInfo === "function" ? await adapter.requestAdapterInfo() : null);
+          if (info) {
+            gpuInfo.adapter = {
+              vendor: String(info.vendor ?? ""),
+              architecture: String(info.architecture ?? ""),
+              device: String(info.device ?? ""),
+              description: String(info.description ?? ""),
+            };
+            const label = gpuInfo.adapter.description || gpuInfo.adapter.architecture || gpuInfo.adapter.vendor;
+            if (label) console.info(`Studio engine GPU: ${label}`);
+          }
+        } catch {
+          // Adapter info is optional metadata — never a boot blocker.
+        }
+      }
+      if (!webgpu) {
+        const canvas = document.getElementById("studio_canvas");
+        const gl = canvas && canvas.getContext("webgl2", { antialias: false, powerPreference: "high-performance" });
+        gpuInfo.webgl2 = !!gl;
+        if (gl) {
+          const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+          if (dbg) {
+            gpuInfo.renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+            gpuInfo.software = /swiftshader|llvmpipe|softpipe|software/i.test(gpuInfo.renderer);
+          }
+          if (gpuInfo.software) {
+            say("GPU acceleration is off in this browser — running in software…");
+          }
+        } else {
+          const message =
+            "WebGL2 is not available in this browser, so the editor cannot start. " +
+            "Turn on hardware acceleration (Chrome/Edge: Settings > System > " +
+            '"Use graphics acceleration when available", then relaunch) and retry.';
+          window.studioEngineLoad.error = message;
+          if (status) {
+            status.className = "err";
+            status.textContent = message;
+          }
+          throw new Error(message);
+        }
+      }
+      window.studioEngineLoad.gpu = gpuInfo;
+      // The engine module: the host page (same-origin) may have started the
+      // download + compile in parallel with this iframe — adopt its module
+      // instead of downloading again. Any problem falls back to our own fetch.
+      let module;
+      try {
+        const warm = window.parent !== window ? window.parent.__studioEditorWasm : undefined;
+        if (warm instanceof Promise) module = await warm;
+      } catch {
+        // The host's warm-up died; boot our own copy.
+      }
+      if (!module) {
+        // Compile once: the page and its render workers instantiate the same module.
+        const wasmUrl = new URL("studio_web_bg.wasm", location.href);
+        say("Downloading Studio…");
+        try {
+          module = await WebAssembly.compileStreaming(fetch(wasmUrl));
+        } catch {
+          module = await WebAssembly.compile(await (await fetch(wasmUrl)).arrayBuffer());
+        }
+      }
+      window.studioEngineModule = module;
+      say("Starting Studio…");
+      await init({ module_or_path: module });
+      window.studioEngineLoad.wasmMs = performance.now() - t0;
+      await ec.start("studio_canvas");
+      window.studioEngineLoad.readyMs = performance.now() - t0;
+    } catch (e) {
+      const s = document.getElementById("status");
+      // A pre-flight failure keeps its plain-language message and status text;
+      // everything else keeps the original stack trace.
+      if (s && !window.studioEngineLoad.error) {
+        s.className = "err";
+        s.textContent = "Studio failed to start:\n" + (e && e.stack || e);
+      }
+      window.studioEngineLoad.error = window.studioEngineLoad.error ?? String(e);
+      throw e;
+    }
+  </script>
+</body>
+</html>

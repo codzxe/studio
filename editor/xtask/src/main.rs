@@ -1,20 +1,18 @@
-//! Workspace automation: `cargo xtask <layers|assets|pdf-deps|wasm|web|ico|ci>`.
+//! Workspace automation: `cargo xtask <layers|assets|pdf-deps|wasm|web|ci>`.
 //!
 //! - `layers`: enforces the dependency layering of `docs/architecture.md` §1 (downward-only edges,
 //!   listed same-layer edges, no UI/OS crates below L5).
 //! - `wasm`: `cargo check --target wasm32-unknown-unknown` for every crate in L0–L4, the egui UI
 //!   and the web app.
-//! - `web [--dev] [--serve PORT]`: build the web app (`apps/effectcraft-web`) into
+//! - `web [--dev] [--serve PORT]`: build the web app (`apps/studio-web`) into
 //!   `<target>/web/dist` with `wasm-bindgen` (docs/web.md); `--serve` serves it on localhost.
 //! - `assets`: every asset file (image, icon, font, LUT, audio, video…) has a complete
 //!   `<file>.attribution` sidecar and an entry in `ATTRIBUTION.md` (AGENTS.md §1).
-//! - `ico <out.ico> <in.png>…`: pack PNGs into a Windows `.ico` (used by `packaging/icons.sh`).
 //! - `ci`: fmt check, clippy -D warnings, tests, PDF dependency policy, layers, assets, wasm.
 //! - `bench [--bin CLI] [--quick] [--compare OLD.jsonl] …`: render benchmark of generated scenarios
 //!   (memory, CPU, wall time) into `target/bench/results.jsonl` (`bench.rs`, docs/testing.md).
 
 mod bench;
-mod ico;
 mod pdf_deps;
 mod version;
 
@@ -24,6 +22,7 @@ use serde_json::Value;
 
 /// (crate name without the `effectcraft-` prefix, layer). See `docs/architecture.md` §1.
 const LAYERS: &[(&str, u8)] = &[
+    ("brand", 0),
     ("time", 0),
     ("geom", 0),
     ("color", 0),
@@ -58,7 +57,6 @@ const LAYERS: &[(&str, u8)] = &[
     ("host", 4),
     ("ui-egui", 5),
     ("automation", 5),
-    ("effectcraft", 6),
     ("cli", 6),
     ("web", 6),
 ];
@@ -83,7 +81,6 @@ const SAME_LAYER: &[(&str, &str)] = &[
     ("host", "engine"),
     ("script", "engine"),
     ("host", "script"),
-    ("cli", "effectcraft"),
 ];
 
 /// Crates that must not appear below L5 (UI toolkits, windowing, OS audio/menus).
@@ -230,7 +227,7 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 }
 
 /// Crates above L4 that must also build for the web.
-const WEB_CRATES: &[&str] = &["effectcraft-ui-egui", "effectcraft-web"];
+const WEB_CRATES: &[&str] = &["studio-ui-egui", "studio-web"];
 
 fn wasm() -> Result<(), String> {
     let md = metadata()?;
@@ -264,7 +261,7 @@ fn web(args: &[String]) -> Result<(), String> {
     let serve = args.iter().position(|a| a == "--serve").map(|i| args.get(i + 1).and_then(|p| p.parse::<u16>().ok()).unwrap_or(8765));
     let profile = if dev { "dev" } else { "release" };
     let mut build = Command::new(env!("CARGO"));
-    build.args(["build", "--target", "wasm32-unknown-unknown", "-p", "effectcraft-web", "--profile", profile]);
+    build.args(["build", "--target", "wasm32-unknown-unknown", "-p", "studio-web", "--profile", profile]);
     run(&mut build)?;
     let out = Command::new("wasm-bindgen")
         .arg("--version")
@@ -278,15 +275,15 @@ fn web(args: &[String]) -> Result<(), String> {
         ));
     }
     let dir = if dev { "debug" } else { "release" };
-    let wasm = target_dir().join("wasm32-unknown-unknown").join(dir).join("effectcraft_web.wasm");
+    let wasm = target_dir().join("wasm32-unknown-unknown").join(dir).join("studio_web.wasm");
     let dist = target_dir().join("web").join("dist");
     let _ = std::fs::remove_dir_all(&dist);
     std::fs::create_dir_all(&dist).map_err(|e| e.to_string())?;
     run(Command::new("wasm-bindgen").args(["--target", "web", "--no-typescript", "--out-dir"]).arg(&dist).arg(&wasm))?;
-    let bg = dist.join("effectcraft_web_bg.wasm");
+    let bg = dist.join("studio_web_bg.wasm");
     if !dev && Command::new("wasm-opt").arg("--version").output().is_ok() {
         // optional: smaller and faster (binaryen); skipped when not installed
-        let opt = dist.join("effectcraft_web_opt.wasm");
+        let opt = dist.join("studio_web_opt.wasm");
         run(Command::new("wasm-opt")
             .args(["-O2", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-sign-ext", "--enable-mutable-globals"])
             .arg(&bg)
@@ -294,7 +291,7 @@ fn web(args: &[String]) -> Result<(), String> {
             .arg(&opt))?;
         std::fs::rename(&opt, &bg).map_err(|e| e.to_string())?;
     }
-    let web = std::path::Path::new("apps/effectcraft-web/web");
+    let web = std::path::Path::new("apps/studio-web/web");
     for e in std::fs::read_dir(web).map_err(|e| e.to_string())?.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         if !name.ends_with(".attribution") {
@@ -427,15 +424,11 @@ fn main() -> ExitCode {
         "ci" => ci(),
         "web" => web(&std::env::args().skip(2).collect::<Vec<_>>()),
         "bench" => bench::run(&root(), &std::env::args().skip(2).collect::<Vec<_>>()),
-        "ico" => {
-            let rest: Vec<String> = std::env::args().skip(2).collect();
-            ico::run(&rest.iter().map(String::as_str).collect::<Vec<_>>())
-        }
         "version" => {
             let rest: Vec<String> = std::env::args().skip(2).collect();
             version::run(&root(), &rest.iter().map(String::as_str).collect::<Vec<_>>())
         }
-        _ => Err("usage: cargo xtask <layers|assets|pdf-deps|wasm|web [--dev] [--serve PORT]|ico OUT.ico IN.png…|version [set X.Y.Z]|ci|bench [--bin CLI] [--quick] [--project F --comp C] [--compare OLD.jsonl] (--help)>".into()),
+        _ => Err("usage: cargo xtask <layers|assets|pdf-deps|wasm|web [--dev] [--serve PORT]|version [set X.Y.Z]|ci|bench [--bin CLI] [--quick] [--project F --comp C] [--compare OLD.jsonl] (--help)>".into()),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,

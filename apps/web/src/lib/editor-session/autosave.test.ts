@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { setTimeout as realSleep } from "node:timers/promises";
 import vm from "node:vm";
 import { type EditorBridge, attachEditorBridge } from "@studio/editor-bridge";
-import type { EffectcraftGlobal, EffectcraftWindow } from "@studio/editor-bridge";
+import type { StudioEngineGlobal, StudioEngineWindow } from "@studio/editor-bridge";
 import { type FakeEditor, attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -494,7 +494,7 @@ describe("createAutosaveController", () => {
 describe("createAutosaveController — cross-realm editor bytes (W3-C1)", () => {
   /**
    * The REAL editor iframe is same-origin but a SEPARATE JS realm, and
-   * wasm-bindgen's `readFile` (editor/apps/effectcraft-web/src/api.rs) mints
+   * wasm-bindgen's `readFile` (editor/apps/studio-web/src/api.rs) mints
    * its `Uint8Array` from the IFRAME's intrinsics — so a host-page
    * `instanceof Uint8Array` is `false` for real editor bytes. The old bridge
    * guard read exactly that as "no file at …", so an agent apply applied in
@@ -523,7 +523,7 @@ describe("createAutosaveController — cross-realm editor bytes (W3-C1)", () => 
     };
     const iframe = document.createElement("iframe");
     document.body.appendChild(iframe);
-    const w = iframe.contentWindow as EffectcraftWindow;
+    const w = iframe.contentWindow as StudioEngineWindow;
     w.effectcraft = {
       request: () => Promise.resolve({}),
       execute: (command: string) =>
@@ -542,8 +542,8 @@ describe("createAutosaveController — cross-realm editor bytes (W3-C1)", () => 
       removeStored: () => true,
       flush: () => Promise.resolve(),
       workerFrameCheck: () => Promise.resolve({}),
-    } as unknown as EffectcraftGlobal;
-    w.effectcraftLoad = { wasmMs: 1, readyMs: 2 };
+    } as unknown as StudioEngineGlobal;
+    w.studioEngineLoad = { wasmMs: 1, readyMs: 2 };
     const bridge = await attachEditorBridge(iframe);
 
     const fakeClient = createFakeEditorSessionClient();

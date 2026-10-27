@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use effectcraft_project::Project;
+use studio_project::Project;
 use serde_json::{Value, json};
 
 use crate::Session;

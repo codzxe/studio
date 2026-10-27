@@ -3,11 +3,11 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use effectcraft_engine::{
+use studio_engine::{
     Session,
     media_browser::{Browser, Entry, VirtualTree},
 };
-use effectcraft_ui_egui::{EffectcraftApp, dock::PanelKind};
+use studio_ui_egui::{EffectcraftApp, dock::PanelKind};
 use egui::{Event, Modifiers, PointerButton, pos2};
 use egui_kittest::Harness;
 use serde_json::{Value, json};

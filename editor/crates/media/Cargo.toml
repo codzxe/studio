@@ -1,5 +1,5 @@
 [package]
-name = "effectcraft-media"
+name = "studio-media"
 description = "Footage import: probing, stills, image sequences, video and audio via FilmCraft's pure-Rust codecs, memory-budgeted frame cache"
 version.workspace = true
 edition.workspace = true
@@ -11,14 +11,14 @@ workspace = true
 
 [dependencies]
 craft-docpath = { workspace = true }
-effectcraft-time = { workspace = true }
-effectcraft-project = { workspace = true }
-effectcraft-raster = { workspace = true }
-effectcraft-render = { workspace = true }
-effectcraft-psd = { workspace = true }
-effectcraft-svg = { workspace = true }
-effectcraft-pdf = { workspace = true }
-effectcraft-model = { workspace = true }
+studio-time = { workspace = true }
+studio-project = { workspace = true }
+studio-raster = { workspace = true }
+studio-render = { workspace = true }
+studio-psd = { workspace = true }
+studio-svg = { workspace = true }
+studio-pdf = { workspace = true }
+studio-model = { workspace = true }
 filmcraft-codecs = { workspace = true }
 filmcraft-media = { workspace = true }
 filmcraft-isobmff = { workspace = true }

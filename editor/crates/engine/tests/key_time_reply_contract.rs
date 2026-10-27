@@ -1,7 +1,7 @@
 //! Omitted time bases retain existing result shapes even for valid keys outside [in, out).
-use effectcraft_engine::Session;
-use effectcraft_project::LayerId;
-use effectcraft_time::Tick;
+use studio_engine::Session;
+use studio_project::LayerId;
+use studio_time::Tick;
 use serde_json::{Value, json};
 
 const LAYER_TIME: f64 = 15.3;

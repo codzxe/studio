@@ -1,6 +1,6 @@
 //! A form keeps its fields and its buttons inside the dialog, whatever a choice's text is (#978).
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::{Dialog, EffectcraftApp, menus};
+use studio_engine::Session;
+use studio_ui_egui::{Dialog, EffectcraftApp, menus};
 use egui::{Rect, pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;

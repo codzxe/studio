@@ -2,11 +2,11 @@
 //! Controls draw the catalog's name, while the effect ids, the property tree's group name, the
 //! automation labels and `effect.list` stay English.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::LayerId;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
-use effectcraft_ui_egui::native_menu::{NativeNode, build as native_menu};
+use studio_engine::Session;
+use studio_engine::project::LayerId;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
+use studio_ui_egui::native_menu::{NativeNode, build as native_menu};
 use egui::vec2;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;

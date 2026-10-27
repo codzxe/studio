@@ -19,11 +19,11 @@
 //! handle registers an automation id.
 
 use crate::i18n::{tr, tr_args};
-use effectcraft_engine::effects::{ColoramaPalette, OffsetCurve};
-use effectcraft_engine::geom::Mat3;
-use effectcraft_engine::keyframe::Value;
-use effectcraft_engine::project::{GroupKind, Layer, PropGroup};
-use effectcraft_engine::render::EvalCtx;
+use studio_engine::effects::{ColoramaPalette, OffsetCurve};
+use studio_engine::geom::Mat3;
+use studio_engine::keyframe::Value;
+use studio_engine::project::{GroupKind, Layer, PropGroup};
+use studio_engine::render::EvalCtx;
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::json;
 
@@ -457,11 +457,11 @@ fn colorama_wheel(
     let euid = root.uid;
     let prefix = format!("effectControls.effect.{euid}.colorama");
     let preset = g.get("usePresetPalette").map(|pr| ectx.value(layer, pr).as_enum()).unwrap_or(0);
-    let custom = preset as usize == effectcraft_engine::effects::COLORAMA_PRESETS.len() - 1;
+    let custom = preset as usize == studio_engine::effects::COLORAMA_PRESETS.len() - 1;
     let interp = g.get("interpolatePalette").is_none_or(|pr| ectx.value(layer, pr).as_bool());
     let pal = if custom { ColoramaPalette::parse(&str_value(layer, ectx, g, "palette")) } else { None }.unwrap_or_else(|| ColoramaPalette::preset(preset));
     let x0 = r.min.x + 38.0;
-    let label = if custom { "Custom palette" } else { effectcraft_engine::effects::COLORAMA_PRESETS.get(preset as usize).copied().unwrap_or("Preset") };
+    let label = if custom { "Custom palette" } else { studio_engine::effects::COLORAMA_PRESETS.get(preset as usize).copied().unwrap_or("Preset") };
     p.text(pos2(x0, r.min.y + 15.0), Align2::LEFT_CENTER, tr_args("Output Cycle: {}", &[&label]), Tokens::ui(11.5), t.text_dim);
     let size = wheel_size(r.width());
     let c = pos2(x0 + size / 2.0, r.min.y + 30.0 + size / 2.0);
@@ -603,7 +603,7 @@ fn colorama_wheel(
         if !custom && let Some(pr) = g.get("usePresetPalette") {
             actions.push((
                 "prop.set".into(),
-                json!({"layer": layer.id.0, "prop": pr.uid, "value": effectcraft_engine::effects::COLORAMA_PRESETS.len() - 1, "merge": key}),
+                json!({"layer": layer.id.0, "prop": pr.uid, "value": studio_engine::effects::COLORAMA_PRESETS.len() - 1, "merge": key}),
             ));
         }
         set_str(actions, layer, g, "palette", format_palette(&st), Some(key));
@@ -669,7 +669,7 @@ fn glow_map(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, laye
     let (loops, phase, mid) = (num("colorLoops") as f32, (num("colorPhase") / 360.0) as f32, (num("abMidpoint") / 100.0) as f32);
     let map = split_map(&str_value(layer, ectx, g, "arbitraryMap"));
     let color_at = |l: f32| -> Color32 {
-        let tt = effectcraft_engine::effects::glow_ab_t(l, looping, loops, phase, mid);
+        let tt = studio_engine::effects::glow_ab_t(l, looping, loops, phase, mid);
         if mode == 2 {
             Color32::from_rgb(
                 (map[0].eval(tt).clamp(0.0, 1.0) * 255.0) as u8,
@@ -819,14 +819,14 @@ const EXTRACTOR_CHANNELS: [&str; 4] = ["red", "green", "blue", "alpha"];
 const NO_CHANNEL: &str = "(none)";
 
 /// Whether `prop` (in group `g`) is one of EXtractoR's channel parameters.
-pub fn is_extractor_channel(g: &PropGroup, prop: &effectcraft_engine::project::Property) -> bool {
+pub fn is_extractor_channel(g: &PropGroup, prop: &studio_engine::project::Property) -> bool {
     matches!(&g.kind, GroupKind::Effect { effect } if effect == EXTRACTOR) && EXTRACTOR_CHANNELS.contains(&prop.match_id.as_str())
 }
 
 /// The OpenEXR layer EXtractoR's red, green and blue come from (`""`: the unnamed layer), or
 /// `None` when they mix layers.
 fn extractor_layer(vals: &[String; 4]) -> Option<&str> {
-    let mut layers = vals[..3].iter().filter(|v| !v.trim().is_empty()).map(|v| effectcraft_engine::raster::channels3d::split_channel(v.trim()).0);
+    let mut layers = vals[..3].iter().filter(|v| !v.trim().is_empty()).map(|v| studio_engine::raster::channels3d::split_channel(v.trim()).0);
     let first = layers.next()?;
     layers.all(|l| l == first).then_some(first)
 }
@@ -891,7 +891,7 @@ pub fn channel_popup(
     app: &mut EffectcraftApp,
     ui: &mut egui::Ui,
     layer: &Layer,
-    prop: &effectcraft_engine::project::Property,
+    prop: &studio_engine::project::Property,
     cur: &str,
     r: Rect,
     actions: &mut Actions,
@@ -925,7 +925,7 @@ pub fn nearest_fraction(pts: &[[f64; 2]], closed: bool, q: [f64; 2]) -> f64 {
     if n < 2 {
         return 0.0;
     }
-    let total = effectcraft_engine::effects::util::poly_length(pts, closed).max(1e-9);
+    let total = studio_engine::effects::util::poly_length(pts, closed).max(1e-9);
     let segs = if closed { n } else { n - 1 };
     let (mut best, mut best_s, mut acc) = (f64::INFINITY, 0.0, 0.0);
     for i in 0..segs {
@@ -959,7 +959,7 @@ pub fn reshape_overlay(
     m: &Mat3,
     actions: &mut Actions,
 ) {
-    let shapes = effectcraft_engine::render::masks::shapes(ectx, layer);
+    let shapes = studio_engine::render::masks::shapes(ectx, layer);
     let mask = |id: &str| -> Option<(Vec<[f64; 2]>, bool)> {
         let i = g.get(id).map(|pr| ectx.value(layer, pr).as_enum()).unwrap_or(0) as usize;
         let s = shapes.get(i.checked_sub(1)?)?;
@@ -978,8 +978,8 @@ pub fn reshape_overlay(
     outline(&src.0, src.1, ys);
     outline(&dst.0, dst.1, cs);
     let at = |pts: &[[f64; 2]], closed: bool, f: f64| {
-        let len = effectcraft_engine::effects::util::poly_length(pts, closed);
-        effectcraft_engine::effects::util::poly_point_at(pts, closed, f * len).0
+        let len = studio_engine::effects::util::poly_length(pts, closed);
+        studio_engine::effects::util::poly_point_at(pts, closed, f * len).0
     };
     let raw = match g.get("correspondencePoints").map(|pr| ectx.value(layer, pr)) {
         Some(Value::Str(s)) => s,
@@ -1031,7 +1031,7 @@ fn mesh_grid(layer: &Layer, ectx: &EvalCtx, g: &PropGroup) -> (usize, usize, Vec
     };
     let (rows, cols) = (n("rows"), n("columns"));
     let count = (rows + 1) * (cols + 1);
-    let mut offs = effectcraft_engine::effects::parse_mesh(&str_value(layer, ectx, g, "mesh"));
+    let mut offs = studio_engine::effects::parse_mesh(&str_value(layer, ectx, g, "mesh"));
     if offs.len() != count {
         offs = vec![(0.0, 0.0); count];
     }
@@ -1121,7 +1121,7 @@ mod tests {
         let offs = vec![(0.0, 0.0), (12.5, -3.25), (1.0 / 3.0, f64::NAN)];
         let s = format_mesh(&offs);
         assert_eq!(s, "0,0 12.5,-3.25 0.333,0");
-        assert_eq!(effectcraft_engine::effects::parse_mesh(&s), vec![(0.0, 0.0), (12.5, -3.25), (0.333, 0.0)]);
+        assert_eq!(studio_engine::effects::parse_mesh(&s), vec![(0.0, 0.0), (12.5, -3.25), (0.333, 0.0)]);
     }
 
     #[test]

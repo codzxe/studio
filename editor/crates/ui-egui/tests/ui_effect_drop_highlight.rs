@@ -1,6 +1,6 @@
 //! Dragging an effect over the Timeline lights up the layer it would land on, not the whole panel.
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::{EffectcraftApp, panels::DragPayload};
+use studio_engine::Session;
+use studio_ui_egui::{EffectcraftApp, panels::DragPayload};
 use egui::{Event, Modifiers, PointerButton, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;

@@ -4,9 +4,9 @@
 
 use std::sync::Arc;
 
-use effectcraft_engine::Session;
-use effectcraft_engine::effects::plugin::{EffectPlugin, PluginFrame, PluginManifest, PluginParam, PluginParamKind, PluginParams, register_plugin};
-use effectcraft_engine::time::Tick;
+use studio_engine::Session;
+use studio_engine::effects::plugin::{EffectPlugin, PluginFrame, PluginManifest, PluginParam, PluginParamKind, PluginParams, register_plugin};
+use studio_engine::time::Tick;
 use serde_json::json;
 
 struct Swap {
@@ -28,7 +28,7 @@ impl EffectPlugin for Swap {
 }
 
 fn setup() -> (Session, u64) {
-    let mut s = effectcraft_host::session();
+    let mut s = studio_host::session();
     s.execute("comp.new", json!({"name": "P", "width": 40, "height": 20, "duration": 1})).unwrap();
     let l = s.execute("layer.newSolid", json!({"color": [1.0, 0.5, 0.0], "width": 40, "height": 20})).unwrap()["layer"].as_u64().unwrap();
     (s, l)
@@ -124,7 +124,7 @@ fn wat_plugin(id: &str, api: i32, render: &str) -> String {
 
 #[test]
 fn plugin_loading_reports_bad_modules_and_survives_failing_renders() {
-    let dir = std::env::temp_dir().join(format!("effectcraft-host-plugins-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("studio-host-plugins-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let files = [
         ("a-good.wasm", wat_plugin("org.test.host.good", 1, "i32.const 0").into_bytes()),

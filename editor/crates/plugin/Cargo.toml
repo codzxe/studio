@@ -1,5 +1,5 @@
 [package]
-name = "effectcraft-plugin"
+name = "studio-plugin"
 description = "EffectCraft effect plug-ins: loads sandboxed WebAssembly effect modules (plug-in API v1) into the effect registry"
 version.workspace = true
 edition.workspace = true
@@ -15,11 +15,11 @@ workspace = true
 wasm = ["dep:wasmi"]
 
 [dependencies]
-effectcraft-effects = { workspace = true }
+studio-effects = { workspace = true }
 serde_json = { workspace = true }
 wasmi = { workspace = true, optional = true }
 
 [dev-dependencies]
-effectcraft-keyframe = { workspace = true }
-effectcraft-project = { workspace = true }
-effectcraft-raster = { workspace = true }
+studio-keyframe = { workspace = true }
+studio-project = { workspace = true }
+studio-raster = { workspace = true }

@@ -1,8 +1,8 @@
 //! Enter renames the selected effect, text animator, mask or shape group, not only the layer
 //! (#1061). Enter commits, Escape cancels.
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
 use egui::{Event, Key, Modifiers};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -25,7 +25,7 @@ fn harness() -> (Harness<'static, EffectcraftApp>, Fx) {
     let shape = s.execute("layer.newShape", json!({"kind": "star"})).unwrap()["layer"].as_u64().unwrap();
     s.execute("layer.addMask", json!({"layer": shape, "shape": "ellipse"})).unwrap();
     let first = |s: &Session, l: u64, path: &str| {
-        s.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(l)).unwrap().props.group(path).unwrap().groups().next().unwrap().uid
+        s.active_comp().unwrap().layer(studio_engine::project::LayerId(l)).unwrap().props.group(path).unwrap().groups().next().unwrap().uid
     };
     let (anim, mask, group) = (first(&s, text, "text/animators"), first(&s, shape, "masks"), first(&s, shape, "contents"));
     let mut h = Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).with_step_dt(1.0 / 60.0).build_eframe(|_| EffectcraftApp::new(s));
@@ -40,11 +40,11 @@ fn key(h: &mut Harness<'_, EffectcraftApp>, key: Key) {
 }
 
 fn name(h: &Harness<'_, EffectcraftApp>, layer: u64, uid: u64) -> String {
-    h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(layer)).unwrap().props.find_group(uid).unwrap().name.clone()
+    h.state().session.active_comp().unwrap().layer(studio_engine::project::LayerId(layer)).unwrap().props.find_group(uid).unwrap().name.clone()
 }
 
 fn layer_name(h: &Harness<'_, EffectcraftApp>, layer: u64) -> String {
-    h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(layer)).unwrap().name.clone()
+    h.state().session.active_comp().unwrap().layer(studio_engine::project::LayerId(layer)).unwrap().name.clone()
 }
 
 fn select(h: &mut Harness<'_, EffectcraftApp>, layer: u64, uid: u64) {

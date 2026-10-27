@@ -11,8 +11,8 @@
 //!   progress bar and a cancel button, and the recently finished ones.
 
 use crate::i18n::tr;
-use effectcraft_engine::media_browser as mb;
-use effectcraft_engine::project::ItemId;
+use studio_engine::media_browser as mb;
+use studio_engine::project::ItemId;
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -45,7 +45,7 @@ fn thumbnail(app: &EffectcraftApp, ctx: &egui::Context, path: &str, budget: &mut
         }
         // A synthetic item id keyed by the path (the frame cache keys on the path).
         let hid = path.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3)) | (1 << 62);
-        let img = app.session.footage.frame(ItemId(hid), &f, effectcraft_engine::time::Tick::ZERO)?;
+        let img = app.session.footage.frame(ItemId(hid), &f, studio_engine::time::Tick::ZERO)?;
         let step = (img.width.max(img.height) as f32 / 128.0).ceil().max(1.0) as u32;
         let (w, h) = (img.width.div_ceil(step), img.height.div_ceil(step));
         let full = img.to_rgba8();

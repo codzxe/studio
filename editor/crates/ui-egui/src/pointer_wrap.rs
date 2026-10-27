@@ -456,12 +456,12 @@ mod tests {
     #[test]
     fn real_properties_and_angle_drags_keep_each_gesture_in_one_undo_step() {
         use crate::{EffectcraftApp, dock::PanelKind};
-        use effectcraft_engine::project::LayerId;
+        use studio_engine::project::LayerId;
         use eframe::App;
         use serde_json::json;
 
         for angle in [false, true] {
-            let mut session = effectcraft_host::session();
+            let mut session = studio_host::session();
             session.execute("comp.new", json!({"width": 32, "height": 16})).unwrap();
             let lid = session.execute("layer.newSolid", json!({"width": 8, "height": 8})).unwrap()["layer"].as_u64().unwrap();
             let path = if angle { "transform/rotation" } else { "transform/position" };

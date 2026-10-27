@@ -1,7 +1,7 @@
 //! #1118: a preview with Video off in the Preview panel says so while it plays.
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
 use egui_kittest::Harness;
 use serde_json::json;
 

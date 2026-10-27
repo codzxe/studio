@@ -15,14 +15,14 @@
 //! prints every input before it runs).
 //!
 //! The default run is bounded (iterations and seconds) to stay fast in `cargo test`; a longer run:
-//! `EFFECTCRAFT_FUZZ_ITERS=200000 EFFECTCRAFT_FUZZ_SECS=600 cargo test -p effectcraft-expr fuzz_`
+//! `EFFECTCRAFT_FUZZ_ITERS=200000 EFFECTCRAFT_FUZZ_SECS=600 cargo test -p studio-expr fuzz_`
 //! (`EFFECTCRAFT_FUZZ_SEED` picks another sequence, `EFFECTCRAFT_FUZZ_START` the first iteration).
 //! The `mutate` + `eval_input` pair is what a cargo-fuzz target would call.
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
-use effectcraft_render::{NoFootage, RenderOpts, Renderer};
+use studio_render::{NoFootage, RenderOpts, Renderer};
 
 use super::{Fx, OPA, POS, ROT, fx, secs};
 use crate::{Expressions, check_syntax, eval_property, eval_standalone};

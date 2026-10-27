@@ -18,16 +18,14 @@ use skrifa::{FontRef, MetadataProvider};
 use crate::sfnt::{FaceNames, NamedInstance, read_faces, read_faces_bytes};
 
 /// Bundled fonts (SIL OFL 1.1; see `assets/fonts/*.attribution` and ATTRIBUTION.md).
-pub static INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
-pub static INTER_MEDIUM: &[u8] = include_bytes!("../../../assets/fonts/Inter-Medium.ttf");
-pub static INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
-pub static INTER_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-Bold.ttf");
-pub static INTER_ITALIC: &[u8] = include_bytes!("../../../assets/fonts/Inter-Italic.ttf");
+pub static INSTRUMENT_SANS_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/InstrumentSans-Regular.ttf");
+pub static INSTRUMENT_SANS_MEDIUM: &[u8] = include_bytes!("../../../assets/fonts/InstrumentSans-Medium.ttf");
+pub static INSTRUMENT_SANS_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/InstrumentSans-SemiBold.ttf");
+pub static INSTRUMENT_SERIF: &[u8] = include_bytes!("../../../assets/fonts/InstrumentSerif-Regular.ttf");
 pub static JETBRAINS_MONO_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
-pub static NOTO_SERIF_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/NotoSerif-Regular.ttf");
 
 /// The default family for new text.
-pub const DEFAULT_FAMILY: &str = "Inter";
+pub const DEFAULT_FAMILY: &str = "Instrument Sans";
 
 /// Index of a face in the database.
 pub type FaceId = usize;
@@ -300,7 +298,7 @@ fn db() -> &'static RwLock<Db> {
     static DB: OnceLock<RwLock<Db>> = OnceLock::new();
     DB.get_or_init(|| {
         let mut db = Db { faces: Vec::new(), scanned: false };
-        for b in [INTER_REGULAR, INTER_MEDIUM, INTER_SEMIBOLD, INTER_BOLD, INTER_ITALIC, JETBRAINS_MONO_REGULAR, NOTO_SERIF_REGULAR] {
+        for b in [INSTRUMENT_SANS_REGULAR, INSTRUMENT_SANS_MEDIUM, INSTRUMENT_SANS_SEMIBOLD, INSTRUMENT_SERIF, JETBRAINS_MONO_REGULAR] {
             for n in read_faces_bytes(b) {
                 push(&mut db, info_from(n, FaceData::Static(b), "bundled"));
             }
@@ -986,20 +984,20 @@ mod tests {
     #[test]
     fn bundled_families_and_resolution() {
         let fams = families();
-        let inter = fams.iter().find(|(f, _)| f == "Inter").expect("Inter");
-        for s in ["Regular", "Medium", "SemiBold", "Bold", "Italic"] {
-            assert!(inter.1.iter().any(|x| x == s), "{s} in {:?}", inter.1);
+        let sans = fams.iter().find(|(f, _)| f == "Instrument Sans").expect("Instrument Sans");
+        for s in ["Regular", "Medium", "SemiBold"] {
+            assert!(sans.1.iter().any(|x| x == s), "{s} in {:?}", sans.1);
         }
-        assert!(fams.iter().any(|(f, _)| f == "Noto Serif"));
+        assert!(fams.iter().any(|(f, _)| f == "Instrument Serif"));
         assert!(fams.iter().any(|(f, _)| f == "JetBrains Mono"));
-        let b = resolve("inter", "bold");
-        assert_eq!(face(b.face).info.style, "Bold");
+        let b = resolve("instrument sans", "semibold");
+        assert_eq!(face(b.face).info.style, "SemiBold");
         assert!(!b.synth_bold);
         let faces = all_faces();
-        assert!(faces.iter().any(|f| f.info.family == "Noto Serif" && f.info.style == "Regular" && f.info.origin == "bundled"));
+        assert!(faces.iter().any(|f| f.info.family == "Instrument Serif" && f.info.style == "Regular" && f.info.origin == "bundled"));
         // A real installed Bold Italic takes priority. Partial installed families can instead
         // supply the nearest weight/slant, so neither synthesis flag is fixed by the OS.
-        for family in ["Noto Serif", "Inter"] {
+        for family in ["Instrument Serif", "Instrument Sans"] {
             let resolved = resolve(family, "Bold Italic");
             let selected = face(resolved.face);
             assert!(selected.info.family.eq_ignore_ascii_case(family));
@@ -1020,9 +1018,9 @@ mod tests {
     }
 
     #[test]
-    fn missing_family_falls_back_to_inter() {
+    fn missing_family_falls_back_to_the_default() {
         let r = resolve("No Such Font Family 123", "Regular");
-        assert_eq!(face(r.face).info.family, "Inter");
+        assert_eq!(face(r.face).info.family, DEFAULT_FAMILY);
         assert!(r.missing);
     }
 
@@ -1045,15 +1043,16 @@ mod tests {
 
     #[test]
     fn postscript_and_full_names_resolve() {
-        // Bundled Inter: name id 6 is `Inter-Bold`, name id 4 is `Inter Bold`.
-        let ps = resolve("Inter-Bold", "");
-        assert_eq!(face(ps.face).info.style, "Bold");
+        // Bundled Instrument Sans (variable): its named instances resolve by PostScript
+        // and full names (e.g. `InstrumentSans-SemiBold` / `Instrument Sans SemiBold`).
+        let ps = resolve("InstrumentSans-SemiBold", "");
+        assert_eq!(face(ps.face).info.style, "SemiBold");
         assert!(!ps.missing && !ps.synth_bold);
-        let full = resolve("inter semibold", "");
-        assert_eq!(face(full.face).info.style, "SemiBold");
+        let full = resolve("instrument sans medium", "");
+        assert_eq!(face(full.face).info.style, "Medium");
         assert!(!full.missing);
         // A family name still wins over a name lookup.
-        assert_eq!(face(resolve("Inter", "Bold").face).info.style, "Bold");
+        assert_eq!(face(resolve("Instrument Sans", "SemiBold").face).info.style, "SemiBold");
     }
 
     /// #1563: a variable font's named instances are styles of its family. `fontStyle = "Black"`,
@@ -1309,12 +1308,18 @@ mod tests {
 
     #[test]
     fn bundled_ui_fonts_cover_the_ukrainian_alphabet() {
+        // The bundled brand family (Instrument) is Latin-only by design; the Cyrillic
+        // safety net is JetBrains Mono (the last face in every UI stack and the text
+        // engine's non-Latin fallback), which covers the full Ukrainian alphabet.
         const ALPHABET: &str = "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯабвгґдеєжзиіїйклмнопрстуфхцчшщьюя’«»";
-        for (name, bytes) in
-            [("Inter Regular", INTER_REGULAR), ("Inter Medium", INTER_MEDIUM), ("Inter SemiBold", INTER_SEMIBOLD), ("JetBrains Mono", JETBRAINS_MONO_REGULAR)]
-        {
+        let font = FontRef::new(JETBRAINS_MONO_REGULAR).unwrap();
+        for c in ALPHABET.chars() {
+            assert!(covers(&font, c), "JetBrains Mono cannot draw {c}");
+        }
+        // And the brand faces cover the Latin baseline (ASCII + typography quotes).
+        for (name, bytes) in [("Instrument Sans", INSTRUMENT_SANS_REGULAR), ("Instrument Serif", INSTRUMENT_SERIF)] {
             let font = FontRef::new(bytes).unwrap();
-            for c in ALPHABET.chars() {
+            for c in "AZaz09’«»".chars() {
                 assert!(covers(&font, c), "{name} cannot draw {c}");
             }
         }
@@ -1322,13 +1327,15 @@ mod tests {
 
     #[test]
     fn metrics_and_coverage() {
-        let f = face(resolve("Inter", "Regular").face);
+        let f = face(resolve("Instrument Sans", "Regular").face);
         let m = f.metrics(100.0);
+        // Instrument Sans: ascent 970, descent 250, cap height 720 (per 1000 upem).
         assert!(m.ascent > 80.0 && m.ascent < 110.0, "{m:?}");
         assert!(m.descent > 10.0 && m.descent < 40.0);
         assert!(m.cap_height > 60.0 && m.cap_height < 80.0);
-        assert!(f.has_char('A') && f.has_char('Ж'));
-        assert!(!f.has_char('\u{5d0}'), "Inter has no Hebrew");
+        assert!(f.has_char('A'));
+        assert!(!f.has_char('Ж'), "Instrument Sans has no Cyrillic (JetBrains Mono is the fallback)");
+        assert!(!f.has_char('\u{5d0}'), "Instrument Sans has no Hebrew");
         assert!(f.has_feature(b"liga") || f.has_feature(b"calt"));
     }
 }

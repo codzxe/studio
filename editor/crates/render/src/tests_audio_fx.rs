@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use effectcraft_keyframe::Value;
-use effectcraft_project::build::{self, Ids};
-use effectcraft_project::{Comp, Footage, FootageKind, ItemId, ItemKind, LayerSource, Project, Solid};
-use effectcraft_time::{FrameRate, Tick};
+use studio_keyframe::Value;
+use studio_project::build::{self, Ids};
+use studio_project::{Comp, Footage, FootageKind, ItemId, ItemKind, LayerSource, Project, Solid};
+use studio_time::{FrameRate, Tick};
 
 use crate::audio::{comp_has_audio, footage_peaks, mix_comp, peak_summary};
 use crate::{FootageSource, Image};
@@ -60,17 +60,17 @@ fn comp_with(id: Option<&str>, vals: &[(&str, Value)], solid: bool) -> (Project,
     let mut p = Project::default();
     let comp = Comp::new(64, 64, FrameRate::new(25, 1), Tick::from_seconds_f64(2.0));
     let src = if solid {
-        let sid = p.add_item("S", effectcraft_color::Label::Red, None, ItemKind::Solid(Solid { color: [1.0; 3], width: 64, height: 64, pixel_aspect: 1.0 }));
+        let sid = p.add_item("S", studio_color::Label::Red, None, ItemKind::Solid(Solid { color: [1.0; 3], width: 64, height: 64, pixel_aspect: 1.0 }));
         LayerSource::Solid { item: sid }
     } else {
-        LayerSource::Footage { item: p.add_item("x.wav", effectcraft_color::Label::SeaFoam, None, ItemKind::Footage(audio_footage())) }
+        LayerSource::Footage { item: p.add_item("x.wav", studio_color::Label::SeaFoam, None, ItemKind::Footage(audio_footage())) }
     };
     let mut l = build::layer(&mut p, &comp, "a", src, (64, 64), None);
     l.out_point = Tick::from_seconds_f64(1.0);
     if let Some(id) = id {
-        let spec = effectcraft_effects::find(id).unwrap();
+        let spec = studio_effects::find(id).unwrap();
         let mut next = p.next_id;
-        let mut g = effectcraft_effects::instantiate(spec, &mut Ids(&mut next), spec.name, [64.0, 64.0]);
+        let mut g = studio_effects::instantiate(spec, &mut Ids(&mut next), spec.name, [64.0, 64.0]);
         p.next_id = next;
         for (k, v) in vals {
             g.prop_mut(k).unwrap_or_else(|| panic!("{k}")).value = v.clone();
@@ -79,7 +79,7 @@ fn comp_with(id: Option<&str>, vals: &[(&str, Value)], solid: bool) -> (Project,
     }
     let mut comp = comp;
     comp.layers = vec![l];
-    let cid = p.add_item("C", effectcraft_color::Label::Sandstone, None, ItemKind::Comp(comp.into()));
+    let cid = p.add_item("C", studio_color::Label::Sandstone, None, ItemKind::Comp(comp.into()));
     (p, cid)
 }
 
@@ -225,19 +225,19 @@ fn audio_spectrum_follows_time_through_the_layer_cache() {
     }
     let mut p = Project::default();
     let comp = Comp::new(64, 64, FrameRate::new(25, 1), Tick::from_seconds_f64(2.0));
-    let audio = p.add_item("x.wav", effectcraft_color::Label::SeaFoam, None, ItemKind::Footage(audio_footage()));
+    let audio = p.add_item("x.wav", studio_color::Label::SeaFoam, None, ItemKind::Footage(audio_footage()));
     let a = build::layer(&mut p, &comp, "a", LayerSource::Footage { item: audio }, (64, 64), None);
-    let sid = p.add_item("S", effectcraft_color::Label::Red, None, ItemKind::Solid(Solid { color: [0.0; 3], width: 64, height: 64, pixel_aspect: 1.0 }));
+    let sid = p.add_item("S", studio_color::Label::Red, None, ItemKind::Solid(Solid { color: [0.0; 3], width: 64, height: 64, pixel_aspect: 1.0 }));
     let mut s = build::layer(&mut p, &comp, "s", LayerSource::Solid { item: sid }, (64, 64), None);
-    let spec = effectcraft_effects::find("ec.generate.audiospectrum").unwrap();
+    let spec = studio_effects::find("ec.generate.audiospectrum").unwrap();
     let mut next = p.next_id;
-    let mut g = effectcraft_effects::instantiate(spec, &mut Ids(&mut next), spec.name, [64.0, 64.0]);
+    let mut g = studio_effects::instantiate(spec, &mut Ids(&mut next), spec.name, [64.0, 64.0]);
     p.next_id = next;
     g.prop_mut("audioLayer").unwrap().value = Value::Layer(Some(a.id.0));
     s.props.sub_mut("effects").unwrap().children.push(g.into());
     let mut comp = comp;
     comp.layers = vec![s, a];
-    let cid = p.add_item("C", effectcraft_color::Label::Sandstone, None, ItemKind::Comp(comp.into()));
+    let cid = p.add_item("C", studio_color::Label::Sandstone, None, ItemKind::Comp(comp.into()));
 
     let src = Signal(late_tone);
     let render = |t: f64, cache: Option<&crate::LayerCache>| {

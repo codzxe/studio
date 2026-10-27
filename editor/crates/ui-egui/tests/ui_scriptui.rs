@@ -2,14 +2,14 @@
 //! windows (clicks reach the script's handlers), the branching History panel, and the Window /
 //! File ▸ Scripts menus listing scripts (egui_kittest, UI logic only).
 
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui::{Event, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
 
 fn harness() -> Harness<'static, EffectcraftApp> {
-    let mut s = effectcraft_host::session();
+    let mut s = studio_host::session();
     s.execute("comp.new", json!({"name": "Main", "width": 320, "height": 180, "duration": 4})).unwrap();
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| EffectcraftApp::new(s));
     h.run_steps(3);
@@ -78,10 +78,10 @@ fn script_windows_are_drawn_and_clickable() {
     assert!(h.state().ui.dock.contains(PanelKind::ScriptPanel(panel)), "the panel docks");
     assert!(h.state().auto.find(&format!("scriptui.{panel}")).is_some());
     // The menus list scripts and panels.
-    let cx = effectcraft_engine::menus::DynCtx::default();
-    let (panels, _) = effectcraft_engine::menus::dynamic(&h.state().session, "scriptPanels", &cx);
+    let cx = studio_engine::menus::DynCtx::default();
+    let (panels, _) = studio_engine::menus::dynamic(&h.state().session, "scriptPanels", &cx);
     assert!(panels.iter().any(|e| e.label == "Layer Tools.jsx" && e.command == "window.scriptPanel"));
-    let (scripts, _) = effectcraft_engine::menus::dynamic(&h.state().session, "scripts", &cx);
+    let (scripts, _) = studio_engine::menus::dynamic(&h.state().session, "scripts", &cx);
     assert!(scripts.iter().any(|e| e.label == "Rename Layers.jsx" && e.command == "file.runScript"));
     // Closing the panel's tab closes its script window.
     h.state_mut().close_panel(PanelKind::ScriptPanel(panel));
@@ -94,11 +94,11 @@ fn script_windows_are_drawn_and_clickable() {
 /// frontends call `window.restoreScriptPanels` before building the app).
 #[test]
 fn panels_open_at_quit_dock_again_at_launch() {
-    use effectcraft_engine::config::{ConfigStore, MemoryConfig};
+    use studio_engine::config::{ConfigStore, MemoryConfig};
     let store = std::sync::Arc::new(MemoryConfig::default());
     store.write("Scripts/ScriptUI Panels/Hello Panel.jsx", "this.add('button', undefined, 'Hi', { name: 'hi' });").unwrap();
-    store.write(effectcraft_engine::commands::scripts::OPEN_PANELS_FILE, r#"{"open": ["Hello Panel.jsx"]}"#).unwrap();
-    let mut s = effectcraft_host::session();
+    store.write(studio_engine::commands::scripts::OPEN_PANELS_FILE, r#"{"open": ["Hello Panel.jsx"]}"#).unwrap();
+    let mut s = studio_host::session();
     s.config = Some(store.clone());
     s.execute("window.restoreScriptPanels", json!({})).unwrap();
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| EffectcraftApp::new(s));
@@ -109,14 +109,14 @@ fn panels_open_at_quit_dock_again_at_launch() {
     // Closing its tab forgets it for the next launch.
     h.state_mut().close_panel(PanelKind::ScriptPanel(panel));
     h.run_steps(2);
-    assert_eq!(store.read(effectcraft_engine::commands::scripts::OPEN_PANELS_FILE).as_deref(), Some(r#"{"open":[]}"#));
+    assert_eq!(store.read(studio_engine::commands::scripts::OPEN_PANELS_FILE).as_deref(), Some(r#"{"open":[]}"#));
 }
 
 /// The bundled Ease Presets ScriptUI panel (Window ▸ Ease Presets.jsx) docks, and clicking a
 /// preset in its list eases the selected keyframes in one undo step.
 #[test]
 fn ease_presets_panel_eases_the_selected_keys_from_its_list() {
-    use effectcraft_engine::keyframe::{Ease, Interp};
+    use studio_engine::keyframe::{Ease, Interp};
     use egui_kittest::kittest::Queryable;
     let mut h = harness();
     let s = &mut h.state_mut().session;
@@ -125,8 +125,8 @@ fn ease_presets_panel_eases_the_selected_keys_from_its_list() {
         s.execute("prop.addKey", json!({"layer": l, "path": "transform/opacity", "time": t, "value": v})).unwrap();
     }
     s.execute("prop.select", json!({"layer": l, "path": "transform/opacity"})).unwrap();
-    let cx = effectcraft_engine::menus::DynCtx::default();
-    let (panels, _) = effectcraft_engine::menus::dynamic(s, "scriptPanels", &cx);
+    let cx = studio_engine::menus::DynCtx::default();
+    let (panels, _) = studio_engine::menus::dynamic(s, "scriptPanels", &cx);
     assert!(panels.iter().any(|e| e.label == "Ease Presets.jsx"), "listed in the Window menu");
     s.execute("window.scriptPanel", json!({"name": "Ease Presets.jsx"})).unwrap();
     h.run_steps(3);
@@ -141,7 +141,7 @@ fn ease_presets_panel_eases_the_selected_keys_from_its_list() {
         h.input_mut().events.push(Event::PointerButton { pos: item, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
     }
     h.run_steps(3);
-    let op = h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(l)).unwrap().props.prop("transform/opacity").unwrap().clone();
+    let op = h.state().session.active_comp().unwrap().layer(studio_engine::project::LayerId(l)).unwrap().props.prop("transform/opacity").unwrap().clone();
     let eased = Ease { speed: 0.0, influence: 0.5 };
     assert_eq!((op.keys[0].out_interp, op.keys[0].out_ease[0]), (Interp::Bezier, eased));
     assert_eq!((op.keys[1].in_interp, op.keys[1].in_ease[0]), (Interp::Bezier, eased));
@@ -173,12 +173,12 @@ fn history_panel_jumps_between_branches() {
 /// onDraw fills of concave paths and real images (drawImage, image controls), rendered.
 #[test]
 fn on_draw_concave_fills_and_images_render() {
-    let dir = std::env::temp_dir().join(format!("effectcraft-scriptui-img-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("studio-scriptui-img-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let png = dir.join("green.png");
     image::RgbaImage::from_pixel(8, 8, image::Rgba([0, 255, 0, 255])).save(&png).unwrap();
     let png = png.to_string_lossy().replace('\\', "/");
-    let mut s = effectcraft_host::session();
+    let mut s = studio_host::session();
     s.execute("comp.new", json!({"name": "Main", "width": 320, "height": 180, "duration": 4})).unwrap();
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_pixels_per_point(1.0).wgpu().build_eframe(|_| EffectcraftApp::new(s));
     h.run_steps(3);
@@ -205,7 +205,7 @@ fn on_draw_concave_fills_and_images_render() {
     h.run_steps(4);
     let win = h.state().session.script_ui.windows[0].clone();
     let g = &win.root.children[0];
-    assert!(matches!(&g.draw[1], effectcraft_engine::scriptui::DrawOp::Image { image: Some(i), .. } if i.src.as_deref() == Some(png.as_str())));
+    assert!(matches!(&g.draw[1], studio_engine::scriptui::DrawOp::Image { image: Some(i), .. } if i.src.as_deref() == Some(png.as_str())));
     assert_eq!(win.root.children[1].image.as_ref().and_then(|i| i.src.clone()).as_deref(), Some(png.as_str()));
     let img = h.render().expect("render");
     if let Ok(d) = std::env::var("EC_SNAPSHOT_DIR") {

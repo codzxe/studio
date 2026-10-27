@@ -397,12 +397,12 @@ mod tests {
         let root = temp("e2e");
         let host = root.join("run/host/fonts/TTF");
         std::fs::create_dir_all(&host).unwrap();
-        std::fs::write(host.join("NOTOSERIF.TTF"), crate::fonts::NOTO_SERIF_REGULAR).unwrap();
+        std::fs::write(host.join("INSTRUMENTSERIF.TTF"), crate::fonts::INSTRUMENT_SERIF).unwrap();
         write(&root.join("etc/fonts/conf.d/50-flatpak.conf"), &format!("<fontconfig><dir>{}</dir></fontconfig>", root.join("run/host/fonts").display()));
         write(&root.join("etc/fonts/fonts.conf"), "<fontconfig><include ignore_missing=\"yes\">conf.d</include></fontconfig>");
         let src = crate::fonts::DirectorySource { dirs: unix_font_dirs(&env_in(&root)) };
         let faces = src.faces();
-        assert!(faces.iter().any(|f| f.family == "Noto Serif" && f.origin == "system"), "{:?}", faces.iter().map(|f| &f.family).collect::<Vec<_>>());
+        assert!(faces.iter().any(|f| f.family == "Instrument Serif" && f.origin == "system"), "{:?}", faces.iter().map(|f| &f.family).collect::<Vec<_>>());
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -4,11 +4,11 @@
 //! options, a Solid Color swatch the colour picker, Alt-click still steps through the kinds, and
 //! with no such gradient selected the swatch opens the options as before.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::keyframe::Value;
-use effectcraft_engine::project::{LayerId, PropGroup};
-use effectcraft_ui_egui::state::Tool;
-use effectcraft_ui_egui::{Dialog, EffectcraftApp};
+use studio_engine::Session;
+use studio_engine::keyframe::Value;
+use studio_engine::project::{LayerId, PropGroup};
+use studio_ui_egui::state::Tool;
+use studio_ui_egui::{Dialog, EffectcraftApp};
 use egui::{Event, Modifiers, PointerButton, Pos2, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;

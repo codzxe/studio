@@ -2,11 +2,11 @@
 //! play from, resolution, overlays, full screen, move time), the preview shortcuts pick their
 //! options, and the Align panel runs `layer.align` / `layer.distribute`.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::preview::PreviewShortcut;
-use effectcraft_engine::time::Tick;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_engine::Session;
+use studio_engine::preview::PreviewShortcut;
+use studio_engine::time::Tick;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui::{Event, Pos2, pos2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -23,7 +23,7 @@ fn harness() -> Harness<'static, EffectcraftApp> {
 
 fn invoke(h: &mut Harness<'_, EffectcraftApp>, id: &str, p: serde_json::Value) -> serde_json::Value {
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, id, p).unwrap()
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, id, p).unwrap()
 }
 
 fn click(h: &mut Harness<'_, EffectcraftApp>, id: &str) {
@@ -218,14 +218,14 @@ fn auto_resolution_is_the_same_playing_and_paused() {
 
 #[test]
 fn achieved_frame_rate_and_real_time() {
-    let mut p = effectcraft_ui_egui::Playback { playing: true, fps: 24.0, ..Default::default() };
+    let mut p = studio_ui_egui::Playback { playing: true, fps: 24.0, ..Default::default() };
     assert_eq!(p.achieved_fps(), None);
     for i in 0..25 {
         p.frame_shown(i as f64 / 24.0);
     }
     assert!((p.achieved_fps().unwrap() - 24.0).abs() < 1e-9);
     assert_eq!(p.real_time(), Some(true));
-    let mut slow = effectcraft_ui_egui::Playback { playing: true, fps: 24.0, ..Default::default() };
+    let mut slow = studio_ui_egui::Playback { playing: true, fps: 24.0, ..Default::default() };
     for i in 0..13 {
         slow.frame_shown(i as f64 / 12.0);
     }

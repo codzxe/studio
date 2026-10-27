@@ -4,10 +4,10 @@
 //! point in one undo step and doesn't move the layer. Uses only APIs that existed before the
 //! handles, so it runs (and fails) on the code without them.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::{LayerId, PropGroup};
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::panels::viewer::comp_to_screen;
+use studio_engine::Session;
+use studio_engine::project::{LayerId, PropGroup};
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::panels::viewer::comp_to_screen;
 use egui::{Event, Modifiers, PointerButton, Pos2, pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;

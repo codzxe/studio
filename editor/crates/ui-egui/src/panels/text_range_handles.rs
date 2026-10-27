@@ -12,12 +12,12 @@
 //!
 //! Automation ids: `viewer.textRange.<uid>` (the Start / End property's uid).
 
-use effectcraft_engine::geom::Mat3;
-use effectcraft_engine::project::{Layer, LayerSource, PropGroup};
-use effectcraft_engine::render::EvalCtx;
-use effectcraft_engine::render::text::{range_bars, range_value_of, source_text};
-use effectcraft_engine::text::kurbo::Point;
-use effectcraft_engine::text::layout_doc;
+use studio_engine::geom::Mat3;
+use studio_engine::project::{Layer, LayerSource, PropGroup};
+use studio_engine::render::EvalCtx;
+use studio_engine::render::text::{range_bars, range_value_of, source_text};
+use studio_engine::text::kurbo::Point;
+use studio_engine::text::layout_doc;
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use serde_json::json;
 

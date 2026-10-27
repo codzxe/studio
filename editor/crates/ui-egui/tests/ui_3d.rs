@@ -1,10 +1,10 @@
 //! Headless UI checks for the 3D viewer (egui_kittest). The `snapshot` test renders the window
-//! with wgpu and writes PNGs when `EC_SNAPSHOT_DIR` is set (`cargo test -p effectcraft-ui-egui
+//! with wgpu and writes PNGs when `EC_SNAPSHOT_DIR` is set (`cargo test -p studio-ui-egui
 //! --test ui_3d -- --ignored`); the other test only runs the UI logic.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::render::three_d::View3D;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_engine::render::three_d::View3D;
+use studio_ui_egui::EffectcraftApp;
 use egui_kittest::Harness;
 use serde_json::json;
 
@@ -71,12 +71,12 @@ fn renderer_menu_shows_and_switches_the_comp_renderer() {
     click_id(&mut h, "viewer.renderer3d");
     click_id(&mut h, "viewer.renderer3dItem.1");
     let renderer = h.state().session.active_comp().unwrap().renderer;
-    assert_eq!(renderer, effectcraft_engine::project::Renderer::Advanced3D);
+    assert_eq!(renderer, studio_engine::project::Renderer::Advanced3D);
     h.run_steps(2);
     assert_eq!(label(&h).as_deref(), Some("Advanced 3D"));
     // One undoable Composition Settings step.
     h.state_mut().session.execute("edit.undo", json!({})).unwrap();
-    assert_eq!(h.state().session.active_comp().unwrap().renderer, effectcraft_engine::project::Renderer::Classic3D);
+    assert_eq!(h.state().session.active_comp().unwrap().renderer, studio_engine::project::Renderer::Classic3D);
 }
 
 #[test]
@@ -85,8 +85,8 @@ fn camera_and_light_dialogs_create_layers() {
     h.step();
     let ctx = h.ctx.clone();
     let n0 = h.state().session.active_comp().unwrap().layers.len();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.newCamera", json!({})).unwrap();
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::CameraSettings));
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.newCamera", json!({})).unwrap();
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::CameraSettings));
     h.step();
     let ok = h.state().auto.elements.iter().chain(h.state().auto.previous.iter()).find(|e| e.id == "dialog.camera.ok").map(|e| e.rect);
     assert!(ok.is_some(), "camera dialog OK registered");
@@ -95,15 +95,15 @@ fn camera_and_light_dialogs_create_layers() {
     h.step();
     assert!(h.state().dialog.is_none());
     assert_eq!(h.state().session.active_comp().unwrap().layers.len(), n0 + 1);
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.newLight", json!({})).unwrap();
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::LightSettings));
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.newLight", json!({})).unwrap();
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::LightSettings));
     h.step();
     h.key_press(egui::Key::Enter);
     h.step();
     assert_eq!(h.state().session.active_comp().unwrap().layers.len(), n0 + 2);
     // Layer Settings on the new light reopens Light Settings for it.
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.settings", json!({})).unwrap();
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::LightSettings));
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.settings", json!({})).unwrap();
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::LightSettings));
 }
 
 #[test]
@@ -124,14 +124,14 @@ fn snapshot() {
         }
     }
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.newCamera", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.newCamera", json!({})).unwrap();
     h.run_steps(3);
     let img = h.render().expect("render");
     if let Some(d) = &dir {
         img.save(format!("{d}/ui3d_camera_dialog.png")).unwrap();
     }
     h.state_mut().dialog = None;
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.newLight", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.newLight", json!({})).unwrap();
     h.run_steps(3);
     let img = h.render().expect("render");
     if let Some(d) = &dir {
@@ -141,7 +141,7 @@ fn snapshot() {
     h.state_mut().dialog = None;
     h.state_mut().session.execute("view.3d.activeCamera", json!({})).unwrap();
     h.state_mut().session.execute("layer.select", json!({"layers": ["Card Blue"]})).unwrap();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.reveal.rotation", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.reveal.rotation", json!({})).unwrap();
     settle(&mut h);
     let img = h.render().expect("render");
     if let Some(d) = &dir {

@@ -1,0 +1,13 @@
+{
+  "$comment": "Single source of truth for the product identity. Rust (editor/crates/brand build.rs) and TS (packages/config brand test) both read THIS file — change the name here once. ts side: pnpm -C packages/config test guards drift.",
+  "productName": "Studio",
+  "codename": "Studio",
+  "engineCliEnvVar": "STUDIO_ENGINE_CLI_PATH",
+  "legacyEngineCliEnvVar": "EFFECTCRAFT_CLI_PATH",
+  "editorStorageDir": "studio",
+  "legacyEditorStorageDir": "effectcraft",
+  "bridgeGlobal": "studioEngine",
+  "wasmPrefix": "studio_web",
+  "swCachePrefix": "studio",
+  "version": "0.13.0"
+}

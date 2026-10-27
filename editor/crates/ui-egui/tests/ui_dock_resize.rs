@@ -1,9 +1,9 @@
 //! Shared pane resizing in the full application, including application shortcut ownership.
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::{DockNode, PanelKind, SplitSize};
-use effectcraft_ui_egui::theme::ThemeKind;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::{DockNode, PanelKind, SplitSize};
+use studio_ui_egui::theme::ThemeKind;
 use egui::{Event, Id, Key, Modifiers, PointerButton, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;

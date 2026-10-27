@@ -447,7 +447,7 @@ fn build_group(project: &Project, comp: ItemId, eg: &EssentialGraphics, old: Opt
                         p.expr = prev.expr.clone();
                         keep.push(uid);
                     } else {
-                        p.value = src.value_at(effectcraft_time::Tick::ZERO);
+                        p.value = src.value_at(studio_time::Tick::ZERO);
                     }
                     out.push(Node::Prop(p));
                 }

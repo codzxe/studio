@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use effectcraft_opusenc::{Application, Bandwidth, Mode, OpusEncoder};
+use studio_opusenc::{Application, Bandwidth, Mode, OpusEncoder};
 
 struct Run {
     snr: f64,

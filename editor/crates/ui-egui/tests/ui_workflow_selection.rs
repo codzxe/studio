@@ -1,6 +1,6 @@
 //! User-reported selection, Project deletion, and render-queue drop regressions.
-use effectcraft_engine::{Session, project::LayerId};
-use effectcraft_ui_egui::{Dialog, EffectcraftApp, dock::PanelKind};
+use studio_engine::{Session, project::LayerId};
+use studio_ui_egui::{Dialog, EffectcraftApp, dock::PanelKind};
 use egui::{Event, Modifiers, PointerButton, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
@@ -139,7 +139,7 @@ fn project_clear_deletes_items_and_undo_restores_them() {
     h.state_mut().session.state.project_selection = vec![id];
     h.state_mut().ui.focused = PanelKind::Project;
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.clear", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.clear", json!({})).unwrap();
     assert!(h.state().session.project.comp(id).is_none());
     h.state_mut().session.execute("edit.undo", json!({})).unwrap();
     assert!(h.state().session.project.comp(id).is_some());
@@ -149,7 +149,7 @@ fn project_comp_drop_queues_the_dragged_comp() {
     let mut h = harness();
     let id = h.state().session.active_comp_id().unwrap();
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.panel", json!({"panel":"renderQueue"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.panel", json!({"panel":"renderQueue"})).unwrap();
     h.run_steps(3);
     let a = rect(&h, &format!("project.item.{}.name", id.0)).center();
     let b = rect(&h, "renderQueue.drop").center();
@@ -184,7 +184,7 @@ fn render_queue_delete_preserves_selected_timeline_layers() {
     h.state_mut().session.execute("layer.select", json!({"layers":[id.0]})).unwrap();
     h.state_mut().session.execute("renderQueue.add", json!({})).unwrap();
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.panel", json!({"panel":"renderQueue"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.panel", json!({"panel":"renderQueue"})).unwrap();
     h.run_steps(3);
     let row = rect(&h, "renderQueue.item.1.row");
     click(&mut h, pos2(row.max.x - 15.0, row.center().y), Modifiers::NONE);
@@ -222,7 +222,7 @@ fn effect_scrubbing_uses_adaptive_resolution_and_settles_on_release() {
     h.state_mut().session.execute("effect.apply", json!({"effect":"Gaussian Blur"})).unwrap();
     h.state_mut().session.execute("view.fastPreviewMode", json!({"mode":"adaptive"})).unwrap();
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.panel", json!({"panel":"effectControls"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.panel", json!({"panel":"effectControls"})).unwrap();
     h.run_steps(3);
     let prop = h.state().session.active_comp().unwrap().layer(id).unwrap().effects().unwrap().groups().next().unwrap().get("blurriness").unwrap().uid;
     let a = rect(&h, &format!("effectControls.prop.{prop}.value")).center();
@@ -263,7 +263,7 @@ fn viewer_right_click_targets_hit_and_duplicate_preserves_group() {
     assert_eq!(h.state().session.state.selected_layers, vec![ids[0]]);
     if let Ok(out) = std::env::var("CONTEXT_MENU_SNAPSHOT") {
         let comp = h.state().session.active_comp_id().unwrap();
-        let key = effectcraft_ui_egui::frames::FrameKey { frame: 0, ..h.state().shown_series(comp) };
+        let key = studio_ui_egui::frames::FrameKey { frame: 0, ..h.state().shown_series(comp) };
         for _ in 0..600 {
             h.step();
             if h.state().frames.is_cached(&key) {
@@ -313,11 +313,11 @@ fn modal_blocks_clicks_on_underlying_timeline_layers() {
     let ids: Vec<LayerId> = h.state().session.active_comp().unwrap().layers.iter().map(|l| l.id).collect();
     h.state_mut().session.execute("layer.select", json!({"layers":[ids[0].0]})).unwrap();
     let row = rect(&h, &format!("timeline.layer.{}.row", ids[2].0));
-    h.state_mut().dialog = Some(effectcraft_ui_egui::Dialog::About);
+    h.state_mut().dialog = Some(studio_ui_egui::Dialog::About);
     h.run_steps(3);
     click(&mut h, pos2(row.min.x + 210.0, row.center().y), Modifiers::NONE);
     assert_eq!(h.state().session.state.selected_layers, vec![ids[0]]);
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::About));
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::About));
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn layer_style_escape_rolls_back_live_preview() {
     let id = h.state().session.active_comp().unwrap().layers[0].id;
     h.state_mut().session.execute("layer.select", json!({"layers":[id.0]})).unwrap();
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.dropShadow", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.dropShadow", json!({})).unwrap();
     h.run_steps(3);
     h.state_mut().session.execute("prop.set", json!({"layer":id.0,"path":"layerStyles/dropShadow/distance","value":25})).unwrap();
     h.input_mut().events.push(Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE });
@@ -345,22 +345,22 @@ fn style_cancel_restores_checkpoint_with_bounded_history_and_reopened_scrub() {
     h.state_mut().session.prefs.general.undo_levels = 1;
     let ctx = h.ctx.clone();
     let open = |h: &mut Harness<'_, EffectcraftApp>| {
-        effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.options", json!({"style":"dropShadow"})).unwrap();
+        studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.options", json!({"style":"dropShadow"})).unwrap();
     };
     open(&mut h);
     let before = h.state().session.project.clone();
     let history = h.state().session.history.undo.len();
     h.state_mut().session.execute("prop.set", json!({"layer":id.0,"path":"layerStyles/dropShadow/distance","value":25,"merge":"same-style-control"})).unwrap();
-    effectcraft_ui_egui::panels::layer_styles_dialog::finish(h.state_mut(), false);
+    studio_ui_egui::panels::layer_styles_dialog::finish(h.state_mut(), false);
     assert!(std::sync::Arc::ptr_eq(&h.state().session.project, &before));
     assert_eq!(h.state().session.history.undo.len(), history);
     open(&mut h);
     h.state_mut().session.execute("prop.set", json!({"layer":id.0,"path":"layerStyles/dropShadow/distance","value":50,"merge":"same-style-control"})).unwrap();
-    effectcraft_ui_egui::panels::layer_styles_dialog::finish(h.state_mut(), true);
+    studio_ui_egui::panels::layer_styles_dialog::finish(h.state_mut(), true);
     let accepted = h.state().session.project.clone();
     open(&mut h);
     h.state_mut().session.execute("prop.set", json!({"layer":id.0,"path":"layerStyles/dropShadow/distance","value":75,"merge":"same-style-control"})).unwrap();
-    effectcraft_ui_egui::panels::layer_styles_dialog::finish(h.state_mut(), false);
+    studio_ui_egui::panels::layer_styles_dialog::finish(h.state_mut(), false);
     assert!(std::sync::Arc::ptr_eq(&h.state().session.project, &accepted));
 }
 
@@ -373,15 +373,15 @@ fn project_edit_commands_do_not_target_timeline_layers() {
     h.state_mut().session.execute("project.select", json!({"items":[comp.0]})).unwrap();
     h.state_mut().ui.focused = PanelKind::Project;
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.duplicate", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.duplicate", json!({})).unwrap();
     assert_eq!(h.state().session.active_comp().unwrap().layers.len(), 4);
     assert_ne!(h.state().session.state.project_selection, vec![comp]);
-    assert!(effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.cut", json!({})).is_err());
+    assert!(studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.cut", json!({})).is_err());
     assert!(h.state().session.active_comp().unwrap().layer(id).is_some());
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.deselectAll", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.deselectAll", json!({})).unwrap();
     assert!(h.state().session.state.project_selection.is_empty());
     assert_eq!(h.state().session.state.selected_layers, vec![id]);
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.selectAll", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.selectAll", json!({})).unwrap();
     assert!(h.state().session.state.project_selection.contains(&comp));
     assert_eq!(h.state().session.state.selected_layers, vec![id]);
 }
@@ -389,7 +389,7 @@ fn project_edit_commands_do_not_target_timeline_layers() {
 #[test]
 fn compact_settings_keeps_confirmation_buttons_clickable() {
     let mut h = Harness::builder().with_size(vec2(1024.0, 768.0)).build_eframe(|_| EffectcraftApp::new(Session::default()));
-    h.state_mut().dialog = Some(effectcraft_ui_egui::Dialog::Settings);
+    h.state_mut().dialog = Some(studio_ui_egui::Dialog::Settings);
     h.run_steps(4);
     h.get_by_label("   OK   ").click();
     h.run_steps(3);
@@ -404,9 +404,9 @@ fn filtered_project_select_all_does_not_delete_hidden_assets() {
     h.state_mut().ui.focused = PanelKind::Project;
     h.state_mut().ui.project_search = "Study".into();
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.selectAll", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.selectAll", json!({})).unwrap();
     assert_eq!(h.state().session.state.project_selection, vec![comp]);
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.clear", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "edit.clear", json!({})).unwrap();
     assert_eq!(h.state().session.project.items.len(), before - 1);
 }
 
@@ -423,7 +423,7 @@ fn workflow_snapshot() {
     h.run_steps(3);
     let out = std::env::var("WORKFLOW_SNAPSHOT").expect("set WORKFLOW_SNAPSHOT to the output PNG");
     let comp = h.state().session.active_comp_id().unwrap();
-    let key = effectcraft_ui_egui::frames::FrameKey { frame: 0, ..h.state().shown_series(comp) };
+    let key = studio_ui_egui::frames::FrameKey { frame: 0, ..h.state().shown_series(comp) };
     for _ in 0..600 {
         h.step();
         if h.state().frames.is_cached(&key) {
@@ -530,7 +530,7 @@ fn project_context_move_to_root_acts_on_the_whole_selection() {
     let mut h = harness();
     let solids: Vec<u64> = {
         let p = &h.state().session.project;
-        p.items.values().filter(|i| matches!(i.kind, effectcraft_engine::project::ItemKind::Solid(_))).map(|i| i.id.0).collect()
+        p.items.values().filter(|i| matches!(i.kind, studio_engine::project::ItemKind::Solid(_))).map(|i| i.id.0).collect()
     };
     assert!(solids.len() >= 2);
     let folder = h.state_mut().session.execute("project.newFolder", json!({"name":"Bin"})).unwrap()["item"].as_u64().unwrap();
@@ -549,7 +549,7 @@ fn project_context_move_to_root_acts_on_the_whole_selection() {
     h.run_steps(3);
     let project = &h.state().session.project;
     for id in &solids[..2] {
-        assert_eq!(project.item(effectcraft_engine::project::ItemId(*id)).unwrap().parent, None);
+        assert_eq!(project.item(studio_engine::project::ItemId(*id)).unwrap().parent, None);
     }
 }
 
@@ -598,7 +598,7 @@ fn timeline_context_menu_precompose_groups_the_whole_selection() {
 /// Text (After Effects), which convert the layer; a non-text layer does not show them (#872).
 #[test]
 fn timeline_context_menu_creates_shapes_and_masks_from_text() {
-    use effectcraft_engine::project::LayerSource;
+    use studio_engine::project::LayerSource;
     let mut s = Session::default();
     s.execute("comp.new", json!({"name":"Type","width":320,"height":180,"duration":4})).unwrap();
     s.execute("layer.newText", json!({"text":"Abc"})).unwrap();

@@ -4,7 +4,7 @@
 //!
 //! The prompt is the **Object Point** (layer pixels) and, with **Use Box**, a box around the
 //! object. On the **Reference Frame** it is segmented by the same engine as Roto Brush: the
-//! trained model chosen in Settings ▸ Roto Brush (MobileSAM, `effectcraft_segment`) when one is
+//! trained model chosen in Settings ▸ Roto Brush (MobileSAM, `studio_segment`) when one is
 //! installed, the classical graph cut otherwise. The model gets the point as a foreground point
 //! and the box as its box prompt; the graph cut gets the point as a foreground stroke and the
 //! box's edges (without a box, the layer's border) as background strokes. With **Track Object** the
@@ -25,12 +25,12 @@
 
 use std::sync::Arc;
 
-use effectcraft_keyframe::Value;
-use effectcraft_project::ParamUi;
-use effectcraft_raster::Image;
-use effectcraft_segment::MaskModel;
-use effectcraft_track::roto::refine::MatteParams;
-use effectcraft_track::roto::{FrameSeg, RotoData, SegOpts, Stroke, StrokeKind, rle};
+use studio_keyframe::Value;
+use studio_project::ParamUi;
+use studio_raster::Image;
+use studio_segment::MaskModel;
+use studio_track::roto::refine::MatteParams;
+use studio_track::roto::{FrameSeg, RotoData, SegOpts, Stroke, StrokeKind, rle};
 use rayon::prelude::*;
 
 use crate::roto::{self, Chain, FROZEN, FrozenCache, INPUT_KEY};
@@ -198,7 +198,7 @@ pub fn seed(params: &Params, layer_size: [f64; 2], fps: f64, model: Option<&dyn 
         fnv(&mut h, &v.to_bits().to_le_bytes());
     }
     fnv(&mut h, &[tracks(params) as u8]);
-    fnv(&mut h, model.map_or(effectcraft_segment::CLASSICAL, |m| m.info().id).as_bytes());
+    fnv(&mut h, model.map_or(studio_segment::CLASSICAL, |m| m.info().id).as_bytes());
     h
 }
 
@@ -297,7 +297,7 @@ pub fn frozen_alpha(params: &Params, layer_size: [f64; 2], fps: f64, f: i64, w: 
     for y in 0..h {
         for x in 0..w {
             let (sx, sy) = ((x as f64 + 0.5) * fw as f64 / w as f64, (y as f64 + 0.5) * fh as f64 / h as f64);
-            out[y * w + x] = effectcraft_track::roto::matting::sample(&af, fw, fh, sx, sy);
+            out[y * w + x] = studio_track::roto::matting::sample(&af, fw, fh, sx, sy);
         }
     }
     Some(out)
@@ -582,10 +582,10 @@ mod tests {
         bbox: std::sync::Mutex<Option<[f32; 4]>>,
     }
     impl MaskModel for Stub {
-        fn info(&self) -> &'static effectcraft_segment::ModelInfo {
-            &effectcraft_segment::MOBILE_SAM
+        fn info(&self) -> &'static studio_segment::ModelInfo {
+            &studio_segment::MOBILE_SAM
         }
-        fn segment(&self, _: &[[f32; 3]], w: usize, h: usize, prompt: &effectcraft_segment::Prompt) -> effectcraft_segment::Result<Vec<f32>> {
+        fn segment(&self, _: &[[f32; 3]], w: usize, h: usize, prompt: &studio_segment::Prompt) -> studio_segment::Result<Vec<f32>> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             *self.bbox.lock().unwrap() = prompt.bbox;
             let Some(([cx, cy], _)) = prompt.points.iter().find(|(_, fg)| *fg) else { return Err("no point".into()) };
@@ -637,8 +637,8 @@ mod tests {
         // full-resolution result above is not reused).
         let mut p = p;
         p.values.insert(INPUT_KEY.into(), Value::Str("half".into()));
-        let half = effectcraft_raster::resample(&img, 50, 40);
-        let mut frame = |g: i64| Some(Arc::new(effectcraft_raster::resample(&frame_at(g), 50, 40)));
+        let half = studio_raster::resample(&img, 50, 40);
+        let mut frame = |g: i64| Some(Arc::new(studio_raster::resample(&frame_at(g), 50, 40)));
         let _ = frame_matte(&p, [100.0, 80.0], 25.0, 0, 0.5, &half, Some(stub.clone()), &mut frame, &|| false);
         assert_eq!(*stub.bbox.lock().unwrap(), Some([37.0, 27.0, 50.0, 40.0]));
     }

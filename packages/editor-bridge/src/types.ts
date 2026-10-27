@@ -1,12 +1,12 @@
 /**
  * Types + runtime (Zod) schemas for the editor bridge (PRODUCT_ARCHITECTURE §6.2).
  *
- * The upstream JS surface (`window.effectcraft`, defined inline in
- * `editor/apps/effectcraft-web/web/index.html` and backed by
- * `editor/apps/effectcraft-web/src/api.rs`) is unknown-shaped from TypeScript's
+ * The upstream JS surface (`window.studioEngine`, defined inline in
+ * `editor/apps/studio-web/web/index.html` and backed by
+ * `editor/apps/studio-web/src/api.rs`) is unknown-shaped from TypeScript's
  * point of view. At the boundary we therefore:
  *
- * - type the raw editor global as `EffectcraftGlobal` with `unknown` results,
+ * - type the raw editor global as `StudioEngineGlobal` with `unknown` results,
  * - validate every result we hand to product code with the Zod schemas below,
  * - expose narrow inferred types for the fields we actually rely on, and
  * - leave everything else as passthrough (`z.looseObject`) / `unknown`.
@@ -29,18 +29,18 @@ import type { AgentBatchInput } from "./batch";
 // Raw upstream surface (do not grow beyond what the sources verify)
 // ---------------------------------------------------------------------------
 
-/** `window.effectcraftLoad` — set to `{}` immediately, `{wasmMs, readyMs}` once running, `{error}` on failure (`web/index.html`). */
-export interface EffectcraftLoad {
+/** `window.studioEngineLoad` — set to `{}` immediately, `{wasmMs, readyMs}` once running, `{error}` on failure (`web/index.html`). */
+export interface StudioEngineLoad {
   readonly wasmMs?: number;
   readonly readyMs?: number;
   readonly error?: string;
 }
 
-/** `window.effectcraft` — verified method-for-method from `editor/apps/effectcraft-web/web/index.html` (v0.13.0). */
-export interface EffectcraftGlobal {
+/** `window.studioEngine` — verified method-for-method from `editor/apps/studio-web/web/index.html` (v0.13.0). */
+export interface StudioEngineGlobal {
   /** Any control method: `ui.inspect`, `ui.click`, `ui.key`, `ui.menu.invoke`, `render.frame`… Resolves with the method's `result`, rejects with its `error` message. */
   request(method: string, params?: unknown): Promise<unknown>;
-  /** `engine.execute` — an engine command (same ids/params as MCP / effectcraft-cli). */
+  /** `engine.execute` — an engine command (same ids/params as MCP / studio-cli). */
   execute(command: string, params?: unknown): Promise<unknown>;
   /** `engine.commands` — the command registry. */
   commands(): Promise<unknown>;
@@ -71,9 +71,9 @@ export interface EffectcraftGlobal {
 }
 
 /** `Window` refined with the (optional) upstream globals; the bridge never assumes they are present. */
-export interface EffectcraftWindow extends Window {
-  effectcraft?: EffectcraftGlobal;
-  effectcraftLoad?: EffectcraftLoad;
+export interface StudioEngineWindow extends Window {
+  effectcraft?: StudioEngineGlobal;
+  studioEngineLoad?: StudioEngineLoad;
   effectcraftModule?: unknown;
 }
 
@@ -362,20 +362,20 @@ export type ScreenshotResult = z.infer<typeof ScreenshotResultSchema>;
 // EditorInfo — `effectcraft.info()` (sync upstream) + `app.capabilities`
 // ---------------------------------------------------------------------------
 
-export const EffectcraftLoadInfoSchema = z.looseObject({
+export const StudioEngineLoadInfoSchema = z.looseObject({
   wasmMs: z.number().nullish(),
   readyMs: z.number().nullish(),
   error: z.string().nullish(),
 });
 
-export type EffectcraftLoadInfo = z.infer<typeof EffectcraftLoadInfoSchema>;
+export type StudioEngineLoadInfo = z.infer<typeof StudioEngineLoadInfoSchema>;
 
 export const EditorInfoSchema = z.looseObject({
   version: z
     .string()
     .nullish()
     .transform((v) => v ?? ""),
-  load: EffectcraftLoadInfoSchema.nullish(),
+  load: StudioEngineLoadInfoSchema.nullish(),
 });
 
 export type EditorInfo = z.infer<typeof EditorInfoSchema>;
@@ -417,7 +417,7 @@ export type SaveResult = z.infer<typeof SaveResultSchema>;
  * `/assets/<assetId>/<sanitizedName>`.
  *
  * Upstream note: `addFile` keeps only the last path segment
- * (`editor/apps/effectcraft-web/src/files.rs` `path_for`), so the editor may
+ * (`editor/apps/studio-web/src/files.rs` `path_for`), so the editor may
  * report a shorter path than requested. `addAsset` returns the path the
  * editor actually assigned — treat the return value, not the request, as
  * authoritative.
@@ -450,7 +450,7 @@ export type EditorEventHandler = (payload: unknown) => void;
  * `info` / `version` / `capabilities`, `dispose`.
  */
 export interface EditorBridge {
-  /** Resolves once `window.effectcraft` reports ready (again, if the editor reloads). */
+  /** Resolves once `window.studioEngine` reports ready (again, if the editor reloads). */
   ready(): Promise<void>;
   inspect(): Promise<UiInspect>;
   /** The command registry (`engine.commands`), optionally filtered by id/label substring. */

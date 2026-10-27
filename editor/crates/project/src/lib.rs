@@ -19,14 +19,14 @@ pub mod tracking;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub use effectcraft_color::ColorSpace;
-use effectcraft_color::{BlendMode, Label};
-use effectcraft_time::{FrameRate, Tick};
+pub use studio_color::ColorSpace;
+use studio_color::{BlendMode, Label};
+use studio_time::{FrameRate, Tick};
 pub use props::{Expression, FeatherFalloff, GroupKind, MaskMode, MaskMotionBlur, Node, ParamUi, PropGroup, Property, Uid, parse_path};
 use serde::{Deserialize, Serialize};
 
-pub use effectcraft_keyframe as keyframe;
-pub use effectcraft_keyframe::{Keyframe, Value};
+pub use studio_keyframe as keyframe;
+pub use studio_keyframe::{Keyframe, Value};
 
 /// The project file schema. 2: effects on layers without a source rectangle (shape, text)
 /// measure positions from the top-left of their comp-sized bounds (effect space), not from
@@ -1225,7 +1225,7 @@ impl Footage {
     /// Source time as the footage's timecode: its frame `frame` from Start Timecode
     /// (`0:00:41:20`), as the Footage panel shows it.
     pub fn timecode(&self, frame: i64) -> String {
-        effectcraft_time::format_timecode_ae(frame.saturating_add(self.start_timecode.unwrap_or(0)), self.frame_rate, false)
+        studio_time::format_timecode_ae(frame.saturating_add(self.start_timecode.unwrap_or(0)), self.frame_rate, false)
     }
 
     /// The data format of data footage: `json`, `csv` or `tsv` (from the file extension).

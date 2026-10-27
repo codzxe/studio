@@ -1,7 +1,7 @@
 //! A checked comp time must remain supported after nearest-frame rounding.
-use effectcraft_engine::Session;
-use effectcraft_project::LayerId;
-use effectcraft_time::{TICKS_PER_SECOND, Tick};
+use studio_engine::Session;
+use studio_project::LayerId;
+use studio_time::{TICKS_PER_SECOND, Tick};
 use serde_json::{Value, json};
 
 fn project(s: &Session) -> Value {

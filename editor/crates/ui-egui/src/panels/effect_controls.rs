@@ -15,10 +15,10 @@
 //!   Levels a histogram; Lumetri's curves, Colorama's output cycle, Glow's colour map and
 //!   Reshape's correspondence points have visual editors ([`super::fx_editors`]).
 
-use effectcraft_engine::geom::Mat3;
-use effectcraft_engine::keyframe::Value;
-use effectcraft_engine::project::{GroupKind, Layer, Node, ParamUi, PropGroup, Property};
-use effectcraft_engine::render::EvalCtx;
+use studio_engine::geom::Mat3;
+use studio_engine::keyframe::Value;
+use studio_engine::project::{GroupKind, Layer, Node, ParamUi, PropGroup, Property};
+use studio_engine::render::EvalCtx;
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
@@ -39,7 +39,7 @@ const TREE_INDENT: f32 = 14.0;
 
 /// Selecting any descendant activates its owning effect without replacing the property
 /// selection used by keyframe editing, copy and delete.
-fn effect_active(g: &PropGroup, layer: effectcraft_engine::project::LayerId, selected: &[(effectcraft_engine::project::LayerId, u64)]) -> bool {
+fn effect_active(g: &PropGroup, layer: studio_engine::project::LayerId, selected: &[(studio_engine::project::LayerId, u64)]) -> bool {
     fn contains(g: &PropGroup, uid: u64, depth: usize) -> bool {
         if g.uid == uid {
             return true;
@@ -455,9 +455,9 @@ fn prop_row(
                     set(actions, if i == 0 { serde_json::Value::Null } else { json!(comp.layers[i - 1].id.0) });
                 }
                 // Source / Masks / Effects & Masks (the hidden companion parameter).
-                if let Some(src) = group.get(&effectcraft_engine::effects::layer_source_id(&prop.match_id)) {
+                if let Some(src) = group.get(&studio_engine::effects::layer_source_id(&prop.match_id)) {
                     let si = src.value.as_enum() as usize;
-                    let opts: Vec<String> = effectcraft_engine::effects::LAYER_SOURCE_OPTIONS.iter().map(|s| s.to_string()).collect();
+                    let opts: Vec<String> = studio_engine::effects::LAYER_SOURCE_OPTIONS.iter().map(|s| s.to_string()).collect();
                     let sr = Rect::from_min_size(pos2(dr.max.x + 6.0, cy - 9.0), vec2(((r.max.x - dr.max.x) - 64.0).clamp(70.0, 120.0), 18.0));
                     let spop = egui::Id::new(("ec-lspop", uid));
                     if widgets::dropdown(ui, sr, opts.get(si).map(String::as_str).unwrap_or(""), &t, egui::Id::new(("ec-ls", uid))).clicked() {
@@ -500,7 +500,7 @@ fn prop_row(
             } else if s.contains('\n') {
                 prop.name.clone()
             } else {
-                effectcraft_engine::sequence::file_name(s)
+                studio_engine::sequence::file_name(s)
             };
             let nr = Rect::from_min_max(pos2(br.max.x + 8.0, r.min.y), pos2(r.max.x - 8.0, r.max.y));
             let np = p.with_clip_rect(nr.intersect(p.clip_rect()));
@@ -553,7 +553,7 @@ fn shown_dims(layer: &Layer, prop: &Property, value: &Value) -> usize {
 }
 
 /// Colour of a gradient at `f` (colour stops only).
-fn gradient_at(g: &effectcraft_engine::keyframe::Gradient, f: f64) -> Color32 {
+fn gradient_at(g: &studio_engine::keyframe::Gradient, f: f64) -> Color32 {
     let stops = &g.colors;
     let c = if stops.is_empty() {
         [0.0, 0.0, 0.0, 1.0]
@@ -629,7 +629,7 @@ fn dial_row(app: &mut EffectcraftApp, ui: &mut egui::Ui, layer: &Layer, prop: &P
 }
 
 /// The effect instance a row belongs to, for conditional visibility
-/// ([`effectcraft_engine::effects::catalog::param_shown`]): effect id, the instance's root
+/// ([`studio_engine::effects::catalog::param_shown`]): effect id, the instance's root
 /// group and the spec-id path of the group being drawn (`""` or `cameraPosition/`).
 struct FxScope<'a> {
     effect: &'a str,
@@ -655,7 +655,7 @@ impl<'a> FxScope<'a> {
             }
             None
         };
-        effectcraft_engine::effects::catalog::param_shown(self.effect, &format!("{}{m}", self.path), &value)
+        studio_engine::effects::catalog::param_shown(self.effect, &format!("{}{m}", self.path), &value)
     }
 }
 
@@ -729,7 +729,7 @@ fn group_rows(
             }
             Node::Group(sg) => {
                 // Paint strokes live in the Timeline only (AE's Paint shows Paint on Transparent).
-                if effectcraft_engine::effects::paint::is_paint(g) || !fx.shown(layer, ectx, &sg.match_id) {
+                if studio_engine::effects::paint::is_paint(g) || !fx.shown(layer, ectx, &sg.match_id) {
                     continue;
                 }
                 *y += ROW;
@@ -779,7 +779,7 @@ fn warp_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, l
         }
         app.auto.add(&format!("effectControls.warp.{}.cancel", g.uid), b2, "Cancel");
     }
-    let analysed = matches!(g.get(effectcraft_engine::effects::warp_stab::ANALYSIS).map(|p| &p.value), Some(Value::Str(s)) if !s.is_empty());
+    let analysed = matches!(g.get(studio_engine::effects::warp_stab::ANALYSIS).map(|p| &p.value), Some(Value::Str(s)) if !s.is_empty());
     let status = match app.session.warp_progress() {
         Some(pr) if running => pr.banner(),
         _ if analysed => "Analysis complete".to_string(),
@@ -791,9 +791,9 @@ fn warp_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, l
 
 /// Roto Brush & Refine Edge: Freeze / Unfreeze and Propagate buttons and the segmentation status.
 fn roto_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, layer: &Layer, g: &PropGroup, r: Rect, actions: &mut Actions) {
-    use effectcraft_engine::effects::roto as fx;
+    use studio_engine::effects::roto as fx;
     let t = app.tokens;
-    let params = effectcraft_engine::effects::flatten_params(g, &mut |pr| pr.value.clone());
+    let params = studio_engine::effects::flatten_params(g, &mut |pr| pr.value.clone());
     let frozen = fx::is_frozen(&params);
     let d = fx::data(&params);
     let running = app.session.roto_target().is_some_and(|(_, l, u, _)| l == layer.id && u == g.uid) && app.session.is_roto_running();
@@ -821,9 +821,9 @@ fn roto_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, l
 /// Object Matte: Freeze / Unfreeze and Track / Stop buttons (the background job that computes
 /// the matte over the tracked frames) and its status.
 fn object_matte_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, layer: &Layer, g: &PropGroup, r: Rect, actions: &mut Actions) {
-    use effectcraft_engine::effects::object_matte as om;
+    use studio_engine::effects::object_matte as om;
     let t = app.tokens;
-    let params = effectcraft_engine::effects::flatten_params(g, &mut |pr| pr.value.clone());
+    let params = studio_engine::effects::flatten_params(g, &mut |pr| pr.value.clone());
     let frozen = om::is_frozen(&params);
     let mine = app.session.roto_target().is_some_and(|(_, l, u, _)| l == layer.id && u == g.uid);
     let running = mine && app.session.is_roto_running();
@@ -864,9 +864,9 @@ fn editor_height(effect: &str, g: &PropGroup, width: f32) -> f32 {
     match effect {
         super::fx_editors::GLOW | super::fx_editors::RESHAPE | super::fx_editors::EXTRACTOR => super::fx_editors::header_height(effect, g, width),
         "ec.color.curves" => 34.0 + curves_size(width) + 26.0,
-        effectcraft_engine::effects::warp_stab::ID => 50.0,
-        effectcraft_engine::effects::camera_tracker::ID => super::camera_tracker_ui::EDITOR_HEIGHT,
-        effectcraft_engine::effects::roto::ID | effectcraft_engine::effects::object_matte::ID => 50.0,
+        studio_engine::effects::warp_stab::ID => 50.0,
+        studio_engine::effects::camera_tracker::ID => super::camera_tracker_ui::EDITOR_HEIGHT,
+        studio_engine::effects::roto::ID | studio_engine::effects::object_matte::ID => 50.0,
         "ec.color.levels" | "ec.color.levelsic" => 34.0 + 80.0 + 58.0,
         "ec.color.autolevels" | "ec.color.autocontrast" | "ec.color.autocolor" => 24.0 + 80.0 + 12.0,
         _ => 0.0,
@@ -999,7 +999,7 @@ fn curves_editor(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter,
 /// Levels parameter ids for a channel: input black, input white, gamma, output black, output white.
 fn levels_ids(effect: &str, ch: usize) -> [String; 5] {
     if effect == "ec.color.levels" {
-        return effectcraft_engine::effects::levels_channel_ids(ch);
+        return studio_engine::effects::levels_channel_ids(ch);
     }
     // Levels (Individual Controls) nests each channel's controls in its twirl-down group.
     let pre = fw::LEVELS_CHANNELS[ch.min(4)].0;
@@ -1138,7 +1138,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         return;
     };
     let Some(cid) = app.session.active_comp_id() else { return };
-    let comp = app.session.project.comp_arc(cid).unwrap_or_else(|| effectcraft_engine::project::Comp::new(1, 1, Default::default(), Default::default()).into());
+    let comp = app.session.project.comp_arc(cid).unwrap_or_else(|| studio_engine::project::Comp::new(1, 1, Default::default(), Default::default()).into());
     let comp_name = app.session.project.item(cid).map(|i| i.name.clone()).unwrap_or_default();
     let snap_project = app.session.project.clone();
     let snap_expr = app.session.expr.clone();
@@ -1187,7 +1187,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         let active = effect_active(g, layer.id, &app.session.state.selected_props);
         bp.rect_filled(r, 0.0, if active { t.fx_header_active } else { t.fx_header });
         // The effect's colour label (26.5): a bar on the header's left edge.
-        if let Some(lab) = g.label.filter(|l| *l != effectcraft_engine::color::Label::None) {
+        if let Some(lab) = g.label.filter(|l| *l != studio_engine::color::Label::None) {
             let [lr, lg, lb] = app.session.prefs.label_rgb(lab);
             bp.rect_filled(Rect::from_min_size(r.min, vec2(4.0, r.height())), 0.0, Color32::from_rgb(lr, lg, lb));
             app.auto.add(
@@ -1254,7 +1254,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if aresp.clicked() {
             widgets::open_popup(ui, apop);
         }
-        if let Some(spec) = effectcraft_engine::effects::find(effect) {
+        if let Some(spec) = studio_engine::effects::find(effect) {
             let lines = vec![
                 crate::i18n::effects::name(spec.id, spec.name),
                 format!("Category: {}", crate::i18n::effects::category(spec.category)),
@@ -1307,8 +1307,8 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
             }
             ui.separator();
             ui.menu_button(crate::i18n::tr("Label"), |ui| {
-                let cur = g.label.unwrap_or(effectcraft_engine::color::Label::None);
-                for (i, l) in effectcraft_engine::color::Label::ALL.into_iter().enumerate() {
+                let cur = g.label.unwrap_or(studio_engine::color::Label::None);
+                for (i, l) in studio_engine::color::Label::ALL.into_iter().enumerate() {
                     if widgets::label_entry(ui, l, &app.session.prefs.label_name(l), l == cur, &t).clicked() {
                         picked_label = Some(i);
                         ui.close();
@@ -1326,7 +1326,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         });
         // What the effect can't render as asked (an OCIO config it can't read, transforms it
         // passes through), under its name.
-        if let Some(w) = effectcraft_engine::effects::warning(g, &mut |pr| ectx.value(&layer, pr)) {
+        if let Some(w) = studio_engine::effects::warning(g, &mut |pr| ectx.value(&layer, pr)) {
             let galley = bp.layout(format!("⚠ {w}"), Tokens::ui(11.0), t.warning, (body.width() - 20.0).max(60.0));
             let wr = Rect::from_min_size(pos2(body.min.x + 10.0, y + 3.0), galley.size());
             bp.galley(wr.min, galley, t.warning);
@@ -1346,10 +1346,10 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     }
                     match effect.as_str() {
                         "ec.color.curves" => curves_editor(app, ui, &bp, &layer, g, &ectx, er, &mut actions),
-                        effectcraft_engine::effects::warp_stab::ID => warp_editor(app, ui, &bp, &layer, g, er, &mut actions),
-                        effectcraft_engine::effects::camera_tracker::ID => super::camera_tracker_ui::editor(app, ui, &bp, &layer, g, er, &mut actions),
-                        effectcraft_engine::effects::roto::ID => roto_editor(app, ui, &bp, &layer, g, er, &mut actions),
-                        effectcraft_engine::effects::object_matte::ID => object_matte_editor(app, ui, &bp, &layer, g, er, &mut actions),
+                        studio_engine::effects::warp_stab::ID => warp_editor(app, ui, &bp, &layer, g, er, &mut actions),
+                        studio_engine::effects::camera_tracker::ID => super::camera_tracker_ui::editor(app, ui, &bp, &layer, g, er, &mut actions),
+                        studio_engine::effects::roto::ID => roto_editor(app, ui, &bp, &layer, g, er, &mut actions),
+                        studio_engine::effects::object_matte::ID => object_matte_editor(app, ui, &bp, &layer, g, er, &mut actions),
                         "ec.color.levels" | "ec.color.levelsic" => levels_editor(app, ui, &bp, &layer, g, effect, &ectx, er, &mut actions),
                         super::fx_editors::GLOW | super::fx_editors::RESHAPE | super::fx_editors::EXTRACTOR => {
                             super::fx_editors::header_editor(app, ui, &bp, &layer, g, effect, &ectx, er, &mut actions)
@@ -1475,7 +1475,7 @@ pub fn viewer_hook(
     let mut actions: Actions = vec![];
     let mut point_preview = None;
     if let Some(pick) = app.ui.fx_pick.clone() {
-        let Some(layer) = ectx.comp.layer(effectcraft_engine::project::LayerId(pick.layer)).cloned() else {
+        let Some(layer) = ectx.comp.layer(studio_engine::project::LayerId(pick.layer)).cloned() else {
             app.ui.fx_pick = None;
             return;
         };
@@ -1483,7 +1483,7 @@ pub fn viewer_hook(
         let keyer = (pick.kind == "color")
             .then(|| layer.effects()?.groups().find(|g| g.find(pick.prop).is_some()))
             .flatten()
-            .filter(|g| effectcraft_engine::effects::find(&g.match_id).is_some_and(|s| s.category == "Keying"))
+            .filter(|g| studio_engine::effects::find(&g.match_id).is_some_and(|s| s.category == "Keying"))
             .map(|g| g.uid);
         if pick.kind == "color" && keyer.is_none() {
             // GPU frames: read the shown frame back for sampling.
@@ -1549,7 +1549,7 @@ pub fn viewer_hook(
         }
     }
     if let Some(pick) = app.ui.text_color_pick.clone() {
-        if ectx.comp.layer(effectcraft_engine::project::LayerId(pick.layer)).is_none() {
+        if ectx.comp.layer(studio_engine::project::LayerId(pick.layer)).is_none() {
             app.ui.text_color_pick = None;
             app.ui.status.clear();
         } else {
@@ -1597,7 +1597,7 @@ pub fn viewer_hook(
         // ⊕ controls for the point parameters of the selected effects.
         let mut sel = app.session.state.selected_props.clone();
         if let Some(pick) = &point_pick {
-            sel.push((effectcraft_engine::project::LayerId(pick.layer), pick.prop));
+            sel.push((studio_engine::project::LayerId(pick.layer), pick.prop));
         }
         let selected = app.session.state.selected_layers.clone();
         for layer in ectx
@@ -1614,7 +1614,7 @@ pub fn viewer_hook(
             for g in fx.groups().filter(|g| g.enabled && effect_active(g, layer.id, &sel)) {
                 // Puppet owns its pin handles and hit testing. Generic crosshairs would
                 // overlap the pins and steal their selection/rotation/scale gestures.
-                if matches!(&g.kind, GroupKind::Effect { effect } if effect == effectcraft_engine::effects::puppet::ID) {
+                if matches!(&g.kind, GroupKind::Effect { effect } if effect == studio_engine::effects::puppet::ID) {
                     continue;
                 }
                 if !picking && app.ui.viewer.show_layer_controls && matches!(&g.kind, GroupKind::Effect { effect } if effect == super::fx_editors::RESHAPE) {

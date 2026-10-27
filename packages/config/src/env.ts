@@ -403,9 +403,9 @@ export const ENV_VAR_SPECS: readonly EnvVarMeta[] = [
   },
   // ── render (M8 worker — BUILD_PLAN §2.3 feature-flag family) ─────────────
   {
-    name: "EFFECTCRAFT_CLI_PATH",
+    name: "STUDIO_ENGINE_CLI_PATH",
     purpose:
-      "Absolute path to the effectcraft-cli binary the render worker spawns. Resolution order: this value, else <repo>/editor/target/release/effectcraft-cli if present, else a PATH lookup.",
+      "Absolute path to the studio-cli binary the render worker spawns. Resolution order: this value, else <repo>/editor/target/release/studio-cli if present, else a PATH lookup.",
     group: "render",
     required: false,
     secret: false,
@@ -689,7 +689,7 @@ export const envSchema = z.object({
   LEASE_HEARTBEAT_MS: wholeNumber(1).default(120_000),
   LEASE_TTL_MS: wholeNumber(1).default(300_000),
   // render (M8 worker)
-  EFFECTCRAFT_CLI_PATH: z.string().min(1).optional(),
+  STUDIO_ENGINE_CLI_PATH: z.string().min(1).optional(),
   RENDER_WORKER_ENABLED: envBool.default(true),
   RENDER_WORKER_CONCURRENCY: wholeNumber(1).default(2),
   RENDER_JOB_TIMEOUT_SECONDS: wholeNumber(1).default(1800),
@@ -763,7 +763,7 @@ export interface StudioEnv {
     readonly ttlMs: number;
   };
   readonly render: {
-    /** Absolute effectcraft-cli path; undefined → repo-local build, then PATH. */
+    /** Absolute studio-cli path; undefined → repo-local build, then PATH. */
     readonly cliPath: string | undefined;
     /** Feature flag — false keeps jobs queued without dequeuing them. */
     readonly workerEnabled: boolean;
@@ -1002,7 +1002,7 @@ function groupEnv(flat: FlatEnv): StudioEnv {
       ttlMs: flat.LEASE_TTL_MS,
     },
     render: {
-      cliPath: flat.EFFECTCRAFT_CLI_PATH,
+      cliPath: flat.STUDIO_ENGINE_CLI_PATH,
       workerEnabled: flat.RENDER_WORKER_ENABLED,
       workerConcurrency: flat.RENDER_WORKER_CONCURRENCY,
       jobTimeoutSeconds: flat.RENDER_JOB_TIMEOUT_SECONDS,

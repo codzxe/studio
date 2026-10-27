@@ -12,17 +12,19 @@
 //!   uses, the media files and a poster frame); `essential.importTemplate` merges one into the
 //!   project and adds an instance to the active comp.
 
-use effectcraft_keyframe::Value as KV;
-use effectcraft_project::essential::{self, ControlType, EgControl, EgKind, EssentialGraphics};
-use effectcraft_project::{GroupKind, ItemId, ItemKind, LayerId, LayerSource, ParamUi, Project, Uid};
-use effectcraft_time::Tick;
+use studio_keyframe::Value as KV;
+use studio_project::essential::{self, ControlType, EgControl, EgKind, EssentialGraphics};
+use studio_project::{GroupKind, ItemId, ItemKind, LayerId, LayerSource, ParamUi, Project, Uid};
+use studio_time::Tick;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, b_p, bad, comp_id, has_comp, layer_p, selected_leaf_props, str_p};
 use crate::{EngineError, Result, Session, cmd, query};
 
 /// Format id written into template manifests.
-pub const TEMPLATE_FORMAT: &str = "effectcraft-template";
+pub const TEMPLATE_FORMAT: &str = "studio-template";
+/// The pre-rename format id (EffectCraft era): accepted on read so old templates open.
+pub const LEGACY_TEMPLATE_FORMAT: &str = "effectcraft-template";
 pub const TEMPLATE_VERSION: u32 = 1;
 
 /// `control`: a control id, or its name in the comp's Essential Graphics (`"Title"`).
@@ -243,7 +245,7 @@ fn unlink_property(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"control": id, "layer": lid.0, "prop": uid}))
 }
 
-fn control_type(pr: &effectcraft_project::Property) -> Option<ControlType> {
+fn control_type(pr: &studio_project::Property) -> Option<ControlType> {
     essential::control_type(pr)
 }
 
@@ -867,7 +869,7 @@ fn export_template(s: &mut Session, p: &Value) -> Result<Value> {
     }
     entries.insert(0, ("project.ecproj".into(), sub.to_json().into_bytes()));
     entries.insert(0, ("manifest.json".into(), serde_json::to_vec_pretty(&manifest).unwrap_or_default()));
-    let bytes = effectcraft_lottie::zip::store(&entries);
+    let bytes = studio_lottie::zip::store(&entries);
     s.services.write_file(&path, &bytes).map_err(|e| EngineError::Other(format!("cannot write {path}: {e}")))?;
     s.toast(format!("Exported template “{name}” to {path}"));
     Ok(json!({"path": path, "name": name, "bytes": bytes.len(), "controls": eg.flat().len(), "items": deps.len()}))
@@ -875,11 +877,12 @@ fn export_template(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Read a template's manifest and project (with media paths still archive-relative).
 pub fn read_template(bytes: &[u8]) -> std::result::Result<(Value, Project, Vec<(String, Vec<u8>)>), String> {
-    let entries = effectcraft_lottie::zip::read_stored(bytes);
+    let entries = studio_lottie::zip::read_stored(bytes);
     let get = |n: &str| entries.iter().find(|(k, _)| k == n).map(|(_, v)| v.clone());
     let manifest: Value =
         serde_json::from_slice(&get("manifest.json").ok_or("not a Studio template (no manifest.json)")?).map_err(|e| format!("manifest.json: {e}"))?;
-    if manifest.get("format").and_then(Value::as_str) != Some(TEMPLATE_FORMAT) {
+    let fmt = manifest.get("format").and_then(Value::as_str);
+    if fmt != Some(TEMPLATE_FORMAT) && fmt != Some(LEGACY_TEMPLATE_FORMAT) {
         return Err("not a Studio template".into());
     }
     if manifest.get("version").and_then(Value::as_u64).unwrap_or(0) > TEMPLATE_VERSION as u64 {
@@ -947,7 +950,7 @@ fn import_template(s: &mut Session, p: &Value) -> Result<Value> {
     essential::offset_ids(&mut sub, base);
     let new_comp = ItemId(tcomp.0 + base);
     let ids = s.edit("Import Template", None, |proj, st| {
-        let folder = proj.add_item(&name, effectcraft_color::Label::Yellow, None, ItemKind::Folder);
+        let folder = proj.add_item(&name, studio_color::Label::Yellow, None, ItemKind::Folder);
         let mut ids = vec![];
         for (id, mut it) in std::mem::take(&mut sub.items) {
             if it.parent.is_none() {

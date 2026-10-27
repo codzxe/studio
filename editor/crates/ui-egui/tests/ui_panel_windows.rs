@@ -1,14 +1,14 @@
 //! Multiple monitors (#486): a panel moves out of the main window into a native window of its
 //! own (Move Panel to New Window), which can be placed on another screen, and back.
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::{PanelKind, PanelWindow};
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::{PanelKind, PanelWindow};
 use egui::vec2;
 use egui_kittest::Harness;
 use serde_json::json;
 
 fn invoke(app: &mut EffectcraftApp, ctx: &egui::Context, params: serde_json::Value) -> Result<serde_json::Value, String> {
-    effectcraft_ui_egui::menus::invoke(app, ctx, "window.panelWindow", params)
+    studio_ui_egui::menus::invoke(app, ctx, "window.panelWindow", params)
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn a_panel_in_its_own_window_leaves_the_main_window() {
     assert!(h.state().auto.elements.iter().any(|e| e.id == "panel.Project"));
     // Docking it back into the main window closes the window entry.
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.dockPanel", json!({"panel": "Project", "anchor": "Timeline"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.dockPanel", json!({"panel": "Project", "anchor": "Timeline"})).unwrap();
     h.run_steps(2);
     assert!(h.state().ui.panel_windows.is_empty());
     assert!(!h.state().in_panel_window(PanelKind::Project));
@@ -66,7 +66,7 @@ fn a_panel_in_its_own_window_leaves_the_main_window() {
 
 #[test]
 fn panel_windows_survive_restart_with_hostile_places_made_safe() {
-    use effectcraft_engine::config::MemoryConfig;
+    use studio_engine::config::MemoryConfig;
     use std::sync::Arc;
     let store = Arc::new(MemoryConfig::default());
     let mut app = EffectcraftApp::new(Session { config: Some(store.clone()), ..Default::default() });

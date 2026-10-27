@@ -4,8 +4,8 @@
 //! pointer, outlined while it is dragged (#88). Agents do the same with `layer.addItem {position}`,
 //! `mediaBrowser.import {position}`, `effect.apply {layers}` and the preset commands.
 
-use effectcraft_engine::project::{ItemId, ItemKind};
-use effectcraft_engine::render::EvalCtx;
+use studio_engine::project::{ItemId, ItemKind};
+use studio_engine::render::EvalCtx;
 use egui::{Rect, Stroke, StrokeKind, vec2};
 use serde_json::{Value, json};
 

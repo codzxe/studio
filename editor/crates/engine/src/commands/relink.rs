@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use effectcraft_project::{Footage, FootageKind, ItemId, ItemKind};
+use studio_project::{Footage, FootageKind, ItemId, ItemKind};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, bad, str_p};

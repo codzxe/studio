@@ -12,8 +12,8 @@
 
 use std::collections::BTreeMap;
 
-use effectcraft_color::Label;
-use effectcraft_time::Tick;
+use studio_color::Label;
+use studio_time::Tick;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -285,7 +285,7 @@ page!(
     /// Settings ▸ Roto Brush.
     RotoPrefs {
         /// The segmentation model Roto Brush 2.0 / 3.0 use: `classical` (built in) or a model id
-        /// from `effectcraft_segment::MODELS` (once installed).
+        /// from `studio_segment::MODELS` (once installed).
         model: String = "classical".into(),
     }
 );
@@ -294,7 +294,7 @@ page!(
     /// Settings ▸ Face Tracking.
     FacePrefs {
         /// The model Track Mask ▸ Face Tracking uses: `classical` (built in) or a model id from
-        /// `effectcraft_segment::MODELS` (once installed).
+        /// `studio_segment::MODELS` (once installed).
         model: String = "classical".into(),
     }
 );
@@ -858,8 +858,8 @@ impl Prefs {
     /// doesn't state how it is stored. `None` = Ask User (keep straight and open Interpret
     /// Footage); `guess` takes premultiplied for movies (codecs with alpha are usually written
     /// premultiplied) and straight for stills.
-    pub fn unlabeled_alpha(&self, movie: bool) -> Option<effectcraft_project::AlphaMode> {
-        use effectcraft_project::AlphaMode::*;
+    pub fn unlabeled_alpha(&self, movie: bool) -> Option<studio_project::AlphaMode> {
+        use studio_project::AlphaMode::*;
         Some(match self.import.unlabeled_alpha.as_str() {
             "ignore" => Ignore,
             "straight" => Straight,
@@ -990,7 +990,7 @@ pub struct CacheBudgets {
 /// Colour of the `k`-th mask of a layer: Appearance ▸ Cycle Mask Colors cycles through the mask
 /// colours, otherwise every new mask takes the first one.
 pub fn mask_color(cycle: bool, k: usize) -> [u8; 3] {
-    use effectcraft_project::build::MASK_COLORS;
+    use studio_project::build::MASK_COLORS;
     if cycle { MASK_COLORS[k % MASK_COLORS.len()] } else { MASK_COLORS[0] }
 }
 
@@ -1138,7 +1138,7 @@ pub enum Item {
     BrowserStorage,
     /// A task's trained models (`roto.models`, `face.models`): authors, licence, size, install,
     /// choose.
-    Models(effectcraft_segment::Task),
+    Models(studio_segment::Task),
 }
 
 /// One page of the Settings dialog.
@@ -1435,7 +1435,7 @@ pub fn pages() -> Vec<Page> {
                 Note(
                     "Roto Brush 2.0 and 3.0 use the model chosen here (Version 1.0 always uses the classic engine). Models are open source, downloaded only when you ask, and checked against their published SHA-256.",
                 ),
-                Models(effectcraft_segment::Task::Mask),
+                Models(studio_segment::Task::Mask),
             ],
         },
         Page {
@@ -1446,7 +1446,7 @@ pub fn pages() -> Vec<Page> {
                 Note(
                     "Face tracking in the Tracker panel (Outline Only and Detailed Features) uses the model chosen here. Models are open source, downloaded only when you ask, and checked against their published SHA-256.",
                 ),
-                Models(effectcraft_segment::Task::Face),
+                Models(studio_segment::Task::Face),
             ],
         },
     ]
@@ -1502,7 +1502,7 @@ pub fn pages_json() -> Value {
                     Item::Note(t) => json!({"note": t}),
                     Item::BrowserStorage => json!({"browserStorage": "storage.info / storage.persist / storage.clear (web app)"}),
                     Item::Models(task) => {
-                        let p = if *task == effectcraft_segment::Task::Face { "face" } else { "roto" };
+                        let p = if *task == studio_segment::Task::Face { "face" } else { "roto" };
                         json!({"models": format!("{p}.models / {p}.model.select / {p}.model.download / {p}.model.install / {p}.model.remove"), "key": format!("{p}.model")})
                     }
                 })

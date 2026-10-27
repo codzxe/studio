@@ -1,6 +1,6 @@
 //! Wiggler, Smoother and Motion Sketch (`keys.wiggle`, `keys.smooth`, `motion.sketch`).
 
-use effectcraft_keyframe::evaluate;
+use studio_keyframe::evaluate;
 use serde_json::json;
 
 use crate::tests_timeline::{animate, prop, setup};

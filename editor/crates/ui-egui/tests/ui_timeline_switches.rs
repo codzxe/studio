@@ -3,10 +3,10 @@
 //! in After Effects (#227); stopwatches the same way (#284). Also the label swatch's menu and the
 //! layer bar past its source (#290).
 
-use effectcraft_engine::Session;
-use effectcraft_engine::color::Label;
-use effectcraft_engine::project::LayerId;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_engine::color::Label;
+use studio_engine::project::LayerId;
+use studio_ui_egui::EffectcraftApp;
 use egui::{Color32, Event, Modifiers, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -47,16 +47,16 @@ fn drag(h: &mut Harness<'_, EffectcraftApp>, from: Pos2, to: Pos2, steps: u32) {
 }
 
 /// Each layer's switch, top to bottom.
-fn states(h: &Harness<'_, EffectcraftApp>, ids: &[u64], f: fn(&effectcraft_engine::project::Layer) -> bool) -> Vec<bool> {
+fn states(h: &Harness<'_, EffectcraftApp>, ids: &[u64], f: fn(&studio_engine::project::Layer) -> bool) -> Vec<bool> {
     let comp = h.state().session.active_comp().unwrap();
     ids.iter().map(|id| f(comp.layer(LayerId(*id)).unwrap())).collect()
 }
 
-fn video(l: &effectcraft_engine::project::Layer) -> bool {
+fn video(l: &studio_engine::project::Layer) -> bool {
     l.switches.video
 }
 
-fn motion_blur(l: &effectcraft_engine::project::Layer) -> bool {
+fn motion_blur(l: &studio_engine::project::Layer) -> bool {
     l.switches.motion_blur
 }
 

@@ -27,8 +27,8 @@ import {
   type EditorEventName,
   type EditorInfo,
   EditorInfoSchema,
-  type EffectcraftLoad,
-  EffectcraftLoadInfoSchema,
+  type StudioEngineLoad,
+  StudioEngineLoadInfoSchema,
   type RenderFrameParams,
   type RenderFrameResult,
   RenderFrameResultSchema,
@@ -42,7 +42,7 @@ import {
 
 export interface FakeBridgeOptions {
   /** Simulate load timings in `info().load` (defaults: 42 / 64 ms). */
-  readonly load?: Partial<EffectcraftLoad>;
+  readonly load?: Partial<StudioEngineLoad>;
 }
 
 function parseOr<T>(schema: z.ZodType<T>, label: string, value: unknown): T {
@@ -71,7 +71,7 @@ export function attachFakeBridge(fake: FakeEditor, opts: FakeBridgeOptions = {})
   const listeners = new Map<EditorEventName, Set<EditorEventHandler>>();
   let disposed = false;
   let stickyReady: { payload: unknown } | null = null;
-  const load: EffectcraftLoad = {
+  const load: StudioEngineLoad = {
     wasmMs: opts.load?.wasmMs ?? 42,
     readyMs: opts.load?.readyMs ?? 64,
   };
@@ -261,7 +261,7 @@ export function attachFakeBridge(fake: FakeEditor, opts: FakeBridgeOptions = {})
 
     info(): EditorInfo {
       const info = parseOr(EditorInfoSchema, "info", fake.info());
-      return { ...info, load: parseOr(EffectcraftLoadInfoSchema, "info.load", load) };
+      return { ...info, load: parseOr(StudioEngineLoadInfoSchema, "info.load", load) };
     },
 
     capabilities(): Promise<AppCapabilities> {

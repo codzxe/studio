@@ -1,6 +1,6 @@
 // @studio/worker — the M8 CLI-gated INTEGRATION suite (BUILD_PLAN §M8 task 5).
 //
-// REAL Postgres queue + REAL effectcraft-cli renders + REAL ledger settlement,
+// REAL Postgres queue + REAL studio-cli renders + REAL ledger settlement,
 // through the REAL pipeline (runJob / runOnce). Each test proves one §M8 exit
 // criterion or M8 task-5 obligation:
 //
@@ -19,7 +19,7 @@
 //   malformed    garbage version bytes → RENDER_PROJECT_INVALID, refund intact.
 //
 // Gates: skips cleanly (reason in the describe title) when DATABASE_URL is
-// not a postgres URL or the effectcraft-cli binary cannot be resolved. On this
+// not a postgres URL or the studio-cli binary cannot be resolved. On this
 // box both gates pass and the suite RUNS.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -60,7 +60,7 @@ const skipReason =
   hasDb === false
     ? "DATABASE_URL is not a postgres URL (DB-gated suite)"
     : cli === null
-      ? "effectcraft-cli binary not found (repo build or EFFECTCRAFT_CLI_PATH)"
+      ? "studio-cli binary not found (repo build or STUDIO_ENGINE_CLI_PATH)"
       : null;
 const RUNS = skipReason === null;
 

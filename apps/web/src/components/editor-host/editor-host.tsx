@@ -85,7 +85,7 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
   // ---------------------------------------------------------------------------
   // Boot progress (the engine warm-up's parallel download + compile, started by
   // the capability gate): polled at the same cadence as the dist's own
-  // `effectcraftLoad` boot poll while the boot overlay is up, so the overlay
+  // `studioEngineLoad` boot poll while the boot overlay is up, so the overlay
   // can say WHERE the 49 MB engine is instead of a frozen "Preparing…".
   // ---------------------------------------------------------------------------
   const [warmup, setWarmup] = useState<EditorWarmupSnapshot>(() => editorWarmupSnapshot());

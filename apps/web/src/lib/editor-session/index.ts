@@ -13,7 +13,7 @@
  *
  * `EditorSessionClient` is implemented by the page on top of
  * `@studio/api-client` (gateway §7.2 manifest, signed URLs, §9.2/§9.3
- * immutable versions). `EditorBridge` is the typed `window.effectcraft`
+ * immutable versions). `EditorBridge` is the typed `window.studioEngine`
  * surface from `@studio/editor-bridge` (real editor; `attachFake` in tests).
  */
 

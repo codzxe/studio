@@ -6,10 +6,10 @@
 //!   it draws: egui's interactive widget rects of the frame are matched against the registered
 //!   automation elements, and any widget no element covers is a gap.
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::control::{self, ControlRequest, Outcome};
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::control::{self, ControlRequest, Outcome};
+use studio_ui_egui::dock::PanelKind;
 use egui::Rect;
 use egui_kittest::Harness;
 use serde_json::{Value, json};
@@ -40,7 +40,7 @@ fn every_engine_command_is_reachable_over_the_control_channel() {
     let mut h = harness(session());
     let listed = send(&mut h, "engine.commands", json!({}));
     let ids: std::collections::HashSet<String> = listed["result"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap().to_string()).collect();
-    for spec in effectcraft_engine::command_specs() {
+    for spec in studio_engine::command_specs() {
         assert!(ids.contains(spec.id), "engine.commands misses {}", spec.id);
         let v = send(&mut h, "engine.execute", json!({"command": spec.id, "params": {"__audit": 1}}));
         let e = v["error"].as_str().unwrap_or_default();

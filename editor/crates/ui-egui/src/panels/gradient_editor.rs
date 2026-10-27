@@ -12,8 +12,8 @@
 //! `dialog.gradient.location`, `dialog.gradient.opacity`, `dialog.gradient.color`,
 //! `dialog.gradient.delete`, `dialog.gradient.ok`, `dialog.gradient.cancel`.
 
-use effectcraft_engine::keyframe::{Gradient, Value};
-use effectcraft_engine::project::{ItemId, LayerId};
+use studio_engine::keyframe::{Gradient, Value};
+use studio_engine::project::{ItemId, LayerId};
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::{Value as Json, json};
 

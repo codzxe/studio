@@ -3,9 +3,9 @@
 //! that existed before the Gradient Editor, so it runs (and fails) on the code without it; the
 //! editor itself is tested in `ui_gradient_editor`.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::{LayerId, PropGroup};
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_engine::project::{LayerId, PropGroup};
+use studio_ui_egui::EffectcraftApp;
 use egui::{Event, Modifiers, PointerButton, pos2};
 use egui_kittest::Harness;
 use serde_json::json;

@@ -1,6 +1,6 @@
 //! Real keyboard/pointer coverage for the font menus in both text panels.
-use effectcraft_engine::{Session, commands::text_edit::layer_doc, project::LayerId};
-use effectcraft_ui_egui::{EffectcraftApp, dock::PanelKind};
+use studio_engine::{Session, commands::text_edit::layer_doc, project::LayerId};
+use studio_ui_egui::{EffectcraftApp, dock::PanelKind};
 use egui::{Event, Key, Modifiers, PointerButton};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -43,7 +43,7 @@ fn font_search_filters_selects_and_undoes_in_both_panels() {
         h.run_steps(3);
         click(&mut h, prefix);
         assert!(h.state().auto.find(&format!("{prefix}.search")).is_some());
-        assert!(effectcraft_ui_egui::widgets::any_menu_open(&h.ctx), "font search must hold app shortcuts like other popup lists");
+        assert!(studio_ui_egui::widgets::any_menu_open(&h.ctx), "font search must hold app shortcuts like other popup lists");
         let field = h.state().auto.find(prefix).unwrap();
         let search = h.state().auto.find(&format!("{prefix}.search")).unwrap();
         assert!(
@@ -139,8 +139,8 @@ fn pinned_variable_font(family: &str) -> Vec<u8> {
 #[test]
 fn font_menu_filters_variable_fonts() {
     const FAMILY: &str = "Inter Variable Menu Test";
-    assert_eq!(effectcraft_engine::text::fonts::add_font_data(pinned_variable_font(FAMILY)).len(), 1);
-    let variable = effectcraft_engine::text::fonts::variable_families();
+    assert_eq!(studio_engine::text::fonts::add_font_data(pinned_variable_font(FAMILY)).len(), 1);
+    let variable = studio_engine::text::fonts::variable_families();
     let mut s = Session::default();
     s.execute("comp.new", json!({"width": 320, "height": 180})).unwrap();
     let lid = s.execute("layer.newText", json!({"text": "Var", "font": "Inter"})).unwrap()["layer"].as_u64().unwrap();

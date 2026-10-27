@@ -1,8 +1,8 @@
 //! Settings remain a single transaction while GPU Information is open.
 use std::sync::Arc;
 
-use effectcraft_engine::{Session, config::MemoryConfig};
-use effectcraft_ui_egui::{Dialog, EffectcraftApp, menus};
+use studio_engine::{Session, config::MemoryConfig};
+use studio_ui_egui::{Dialog, EffectcraftApp, menus};
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, Rect, pos2, vec2};
 use egui_kittest::{Harness, kittest::Queryable as _};
 use serde_json::json;

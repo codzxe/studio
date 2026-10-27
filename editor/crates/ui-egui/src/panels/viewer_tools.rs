@@ -4,11 +4,11 @@
 //!
 //! Edits go through engine commands (`view.*`, `comp.*`); the viewer calls in from small hooks.
 
-use effectcraft_engine::commands::viewer_cmds::FastPreviews;
-use effectcraft_engine::project::{Comp, ItemId, LayerId};
-use effectcraft_engine::render::EvalCtx;
-use effectcraft_engine::time::Tick;
-use effectcraft_engine::viewer::{self as vw, Channel, Snap, SnapKind, SnapSource};
+use studio_engine::commands::viewer_cmds::FastPreviews;
+use studio_engine::project::{Comp, ItemId, LayerId};
+use studio_engine::render::EvalCtx;
+use studio_engine::time::Tick;
+use studio_engine::viewer::{self as vw, Channel, Snap, SnapKind, SnapSource};
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::json;
 
@@ -99,13 +99,13 @@ pub(crate) fn draw_snap(ctx: &egui::Context, painter: &egui::Painter, map: &View
     for h in &s.hits {
         if let SnapSource::Layer(l) | SnapSource::Vertex(l) = h.source
             && let Some(layer) = ectx.comp.layer(l)
-            && let Some(b) = effectcraft_engine::render::content_bounds(ectx, layer)
+            && let Some(b) = studio_engine::render::content_bounds(ectx, layer)
         {
             let (m, _) = ectx.layer_to_comp(layer);
             let q: Vec<Pos2> = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]]
                 .iter()
                 .map(|p| {
-                    let c = m.apply(effectcraft_engine::geom::vec2(p[0], p[1]));
+                    let c = m.apply(studio_engine::geom::vec2(p[0], p[1]));
                     map.to_screen([c.x, c.y])
                 })
                 .collect();
@@ -373,12 +373,12 @@ pub(crate) fn draw_frame(app: &mut EffectcraftApp, ctx: &egui::Context, painter:
         let zoom = comp_rect.width() / ectx.comp.width.max(1) as f32;
         let map = ViewerMap { origin: comp_rect.min, zoom, comp: [ectx.comp.width as f32, ectx.comp.height as f32], area: comp_rect };
         for l in ectx.comp.layers.iter().filter(|l| l.is_active_at(ectx.time) && l.has_video()) {
-            let Some(b) = effectcraft_engine::render::content_bounds(ectx, l) else { continue };
+            let Some(b) = studio_engine::render::content_bounds(ectx, l) else { continue };
             let (m, _) = super::viewer::l2c(ectx, l);
             let q: Vec<Pos2> = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]]
                 .iter()
                 .map(|p| {
-                    let c = m.apply(effectcraft_engine::geom::vec2(p[0], p[1]));
+                    let c = m.apply(studio_engine::geom::vec2(p[0], p[1]));
                     map.to_screen([c.x, c.y])
                 })
                 .collect();
@@ -782,7 +782,7 @@ fn bottom_bar_contents(app: &mut EffectcraftApp, ui: &mut egui::Ui, bar: Rect, z
     if comp.has_3d() {
         // The comp's 3D renderer, as After Effects' Composition panel shows it: the menu switches
         // it through Composition Settings (undoable), and the automation label is the renderer.
-        use effectcraft_engine::project::Renderer;
+        use studio_engine::project::Renderer;
         let renderers = [(Renderer::Classic3D, "Classic 3D", "classic3D"), (Renderer::Advanced3D, "Advanced 3D", "advanced3D")];
         let current = renderers.iter().find(|(r, ..)| *r == comp.renderer).map_or("Classic 3D", |(_, label, _)| *label);
         let r = Rect::from_min_size(pos2(x, cy - 10.0), vec2(96.0, 20.0));
@@ -806,7 +806,7 @@ fn bottom_bar_contents(app: &mut EffectcraftApp, ui: &mut egui::Ui, bar: Rect, z
             toggle_popup(ui, "vw-cam-pop");
         }
         app.auto.add_response("viewer.view3d", &response, "3D View");
-        use effectcraft_engine::render::three_d::View3D;
+        use studio_engine::render::three_d::View3D;
         let items: Vec<(String, bool)> = View3D::ALL.iter().map(|v| (v.label().to_string(), *v == cur)).collect();
         if let Some(i) = popup(app, ui, "vw-cam-pop", r, &items, "view3dItem") {
             let _ = app.session.execute("view.set3DView", json!({"view": View3D::ALL[i].id()}));

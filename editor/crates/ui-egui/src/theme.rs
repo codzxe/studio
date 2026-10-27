@@ -252,17 +252,17 @@ impl Tokens {
         FontId::new(size, FontFamily::Name("medium".into()))
     }
     /// sRGB colour of an item/layer label (Settings ▸ Labels).
-    pub fn label(&self, l: effectcraft_color::Label) -> Color32 {
-        let i = effectcraft_color::Label::ALL.iter().position(|x| *x == l).unwrap_or(0);
+    pub fn label(&self, l: studio_color::Label) -> Color32 {
+        let i = studio_color::Label::ALL.iter().position(|x| *x == l).unwrap_or(0);
         self.labels[i]
     }
 
     /// Theme tokens for the current settings: theme, UI brightness and label colours.
     /// The tokens for theme `kind` (resolved from the appearance mode) with the rest of the
     /// Appearance settings: brightness, label colours, gradients.
-    pub fn from_prefs(p: &effectcraft_engine::prefs::Prefs, kind: ThemeKind) -> Tokens {
+    pub fn from_prefs(p: &studio_engine::prefs::Prefs, kind: ThemeKind) -> Tokens {
         let mut t = Tokens::for_kind(kind).with_brightness(p.appearance.brightness as f32);
-        for (i, l) in effectcraft_color::Label::ALL.iter().enumerate() {
+        for (i, l) in studio_color::Label::ALL.iter().enumerate() {
             let [r, g, b] = p.label_rgb(*l);
             t.labels[i] = Color32::from_rgb(r, g, b);
         }
@@ -312,18 +312,20 @@ impl Tokens {
 }
 
 fn default_labels() -> [Color32; 17] {
-    effectcraft_color::Label::ALL.map(|l| {
+    studio_color::Label::ALL.map(|l| {
         let [r, g, b] = l.rgb();
         Color32::from_rgb(r, g, b)
     })
 }
 
-static INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
-static INTER_MEDIUM: &[u8] = include_bytes!("../../../assets/fonts/Inter-Medium.ttf");
-static INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
+static INSTRUMENT_SANS: &[u8] = include_bytes!("../../../assets/fonts/InstrumentSans-Regular.ttf");
+static INSTRUMENT_SANS_MEDIUM: &[u8] = include_bytes!("../../../assets/fonts/InstrumentSans-Medium.ttf");
+static INSTRUMENT_SANS_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/InstrumentSans-SemiBold.ttf");
+static INSTRUMENT_SERIF: &[u8] = include_bytes!("../../../assets/fonts/InstrumentSerif-Regular.ttf");
 static JETBRAINS_MONO: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
 
-/// Install fonts (Inter, Inter Medium/SemiBold, JetBrains Mono) and egui visuals. `language` is the
+/// Install fonts (Instrument Sans Regular/Medium/SemiBold, Instrument Serif, JetBrains
+/// Mono — the SaaS brand family) and egui visuals. `language` is the
 /// resolved interface language from [`crate::i18n::language`] (`en`, `ja`, `zh-hans` or `zh-hant`),
 /// not the stored `general.language` preference: `system` is already resolved there, so a Chinese
 /// system draws Chinese with the default setting. The CJK fallback that draws the interface's own
@@ -332,14 +334,17 @@ static JETBRAINS_MONO: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMo
 /// frame loop), so the fonts do not need a restart.
 pub fn install(ctx: &egui::Context, t: &Tokens, language: &str) {
     let mut fonts = FontDefinitions::default();
-    fonts.font_data.insert("inter".into(), Arc::new(FontData::from_static(INTER_REGULAR)));
-    fonts.font_data.insert("inter-medium".into(), Arc::new(FontData::from_static(INTER_MEDIUM)));
-    fonts.font_data.insert("inter-semibold".into(), Arc::new(FontData::from_static(INTER_SEMIBOLD)));
+    fonts.font_data.insert("instrument-sans".into(), Arc::new(FontData::from_static(INSTRUMENT_SANS)));
+    fonts.font_data.insert("instrument-sans-medium".into(), Arc::new(FontData::from_static(INSTRUMENT_SANS_MEDIUM)));
+    fonts.font_data.insert("instrument-sans-semibold".into(), Arc::new(FontData::from_static(INSTRUMENT_SANS_SEMIBOLD)));
+    fonts.font_data.insert("instrument-serif".into(), Arc::new(FontData::from_static(INSTRUMENT_SERIF)));
     fonts.font_data.insert("jbmono".into(), Arc::new(FontData::from_static(JETBRAINS_MONO)));
-    fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "inter".into());
+    fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "instrument-sans".into());
     fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "jbmono".into());
-    fonts.families.insert(FontFamily::Name("semibold".into()), vec!["inter-semibold".into(), "inter".into()]);
-    fonts.families.insert(FontFamily::Name("medium".into()), vec!["inter-medium".into(), "inter".into()]);
+    fonts.families.insert(FontFamily::Name("semibold".into()), vec!["instrument-sans-semibold".into(), "instrument-sans".into()]);
+    fonts.families.insert(FontFamily::Name("medium".into()), vec!["instrument-sans-medium".into(), "instrument-sans".into()]);
+    // Display/serif family for brand headlines — the SaaS `--font-display-stack` match.
+    fonts.families.insert(FontFamily::Name("serif".into()), vec!["instrument-serif".into(), "instrument-sans".into()]);
     // Inter and egui's own fallbacks have no small triangles (the `▸` of "File ▸ Import"), which
     // would draw as missing-glyph boxes: JetBrains Mono fills in the symbols the others lack.
     for (family, stack) in &mut fonts.families {
@@ -393,7 +398,7 @@ fn install_script_fallbacks(family_fonts: &mut FontDefinitions, language: &str) 
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        use effectcraft_text::fonts;
+        use studio_text::fonts;
         // Kana is unambiguously Japanese; Han ideographs are shared, so the order decides which
         // language's face draws them.
         const KANA: (char, &str) = ('あ', "japanese-system");
@@ -530,7 +535,7 @@ pub fn apply_visuals(ctx: &egui::Context, t: &Tokens) {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod script_font_tests {
-    use effectcraft_text::fonts;
+    use studio_text::fonts;
 
     /// Whether an installed face covers `probe` (else the glyph check is skipped).
     fn installed(probe: char) -> bool {
@@ -717,7 +722,7 @@ mod tests {
 
     #[test]
     fn hangul_gets_a_face_when_one_is_installed() {
-        use effectcraft_text::fonts;
+        use studio_text::fonts;
         let mut fonts_def = FontDefinitions::default();
         install_script_fallbacks(&mut fonts_def, "en");
         let base = fonts::resolve("Inter", "Regular").face;

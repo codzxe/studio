@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Typed window.effectcraft bridge for the frozen EffectCraft editor iframe (PRODUCT_ARCHITECTURE §6.2) + deterministic fake editor for tests and E2E fixtures.",
+  "description": "Typed window.studioEngine bridge for the frozen EffectCraft editor iframe (PRODUCT_ARCHITECTURE §6.2) + deterministic fake editor for tests and E2E fixtures.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",

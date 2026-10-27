@@ -28,7 +28,7 @@ impl EffectcraftApp {
     fn tab_titles(&self) -> Vec<(PanelKind, String)> {
         let mut out = Vec::new();
         // ScriptUI panels are named after their script.
-        for w in self.session.script_ui.windows.iter().filter(|w| w.kind == effectcraft_engine::scriptui::WindowKind::Panel) {
+        for w in self.session.script_ui.windows.iter().filter(|w| w.kind == studio_engine::scriptui::WindowKind::Panel) {
             if let Some(t) = panels::scriptui_view::panel_title(self, w.id) {
                 out.push((PanelKind::ScriptPanel(w.id), t));
             }
@@ -48,9 +48,9 @@ impl EffectcraftApp {
     }
 
     /// A comp's label colour as a tab swatch (faint without a label).
-    fn comp_swatch(&self, cid: effectcraft_engine::project::ItemId) -> Color32 {
+    fn comp_swatch(&self, cid: studio_engine::project::ItemId) -> Color32 {
         match self.session.project.item(cid).map(|i| i.label) {
-            Some(l) if l != effectcraft_engine::color::Label::None => self.tokens.label(l),
+            Some(l) if l != studio_engine::color::Label::None => self.tokens.label(l),
             _ => self.tokens.text_faint,
         }
     }
@@ -86,7 +86,7 @@ impl EffectcraftApp {
         }
         // Effect Controls carries the selected layer's label colour.
         if let Some(l) = self.session.active_comp().and_then(|c| self.session.state.selected_layers.first().and_then(|id| c.layer(*id)))
-            && l.label != effectcraft_engine::color::Label::None
+            && l.label != studio_engine::color::Label::None
         {
             v.push((PanelKind::EffectControls, dock::TabDeco { swatch: self.tokens.label(l.label), locked: false, viewer: false }));
         }
@@ -106,7 +106,7 @@ impl EffectcraftApp {
         let _ = comp_label;
         for (p, label) in [(PanelKind::Properties, layer_label)] {
             let (Some(label), Some(e)) = (label, self.auto.find(&format!("panel.tab.{}", p.id()))) else { continue };
-            if label == effectcraft_engine::color::Label::None {
+            if label == studio_engine::color::Label::None {
                 continue;
             }
             let r = Rect::from_min_size(pos2(e.rect[0] + 2.0, e.rect[1] + 9.0), vec2(4.0, (e.rect[3] - 16.0).max(6.0)));
@@ -605,7 +605,7 @@ fn insertion_mark(painter: &egui::Painter, x: f32, strip: Rect, col: Color32) {
 
 /// The native window of the floating group whose window entry names `panel`.
 pub fn panel_window_id(panel: PanelKind) -> egui::ViewportId {
-    egui::ViewportId::from_hash_of(("effectcraft-panel-window", panel.id()))
+    egui::ViewportId::from_hash_of(("studio-panel-window", panel.id()))
 }
 
 /// Where a native panel window was told to open (kept for as long as it stays open).

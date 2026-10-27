@@ -3,8 +3,8 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, Weak};
 
-use effectcraft_effects::Buf;
-use effectcraft_raster::Image;
+use studio_effects::Buf;
+use studio_raster::Image;
 
 /// Compute entry points in `kernels.wgsl` (one pipeline each).
 const ENTRIES: &[&str] = &[
@@ -1037,7 +1037,7 @@ impl GpuContext {
             }
             if u.bytes > budget && !self.upload_full_warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
                 log::warn!(
-                    target: "effectcraft_gpu",
+                    target: "studio_gpu",
                     "GPU upload cache full ({} MB): evicting layer textures, which upload again when next used; a frame whose static layers exceed it re-uploads them every frame",
                     budget >> 20
                 );

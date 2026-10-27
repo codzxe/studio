@@ -9,9 +9,9 @@
 //! ```
 //!
 //! Feature Center, Confidence and Attach Point get one keyframe per analysed frame (layer time).
-//! The tracking algorithms live in `effectcraft-track`; applying tracks lives in the engine.
+//! The tracking algorithms live in `studio-track`; applying tracks lives in the engine.
 
-use effectcraft_keyframe::Value;
+use studio_keyframe::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::build::Ids;

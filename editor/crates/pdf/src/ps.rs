@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use effectcraft_svg::{Affine, BezPath, Cap, FillRule, Join, Paint, Stroke};
+use studio_svg::{Affine, BezPath, Cap, FillRule, Join, Paint, Stroke};
 use kurbo::{PathEl, Point};
 
 use crate::build::{Builder, MAX_PATH};

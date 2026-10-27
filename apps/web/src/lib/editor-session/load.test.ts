@@ -8,7 +8,7 @@ import { type EditorSessionClient, EditorSessionError } from "./types";
 
 /**
  * M3.3 load sequence against the deterministic fake editor (the real
- * `window.effectcraft` surface, incl. addFile/addAsset semantics) and a fake
+ * `window.studioEngine` surface, incl. addFile/addAsset semantics) and a fake
  * `EditorSessionClient`. Real timers — the fake editor reads Blobs through
  * FileReader in jsdom, which fake timers cannot drive; the timeout test uses
  * a small real `assetTimeoutMs` instead.

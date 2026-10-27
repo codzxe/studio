@@ -14,38 +14,38 @@ repository = "https://github.com/storytold/effectcraft"
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d", version = "=0.1.0", default-features = false, features = ["read"] }
 craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "82a24b006eefa036b43c09a67fb9a3fbd17ffe63" }
 # internal
-effectcraft-time = { path = "crates/time" }
-effectcraft-geom = { path = "crates/geom" }
-effectcraft-color = { path = "crates/color" }
-effectcraft-raster = { path = "crates/raster" }
-effectcraft-path = { path = "crates/path" }
-effectcraft-keyframe = { path = "crates/keyframe" }
-effectcraft-project = { path = "crates/project" }
-effectcraft-text = { path = "crates/text" }
-effectcraft-effects = { path = "crates/effects" }
-effectcraft-track = { path = "crates/track" }
-effectcraft-segment = { path = "crates/segment" }
-effectcraft-model = { path = "crates/model" }
-effectcraft-render = { path = "crates/render" }
-effectcraft-gpu = { path = "crates/gpu" }
-effectcraft-media = { path = "crates/media" }
-effectcraft-export = { path = "crates/export" }
-effectcraft-expr = { path = "crates/expr" }
-effectcraft-lottie = { path = "crates/lottie" }
-effectcraft-interchange = { path = "crates/interchange" }
-effectcraft-pdf = { path = "crates/pdf" }
-effectcraft-psd = { path = "crates/psd" }
-effectcraft-vp9enc = { path = "crates/vp9enc" }
-effectcraft-svg = { path = "crates/svg" }
-effectcraft-engine = { path = "crates/engine" }
-effectcraft-host = { path = "crates/host" }
-effectcraft-ui-egui = { path = "crates/ui-egui" }
-effectcraft-automation = { path = "crates/automation" }
-effectcraft-opusenc = { path = "crates/opusenc" }
-effectcraft-script = { path = "crates/script" }
-effectcraft-hevcenc = { path = "crates/hevcenc" }
-effectcraft-av1enc = { path = "crates/av1enc" }
-effectcraft-plugin = { path = "crates/plugin" }
+studio-time = { path = "crates/time" }
+studio-geom = { path = "crates/geom" }
+studio-color = { path = "crates/color" }
+studio-raster = { path = "crates/raster" }
+studio-path = { path = "crates/path" }
+studio-keyframe = { path = "crates/keyframe" }
+studio-project = { path = "crates/project" }
+studio-text = { path = "crates/text" }
+studio-effects = { path = "crates/effects" }
+studio-track = { path = "crates/track" }
+studio-segment = { path = "crates/segment" }
+studio-model = { path = "crates/model" }
+studio-render = { path = "crates/render" }
+studio-gpu = { path = "crates/gpu" }
+studio-media = { path = "crates/media" }
+studio-export = { path = "crates/export" }
+studio-expr = { path = "crates/expr" }
+studio-lottie = { path = "crates/lottie" }
+studio-interchange = { path = "crates/interchange" }
+studio-pdf = { path = "crates/pdf" }
+studio-psd = { path = "crates/psd" }
+studio-vp9enc = { path = "crates/vp9enc" }
+studio-svg = { path = "crates/svg" }
+studio-engine = { path = "crates/engine" }
+studio-host = { path = "crates/host" }
+studio-ui-egui = { path = "crates/ui-egui" }
+studio-automation = { path = "crates/automation" }
+studio-opusenc = { path = "crates/opusenc" }
+studio-script = { path = "crates/script" }
+studio-hevcenc = { path = "crates/hevcenc" }
+studio-av1enc = { path = "crates/av1enc" }
+studio-plugin = { path = "crates/plugin" }
 
 # foundation
 thiserror = "2"
@@ -83,10 +83,10 @@ filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "2c5
 filmcraft-prores = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
 filmcraft-aac = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
 filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
-# decoder used as the round-trip oracle of effectcraft-opusenc (crates/export dev-dependency)
+# decoder used as the round-trip oracle of studio-opusenc (crates/export dev-dependency)
 filmcraft-opus = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
 filmcraft-vp9 = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
-# decoders used as the round-trip oracles of effectcraft-hevcenc / effectcraft-av1enc (dev-dependencies only)
+# decoders used as the round-trip oracles of studio-hevcenc / studio-av1enc (dev-dependencies only)
 filmcraft-hevc = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
 filmcraft-av1 = { git = "https://github.com/storytold/filmcraft", rev = "2c5ba7a72619935f0481f99d59409e0d1844b234" }
 # timeline interchange (EDL, FCP7 XML, FCPXML, OTIO) for Premiere Pro interop (crates/interchange only)
@@ -142,40 +142,40 @@ opt-level = 2
 opt-level = 1
 
 # Pixel hot loops: keep debug builds interactive.
-[profile.dev.package.effectcraft-raster]
+[profile.dev.package.studio-raster]
 opt-level = 3
 
-[profile.dev.package.effectcraft-render]
+[profile.dev.package.studio-render]
 opt-level = 3
 
-[profile.dev.package.effectcraft-gpu]
+[profile.dev.package.studio-gpu]
 opt-level = 3
 
-[profile.dev.package.effectcraft-effects]
+[profile.dev.package.studio-effects]
 opt-level = 3
 
-[profile.dev.package.effectcraft-track]
+[profile.dev.package.studio-track]
 opt-level = 3
 
-[profile.dev.package.effectcraft-path]
+[profile.dev.package.studio-path]
 opt-level = 3
 
-[profile.dev.package.effectcraft-media]
+[profile.dev.package.studio-media]
 opt-level = 3
 
-[profile.dev.package.effectcraft-opusenc]
+[profile.dev.package.studio-opusenc]
 opt-level = 3
 
-[profile.dev.package.effectcraft-export]
+[profile.dev.package.studio-export]
 opt-level = 3
 
-[profile.dev.package.effectcraft-vp9enc]
+[profile.dev.package.studio-vp9enc]
 opt-level = 3
 
-[profile.dev.package.effectcraft-hevcenc]
+[profile.dev.package.studio-hevcenc]
 opt-level = 3
 
-[profile.dev.package.effectcraft-av1enc]
+[profile.dev.package.studio-av1enc]
 opt-level = 3
 
 # FilmCraft codec hot loops (same settings as FilmCraft's own workspace).

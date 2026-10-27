@@ -5,9 +5,9 @@
 //! edits made in the dialog back, OK keeps them (one undo step per control drag).
 
 use crate::i18n::tr;
-use effectcraft_engine::keyframe::Value as KV;
-use effectcraft_engine::project::styles::{BLENDING, STYLES};
-use effectcraft_engine::project::{Layer, LayerId, ParamUi, Property};
+use studio_engine::keyframe::Value as KV;
+use studio_engine::project::styles::{BLENDING, STYLES};
+use studio_engine::project::{Layer, LayerId, ParamUi, Property};
 use egui::vec2;
 use serde_json::{Value, json};
 
@@ -25,8 +25,8 @@ pub struct LayerStyleState {
 
 #[derive(Clone)]
 struct Checkpoint {
-    project: std::sync::Arc<effectcraft_engine::project::Project>,
-    history: effectcraft_engine::history::History,
+    project: std::sync::Arc<studio_engine::project::Project>,
+    history: studio_engine::history::History,
 }
 
 impl std::fmt::Debug for Checkpoint {

@@ -20,7 +20,7 @@
  *                     `demo-workspace`, project `demo-project`, 1000 credits).
  *   [3/4] editor    — verifies the WASM editor dist in apps/web/public/editor:
  *                     `\0asm` magic bytes, size floor, and every boot file the
- *                     iframe needs (effectcraft_web.js, worker.js,
+ *                     iframe needs (studio_web.js, worker.js,
  *                     audio-worklet.js, index.html, sw.js, manifest) + the
  *                     three next/font/local .ttf files (scripts/fetch-web-fonts.mjs
  *                     — pinned google/fonts fetch, sha256-verified, offline-friendly
@@ -87,14 +87,14 @@ const ROUTES_AUTHED = [
 ];
 // A failure here means the user WOULD see a broken page — exit non-zero.
 const CORE_FATAL = new Set(["/", "/sign-in", "/editor/?empty"]);
-const EDITOR_WASM_ROUTE = "/editor/effectcraft_web_bg.wasm";
+const EDITOR_WASM_ROUTE = "/editor/studio_web_bg.wasm";
 const EDITOR_IFRAME_ROUTE = "/editor/?empty";
 
 const EDITOR_DIR = path.join(REPO, "apps/web/public/editor");
 const WASM_MIN_BYTES = 10 * 1024 * 1024; // the real dist is ~49.4 MB; the floor only catches truncation
 const EDITOR_BOOT_FILES = [
-  "effectcraft_web_bg.wasm",
-  "effectcraft_web.js",
+  "studio_web_bg.wasm",
+  "studio_web.js",
   "index.html",
   "worker.js",
   "audio-worklet.js",
@@ -307,7 +307,7 @@ async function ensureDatabase() {
 // ── [3/4] editor wasm verification ───────────────────────────────────────────
 function verifyEditorAssets() {
   const missing = EDITOR_BOOT_FILES.filter((f) => !fs.existsSync(path.join(EDITOR_DIR, f)));
-  const wasmPath = path.join(EDITOR_DIR, "effectcraft_web_bg.wasm");
+  const wasmPath = path.join(EDITOR_DIR, "studio_web_bg.wasm");
   if (!fs.existsSync(wasmPath)) {
     throw new Error(
       `editor wasm missing: ${wasmPath} — run scripts/build_editor_web.sh (see docs/PRODUCT_ARCHITECTURE.md §6.1)`,
@@ -576,7 +576,7 @@ async function cmdStart(opts) {
     process.exit(1);
   }
   say(
-    `      effectcraft_web_bg.wasm — ${bold(fmtBytes(wasmInfo.size))}, magic ${green("\\0asm")} ✓`,
+    `      studio_web_bg.wasm — ${bold(fmtBytes(wasmInfo.size))}, magic ${green("\\0asm")} ✓`,
   );
   if (wasmInfo.missing.length > 0) {
     say(

@@ -1,8 +1,8 @@
 //! Window ▸ Script Console: the panel shows, runs JavaScript through `script.run` (persistent
 //! context) and logs output, results and errors (egui_kittest, UI logic only).
 
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui_kittest::Harness;
 
 fn click(h: &mut Harness<'_, EffectcraftApp>, id: &str) {
@@ -17,7 +17,7 @@ fn click(h: &mut Harness<'_, EffectcraftApp>, id: &str) {
 
 #[test]
 fn script_console_runs_scripts() {
-    let s = effectcraft_host::session();
+    let s = studio_host::session();
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| EffectcraftApp::new(s));
     h.state_mut().show_panel(PanelKind::ScriptConsole);
     h.run_steps(3);
@@ -44,11 +44,11 @@ fn script_console_runs_scripts() {
 }
 
 /// Headless look at the panel (wgpu offscreen); run with
-/// `SC_SNAPSHOT=/abs/out.png cargo test -p effectcraft-ui-egui --test ui_script_console -- --ignored`.
+/// `SC_SNAPSHOT=/abs/out.png cargo test -p studio-ui-egui --test ui_script_console -- --ignored`.
 #[test]
 #[ignore]
 fn script_console_snapshot() {
-    let s = effectcraft_host::session();
+    let s = studio_host::session();
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_| EffectcraftApp::new(s));
     h.state_mut().show_panel(PanelKind::ScriptConsole);
     h.run_steps(2);

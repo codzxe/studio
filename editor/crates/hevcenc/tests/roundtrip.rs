@@ -1,7 +1,7 @@
 //! Round trips through the filmcraft-hevc decoder and (when installed) ffmpeg: decoded pictures must
 //! equal the encoder's own reconstruction bit-exactly.
 
-use effectcraft_hevcenc::{Encoder, EncoderConfig, Frame, Profile, RateControl};
+use studio_hevcenc::{Encoder, EncoderConfig, Frame, Profile, RateControl};
 use std::process::Command;
 
 struct Pic {
@@ -365,7 +365,7 @@ fn hvcc_layout() {
 }
 
 /// Speed / size / quality report on ffmpeg-generated 1080p test content:
-/// `cargo test -p effectcraft-hevcenc --test roundtrip bench_1080p -- --ignored --nocapture`
+/// `cargo test -p studio-hevcenc --test roundtrip bench_1080p -- --ignored --nocapture`
 /// (`HEVCENC_BENCH_SRC` selects another lavfi source).
 #[test]
 #[ignore]

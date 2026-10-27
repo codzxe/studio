@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use effectcraft_project::render_queue::RenderStatus;
+use studio_project::render_queue::RenderStatus;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, str_p};

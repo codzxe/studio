@@ -1,10 +1,10 @@
-//! Probing: describe a file as an [`effectcraft_project::Footage`].
+//! Probing: describe a file as an [`studio_project::Footage`].
 
 use std::path::Path;
 use std::sync::Arc;
 
-use effectcraft_project::{AlphaMode, Footage, FootageKind};
-use effectcraft_time::{FrameRate, Tick};
+use studio_project::{AlphaMode, Footage, FootageKind};
+use studio_time::{FrameRate, Tick};
 use image::metadata::Orientation;
 
 use crate::{MediaError, Result, ext_of, rate_from_fc};
@@ -13,7 +13,7 @@ use crate::{MediaError, Result, ext_of, rate_from_fc};
 pub const DEFAULT_SEQUENCE_RATE: FrameRate = FrameRate::FPS_30;
 
 /// Probe one file. Image sequences are made by the engine, which groups numbered stills
-/// (`effectcraft_engine::sequence`) and probes their first frame here.
+/// (`studio_engine::sequence`) and probes their first frame here.
 pub fn probe(path: impl AsRef<Path>) -> Result<Footage> {
     let path = path.as_ref();
     // A movie is read in place (its index), not loaded whole.
@@ -36,10 +36,10 @@ pub fn probe(path: impl AsRef<Path>) -> Result<Footage> {
 /// Probe a 3D model (glTF 2.0 / OBJ / STL / FBX): a [`FootageKind::Model`] item whose duration is its
 /// longest animation. `resolve` reads sibling resources.
 pub fn probe_model(path: &str, bytes: &[u8], resolve: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<Footage> {
-    let m = effectcraft_model::load(path, bytes, resolve).map_err(|e| MediaError::Decode(format!("{path}: {e}")))?;
+    let m = studio_model::load(path, bytes, resolve).map_err(|e| MediaError::Decode(format!("{path}: {e}")))?;
     let s = m.summary();
     let dur = s.animations.iter().map(|a| a.1).fold(0.0f64, f64::max);
-    let codec = match effectcraft_model::format_of(path) {
+    let codec = match studio_model::format_of(path) {
         Some("obj") => "OBJ",
         Some("stl") => "STL",
         Some("fbx") => "FBX",
@@ -162,8 +162,8 @@ pub(crate) fn footage_from_info(path: &str, info: &filmcraft_media::MediaInfo) -
 
 /// The colour profile a video stream declares (H.273 primaries / transfer from the bitstream or
 /// container). `None` (interpreted as sRGB) for Rec. 709 primaries with an sRGB curve.
-fn profile_of(c: &filmcraft_color::ColorInfo) -> Option<effectcraft_project::ColorSpace> {
-    use effectcraft_project::ColorSpace;
+fn profile_of(c: &filmcraft_color::ColorInfo) -> Option<studio_project::ColorSpace> {
+    use studio_project::ColorSpace;
     use filmcraft_color::{Primaries, Transfer};
     match (c.primaries, c.transfer) {
         (Primaries::Bt2020, _) => Some(ColorSpace::Rec2020),

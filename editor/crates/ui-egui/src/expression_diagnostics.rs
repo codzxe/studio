@@ -9,11 +9,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use effectcraft_engine::Session;
-use effectcraft_engine::commands::expr_tools::{self, ExprError};
-use effectcraft_engine::project::{ItemId, Project};
-use effectcraft_engine::render::{EvalCtx, ExprHost, FootageSource};
-use effectcraft_engine::time::Tick;
+use studio_engine::Session;
+use studio_engine::commands::expr_tools::{self, ExprError};
+use studio_engine::project::{ItemId, Project};
+use studio_engine::render::{EvalCtx, ExprHost, FootageSource};
+use studio_engine::time::Tick;
 use web_time::Instant;
 
 const QUIET: Duration = Duration::from_millis(150);
@@ -277,8 +277,8 @@ impl Drop for Worker {
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
     use super::*;
-    use effectcraft_engine::keyframe::Value;
-    use effectcraft_engine::project::{Layer, Property};
+    use studio_engine::keyframe::Value;
+    use studio_engine::project::{Layer, Property};
     use serde_json::json;
     use std::sync::atomic::AtomicUsize;
     use std::sync::mpsc;

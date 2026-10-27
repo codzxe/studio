@@ -1,12 +1,12 @@
-//! Movie export: FilmCraft H.264, HEVC (`effectcraft-hevcenc`) and AV1 (`effectcraft-av1enc`)
+//! Movie export: FilmCraft H.264, HEVC (`studio-hevcenc`) and AV1 (`studio-av1enc`)
 //! → MP4 (+ AAC), ProRes and uncompressed `raw ` → MOV (+ PCM), muxed by
 //! FilmCraft's ISO BMFF / QuickTime writer.
 
 use std::io::Write;
 
-use effectcraft_project::Comp;
-use effectcraft_project::render_queue::{AudioFormat, Channels, OutputFormat, ProResProfile};
-use effectcraft_time::{FrameRate, Tick};
+use studio_project::Comp;
+use studio_project::render_queue::{AudioFormat, Channels, OutputFormat, ProResProfile};
+use studio_time::{FrameRate, Tick};
 use filmcraft_isobmff::{Brand, FourCc, Mp4Writer, PcmConfig, SampleEntry, TrackConfig, WriteSample, WriterOptions};
 use rayon::prelude::*;
 
@@ -215,8 +215,8 @@ fn deinterleave(buf: &[f32], channels: usize) -> Vec<Vec<f32>> {
 
 /// The comp's audio over `n` samples from `start`, interleaved with the module's channel count
 /// (mono = the average of left and right).
-pub(crate) fn mix(cx: &Cx, start: effectcraft_time::Tick, n: usize, sr: u32) -> Vec<f32> {
-    let st = effectcraft_render::audio::mix_comp(&cx.project, cx.footage, cx.expr, cx.comp, start, n, sr);
+pub(crate) fn mix(cx: &Cx, start: studio_time::Tick, n: usize, sr: u32) -> Vec<f32> {
+    let st = studio_render::audio::mix_comp(&cx.project, cx.footage, cx.expr, cx.comp, start, n, sr);
     if cx.output.audio_channels == 1 { st.as_chunks::<2>().0.iter().map(|p| (p[0] + p[1]) * 0.5).collect() } else { st }
 }
 
@@ -265,7 +265,7 @@ pub(crate) async fn movie(job: &Cx<'_>, comp: &Comp, w: u32, h: u32, st: &mut St
     };
     let brand = if matches!(fmt, OutputFormat::ProRes | OutputFormat::Uncompressed) { Brand::Mov } else { Brand::Mp4 };
     let batch = batch_size();
-    let render = |_: u64, img: effectcraft_raster::Image| -> Vec<u8> { job.pixels(&img, comp, channels, w, h) };
+    let render = |_: u64, img: studio_raster::Image| -> Vec<u8> { job.pixels(&img, comp, channels, w, h) };
 
     // Encode the first batch before creating tracks: encoders finalise their config on frame 1.
     let first_end = batch.min(st.total);

@@ -2,7 +2,7 @@
 //! with FilmCraft's spec-derived decoder, delay-searched SNR and an Ogg Opus writer for ffmpeg.
 #![allow(dead_code)]
 
-use effectcraft_opusenc::OpusEncoder;
+use studio_opusenc::OpusEncoder;
 
 pub const SR: f64 = 48_000.0;
 pub const FRAME: usize = OpusEncoder::FRAME_SIZE;
@@ -269,7 +269,7 @@ fn ogg_page(out: &mut Vec<u8>, packet: &[u8], header_type: u8, granule: u64, seq
 pub fn ogg_opus(enc: &OpusEncoder, packets: &[Vec<u8>], len: usize) -> Vec<u8> {
     let mut out = Vec::new();
     ogg_page(&mut out, &enc.opus_head(), 0x02, 0, 0);
-    let vendor = b"effectcraft-opusenc";
+    let vendor = b"studio-opusenc";
     let mut tags = b"OpusTags".to_vec();
     tags.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
     tags.extend_from_slice(vendor);

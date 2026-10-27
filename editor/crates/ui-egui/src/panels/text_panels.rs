@@ -3,8 +3,8 @@
 //! otherwise they apply to the whole selected text layer.
 
 use crate::i18n::tr;
-use effectcraft_engine::keyframe::{BaselineOption, Composer, Direction, FigureStyle, FigureWidth, Justify, Kerning, TextDoc};
-use effectcraft_engine::render::EvalCtx;
+use studio_engine::keyframe::{BaselineOption, Composer, Direction, FigureStyle, FigureWidth, Justify, Kerning, TextDoc};
+use studio_engine::render::EvalCtx;
 use egui::{Align2, Rect, Sense, pos2, vec2};
 use serde_json::json;
 
@@ -37,7 +37,7 @@ pub fn text_target(app: &EffectcraftApp) -> Option<TextTarget> {
     let comp = app.session.active_comp()?;
     let cid = app.session.active_comp_id()?;
     if let Some(e) = app.session.state.text_edit.clone()
-        && let Some(full) = effectcraft_engine::commands::text_edit::layer_doc(&app.session, e.layer)
+        && let Some(full) = studio_engine::commands::text_edit::layer_doc(&app.session, e.layer)
     {
         let r = e.range();
         let style = e.pending.clone().unwrap_or_else(|| if r.is_empty() { full.insertion_style(r.start) } else { full.style_at(r.start) });
@@ -56,9 +56,9 @@ pub fn text_target(app: &EffectcraftApp) -> Option<TextTarget> {
         .selected_layers
         .iter()
         .filter_map(|id| comp.layer(*id))
-        .find(|l| matches!(l.source, effectcraft_engine::project::LayerSource::Text))?;
+        .find(|l| matches!(l.source, studio_engine::project::LayerSource::Text))?;
     let ectx = EvalCtx { project: &app.session.project, comp_id: cid, comp, time: app.session.time(), expr: app.session.expr.as_deref(), footage: None };
-    effectcraft_engine::render::text::source_text(&ectx, layer).map(|d| TextTarget { layer: layer.id.0, doc: d, range: None })
+    studio_engine::render::text::source_text(&ectx, layer).map(|d| TextTarget { layer: layer.id.0, doc: d, range: None })
 }
 
 fn toggle(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, r: Rect, id: &str, label: &str, on: bool, bold: bool) -> bool {
@@ -108,7 +108,7 @@ pub fn character(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     app.auto.add("character.style", sr, "Font style");
     // The family's own styles.
-    let styles: Vec<String> = if widgets::popup_is_open(ui, spop) { effectcraft_engine::font_styles(&doc.font) } else { vec![] };
+    let styles: Vec<String> = if widgets::popup_is_open(ui, spop) { studio_engine::font_styles(&doc.font) } else { vec![] };
     if let Some(st) = widgets::popup_menu(ui, spop, sr.left_bottom(), &styles, styles.iter().position(|s| *s == doc.style)).and_then(|i| styles.get(i)) {
         actions.push(json!({"style": st}));
     }
@@ -272,11 +272,11 @@ pub fn character(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
     }
     // Variable Font Axes: one value per axis of a variable font (`character.axis.<tag>`).
-    let resolved = effectcraft_engine::text::resolve(&doc.font, &doc.style);
+    let resolved = studio_engine::text::resolve(&doc.font, &doc.style);
     let face = resolved.face;
-    let axes = effectcraft_engine::text::variable::font_axes(face);
+    let axes = studio_engine::text::variable::font_axes(face);
     // A named instance (`Black`) sets the axes the text doesn't set itself.
-    let instance = effectcraft_engine::text::fonts::instance_variations(&resolved);
+    let instance = studio_engine::text::fonts::instance_variations(&resolved);
     if !axes.is_empty() {
         y += 26.0;
         p.text(pos2(x0, y + 7.0), Align2::LEFT_CENTER, tr("Variable Font Axes"), Tokens::semibold(11.0), t.text_dim);
@@ -328,7 +328,7 @@ fn opentype_popup(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: egui::Id, pos
         return;
     }
     let t = app.tokens;
-    let feats = effectcraft_engine::font_features(&doc.font, &doc.style);
+    let feats = studio_engine::font_features(&doc.font, &doc.style);
     let has = |tag: &str| feats.iter().any(|f| f == tag);
     let o = doc.opentype;
     let mut rects: Vec<(String, Rect, String)> = vec![];
@@ -582,7 +582,7 @@ pub(super) fn font_picker(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: egui:
         }
         return None;
     }
-    let rows = effectcraft_engine::font_menu(&app.session.prefs);
+    let rows = studio_engine::font_menu(&app.session.prefs);
     let saved = ui.data(|d| d.get_temp::<FontSearch>(state_id));
     let fresh = saved.is_none();
     let mut state = saved.unwrap_or_default();
@@ -717,7 +717,7 @@ pub(super) fn font_picker(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: egui:
                         let lines: std::sync::Arc<Vec<Vec<[f32; 2]>>> = match ui.data(|d| d.get_temp(key)) {
                             Some(l) => l,
                             None => {
-                                let l = std::sync::Arc::new(effectcraft_engine::font_preview(&r.family, 14.0));
+                                let l = std::sync::Arc::new(studio_engine::font_preview(&r.family, 14.0));
                                 ui.data_mut(|d| d.insert_temp(key, l.clone()));
                                 l
                             }

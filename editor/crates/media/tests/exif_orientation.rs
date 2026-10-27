@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use effectcraft_media::{MediaPool, probe_bytes};
-use effectcraft_project::FootageKind;
-use effectcraft_time::Tick;
+use studio_media::{MediaPool, probe_bytes};
+use studio_project::FootageKind;
+use studio_time::Tick;
 
 const RED: [f32; 3] = [1.0, 0.0, 0.0];
 const GREEN: [f32; 3] = [0.0, 1.0, 0.0];

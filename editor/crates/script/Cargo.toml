@@ -1,5 +1,5 @@
 [package]
-name = "effectcraft-script"
+name = "studio-script"
 description = "EffectCraft scripting: JavaScript (boa) with an After Effects-style object model (app, project, CompItem, Layer, Property…) over the engine's undoable commands"
 version.workspace = true
 edition.workspace = true
@@ -10,12 +10,13 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-effectcraft-engine = { workspace = true }
-effectcraft-project = { workspace = true }
-effectcraft-keyframe = { workspace = true }
-effectcraft-time = { workspace = true }
-effectcraft-render = { workspace = true }
-effectcraft-path = { workspace = true }
+studio-brand = { path = "../brand" }
+studio-engine = { workspace = true }
+studio-project = { workspace = true }
+studio-keyframe = { workspace = true }
+studio-time = { workspace = true }
+studio-render = { workspace = true }
+studio-path = { workspace = true }
 serde_json = { workspace = true }
 boa_engine = { workspace = true }
 web-time = { workspace = true }
@@ -25,5 +26,5 @@ web-time = { workspace = true }
 boa_engine = { workspace = true, features = ["js"] }
 
 [dev-dependencies]
-effectcraft-expr = { workspace = true }
-effectcraft-psd = { workspace = true }
+studio-expr = { workspace = true }
+studio-psd = { workspace = true }

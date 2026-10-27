@@ -71,7 +71,7 @@ import type { EditorHostPayload, EditorSessionFactory } from "./types";
 
 /** §11: renew the lease every 2 minutes while the tab is open. */
 const LEASE_HEARTBEAT_MS = 120_000;
-/** Boot-UI poll of the dist's `effectcraftLoad` (the M3.7 seam — not a DOM poll). */
+/** Boot-UI poll of the dist's `studioEngineLoad` (the M3.7 seam — not a DOM poll). */
 const BOOT_POLL_MS = 250;
 /** How long the "Saved" chip stays up (ms). */
 const SAVED_CHIP_MS = 4000;

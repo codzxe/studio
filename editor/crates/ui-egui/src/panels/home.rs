@@ -40,7 +40,7 @@ pub struct RecentEntry {
 }
 
 /// The recent projects, most recent first (Settings ▸ General ▸ recent items).
-pub fn recent_entries(prefs: &effectcraft_engine::prefs::Prefs) -> Vec<RecentEntry> {
+pub fn recent_entries(prefs: &studio_engine::prefs::Prefs) -> Vec<RecentEntry> {
     prefs
         .recent_projects
         .iter()
@@ -273,11 +273,11 @@ fn rail_ui(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, rail:
     // Community links at the foot (below the pages when the window is short): every entry
     // shows only while its links.rs constant is non-empty (studio ships them all empty).
     let mut links: Vec<(Icon, &str, &str)> = Vec::new();
-    if !effectcraft_engine::links::DISCORD.is_empty() { links.push((Icon::Chat, "Join the community", "help.discord")); }
-    if !effectcraft_engine::links::WEBSITE.is_empty() { links.push((Icon::Globe, "Website", "help.website")); }
-    if !effectcraft_engine::links::APP_PAGE.is_empty() { links.push((Icon::Globe, "Home page", "help.appPage")); }
-    if !effectcraft_engine::links::GITHUB.is_empty() { links.push((Icon::Code, "Source code on GitHub", "help.github")); }
-    let sib = effectcraft_engine::links::SIBLINGS;
+    if !studio_engine::links::DISCORD.is_empty() { links.push((Icon::Chat, "Join the community", "help.discord")); }
+    if !studio_engine::links::WEBSITE.is_empty() { links.push((Icon::Globe, "Website", "help.website")); }
+    if !studio_engine::links::APP_PAGE.is_empty() { links.push((Icon::Globe, "Home page", "help.appPage")); }
+    if !studio_engine::links::GITHUB.is_empty() { links.push((Icon::Code, "Source code on GitHub", "help.github")); }
+    let sib = studio_engine::links::SIBLINGS;
     if !links.is_empty() {
         let sib_rows = sib.len().div_ceil(2) as f32;
         let foot_h = 22.0 + links.len() as f32 * 30.0 + 22.0 + sib_rows * 26.0;
@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn recent_list_comes_from_settings() {
-        let mut prefs = effectcraft_engine::prefs::Prefs::default();
+        let mut prefs = studio_engine::prefs::Prefs::default();
         prefs.push_recent("/projects/a/Alpha.ecproj");
         prefs.push_recent("/projects/b/Beta.ecproj");
         let e = recent_entries(&prefs);
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn home_screen_registers_its_controls() {
-        let mut s = effectcraft_engine::Session::default();
+        let mut s = studio_engine::Session::default();
         s.prefs.push_recent("/projects/Alpha.ecproj");
         let mut app = EffectcraftApp::new(s);
         let ctx = egui::Context::default();
@@ -589,7 +589,7 @@ mod tests {
 
     #[test]
     fn learn_tab_lists_and_starts_tutorials() {
-        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        let mut app = EffectcraftApp::new(studio_engine::Session::default());
         app.ui.start_screen = true;
         app.ui.home_learn = true;
         let ctx = egui::Context::default();
@@ -605,7 +605,7 @@ mod tests {
         };
         frame(&mut app);
         frame(&mut app);
-        for t in effectcraft_engine::learn::tutorials() {
+        for t in studio_engine::learn::tutorials() {
             assert!(app.auto.find(&format!("home.learn.{}.start", t.id)).is_some(), "{}", t.id);
         }
         assert!(app.auto.find("home.recent.0").is_none());

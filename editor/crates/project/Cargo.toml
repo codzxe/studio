@@ -1,5 +1,5 @@
 [package]
-name = "effectcraft-project"
+name = "studio-project"
 description = "The EffectCraft document: project items, compositions, layers and the After-Effects-style property tree"
 version.workspace = true
 edition.workspace = true
@@ -10,10 +10,10 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-effectcraft-time = { workspace = true }
-effectcraft-geom = { workspace = true }
-effectcraft-color = { workspace = true }
-effectcraft-keyframe = { workspace = true }
+studio-time = { workspace = true }
+studio-geom = { workspace = true }
+studio-color = { workspace = true }
+studio-keyframe = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

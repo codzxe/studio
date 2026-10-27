@@ -1547,7 +1547,7 @@ mod tests {
         assert!(workspace("Color").contains(PanelKind::EffectControls));
         assert!(!workspace_floating("Undocked Panels").is_empty());
         // Every built-in workspace is in Window ▸ Workspace.
-        let menu: Vec<String> = effectcraft_engine::menus::entries()
+        let menu: Vec<String> = studio_engine::menus::entries()
             .into_iter()
             .filter(|(_, e)| e.command == "window.workspace")
             .filter_map(|(_, e)| e.params.get("name").and_then(|v| v.as_str()).map(str::to_string))

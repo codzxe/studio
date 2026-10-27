@@ -15,10 +15,10 @@ pub fn placeholder(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect, p: P
 }
 
 /// Preview panel: transport controls, the shortcut whose options are shown, and that
-/// shortcut's options (each Preview shortcut keeps its own; see `effectcraft_engine::preview`).
+/// shortcut's options (each Preview shortcut keeps its own; see `studio_engine::preview`).
 /// Every change runs `playback.settings.set`.
 pub fn preview(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
-    use effectcraft_engine::preview::{PlayFrom, PreviewRange, PreviewResolution, PreviewShortcut};
+    use studio_engine::preview::{PlayFrom, PreviewRange, PreviewResolution, PreviewShortcut};
     let t = app.tokens;
     let ctx = ui.ctx().clone();
     let p = ui.painter().with_clip_rect(rect);
@@ -215,7 +215,7 @@ pub fn preview(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     if let (Some(c), Some(cid)) = (app.session.active_comp_arc(), app.session.active_comp_id()) {
         let pl = match app.playback.plan.filter(|_| app.playback.playing) {
             Some(pl) => pl,
-            None => effectcraft_engine::preview::plan(&o, &c, app.session.time()),
+            None => studio_engine::preview::plan(&o, &c, app.session.time()),
         };
         let cached_set = app.frames.cached_frames(&app.shown_series(cid));
         let total = pl.frames().count();

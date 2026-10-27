@@ -1,6 +1,6 @@
 // M8-L — the M8 RENDER EXIT-CRITERIA proof at the JOURNEY level (BUILD_PLAN
 // §M8): the REAL gateway app + REAL Postgres + the REAL worker
-// (services/worker, driven IN-PROCESS) + the REAL effectcraft-cli binary.
+// (services/worker, driven IN-PROCESS) + the REAL studio-cli binary.
 //
 // EXIT-CRITERIA SCORECARD (criterion → the journey that proves it):
 //   * "A user can render a project and download a playable file."
@@ -27,7 +27,7 @@
 //      HAS_POSTGRES): the sqlite dev twin does not carry FOR UPDATE SKIP
 //      LOCKED, which this file's surgical claim needs.
 //   2. The real CLI binary must exist at
-//      <repo>/editor/target/release/effectcraft-cli (the spike §1
+//      <repo>/editor/target/release/studio-cli (the spike §1
 //      repo-build resolution order; never committed — CI rebuilds it).
 //
 // FIXTURE RECIPE (spike §4, CLI-validated on this box):
@@ -199,8 +199,8 @@ const loadWorkerModule = async (): Promise<WorkerModule> => {
 // ───────────────────────────────────────────────────────────────────────────
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
-/** Spike §1 resolution order, step 2: the repo build (EFFECTCRAFT_CLI_PATH unset). */
-const CLI_PATH = join(REPO_ROOT, "editor", "target", "release", "effectcraft-cli");
+/** Spike §1 resolution order, step 2: the repo build (STUDIO_ENGINE_CLI_PATH unset). */
+const CLI_PATH = join(REPO_ROOT, "editor", "target", "release", "studio-cli");
 const HAS_CLI = existsSync(CLI_PATH);
 
 /**
@@ -209,14 +209,14 @@ const HAS_CLI = existsSync(CLI_PATH);
  *  - Postgres dialect (helpers' HAS_POSTGRES): the surgical claim below is
  *    the repo's own FOR UPDATE SKIP LOCKED transactional SQL and the raw
  *    table builders resolve the canonical pg schema.
- *  - the real CLI binary at <repo>/editor/target/release/effectcraft-cli
+ *  - the real CLI binary at <repo>/editor/target/release/studio-cli
  *    (the spike §1 repo-build resolution order; never committed — CI
  *    rebuilds it).
  */
 const SKIP_REASON = !HAS_POSTGRES
   ? "requires the Postgres dialect (FOR UPDATE SKIP LOCKED surgical claim + pg-schema table builders)"
   : !HAS_CLI
-    ? `effectcraft-cli binary not found at ${CLI_PATH} (repo build; CI rebuilds it)`
+    ? `studio-cli binary not found at ${CLI_PATH} (repo build; CI rebuilds it)`
     : null;
 
 const TITLE_SUFFIX = SKIP_REASON === null ? "" : ` — SKIPPED: ${SKIP_REASON}`;

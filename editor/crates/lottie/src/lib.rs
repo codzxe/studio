@@ -28,8 +28,8 @@ mod shapes;
 mod text;
 pub mod zip;
 
-use effectcraft_color::BlendMode;
-use effectcraft_time::{FrameRate, TICKS_PER_SECOND, Tick};
+use studio_color::BlendMode;
+use studio_time::{FrameRate, TICKS_PER_SECOND, Tick};
 
 pub use export::{ExportOptions, ExportResult, export_comp, to_dotlottie};
 pub use import::{ImportResult, ImportedImage, import};

@@ -3,11 +3,11 @@
 //! The solve is a synthetic one written into the effect (the analysis itself is tested in the
 //! engine and track crates).
 
-use effectcraft_engine::Session;
-use effectcraft_engine::effects::camera_tracker as ct;
-use effectcraft_engine::track::camtrack::{CameraSolve, ShotType, SolveMethod, SolvedFrame, SolvedPoint};
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_engine::Session;
+use studio_engine::effects::camera_tracker as ct;
+use studio_engine::track::camtrack::{CameraSolve, ShotType, SolveMethod, SolvedFrame, SolvedPoint};
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui_kittest::Harness;
 use serde_json::json;
 
@@ -45,9 +45,9 @@ fn app() -> (EffectcraftApp, u64, u64) {
     };
     s.execute("prop.set", json!({"layer": plate, "path": "effects/#1/solve", "value": solve.to_json()})).unwrap();
     s.camera_pending.clear();
-    s.state.selected_props = vec![(effectcraft_engine::project::LayerId(plate), uid)];
+    s.state.selected_props = vec![(studio_engine::project::LayerId(plate), uid)];
     s.execute("layer.select", json!({"layers": [plate]})).unwrap();
-    s.state.selected_props = vec![(effectcraft_engine::project::LayerId(plate), uid)];
+    s.state.selected_props = vec![(studio_engine::project::LayerId(plate), uid)];
     (EffectcraftApp::new(s), plate, uid)
 }
 
@@ -81,9 +81,9 @@ fn deleting_viewer_track_points_preserves_the_effect_and_layer() {
     h.state_mut().ui.focused = PanelKind::Composition;
     h.input_mut().events.push(egui::Event::Key { key: egui::Key::Delete, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });
     h.run_steps(3);
-    let layer = h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(plate)).unwrap();
+    let layer = h.state().session.active_comp().unwrap().layer(studio_engine::project::LayerId(plate)).unwrap();
     let effect = layer.props.find_group(uid).expect("tracker effect survived");
-    let params = effectcraft_engine::camera_track::static_params(effect);
+    let params = studio_engine::camera_track::static_params(effect);
     assert!(ct::deleted(&params).contains(&7));
 }
 
@@ -125,7 +125,7 @@ fn viewer_points_selection_and_effect_controls() {
     assert_eq!(sel, vec![0, 1, 2, 3, 4, 5]);
     // The right-click menu's Create Solid and Camera (via its command).
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "camera.createFromSolve", json!({"kind": "solid"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "camera.createFromSolve", json!({"kind": "solid"})).unwrap();
     let comp = h.state().session.active_comp().unwrap();
     assert!(comp.layers.iter().any(|l| l.name == "3D Tracker Camera" && l.is_camera()));
     assert!(comp.layers.iter().any(|l| l.name.starts_with("Track Solid")));

@@ -37,8 +37,8 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                         .filter(|g| {
                             matches!(
                                 g.kind,
-                                effectcraft_engine::project::GroupKind::Mask { mode: effectcraft_engine::project::MaskMode::Subtract, .. }
-                                    | effectcraft_engine::project::GroupKind::Mask { inverted: true, .. }
+                                studio_engine::project::GroupKind::Mask { mode: studio_engine::project::MaskMode::Subtract, .. }
+                                    | studio_engine::project::GroupKind::Mask { inverted: true, .. }
                             )
                         })
                         .count()

@@ -4,9 +4,9 @@
 //! Effects): the same controls zoom the graph's time axis, centred on the current time, and
 //! switching between the views keeps it.
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::control::{self, ControlRequest, Outcome};
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::control::{self, ControlRequest, Outcome};
 use egui_kittest::Harness;
 use serde_json::{Value, json};
 

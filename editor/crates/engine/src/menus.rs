@@ -250,14 +250,14 @@ pub fn entry_label(s: &Session, e: &MenuEntry) -> String {
             Some("footage") => {
                 let shown = s.state.footage_panel.as_ref().and_then(|f| s.project.item(f.item));
                 let f = shown.or_else(|| {
-                    s.state.project_selection.iter().filter_map(|i| s.project.item(*i)).find(|i| matches!(i.kind, effectcraft_project::ItemKind::Footage(_)))
+                    s.state.project_selection.iter().filter_map(|i| s.project.item(*i)).find(|i| matches!(i.kind, studio_project::ItemKind::Footage(_)))
                 });
                 format!("Footage: {}", f.map(|i| i.name.clone()).unwrap_or_else(|| "(none)".into()))
             }
             _ => e.label.clone(),
         },
-        "edit.label" => match e.params.get("label").and_then(Value::as_str).and_then(effectcraft_color::Label::from_name) {
-            Some(l) if l != effectcraft_color::Label::None => s.prefs.label_name(l),
+        "edit.label" => match e.params.get("label").and_then(Value::as_str).and_then(studio_color::Label::from_name) {
+            Some(l) if l != studio_color::Label::None => s.prefs.label_name(l),
             _ => e.label.clone(),
         },
         _ => e.label.clone(),
@@ -275,7 +275,7 @@ pub fn checked(s: &Session, command: &str, params: &Value) -> Option<bool> {
     let pstr = |k: &str| params.get(k).and_then(Value::as_str);
     match command {
         "layer.setBlendMode" => {
-            let want = effectcraft_color::BlendMode::from_name(pstr("mode")?)?;
+            let want = studio_color::BlendMode::from_name(pstr("mode")?)?;
             Some(layer?.blend_mode == want)
         }
         "layer.setSwitch" => {
@@ -298,22 +298,22 @@ pub fn checked(s: &Session, command: &str, params: &Value) -> Option<bool> {
             })
         }
         "layer.quality" => {
-            use effectcraft_project::Quality::*;
+            use studio_project::Quality::*;
             let q = layer?.switches.quality;
             Some(matches!((pstr("quality")?, q), ("best", Best) | ("draft", Draft) | ("wireframe", Wireframe)))
         }
         "layer.sampling" => {
-            use effectcraft_project::Sampling::*;
+            use studio_project::Sampling::*;
             let q = layer?.switches.sampling;
             Some(matches!((pstr("sampling")?, q), ("bilinear", Bilinear) | ("bicubic", Bicubic)))
         }
         "layer.frameBlending" => {
-            use effectcraft_project::FrameBlend::*;
+            use studio_project::FrameBlend::*;
             let q = layer?.switches.frame_blend;
             Some(matches!((pstr("mode")?, q), ("off", Off) | ("frameMix", FrameMix) | ("pixelMotion", PixelMotion)))
         }
         "layer.trackMatte" => {
-            use effectcraft_project::MatteKind::*;
+            use studio_project::MatteKind::*;
             let m = layer?.track_matte;
             Some(match (pstr("op")?, m) {
                 ("none", None) => true,
@@ -346,7 +346,7 @@ pub fn checked(s: &Session, command: &str, params: &Value) -> Option<bool> {
             })
         }
         "layer.mask.motionBlur" | "layer.mask.featherFalloff" | "path.rotoBezier" => {
-            use effectcraft_project::{FeatherFalloff, GroupKind, MaskMotionBlur};
+            use studio_project::{FeatherFalloff, GroupKind, MaskMotionBlur};
             let GroupKind::Mask { motion_blur, feather_falloff, roto_bezier, .. } = layer?.masks()?.groups().next()?.kind else { return None };
             Some(match command {
                 "path.rotoBezier" => roto_bezier,

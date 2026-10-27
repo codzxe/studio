@@ -1,4 +1,4 @@
-//! # effectcraft-automation (L5)
+//! # studio-automation (L5)
 //!
 //! Makes EffectCraft drivable by AI agents. See `docs/agents.md`.
 //!
@@ -8,10 +8,10 @@
 //!   **bridge** forwards to a running desktop app over its JSON-lines control channel
 //!   (`effectcraft --control 9877`, `docs/control-protocol.md`), adding screenshots and UI input.
 //! * [`tools`]: the tool catalogue (names, descriptions, JSON schemas) and their implementations,
-//!   shared by the MCP server and `effectcraft-cli`'s one-shot subcommands.
+//!   shared by the MCP server and `studio-cli`'s one-shot subcommands.
 //!
-//! Layering: depends on `effectcraft-engine` only (never egui); the CLI injects a fully wired
-//! session (`effectcraft_host::session()`).
+//! Layering: depends on `studio-engine` only (never egui); the CLI injects a fully wired
+//! session (`studio_host::session()`).
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -26,7 +26,7 @@ pub mod tools;
 
 pub use backend::{Backend, Frame};
 pub use bridge::BridgeClient;
-pub use effectcraft_engine::Session;
+pub use studio_engine::Session;
 pub use server::McpServer;
 
 #[derive(Debug, thiserror::Error)]
@@ -35,7 +35,7 @@ pub enum Error {
     #[error("{0}")]
     BadArgs(String),
     #[error(transparent)]
-    Engine(#[from] effectcraft_engine::EngineError),
+    Engine(#[from] studio_engine::EngineError),
     /// Transport problem talking to the desktop app.
     #[error("bridge: {0}")]
     Bridge(String),

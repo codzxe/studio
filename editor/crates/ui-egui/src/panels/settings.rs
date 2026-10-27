@@ -1,6 +1,6 @@
 //! The Settings dialog (After Effects' Preferences): the page list on the left, the page on the
 //! right, OK / Cancel / Previous / Next. Pages are built from the engine's schema
-//! (`effectcraft_engine::prefs::pages`), so the dialog, `prefs.pages` and the docs agree. Edits
+//! (`studio_engine::prefs::pages`), so the dialog, `prefs.pages` and the docs agree. Edits
 //! apply live; Cancel restores the settings from when the dialog opened, OK saves them.
 //!
 //! Automation ids: `settings.page.<id>`, `settings.<key>` (e.g. `settings.general.undoLevels`),
@@ -8,8 +8,8 @@
 //! `settings.cancel`, `settings.previous`, `settings.next`.
 
 use crate::i18n::{tr, tr_args};
-use effectcraft_engine::prefs::{APPEARANCE_MODES, DARK_THEMES, Item, Kind, LIGHT_THEMES, Page, pages};
-use effectcraft_engine::segment::Task;
+use studio_engine::prefs::{APPEARANCE_MODES, DARK_THEMES, Item, Kind, LIGHT_THEMES, Page, pages};
+use studio_engine::segment::Task;
 use egui::{Color32, RichText, vec2};
 use serde_json::{Value, json};
 
@@ -428,7 +428,7 @@ fn models_ui(app: &mut EffectcraftApp, ui: &mut egui::Ui, t: &Tokens, acts: &mut
     for m in info["models"].as_array().into_iter().flatten() {
         let id = m["id"].as_str().unwrap_or_default().to_string();
         let name = m["name"].as_str().unwrap_or_default();
-        let classic = id == effectcraft_engine::segment::CLASSICAL;
+        let classic = id == studio_engine::segment::CLASSICAL;
         let (installed, selected, active) =
             (m["installed"].as_bool().unwrap_or(false), m["selected"].as_bool().unwrap_or(false), m["active"].as_bool().unwrap_or(false));
         ui.add_space(6.0);
@@ -737,7 +737,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
             }
             Act::PickModel(task) => {
                 // The registry's file types for the task (`.pt`, `.task`).
-                let mut exts: Vec<&str> = effectcraft_engine::segment::models(task).filter_map(|m| m.file_name.rsplit_once('.').map(|x| x.1)).collect();
+                let mut exts: Vec<&str> = studio_engine::segment::models(task).filter_map(|m| m.file_name.rsplit_once('.').map(|x| x.1)).collect();
                 exts.dedup();
                 let picked = app.hooks.pick_files.as_ref().map(|f| f(&exts)).unwrap_or_default();
                 let cmd = if task == Task::Face { "face.model.install" } else { "roto.model.install" };

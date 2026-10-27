@@ -2,7 +2,7 @@
 //! (scale and move them in time and value), key-time snapping, and Alt-drag of a key group's
 //! first or last key in the timeline to scale the group in time. Edits are `keys.transform`.
 
-use effectcraft_engine::project::Comp;
+use studio_engine::project::Comp;
 use egui::{Color32, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -226,7 +226,7 @@ mod snap_tests {
 
     #[test]
     fn graph_snap_targets_markers_and_layer_ends() {
-        use effectcraft_engine::Session;
+        use studio_engine::Session;
         let mut s = Session::default();
         s.execute("comp.new", json!({"name": "S", "width": 100, "height": 100, "frameRate": 30, "duration": 4})).unwrap();
         s.execute("layer.newSolid", json!({"color": "#ffffff", "width": 10, "height": 10})).unwrap();
@@ -294,7 +294,7 @@ pub(crate) fn alt_scale_update(app: &EffectcraftApp, ctx: &egui::Context, comp: 
     }
     let (Some((lo, hi)), Some(px)) = (sel_range(app, comp), ctx.input(|i| i.pointer.latest_pos())) else { return };
     let fr = comp.frame_rate;
-    let target = fr.snap_nearest(effectcraft_engine::time::Tick::from_seconds_f64(tm.t(px.x).max(0.0))).seconds();
+    let target = fr.snap_nearest(studio_engine::time::Tick::from_seconds_f64(tm.t(px.x).max(0.0))).seconds();
     // The group's span when the drag started: every step sends the whole scale since then.
     let span = st.span.unwrap_or((if st.end_is_max { hi } else { lo }) - st.anchor);
     if st.span.is_none() {

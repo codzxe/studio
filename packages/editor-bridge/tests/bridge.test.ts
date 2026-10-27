@@ -1,14 +1,14 @@
 /**
  * Bridge tests: handshake, timeouts, retry, error normalization, batch
  * validation, events, shortcut forwarding — against a jsdom iframe with the
- * FakeEditor (or hand-rolled stubs) installed as `window.effectcraft`.
+ * FakeEditor (or hand-rolled stubs) installed as `window.studioEngine`.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AttachOptions, attachEditorBridge, forwardShortcut } from "../src/bridge";
 import { type BridgeError, isBridgeError } from "../src/errors";
 import { type FakeEditor, createFakeEditor } from "../src/fake";
-import type { EffectcraftGlobal, EffectcraftWindow } from "../src/types";
+import type { StudioEngineGlobal, StudioEngineWindow } from "../src/types";
 
 function makeIframe(src = "/editor/"): HTMLIFrameElement {
   const iframe = document.createElement("iframe");
@@ -17,21 +17,21 @@ function makeIframe(src = "/editor/"): HTMLIFrameElement {
   return iframe;
 }
 
-function editorWindow(iframe: HTMLIFrameElement): EffectcraftWindow {
-  const w = iframe.contentWindow as EffectcraftWindow | null;
+function editorWindow(iframe: HTMLIFrameElement): StudioEngineWindow {
+  const w = iframe.contentWindow as StudioEngineWindow | null;
   if (!w) throw new Error("no contentWindow");
   return w;
 }
 
-/** Install the fake (or a stub) as the iframe's `window.effectcraft`. */
+/** Install the fake (or a stub) as the iframe's `window.studioEngine`. */
 function install(
   iframe: HTMLIFrameElement,
-  effectcraft: EffectcraftGlobal | FakeEditor,
+  effectcraft: StudioEngineGlobal | FakeEditor,
   load: { wasmMs?: number; readyMs?: number; error?: string } = { wasmMs: 1, readyMs: 2 },
 ): void {
   const w = editorWindow(iframe);
-  w.effectcraft = effectcraft as EffectcraftGlobal;
-  w.effectcraftLoad = load;
+  w.effectcraft = effectcraft as StudioEngineGlobal;
+  w.studioEngineLoad = load;
 }
 
 afterEach(() => {
@@ -48,7 +48,7 @@ afterAll(() => {
 // ---------------------------------------------------------------------------
 
 describe("attachEditorBridge: handshake", () => {
-  it("resolves once effectcraftLoad.readyMs is set; ready() is idempotent", async () => {
+  it("resolves once studioEngineLoad.readyMs is set; ready() is idempotent", async () => {
     const iframe = makeIframe();
     const fake = createFakeEditor();
     const attach = attachEditorBridge(iframe);
@@ -118,7 +118,7 @@ describe("attachEditorBridge: handshake", () => {
     const withReady = {
       ...fake,
       ready: () => new Promise<void>((resolve) => setTimeout(resolve, 10)),
-    } as EffectcraftGlobal & { ready: () => Promise<void> };
+    } as StudioEngineGlobal & { ready: () => Promise<void> };
     install(iframe, withReady, {}); // no readyMs — the hook must be used
     const attach = attachEditorBridge(iframe, { readyTimeoutMs: 1000 });
     const bridge = await vi.advanceTimersByTimeAsync(50).then(() => attach);
@@ -138,7 +138,7 @@ function stubEffectcraft(behavior: {
   request?: (method: string, params?: unknown) => unknown;
   inspect?: () => unknown;
   info?: () => unknown;
-}): EffectcraftGlobal {
+}): StudioEngineGlobal {
   const asy = <T>(v: T | Promise<T>): Promise<T> => Promise.resolve(v);
   return {
     request: (method, params) => asy(behavior.request?.(method, params) ?? {}),
@@ -710,7 +710,7 @@ describe("bridge over fake editor (end-to-end)", () => {
 
     const info = bridge.info();
     expect(info.version).toBe("0.13.0-fake");
-    expect(info.load?.readyMs).toBe(2); // from effectcraftLoad
+    expect(info.load?.readyMs).toBe(2); // from studioEngineLoad
     const caps = await bridge.capabilities();
     expect(caps.version).toBe("0.13.0-fake");
     expect(caps.commands).toBeGreaterThan(15);

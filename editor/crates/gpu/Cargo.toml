@@ -1,5 +1,5 @@
 [package]
-name = "effectcraft-gpu"
+name = "studio-gpu"
 description = "The GPU compositor (wgpu compute): layer transforms, masks/mattes, the 38 blend modes, motion blur, bit-depth quantisation and GPU effects, with the CPU renderer as the reference"
 version.workspace = true
 edition.workspace = true
@@ -10,14 +10,14 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-effectcraft-time = { workspace = true }
-effectcraft-geom = { workspace = true }
-effectcraft-color = { workspace = true }
-effectcraft-project = { workspace = true }
-effectcraft-raster = { workspace = true }
-effectcraft-effects = { workspace = true }
-effectcraft-render = { workspace = true }
-effectcraft-keyframe = { workspace = true }
+studio-time = { workspace = true }
+studio-geom = { workspace = true }
+studio-color = { workspace = true }
+studio-project = { workspace = true }
+studio-raster = { workspace = true }
+studio-effects = { workspace = true }
+studio-render = { workspace = true }
+studio-keyframe = { workspace = true }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 log = { workspace = true }
@@ -27,7 +27,7 @@ web-time = { workspace = true }
 pollster = { workspace = true }
 
 [dev-dependencies]
-effectcraft-text = { workspace = true }
+studio-text = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.129"

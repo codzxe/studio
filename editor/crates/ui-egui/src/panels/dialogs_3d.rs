@@ -3,8 +3,8 @@
 //! or `layer.cameraSettings` / `layer.lightSettings` with the dialog's values.
 
 use crate::i18n::tr;
-use effectcraft_engine::project::{AutoOrient, LayerSource, LightKind};
-use effectcraft_engine::render::three_d::camera::{PRESETS, angle_of_view, default_aperture, focal_for_zoom, zoom_for_focal};
+use studio_engine::project::{AutoOrient, LayerSource, LightKind};
+use studio_engine::render::three_d::camera::{PRESETS, angle_of_view, default_aperture, focal_for_zoom, zoom_for_focal};
 use egui::{Color32, vec2};
 use serde_json::{Value, json};
 
@@ -54,7 +54,7 @@ pub fn open_camera(app: &mut EffectcraftApp, layer: Option<u64>) -> Result<(), S
     let comp = app.session.active_comp().ok_or("no composition is open")?.clone();
     let w = comp.width as f64;
     let t = app.session.time();
-    let d = match layer.and_then(|id| comp.layer(effectcraft_engine::project::LayerId(id))) {
+    let d = match layer.and_then(|id| comp.layer(studio_engine::project::LayerId(id))) {
         Some(l) => {
             let f = |p: &str, d: f64| l.props.prop(p).map(|pr| pr.value_at(l.layer_time(t)).as_f64()).unwrap_or(d);
             let zoom = f("cameraOptions/zoom", 1000.0);
@@ -96,7 +96,7 @@ pub fn open_camera(app: &mut EffectcraftApp, layer: Option<u64>) -> Result<(), S
 pub fn open_light(app: &mut EffectcraftApp, layer: Option<u64>) -> Result<(), String> {
     let comp = app.session.active_comp().ok_or("no composition is open")?.clone();
     let t = app.session.time();
-    let d = match layer.and_then(|id| comp.layer(effectcraft_engine::project::LayerId(id))) {
+    let d = match layer.and_then(|id| comp.layer(studio_engine::project::LayerId(id))) {
         Some(l) => {
             let LayerSource::Light { kind } = l.source else { return Err("not a light".into()) };
             let v = |p: &str| l.props.prop(&format!("lightOptions/{p}")).map(|pr| pr.value_at(l.layer_time(t)));
@@ -365,7 +365,7 @@ pub fn route(app: &mut EffectcraftApp, id: &str, params: &Value) -> Result<bool,
     let selected = || -> Option<(u64, bool, bool)> {
         let c = app.session.active_comp()?;
         let id = params.get("layer").and_then(Value::as_u64).or_else(|| app.session.state.selected_layers.first().map(|l| l.0))?;
-        let l = c.layer(effectcraft_engine::project::LayerId(id))?;
+        let l = c.layer(studio_engine::project::LayerId(id))?;
         Some((id, l.is_camera(), l.is_light()))
     };
     match id {

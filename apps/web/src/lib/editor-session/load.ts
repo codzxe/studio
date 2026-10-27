@@ -8,7 +8,7 @@
  * - `bridge.addAsset` fetches nothing itself in tests; the engine downloads
  *   via the client seam and hands the bridge `bytes` (§6.3), then keeps the
  *   path the editor ASSIGNED (upstream `addFile` keeps only the last path
- *   segment — editor/apps/effectcraft-web/src/files.rs `path_for`).
+ *   segment — editor/apps/studio-web/src/files.rs `path_for`).
  * - Opening is `engine.execute("file.open", { path })` (editor/crates/engine/
  *   src/commands/file.rs:729); it reads the file table, replaces the project
  *   and restores the saved view (active comp/playhead/selection).

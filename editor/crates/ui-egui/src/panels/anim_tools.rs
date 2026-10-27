@@ -208,7 +208,7 @@ pub fn motion_sketch(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
 #[derive(Clone, Debug)]
 struct Capture {
     t0: f64,
-    start: effectcraft_engine::time::Tick,
+    start: studio_engine::time::Tick,
     points: Vec<[f64; 3]>,
 }
 
@@ -250,7 +250,7 @@ pub fn sketch_overlay(app: &mut EffectcraftApp, ui: &mut egui::Ui) {
             }
             // Play the comp in real time (slowed by the capture speed) while recording.
             let speed = app.ui.anim_tools.sketch_speed.max(1.0) / 100.0;
-            let comp_t = c.start + effectcraft_engine::time::Tick::from_seconds_f64(el * speed);
+            let comp_t = c.start + studio_engine::time::Tick::from_seconds_f64(el * speed);
             if let Some(comp) = app.session.active_comp()
                 && comp_t < comp.duration
             {

@@ -3,7 +3,7 @@
 //! (the flow of nested comps, click to open) and the Composition Mini-Flowchart popup (Tab).
 
 use crate::i18n::{tr, tr_args};
-use effectcraft_engine::project::{ItemId, LayerSource, Project};
+use studio_engine::project::{ItemId, LayerSource, Project};
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
@@ -80,7 +80,7 @@ pub fn open(app: &mut EffectcraftApp, p: &serde_json::Value) -> Result<(), Strin
     if layers.is_empty() {
         return Err("select the layers to pre-compose".into());
     }
-    let first = c.layer(effectcraft_engine::project::LayerId(layers[0]));
+    let first = c.layer(studio_engine::project::LayerId(layers[0]));
     let can_leave = layers.len() == 1 && first.is_some_and(|l| l.source.item().is_some());
     let n = s.project.comps().count() + 1;
     let base = if layers.len() == 1 { first.map(|l| format!("{} Comp 1", l.name)) } else { None };
@@ -319,7 +319,7 @@ pub fn mini_flowchart(app: &mut EffectcraftApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effectcraft_engine::Session;
+    use studio_engine::Session;
 
     #[test]
     fn flow_chain_and_precompose_dialog_params() {

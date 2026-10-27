@@ -1,7 +1,7 @@
 //! Composition Settings: saving, picking and deleting your own presets (egui_kittest).
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::{Dialog, EffectcraftApp};
+use studio_engine::Session;
+use studio_ui_egui::{Dialog, EffectcraftApp};
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, pos2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -37,7 +37,7 @@ fn key(h: &mut Harness<'_, EffectcraftApp>, key: Key) {
 
 fn open_settings(h: &mut Harness<'_, EffectcraftApp>) {
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "comp.settings", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "comp.settings", json!({})).unwrap();
     h.run_steps(3);
     assert_eq!(h.state().dialog, Some(Dialog::CompSettings));
 }

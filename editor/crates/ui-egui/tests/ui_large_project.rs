@@ -3,10 +3,10 @@
 //! Timeline reaches the last of thousands of layers; the Progress panel lists the footage check
 //! started by a lazy open.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::perf::{LargeSpec, large_project};
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_engine::Session;
+use studio_engine::perf::{LargeSpec, large_project};
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui_kittest::Harness;
 use serde_json::json;
 
@@ -42,7 +42,7 @@ fn project_panel_scrolls_and_reveals_the_selection() {
     assert!(rows > 5 && rows < 80, "only the rows in view are drawn: {rows}");
     // Selecting an item (a command, an agent) scrolls it into view.
     let footage =
-        h.state().session.project.items.values().filter(|i| matches!(i.kind, effectcraft_engine::project::ItemKind::Footage(_))).map(|i| i.id.0).max().unwrap();
+        h.state().session.project.items.values().filter(|i| matches!(i.kind, studio_engine::project::ItemKind::Footage(_))).map(|i| i.id.0).max().unwrap();
     h.state_mut().session.execute("project.select", json!({"items": [footage]})).unwrap();
     h.run_steps(3);
     assert!(h.state().auto.find(&format!("project.item.{footage}")).is_some(), "selected item scrolled into view");
@@ -113,7 +113,7 @@ fn lazy_open_lists_the_footage_check_in_the_progress_panel() {
     }
     assert!(h.state().session.tasks.is_empty());
     let missing =
-        h.state().session.project.items.values().filter(|i| matches!(&i.kind, effectcraft_engine::project::ItemKind::Footage(f) if f.missing)).count();
+        h.state().session.project.items.values().filter(|i| matches!(&i.kind, studio_engine::project::ItemKind::Footage(f) if f.missing)).count();
     assert_eq!(missing, spec().footage);
     assert!(!h.state().session.is_dirty(), "the check doesn't modify the project");
     let _ = std::fs::remove_file(path);

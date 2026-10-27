@@ -60,9 +60,9 @@
                 # deploys never serve stale bytes through the service worker.
                 @hashed {
                         path /snippets/*
-                        path /effectcraft_web.js
-                        path /effectcraft_web_bg.wasm
-                        path /effectcraft_web_opt.wasm
+                        path /studio_web.js
+                        path /studio_web_bg.wasm
+                        path /studio_web_opt.wasm
                 }
                 header @hashed Cache-Control "public, max-age=31536000, immutable"
 

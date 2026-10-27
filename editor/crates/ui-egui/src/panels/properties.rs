@@ -8,9 +8,9 @@
 //! - **Paragraph** (text layers): the seven alignment buttons; "More" opens the Paragraph panel.
 //! - **Text Animation** (text layers): Add Animator menu.
 
-use effectcraft_engine::keyframe::{Justify, TextDoc, Value};
-use effectcraft_engine::project::{Layer, LayerSource, Property};
-use effectcraft_engine::render::EvalCtx;
+use studio_engine::keyframe::{Justify, TextDoc, Value};
+use studio_engine::project::{Layer, LayerSource, Property};
+use studio_engine::render::EvalCtx;
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
@@ -29,7 +29,7 @@ const PAD: f32 = 12.0;
 /// for separators). The engine's list (`build::TEXT_ANIMATOR_KINDS`) after Enable Per-character 3D.
 fn animator_entries(per_char: bool) -> Vec<(String, &'static str)> {
     let mut v = vec![((if per_char { "Disable Per-character 3D" } else { "Enable Per-character 3D" }).to_string(), "perChar3d"), ("-".to_string(), "")];
-    for (k, l) in effectcraft_engine::project::build::TEXT_ANIMATOR_KINDS {
+    for (k, l) in studio_engine::project::build::TEXT_ANIMATOR_KINDS {
         v.push((l.to_string(), if *k == "-" { "" } else { k }));
     }
     v
@@ -111,7 +111,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // selected characters.
     let text_target = crate::panels::text_panels::text_target(app).filter(|tt| tt.layer == layer.id.0);
     if matches!(layer.source, LayerSource::Text)
-        && let Some(doc) = text_target.as_ref().map(|tt| tt.doc.clone()).or_else(|| effectcraft_engine::render::text::source_text(&ectx, &layer))
+        && let Some(doc) = text_target.as_ref().map(|tt| tt.doc.clone()).or_else(|| studio_engine::render::text::source_text(&ectx, &layer))
     {
         divider(&p, x0, w, y - 4.0, &t);
         y = text_section(app, ui, &p, &layer, &doc, x0, w, y + 4.0, &mut actions);
@@ -151,7 +151,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if presp.clicked() {
             widgets::open_popup(ui, ppop);
         }
-        let presets = effectcraft_engine::text_presets();
+        let presets = studio_engine::text_presets();
         let names: Vec<String> = presets.iter().map(|(_, n)| n.clone()).collect();
         if let Some(i) = widgets::popup_menu(ui, ppop, pr.left_bottom(), &names, None) {
             actions.push(("layer.applyTextPreset".into(), json!({"layer": layer.id.0, "preset": presets[i].0})));
@@ -366,7 +366,7 @@ fn text_section(
     }
     app.auto.add("properties.text.style", sr, "Font style");
     // The family's own styles.
-    let styles: Vec<String> = if widgets::popup_is_open(ui, spop) { effectcraft_engine::font_styles(&doc.font) } else { vec![] };
+    let styles: Vec<String> = if widgets::popup_is_open(ui, spop) { studio_engine::font_styles(&doc.font) } else { vec![] };
     if let Some(st) = widgets::popup_menu(ui, spop, sr.left_bottom(), &styles, styles.iter().position(|s| *s == doc.style)).and_then(|i| styles.get(i)) {
         set(actions, json!({"style": st}));
     }

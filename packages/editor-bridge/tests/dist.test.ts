@@ -1,23 +1,23 @@
 /**
  * Dist-surface contract tests (M3.2 / BUILD_PLAN §M3 task 8).
  *
- * These mount `window.effectcraft` + `window.effectcraftLoad` EXACTLY the way
+ * These mount `window.studioEngine` + `window.studioEngineLoad` EXACTLY the way
  * the shipped dist defines them (`apps/web/public/editor/index.html`, from
- * `editor/apps/effectcraft-web/web/index.html` — READ-ONLY, verified against
- * `editor/apps/effectcraft-web/src/api.rs`):
+ * `editor/apps/studio-web/web/index.html` — READ-ONLY, verified against
+ * `editor/apps/studio-web/src/api.rs`):
  *
- * - `window.effectcraftLoad = {}` synchronously, then `wasmMs` after the wasm
+ * - `window.studioEngineLoad = {}` synchronously, then `wasmMs` after the wasm
  *   module compiles, then `readyMs` after `ec.start()` returns; on failure
  *   `error = String(e)` and never `readyMs` (the boot order of the inline
  *   module script).
- * - `window.effectcraft` is a synchronous object literal with the 15 methods
+ * - `window.studioEngine` is a synchronous object literal with the 15 methods
  *   (`request`, `execute`, `commands`, `inspect`, `screenshot`, `renderFrame`,
  *   `files`, `readFile`, `addFile`, `info`, `saveToBrowser`, `listStored`,
  *   `removeStored`, `flush`, `workerFrameCheck`), `execute` routing through
  *   `ec.request("engine.execute", {command, params})`, `info()` carrying the
  *   dist's key set (`version` from CARGO_PKG_VERSION = 0.13.0, `threads`,
  *   `workers`, `audio`, `crossOriginIsolated`, `webgpu`, `serviceWorker`,
- *   `load: window.effectcraftLoad`).
+ *   `load: window.studioEngineLoad`).
  * - Startup rejections from api.rs are plain strings; the de-branded dist
  *   rejects "Studio is not running yet".
  *
@@ -30,14 +30,14 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { attachEditorBridge, editorLoadState } from "../src/bridge";
 import { type BridgeError, isBridgeError } from "../src/errors";
 import { type FakeEditor, createFakeEditor } from "../src/fake";
-import type { EffectcraftGlobal, EffectcraftWindow } from "../src/types";
+import type { StudioEngineGlobal, StudioEngineWindow } from "../src/types";
 import { ProjectSummarySchema } from "../src/types";
 
 const DIST_VERSION = "0.13.0"; // editor/Cargo.toml [workspace] version → info().version
 
 /**
- * The dist owns `effectcraftLoad` and writes to it as the boot progresses
- * (`EffectcraftLoad`'s props are read-only for bridge *consumers*); the test
+ * The dist owns `studioEngineLoad` and writes to it as the boot progresses
+ * (`StudioEngineLoad`'s props are read-only for bridge *consumers*); the test
  * harness plays the dist, so it gets the writable view.
  */
 interface WritableEffectcraftLoad {
@@ -46,11 +46,11 @@ interface WritableEffectcraftLoad {
   error?: string;
 }
 
-function loadOf(w: EffectcraftWindow): WritableEffectcraftLoad {
-  if (!w.effectcraftLoad) {
-    w.effectcraftLoad = {};
+function loadOf(w: StudioEngineWindow): WritableEffectcraftLoad {
+  if (!w.studioEngineLoad) {
+    w.studioEngineLoad = {};
   }
-  return w.effectcraftLoad as WritableEffectcraftLoad;
+  return w.studioEngineLoad as WritableEffectcraftLoad;
 }
 
 function makeIframe(src = "/editor/"): HTMLIFrameElement {
@@ -60,15 +60,15 @@ function makeIframe(src = "/editor/"): HTMLIFrameElement {
   return iframe;
 }
 
-function editorWindow(iframe: HTMLIFrameElement): EffectcraftWindow {
-  const w = iframe.contentWindow as EffectcraftWindow | null;
+function editorWindow(iframe: HTMLIFrameElement): StudioEngineWindow {
+  const w = iframe.contentWindow as StudioEngineWindow | null;
   if (!w) throw new Error("no contentWindow");
   return w;
 }
 
 /**
  * The dist's inline module script, backed by the fake editor: installs
- * `window.effectcraftLoad = {}` and the synchronous `window.effectcraft`
+ * `window.studioEngineLoad = {}` and the synchronous `window.studioEngine`
  * object literal with the dist's exact method set and info() shape. The boot
  * then has to be driven with {@link boot} (the dist awaits wasm compile +
  * `ec.start()` before setting the timings).
@@ -76,12 +76,12 @@ function editorWindow(iframe: HTMLIFrameElement): EffectcraftWindow {
 function mountDistEditor(fake: FakeEditor = createFakeEditor({ version: DIST_VERSION })): {
   iframe: HTMLIFrameElement;
   fake: FakeEditor;
-  w: EffectcraftWindow;
+  w: StudioEngineWindow;
 } {
   const iframe = makeIframe();
   const w = editorWindow(iframe);
-  w.effectcraftLoad = {}; // dist: `window.effectcraftLoad = {};`
-  const ec: EffectcraftGlobal = {
+  w.studioEngineLoad = {}; // dist: `window.studioEngineLoad = {};`
+  const ec: StudioEngineGlobal = {
     request: (method, params) => fake.request(method, params ?? {}),
     execute: (command, params) => fake.request("engine.execute", { command, params: params ?? {} }),
     commands: () => fake.request("engine.commands", {}),
@@ -91,13 +91,13 @@ function mountDistEditor(fake: FakeEditor = createFakeEditor({ version: DIST_VER
     files: () => fake.files(),
     readFile: (path) => fake.readFile(path),
     addFile: (fileOrUrl, name) => fake.addFile(fileOrUrl, name),
-    // The dist spreads ec.info() and adds the browser facts + `load: window.effectcraftLoad`.
+    // The dist spreads ec.info() and adds the browser facts + `load: window.studioEngineLoad`.
     info: () => ({
       ...((fake.info() as Record<string, unknown>) ?? {}),
       crossOriginIsolated: true,
       webgpu: false,
       serviceWorker: false,
-      load: w.effectcraftLoad,
+      load: w.studioEngineLoad,
     }),
     saveToBrowser: (path) => fake.saveToBrowser(path ?? undefined),
     listStored: () => fake.listStored(),
@@ -111,7 +111,7 @@ function mountDistEditor(fake: FakeEditor = createFakeEditor({ version: DIST_VER
 
 /** Drive the dist's boot sequence: wasm compile → start, or start failure. */
 function boot(
-  w: EffectcraftWindow,
+  w: StudioEngineWindow,
   outcome: { wasmMs: number; readyMs: number } | { wasmMs: number; error: string } = {
     wasmMs: 420,
     readyMs: 1337,
@@ -122,7 +122,7 @@ function boot(
   if ("readyMs" in outcome) {
     load.readyMs = outcome.readyMs;
   } else {
-    // dist: `window.effectcraftLoad.error = String(e); throw e;`
+    // dist: `window.studioEngineLoad.error = String(e); throw e;`
     load.error = outcome.error;
   }
 }
@@ -145,7 +145,7 @@ describe("editorLoadState: the dist's boot sequence", () => {
   it("tracks loading → readyMs: ready (the dist's success order)", () => {
     const { iframe, w } = mountDistEditor();
     const load = loadOf(w);
-    expect(editorLoadState(iframe)).toEqual({ status: "loading" }); // effectcraftLoad = {}
+    expect(editorLoadState(iframe)).toEqual({ status: "loading" }); // studioEngineLoad = {}
     load.wasmMs = 420; // wasm module compiled, start() pending
     expect(editorLoadState(iframe)).toEqual({ status: "loading", wasmMs: 420 });
     load.readyMs = 1337; // ec.start() returned
@@ -193,7 +193,7 @@ describe("attachEditorBridge × shipped dist surface", () => {
 
     const info = bridge.info();
     expect(info.version).toBe("0.13.0");
-    // the dist's info().load is window.effectcraftLoad; the bridge re-reads it
+    // the dist's info().load is window.studioEngineLoad; the bridge re-reads it
     // from the window (authoritative) — values must match the booted state
     expect(info.load).toMatchObject({ wasmMs: 420, readyMs: 1337 });
     // the dist's info() extras pass through the loose schema
@@ -237,7 +237,7 @@ describe("attachEditorBridge × shipped dist surface", () => {
     const bridge = await attachEditorBridge(iframe);
 
     // The editor page reloads and this boot fails: fresh load object with error only.
-    w.effectcraftLoad = { wasmMs: 10, error: "Unreachable: editor dist gone" };
+    w.studioEngineLoad = { wasmMs: 10, error: "Unreachable: editor dist gone" };
     const err = await bridge.ready().then(
       () => {
         throw new Error("should not resolve");

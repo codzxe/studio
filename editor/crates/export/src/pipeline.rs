@@ -4,13 +4,13 @@
 
 use std::sync::Mutex;
 
-use effectcraft_project::render_queue::{
+use studio_project::render_queue::{
     AlphaMode, Channels, ColorDepth, CurrentOrOff, EffectsMode, FrameSample, RenderLog, ResizeQuality, SwitchOverride, log_path,
 };
-use effectcraft_project::{Comp, Project};
-use effectcraft_raster::Image;
-use effectcraft_render::{Backend, LayerCache, RenderOpts, Renderer};
-use effectcraft_time::Tick;
+use studio_project::{Comp, Project};
+use studio_raster::Image;
+use studio_render::{Backend, LayerCache, RenderOpts, Renderer};
+use studio_time::Tick;
 use web_time::Instant;
 
 use crate::{Job, RenderQuality, out};
@@ -33,7 +33,7 @@ pub(crate) fn gpu_inflight(var: Option<&str>) -> usize {
     match v.trim().parse::<usize>() {
         Ok(n) if n >= 1 => n,
         _ => {
-            log::warn!(target: "effectcraft_export", "{GPU_INFLIGHT_ENV}={v:?} is not a whole number of frames of at least 1: using {GPU_INFLIGHT_DEFAULT}");
+            log::warn!(target: "studio_export", "{GPU_INFLIGHT_ENV}={v:?} is not a whole number of frames of at least 1: using {GPU_INFLIGHT_DEFAULT}");
             GPU_INFLIGHT_DEFAULT
         }
     }
@@ -189,12 +189,12 @@ impl<'a> Cx<'a> {
 
     async fn render_at(&self, t: Tick) -> Image {
         // With deferred GPU readbacks (a browser worker) the frame renders in passes.
-        effectcraft_render::passes::comp_frame(&self.renderer(), self.job.comp, t).await
+        studio_render::passes::comp_frame(&self.renderer(), self.job.comp, t).await
     }
 
     /// Whether frames render in passes (an accelerator with deferred readbacks).
     pub fn deferred(&self) -> bool {
-        effectcraft_render::passes::is_deferred(self.job.accel)
+        studio_render::passes::is_deferred(self.job.accel)
     }
 
     /// Output frames `ks`, each mapped by `f` (encoding): rendered in parallel batches, or one
@@ -224,7 +224,7 @@ impl<'a> Cx<'a> {
 
     /// Output frame `i`: sampled (fields, pulldown), at the colour depth, cropped and resized.
     pub fn frame(&self, comp: &Comp, i: u64) -> Image {
-        effectcraft_render::passes::block_on(self.frame_async(comp, i))
+        studio_render::passes::block_on(self.frame_async(comp, i))
     }
 
     /// [`Cx::frame`] as a future (deferred readbacks: the frame renders in passes).
@@ -266,7 +266,7 @@ impl<'a> Cx<'a> {
             return img;
         }
         match om.resize.quality {
-            ResizeQuality::Low => effectcraft_raster::warp::resample(&img, w, h),
+            ResizeQuality::Low => studio_raster::warp::resample(&img, w, h),
             ResizeQuality::High => bicubic(&img, w, h),
         }
     }
@@ -420,7 +420,7 @@ pub(crate) fn crop(img: &Image, t: i32, l: i32, b: i32, r: i32) -> Image {
 fn bicubic(src: &Image, w: u32, h: u32) -> Image {
     // Shrinking a lot: bilinear with its box pre-filter first, then bicubic for the last step.
     if src.width > w * 2 && src.height > h * 2 {
-        let mid = effectcraft_raster::warp::resample(src, w * 2, h * 2);
+        let mid = studio_raster::warp::resample(src, w * 2, h * 2);
         return bicubic(&mid, w, h);
     }
     let mut out = Image::new(w, h);
@@ -585,17 +585,17 @@ mod tests {
 
     /// An accelerator that renders nothing itself (the tests only check whether frames are capped).
     struct NoAccel;
-    impl effectcraft_render::Accelerator for NoAccel {
+    impl studio_render::Accelerator for NoAccel {
         fn name(&self) -> String {
             "none".into()
         }
-        fn comp_frame(&self, _r: &Renderer, _comp: effectcraft_project::ItemId, _t: Tick) -> Option<Image> {
+        fn comp_frame(&self, _r: &Renderer, _comp: studio_project::ItemId, _t: Tick) -> Option<Image> {
             None
         }
         fn supports_effect(&self, _id: &str) -> bool {
             false
         }
-        fn effects(&self, _chain: &[effectcraft_render::FxStep], _buf: &effectcraft_effects::Buf, _levels: Option<f32>) -> Option<effectcraft_effects::Buf> {
+        fn effects(&self, _chain: &[studio_render::FxStep], _buf: &studio_effects::Buf, _levels: Option<f32>) -> Option<studio_effects::Buf> {
             None
         }
     }
@@ -603,8 +603,8 @@ mod tests {
     #[test]
     fn software_only_projects_are_not_capped() {
         // Review of #879: an accelerator alone capped Software Only projects, which render on the CPU.
-        use effectcraft_project::render_queue::{OutputFormat, OutputModule, RenderSettings};
-        use effectcraft_render::NoFootage;
+        use studio_project::render_queue::{OutputFormat, OutputModule, RenderSettings};
+        use studio_render::NoFootage;
         let (settings, output) = (RenderSettings::default(), OutputModule::for_format(OutputFormat::PngSequence));
         let accel = NoAccel;
         for (gpu, want) in [(false, None), (true, Some(GPU_INFLIGHT_DEFAULT))] {
@@ -615,7 +615,7 @@ mod tests {
                 footage: &NoFootage,
                 expr: None,
                 accel: Some(&accel),
-                comp: effectcraft_project::ItemId(0),
+                comp: studio_project::ItemId(0),
                 settings: &settings,
                 output: &output,
                 path: "/c/f_[#####].png",
@@ -635,7 +635,7 @@ mod tests {
             footage: &NoFootage,
             expr: None,
             accel: None,
-            comp: effectcraft_project::ItemId(0),
+            comp: studio_project::ItemId(0),
             settings: &settings,
             output: &output,
             path: "/c/f_[#####].png",
@@ -659,12 +659,12 @@ mod tests {
     #[test]
     fn layers_render_once_per_job() {
         // #413: a job rendered every layer of every frame from scratch (no layer cache).
-        use effectcraft_color::Label;
-        use effectcraft_keyframe::{Keyframe, Value};
-        use effectcraft_project::render_queue::{OutputFormat, OutputModule, RenderSettings};
-        use effectcraft_project::{ItemKind, LayerSource, Solid, build};
-        use effectcraft_render::NoFootage;
-        use effectcraft_time::FrameRate;
+        use studio_color::Label;
+        use studio_keyframe::{Keyframe, Value};
+        use studio_project::render_queue::{OutputFormat, OutputModule, RenderSettings};
+        use studio_project::{ItemKind, LayerSource, Solid, build};
+        use studio_render::NoFootage;
+        use studio_time::FrameRate;
         // A solid animated only in Transform: its pixels render once, then move.
         let mut p = Project::default();
         let mut comp = Comp::new(64, 48, FrameRate::FPS_25, Tick::from_seconds_f64(1.0));

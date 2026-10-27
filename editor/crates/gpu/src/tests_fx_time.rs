@@ -3,11 +3,11 @@
 //! the effect host: a precomp whose content moves, at a nonzero time, composited at 8 and
 //! 32 bpc (the direct cases have no host and pass the layer through).
 
-use effectcraft_color::Label;
-use effectcraft_keyframe::{Keyframe, Value};
-use effectcraft_project::{BitDepth, Comp, ItemKind, LayerSource, build};
-use effectcraft_render::RenderOpts;
-use effectcraft_time::{FrameRate, Tick};
+use studio_color::Label;
+use studio_keyframe::{Keyframe, Value};
+use studio_project::{BitDepth, Comp, ItemKind, LayerSource, build};
+use studio_render::RenderOpts;
+use studio_time::{FrameRate, Tick};
 
 use crate::tests::{Scene, check, compare_at, effect_case, n, opts, set, v3};
 

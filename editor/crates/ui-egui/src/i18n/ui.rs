@@ -98,9 +98,9 @@ const JAPANESE: &[(&str, &str)] = &[
     ("3:2 Pulldown: {}", "3:2プルダウン：{}"),
     (
         "A clean-room, open-source compositor for motion graphics and visual effects: native on macOS, Windows and Linux, and in the browser. Part of the Studio family of creative apps.",
-        "モーショングラフィックスとビジュアルエフェクト向けの、クリーンルーム方式で開発されたオープンソースのコンポジットソフトウェアです。macOS、Windows、Linuxでネイティブに動作し、ブラウザーでも使えます。ArtCraftクリエイティブアプリファミリーの一員です。",
+        "モーショングラフィックスとビジュアルエフェクト向けの、クリーンルーム方式で開発されたオープンソースのコンポジットソフトウェアです。macOS、Windows、Linuxでネイティブに動作し、ブラウザーでも使えます。Studioクリエイティブアプリファミリーの一員です。",
     ),
-    ("About Studio", "EffectCraftについて"),
+    ("About Studio", "Studioについて"),
     ("About...", "情報..."),
     ("Active", "使用中"),
     ("Active Camera", "アクティブカメラ"),
@@ -229,7 +229,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Edit Gradient…", "グラデーションを編集…"),
     ("Edit Target: {}", "編集対象：{}"),
     ("Edit in the Timeline", "タイムラインで編集"),
-    ("Studio didn't quit normally last time.", "EffectCraftは前回正常に終了しませんでした。"),
+    ("Studio didn't quit normally last time.", "Studioは前回正常に終了しませんでした。"),
     ("Effects", "エフェクト"),
     ("Effects & Presets options", "エフェクト＆プリセットのオプション"),
     ("Copy Presets Folder Path", "プリセットフォルダーのパスをコピー"),
@@ -285,7 +285,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Install from File…", "ファイルからインストール…"),
     ("Intensity", "強度"),
     ("Inverted", "反転"),
-    ("Join the Studio community on Discord", "DiscordでArtCraftコミュニティに参加"),
+    ("Join the Studio community on Discord", "DiscordでStudioコミュニティに参加"),
     ("Key: {}", "キー：{}"),
     ("LEARN", "学習"),
     ("Label", "ラベル"),
@@ -326,7 +326,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Models folder: {}", "モデルフォルダー：{}"),
     ("Modifiers:", "修飾キー:"),
     ("More", "その他"),
-    ("More Studio apps", "ほかのArtCraftアプリ"),
+    ("More Studio apps", "ほかのStudioアプリ"),
     ("More tutorials", "ほかのチュートリアル"),
     ("Motion Blur", "モーションブラー"),
     ("Motion Blur: {}", "モーションブラー：{}"),
@@ -542,7 +542,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Variable Font Axes", "可変フォントの軸"),
     ("Video Codec: {}", "ビデオコーデック：{}"),
     ("View:", "表示:"),
-    ("Welcome to Studio", "EffectCraftへようこそ"),
+    ("Welcome to Studio", "Studioへようこそ"),
     ("Width:", "幅:"),
     ("You can undo this.", "この操作は取り消せます。"),
     ("You can't undo this.", "この操作は取り消せません。"),
@@ -596,7 +596,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Import PDF / Illustrator File", "PDF / Illustratorファイルを読み込み"),
     ("Import Photoshop File", "Photoshopファイルを読み込み"),
     ("Interpret Unlabeled Alpha As", "ラベルのないアルファを変換"),
-    ("Join the Studio Discord", "ArtCraftのDiscordに参加"),
+    ("Join the Studio Discord", "StudioのDiscordに参加"),
     ("Mercury GPU Acceleration ({})", "Mercury GPUアクセラレーション（{}）"),
     ("Mercury Software Only", "Mercuryソフトウェアのみ"),
     ("OCIO (built-in ACES config)", "OCIO（組み込みACES設定）"),
@@ -612,8 +612,8 @@ const JAPANESE: &[(&str, &str)] = &[
     ("New Project", "新規プロジェクト"),
     ("Open Project…", "プロジェクトを開く…"),
     ("Templates", "テンプレート"),
-    ("Studio home page", "EffectCraftのホームページ"),
-    ("Studio on GitHub", "GitHubのEffectCraft"),
+    ("Studio home page", "Studioのホームページ"),
+    ("Studio on GitHub", "GitHubのStudio"),
     ("Motion graphics and visual effects · version {}", "モーショングラフィックスとビジュアルエフェクト · バージョン{}"),
     ("New Composition", "新規コンポジション"),
     ("Open Demo Project", "デモプロジェクトを開く"),
@@ -635,7 +635,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("{} hours ago", "{}時間前"),
     ("{} day ago", "{}日前"),
     ("{} days ago", "{}日前"),
-    ("Studio project", "EffectCraftプロジェクト"),
+    ("Studio project", "Studioプロジェクト"),
     ("After Effects project", "After Effectsプロジェクト"),
     ("Lottie animation", "Lottieアニメーション"),
     ("Project", "プロジェクト"),
@@ -656,7 +656,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Use System Color Picker", "システムのカラーピッカーを使用"),
     (
         "Studio always uses its own colour picker (the same on every platform and the web).",
-        "EffectCraftは常に独自のカラーピッカーを使用します（すべてのプラットフォームとWeb版で同じです）。",
+        "Studioは常に独自のカラーピッカーを使用します（すべてのプラットフォームとWeb版で同じです）。",
     ),
     ("Startup & Repair", "起動と修復"),
     ("Show Home Screen When Launching", "起動時にホーム画面を表示"),
@@ -666,7 +666,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Automatic", "自動"),
     (
         "Window Graphics applies from the next launch. When the graphics driver stops Studio as its window opens, the next launch switches to OpenGL.",
-        "ウィンドウグラフィックスは次回の起動から適用されます。ウィンドウを開くときにグラフィックスドライバーがEffectCraftを停止させた場合、次回の起動ではOpenGLに切り替わります。",
+        "ウィンドウグラフィックスは次回の起動から適用されます。ウィンドウを開くときにグラフィックスドライバーがStudioを停止させた場合、次回の起動ではOpenGLに切り替わります。",
     ),
     ("Repair", "修復"),
     ("Reset Settings", "設定をリセット"),
@@ -4709,7 +4709,7 @@ mod tests {
     /// everywhere.
     #[test]
     fn settings_pages_are_translated() {
-        use effectcraft_engine::prefs::{Item, Kind, LANGUAGES, pages};
+        use studio_engine::prefs::{Item, Kind, LANGUAGES, pages};
         const VERBATIM: &[&str] = &["", "3D", "1/2", "1/4", "1/8", "sRGB", "Display P3", "px", "s", "%", "MB", "GB", "Hz", "pt"];
         let mut drawn = Vec::new();
         for page in pages() {

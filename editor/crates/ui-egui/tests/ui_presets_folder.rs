@@ -1,8 +1,8 @@
 //! Effects & Presets: copy the configured folder path through the contents menu.
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::panels::effects_presets::PresetFile;
-use effectcraft_ui_egui::{ControlRequest, EffectcraftApp, control, dock::PanelKind};
+use studio_engine::Session;
+use studio_ui_egui::panels::effects_presets::PresetFile;
+use studio_ui_egui::{ControlRequest, EffectcraftApp, control, dock::PanelKind};
 use egui::{Event, Modifiers, OutputCommand, PointerButton, pos2};
 use egui_kittest::Harness;
 use serde_json::json;

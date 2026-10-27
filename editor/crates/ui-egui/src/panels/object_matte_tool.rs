@@ -8,9 +8,9 @@
 //! click: segmenting on every pointer move would be far too slow for a hover preview (a model
 //! pass or a graph cut per move), so the matte itself appears once the prompt is set.
 
-use effectcraft_engine::geom::vec2 as gv2;
-use effectcraft_engine::project::Layer;
-use effectcraft_engine::render::EvalCtx;
+use studio_engine::geom::vec2 as gv2;
+use studio_engine::project::Layer;
+use studio_engine::render::EvalCtx;
 use egui::{Color32, Pos2, Rect, Stroke, StrokeKind};
 use serde_json::json;
 
@@ -123,6 +123,6 @@ fn existing(app: &EffectcraftApp, layer: &Layer) -> Option<u64> {
     sel.or(om.last().copied())
 }
 
-fn is_object_matte(g: &effectcraft_engine::project::PropGroup) -> bool {
-    matches!(&g.kind, effectcraft_engine::project::GroupKind::Effect { effect } if effect == effectcraft_engine::effects::object_matte::ID)
+fn is_object_matte(g: &studio_engine::project::PropGroup) -> bool {
+    matches!(&g.kind, studio_engine::project::GroupKind::Effect { effect } if effect == studio_engine::effects::object_matte::ID)
 }

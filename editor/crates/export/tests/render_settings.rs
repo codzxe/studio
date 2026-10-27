@@ -6,14 +6,14 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use effectcraft_color::Label;
-use effectcraft_effects::Buf;
-use effectcraft_export::render_queue::*;
-use effectcraft_export::{Job, JobOptions, Report, Sink, StorageQuota, export};
-use effectcraft_keyframe::{Keyframe, Value};
-use effectcraft_project::{Comp, ItemId, ItemKind, LayerSource, Project, Solid, build};
-use effectcraft_render::{Accelerator, AutoPick, FxStep, Image, NoFootage, Renderer};
-use effectcraft_time::{FrameRate, Tick};
+use studio_color::Label;
+use studio_effects::Buf;
+use studio_export::render_queue::*;
+use studio_export::{Job, JobOptions, Report, Sink, StorageQuota, export};
+use studio_keyframe::{Keyframe, Value};
+use studio_project::{Comp, ItemId, ItemKind, LayerSource, Project, Solid, build};
+use studio_render::{Accelerator, AutoPick, FxStep, Image, NoFootage, Renderer};
+use studio_time::{FrameRate, Tick};
 
 const W: u32 = 64;
 const H: u32 = 48;
@@ -363,7 +363,7 @@ fn wav_and_aiff_channels_and_formats() {
 
 #[test]
 fn cancelled_export_removes_only_files_it_opened() {
-    use effectcraft_export::ExportError;
+    use studio_export::ExportError;
     let dir = std::env::temp_dir().join(format!("ec-cancel-owned-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let (p, cid) = project(FrameRate::new(25, 1), |_, _| {});

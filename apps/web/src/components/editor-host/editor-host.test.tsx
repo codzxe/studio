@@ -1,10 +1,10 @@
 /**
  * EditorHost component tests (M3.5/M3.6/M3.7 + the M4-J chat layer mount) —
- * the real `attachEditorBridge` against a DIST-SHAPED mount: `window.effectcraft`
- * + `window.effectcraftLoad` installed on the host's own iframe `contentWindow`
+ * the real `attachEditorBridge` against a DIST-SHAPED mount: `window.studioEngine`
+ * + `window.studioEngineLoad` installed on the host's own iframe `contentWindow`
  * exactly the way the shipped dist defines them
  * (`apps/web/public/editor/index.html`, from
- * `editor/apps/effectcraft-web/web/index.html`), with the deterministic
+ * `editor/apps/studio-web/web/index.html`), with the deterministic
  * fake editor behind the API (M3-C's harness pattern).
  *
  * The session engine runs for real (`loadProjectSession` +
@@ -71,7 +71,7 @@ interface WritableLoad {
 
 type EditorWindow = Window & {
   effectcraft?: Record<string, unknown>;
-  effectcraftLoad?: WritableLoad;
+  studioEngineLoad?: WritableLoad;
 };
 
 function installDistEditor(
@@ -83,10 +83,10 @@ function installDistEditor(
   if ("readyMs" in boot) {
     load.readyMs = boot.readyMs;
   } else {
-    // dist: `window.effectcraftLoad.error = String(e)` (never readyMs).
+    // dist: `window.studioEngineLoad.error = String(e)` (never readyMs).
     load.error = boot.error;
   }
-  w.effectcraftLoad = load;
+  w.studioEngineLoad = load;
   w.effectcraft = {
     request: (method: string, params?: unknown) => fake.request(method, params ?? {}),
     execute: (command: string, params?: unknown) =>
@@ -99,7 +99,7 @@ function installDistEditor(
     files: () => fake.files(),
     readFile: (path: string) => fake.readFile(path),
     addFile: (fileOrUrl: Blob | File | string, name?: string) => fake.addFile(fileOrUrl, name),
-    info: () => ({ ...(fake.info() as Record<string, unknown>), load: w.effectcraftLoad }),
+    info: () => ({ ...(fake.info() as Record<string, unknown>), load: w.studioEngineLoad }),
     saveToBrowser: (path?: string) => fake.saveToBrowser(path ?? undefined),
     listStored: () => fake.listStored(),
     removeStored: (path: string) => fake.removeStored(path),

@@ -5,12 +5,12 @@
 //! Every edit is an engine command (`mask.*`, `path.freeTransform`, `keys.set`,
 //! `keys.setSpatialTangents`, `prop.set`).
 
-use effectcraft_engine::geom::{Mat3, vec2 as gv2};
-use effectcraft_engine::keyframe::ShapePath;
-use effectcraft_engine::project::{GroupKind, Layer, LayerId};
-use effectcraft_engine::render::EvalCtx;
-use effectcraft_engine::time::Tick;
-use effectcraft_engine::{KeyRef, VertexRef};
+use studio_engine::geom::{Mat3, vec2 as gv2};
+use studio_engine::keyframe::ShapePath;
+use studio_engine::project::{GroupKind, Layer, LayerId};
+use studio_engine::render::EvalCtx;
+use studio_engine::time::Tick;
+use studio_engine::{KeyRef, VertexRef};
 use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, vec2};
 use serde_json::json;
 
@@ -125,14 +125,14 @@ pub(crate) fn path_of(ectx: &EvalCtx, layer: LayerId, uid: u64) -> Option<PathIn
     let sp = g.get("path").map(|pr| ectx.value(l, pr)).and_then(|v| v.as_path().cloned())?;
     let (m, _) = super::viewer::l2c(ectx, l);
     let is_mask = matches!(g.kind, GroupKind::Mask { .. });
-    let m = if is_mask { m } else { m * effectcraft_engine::render::shapes::item_matrix(ectx, l, uid).unwrap_or(Mat3::IDENTITY) };
+    let m = if is_mask { m } else { m * studio_engine::render::shapes::item_matrix(ectx, l, uid).unwrap_or(Mat3::IDENTITY) };
     Some(PathInfo { layer, uid, m, sp, is_mask, feather: Vec::new() })
 }
 
 /// The path on screen: `sp` through `m` and the viewer map, flattened, with the closing point
 /// repeated for a closed path.
 pub(crate) fn flatten(sp: &ShapePath, m: &Mat3, map: &ViewerMap) -> Vec<Pos2> {
-    let k = effectcraft_engine::render::kurbo_path(sp);
+    let k = studio_engine::render::kurbo_path(sp);
     let mut pts: Vec<Pos2> = vec![];
     kurbo::flatten(k.iter(), 0.5, |el| match el {
         kurbo::PathEl::MoveTo(q) | kurbo::PathEl::LineTo(q) => {
@@ -176,8 +176,8 @@ pub(crate) fn draw_paths(
             list.push((g.uid, g.name.clone(), sp, m, Color32::from_rgb(color[0], color[1], color[2]), true));
         }
     }
-    for (uid, sp) in effectcraft_engine::viewer::shape_paths(ectx, l) {
-        let im = effectcraft_engine::render::shapes::item_matrix(ectx, l, uid).unwrap_or(Mat3::IDENTITY);
+    for (uid, sp) in studio_engine::viewer::shape_paths(ectx, l) {
+        let im = studio_engine::render::shapes::item_matrix(ectx, l, uid).unwrap_or(Mat3::IDENTITY);
         let name = l.props.find_group(uid).map(|g| g.name.clone()).unwrap_or_default();
         list.push((uid, name, sp, m * im, label_col, false));
     }
@@ -363,9 +363,9 @@ pub(crate) fn motion_path(
         // Auto-Bezier keys show handles on a side the path leaves straight too (a two-key path's
         // ends), to drag it into a curve; Linear keys (no tangents) show none.
         let (tin, tout) = if k.spatial_auto {
-            effectcraft_engine::keyframe::spatial_handles(&pos.keys, i)
+            studio_engine::keyframe::spatial_handles(&pos.keys, i)
         } else {
-            effectcraft_engine::keyframe::spatial_tangents(&pos.keys, i)
+            studio_engine::keyframe::spatial_tangents(&pos.keys, i)
         };
         for (out, tg) in [(false, tin), (true, tout)] {
             let has = (out && i + 1 < pos.keys.len()) || (!out && i > 0);

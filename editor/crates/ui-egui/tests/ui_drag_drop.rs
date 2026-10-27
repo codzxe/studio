@@ -7,12 +7,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use effectcraft_engine::Session;
-use effectcraft_engine::keyframe::Value as KV;
-use effectcraft_engine::time::Tick;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
-use effectcraft_ui_egui::panels::viewer::{comp_to_screen, last_fit};
+use studio_engine::Session;
+use studio_engine::keyframe::Value as KV;
+use studio_engine::time::Tick;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
+use studio_ui_egui::panels::viewer::{comp_to_screen, last_fit};
 use egui::{Event, Modifiers, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -134,7 +134,7 @@ fn dragging_selected_project_items_adds_every_item_to_the_timeline() {
         .as_u64()
         .unwrap();
     h.state_mut().session.execute("comp.open", json!({"comp": main})).unwrap();
-    h.state_mut().session.state.project_selection = vec![effectcraft_engine::project::ItemId(clip), effectcraft_engine::project::ItemId(other)];
+    h.state_mut().session.state.project_selection = vec![studio_engine::project::ItemId(clip), studio_engine::project::ItemId(other)];
     h.run_steps(3);
     let from = rect(&h, &format!("project.item.{clip}.name")).center();
     let top = rect(&h, &format!("timeline.layer.{}.row", layer_id(&h, "Top")));
@@ -151,7 +151,7 @@ fn dragging_selected_project_items_adds_every_item_to_the_viewer() {
         .as_u64()
         .unwrap();
     h.state_mut().session.execute("comp.open", json!({"comp": main})).unwrap();
-    h.state_mut().session.state.project_selection = vec![effectcraft_engine::project::ItemId(clip), effectcraft_engine::project::ItemId(other)];
+    h.state_mut().session.state.project_selection = vec![studio_engine::project::ItemId(clip), studio_engine::project::ItemId(other)];
     h.run_steps(3);
     let from = rect(&h, &format!("project.item.{clip}.name")).center();
     let to = comp_to_screen(&h.ctx, [80.0, 45.0]).unwrap();
@@ -178,7 +178,7 @@ fn effects_dropped_on_the_viewer_go_on_the_layer_under_the_pointer() {
     let to = comp_to_screen(&h.ctx, [160.0, 90.0]).unwrap();
     drag(&mut h, fx, to, Modifiers::NONE);
     let comp = h.state().session.active_comp().unwrap();
-    let effects = |id: u64| comp.layer(effectcraft_engine::project::LayerId(id)).unwrap().effects().map_or(0, |fx| fx.groups().count());
+    let effects = |id: u64| comp.layer(studio_engine::project::LayerId(id)).unwrap().effects().map_or(0, |fx| fx.groups().count());
     assert_eq!((effects(top), effects(middle)), (1, 0), "on Top, which is under the pointer");
 }
 
@@ -202,11 +202,11 @@ fn project_items_dropped_on_new_comp_make_a_composition() {
 
     // Two selected items, one dragged: New Composition from Selection asks how.
     let main = h.state().session.project.items.values().find(|i| i.name == "Main").unwrap().id;
-    h.state_mut().session.state.project_selection = vec![effectcraft_engine::project::ItemId(clip), main];
+    h.state_mut().session.state.project_selection = vec![studio_engine::project::ItemId(clip), main];
     h.run_steps(2);
     let item = rect(&h, &format!("project.item.{clip}.name")).center();
     drag(&mut h, item, button, Modifiers::NONE);
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::Form));
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::Form));
     assert!(h.state().auto.find("form.field.single").is_some(), "the New Composition from Selection dialog");
     assert_eq!(comps(&h), before + 1, "nothing made yet");
 }
@@ -228,7 +228,7 @@ fn project_footage_dropped_on_empty_timeline_creates_first_comp() {
     drag(&mut h, from, to, Modifiers::NONE);
     let comp = h.state().session.active_comp().expect("created a composition");
     assert_eq!((comp.width, comp.height), (640, 360));
-    assert_eq!(comp.frame_rate, effectcraft_engine::time::FrameRate::from_f64(24.0));
+    assert_eq!(comp.frame_rate, studio_engine::time::FrameRate::from_f64(24.0));
     assert_eq!(comp.duration.seconds(), 5.0);
     assert_eq!(comp.layers.len(), 1);
     assert_eq!(comp.layers[0].name, "Landscape.png");
@@ -242,13 +242,13 @@ fn multiple_selected_footage_dropped_on_empty_timeline_asks_how_to_create_comps(
     let mut s = Session::default();
     let first = s.execute("file.importPlaceholder", json!({"name": "First.png", "width": 160, "height": 90})).unwrap()["item"].as_u64().unwrap();
     let second = s.execute("file.importPlaceholder", json!({"name": "Second.png", "width": 300, "height": 200})).unwrap()["item"].as_u64().unwrap();
-    s.state.project_selection = vec![effectcraft_engine::project::ItemId(first), effectcraft_engine::project::ItemId(second)];
+    s.state.project_selection = vec![studio_engine::project::ItemId(first), studio_engine::project::ItemId(second)];
     let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(s));
     h.run_steps(3);
     let from = rect(&h, &format!("project.item.{first}.name")).center();
     let to = rect(&h, "panel.Timeline").center();
     drag(&mut h, from, to, Modifiers::NONE);
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::Form));
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::Form));
     assert!(h.state().auto.find("form.field.single").is_some());
     assert!(h.state().session.active_comp().is_none(), "no composition until the user chooses");
 }
@@ -270,7 +270,7 @@ fn project_footage_dropped_on_empty_viewer_creates_first_comp() {
     drag(&mut h, from, pos2(viewer.min.x + 40.0, viewer.min.y + 70.0), Modifiers::NONE);
     let comp = h.state().session.active_comp().expect("created a composition");
     assert_eq!((comp.width, comp.height), (640, 360));
-    assert_eq!(comp.frame_rate, effectcraft_engine::time::FrameRate::from_f64(24.0));
+    assert_eq!(comp.frame_rate, studio_engine::time::FrameRate::from_f64(24.0));
     assert_eq!(comp.duration.seconds(), 5.0);
     assert_eq!(comp.layers.len(), 1);
     assert_eq!(comp.layers[0].name, "Landscape.png");
@@ -284,13 +284,13 @@ fn multiple_selected_footage_dropped_on_empty_viewer_asks_how_to_create_comps() 
     let mut s = Session::default();
     let first = s.execute("file.importPlaceholder", json!({"name": "First.png", "width": 160, "height": 90})).unwrap()["item"].as_u64().unwrap();
     let second = s.execute("file.importPlaceholder", json!({"name": "Second.png", "width": 300, "height": 200})).unwrap()["item"].as_u64().unwrap();
-    s.state.project_selection = vec![effectcraft_engine::project::ItemId(first), effectcraft_engine::project::ItemId(second)];
+    s.state.project_selection = vec![studio_engine::project::ItemId(first), studio_engine::project::ItemId(second)];
     let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(s));
     h.run_steps(3);
     let from = rect(&h, &format!("project.item.{first}.name")).center();
     let viewer = rect(&h, "panel.Composition");
     drag(&mut h, from, pos2(viewer.min.x + 40.0, viewer.min.y + 70.0), Modifiers::NONE);
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::Form));
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::Form));
     assert!(h.state().auto.find("form.field.single").is_some());
     assert!(h.state().session.active_comp().is_none(), "no composition until the user chooses");
 }
@@ -315,8 +315,8 @@ struct Gated {
     allow: Arc<AtomicUsize>,
 }
 
-impl effectcraft_engine::Importer for Gated {
-    fn probe(&self, path: &str) -> Result<effectcraft_engine::project::Footage, String> {
+impl studio_engine::Importer for Gated {
+    fn probe(&self, path: &str) -> Result<studio_engine::project::Footage, String> {
         let k = self.started.fetch_add(1, Ordering::SeqCst);
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while self.allow.load(Ordering::SeqCst) <= k && std::time::Instant::now() < until {
@@ -325,7 +325,7 @@ impl effectcraft_engine::Importer for Gated {
         if path.ends_with(".unsupported") {
             return Err("unsupported media format".into());
         }
-        Ok(effectcraft_engine::project::Footage { path: path.into(), width: 64, height: 32, has_video: true, ..Default::default() })
+        Ok(studio_engine::project::Footage { path: path.into(), width: 64, height: 32, has_video: true, ..Default::default() })
     }
 }
 
@@ -433,7 +433,7 @@ fn dropped_photoshop_file_shows_the_import_photoshop_file_dialog() {
     h.step();
     h.input_mut().dropped_files.push(Arc::new(Dropped(std::env::temp_dir().join("Layers.PSD"))));
     h.run_steps(2);
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::Form), "the drop asks first");
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::Form), "the drop asks first");
     h.run_steps(2);
     assert!(h.query_by_label("Import Photoshop File").is_some());
     assert!(h.query_by_value("Composition - Retain Layer Sizes").is_some(), "Import Kind starts at Default Drag Import As");
@@ -445,7 +445,7 @@ fn dropped_photoshop_file_shows_the_import_photoshop_file_dialog() {
     h.state_mut().session.prefs.import.drag_import_as = "footage".into();
     h.input_mut().dropped_files.push(Arc::new(Dropped(std::env::temp_dir().join("Layers.PSD"))));
     h.run_steps(4);
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::Form));
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::Form));
     assert!(h.query_by_value("Footage").is_some());
     click_id(&mut h, "form.ok");
     step_until(&mut h, |h| h.state().session.project.items.values().any(|i| i.name == "Layers.PSD"));
@@ -474,12 +474,12 @@ fn card_id(h: &Harness<'_, EffectcraftApp>) -> String {
 /// Probes any existing file as a 64×32 PNG still.
 struct Stills;
 
-impl effectcraft_engine::Importer for Stills {
-    fn probe(&self, path: &str) -> Result<effectcraft_engine::project::Footage, String> {
+impl studio_engine::Importer for Stills {
+    fn probe(&self, path: &str) -> Result<studio_engine::project::Footage, String> {
         if !std::path::Path::new(path).is_file() {
             return Err(format!("{path}: no such file"));
         }
-        Ok(effectcraft_engine::project::Footage { path: path.into(), width: 64, height: 32, has_video: true, codec: "PNG".into(), ..Default::default() })
+        Ok(studio_engine::project::Footage { path: path.into(), width: 64, height: 32, has_video: true, codec: "PNG".into(), ..Default::default() })
     }
 }
 
@@ -514,7 +514,7 @@ fn footage_items(h: &Harness<'_, EffectcraftApp>) -> Vec<(String, usize)> {
         .items
         .values()
         .filter_map(|i| match &i.kind {
-            effectcraft_engine::project::ItemKind::Footage(f) => Some((i.name.clone(), f.sequence.len())),
+            studio_engine::project::ItemKind::Footage(f) => Some((i.name.clone(), f.sequence.len())),
             _ => None,
         })
         .collect()
@@ -531,9 +531,9 @@ fn import_dialog_offers_the_image_sequence_option() {
     h.state_mut().session.importer = Some(Arc::new(Stills));
     h.state_mut().hooks.pick_files = Some(Box::new(move |_: &[&str]| vec![pick.clone()]));
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "file.import", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "file.import", json!({})).unwrap();
     h.run_steps(2);
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::Form));
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::Form));
     let label = |h: &Harness<'_, EffectcraftApp>, id: &str| h.state().auto.find(id).map(|e| e.label.clone());
     assert_eq!(label(&h, "form.field.sequence").as_deref(), Some("PNG Sequence"));
     assert!(label(&h, "form.field.alphabetical").is_some() && label(&h, "form.field.frameRate").is_some());
@@ -544,7 +544,7 @@ fn import_dialog_offers_the_image_sequence_option() {
     assert_eq!(footage_items(&h), [("frame_0002.png".to_string(), 0)]);
 
     // Ticked: the whole run as one sequence.
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "file.import", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "file.import", json!({})).unwrap();
     h.run_steps(2);
     click_id(&mut h, "form.field.sequence");
     click_id(&mut h, "form.ok");
@@ -576,7 +576,7 @@ fn a_dropped_folder_imports_as_one_sequence_with_sequence_interpretation() {
     assert!(h.state().dialog.is_none(), "drops don't ask");
     // Interpret Footage on it (the import selected it).
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "file.interpretFootage", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "file.interpretFootage", json!({})).unwrap();
     h.run_steps(2);
     for id in ["form.field.sequenceInfo", "form.field.overrideStart", "form.field.startTimecode", "form.field.frameRate", "form.field.alpha"] {
         assert!(h.state().auto.find(id).is_some(), "{id}");
@@ -587,12 +587,12 @@ fn a_dropped_folder_imports_as_one_sequence_with_sequence_interpretation() {
 
 #[test]
 fn illustrator_import_offers_and_applies_retain_layer_sizes() {
-    let path = std::env::temp_dir().join(format!("effectcraft-retain-ui-{}.ai", std::process::id()));
+    let path = std::env::temp_dir().join(format!("studio-retain-ui-{}.ai", std::process::id()));
     std::fs::write(&path, b"%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 120 80] /Contents 4 0 R >> endobj\n4 0 obj << >> stream\n1 0 0 rg 20 15 30 20 re f\nendstream endobj\n%%EOF").unwrap();
-    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(effectcraft_host::session()));
+    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(studio_host::session()));
     h.run_steps(3);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "file.import", json!({"paths": [path]})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "file.import", json!({"paths": [path]})).unwrap();
     h.run_steps(3);
     assert!(h.query_by_label("Import PDF / Illustrator File").is_some());
     click_id(&mut h, "form.field.importAs");
@@ -604,8 +604,8 @@ fn illustrator_import_offers_and_applies_retain_layer_sizes() {
     let comp = s.active_comp().unwrap();
     assert_eq!((comp.width, comp.height), (120, 80));
     assert_eq!(comp.layers.len(), 1);
-    let effectcraft_engine::project::LayerSource::Footage { item } = comp.layers[0].source else { panic!("footage") };
-    let effectcraft_engine::project::ItemKind::Footage(f) = &s.project.item(item).unwrap().kind else { panic!("footage") };
+    let studio_engine::project::LayerSource::Footage { item } = comp.layers[0].source else { panic!("footage") };
+    let studio_engine::project::ItemKind::Footage(f) = &s.project.item(item).unwrap().kind else { panic!("footage") };
     assert_eq!((f.width, f.height), (30, 20));
     assert!(f.layer.as_ref().unwrap().layer_size);
 }

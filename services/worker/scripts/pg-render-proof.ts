@@ -8,7 +8,7 @@
 //
 //   queue (gateway's exact §9.2 flow: quote → row with pre-created output key
 //   → ledger.reserve) → runOnce (claim → hydrate → spawn the REAL
-//   effectcraft-cli → heartbeat → markCompleted → ledger settle D-20) → the
+//   studio-cli → heartbeat → markCompleted → ledger settle D-20) → the
 //   MP4 is read back out of storage (ftyp verified).
 //
 // Gates honestly: refuses to run when the CLI binary cannot be resolved or
@@ -18,7 +18,7 @@
 // Usage:
 //   cd services/worker && node --import tsx scripts/pg-render-proof.ts
 // Env: DATABASE_URL (default postgres://studio:studio@127.0.0.1:5432/studio),
-//      EFFECTCRAFT_CLI_PATH honored through the worker's own resolution.
+//      STUDIO_ENGINE_CLI_PATH honored through the worker's own resolution.
 //
 // The artifact + a proof.json are LEFT ON DISK under <repo>/.local/v1-loop-proof/
 // (gitignored runtime data). DB rows persist like the suite's (throwaway
@@ -64,8 +64,8 @@ function proofEnv(): StudioEnv {
     CHAT_MAX_STEPS: "20",
     RENDER_JOB_TIMEOUT_SECONDS: "90",
   };
-  const cli = process.env.EFFECTCRAFT_CLI_PATH?.trim();
-  if (cli !== undefined && cli !== "") source.EFFECTCRAFT_CLI_PATH = cli;
+  const cli = process.env.STUDIO_ENGINE_CLI_PATH?.trim();
+  if (cli !== undefined && cli !== "") source.STUDIO_ENGINE_CLI_PATH = cli;
   return parseEnv(source);
 }
 
@@ -80,7 +80,7 @@ async function main(): Promise<void> {
   console.log(`v1-loop render proof — dialect=postgres db=${DATABASE_URL}`);
   // biome-ignore lint/suspicious/noConsole: CLI proof script — its console report IS the deliverable (pipeline outcome + PASS/FAIL verdict)
   console.log(`CLI resolution: path=${cli.path} source=${cli.source} present=${cliPresent}`);
-  if (!cliPresent) throw new Error("effectcraft-cli not resolvable — nothing to prove");
+  if (!cliPresent) throw new Error("studio-cli not resolvable — nothing to prove");
 
   mkdirSync(PROOF_ROOT, { recursive: true }); // PERSISTENT proof root
   const db = createDb(DATABASE_URL, { max: 5 });

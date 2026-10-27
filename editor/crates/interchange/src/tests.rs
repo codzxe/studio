@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use effectcraft_keyframe::{Keyframe, Value};
-use effectcraft_project::{Comp, Footage, FootageKind, ItemId, ItemKind, Layer, LayerSource, Project};
-use effectcraft_time::{FrameRate, Tick};
+use studio_keyframe::{Keyframe, Value};
+use studio_project::{Comp, Footage, FootageKind, ItemId, ItemKind, Layer, LayerSource, Project};
+use studio_time::{FrameRate, Tick};
 use filmcraft_project as fp;
 
 use crate::*;
@@ -371,11 +371,11 @@ fn rejects_unknown_documents() {
 
 fn footage_item(p: &mut Project, path: &str) -> ItemId {
     let f = probe(path).unwrap();
-    p.add_item(path.rsplit('/').next().unwrap(), effectcraft_color::Label::Aqua, None, ItemKind::Footage(f))
+    p.add_item(path.rsplit('/').next().unwrap(), studio_color::Label::Aqua, None, ItemKind::Footage(f))
 }
 
 fn comp_item(p: &mut Project, name: &str, c: Comp) -> ItemId {
-    p.add_item(name, effectcraft_color::Label::Sandstone, None, ItemKind::Comp(Arc::new(c)))
+    p.add_item(name, studio_color::Label::Sandstone, None, ItemKind::Comp(Arc::new(c)))
 }
 
 /// A comp with a stretched, keyframed footage layer, a text layer, a precomp and an audio layer.
@@ -384,11 +384,11 @@ fn ae_project() -> (Project, ItemId) {
     let a = footage_item(&mut p, "/media/a.mov");
     let s = footage_item(&mut p, "/media/tone.wav");
     let mut inner = Comp::new(W, H, FrameRate::new(25, 1), t(4.0));
-    let li = effectcraft_project::build::layer(&mut p, &inner, "inner a", LayerSource::Footage { item: a }, (W, H), None);
+    let li = studio_project::build::layer(&mut p, &inner, "inner a", LayerSource::Footage { item: a }, (W, H), None);
     inner.layers.push(li);
     let inner_id = comp_item(&mut p, "Inner", inner);
     let mut c = Comp::new(W, H, FrameRate::new(25, 1), t(5.0));
-    let mut la = effectcraft_project::build::layer(&mut p, &c, "clip a", LayerSource::Footage { item: a }, (W, H), None);
+    let mut la = studio_project::build::layer(&mut p, &c, "clip a", LayerSource::Footage { item: a }, (W, H), None);
     la.stretch = 200.0; // half speed
     la.start_time = t(-1.0); // layer time 1 s at comp 3 s… source 1 s at comp 1 s
     la.in_point = t(1.0);
@@ -401,14 +401,14 @@ fn ae_project() -> (Project, ItemId) {
         tr.get_mut("rotation").unwrap().value = Value::Scalar(-15.0);
         tr.get_mut("opacity").unwrap().value = Value::Scalar(75.0);
     }
-    let mut lt = effectcraft_project::build::layer(&mut p, &c, "Title", LayerSource::Text, (W, H), None);
+    let mut lt = studio_project::build::layer(&mut p, &c, "Title", LayerSource::Text, (W, H), None);
     lt.in_point = t(0.6);
     lt.out_point = t(2.6);
-    let mut lp = effectcraft_project::build::layer(&mut p, &c, "Inner", LayerSource::Comp { item: inner_id }, (W, H), None);
+    let mut lp = studio_project::build::layer(&mut p, &c, "Inner", LayerSource::Comp { item: inner_id }, (W, H), None);
     lp.start_time = t(2.0);
     lp.in_point = t(2.0);
     lp.out_point = t(5.0);
-    let mut ls = effectcraft_project::build::layer(&mut p, &c, "tone", LayerSource::Footage { item: s }, (0, 0), None);
+    let mut ls = studio_project::build::layer(&mut p, &c, "tone", LayerSource::Footage { item: s }, (0, 0), None);
     ls.out_point = t(3.0);
     ls.props.prop_mut("audio/levels").unwrap().value = Value::Vec2([-3.0, -3.0]);
     c.layers = vec![lt, lp, la, ls];
@@ -476,7 +476,7 @@ fn export_then_reimport_keeps_the_timeline() {
     }
 }
 
-fn tr_orig(l: &Layer) -> &effectcraft_project::Property {
+fn tr_orig(l: &Layer) -> &studio_project::Property {
     l.transform().unwrap().get("position").unwrap()
 }
 

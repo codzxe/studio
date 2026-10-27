@@ -4,12 +4,12 @@
 //! doesn't move the layer. Uses only APIs that existed before the bars, so it runs (and fails)
 //! on the code without them.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::commands::text_edit::layer_doc;
-use effectcraft_engine::project::{LayerId, PropGroup};
-use effectcraft_engine::text::layout_doc;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::panels::viewer::comp_to_screen;
+use studio_engine::Session;
+use studio_engine::commands::text_edit::layer_doc;
+use studio_engine::project::{LayerId, PropGroup};
+use studio_engine::text::layout_doc;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::panels::viewer::comp_to_screen;
 use egui::{Event, Modifiers, PointerButton, Pos2, pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -144,7 +144,7 @@ fn bars_show_only_for_a_selected_selector_or_animator() {
     h.run_steps(3);
     assert!(handle(&h, ids.end).is_none(), "View ▸ Show Layer Controls off hides them");
     h.state_mut().ui.viewer.show_layer_controls = true;
-    h.state_mut().ui.tool = effectcraft_ui_egui::state::Tool::Pen;
+    h.state_mut().ui.tool = studio_ui_egui::state::Tool::Pen;
     h.run_steps(3);
     assert!(handle(&h, ids.end).is_none(), "only the Selection tool drags them");
 }

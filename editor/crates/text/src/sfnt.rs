@@ -311,18 +311,19 @@ mod tests {
 
     #[test]
     fn reads_bundled_names() {
-        let f = read_faces_bytes(crate::fonts::INTER_BOLD);
+        let f = read_faces_bytes(crate::fonts::INSTRUMENT_SERIF);
         assert_eq!(f.len(), 1);
-        assert_eq!(f[0].family, "Inter");
-        assert_eq!(f[0].style, "Bold");
-        assert_eq!(f[0].weight, 700);
+        assert_eq!(f[0].family, "Instrument Serif");
+        assert_eq!(f[0].style, "Regular");
+        assert_eq!(f[0].weight, 400);
         assert!(!f[0].italic);
-        let i = read_faces_bytes(crate::fonts::INTER_ITALIC);
-        assert!(i[0].italic, "{:?}", i[0]);
-        let n = read_faces_bytes(crate::fonts::NOTO_SERIF_REGULAR);
-        assert_eq!(n[0].family, "Noto Serif");
+        let v = read_faces_bytes(crate::fonts::INSTRUMENT_SANS_MEDIUM);
+        assert_eq!(v[0].family, "Instrument Sans");
+        assert_eq!(v[0].style, "Medium");
+        assert_eq!(v[0].weight, 500);
+        assert!(!v[0].variable, "the bundled sans faces are statics");
         assert!(read_faces_bytes(b"not a font").is_empty());
-        assert!(!f[0].variable && !n[0].variable, "the bundled fonts are static");
+        assert!(!f[0].variable, "the bundled serif is static");
     }
 
     /// A font file of just `name` (family, Regular) and, when `fvar` is given, an `fvar` table
@@ -397,7 +398,7 @@ mod tests {
         let short = read_faces_bytes(&test_font::variable("Fig Test", &[("Black", 900.0, None)], false));
         assert_eq!(short[0].instances[0].postscript, "FigTest-Black");
         // A static font has none.
-        assert!(read_faces_bytes(crate::fonts::INTER_BOLD)[0].instances.is_empty());
+        assert!(read_faces_bytes(crate::fonts::INSTRUMENT_SERIF)[0].instances.is_empty());
     }
 
     /// Hostile `fvar` counts: records past the end of the table are dropped, never read out of

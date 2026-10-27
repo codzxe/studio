@@ -2,12 +2,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use effectcraft_engine::{
+use studio_engine::{
     Session,
     project::LayerId,
     render::{NoFootage, Renderer},
 };
-use effectcraft_ui_egui::{
+use studio_ui_egui::{
     EffectcraftApp,
     frames::{RemoteDone, RemoteFrame, RemoteFrames, RemoteJob, to_color_image},
 };

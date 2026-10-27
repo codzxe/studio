@@ -140,7 +140,7 @@ fn checked_reflects_layer_state() {
     assert_eq!(checked(&s, "file.save", &serde_json::json!({})), None);
 }
 
-/// `cargo test -p effectcraft-engine dump_specs -- --ignored --nocapture`: every command as TSV.
+/// `cargo test -p studio-engine dump_specs -- --ignored --nocapture`: every command as TSV.
 #[test]
 #[ignore]
 fn dump_specs() {

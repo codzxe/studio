@@ -2,10 +2,10 @@
 //! is focused, the wheel, the Zoom and Hand tools), and the Roto Brush explains itself in the
 //! Composition panel (egui_kittest, UI logic only).
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
-use effectcraft_ui_egui::state::Tool;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
+use studio_ui_egui::state::Tool;
 use egui::{Event, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -28,7 +28,7 @@ fn harness() -> Harness<'static, EffectcraftApp> {
     let id = box_id(&h);
     h.state_mut().session.execute("layer.select", json!({"layers": [id]})).unwrap();
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.openLayer", json!({"layer": id})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.openLayer", json!({"layer": id})).unwrap();
     h.run_steps(3);
     assert_eq!(h.state().ui.focused, PanelKind::Layer);
     h
@@ -66,7 +66,7 @@ fn drag_with(h: &mut Harness<'_, EffectcraftApp>, button: egui::PointerButton, f
 
 fn command(h: &mut Harness<'_, EffectcraftApp>, id: &str) {
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, id, json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, id, json!({})).unwrap();
     h.run_steps(3);
 }
 
@@ -132,7 +132,7 @@ fn wheel_zooms_around_the_pointer_and_hand_tool_pans() {
     drag_with(&mut h, egui::PointerButton::Middle, c, c - vec2(40.0, 20.0));
     let moved = rect(&h, "layerPanel.canvas").min - before;
     assert!((moved.x + 40.0).abs() < 1.0 && (moved.y + 20.0).abs() < 1.0, "{moved:?}");
-    let layer = h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(box_id(&h))).unwrap().clone();
+    let layer = h.state().session.active_comp().unwrap().layer(studio_engine::project::LayerId(box_id(&h))).unwrap().clone();
     assert!(layer.effects().is_none_or(|fx| fx.groups().count() == 0), "panning adds no Roto Brush effect");
 }
 

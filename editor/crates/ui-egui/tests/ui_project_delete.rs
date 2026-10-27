@@ -1,10 +1,10 @@
 //! Project-panel deletion uses its selection, even when a Timeline layer is still selected.
 //! Shift+Delete deletes it without asking (Delete Project Items Without Confirmation).
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::{Footage, FootageKind, ItemId, ItemKind, LayerId};
-use effectcraft_ui_egui::dock::PanelKind;
-use effectcraft_ui_egui::{Dialog, EffectcraftApp};
+use studio_engine::Session;
+use studio_engine::project::{Footage, FootageKind, ItemId, ItemKind, LayerId};
+use studio_ui_egui::dock::PanelKind;
+use studio_ui_egui::{Dialog, EffectcraftApp};
 use egui::{Event, Key, Modifiers, pos2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -175,7 +175,7 @@ fn typing_dialogs_and_modified_keys_do_not_delete_project_items() {
         key(&mut h, k, m);
         assert_eq!(h.state().session.project, project, "{m:?}+{k:?}");
     }
-    h.state_mut().dialog = Some(effectcraft_ui_egui::Dialog::About);
+    h.state_mut().dialog = Some(studio_ui_egui::Dialog::About);
     key(&mut h, Key::Delete, Modifiers::NONE);
     for how in SHIFT_DELETE {
         shift_delete(&mut h, how);

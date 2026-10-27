@@ -13,8 +13,8 @@
 //   - the REAL pipeline drivers: runOnce (deterministic tick) and startWorker
 //     (the long-lived claim loop).
 //
-// The ONLY external dependency is the effectcraft-cli binary:
-//   - PRESENT (env EFFECTCRAFT_CLI_PATH → repo build → PATH): the full
+// The ONLY external dependency is the studio-cli binary:
+//   - PRESENT (env STUDIO_ENGINE_CLI_PATH → repo build → PATH): the full
 //     success path runs — claim → hydrate → spawn → heartbeat → output object
 //     → markCompleted → ledger settle (D-20).
 //   - ABSENT (this box today): the HONEST degrade path runs — claim → hydrate
@@ -30,7 +30,7 @@
 // Usage (idempotent — wipes its own throwaway files first):
 //   cd services/worker && node --import tsx scripts/sqlite-pipeline-smoke.ts
 // Env: W5_10_SMOKE_DB (default <repo>/.local/w5-10-smoke.db),
-//      EFFECTCRAFT_CLI_PATH honored through the worker's own resolution.
+//      STUDIO_ENGINE_CLI_PATH honored through the worker's own resolution.
 
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -75,8 +75,8 @@ function smokeEnv(): StudioEnv {
     CHAT_MAX_STEPS: "20",
     RENDER_POLL_INTERVAL_MS: "300", // snappy loop for the startWorker phase
   };
-  const cli = process.env.EFFECTCRAFT_CLI_PATH?.trim();
-  if (cli !== undefined && cli !== "") source.EFFECTCRAFT_CLI_PATH = cli;
+  const cli = process.env.STUDIO_ENGINE_CLI_PATH?.trim();
+  if (cli !== undefined && cli !== "") source.STUDIO_ENGINE_CLI_PATH = cli;
   return parseEnv(source);
 }
 

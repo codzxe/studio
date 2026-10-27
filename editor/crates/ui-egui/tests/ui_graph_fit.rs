@@ -3,8 +3,8 @@
 //! layer isn't selected), else Fit All Graphs to View. It used to open on an empty 0–100 range
 //! or with the curves off-view.
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
 use egui_kittest::Harness;
 use serde_json::json;
 
@@ -29,7 +29,7 @@ fn harness(select_layer: bool) -> (Harness<'static, EffectcraftApp>, u64, u64) {
 
 fn open_graph(h: &mut Harness<'_, EffectcraftApp>) {
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.graphEditor", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.graphEditor", json!({})).unwrap();
     h.run_steps(4);
     assert!(h.state().ui.timeline.graph_editor);
 }
@@ -72,7 +72,7 @@ fn opening_the_graph_editor_with_no_keys_selected_fits_all_graphs() {
 
 fn open_graph_toggle_twice(h: &mut Harness<'_, EffectcraftApp>) {
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.graphEditor", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.graphEditor", json!({})).unwrap();
     h.run_steps(2);
     assert!(!h.state().ui.timeline.graph_editor);
     open_graph(h);

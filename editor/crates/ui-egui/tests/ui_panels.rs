@@ -4,9 +4,9 @@
 
 use std::sync::Arc;
 
-use effectcraft_engine::{Session, config::MemoryConfig};
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_engine::{Session, config::MemoryConfig};
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui::{Event, Pos2, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -23,7 +23,7 @@ fn harness() -> Harness<'static, EffectcraftApp> {
 
 fn open(h: &mut Harness<'_, EffectcraftApp>, panel: &str) {
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.panel", json!({"panel": panel})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.panel", json!({"panel": panel})).unwrap();
     h.run_steps(3);
 }
 
@@ -43,7 +43,7 @@ fn click(h: &mut Harness<'_, EffectcraftApp>, id: &str) {
 fn discord_pill_fits_its_label() {
     let h = harness();
     let e = h.state().auto.find("header.discord").expect("the Discord pill").clone();
-    let text = h.ctx.fonts_mut(|f| f.layout_no_wrap("Discord".into(), effectcraft_ui_egui::theme::Tokens::semibold(12.0), egui::Color32::WHITE).size().x);
+    let text = h.ctx.fonts_mut(|f| f.layout_no_wrap("Discord".into(), studio_ui_egui::theme::Tokens::semibold(12.0), egui::Color32::WHITE).size().x);
     // Padding 10, the 14 px icon, a 6 px gap, the text, padding 12.
     assert!((e.rect[2] - (text + 42.0)).abs() < 0.5, "{} for a {text} px label", e.rect[2]);
 }
@@ -103,7 +103,7 @@ fn scopes_switch_kind() {
 #[test]
 fn footage_panel_buttons_edit_into_the_comp() {
     let mut h = harness();
-    let item = h.state().session.project.items.values().find(|i| matches!(i.kind, effectcraft_engine::project::ItemKind::Solid(_))).unwrap().id.0;
+    let item = h.state().session.project.items.values().find(|i| matches!(i.kind, studio_engine::project::ItemKind::Solid(_))).unwrap().id.0;
     h.state_mut().session.execute("footage.open", json!({"item": item})).unwrap();
     h.run_steps(4);
     assert!(h.state().ui.dock.contains(PanelKind::Footage) || h.state().ui.floating.iter().any(|f| f.panels.contains(&PanelKind::Footage)));
@@ -164,8 +164,8 @@ fn hover(h: &mut Harness<'_, EffectcraftApp>, p: Pos2) {
 /// ones stay that way.
 #[test]
 fn saved_workspaces_persist_across_sessions() {
-    use effectcraft_engine::config::{ConfigStore, MemoryConfig};
-    use effectcraft_ui_egui::menus::invoke;
+    use studio_engine::config::{ConfigStore, MemoryConfig};
+    use studio_ui_egui::menus::invoke;
     let store = std::sync::Arc::new(MemoryConfig::default());
     let launch = || {
         let s = Session { config: Some(store.clone()), ..Default::default() };
@@ -191,7 +191,7 @@ fn saved_workspaces_persist_across_sessions() {
     drop(h);
     assert_eq!(launch().state().saved_workspace_names(), ["Edit Bay"]);
     // A damaged file is ignored.
-    store.write(effectcraft_ui_egui::WORKSPACES_FILE, "{not json").unwrap();
+    store.write(studio_ui_egui::WORKSPACES_FILE, "{not json").unwrap();
     assert!(launch().state().saved_workspace_names().is_empty());
 }
 
@@ -204,17 +204,17 @@ fn saved_workspace_is_listed_in_the_workspace_menu() {
     // Saving needs a settings folder.
     h.state_mut().session.config = Some(Arc::new(MemoryConfig::default()));
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.workspace", json!({"name": "Minimal"})).unwrap();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.saveWorkspaceAs", json!({"name": "My Layout"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.workspace", json!({"name": "Minimal"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.saveWorkspaceAs", json!({"name": "My Layout"})).unwrap();
     h.run_steps(3);
     let saved = h.state().ui.dock.clone();
     assert_eq!(h.state().saved_workspace_names(), ["My Layout"]);
-    let cx = effectcraft_engine::menus::DynCtx { workspace: Some("My Layout"), saved_workspaces: &["My Layout".to_string()] };
-    let (entries, _) = effectcraft_engine::menus::dynamic(&h.state().session, "savedWorkspaces", &cx);
+    let cx = studio_engine::menus::DynCtx { workspace: Some("My Layout"), saved_workspaces: &["My Layout".to_string()] };
+    let (entries, _) = studio_engine::menus::dynamic(&h.state().session, "savedWorkspaces", &cx);
     assert_eq!(entries.len(), 1);
     assert_eq!((entries[0].label.as_str(), entries[0].command.as_str(), &entries[0].params), ("My Layout", "window.workspace", &json!({"name": "My Layout"})));
     // Leave it, then pick it from the in-window menu bar.
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.workspace", json!({"name": "Default"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.workspace", json!({"name": "Default"})).unwrap();
     h.run_steps(3);
     assert_ne!(h.state().ui.dock, saved);
     click(&mut h, "menu.Window");
@@ -243,7 +243,7 @@ fn edit_label_menu_shows_the_label_colours() {
     hover(&mut h, label.center());
     // (Not Dark Green; the entry's label starts with its check-mark column.)
     let green = h.query_by_label(" Green").expect("the Label submenu is open").rect();
-    let col = h.state().tokens.label(effectcraft_engine::color::Label::Green);
+    let col = h.state().tokens.label(studio_engine::color::Label::Green);
     let swatch = |s: &egui::Shape| matches!(s, egui::Shape::Rect(r) if r.fill == col && r.rect.width() < 16.0 && green.contains(r.rect.center()));
     let shapes: Vec<egui::Shape> = h.output().shapes.iter().map(|c| c.shape.clone()).collect();
     assert!(shapes.iter().any(|s| swatch(s) || matches!(s, egui::Shape::Vec(v) if v.iter().any(swatch))), "no Green swatch");
@@ -253,7 +253,7 @@ fn edit_label_menu_shows_the_label_colours() {
         hover(&mut h, pos2(green.center().x, label.center().y + (green.center().y - label.center().y) * k as f32 / 10.0));
     }
     click_at(&mut h, green.center());
-    assert_eq!(h.state().session.active_comp().unwrap().layers[0].label, effectcraft_engine::color::Label::Green);
+    assert_eq!(h.state().session.active_comp().unwrap().layers[0].label, studio_engine::color::Label::Green);
 }
 
 /// Learn opens the Home screen's tutorials; clicking another workspace tab closes them again,
@@ -272,7 +272,7 @@ fn leaving_the_learn_workspace_closes_its_tutorials() {
 
 fn open_settings(h: &mut Harness<'_, EffectcraftApp>) {
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "app.settings", json!({"page": "appearance"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "app.settings", json!({"page": "appearance"})).unwrap();
     h.run_steps(3);
 }
 
@@ -337,7 +337,7 @@ fn ui_scale_setting_sizes_the_interface() {
     h.run_steps(2);
     assert_eq!(ctx.zoom_factor(), 0.9);
     // A saved scale applies from the first frame.
-    let s = Session { prefs: effectcraft_engine::prefs::Prefs::from_json(&h.state().session.prefs.to_json()), ..Default::default() };
+    let s = Session { prefs: studio_engine::prefs::Prefs::from_json(&h.state().session.prefs.to_json()), ..Default::default() };
     let mut h2 = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(s));
     h2.run_steps(3);
     assert_eq!(h2.ctx.zoom_factor(), 0.9);
@@ -414,18 +414,18 @@ fn settings_buttons_stay_in_view_at_200_percent() {
 }
 
 /// Headless look at the panels (wgpu offscreen; needs a GPU adapter). Run with
-/// `PANELS_SNAPSHOT=/abs/dir cargo test -p effectcraft-ui-egui --test ui_panels -- --ignored`.
+/// `PANELS_SNAPSHOT=/abs/dir cargo test -p studio-ui-egui --test ui_panels -- --ignored`.
 #[test]
 #[ignore]
 fn panels_snapshot() {
     let mut s = Session::default();
     s.execute("file.openDemoProject", json!({})).unwrap();
-    let solid = s.project.items.values().find(|i| matches!(i.kind, effectcraft_engine::project::ItemKind::Solid(_))).map(|i| i.id.0);
+    let solid = s.project.items.values().find(|i| matches!(i.kind, studio_engine::project::ItemKind::Solid(_))).map(|i| i.id.0);
     let mut app = Some(EffectcraftApp::new(s));
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| app.take().expect("app"));
     h.run_steps(3);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.workspace", json!({"name": "All Panels"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.workspace", json!({"name": "All Panels"})).unwrap();
     h.run_steps(3);
     let dir = std::env::var("PANELS_SNAPSHOT").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/test-out").into());
     std::fs::create_dir_all(&dir).unwrap();
@@ -546,7 +546,7 @@ fn properties_label_double_click_reveals_without_editing() {
     let opacity = comp.layer(layer).unwrap().props.prop("transform/opacity").unwrap().uid;
     let other_scale = comp.layers.iter().find(|l| l.id.0 == other).unwrap().props.prop("transform/scale").unwrap().uid;
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::frontend(h.state_mut(), &ctx, "timeline.revealProps", json!({"props": [{"layer": other, "prop": other_scale}]})).unwrap();
+    studio_ui_egui::menus::frontend(h.state_mut(), &ctx, "timeline.revealProps", json!({"props": [{"layer": other, "prop": other_scale}]})).unwrap();
     open(&mut h, "properties");
     open(&mut h, "renderQueue");
     h.state_mut().ui.timeline.search = "no matching property".into();

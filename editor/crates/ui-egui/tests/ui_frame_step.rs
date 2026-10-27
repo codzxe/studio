@@ -1,9 +1,9 @@
 //! Stepping the current time from the keyboard: Page Down / Page Up and Cmd+Right / Cmd+Left
 //! Arrow move one frame, with Shift ten.
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui::{Event, Key, Modifiers};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -48,7 +48,7 @@ fn cmd_arrows_step_the_current_frame() {
 /// magnification, 10 with Shift), as After Effects does (#961).
 #[test]
 fn plain_arrows_nudge_the_selected_layer() {
-    use effectcraft_engine::project::LayerId;
+    use studio_engine::project::LayerId;
     let mut session = Session::default();
     session.execute("comp.new", json!({"name": "Main", "width": 320, "height": 180, "frameRate": 30.0, "duration": 4.0})).unwrap();
     let lid = session.execute("layer.newSolid", json!({"name": "Box", "width": 40, "height": 40, "color": "#ff0000"})).unwrap()["layer"].as_u64().unwrap();
@@ -78,7 +78,7 @@ fn plain_arrows_nudge_the_selected_layer() {
 /// nudge it (#961).
 #[test]
 fn clicking_a_timeline_row_then_arrows_nudge_the_layer() {
-    use effectcraft_engine::project::LayerId;
+    use studio_engine::project::LayerId;
     let mut session = Session::default();
     session.execute("comp.new", json!({"name": "Main", "width": 320, "height": 180, "frameRate": 30.0, "duration": 4.0})).unwrap();
     let lid = session.execute("layer.newSolid", json!({"name": "Box", "width": 40, "height": 40, "color": "#ff0000"})).unwrap()["layer"].as_u64().unwrap();
@@ -109,7 +109,7 @@ fn clicking_a_timeline_row_then_arrows_nudge_the_layer() {
 /// its own keyboard navigation (#961).
 #[test]
 fn arrows_nudge_from_any_panel_but_project() {
-    use effectcraft_engine::project::LayerId;
+    use studio_engine::project::LayerId;
     let mut session = Session::default();
     session.execute("comp.new", json!({"name": "Main", "width": 320, "height": 180, "frameRate": 30.0, "duration": 4.0})).unwrap();
     let lid = session.execute("layer.newSolid", json!({"name": "Box", "width": 40, "height": 40, "color": "#ff0000"})).unwrap()["layer"].as_u64().unwrap();

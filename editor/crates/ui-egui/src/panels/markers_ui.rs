@@ -9,8 +9,8 @@
 //! is dropped. Every change is an engine command, so it is undoable and agent-drivable.
 
 use crate::i18n::tr;
-use effectcraft_engine::project::{Comp, Layer, Marker};
-use effectcraft_engine::time::Tick;
+use studio_engine::project::{Comp, Layer, Marker};
+use studio_engine::time::Tick;
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -88,8 +88,8 @@ pub fn open_dialog(app: &mut EffectcraftApp, m: MarkerRef) -> Result<(), String>
             .map(|a| a.iter().map(|kv| (kv[0].as_str().unwrap_or_default().to_string(), kv[1].as_str().unwrap_or_default().to_string())).collect())
             .unwrap_or_default(),
         protected: v["protected"].as_bool().unwrap_or(false),
-        label: effectcraft_engine::color::Label::from_name(&s("label"))
-            .and_then(|l| effectcraft_engine::color::Label::ALL.iter().position(|x| *x == l))
+        label: studio_engine::color::Label::from_name(&s("label"))
+            .and_then(|l| studio_engine::color::Label::ALL.iter().position(|x| *x == l))
             .unwrap_or(0),
     };
     app.dialog = Some(Dialog::Marker);
@@ -195,7 +195,7 @@ pub fn dialog(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
             app.auto.add("dialog.marker.protected", r.rect, "Protected Region");
             ui.add_space(20.0);
             ui.label(tr("Label:"));
-            let labels = effectcraft_engine::color::Label::ALL;
+            let labels = studio_engine::color::Label::ALL;
             let cur = labels.get(d.label).copied().unwrap_or_default();
             let r = egui::ComboBox::from_id_salt("dialog.marker.label").selected_text(app.session.prefs.label_name(cur)).show_ui(ui, |ui| {
                 for (i, l) in labels.into_iter().enumerate() {
@@ -264,8 +264,8 @@ fn snap(app: &EffectcraftApp, comp: &Comp, tm: TMap, t: f64, skip: MarkerRef) ->
 }
 
 /// A marker's colour: its label's, pale yellow without one.
-fn marker_color(t: &Tokens, label: effectcraft_engine::color::Label) -> Color32 {
-    if label == effectcraft_engine::color::Label::None { Color32::from_rgb(0xd8, 0xd8, 0x60) } else { t.label(label) }
+fn marker_color(t: &Tokens, label: studio_engine::color::Label) -> Color32 {
+    if label == studio_engine::color::Label::None { Color32::from_rgb(0xd8, 0xd8, 0x60) } else { t.label(label) }
 }
 
 /// The marker glyph at `x` from `y0`, `h` points tall: a tab pointing down at the time.
@@ -405,7 +405,7 @@ pub(crate) fn marker_bin(app: &mut EffectcraftApp, ui: &mut egui::Ui, comp: &Com
     let Some(at) = at else { return };
     if resp.dragged() {
         let h = strip.height().min(10.0);
-        let col = marker_color(&t, effectcraft_engine::color::Label::None);
+        let col = marker_color(&t, studio_engine::color::Label::None);
         let p = ui.painter().with_clip_rect(strip);
         p.add(egui::Shape::convex_polygon(marker_shape(tm.x(at), strip.min.y, h), col, Stroke::NONE));
     }
@@ -428,7 +428,7 @@ pub(crate) fn layer_markers(app: &mut EffectcraftApp, ui: &mut egui::Ui, clip: R
 
 /// The nested comp's markers on a precomp layer's bar (`markers.nested`).
 fn nested_markers(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter, comp: &Comp, layer: &Layer, tm: TMap, r: Rect) {
-    let effectcraft_engine::project::LayerSource::Comp { item } = layer.source else { return };
+    let studio_engine::project::LayerSource::Comp { item } = layer.source else { return };
     let Some(cid) = app.session.active_comp_id() else { return };
     let project = app.session.project.clone();
     let Some(nc) = project.comp(item) else { return };
@@ -440,7 +440,7 @@ fn nested_markers(app: &mut EffectcraftApp, ui: &mut egui::Ui, p: &egui::Painter
     let cached = ui.ctx().data(|d| d.get_temp::<(u64, Vec<(Tick, usize)>)>(key)).filter(|(r, _)| *r == rev);
     let at = cached.map(|(_, v)| v).unwrap_or_else(|| {
         let v: Vec<(Tick, usize)> =
-            effectcraft_engine::commands::markers::nested_markers(&project, cid, comp, layer).into_iter().map(|(t, i, _)| (t, i)).collect();
+            studio_engine::commands::markers::nested_markers(&project, cid, comp, layer).into_iter().map(|(t, i, _)| (t, i)).collect();
         ui.ctx().data_mut(|d| d.insert_temp(key, (rev, v.clone())));
         v
     });
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn marker_dialog_reads_and_writes_every_field() {
-        let mut s = effectcraft_engine::Session::default();
+        let mut s = studio_engine::Session::default();
         s.execute("comp.new", json!({"name": "M", "width": 100, "height": 100, "frameRate": 30, "duration": 4})).unwrap();
         s.execute("markers.set", json!({"new": true, "time": 1.0, "comment": "hello", "cuePoint": {"name": "c", "params": [["a", "1"]]}, "label": "Blue"}))
             .unwrap();
@@ -485,7 +485,7 @@ mod tests {
         let d = &mut app.dialog_state.marker;
         assert_eq!((d.time, d.comment.as_str(), d.cue, d.cue_name.as_str()), (1.0, "hello", true, "c"));
         assert_eq!(d.cue_params, vec![("a".to_string(), "1".to_string())]);
-        assert_eq!(effectcraft_engine::color::Label::ALL[d.label].name(), "Blue");
+        assert_eq!(studio_engine::color::Label::ALL[d.label].name(), "Blue");
         d.duration = 0.5;
         d.chapter = "Ch".into();
         d.url = "https://getartcraft.com".into();

@@ -6,9 +6,9 @@
 //! Values stay gamma-encoded: like After Effects, footage pixels enter the working space as they
 //! are encoded in the file. Alpha follows the footage's [`AlphaMode`] interpretation.
 
-use effectcraft_project::{AlphaMode, Footage};
-use effectcraft_raster::{Image, Px};
-use effectcraft_render::FloatCurve;
+use studio_project::{AlphaMode, Footage};
+use studio_raster::{Image, Px};
+use studio_render::FloatCurve;
 use filmcraft_color::{Matrix, Range};
 use filmcraft_frame::{Chroma, PixelData, VideoFrame};
 use rayon::prelude::*;
@@ -161,7 +161,7 @@ pub(crate) fn frame_to_image_scaled(f: &VideoFrame, w: u32, h: u32) -> Option<Im
         }
         _ => return None,
     };
-    Some(if (half.width, half.height) == (w, h) { half } else { effectcraft_raster::resample(&half, w, h) })
+    Some(if (half.width, half.height) == (w, h) { half } else { studio_raster::resample(&half, w, h) })
 }
 
 /// An opaque 4:2:0 frame of even size `w` × `h` converted at half that size (see
@@ -460,7 +460,7 @@ mod tests {
         let full = frame_to_image(&f, AlphaOp::new(AlphaMode::Straight, [0.0; 3]));
         for (w, h) in [(48, 32), (32, 21), (24, 16), (13, 9)] {
             let scaled = frame_to_image_scaled(&f, w, h).expect("4:2:0, at most half size");
-            let want = effectcraft_raster::resample(&full, w, h);
+            let want = studio_raster::resample(&full, w, h);
             assert_eq!((scaled.width, scaled.height), (w, h));
             let worst = scaled.data.iter().zip(&want.data).flat_map(|(a, b)| (0..4).map(move |c| (a[c] - b[c]).abs())).fold(0.0f32, f32::max);
             assert!(worst < 1e-5, "{w}×{h}: {worst}");
@@ -505,7 +505,7 @@ mod tests {
         assert!((p[0] - 0.5).abs() < 1e-3 && (p[1] - 1.0).abs() < 1e-5 && p[2] > 1.5, "{p:?}");
     }
 
-    /// `cargo test -p effectcraft-media --lib bench -- --ignored --nocapture`
+    /// `cargo test -p studio-media --lib bench -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn bench_convert_1080p() {

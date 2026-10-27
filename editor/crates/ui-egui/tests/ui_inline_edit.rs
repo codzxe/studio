@@ -1,8 +1,8 @@
 //! Inline text fields (a name, the current time) open with their whole text selected so typing
 //! replaces it, commit on Enter and cancel on Escape (#170).
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -123,7 +123,7 @@ fn the_expression_pick_whip_inserts_at_the_cursor_while_editing() {
         let s = &mut h.state_mut().session;
         let l = s.execute("layer.newSolid", json!({"name": "Plate", "color": "#406080"})).unwrap()["layer"].as_u64().unwrap();
         s.execute("prop.setExpression", json!({"layer": l, "path": "transform/opacity", "expression": "50 + 0"})).unwrap();
-        let tr = s.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().clone();
+        let tr = s.active_comp().unwrap().layer(studio_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().clone();
         (l, tr.get("opacity").unwrap().uid, tr.get("rotation").unwrap().uid, tr.uid)
     };
     h.state_mut().ui.timeline.open_layers.insert(layer);
@@ -131,7 +131,7 @@ fn the_expression_pick_whip_inserts_at_the_cursor_while_editing() {
     h.run_steps(3);
     let expr = |h: &Harness<'_, EffectcraftApp>| {
         let comp = h.state().session.active_comp().unwrap();
-        comp.layer(effectcraft_engine::project::LayerId(layer)).unwrap().props.find(opacity).unwrap().expr.as_ref().unwrap().text.clone()
+        comp.layer(studio_engine::project::LayerId(layer)).unwrap().props.find(opacity).unwrap().expr.as_ref().unwrap().text.clone()
     };
     let whip = |h: &mut Harness<'_, EffectcraftApp>| {
         let (from, to) = (center(h, &format!("timeline.prop.{opacity}.pickWhip")), center(h, &format!("timeline.prop.{rotation}.name")));
@@ -167,7 +167,7 @@ fn the_expression_pick_whip_picks_the_dimension_it_is_dropped_on() {
         let s = &mut h.state_mut().session;
         let l = s.execute("layer.newSolid", json!({"name": "Plate", "color": "#406080"})).unwrap()["layer"].as_u64().unwrap();
         s.execute("prop.setExpression", json!({"layer": l, "path": "transform/opacity", "expression": "50"})).unwrap();
-        let tr = s.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().clone();
+        let tr = s.active_comp().unwrap().layer(studio_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().clone();
         (l, tr.get("opacity").unwrap().uid, tr.get("position").unwrap().uid, tr.uid)
     };
     h.state_mut().ui.timeline.open_layers.insert(layer);
@@ -175,7 +175,7 @@ fn the_expression_pick_whip_picks_the_dimension_it_is_dropped_on() {
     h.run_steps(3);
     let expr = |h: &Harness<'_, EffectcraftApp>| {
         let comp = h.state().session.active_comp().unwrap();
-        comp.layer(effectcraft_engine::project::LayerId(layer)).unwrap().props.find(opacity).unwrap().expr.as_ref().unwrap().text.clone()
+        comp.layer(studio_engine::project::LayerId(layer)).unwrap().props.find(opacity).unwrap().expr.as_ref().unwrap().text.clone()
     };
     let whip_to = |h: &mut Harness<'_, EffectcraftApp>, target: &str| {
         let (from, to) = (center(h, &format!("timeline.prop.{opacity}.pickWhip")), center(h, target));
@@ -201,15 +201,15 @@ fn the_property_pick_whip_links_a_property_to_another() {
         for fx in ["Slider Control", "Point Control"] {
             s.execute("effect.apply", json!({"layers": [l], "effect": fx})).unwrap();
         }
-        let tr = s.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().clone();
+        let tr = s.active_comp().unwrap().layer(studio_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().clone();
         (l, tr.get("opacity").unwrap().uid, tr.get("rotation").unwrap().uid, tr.get("position").unwrap().uid, tr.uid)
     };
     h.state_mut().ui.timeline.open_layers.insert(layer);
     h.state_mut().ui.timeline.open_groups.insert(transform);
-    h.state_mut().show_panel(effectcraft_ui_egui::dock::PanelKind::EffectControls);
+    h.state_mut().show_panel(studio_ui_egui::dock::PanelKind::EffectControls);
     h.run_steps(3);
     let props =
-        |h: &Harness<'_, EffectcraftApp>| h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(layer)).unwrap().props.clone();
+        |h: &Harness<'_, EffectcraftApp>| h.state().session.active_comp().unwrap().layer(studio_engine::project::LayerId(layer)).unwrap().props.clone();
     let expr = |h: &Harness<'_, EffectcraftApp>| props(h).find(opacity).unwrap().expr.clone().map(|e| (e.text, e.enabled));
     let whip_to = |h: &mut Harness<'_, EffectcraftApp>, target: &str| {
         let (from, to) = (center(h, &format!("timeline.prop.{opacity}.propertyPickWhip")), center(h, target));
@@ -250,7 +250,7 @@ fn the_pick_whip_scrolls_the_timeline_at_its_edges() {
         }
         let l = s.execute("layer.newSolid", json!({"name": "Top", "color": "#406080"})).unwrap()["layer"].as_u64().unwrap();
         s.execute("prop.setExpression", json!({"layer": l, "path": "transform/opacity", "expression": "50"})).unwrap();
-        let tr = s.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().clone();
+        let tr = s.active_comp().unwrap().layer(studio_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().clone();
         (l, tr.get("opacity").unwrap().uid, tr.uid)
     };
     h.state_mut().ui.timeline.open_layers.insert(top);
@@ -292,7 +292,7 @@ fn the_expression_field_grows_while_editing_and_drags_taller() {
         let s = &mut h.state_mut().session;
         let l = s.execute("layer.newSolid", json!({"name": "Plate", "color": "#406080"})).unwrap()["layer"].as_u64().unwrap();
         s.execute("prop.setExpression", json!({"layer": l, "path": "transform/opacity", "expression": "50"})).unwrap();
-        let tr = s.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().clone();
+        let tr = s.active_comp().unwrap().layer(studio_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().clone();
         (l, tr.get("opacity").unwrap().uid, tr.uid)
     };
     h.state_mut().ui.timeline.open_layers.insert(layer);
@@ -356,15 +356,15 @@ fn tab_commits_a_value_and_moves_to_the_next() {
         for fx in ["Point Control", "Slider Control"] {
             s.execute("effect.apply", json!({"layers": [l], "effect": fx})).unwrap();
         }
-        let tr = s.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().uid;
+        let tr = s.active_comp().unwrap().layer(studio_engine::project::LayerId(l)).unwrap().props.sub("transform").unwrap().uid;
         (l, tr)
     };
     h.state_mut().ui.timeline.open_layers.insert(layer);
     h.state_mut().ui.timeline.open_groups.insert(transform);
-    h.state_mut().show_panel(effectcraft_ui_egui::dock::PanelKind::EffectControls);
+    h.state_mut().show_panel(studio_ui_egui::dock::PanelKind::EffectControls);
     h.run_steps(3);
     let props =
-        |h: &Harness<'_, EffectcraftApp>| h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(layer)).unwrap().props.clone();
+        |h: &Harness<'_, EffectcraftApp>| h.state().session.active_comp().unwrap().layer(studio_engine::project::LayerId(layer)).unwrap().props.clone();
     let value = |h: &Harness<'_, EffectcraftApp>, path: &str| props(h).prop(path).unwrap().value.components();
     let uid = |h: &Harness<'_, EffectcraftApp>, path: &str| props(h).prop(path).unwrap().uid;
     let (position, scale) = (uid(&h, "transform/position"), uid(&h, "transform/scale"));
@@ -419,7 +419,7 @@ fn click_with(h: &mut Harness<'_, EffectcraftApp>, p: Pos2, modifiers: Modifiers
 /// in After Effects; under the Timeline's display the other style shows.
 #[test]
 fn ctrl_click_on_the_time_display_toggles_timecode_and_frames() {
-    use effectcraft_engine::project::TimeDisplayStyle;
+    use studio_engine::project::TimeDisplayStyle;
     let (mut h, _) = harness();
     h.state_mut().session.execute("time.set", json!({"frame": 30})).unwrap();
     h.run_steps(2);
@@ -469,7 +469,7 @@ fn a_layout_switch_keeps_the_name_field_and_arabic_names_are_kept() {
     let layer = h.state_mut().session.execute("layer.newNull", json!({})).unwrap()["layer"].as_u64().unwrap();
     h.run_steps(3);
     let layer_name =
-        |h: &Harness<'_, EffectcraftApp>| h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(layer)).unwrap().name.clone();
+        |h: &Harness<'_, EffectcraftApp>| h.state().session.active_comp().unwrap().layer(studio_engine::project::LayerId(layer)).unwrap().name.clone();
     let p = center(&h, &format!("timeline.layer.{layer}.row"));
     click(&mut h, p, 2);
     assert!(h.state().auto.find(&format!("timeline.layer.{layer}.nameEdit")).is_some(), "double-click opened the rename field");
@@ -536,7 +536,7 @@ fn arrow_keys_move_the_caret_in_rename_fields() {
     key(&mut h, Key::ArrowLeft);
     type_text(&mut h, "-");
     key(&mut h, Key::Enter);
-    let layer_name = h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(layer)).unwrap().name.clone();
+    let layer_name = h.state().session.active_comp().unwrap().layer(studio_engine::project::LayerId(layer)).unwrap().name.clone();
     assert_eq!(layer_name, "Pla-te");
 }
 
@@ -556,7 +556,7 @@ fn typing_one_component_with_several_layers_selected_keeps_their_other_component
             ids.push(l);
         }
         s.execute("layer.select", json!({"layers": ids})).unwrap();
-        let tr = s.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(ids[0])).unwrap().props.sub("transform").unwrap().uid;
+        let tr = s.active_comp().unwrap().layer(studio_engine::project::LayerId(ids[0])).unwrap().props.sub("transform").unwrap().uid;
         (ids[0], ids[1], tr)
     };
     h.state_mut().ui.timeline.open_layers.insert(a);
@@ -567,7 +567,7 @@ fn typing_one_component_with_several_layers_selected_keeps_their_other_component
             .session
             .active_comp()
             .unwrap()
-            .layer(effectcraft_engine::project::LayerId(l))
+            .layer(studio_engine::project::LayerId(l))
             .unwrap()
             .props
             .prop("transform/position")
@@ -576,7 +576,7 @@ fn typing_one_component_with_several_layers_selected_keeps_their_other_component
             .components()
     };
     let position =
-        h.state().session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(a)).unwrap().props.prop("transform/position").unwrap().uid;
+        h.state().session.active_comp().unwrap().layer(studio_engine::project::LayerId(a)).unwrap().props.prop("transform/position").unwrap().uid;
     let p = center(&h, &format!("timeline.prop.{position}.value.2"));
     click(&mut h, p, 1);
     type_text(&mut h, "-300");

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Studio render worker: drains the Postgres renders job queue, hydrates the pinned version + assets into a confined temp dir, drives effectcraft-cli (M8 spike contract), uploads the output to the shared storage seam and settles the credit hold (BUILD_PLAN §M8 task 1).",
+  "description": "Studio render worker: drains the Postgres renders job queue, hydrates the pinned version + assets into a confined temp dir, drives studio-cli (M8 spike contract), uploads the output to the shared storage seam and settles the credit hold (BUILD_PLAN §M8 task 1).",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",

@@ -230,8 +230,8 @@ impl Tool {
 }
 
 /// The viewer's Resolution: each composition keeps its own in the project
-/// ([`effectcraft_engine::project::Comp::resolution`], `EffectcraftApp::viewer_res`).
-pub use effectcraft_engine::project::Resolution;
+/// ([`studio_engine::project::Comp::resolution`], `EffectcraftApp::viewer_res`).
+pub use studio_engine::project::Resolution;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]

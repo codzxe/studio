@@ -24,8 +24,8 @@ const COMP = { width: 640, height: 360, frameRate: 30000 / 1001, durationSeconds
 
 describe("resolveCliPath (spike §1 order)", () => {
   it("uses the env value verbatim when set", () => {
-    expect(resolveCliPath("/opt/custom/effectcraft-cli", "/repo")).toEqual({
-      path: "/opt/custom/effectcraft-cli",
+    expect(resolveCliPath("/opt/custom/studio-cli", "/repo")).toEqual({
+      path: "/opt/custom/studio-cli",
       source: "env",
     });
   });
@@ -34,7 +34,7 @@ describe("resolveCliPath (spike §1 order)", () => {
     const root = mkdtempSync(join(tmpdir(), "cli-resolve-"));
     try {
       mkdirSync(join(root, "editor", "target", "release"), { recursive: true });
-      const bin = join(root, "editor", "target", "release", "effectcraft-cli");
+      const bin = join(root, "editor", "target", "release", "studio-cli");
       writeFileSync(bin, "#!/bin/sh\n", { mode: 0o755 });
       expect(resolveCliPath(undefined, root)).toEqual({ path: bin, source: "repo-build" });
     } finally {
@@ -45,7 +45,7 @@ describe("resolveCliPath (spike §1 order)", () => {
   it("falls back to PATH when the repo build is absent", () => {
     const missingRoot = join(tmpdir(), "definitely-not-a-repo");
     expect(resolveCliPath(undefined, missingRoot)).toEqual({
-      path: "effectcraft-cli",
+      path: "studio-cli",
       source: "path",
     });
   });
@@ -54,7 +54,7 @@ describe("resolveCliPath (spike §1 order)", () => {
     const root = mkdtempSync(join(tmpdir(), "cli-resolve-"));
     try {
       mkdirSync(join(root, "editor", "target", "release"), { recursive: true });
-      writeFileSync(join(root, "editor", "target", "release", "effectcraft-cli"), "#!/bin/sh\n", {
+      writeFileSync(join(root, "editor", "target", "release", "studio-cli"), "#!/bin/sh\n", {
         mode: 0o755,
       });
       expect(resolveCliPath("  ", root).source).toBe("repo-build");

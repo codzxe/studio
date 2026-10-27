@@ -1,8 +1,8 @@
 //! Long menus and lists scroll instead of running off the window, with a scroll bar to drag
 //! (egui_kittest, UI logic only).
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
 use egui::{Event, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -56,7 +56,7 @@ fn a_menu_taller_than_the_window_scrolls() {
     let last = h.query_by_label_contains("Keyboard Shortcuts").expect("still open").rect();
     assert!(last.min.y >= 0.0 && last.max.y <= 520.0, "scrolled into the window ({last:?})");
     click_at(&mut h, last.center());
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::Shortcuts), "the entry takes the click");
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::Shortcuts), "the entry takes the click");
 }
 
 fn drag(h: &mut Harness<'_, EffectcraftApp>, from: Pos2, to: Pos2) {
@@ -82,7 +82,7 @@ fn scrolled(h: &Harness<'_, EffectcraftApp>, id: &str) -> (f32, f32) {
 /// scrolls them: without a mouse wheel or touchpad there was no way down most panels (#271).
 #[test]
 fn panels_taller_than_their_space_have_a_scroll_bar_to_drag() {
-    use effectcraft_ui_egui::dock::PanelKind;
+    use studio_ui_egui::dock::PanelKind;
     // (The Project panel's list starts below its item preview and search: a taller window.)
     for (panel, id, height) in [
         (PanelKind::EffectControls, "effectControls.scroll", 240.0),
@@ -126,7 +126,7 @@ fn panels_taller_than_their_space_have_a_scroll_bar_to_drag() {
 /// navigator (â—€ â—† â–¶), which was drawn over them (#271).
 #[test]
 fn effect_values_stay_clear_of_the_keyframe_navigator() {
-    use effectcraft_ui_egui::dock::PanelKind;
+    use studio_ui_egui::dock::PanelKind;
     let mut h = harness(1600.0, 1000.0);
     let app = h.state_mut();
     let lid = app.session.active_comp().unwrap().layers[0].id.0;
@@ -135,7 +135,7 @@ fn effect_values_stay_clear_of_the_keyframe_navigator() {
     let path = "effects/#1/point";
     app.session.execute("prop.toggleAnimation", json!({"layer": lid, "path": path})).unwrap();
     app.session.execute("prop.set", json!({"layer": lid, "path": path, "value": [123456.7, 123456.7]})).unwrap();
-    let uid = app.session.active_comp().unwrap().layer(effectcraft_engine::project::LayerId(lid)).unwrap().props.prop(path).unwrap().uid;
+    let uid = app.session.active_comp().unwrap().layer(studio_engine::project::LayerId(lid)).unwrap().props.prop(path).unwrap().uid;
     assert!(app.edit_layout(|l| l.float(PanelKind::EffectControls, [300.0, 150.0, 330.0, 500.0])));
     h.run_steps(3);
     let value = rect(&h, &format!("effectControls.prop.{uid}.value.1"));
@@ -150,7 +150,7 @@ fn effect_values_stay_clear_of_the_keyframe_navigator() {
 fn settings_dialog_does_not_scroll_sideways() {
     let mut h = harness(1400.0, 900.0);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "app.settings", json!({"page": "general"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "app.settings", json!({"page": "general"})).unwrap();
     h.run_steps(3);
     let (ok, page) = (rect(&h, "settings.ok"), rect(&h, "settings.page.general"));
     h.input_mut().events.push(Event::PointerMoved(page.center()));

@@ -1,13 +1,13 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 //! Native MediaPool decoding and native WAV export preserve selected sample positions.
-use effectcraft_export::render_queue::{AudioFormat, OutputFormat, OutputModule, RenderSettings};
-use effectcraft_export::{Job, JobOptions, Sink, export};
-use effectcraft_media::{MediaPool, probe_bytes};
-use effectcraft_project::{Comp, Footage, ItemId, ItemKind, LayerSource, Project, build};
-use effectcraft_raster::Image;
-use effectcraft_render::FootageSource;
-use effectcraft_time::{FrameRate, TICKS_PER_SECOND, Tick};
+use studio_export::render_queue::{AudioFormat, OutputFormat, OutputModule, RenderSettings};
+use studio_export::{Job, JobOptions, Sink, export};
+use studio_media::{MediaPool, probe_bytes};
+use studio_project::{Comp, Footage, ItemId, ItemKind, LayerSource, Project, build};
+use studio_raster::Image;
+use studio_render::FootageSource;
+use studio_time::{FrameRate, TICKS_PER_SECOND, Tick};
 use std::sync::{Arc, Mutex};
 
 struct RecordingNative {

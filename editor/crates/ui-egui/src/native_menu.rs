@@ -1,9 +1,9 @@
 //! The native (macOS) menu bar as a plain, serializable spec. The desktop app turns it into an
-//! `NSMenu` with `muda` (`apps/effectcraft/src/native_menu.rs`); everything that decides *what*
+//! `NSMenu` with `muda` (the native app (deleted: the SaaS ships the web editor)); everything that decides *what*
 //! the menu contains lives here, so it is tested without creating real menus and builds for the
 //! web (where the in-window menu bar is used).
 //!
-//! The spec mirrors the engine's After Effects menu tree ([`effectcraft_engine::menus`]):
+//! The spec mirrors the engine's After Effects menu tree ([`studio_engine::menus`]):
 //! submenus, separators, labels (Undo/Redo and label names are live), check marks, enabled
 //! state, and the active shortcut preset's keys as accelerators. File ▸ Open Recent lists the
 //! recent projects. The application menu's Hide / Hide Others / Show All are macOS'
@@ -19,7 +19,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::EffectcraftApp;
-use effectcraft_engine::menus::{MenuNode, menu_bar};
+use studio_engine::menus::{MenuNode, menu_bar};
 
 /// What macOS performs itself (no command dispatch).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
@@ -138,7 +138,7 @@ pub fn build(app: &EffectcraftApp) -> NativeMenu {
                     // Recent projects / footage / presets, undo history, shortcut slots, viewers,
                     // saved workspaces.
                     let saved = app.saved_workspace_names();
-                    let (entries, empty) = effectcraft_engine::menus::dynamic(&app.session, name, &crate::menus::dyn_ctx(&app.ui.workspace, &saved));
+                    let (entries, empty) = studio_engine::menus::dynamic(&app.session, name, &crate::menus::dyn_ctx(&app.ui.workspace, &saved));
                     if entries.is_empty()
                         && let Some(e) = empty
                     {
@@ -175,7 +175,7 @@ pub fn build(app: &EffectcraftApp) -> NativeMenu {
                         crate::i18n::submenu(
                             app,
                             label,
-                            effectcraft_engine::menus::submenu_label(&app.session, label, &crate::menus::dyn_ctx(&app.ui.workspace, &[])),
+                            studio_engine::menus::submenu_label(&app.session, label, &crate::menus::dyn_ctx(&app.ui.workspace, &[])),
                         )
                     });
                     out.push(NativeNode::Submenu { label: shown, children: kids });
@@ -390,7 +390,7 @@ mod tests {
     use super::*;
 
     fn app() -> EffectcraftApp {
-        let mut s = effectcraft_engine::Session::default();
+        let mut s = studio_engine::Session::default();
         s.execute("file.openDemoProject", json!({})).unwrap();
         EffectcraftApp::new(s)
     }
@@ -414,7 +414,7 @@ mod tests {
         }
         let mut got = vec![];
         commands(&spec.menus, &mut got);
-        let want: Vec<(String, String)> = effectcraft_engine::menus::entries().into_iter().map(|(_, e)| (e.command.clone(), e.params.to_string())).collect();
+        let want: Vec<(String, String)> = studio_engine::menus::entries().into_iter().map(|(_, e)| (e.command.clone(), e.params.to_string())).collect();
         assert_eq!(got, want, "native menu must mirror the engine tree entry for entry");
         // Top-level menus in order.
         let tops: Vec<&str> = spec
@@ -425,7 +425,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(tops, effectcraft_engine::menus::top_level());
+        assert_eq!(tops, studio_engine::menus::top_level());
         // Ids are unique.
         let ids: std::collections::BTreeSet<&str> = spec.items().iter().map(|i| i.id.as_str()).collect();
         assert_eq!(ids.len(), spec.items().len());
@@ -438,7 +438,7 @@ mod tests {
     #[test]
     fn saved_workspaces_are_in_the_native_workspace_menu() {
         let mut app = app();
-        app.session.config = Some(std::sync::Arc::new(effectcraft_engine::config::MemoryConfig::default()));
+        app.session.config = Some(std::sync::Arc::new(studio_engine::config::MemoryConfig::default()));
         let ctx = egui::Context::default();
         crate::menus::invoke(&mut app, &ctx, "window.saveWorkspaceAs", json!({"name": "My Layout"})).unwrap();
         let entry = |app: &EffectcraftApp| build(app).items().into_iter().find(|i| i.label == "My Layout").cloned();
@@ -453,7 +453,7 @@ mod tests {
         if !cfg!(target_os = "macos") {
             return;
         }
-        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        let mut app = EffectcraftApp::new(studio_engine::Session::default());
         app.session.execute("prefs.set", json!({"key": "general.language", "value": "uk"})).unwrap();
         fn labels(nodes: &[NativeNode], out: &mut Vec<String>) {
             for node in nodes {
@@ -474,7 +474,7 @@ mod tests {
         if !cfg!(target_os = "macos") {
             return;
         }
-        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        let mut app = EffectcraftApp::new(studio_engine::Session::default());
         app.session.execute("prefs.set", json!({"key": "general.language", "value": "cs"})).unwrap();
         fn labels(nodes: &[NativeNode], out: &mut Vec<String>) {
             for node in nodes {

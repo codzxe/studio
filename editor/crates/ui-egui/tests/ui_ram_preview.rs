@@ -1,9 +1,9 @@
 //! RAM preview frames are keyed by content: editing one comp keeps the cached frames of another,
 //! and undo finds the frames of the state it returns to.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::ItemId;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_engine::project::ItemId;
+use studio_ui_egui::EffectcraftApp;
 use egui_kittest::Harness;
 use serde_json::json;
 
@@ -20,7 +20,7 @@ fn settle(h: &mut Harness<'_, EffectcraftApp>) {
 
 fn shown_cached(h: &Harness<'_, EffectcraftApp>, comp: u64) -> bool {
     let app = h.state();
-    let key = effectcraft_ui_egui::frames::FrameKey { frame: 0, ..app.shown_series(ItemId(comp)) };
+    let key = studio_ui_egui::frames::FrameKey { frame: 0, ..app.shown_series(ItemId(comp)) };
     app.frames.is_cached(&key)
 }
 
@@ -49,7 +49,7 @@ fn an_edit_in_another_comp_keeps_the_cached_frames_and_undo_finds_them_again() {
     assert_eq!(h.state().shown_series(ItemId(a)), before);
     assert!(shown_cached(&h, a), "undo finds the earlier frame");
     // B's frame is still there too.
-    assert!(h.state().frames.is_cached(&effectcraft_ui_egui::frames::FrameKey { frame: 0, ..b_frame }));
+    assert!(h.state().frames.is_cached(&studio_ui_egui::frames::FrameKey { frame: 0, ..b_frame }));
 }
 
 /// #284: the Timeline shows the cached frames as a green line under the work area bar, from
@@ -131,7 +131,7 @@ fn prefetch_waits_while_edits_keep_coming() {
 /// (333 → 0.333), whose render options hashed apart from the frames rendered at 0.3333….
 #[test]
 fn cached_frames_are_counted_at_one_third_resolution() {
-    use effectcraft_ui_egui::state::Resolution;
+    use studio_ui_egui::state::Resolution;
     for res in [Resolution::Third, Resolution::Custom(7)] {
         let mut s = Session::default();
         let c = s.execute("comp.new", json!({"name": "Third", "width": 64, "height": 36, "duration": 1})).unwrap()["comp"].as_u64().unwrap();

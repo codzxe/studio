@@ -1,7 +1,7 @@
 //! Existing Studio workspaces use shared transactions without changing their saved schema.
 use craft_ui::docking::{Action, Placement, Zone};
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::{
+use studio_engine::Session;
+use studio_ui_egui::{
     EffectcraftApp,
     dock::{self, DockNode, Layout, PanelKind, SplitSize, StackEntry},
 };
@@ -189,7 +189,7 @@ fn pointer_drop_merges_floats_and_redocks_without_project_changes() {
 
     if let Some(directory) = &snapshots {
         std::fs::create_dir_all(directory).unwrap();
-        h.render().unwrap().save(directory.join("effectcraft-floating.png")).unwrap();
+        h.render().unwrap().save(directory.join("studio-floating.png")).unwrap();
     }
     let from = rect(&h, "panel.tab.Info").center();
     let to = rect(&h, "panel.Audio").center();
@@ -212,10 +212,10 @@ fn pointer_drop_merges_floats_and_redocks_without_project_changes() {
     assert_eq!(h.state().session.state.viewer.exposure, 0.0);
     action_log.push(action_state(&h, "viewer-reset-exposure"));
     if let Some(directory) = &snapshots {
-        std::fs::write(directory.join("effectcraft-actions.json"), serde_json::to_vec_pretty(&action_log).unwrap()).unwrap();
+        std::fs::write(directory.join("studio-actions.json"), serde_json::to_vec_pretty(&action_log).unwrap()).unwrap();
     }
     if let Some(directory) = &snapshots {
-        h.render().unwrap().save(directory.join("effectcraft-redocked.png")).unwrap();
+        h.render().unwrap().save(directory.join("studio-redocked.png")).unwrap();
     }
     assert!(std::sync::Arc::ptr_eq(&project, &h.state().session.project));
 }
@@ -230,13 +230,13 @@ fn same_group(root: &DockNode, first: PanelKind, second: PanelKind) -> bool {
 
 #[test]
 fn current_and_named_floating_layouts_survive_restart() {
-    use effectcraft_engine::config::MemoryConfig;
+    use studio_engine::config::MemoryConfig;
     use std::sync::Arc;
     let store = Arc::new(MemoryConfig::default());
     let mut app = EffectcraftApp::new(Session { config: Some(store.clone()), ..Default::default() });
     assert!(app.edit_layout(|layout| layout.apply(Action::Float { panel: PanelKind::Project, rect: [45.0, 65.0, 430.0, 310.0] }).is_ok()));
     let ctx = egui::Context::default();
-    effectcraft_ui_egui::menus::invoke(&mut app, &ctx, "window.saveWorkspaceAs", json!({"name": "Shared float"})).unwrap();
+    studio_ui_egui::menus::invoke(&mut app, &ctx, "window.saveWorkspaceAs", json!({"name": "Shared float"})).unwrap();
     let saved = app.ui.floating.clone();
     assert!(app.edit_layout(|layout| layout.apply(Action::MoveFloating { panel: PanelKind::Project, rect: [75.0, 95.0, 480.0, 360.0] }).is_ok()));
     let current = app.ui.floating.clone();
@@ -265,7 +265,7 @@ fn float_command_rejects_malformed_rectangles_atomically() {
     let before = app.ui.dock.clone();
     let ctx = egui::Context::default();
     for rect in [json!([1, 2, 300]), json!([1, 2, 300, 200, 7]), json!([1, 2, 1e100, 200]), json!("rectangle")] {
-        assert!(effectcraft_ui_egui::menus::invoke(&mut app, &ctx, "window.floatPanel", json!({"panel": "Project", "rect": rect})).is_err());
+        assert!(studio_ui_egui::menus::invoke(&mut app, &ctx, "window.floatPanel", json!({"panel": "Project", "rect": rect})).is_err());
         assert_eq!(app.ui.dock, before);
         assert!(app.ui.floating.is_empty());
     }
@@ -281,7 +281,7 @@ fn floating_panel_dragged_past_the_window_edge_is_drawn_at_its_rect() {
     let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(Session::default()));
     h.run_steps(3);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.floatPanel", json!({"panel": "Preview", "rect": [600.0, 400.0, 360.0, 300.0]})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.floatPanel", json!({"panel": "Preview", "rect": [600.0, 400.0, 360.0, 300.0]})).unwrap();
     h.run_steps(3);
     let strip = rect(&h, "panel.float.0.move");
     let from = pos2(strip.right() - 24.0, strip.center().y);
@@ -316,14 +316,14 @@ fn catalog_docking_action_supports_resize_reorder_and_floating_geometry() {
         Action::Float { panel: PanelKind::Info, rect: [20.0, 40.0, 300.0, 200.0] },
         Action::MoveFloating { panel: PanelKind::Info, rect: [45.0, 65.0, 330.0, 240.0] },
     ] {
-        effectcraft_ui_egui::menus::invoke(&mut app, &ctx, "window.dockAction", json!({"action": action})).unwrap();
+        studio_ui_egui::menus::invoke(&mut app, &ctx, "window.dockAction", json!({"action": action})).unwrap();
     }
     assert_eq!(app.ui.floating[0].rect, [45.0, 65.0, 330.0, 240.0]);
     let DockNode::Split { size, .. } = &app.ui.dock else { panic!("split lost") };
     assert_eq!(*size, SplitSize::FixedA(360.0));
     let before = json!({"dock": app.ui.dock, "floating": app.ui.floating});
     assert!(
-        effectcraft_ui_egui::menus::invoke(
+        studio_ui_egui::menus::invoke(
             &mut app,
             &ctx,
             "window.dockAction",
@@ -342,7 +342,7 @@ fn catalog_close_keeps_dynamic_panel_identity() {
     app.ui.dock = DockNode::Tabs { panels: vec![PanelKind::Composition, PanelKind::Viewer(42), PanelKind::ScriptPanel(77)], active: 1 };
     let ctx = egui::Context::default();
     for panel in [PanelKind::Viewer(42), PanelKind::ScriptPanel(77)] {
-        effectcraft_ui_egui::menus::invoke(&mut app, &ctx, "window.dockAction", json!({"action": Action::Close { panel }})).unwrap();
+        studio_ui_egui::menus::invoke(&mut app, &ctx, "window.dockAction", json!({"action": Action::Close { panel }})).unwrap();
         assert!(!app.ui.dock.contains(panel));
     }
     assert!(app.ui.dock.contains(PanelKind::Composition));
@@ -385,7 +385,7 @@ fn accordion_resize_routes_pointer_and_keyboard_without_changing_closed_entries(
 
 #[test]
 fn legacy_close_repairs_selection_but_transactions_remain_strict() {
-    use effectcraft_ui_egui::dock::Floating;
+    use studio_ui_egui::dock::Floating;
     let mut root = DockNode::Tabs { panels: vec![PanelKind::Properties, PanelKind::Align, PanelKind::EffectsPresets], active: usize::MAX };
     root.close(PanelKind::History);
     assert!(root.is_visible(PanelKind::EffectsPresets));

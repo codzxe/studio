@@ -12,9 +12,9 @@
 //! Edge tools paint their strokes here (see [`super::roto_tool`]).
 
 use crate::i18n::{tr, tr_args};
-use effectcraft_engine::effects::paint;
-use effectcraft_engine::project::{Layer, LayerId};
-use effectcraft_engine::render::{EvalCtx, RenderOpts, Renderer};
+use studio_engine::effects::paint;
+use studio_engine::project::{Layer, LayerId};
+use studio_engine::render::{EvalCtx, RenderOpts, Renderer};
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::json;
 
@@ -93,7 +93,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         app.auto.add("layerPanel.empty", rect, "Layer panel (empty)");
         return;
     };
-    let comp = app.session.project.comp_arc(cid).unwrap_or_else(|| effectcraft_engine::project::Comp::new(1, 1, Default::default(), Default::default()).into());
+    let comp = app.session.project.comp_arc(cid).unwrap_or_else(|| studio_engine::project::Comp::new(1, 1, Default::default(), Default::default()).into());
     let time = app.session.time();
     let fx_count = layer.effects().map(|f| f.groups().count()).unwrap_or(0);
     let view = app.ui.layer_view.map(|v| v.min(fx_count)).unwrap_or_else(|| default_view(&layer, app.ui.tool));
@@ -109,7 +109,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let canvas_bottom = if roto.is_some() { bar.min.y - 18.0 } else { bar.min.y };
     let area = Rect::from_min_max(pos2(rect.min.x, top.max.y), pos2(rect.max.x, canvas_bottom));
     // The layer's effect bounds, in effect space (where paint and Roto Brush strokes are).
-    let [lw, lh] = effectcraft_engine::render::effect_bounds(&app.session.project, &comp, &layer).0;
+    let [lw, lh] = studio_engine::render::effect_bounds(&app.session.project, &comp, &layer).0;
     let fit = ((area.width() - 40.0) as f64 / lw).min((area.height() - 40.0) as f64 / lh).max(0.01) as f32;
     ctx.data_mut(|d| d.insert_temp(fit_id(), fit));
     let zoom = app.ui.layer_zoom.filter(|z| z.is_finite() && *z > 0.0).unwrap_or(fit) as f64;

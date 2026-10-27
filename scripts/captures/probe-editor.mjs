@@ -56,7 +56,7 @@ try {
     log("editor frame url:", editorFrame.url());
     const inner = await editorFrame
       .evaluate(() => ({
-        effectcraft: typeof window.effectcraft,
+        effectcraft: typeof window.studioEngine,
         canvases: document.querySelectorAll("canvas").length,
         bodyStart: document.body.innerText.slice(0, 200).replace(/\n/g, " | "),
       }))

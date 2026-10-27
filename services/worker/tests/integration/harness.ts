@@ -19,7 +19,7 @@
 // see only this suite's rows.
 //
 // Gates: the suite only runs when BOTH (a) DATABASE_URL is a postgres URL and
-// (b) the effectcraft-cli binary resolves (env → repo build → PATH). The test
+// (b) the studio-cli binary resolves (env → repo build → PATH). The test
 // file encodes the skip reason in the describe title.
 
 import { randomUUID } from "node:crypto";
@@ -66,22 +66,22 @@ export interface ResolvedTestCli {
 }
 
 /**
- * CLI gate — the worker's own resolution order (spike §1): EFFECTCRAFT_CLI_PATH
- * → <repo>/editor/target/release/effectcraft-cli → PATH lookup. Returns null
+ * CLI gate — the worker's own resolution order (spike §1): STUDIO_ENGINE_CLI_PATH
+ * → <repo>/editor/target/release/studio-cli → PATH lookup. Returns null
  * when the binary cannot be found (suite skips with a written reason).
  */
 export function resolveTestCli(): ResolvedTestCli | null {
-  const fromEnv = process.env.EFFECTCRAFT_CLI_PATH?.trim();
+  const fromEnv = process.env.STUDIO_ENGINE_CLI_PATH?.trim();
   if (fromEnv !== undefined && fromEnv !== "") {
     return existsSync(fromEnv) ? { path: fromEnv, source: "env" } : null;
   }
-  const repoBuild = join(defaultRepoRoot(), "editor", "target", "release", "effectcraft-cli");
+  const repoBuild = join(defaultRepoRoot(), "editor", "target", "release", "studio-cli");
   if (existsSync(repoBuild)) {
     return { path: repoBuild, source: "repo-build" };
   }
   for (const dir of (process.env.PATH ?? "").split(":")) {
     if (dir === "") continue;
-    const candidate = join(dir, "effectcraft-cli");
+    const candidate = join(dir, "studio-cli");
     if (existsSync(candidate)) {
       return { path: candidate, source: "path" };
     }
@@ -98,7 +98,7 @@ export type HarnessEnvOverrides = Readonly<Record<string, string | undefined>>;
 /**
  * A complete, test-safe env source — the gateway integration helper's proven
  * set (APP_ENV=local so storage uses the LocalFS driver), plus the `render`
- * group passthrough/overrides the worker reads (EFFECTCRAFT_CLI_PATH,
+ * group passthrough/overrides the worker reads (STUDIO_ENGINE_CLI_PATH,
  * RENDER_*).
  */
 export function harnessEnvSource(overrides: HarnessEnvOverrides = {}): Record<string, string> {
@@ -121,7 +121,7 @@ export function harnessEnvSource(overrides: HarnessEnvOverrides = {}): Record<st
     LITELLM_API_KEY: "sk-test-not-configured",
     CHAT_MAX_STEPS: "20",
     // Blank = unset (config's blank-unset rule) → repo-build / PATH resolution.
-    EFFECTCRAFT_CLI_PATH: process.env.EFFECTCRAFT_CLI_PATH ?? "",
+    STUDIO_ENGINE_CLI_PATH: process.env.STUDIO_ENGINE_CLI_PATH ?? "",
   };
   const source: Record<string, string> = {};
   for (const [key, value] of Object.entries({ ...base, ...overrides })) {

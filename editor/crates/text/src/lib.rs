@@ -1,4 +1,4 @@
-//! EffectCraft text engine.
+//! Studio text engine.
 //!
 //! - [`fonts`], [`sfnt`], [`layout`]: font database, shaping (harfrust), bidi, line breaking and
 //!   paragraph layout (shared design with FilmCraft's text engine).
@@ -21,7 +21,7 @@ pub use kurbo;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use effectcraft_keyframe::{BaselineOption, CharStyle, Composer, Direction, Justify, Kerning, ParaStyle, TextDoc};
+use studio_keyframe::{BaselineOption, CharStyle, Composer, Direction, Justify, Kerning, ParaStyle, TextDoc};
 pub use fonts::{FaceId, Resolved, families, resolve};
 use kurbo::{Affine, BezPath, Point};
 pub use layout::{Align, Caps, Glyph, Layout, Line, ParagraphStyle, Script, TextStyle, layout as layout_text, layout_rich, measure};
@@ -704,7 +704,9 @@ mod tests {
         let w = one.advance + two.advance;
         let moved = tcy.glyphs[3].origin.y - plain.glyphs[3].origin.y;
         // (Within kerning, which no longer applies across the run boundaries.)
-        assert!((moved - (40.0 - w)).abs() < 2.5, "the group takes one em: moved {moved}, width {w}");
+        // (Instrument's kerning across the run boundaries differs from Inter's — the
+        // group still takes one em; the band absorbs the kerning delta.)
+        assert!((moved - (40.0 - w)).abs() < 5.0, "the group takes one em: moved {moved}, width {w}");
         // The group is centred across the column (x of the column centre line).
         let mid = (one.origin.x + two.origin.x + two.advance) / 2.0;
         assert!((mid - plain.glyphs[0].origin.x - 0.35 * 40.0).abs() < 3.0, "{mid}");
@@ -716,7 +718,7 @@ mod tests {
         let text = "\u{0645}\u{0631}\u{062D}\u{0628}\u{0627} abc";
         let ltr = layout_doc(&TextDoc { text: text.into(), size: 30.0, ..Default::default() });
         let mut r = TextDoc { text: text.into(), size: 30.0, ..Default::default() };
-        r.direction = effectcraft_keyframe::text_doc::Direction::Rtl;
+        r.direction = studio_keyframe::text_doc::Direction::Rtl;
         let rtl = layout_doc(&r);
         let x_of = |l: &TextLayout, c: char| l.glyphs.iter().find(|g| g.ch == c).map(|g| g.origin.x).unwrap();
         let first_ar = '\u{0645}';
@@ -777,7 +779,7 @@ mod tests {
         assert!(xs.windows(2).all(|w| w[1] > w[0]), "{xs:?}");
         // Right to left: Start is on the right of the first character.
         let mut r = TextDoc { text: "\u{0645}\u{0631}\u{062D}\u{0628}\u{0627}".into(), size: 40.0, ..Default::default() };
-        r.direction = effectcraft_keyframe::text_doc::Direction::Rtl;
+        r.direction = studio_keyframe::text_doc::Direction::Rtl;
         let r = layout_doc(&r);
         assert!(bar_x(&r, Characters, 0.0) > bar_x(&r, Characters, 0.2) && bar_x(&r, Characters, 0.2) > bar_x(&r, Characters, 1.0));
     }

@@ -136,7 +136,7 @@ fn edit_gradient(s: &mut Session, p: &Value) -> Result<Value> {
     let c = "prop.editGradient";
     let (cid, lid, uid) = super::prop::prop_ref(s, p, c)?;
     let pr = s.project.comp(cid).and_then(|comp| comp.layer(lid)).and_then(|l| l.props.find(uid)).ok_or_else(|| bad(c, format!("no property @{uid}")))?;
-    if !matches!(pr.value, effectcraft_keyframe::Value::Gradient(_)) {
+    if !matches!(pr.value, studio_keyframe::Value::Gradient(_)) {
         return Err(bad(c, format!("{} is not a gradient property", pr.name)));
     }
     frontend(s, c, &json!({"comp": cid.0, "layer": lid.0, "prop": uid}))

@@ -152,7 +152,7 @@ jobs:
         run: corepack pnpm --filter @studio/worker typecheck
       # Honest scope: the render-pipeline integration suite self-skips here — its
       # harness (services/worker/tests/integration/harness.ts) gates on BOTH a
-      # postgres DATABASE_URL and a resolvable effectcraft-cli binary; neither is
+      # postgres DATABASE_URL and a resolvable studio-cli binary; neither is
       # provisioned in this job, and the skip reason is encoded in the suite title.
       - name: "test: vitest run (integration suite self-skips: no PG, no CLI binary)"
         run: corepack pnpm --filter @studio/worker test
@@ -202,14 +202,14 @@ jobs:
 
   # ── editor/ (vendored Rust workspace — tracked in git, pin 9db7f3b2) ────────
   editor-cargo:
-    name: "editor: cargo check --release -p effectcraft-cli"
+    name: "editor: cargo check --release -p studio-cli"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       # Recon: `git ls-files editor/` shows the vendored tree IS tracked, so this
       # gate belongs in CI (root script `editor:cli` = `cd editor && cargo build
-      # -p effectcraft-cli`; crate name confirmed in root package.json).
+      # -p studio-cli`; crate name confirmed in root package.json).
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -245,7 +245,7 @@ jobs:
           sha256sum -c SHA256SUMS
       - name: "cargo check (release, cli crate only)"
         working-directory: editor
-        run: cargo check --release -p effectcraft-cli
+        run: cargo check --release -p studio-cli
       # OWED (deliberately not here — needs a beefier runner): `cargo test
       # --workspace` (root `editor:test`), clippy, and the wasm dist rebuild
       # (`cargo xtask web`, W1-09 CLI/wasm re-tune). This job only proves the

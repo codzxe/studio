@@ -3,9 +3,9 @@
 //! layers deselecting them (#205), Mask Feather's linked values (#203), and copying shape items
 //! between shape layers (#227), and Ctrl+V of SVG markup making a shape layer (#738).
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::LayerId;
-use effectcraft_ui_egui::{Dialog, EffectcraftApp};
+use studio_engine::Session;
+use studio_engine::project::LayerId;
+use studio_ui_egui::{Dialog, EffectcraftApp};
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -98,7 +98,7 @@ fn add_position_key_reveals_position() {
     let l = s.execute("layer.newSolid", json!({"color": "#808080"})).unwrap()["layer"].as_u64().unwrap();
     let mut h = harness(s);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.keyAt.position", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.keyAt.position", json!({})).unwrap();
     h.run_steps(2);
     let app = h.state();
     let position = app.session.active_comp().unwrap().layer(LayerId(l)).unwrap().props.prop("transform/position").unwrap().clone();
@@ -220,12 +220,12 @@ fn timeline_colour_eyedropper_samples_the_comp() {
     let layer = s.active_comp().unwrap().layer(LayerId(l)).unwrap().clone();
     let mut fill = None;
     layer.props.walk("", &mut |_, p| {
-        if fill.is_none() && matches!(p.value, effectcraft_engine::keyframe::Value::Color(_)) {
+        if fill.is_none() && matches!(p.value, studio_engine::keyframe::Value::Color(_)) {
             fill = Some(p.uid);
         }
     });
     let fill = fill.expect("a fill colour");
-    fn groups(g: &effectcraft_engine::project::PropGroup, out: &mut Vec<u64>) {
+    fn groups(g: &studio_engine::project::PropGroup, out: &mut Vec<u64>) {
         for c in g.groups() {
             out.push(c.uid);
             groups(c, out);
@@ -239,7 +239,7 @@ fn timeline_colour_eyedropper_samples_the_comp() {
     settle(&mut h);
     click(&mut h, &format!("timeline.prop.{fill}.eyedropper"));
     assert_eq!(h.state().ui.fx_pick.as_ref().map(|p| (p.prop, p.kind.as_str())), Some((fill, "color")), "the eyedropper waits for a viewer click");
-    let pos = effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [6.0, 6.0]).unwrap();
+    let pos = studio_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [6.0, 6.0]).unwrap();
     click_at(&mut h, pos);
     assert!(h.state().ui.fx_pick.is_none(), "the pick is used up");
     let layer = h.state().session.active_comp().unwrap().layer(LayerId(l)).unwrap().clone();
@@ -249,7 +249,7 @@ fn timeline_colour_eyedropper_samples_the_comp() {
             got = Some(p.value.clone());
         }
     });
-    let Some(effectcraft_engine::keyframe::Value::Color(c)) = got else { panic!("{got:?}") };
+    let Some(studio_engine::keyframe::Value::Color(c)) = got else { panic!("{got:?}") };
     let want = [0x20 as f64 / 255.0, 0xc0 as f64 / 255.0, 0x40 as f64 / 255.0];
     for k in 0..3 {
         assert!((c[k] - want[k]).abs() < 0.02, "{c:?} vs {want:?}");

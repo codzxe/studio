@@ -1,8 +1,8 @@
 //! Color Correction effects.
 
-use effectcraft_color::{hsl_to_rgb, luminance, rgb_to_hsl};
-use effectcraft_keyframe::Value;
-use effectcraft_project::ParamUi;
+use studio_color::{hsl_to_rgb, luminance, rgb_to_hsl};
+use studio_keyframe::Value;
+use studio_project::ParamUi;
 
 use crate::{Buf, EffectCtx, EffectSpec, col, num, p, popup, slider};
 
@@ -313,9 +313,9 @@ fn exposure(ctx: &EffectCtx, mut b: Buf) -> Buf {
             if bypass {
                 return mirror_pow(c[i] * e + off, 1.0 / g);
             }
-            let lin = effectcraft_color::srgb_to_linear(c[i].max(0.0));
+            let lin = studio_color::srgb_to_linear(c[i].max(0.0));
             let o = mirror_pow(lin * e + off, 1.0 / g);
-            effectcraft_color::linear_to_srgb(o.abs()).copysign(o)
+            studio_color::linear_to_srgb(o.abs()).copysign(o)
         })
     });
     b
@@ -1148,7 +1148,7 @@ pub fn specs() -> Vec<EffectSpec> {
 mod tests {
     use super::*;
     use crate::{EffectEnv, run_fx};
-    use effectcraft_raster::Image;
+    use studio_raster::Image;
 
     fn px(id: &str, vals: &[(&str, Value)], c: [f32; 4]) -> [f32; 4] {
         run_fx(id, vals, Image::filled(2, 2, c), 0.0, EffectEnv::default()).img.get(0, 0)
@@ -1160,7 +1160,7 @@ mod tests {
     /// Projects saved before Use Legacy / the Photo Filter menu existed keep rendering as before.
     #[test]
     fn old_saves_get_legacy_values_for_added_params() {
-        use effectcraft_project::build::Ids;
+        use studio_project::build::Ids;
         let mut next = 1;
         for (id, param, want) in
             [("ec.color.brightnesscontrast", "useLegacy", Value::Bool(true)), ("ec.color.photofilter", "filter", Value::Enum(PHOTO_FILTER_CUSTOM))]

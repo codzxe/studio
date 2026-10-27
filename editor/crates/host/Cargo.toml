@@ -1,5 +1,5 @@
 [package]
-name = "effectcraft-host"
+name = "studio-host"
 description = "Builds a fully wired EffectCraft session: media decoding (FilmCraft codecs), importer, the expression engine and scripting"
 version.workspace = true
 edition.workspace = true
@@ -10,27 +10,27 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-effectcraft-engine = { workspace = true }
-effectcraft-project = { workspace = true }
+studio-engine = { workspace = true }
+studio-project = { workspace = true }
 log = { workspace = true }
-effectcraft-media = { workspace = true }
-effectcraft-expr = { workspace = true }
-effectcraft-script = { workspace = true }
-effectcraft-export = { workspace = true }
-effectcraft-plugin = { workspace = true }
+studio-media = { workspace = true }
+studio-expr = { workspace = true }
+studio-script = { workspace = true }
+studio-export = { workspace = true }
+studio-plugin = { workspace = true }
 
 # WebAssembly effect plug-ins run in wasmi on native builds.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-effectcraft-plugin = { workspace = true, features = ["wasm"] }
+studio-plugin = { workspace = true, features = ["wasm"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-effectcraft-psd = { workspace = true }
-effectcraft-svg = { workspace = true }
-effectcraft-pdf = { workspace = true }
-effectcraft-raster = { workspace = true }
-effectcraft-time = { workspace = true }
-effectcraft-interchange = { workspace = true }
+studio-psd = { workspace = true }
+studio-svg = { workspace = true }
+studio-pdf = { workspace = true }
+studio-raster = { workspace = true }
+studio-time = { workspace = true }
+studio-interchange = { workspace = true }
 image = { workspace = true }
 gif = { workspace = true }
 exr = { workspace = true }

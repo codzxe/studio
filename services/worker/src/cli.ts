@@ -1,7 +1,7 @@
-// @studio/worker — the effectcraft-cli runner (docs/phases/m8-cli-spike.md §1–§3).
+// @studio/worker — the studio-cli runner (docs/phases/m8-cli-spike.md §1–§3).
 //
-// Binary resolution (§1): EFFECTCRAFT_CLI_PATH → <repo>/editor/target/release/
-// effectcraft-cli when present → bare `effectcraft-cli` on PATH.
+// Binary resolution (§1): STUDIO_ENGINE_CLI_PATH → <repo>/editor/target/release/
+// studio-cli when present → bare `studio-cli` on PATH.
 //
 // The argv (§2): `--project <workdir>/project.ecproj render --comp <id>
 // --format <h264|png> --out <path> [--fps N] [--start S] [--end S]
@@ -32,14 +32,18 @@ export interface ResolvedCli {
 }
 
 export function resolveCliPath(cliPath: string | undefined, repoRoot: string): ResolvedCli {
+  // Legacy deployments (pre-rename) set EFFECTCRAFT_CLI_PATH: honored for one release.
+  if (cliPath === undefined && process.env.EFFECTCRAFT_CLI_PATH) {
+    cliPath = process.env.EFFECTCRAFT_CLI_PATH;
+  }
   if (cliPath !== undefined && cliPath.trim() !== "") {
     return { path: cliPath, source: "env" };
   }
-  const repoBuild = join(repoRoot, "editor", "target", "release", "effectcraft-cli");
+  const repoBuild = join(repoRoot, "editor", "target", "release", "studio-cli");
   if (existsSync(repoBuild)) {
     return { path: repoBuild, source: "repo-build" };
   }
-  return { path: "effectcraft-cli", source: "path" };
+  return { path: "studio-cli", source: "path" };
 }
 
 // ───────────────────────────────────────────────────────────────────────────

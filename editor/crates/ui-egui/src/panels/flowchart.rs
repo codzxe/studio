@@ -9,7 +9,7 @@
 use crate::i18n::tr_args;
 use std::collections::{BTreeMap, BTreeSet};
 
-use effectcraft_engine::project::{ItemId, ItemKind, LayerSource, Project};
+use studio_engine::project::{ItemId, ItemKind, LayerSource, Project};
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -376,7 +376,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effectcraft_engine::Session;
+    use studio_engine::Session;
 
     /// Main ⊃ Mid ⊃ Inner (with a solid), Main also uses Inner directly.
     fn session() -> (Session, ItemId, ItemId, ItemId) {
@@ -433,7 +433,7 @@ mod tests {
         let mut p = (*s.project).clone();
         let mut c = (*p.comp(mid).unwrap()).clone();
         let mut l = c.layers[0].clone();
-        l.id = effectcraft_engine::project::LayerId(9999);
+        l.id = studio_engine::project::LayerId(9999);
         l.source = LayerSource::Comp { item: main };
         c.layers.push(l);
         if let Some(ItemKind::Comp(arc)) = p.items.get_mut(&mid).map(|i| &mut i.kind) {

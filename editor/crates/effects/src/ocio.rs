@@ -27,10 +27,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use effectcraft_color::ColorSpace;
-use effectcraft_color::space::{invert, mul, mul_vec, rgb_to_xyz};
-use effectcraft_keyframe::Value;
-use effectcraft_project::ParamUi;
+use studio_color::ColorSpace;
+use studio_color::space::{invert, mul, mul_vec, rgb_to_xyz};
+use studio_keyframe::Value;
+use studio_project::ParamUi;
 use rayon::prelude::*;
 
 use crate::util::unpremul;

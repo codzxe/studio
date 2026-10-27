@@ -1,8 +1,8 @@
 //! The menu bar from the keyboard, and the app's shortcuts waiting while a menu is open (#279)
 //! (egui_kittest, UI logic only).
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
 use egui::{Event, Key, Modifiers, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -110,13 +110,13 @@ fn enter_chooses_the_highlighted_entry() {
     if cfg!(target_os = "macos") {
         assert!(focused(&h).starts_with("Keyboard Shortcuts"), "Up went to the last entry: {:?}", focused(&h));
         key(&mut h, Key::Enter);
-        assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::Shortcuts), "Enter chose it");
+        assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::Shortcuts), "Enter chose it");
     } else {
         assert!(focused(&h).starts_with("Preferences"), "Up went to the last entry: {:?}", focused(&h));
         key(&mut h, Key::Enter);
         assert!(focused(&h).starts_with("General"), "Enter opened the submenu: {:?}", focused(&h));
         key(&mut h, Key::Enter);
-        assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::Settings), "Enter chose General...");
+        assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::Settings), "Enter chose General...");
     }
     assert!(!shown(&h, "Quick Apply"), "and closed the menu");
 }
@@ -127,7 +127,7 @@ fn relink_menu_uses_engine_availability_and_folder_picker_cancel_is_a_noop() {
     use std::rc::Rc;
 
     let mut app = EffectcraftApp::new(Session::default());
-    let menu = effectcraft_ui_egui::menus::menu_items(&app);
+    let menu = studio_ui_egui::menus::menu_items(&app);
     let entry = menu.iter().find(|e| e.id == "file.relinkFootage").unwrap();
     assert_eq!(entry.path, ["File", "Dependencies"]);
     assert_eq!(entry.enabled, app.session.is_enabled("file.relinkFootage"));
@@ -139,7 +139,7 @@ fn relink_menu_uses_engine_availability_and_folder_picker_cancel_is_a_noop() {
         None
     }));
     let revision = app.session.revision;
-    let result = effectcraft_ui_egui::menus::invoke(&mut app, &egui::Context::default(), "file.relinkFootage", json!({})).unwrap();
+    let result = studio_ui_egui::menus::invoke(&mut app, &egui::Context::default(), "file.relinkFootage", json!({})).unwrap();
     assert!(picked.get());
     assert!(result.is_null());
     assert_eq!(app.session.revision, revision);
@@ -175,16 +175,16 @@ fn relink_is_reachable_through_the_dependencies_menu() {
 
 #[test]
 fn relink_restores_decoded_pixels_and_invalidates_viewer_content() {
-    use effectcraft_engine::project::{ItemId, ItemKind};
-    use effectcraft_engine::render::RenderOpts;
-    use effectcraft_engine::time::Tick;
+    use studio_engine::project::{ItemId, ItemKind};
+    use studio_engine::render::RenderOpts;
+    use studio_engine::time::Tick;
 
     let dir = std::env::temp_dir().join(format!("ec-ui-relink-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("old")).unwrap();
     std::fs::create_dir_all(dir.join("new/deep")).unwrap();
     let old = dir.join("old/plate.png");
     image::RgbaImage::from_pixel(32, 32, image::Rgba([230, 40, 80, 255])).save(&old).unwrap();
-    let mut s = effectcraft_host::session();
+    let mut s = studio_host::session();
     let item = s.execute("file.import", json!({"paths": [old], "sequence": false})).unwrap()["items"][0].as_u64().unwrap();
     s.execute("comp.new", json!({"name": "Relink", "width": 32, "height": 32, "duration": 1})).unwrap();
     s.execute("layer.addItem", json!({"item": item})).unwrap();
@@ -195,12 +195,12 @@ fn relink_restores_decoded_pixels_and_invalidates_viewer_content() {
     s.execute("footage.check", json!({"wait": true})).unwrap();
     let ItemKind::Footage(f) = &s.project.item(ItemId(item)).unwrap().kind else { panic!("footage") };
     assert!(f.missing);
-    let missing_content = effectcraft_ui_egui::frames::comp_content(&s.project, cid);
+    let missing_content = studio_ui_egui::frames::comp_content(&s.project, cid);
     let missing = s.render(cid, Tick::ZERO, RenderOpts::default());
     assert_ne!(missing.data, expected.data);
     let r = s.execute("file.relinkFootage", json!({"folder": dir.join("new"), "wait": true})).unwrap();
     assert_eq!(r["relinked"], 1);
-    assert_ne!(effectcraft_ui_egui::frames::comp_content(&s.project, cid), missing_content);
+    assert_ne!(studio_ui_egui::frames::comp_content(&s.project, cid), missing_content);
     assert_eq!(s.render(cid, Tick::ZERO, RenderOpts::default()).data, expected.data);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -219,7 +219,7 @@ fn import_dialog_offers_mxf() {
         *seen.borrow_mut() = exts.iter().map(|e| e.to_string()).collect();
         Vec::new()
     }));
-    let result = effectcraft_ui_egui::menus::invoke(&mut app, &egui::Context::default(), "file.import", json!({})).unwrap();
+    let result = studio_ui_egui::menus::invoke(&mut app, &egui::Context::default(), "file.import", json!({})).unwrap();
     assert!(result.is_null(), "cancelled: nothing imported");
     let offered = offered.borrow();
     assert!(offered.iter().any(|e| e == "mxf"), "offered {offered:?}");

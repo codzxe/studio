@@ -2,12 +2,12 @@
 //! automation ids, the on-viewer effect point control appears for the selected effect, and the
 //! crosshair / eyedropper picks set parameters from a viewer click.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::keyframe::Value as KV;
-use effectcraft_engine::project::{Layer, LayerId};
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
-use effectcraft_ui_egui::state::FxPick;
+use studio_engine::Session;
+use studio_engine::keyframe::Value as KV;
+use studio_engine::project::{Layer, LayerId};
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
+use studio_ui_egui::state::FxPick;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
@@ -179,18 +179,18 @@ fn crosshair_and_eyedropper_pick_from_the_viewer() {
     h.state_mut().ui.fx_pick = Some(FxPick { kind: "point".into(), layer: x.small, prop: x.point, name: "Point".into() });
     h.step();
     assert!(ids(&h).contains(&"viewer.fxPick".to_string()));
-    let pos = effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [330.0, 190.0]).unwrap();
+    let pos = studio_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [330.0, 190.0]).unwrap();
     click(&mut h, pos);
     assert!(h.state().ui.fx_pick.is_none(), "the pick is used up");
     let v = layer(&h.state().session, x.small).effects().unwrap().find(x.point).unwrap().value.clone();
     let KV::Vec2(p) = v else { panic!("{v:?}") };
     // One viewer point is up to 1/zoom comp pixels.
-    let tol = 1.0 / effectcraft_ui_egui::panels::viewer::last_fit(&h.ctx) as f64;
+    let tol = 1.0 / studio_ui_egui::panels::viewer::last_fit(&h.ctx) as f64;
     assert!((p[0] - 105.0).abs() <= tol && (p[1] - 55.0).abs() <= tol, "{p:?}");
     // Eyedropper over the green background.
     h.state_mut().ui.fx_pick = Some(FxPick { kind: "color".into(), layer: x.small, prop: x.color, name: "Color".into() });
     h.step();
-    let pos = effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [24.0, 24.0]).unwrap();
+    let pos = studio_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [24.0, 24.0]).unwrap();
     click(&mut h, pos);
     let v = layer(&h.state().session, x.small).effects().unwrap().find(x.color).unwrap().value.clone();
     let KV::Color(c) = v else { panic!("{v:?}") };
@@ -216,7 +216,7 @@ fn the_eyedropper_samples_under_the_pointer_in_a_region_of_interest() {
     h.step();
     // (200, 150) is on the red layer (it covers 120..520 × 80..280); read as a frame of the
     // whole comp, the green background at (100, 75).
-    let pos = effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [200.0, 150.0]).unwrap();
+    let pos = studio_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [200.0, 150.0]).unwrap();
     click(&mut h, pos);
     let v = layer(&h.state().session, x.small).effects().unwrap().find(x.color).unwrap().value.clone();
     let KV::Color(c) = v else { panic!("{v:?}") };
@@ -244,7 +244,7 @@ fn the_eyedropper_stays_armed_until_the_viewer_has_a_frame() {
     let mut h = Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).build_eframe(|_| EffectcraftApp::new(s));
     h.state_mut().ui.fx_pick = Some(FxPick { kind: "color".into(), layer: top, prop, name: "Color".into() });
     h.step();
-    let pos = effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [100.0, 100.0]).unwrap();
+    let pos = studio_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [100.0, 100.0]).unwrap();
     click(&mut h, pos);
     // (A frame that made it in time was sampled: the colour below is checked either way.)
     if h.state().ui.fx_pick.is_some() {
@@ -276,7 +276,7 @@ fn keyer_eyedropper_picks_the_screen_from_the_effect_input() {
     settle(&mut h);
     h.state_mut().ui.fx_pick = Some(FxPick { kind: "color".into(), layer: screen, prop, name: "Screen Colour".into() });
     h.step();
-    let pos = effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [160.0, 90.0]).unwrap();
+    let pos = studio_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [160.0, 90.0]).unwrap();
     click(&mut h, pos);
     assert!(h.state().ui.fx_pick.is_none(), "the pick is used up");
     let v = layer(&h.state().session, screen).effects().unwrap().find(prop).unwrap().value.clone();
@@ -380,7 +380,7 @@ fn angle_revolutions_scrub_and_take_typing() {
     let rot = layer(&h.state().session, x.small).props.prop("transform/rotation").unwrap().uid;
     h.state_mut().show_panel(PanelKind::Timeline);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.reveal.rotation", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.reveal.rotation", json!({})).unwrap();
     h.run_steps(4);
     type_into(&mut h, &format!("timeline.prop.{rot}.revolutions"), "-2");
     let rotation = |h: &Harness<'_, EffectcraftApp>| layer(&h.state().session, x.small).props.prop("transform/rotation").unwrap().value.as_f64();
@@ -472,7 +472,7 @@ fn extractor_offers_the_exr_layers_and_channels() {
     let path = std::env::temp_dir().join(format!("ec-ui-exr-layers-{}.exr", std::process::id()));
     Image::from_layer(exr::prelude::Layer::new((w, hh), LayerAttributes::default(), Encoding::FAST_LOSSLESS, channels)).write().to_file(&path).unwrap();
 
-    let mut s = effectcraft_host::session();
+    let mut s = studio_host::session();
     let item = s.execute("file.import", json!({"paths": [path.to_string_lossy()]})).unwrap()["items"][0].clone();
     s.execute("comp.new", json!({"name": "EXR", "width": 8, "height": 4, "frameRate": 24, "duration": 1})).unwrap();
     let l = s.execute("layer.addItem", json!({"item": item})).unwrap()["layer"].as_u64().unwrap();
@@ -548,13 +548,13 @@ fn point_picker_handle_follows_hover_then_commits_once_across_effects() {
         assert_eq!(rect_of(&h, &id).center(), original, "the handle remains visible before entering the viewer");
         let undo = h.state().session.history.undo.len();
         for comp in [[350.0, 200.0], [370.0, 220.0]] {
-            let pos = effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, comp).unwrap();
+            let pos = studio_ui_egui::panels::viewer::comp_to_screen(&h.ctx, comp).unwrap();
             hover(&mut h, pos);
             assert!(rect_of(&h, &id).center().distance(pos) < 0.1, "{effect}: handle must follow the pointer before clicking");
             assert_eq!(layer(&h.state().session, lid).props.find(point).unwrap().value.as_vec2(), [100.0, 50.0], "hover is only a preview");
             assert_eq!(h.state().session.history.undo.len(), undo, "hover must not add undo entries");
         }
-        let pos = effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [370.0, 220.0]).unwrap();
+        let pos = studio_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [370.0, 220.0]).unwrap();
         click(&mut h, pos);
         assert!(h.state().ui.fx_pick.is_none());
         let after = layer(&h.state().session, lid).props.find(point).unwrap().value.as_vec2();
@@ -578,7 +578,7 @@ fn point_picker_preview_cancels_and_works_with_layer_controls_hidden() {
     click(&mut h, pick_button);
     let id = format!("viewer.effectPoint.{}", x.point);
     let original = rect_of(&h, &id).center();
-    let pos = effectcraft_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [370.0, 220.0]).unwrap();
+    let pos = studio_ui_egui::panels::viewer::comp_to_screen(&h.ctx, [370.0, 220.0]).unwrap();
     hover(&mut h, pos);
     assert!(rect_of(&h, &id).center().distance(pos) < 0.1, "explicit picks show a handle even with layer controls hidden");
     hover(&mut h, pick_button);
@@ -712,7 +712,7 @@ fn file_and_text_parameters_have_widgets() {
     let mut h = Harness::builder().with_size(egui::vec2(1700.0, 1100.0)).build_eframe(|_| app);
     settle(&mut h);
     let ctx = h.ctx.clone();
-    let r = effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "effect.apply", json!({"effect": "Apply Color LUT"})).unwrap();
+    let r = studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "effect.apply", json!({"effect": "Apply Color LUT"})).unwrap();
     let fx = r["effects"][0].as_u64().unwrap();
     let lut = |h: &Harness<'_, EffectcraftApp>| {
         let g = layer(&h.state().session, l).effects().and_then(|f| f.groups().find(|g| g.uid == fx).cloned()).unwrap();
@@ -728,7 +728,7 @@ fn file_and_text_parameters_have_widgets() {
     assert_eq!(lut(&h).1, invert.to_string_lossy(), "the LUT was asked for on apply");
     let px = |h: &Harness<'_, EffectcraftApp>| {
         let s = &h.state().session;
-        s.render(s.active_comp_id().unwrap(), effectcraft_engine::time::Tick::ZERO, Default::default()).get(10, 10)
+        s.render(s.active_comp_id().unwrap(), studio_engine::time::Tick::ZERO, Default::default()).get(10, 10)
     };
     assert!(px(&h)[0] < 0.05 && px(&h)[1] > 0.95, "red inverted to cyan: {:?}", px(&h));
     settle(&mut h);

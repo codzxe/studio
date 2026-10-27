@@ -2,18 +2,18 @@
 //! comp goes to an unlocked viewer (a new one when every viewer is locked); a click on another
 //! viewer makes it the active one; closing a viewer forgets it.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::ItemId;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::{PanelKind, Zone};
-use effectcraft_ui_egui::panels::viewers;
+use studio_engine::Session;
+use studio_engine::project::ItemId;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::{PanelKind, Zone};
+use studio_ui_egui::panels::viewers;
 use egui::{Event, pos2};
 use egui_kittest::Harness;
 use serde_json::{Value, json};
 
 fn invoke(h: &mut Harness<'_, EffectcraftApp>, id: &str, p: Value) {
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, id, p).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, id, p).unwrap();
     h.run_steps(3);
 }
 
@@ -134,7 +134,7 @@ fn a_locked_viewer_keeps_its_comp_when_the_project_panel_opens_another() {
     assert_eq!((h.state().ui.active_viewer, shows(&h, 0), shows(&h, 1)), (1, Some(a), Some(b)));
 }
 
-/// `cargo test -p effectcraft-ui-egui --test ui_viewers -- --ignored`: two viewers side by side
+/// `cargo test -p studio-ui-egui --test ui_viewers -- --ignored`: two viewers side by side
 /// (`target/test-out/viewers.png`).
 #[test]
 #[ignore]

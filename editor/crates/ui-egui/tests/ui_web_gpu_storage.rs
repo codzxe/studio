@@ -13,15 +13,15 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use effectcraft_engine::Session;
-use effectcraft_engine::remote::{FrameMsg, FrameReply, FrameServer, Mirror};
-use effectcraft_engine::render::RenderOpts;
-use effectcraft_engine::render::disk_cache;
-use effectcraft_engine::storage::StorageHost;
-use effectcraft_gpu::Gpu;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::control::{self, ControlRequest, Outcome};
-use effectcraft_ui_egui::frames::{FrameImage, FrameKey, Frames, RemoteDone, RemoteFrame, RemoteFrames, RemoteJob, RenderSource};
+use studio_engine::Session;
+use studio_engine::remote::{FrameMsg, FrameReply, FrameServer, Mirror};
+use studio_engine::render::RenderOpts;
+use studio_engine::render::disk_cache;
+use studio_engine::storage::StorageHost;
+use studio_gpu::Gpu;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::control::{self, ControlRequest, Outcome};
+use studio_ui_egui::frames::{FrameImage, FrameKey, Frames, RemoteDone, RemoteFrame, RemoteFrames, RemoteJob, RenderSource};
 use egui_kittest::Harness;
 use serde_json::{Value, json};
 
@@ -135,11 +135,11 @@ fn gpu_worker_renders_effect_frames_and_the_disk_cache_survives_a_reload() {
     s.execute("layer.newSolid", json!({"color": "#ff8030", "width": 80, "height": 40})).unwrap();
     s.execute("effect.apply", json!({"layer": "#1", "effect": "Gaussian Blur"})).unwrap();
     s.execute("prop.set", json!({"layer": "#1", "path": "effects/#1/blurriness", "value": 12})).unwrap();
-    let opts = RenderOpts { backend: effectcraft_engine::render::Backend::Gpu, ..Default::default() };
-    let t = effectcraft_engine::time::Tick::ZERO;
-    let key = |comp: effectcraft_engine::project::ItemId| FrameKey {
+    let opts = RenderOpts { backend: studio_engine::render::Backend::Gpu, ..Default::default() };
+    let t = studio_engine::time::Tick::ZERO;
+    let key = |comp: studio_engine::project::ItemId| FrameKey {
         revision: s.revision,
-        content: effectcraft_ui_egui::frames::comp_content(&s.project, comp),
+        content: studio_ui_egui::frames::comp_content(&s.project, comp),
         comp: comp.0,
         frame: 0,
         scale: 1000,
@@ -161,7 +161,7 @@ fn gpu_worker_renders_effect_frames_and_the_disk_cache_survives_a_reload() {
     let got = cpu_pixels(&frames.get(&key(fx)).expect("rendered by the worker"));
     let (passes, on_gpu) = worker.rendered.lock().unwrap()[0];
     assert!(on_gpu && passes >= 2, "passes {passes}");
-    let want = effectcraft_ui_egui::frames::to_color_image(&s.render(fx, t, RenderOpts { backend: effectcraft_engine::render::Backend::Cpu, ..opts }));
+    let want = studio_ui_egui::frames::to_color_image(&s.render(fx, t, RenderOpts { backend: studio_engine::render::Backend::Cpu, ..opts }));
     let worst = got.iter().zip(&want.pixels).map(|(a, b)| (0..4).map(|c| (a[c] as i32 - b[c] as i32).abs()).max().unwrap()).max().unwrap();
     assert!(worst <= 2, "GPU vs CPU: {worst}/255");
     assert_eq!(disk.lock().unwrap().len(), 1, "stored under its disk key");
@@ -228,7 +228,7 @@ fn settings_disk_page_shows_the_browser_storage_manager() {
     s.storage = Some(host.clone());
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(s));
     h.run_steps(2);
-    effectcraft_ui_egui::panels::settings::open(h.state_mut(), "disk");
+    studio_ui_egui::panels::settings::open(h.state_mut(), "disk");
     h.run_steps(3);
     for id in [
         "settings.storage.backend",
@@ -249,7 +249,7 @@ fn settings_disk_page_shows_the_browser_storage_manager() {
     // Without a host (the desktop) the section is not there.
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| EffectcraftApp::new(Session::default()));
     h.run_steps(2);
-    effectcraft_ui_egui::panels::settings::open(h.state_mut(), "disk");
+    studio_ui_egui::panels::settings::open(h.state_mut(), "disk");
     h.run_steps(3);
     assert!(h.state().auto.find("settings.storage.usage").is_none());
 }

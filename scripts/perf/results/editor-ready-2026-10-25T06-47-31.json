@@ -13,7 +13,7 @@
       "loadEventMs": 1085,
       "wasm": [
         {
-          "name": "effectcraft_web_bg.wasm",
+          "name": "studio_web_bg.wasm",
           "durationMs": 5268,
           "transferSize": 17856646,
           "encodedBodySize": 17856346,
@@ -38,7 +38,7 @@
       "loadEventMs": 1092,
       "wasm": [
         {
-          "name": "effectcraft_web_bg.wasm",
+          "name": "studio_web_bg.wasm",
           "durationMs": 4993,
           "transferSize": 17856646,
           "encodedBodySize": 17856346,
@@ -63,7 +63,7 @@
       "loadEventMs": 1049,
       "wasm": [
         {
-          "name": "effectcraft_web_bg.wasm",
+          "name": "studio_web_bg.wasm",
           "durationMs": 5094,
           "transferSize": 17856646,
           "encodedBodySize": 17856346,
@@ -90,7 +90,7 @@
       "loadEventMs": 2104,
       "wasm": [
         {
-          "name": "effectcraft_web_bg.wasm",
+          "name": "studio_web_bg.wasm",
           "durationMs": 3100,
           "transferSize": 17856646,
           "encodedBodySize": 17856346,
@@ -113,7 +113,7 @@
       "loadEventMs": 1064,
       "wasm": [
         {
-          "name": "effectcraft_web_bg.wasm",
+          "name": "studio_web_bg.wasm",
           "durationMs": 3197,
           "transferSize": 17856646,
           "encodedBodySize": 17856346,
@@ -136,7 +136,7 @@
       "loadEventMs": 965,
       "wasm": [
         {
-          "name": "effectcraft_web_bg.wasm",
+          "name": "studio_web_bg.wasm",
           "durationMs": 3128,
           "transferSize": 17856646,
           "encodedBodySize": 17856346,
@@ -161,7 +161,7 @@
       "wallMs": 11052,
       "wasm": [
         {
-          "name": "effectcraft_web_bg.wasm",
+          "name": "studio_web_bg.wasm",
           "durationMs": 2308,
           "transferSize": 17856646,
           "encodedBodySize": 17856346,
@@ -184,7 +184,7 @@
       "wallMs": 11573,
       "wasm": [
         {
-          "name": "effectcraft_web_bg.wasm",
+          "name": "studio_web_bg.wasm",
           "durationMs": 2416,
           "transferSize": 17856646,
           "encodedBodySize": 17856346,
@@ -207,7 +207,7 @@
       "wallMs": 11269,
       "wasm": [
         {
-          "name": "effectcraft_web_bg.wasm",
+          "name": "studio_web_bg.wasm",
           "durationMs": 2303,
           "transferSize": 17856646,
           "encodedBodySize": 17856346,

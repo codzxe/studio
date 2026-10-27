@@ -179,7 +179,7 @@ pub fn handle(app: &mut EffectcraftApp, ctx: &egui::Context, req: &ControlReques
             // `engine.execute` runs engine commands exactly as headless (never opens a dialog, e.g.
             // `comp.new {}` creates a default comp); UI-only ids (`tool.*`, `view.*`, `window.*`,
             // `playback.*` …) and `ui.menu.invoke` go through the menu dispatcher like a click.
-            let r = if req.method == "engine.execute" && effectcraft_engine::find_command(id).is_some() {
+            let r = if req.method == "engine.execute" && studio_engine::find_command(id).is_some() {
                 execute_engine(app, id, params)
             } else {
                 crate::menus::invoke(app, ctx, id, params).map(ok)
@@ -476,7 +476,7 @@ fn render_frame(app: &EffectcraftApp, p: &Value) -> Outcome {
         Ok(c) => c,
         Err(e) => return err(e),
     };
-    let t = p.get("time").or(p.get("seconds")).and_then(Value::as_f64).map(effectcraft_time::Tick::from_seconds_f64).unwrap_or_else(|| s.time());
+    let t = p.get("time").or(p.get("seconds")).and_then(Value::as_f64).map(studio_time::Tick::from_seconds_f64).unwrap_or_else(|| s.time());
     let max_side = p.get("max_side").or(p.get("maxSide")).and_then(Value::as_u64).unwrap_or(0) as u32;
     let transparent = p.get("transparent").and_then(Value::as_bool).unwrap_or(false);
     let (w, h, rgba) = match s.render_rgba8_alpha(cid, t, max_side, transparent) {
@@ -498,7 +498,7 @@ fn render_frame(app: &EffectcraftApp, p: &Value) -> Outcome {
         .get("path")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .unwrap_or_else(|| std::env::temp_dir().join(format!("effectcraft-frame-{}.png", std::process::id())).to_string_lossy().to_string());
+        .unwrap_or_else(|| std::env::temp_dir().join(format!("studio-frame-{}.png", std::process::id())).to_string_lossy().to_string());
     match std::fs::write(&path, png) {
         Ok(()) => {
             out["path"] = json!(path);
@@ -592,7 +592,7 @@ pub fn save_screenshot(ctx: &egui::Context, image: &egui::ColorImage, path: Opti
             Err(e) => json!({"ok": false, "error": e}),
         };
     }
-    let path = path.map(str::to_string).unwrap_or_else(|| std::env::temp_dir().join("effectcraft-screenshot.png").to_string_lossy().to_string());
+    let path = path.map(str::to_string).unwrap_or_else(|| std::env::temp_dir().join("studio-screenshot.png").to_string_lossy().to_string());
     match encode_png(&rgba, cw as u32, ch as u32) {
         Ok(png) => match std::fs::write(&path, png) {
             Ok(()) => json!({"ok": true, "result": {"path": path, "width": cw, "height": ch}}),

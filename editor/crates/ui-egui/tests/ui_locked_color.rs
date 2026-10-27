@@ -1,8 +1,8 @@
 //! The split locked viewer re-converts its pixels when the display profile or the output
 //! simulation changes (egui_kittest, texture uploads captured).
 
-use effectcraft_engine::{Session, render::RenderOpts, viewer::DisplayColor};
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::{Session, render::RenderOpts, viewer::DisplayColor};
+use studio_ui_egui::EffectcraftApp;
 use egui_kittest::{Harness, TestRenderer};
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -33,7 +33,7 @@ impl TestRenderer for Capture {
 
 fn invoke(h: &mut Harness<'_, EffectcraftApp>, command: &str, params: Value) {
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, command, params).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, command, params).unwrap();
     h.run_steps(3);
 }
 
@@ -48,7 +48,7 @@ fn expected_center(h: &mut Harness<'_, EffectcraftApp>) -> [u8; 4] {
     let s = &mut h.state_mut().session;
     let comp = s.active_comp_id().unwrap();
     let image = s.render(comp, s.time(), RenderOpts::default());
-    let ci = effectcraft_ui_egui::frames::to_color_image(&image);
+    let ci = studio_ui_egui::frames::to_color_image(&image);
     let mut pixels = vec![ci.pixels[(ci.size[1] / 2) * ci.size[0] + ci.size[0] / 2].to_array()];
     DisplayColor::of(s).unwrap().apply(&mut pixels);
     pixels[0]

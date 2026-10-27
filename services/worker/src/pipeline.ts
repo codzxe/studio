@@ -9,7 +9,7 @@
 //   hydrate (spike §4) ─▶ RENDER_PROJECT_INVALID / RENDER_ASSET_MISSING
 //      │                  (never spawns the CLI — it renders placeholders
 //      │                   as success, spike §4)
-//   spawn effectcraft-cli (spike §2 argv) in the confined workdir
+//   spawn studio-cli (spike §2 argv) in the confined workdir
 //      │
 //   monitor: progress → heartbeat (monotonic, ~1/s) · cancel poll (~2s,
 //      │   cooperative: kill → cancelled + refundAll) · hard timeout

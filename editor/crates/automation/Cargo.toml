@@ -1,5 +1,5 @@
 [package]
-name = "effectcraft-automation"
+name = "studio-automation"
 description = "EffectCraft MCP server (JSON-RPC 2.0 over stdio) over a headless session or bridged to the running app's control channel"
 version.workspace = true
 edition.workspace = true
@@ -10,11 +10,12 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-effectcraft-engine = { workspace = true }
+studio-brand = { path = "../brand" }
+studio-engine = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 image = { workspace = true }
 
 [dev-dependencies]
-effectcraft-script = { workspace = true }
-effectcraft-host = { workspace = true }
+studio-script = { workspace = true }
+studio-host = { workspace = true }

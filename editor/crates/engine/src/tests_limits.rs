@@ -1,15 +1,15 @@
 //! Sizes, frame rates and motion-blur samples stay within the project limits when a project is
 //! opened and when a command sets them (#788).
 
-use effectcraft_project::{ItemKind, limits};
-use effectcraft_render::RenderOpts;
-use effectcraft_time::{FrameRate, Tick};
+use studio_project::{ItemKind, limits};
+use studio_render::RenderOpts;
+use studio_time::{FrameRate, Tick};
 use serde_json::{Value, json};
 
 use crate::{Event, Session};
 
 fn tmp(name: &str) -> String {
-    let d = std::env::temp_dir().join(format!("effectcraft-limits-tests-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("studio-limits-tests-{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d.join(name).to_string_lossy().to_string()
 }
@@ -74,7 +74,7 @@ fn a_project_within_the_limits_opens_unchanged() {
     let mut s = Session::default();
     s.execute("comp.new", json!({"name": "Main", "width": 64, "height": 32, "frameRate": 24, "duration": 2})).unwrap();
     let text = s.project.to_file_json().unwrap();
-    let (p, notes) = effectcraft_project::Project::from_json_repaired(&text).unwrap();
+    let (p, notes) = studio_project::Project::from_json_repaired(&text).unwrap();
     assert!(notes.is_empty(), "{notes:?}");
     assert_eq!(p, *s.project);
 }

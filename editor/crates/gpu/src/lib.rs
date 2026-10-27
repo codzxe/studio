@@ -19,7 +19,7 @@
 //! scene and composite it through the 2D path here too; environment backgrounds (Classic and
 //! Advanced 3D) draw their sky in a kernel (`Renderer::sky_draw`).
 //!
-//! GPU effects ([`effectcraft_effects::GPU_EFFECTS`]) run as compute kernels with the CPU
+//! GPU effects ([`studio_effects::GPU_EFFECTS`]) run as compute kernels with the CPU
 //! effect's exact steps (padding, box-blur radii, parameter conversions); chains of them are
 //! uploaded and read back once. Each family lives in its own module with its own WGSL file
 //! (`fx_color`, `fx_depth`, `fx_distort`, `fx_extra`, `fx_gen2`, `fx_generate`, `fx_key`,
@@ -37,17 +37,17 @@
 //! RGBA f32 images per layer, and creating and zeroing those cost more than compositing a small
 //! layer. A released texture is reused once every encoder that could still read it has been
 //! submitted. 8/16 bpc quantisation after each layer is fused into that layer's composite.
-//! [`Backend::Auto`](effectcraft_render::Backend) renders each comp on whichever compositor
-//! measured faster for it ([`effectcraft_render::AutoPick`], kept by [`Gpu`]): a light comp
+//! [`Backend::Auto`](studio_render::Backend) renders each comp on whichever compositor
+//! measured faster for it ([`studio_render::AutoPick`], kept by [`Gpu`]): a light comp
 //! that the CPU composites in a millisecond stays there rather than paying for a full-frame
 //! readback.
 //!
 //! GPU particles (`particles`): the stepped particle effects hand their simulation to
-//! [`effectcraft_effects::psim::ParticleSim`], implemented here with one invocation per particle
+//! [`studio_effects::psim::ParticleSim`], implemented here with one invocation per particle
 //! and GPU-resident checkpoints.
 //!
 //! Plug a [`Gpu`] into [`Renderer::accel`] (it implements [`Accelerator`]); renders then use it
-//! when [`RenderOpts::backend`](effectcraft_render::RenderOpts) asks for it. The viewer can
+//! when [`RenderOpts::backend`](studio_render::RenderOpts) asks for it. The viewer can
 //! skip readback entirely with [`Gpu::render_display`], which leaves an RGBA8 texture for
 //! egui-wgpu to draw.
 
@@ -87,11 +87,11 @@ mod walk;
 use std::sync::Arc;
 
 pub use context::{GpuContext, GpuImage, TransferStats};
-use effectcraft_effects::Buf;
-use effectcraft_project::ItemId;
-use effectcraft_raster::Image;
-use effectcraft_render::{Accelerator, FxStep, Renderer};
-use effectcraft_time::Tick;
+use studio_effects::Buf;
+use studio_project::ItemId;
+use studio_raster::Image;
+use studio_render::{Accelerator, FxStep, Renderer};
+use studio_time::Tick;
 pub use wgpu;
 
 use crate::context::Enc;
@@ -101,7 +101,7 @@ use crate::context::Enc;
 pub struct Gpu {
     ctx: Arc<GpuContext>,
     /// Backend::Auto's per-comp CPU / GPU timings.
-    auto: Arc<effectcraft_render::AutoPick>,
+    auto: Arc<studio_render::AutoPick>,
     /// (comp, reason) pairs already warned about when the GPU declined a frame.
     declined: Arc<std::sync::Mutex<std::collections::HashSet<(u64, String)>>>,
 }
@@ -331,9 +331,9 @@ impl Accelerator for Gpu {
             let reason = self.decline_reason();
             let first = self.declined.lock().map(|mut seen| seen.len() < 256 && seen.insert((comp.0, reason.clone()))).unwrap_or(false);
             if first {
-                log::warn!(target: "effectcraft_gpu", "GPU declined the frame at {:.3} s, the CPU renders it: {reason}", t.seconds());
+                log::warn!(target: "studio_gpu", "GPU declined the frame at {:.3} s, the CPU renders it: {reason}", t.seconds());
             } else {
-                log::debug!(target: "effectcraft_gpu", "GPU declined the frame at {:.3} s: {reason}", t.seconds());
+                log::debug!(target: "studio_gpu", "GPU declined the frame at {:.3} s: {reason}", t.seconds());
             }
         }
         img
@@ -348,22 +348,22 @@ impl Accelerator for Gpu {
         effects::run_chain(&mut Enc::new(&self.ctx), chain, buf, levels)
     }
 
-    fn raster_3d(&self, scene: &effectcraft_render::three_d::adv::Scene) -> Option<effectcraft_render::three_d::adv::Target> {
+    fn raster_3d(&self, scene: &studio_render::three_d::adv::Scene) -> Option<studio_render::three_d::adv::Target> {
         self.ctx.check_health().ok()?;
         adv3d::render(&self.ctx, scene)
     }
 
-    fn render_3d(&self, run: &effectcraft_render::three_d::adv::Prepared) -> Option<effectcraft_render::three_d::adv::Rendered> {
+    fn render_3d(&self, run: &studio_render::three_d::adv::Prepared) -> Option<studio_render::three_d::adv::Rendered> {
         self.ctx.check_health().ok()?;
         adv3d::render_prepared(&self.ctx, run)
     }
 
-    fn particles(&self) -> Option<&dyn effectcraft_effects::psim::ParticleSim> {
+    fn particles(&self) -> Option<&dyn studio_effects::psim::ParticleSim> {
         self.ctx.check_health().ok()?;
-        self.ctx.can_readback().then_some(self as &dyn effectcraft_effects::psim::ParticleSim)
+        self.ctx.can_readback().then_some(self as &dyn studio_effects::psim::ParticleSim)
     }
 
-    fn auto_pick(&self) -> Option<&effectcraft_render::AutoPick> {
+    fn auto_pick(&self) -> Option<&studio_render::AutoPick> {
         Some(&self.auto)
     }
 
@@ -398,8 +398,8 @@ impl Accelerator for Gpu {
     }
 }
 
-impl effectcraft_effects::psim::ParticleSim for Gpu {
-    fn simulate(&self, req: &effectcraft_effects::psim::SimRequest) -> Option<Vec<effectcraft_effects::psim::SimParticle>> {
+impl studio_effects::psim::ParticleSim for Gpu {
+    fn simulate(&self, req: &studio_effects::psim::SimRequest) -> Option<Vec<studio_effects::psim::SimParticle>> {
         self.ctx.check_health().ok()?;
         particles::simulate(&self.ctx, req)
     }

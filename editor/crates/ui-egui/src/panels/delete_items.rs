@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn cmd_d_is_delete_and_enter_is_not() {
         let ctx = egui::Context::default();
-        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        let mut app = EffectcraftApp::new(studio_engine::Session::default());
         crate::theme::install(&ctx, &app.tokens, crate::i18n::language(&app));
         app.dialog_state.delete_items.command = Some((json!({"items": []}), json!({"items": 1, "layers": 1, "comps": 1})));
         app.dialog = Some(Dialog::DeleteItems);

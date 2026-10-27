@@ -21,9 +21,9 @@
 //! `essential.instance.<id>.value`, `essential.export`…).
 
 use crate::i18n::{tr, tr_args};
-use effectcraft_engine::keyframe::Value as KV;
-use effectcraft_engine::project::essential::{self, ControlType, EgControl, EgKind};
-use effectcraft_engine::project::{ItemId, ItemKind, LayerSource, ParamUi, Property};
+use studio_engine::keyframe::Value as KV;
+use studio_engine::project::essential::{self, ControlType, EgControl, EgKind};
+use studio_engine::project::{ItemId, ItemKind, LayerSource, ParamUi, Property};
 use egui::{Rect, RichText};
 use serde_json::{Value, json};
 
@@ -425,7 +425,7 @@ fn value_widget(app: &mut EffectcraftApp, ui: &mut egui::Ui, auto: &str, ty: Opt
         ControlType::Font => {
             // Family (from the installed fonts), style and size; the text stays as it is.
             let KV::Text(doc) = v else { return None };
-            let fams = effectcraft_engine::text::fonts::families();
+            let fams = studio_engine::text::fonts::families();
             let mut d = (**doc).clone();
             let mut changed = false;
             let r1 = egui::ComboBox::from_id_salt(("eg-font", auto)).selected_text(&d.font).width(110.0).show_ui(ui, |ui| {
@@ -492,7 +492,7 @@ fn instance(app: &mut EffectcraftApp, ui: &mut egui::Ui, actions: &mut Actions) 
     let lt = layer.layer_time(app.session.time());
     ui.separator();
     ui.label(RichText::new(tr_args("Essential Properties — {}", &[&layer.name])).strong());
-    let group = essential::group(&layer).cloned().unwrap_or_else(|| effectcraft_engine::project::PropGroup::new(0, "", ""));
+    let group = essential::group(&layer).cloned().unwrap_or_else(|| studio_engine::project::PropGroup::new(0, "", ""));
     for c in eg.flat() {
         let m = essential::match_id(c.id);
         let mut pr = None;

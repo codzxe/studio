@@ -1,8 +1,8 @@
 //! The viewer on the GPU compositor (egui_kittest with wgpu): frames composited on the GPU match
 //! the CPU viewer. Skips without a GPU adapter (CI). Set `EC_SNAPSHOT_DIR` to keep PNGs.
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
 use egui_kittest::Harness;
 use serde_json::json;
 
@@ -41,11 +41,11 @@ fn same_adapter(name: String) -> eframe::egui_wgpu::WgpuSetup {
 
 #[test]
 fn viewer_draws_gpu_frames_that_match_the_cpu() {
-    let Some(probe) = effectcraft_gpu::Gpu::headless() else {
+    let Some(probe) = studio_gpu::Gpu::headless() else {
         eprintln!("no GPU adapter: skipping");
         return;
     };
-    let adapter = effectcraft_engine::render::Accelerator::name(&probe);
+    let adapter = studio_engine::render::Accelerator::name(&probe);
     eprintln!("headless compositor adapter: {adapter}");
     // egui-wgpu creates its GL device with WebGL2's limits, which the compositor declines.
     let gl = adapter.ends_with("(Gl)");
@@ -103,7 +103,7 @@ fn a_lost_device_draws_nothing_autosaves_and_closes() {
     h.state_mut().hooks.device_lost = Some(Box::new(move |saved| log.borrow_mut().push(saved)));
     h.run_steps(3);
     assert!(!h.output().shapes.is_empty(), "the UI draws before the loss");
-    let bridge = effectcraft_ui_egui::gpu_failure::GpuFailureBridge::new(&h.ctx);
+    let bridge = studio_ui_egui::gpu_failure::GpuFailureBridge::new(&h.ctx);
     h.state_mut().set_gpu_failure_bridge(bridge.clone());
     bridge.report("GPU device lost (Unknown): Device is lost", true);
     h.step();

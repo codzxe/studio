@@ -126,9 +126,9 @@ try {
   log("editor phase=open (project opened by the real wasm engine)");
   const editorFrame = page.frames().find((f) => f.url().includes("/editor/"));
   if (editorFrame) {
-    const ec = await editorFrame.evaluate(() => typeof window.effectcraft);
+    const ec = await editorFrame.evaluate(() => typeof window.studioEngine);
     const canvases = await editorFrame.evaluate(() => document.querySelectorAll("canvas").length);
-    log(`iframe window.effectcraft=${ec}, canvases=${canvases}`);
+    log(`iframe window.studioEngine=${ec}, canvases=${canvases}`);
   } else {
     log("WARN: editor iframe not found by URL");
   }

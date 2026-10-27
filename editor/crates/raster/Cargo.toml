@@ -1,5 +1,5 @@
 [package]
-name = "effectcraft-raster"
+name = "studio-raster"
 description = "f32 premultiplied RGBA images: sampling, projective warps, blurs, convolution, compositing (rayon-parallel)"
 version.workspace = true
 edition.workspace = true
@@ -10,6 +10,6 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-effectcraft-geom = { workspace = true }
-effectcraft-color = { workspace = true }
+studio-geom = { workspace = true }
+studio-color = { workspace = true }
 rayon = { workspace = true }

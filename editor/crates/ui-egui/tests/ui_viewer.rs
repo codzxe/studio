@@ -2,11 +2,11 @@
 //! interest drawing, rulers and guides, snapping, the shape Pen and motion-path key drags
 //! (egui_kittest, UI logic only).
 
-use effectcraft_engine::Session;
-use effectcraft_engine::commands::shape_tool::PaintKind;
-use effectcraft_engine::project::LayerId;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::state::Tool;
+use studio_engine::Session;
+use studio_engine::commands::shape_tool::PaintKind;
+use studio_engine::project::LayerId;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::state::Tool;
 use egui::{Event, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -131,7 +131,7 @@ fn viewer_click_picks_nothing_while_the_solo_layer_is_inactive() {
     let s = &mut h.state_mut().session;
     s.execute("layer.setSwitch", json!({"layers": [front.0], "switch": "solo", "value": true})).unwrap();
     let cid = s.active_comp_id().unwrap();
-    std::sync::Arc::make_mut(&mut s.project).comp_mut(cid).unwrap().layer_mut(front).unwrap().in_point = effectcraft_engine::time::Tick::from_seconds_f64(1.0);
+    std::sync::Arc::make_mut(&mut s.project).comp_mut(cid).unwrap().layer_mut(front).unwrap().in_point = studio_engine::time::Tick::from_seconds_f64(1.0);
     h.run_steps(3);
     let at = screen(&h, [320.0, 180.0]);
     click(&mut h, at);
@@ -169,7 +169,7 @@ fn viewer_press_prefers_a_selected_layer_under_the_pointer() {
 /// A's cached frames and is read back from the saved file (#417).
 #[test]
 fn each_comp_keeps_its_viewer_resolution() {
-    use effectcraft_ui_egui::state::Resolution;
+    use studio_ui_egui::state::Resolution;
     let mut h = harness();
     let a = h.state().session.active_comp_id().unwrap();
     let content = |h: &Harness<'_, EffectcraftApp>, c| {
@@ -191,12 +191,12 @@ fn each_comp_keeps_its_viewer_resolution() {
     let b = h.state().session.active_comp_id().unwrap();
     assert_ne!(a, b);
     assert_eq!(h.state().viewer_res(), Resolution::Auto);
-    let (req, _reply) = effectcraft_ui_egui::control::ControlRequest::new("ui.set", json!({"viewer": {"res": "quarter"}}));
+    let (req, _reply) = studio_ui_egui::control::ControlRequest::new("ui.set", json!({"viewer": {"res": "quarter"}}));
     let ctx = h.ctx.clone();
-    let _ = effectcraft_ui_egui::control::handle(h.state_mut(), &ctx, &req);
+    let _ = studio_ui_egui::control::handle(h.state_mut(), &ctx, &req);
     assert_eq!(h.state().viewer_res(), Resolution::Quarter);
     let ctx = h.ctx.clone();
-    assert_eq!(effectcraft_ui_egui::control::inspect(h.state(), &ctx)["ui"]["viewer"]["res"], json!("Quarter"));
+    assert_eq!(studio_ui_egui::control::inspect(h.state(), &ctx)["ui"]["viewer"]["res"], json!("Quarter"));
     // Back to comp A: its resolution again.
     h.state_mut().session.open_comp(a);
     h.run_steps(3);
@@ -388,7 +388,7 @@ fn shape_tool_draws_into_the_selected_shape_layer() {
     drag(&mut h, a, b);
     let comp = h.state().session.active_comp().unwrap();
     assert_eq!(comp.layers.len(), n0 + 1);
-    assert!(matches!(comp.layers[0].source, effectcraft_engine::project::LayerSource::Shape));
+    assert!(matches!(comp.layers[0].source, studio_engine::project::LayerSource::Shape));
     assert_ne!(comp.layers[0].id, LayerId(l));
 }
 
@@ -535,7 +535,7 @@ fn shape_drag_ghost_normalises_the_same_way_as_the_release() {
         // group sits at its own centre's origin.
         let comp = h.state().session.active_comp().unwrap().clone();
         let layer = comp.layers.first().expect("a new shape layer").clone();
-        assert!(matches!(layer.source, effectcraft_engine::project::LayerSource::Shape), "{mods:?}: no shape layer");
+        assert!(matches!(layer.source, studio_engine::project::LayerSource::Shape), "{mods:?}: no shape layer");
         let at = layer.transform().unwrap().get("position").unwrap().value.components();
         assert!((at[0] - centre[0]).abs() < 1.0 && (at[1] - centre[1]).abs() < 1.0, "{mods:?}: at {at:?}, not {centre:?}");
         let group = layer.props.sub("contents").unwrap().groups().next().unwrap().clone();
@@ -637,7 +637,7 @@ fn fill_options_paint_the_next_shape() {
     h.input_mut().events.push(Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });
     h.run_steps(2);
     let fill = h.state().session.state.shape_tool.fill.clone();
-    assert_eq!((fill.kind, fill.blend, fill.opacity), (PaintKind::Radial, effectcraft_engine::color::BlendMode::Multiply, 40.0));
+    assert_eq!((fill.kind, fill.blend, fill.opacity), (PaintKind::Radial, studio_engine::color::BlendMode::Multiply, 40.0));
     h.input_mut().events.push(Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });
     h.run_steps(3);
     assert!(h.state().auto.find("header.fillOptions.radial").is_none(), "closed");
@@ -647,9 +647,9 @@ fn fill_options_paint_the_next_shape() {
     let g = layer.props.sub("contents").unwrap().groups().next().unwrap().sub("contents").unwrap().clone();
     assert_eq!(g.groups().map(|x| x.match_id.as_str()).collect::<Vec<_>>(), ["ellipse", "gfill"]);
     let gfill = g.groups().find(|x| x.match_id == "gfill").unwrap();
-    let multiply = effectcraft_engine::color::BlendMode::ALL.iter().position(|m| *m == effectcraft_engine::color::BlendMode::Multiply).unwrap() as u32;
-    assert_eq!(gfill.get("type").unwrap().value, effectcraft_keyframe::Value::Enum(1));
-    assert_eq!(gfill.get("blend").unwrap().value, effectcraft_keyframe::Value::Enum(multiply));
+    let multiply = studio_engine::color::BlendMode::ALL.iter().position(|m| *m == studio_engine::color::BlendMode::Multiply).unwrap() as u32;
+    assert_eq!(gfill.get("type").unwrap().value, studio_keyframe::Value::Enum(1));
+    assert_eq!(gfill.get("blend").unwrap().value, studio_keyframe::Value::Enum(multiply));
     assert_eq!(gfill.get("opacity").unwrap().value.as_f64(), 40.0);
 }
 
@@ -789,7 +789,7 @@ fn shape_pen_draws_a_closed_shape_layer() {
     let comp = h.state().session.active_comp().unwrap().clone();
     assert_eq!(comp.layers.len(), n0 + 1);
     let l = &comp.layers[0];
-    assert!(matches!(l.source, effectcraft_engine::project::LayerSource::Shape));
+    assert!(matches!(l.source, studio_engine::project::LayerSource::Shape));
     let g = l.props.sub("contents").unwrap().groups().next().unwrap();
     assert_eq!(g.name, "Shape 1");
     let path = g.sub("contents").unwrap().groups().next().unwrap();
@@ -801,7 +801,7 @@ fn shape_pen_draws_a_closed_shape_layer() {
     let ctx = h.ctx.clone();
     let mut seen = vec![];
     for _ in 0..5 {
-        effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "tool.pen", json!({})).unwrap();
+        studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "tool.pen", json!({})).unwrap();
         seen.push(h.state().ui.tool);
     }
     assert_eq!(seen, vec![Tool::PenAdd, Tool::PenDelete, Tool::PenConvert, Tool::MaskFeather, Tool::Pen]);
@@ -841,7 +841,7 @@ fn motion_path_key_drag_edits_that_key() {
     s.execute("prop.addKey", json!({"layer": box_id.0, "path": "transform/position", "time": 0.0, "value": [100, 100, 0]})).unwrap();
     s.execute("prop.addKey", json!({"layer": box_id.0, "path": "transform/position", "time": 2.0, "value": [500, 100, 0]})).unwrap();
     s.execute("view.snapping", json!({"value": false})).unwrap();
-    s.set_time(effectcraft_engine::time::Tick::from_seconds_f64(1.0));
+    s.set_time(studio_engine::time::Tick::from_seconds_f64(1.0));
     h.run_steps(3);
     assert!(h.state().auto.find(&format!("viewer.motionPath.{}.1", box_id.0)).is_some());
     let from = screen(&h, [500.0, 100.0]);
@@ -855,7 +855,7 @@ fn motion_path_key_drag_edits_that_key() {
 }
 
 /// The first mask path of layer `name`.
-fn mask_path(h: &Harness<'_, EffectcraftApp>, name: &str) -> effectcraft_engine::keyframe::ShapePath {
+fn mask_path(h: &Harness<'_, EffectcraftApp>, name: &str) -> studio_engine::keyframe::ShapePath {
     let l = h.state().session.active_comp().unwrap().layers.iter().find(|l| l.name == name).unwrap().clone();
     l.masks().unwrap().groups().next().unwrap().get("path").unwrap().value.as_path().unwrap().clone()
 }
@@ -990,7 +990,7 @@ fn a_straight_motion_path_has_handles_to_curve_it() {
     s.execute("prop.addKey", json!({"layer": box_id.0, "path": "transform/position", "time": 0.0, "value": [100, 100, 0]})).unwrap();
     s.execute("prop.addKey", json!({"layer": box_id.0, "path": "transform/position", "time": 2.0, "value": [400, 100, 0]})).unwrap();
     s.execute("view.snapping", json!({"value": false})).unwrap();
-    s.set_time(effectcraft_engine::time::Tick::from_seconds_f64(1.0));
+    s.set_time(studio_engine::time::Tick::from_seconds_f64(1.0));
     h.run_steps(3);
     let (out0, in1) = (format!("viewer.motionPath.{}.0.out", box_id.0), format!("viewer.motionPath.{}.1.in", box_id.0));
     assert!(h.state().auto.find(&in1).is_some(), "the second key has a handle");
@@ -1004,7 +1004,7 @@ fn a_straight_motion_path_has_handles_to_curve_it() {
     assert!(!p.keys[0].spatial_auto);
     let t = p.keys[0].spatial_out;
     assert!((t[0] - 50.0).abs() < 2.0 && (t[1] - 150.0).abs() < 2.0, "{t:?}");
-    let mid = p.value_at(effectcraft_engine::time::Tick::from_seconds_f64(1.0)).as_vec3();
+    let mid = p.value_at(studio_engine::time::Tick::from_seconds_f64(1.0)).as_vec3();
     assert!(mid[1] > 130.0, "the path curves: {mid:?}");
 }
 
@@ -1053,7 +1053,7 @@ fn timeline_alt_drag_scales_a_key_group_in_time() {
     let uid = s.active_comp().unwrap().layer(box_id).unwrap().props.prop("transform/opacity").unwrap().uid;
     s.execute("keys.selectAll", json!({"layers": [box_id.0]})).unwrap();
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.reveal.opacity", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.reveal.opacity", json!({})).unwrap();
     h.run_steps(4);
     let mut ks: Vec<Pos2> =
         h.state().auto.query(&format!("timeline.key.{uid}.")).iter().map(|e| pos2(e.rect[0] + e.rect[2] / 2.0, e.rect[1] + e.rect[3] / 2.0)).collect();
@@ -1360,7 +1360,7 @@ fn puppet_pin_keys_show_under_their_pins_in_the_timeline() {
     h.state_mut().ui.tool = Tool::Puppet;
     let pins: Vec<u64> = h.state().auto.previous.iter().filter_map(|e| e.id.strip_prefix("viewer.puppetPin.")?.parse().ok()).filter(|p| *p != bend).collect();
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "anim.reveal", json!({"kind": "keyframes"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "anim.reveal", json!({"kind": "keyframes"})).unwrap();
     h.run_steps(3);
     assert_eq!(pins.len(), 2);
     for pin in &pins {
@@ -1369,7 +1369,7 @@ fn puppet_pin_keys_show_under_their_pins_in_the_timeline() {
         assert_eq!(timeline_keys(&h, pin_keys(&h, id, *pin).0).len(), 1, "its key at 0 s");
     }
     // Moved at 1 s: keyed there, in view.
-    h.state_mut().session.set_time(effectcraft_engine::time::Tick::from_seconds_f64(1.0));
+    h.state_mut().session.set_time(studio_engine::time::Tick::from_seconds_f64(1.0));
     h.run_steps(2);
     let pa = rect(&h, &format!("viewer.puppetPin.{}", pins[0])).center();
     drag(&mut h, pa, pa + vec2(20.0, 10.0));
@@ -1489,7 +1489,7 @@ fn selected_puppet_pins_are_filled_and_unselected_hollow() {
     // Pointer away from the pins (hover enlarges a pin), then look at the painted pins.
     h.input_mut().events.push(Event::PointerMoved(pos2(5.0, 5.0)));
     h.run_steps(2);
-    let col = effectcraft_ui_egui::panels::puppet_tool::pin_color(effectcraft_engine::effects::puppet::PinKind::Position);
+    let col = studio_ui_egui::panels::puppet_tool::pin_color(studio_engine::effects::puppet::PinKind::Position);
     let at = |p: Pos2| circles(&h).into_iter().filter(move |c| c.center.distance(p) < 0.5).collect::<Vec<_>>();
     let dark = |c: egui::Color32| c.r().max(c.g()).max(c.b()) < 0x60;
     let sel = at(pa);
@@ -1710,7 +1710,7 @@ fn command_clicking_a_group_twirl_opens_its_whole_tree() {
     let mut h = harness();
     let id = layer_id(&h, "Box");
     h.state_mut().session.execute("effect.apply", json!({"effect": "Lumetri Color", "layers": [id]})).unwrap();
-    fn walk(g: &effectcraft_engine::project::PropGroup, out: &mut Vec<u64>) {
+    fn walk(g: &studio_engine::project::PropGroup, out: &mut Vec<u64>) {
         for sg in g.groups() {
             out.push(sg.uid);
             walk(sg, out);
@@ -2159,7 +2159,7 @@ fn roto_brush_ctrl_drag_resizes_the_brush() {
     let id = h.state().session.active_comp().unwrap().layers.iter().find(|l| l.name == "Box").unwrap().id.0;
     h.state_mut().session.execute("layer.select", json!({"layers": [id]})).unwrap();
     h.state_mut().ui.layer_panel = Some(id);
-    h.state_mut().show_panel(effectcraft_ui_egui::dock::PanelKind::Layer);
+    h.state_mut().show_panel(studio_ui_egui::dock::PanelKind::Layer);
     h.state_mut().ui.tool = Tool::RotoBrush;
     h.run_steps(3);
     assert!(h.state().auto.find("header.roto.diameter").is_some(), "the Diameter field");
@@ -2174,11 +2174,11 @@ fn roto_brush_ctrl_drag_resizes_the_brush() {
     assert!((dia - 40.0).abs() <= 1.0, "a 20 px drag makes a 40 px brush: {dia}");
     let strokes = |h: &Harness<'_, EffectcraftApp>| {
         let l = h.state().session.active_comp().unwrap().layer(LayerId(id)).unwrap().clone();
-        let roto = effectcraft_engine::effects::roto::ID;
+        let roto = studio_engine::effects::roto::ID;
         let g = l
             .effects()
-            .and_then(|fx| fx.groups().find(|g| matches!(&g.kind, effectcraft_engine::project::GroupKind::Effect { effect } if effect == roto)).cloned());
-        g.map(|g| effectcraft_engine::effects::roto::data(&effectcraft_engine::effects::flatten_params(&g, &mut |p| p.value.clone())).strokes.clone())
+            .and_then(|fx| fx.groups().find(|g| matches!(&g.kind, studio_engine::project::GroupKind::Effect { effect } if effect == roto)).cloned());
+        g.map(|g| studio_engine::effects::roto::data(&studio_engine::effects::flatten_params(&g, &mut |p| p.value.clone())).strokes.clone())
             .unwrap_or_default()
     };
     assert!(strokes(&h).is_empty(), "resizing paints nothing");
@@ -2200,7 +2200,7 @@ fn vertex_tools_edit_motion_path_keyframes() {
     s.execute("prop.addKey", json!({"layer": box_id.0, "path": "transform/position", "time": 0.0, "value": [100, 100, 0]})).unwrap();
     s.execute("prop.addKey", json!({"layer": box_id.0, "path": "transform/position", "time": 2.0, "value": [500, 100, 0]})).unwrap();
     s.execute("view.snapping", json!({"value": false})).unwrap();
-    s.set_time(effectcraft_engine::time::Tick::from_seconds_f64(3.0));
+    s.set_time(studio_engine::time::Tick::from_seconds_f64(3.0));
     let keys = |h: &Harness<'_, EffectcraftApp>| {
         h.state().session.active_comp().unwrap().layer(box_id).unwrap().props.prop("transform/position").unwrap().keys.clone()
     };
@@ -2261,7 +2261,7 @@ fn frame_sits_on_the_physical_pixel_grid() {
 /// Fit, and never magnifies past 100%.
 #[test]
 fn fit_up_to_100_follows_the_maximized_panel() {
-    use effectcraft_ui_egui::dock::PanelKind;
+    use studio_ui_egui::dock::PanelKind;
     let pick = |h: &mut Harness<'_, EffectcraftApp>| {
         let at = rect(h, "viewer.magnification").center();
         click(h, at);
@@ -2518,7 +2518,7 @@ fn unselected_null_keeps_its_outline() {
     assert_eq!(outlines(&h), 0, "an unsoloed null follows solo scope");
     let cid = h.state().session.active_comp_id().unwrap();
     std::sync::Arc::make_mut(&mut h.state_mut().session.project).comp_mut(cid).unwrap().layer_mut(LayerId(solid)).unwrap().out_point =
-        effectcraft_engine::time::Tick::ZERO;
+        studio_engine::time::Tick::ZERO;
     h.run_steps(2);
     assert_eq!(outlines(&h), 0, "an inactive soloed layer still sets solo scope");
     h.state_mut().session.execute("layer.setSwitch", json!({"layers": [n], "switch": "solo", "value": true})).unwrap();

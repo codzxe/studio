@@ -8,7 +8,7 @@
 //! (`[#####]`) that becomes the zero-padded frame number. A relative result is resolved against the
 //! project's folder (or the working directory for unsaved projects).
 
-use effectcraft_time::{FrameRate, Tick};
+use studio_time::{FrameRate, Tick};
 use serde::{Deserialize, Serialize};
 
 use crate::{Comp, ItemId};

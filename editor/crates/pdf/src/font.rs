@@ -89,7 +89,7 @@ impl OutlinePen for Pen {
 
 /// A bundled stand-in for a font that is not embedded, by its PostScript name.
 fn fallback(base: &str) -> &'static [u8] {
-    use effectcraft_text::fonts::*;
+    use studio_text::fonts::*;
     let b = base.to_ascii_lowercase();
     if b.contains("courier") || b.contains("mono") || b.contains("consol") {
         return JETBRAINS_MONO_REGULAR;
@@ -101,18 +101,15 @@ fn fallback(base: &str) -> &'static [u8] {
         || b.contains("minion")
         || b.contains("roman")
     {
-        return NOTO_SERIF_REGULAR;
+        return INSTRUMENT_SERIF;
     }
     if b.contains("bold") || b.contains("black") || b.contains("heavy") {
-        return INTER_BOLD;
+        return INSTRUMENT_SANS_SEMIBOLD;
     }
-    if b.contains("semibold") || b.contains("demi") {
-        return INTER_SEMIBOLD;
+    if b.contains("semibold") || b.contains("demi") || b.contains("medium") {
+        return INSTRUMENT_SANS_MEDIUM;
     }
-    if b.contains("italic") || b.contains("oblique") {
-        return INTER_ITALIC;
-    }
-    INTER_REGULAR
+    INSTRUMENT_SANS_REGULAR
 }
 
 fn sfnt_upem(data: &[u8]) -> f64 {

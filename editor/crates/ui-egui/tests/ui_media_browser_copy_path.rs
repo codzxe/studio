@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use effectcraft_engine::{
+use studio_engine::{
     Session,
     media_browser::{Browser, Entry, VirtualTree},
 };
-use effectcraft_ui_egui::{ControlRequest, EffectcraftApp, control, dock::PanelKind};
+use studio_ui_egui::{ControlRequest, EffectcraftApp, control, dock::PanelKind};
 use egui::{Event, Modifiers, OutputCommand, PointerButton, pos2};
 use egui_kittest::Harness;
 use serde_json::{Value, json};

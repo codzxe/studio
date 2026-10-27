@@ -1,5 +1,5 @@
 [package]
-name = "effectcraft-color"
+name = "studio-color"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

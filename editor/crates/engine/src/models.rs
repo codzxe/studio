@@ -1,5 +1,5 @@
 //! Trained models (Settings ▸ Roto Brush and Settings ▸ Face Tracking; `roto.model*` and
-//! `face.model*` commands): which models the registry offers (`effectcraft_segment::MODELS`, all
+//! `face.model*` commands): which models the registry offers (`studio_segment::MODELS`, all
 //! open source), which are installed (in the `models` folder), installing one from a file or
 //! downloading the official weights (verified against the registry's SHA-256 either way, and kept
 //! with a notice naming their authors and licence), choosing one per task, and loading it in the
@@ -15,8 +15,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use effectcraft_segment::face::FaceModel;
-use effectcraft_segment::{self as seg, Loaded, ModelInfo, Task};
+use studio_segment::face::FaceModel;
+use studio_segment::{self as seg, Loaded, ModelInfo, Task};
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, always, b_p, bad, str_p};

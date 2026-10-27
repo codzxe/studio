@@ -97,7 +97,7 @@ async function main() {
           const host = document.querySelector('[data-testid="editor-host"]');
           if (d.host === null && host !== null) d.host = Math.round(performance.now() - d.t0);
           try {
-            const load = host ? host.querySelector("iframe")?.contentWindow?.effectcraftLoad : null;
+            const load = host ? host.querySelector("iframe")?.contentWindow?.studioEngineLoad : null;
             if (d.wasm === null && load && load.wasmMs !== undefined)
               d.wasm = Math.round(performance.now() - d.t0);
             if (d.ready === null && load && load.readyMs !== undefined)

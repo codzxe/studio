@@ -1,9 +1,9 @@
 //! Obsolete-category effects: Basic 3D (tilt/swivel the layer in a simple perspective space
 //! with an optional specular highlight) and Gaussian Blur (Legacy).
 
-use effectcraft_keyframe::Value;
-use effectcraft_project::ParamUi;
-use effectcraft_raster::gaussian_blur;
+use studio_keyframe::Value;
+use studio_project::ParamUi;
+use studio_raster::gaussian_blur;
 use rayon::prelude::*;
 
 use crate::util::layer_rect;
@@ -133,7 +133,7 @@ pub fn specs() -> Vec<EffectSpec> {
 mod tests {
     use super::*;
     use crate::{EffectEnv, run_fx};
-    use effectcraft_raster::Image;
+    use studio_raster::Image;
 
     fn ramp() -> Image {
         let mut img = Image::new(20, 12);

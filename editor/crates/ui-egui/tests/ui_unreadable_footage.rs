@@ -3,12 +3,12 @@
 
 use std::sync::Arc;
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::{Footage, FootageKind, ItemId, ItemKind};
-use effectcraft_engine::render::FootageSource;
-use effectcraft_render::Image;
-use effectcraft_time::Tick;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_engine::project::{Footage, FootageKind, ItemId, ItemKind};
+use studio_engine::render::FootageSource;
+use studio_render::Image;
+use studio_time::Tick;
+use studio_ui_egui::EffectcraftApp;
 use egui_kittest::Harness;
 use serde_json::json;
 

@@ -1,8 +1,8 @@
 //! Headless checks for the M13.5 long-tail UI: horizontal scrolling of the Timeline outline and
 //! Project panel columns (egui_kittest, UI logic only).
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
 use egui::{Event, Pos2, Rect, pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -43,7 +43,7 @@ fn timeline_outline_columns_scroll_horizontally() {
     // Every column on: wider than the outline pane.
     let ctx = h.ctx.clone();
     for c in ["keys", "comment", "modes", "parent", "in", "out", "duration", "stretch"] {
-        effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.column", json!({"column": c, "visible": true})).unwrap();
+        studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.column", json!({"column": c, "visible": true})).unwrap();
     }
     h.run_steps(3);
     let bar = rect(&h, "timeline.outlineScroll");
@@ -57,7 +57,7 @@ fn timeline_outline_columns_scroll_horizontally() {
     assert!((name0 - name1 - s).abs() < 1.0, "the columns moved by the scroll: {name0} → {name1} ({s})");
     // The scroll is clamped to the overflow and resets when the columns fit again.
     for c in ["keys", "comment", "modes", "parent", "in", "out", "duration", "stretch"] {
-        effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.column", json!({"column": c, "visible": false})).unwrap();
+        studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.column", json!({"column": c, "visible": false})).unwrap();
     }
     h.run_steps(3);
     assert_eq!(h.state().ui.timeline.outline_scroll, 0.0);
@@ -86,9 +86,9 @@ fn layer_style_dialog_adds_previews_and_cancels() {
     h.state_mut().session.execute("layer.select", json!({"layers": [lid]})).unwrap();
     let ctx = h.ctx.clone();
     // Layer ▸ Layer Styles ▸ Drop Shadow (from the menu): adds the style and opens the dialog on it.
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.dropShadow", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.dropShadow", json!({})).unwrap();
     h.run_steps(3);
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::LayerStyles));
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::LayerStyles));
     assert_eq!(styles(&mut h), ["dropShadow"]);
     assert!(h.state().auto.find("dialog.layerStyle.prop.dropShadow/distance").is_some(), "the style's controls are shown");
     // Live preview: the controls edit the real property (here through the same command).
@@ -96,23 +96,23 @@ fn layer_style_dialog_adds_previews_and_cancels() {
     // Pick Stroke in the list (its page: not applied), then Cancel: everything done in the
     // dialog is rolled back. (Dialog buttons are driven through the dialog's functions:
     // kittest pointer events don't reach Foreground areas here.)
-    effectcraft_ui_egui::panels::layer_styles_dialog::select(h.state_mut(), "stroke");
+    studio_ui_egui::panels::layer_styles_dialog::select(h.state_mut(), "stroke");
     h.run_steps(2);
     assert_eq!(h.state().auto.find("dialog.layerStyle.page").unwrap().label, "stroke");
     assert!(h.state().auto.find("dialog.layerStyle.prop.dropShadow/distance").is_none());
     assert!(h.state().auto.find("dialog.layerStyle.cancel").is_some());
-    effectcraft_ui_egui::panels::layer_styles_dialog::finish(h.state_mut(), false);
+    studio_ui_egui::panels::layer_styles_dialog::finish(h.state_mut(), false);
     h.run_steps(2);
     assert!(h.state().dialog.is_none());
     assert!(styles(&mut h).is_empty(), "Cancel removes the style added from the menu");
     // Layer Style Options… on Stroke, add it (the list check box runs layer.style.add), OK keeps it.
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.options", json!({"style": "stroke"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.options", json!({"style": "stroke"})).unwrap();
     h.run_steps(3);
     assert!(h.state().auto.find("dialog.layerStyle.prop.stroke/size").is_none(), "not applied yet");
     h.state_mut().session.execute("layer.style.add", json!({"style": "stroke"})).unwrap();
     h.run_steps(3);
     assert!(h.state().auto.find("dialog.layerStyle.prop.stroke/size").is_some(), "its controls appear");
-    effectcraft_ui_egui::panels::layer_styles_dialog::finish(h.state_mut(), true);
+    studio_ui_egui::panels::layer_styles_dialog::finish(h.state_mut(), true);
     assert!(h.state().dialog.is_none());
     assert_eq!(styles(&mut h), ["stroke"]);
 }
@@ -125,7 +125,7 @@ fn open_drop_shadow(h: &mut Harness<'_, EffectcraftApp>, scale: u32) -> u64 {
     h.state_mut().set_pref("appearance.uiScale", json!(scale)).unwrap();
     h.run_steps(3);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.dropShadow", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.dropShadow", json!({})).unwrap();
     // (Its layout settles a few frames after it opens.)
     h.run_steps(5);
     lid
@@ -203,7 +203,7 @@ fn layer_style_controls_stay_reachable_in_a_small_window() {
         let slider = rect(&h, "dialog.layerStyle.value.dropShadow/noise").left_center();
         drag(&mut h, slider + vec2(8.0, 0.0), slider + vec2(60.0, 0.0));
         assert!(style_value(&mut h, lid, "noise") > 0.0, "narrowed {narrowed}: Noise was dragged (at {at:?})");
-        assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::LayerStyles));
+        assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::LayerStyles));
     }
 }
 
@@ -213,7 +213,7 @@ fn layer_style_dialog_moves_by_its_title() {
     let lid = h.state().session.active_comp().unwrap().layers[0].id.0;
     h.state_mut().session.execute("layer.select", json!({"layers": [lid]})).unwrap();
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.dropShadow", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.style.dropShadow", json!({})).unwrap();
     h.run_steps(3);
     let list0 = rect(&h, "dialog.layerStyle.list.blendingOptions");
     // The title row sits just above the style list.
@@ -222,14 +222,14 @@ fn layer_style_dialog_moves_by_its_title() {
     h.run_steps(2);
     let list1 = rect(&h, "dialog.layerStyle.list.blendingOptions");
     assert!((list1.min - list0.min - vec2(-150.0, 60.0)).length() < 2.0, "the dialog followed the drag: {:?} → {:?}", list0.min, list1.min);
-    assert_eq!(h.state().dialog, Some(effectcraft_ui_egui::Dialog::LayerStyles), "dragging does not close it");
+    assert_eq!(h.state().dialog, Some(studio_ui_egui::Dialog::LayerStyles), "dragging does not close it");
 }
 
 #[test]
 fn project_panel_columns_scroll_horizontally() {
     let mut h = harness(1400.0);
     for c in ["type", "size", "duration", "fps", "path", "comment"] {
-        effectcraft_ui_egui::panels::project::set_column(&mut h.state_mut().ui.project_columns, c, true);
+        studio_ui_egui::panels::project::set_column(&mut h.state_mut().ui.project_columns, c, true);
     }
     h.run_steps(3);
     let bar = rect(&h, "project.hscroll");

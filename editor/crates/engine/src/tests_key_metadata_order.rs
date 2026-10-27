@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use effectcraft_keyframe::Interp;
-use effectcraft_project::LayerId;
+use studio_keyframe::Interp;
+use studio_project::LayerId;
 use serde_json::json;
 
 use crate::{KeyRef, Session, time::FrameRate};

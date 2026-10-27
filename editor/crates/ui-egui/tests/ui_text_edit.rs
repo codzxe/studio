@@ -1,11 +1,11 @@
 //! Headless checks for on-canvas text editing in the viewer and the Character / Paragraph panels
 //! acting on the selection (egui_kittest, UI logic only: no GPU needed).
 
-use effectcraft_engine::Session;
-use effectcraft_engine::commands::text_edit::layer_doc;
-use effectcraft_engine::project::LayerId;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_engine::Session;
+use studio_engine::commands::text_edit::layer_doc;
+use studio_engine::project::LayerId;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui::{Event, Key, Modifiers, PointerButton, Pos2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -74,7 +74,7 @@ fn type_tool_skips_hidden_and_unsoloed_text_layers() {
         s.execute("layer.setSwitch", json!({"layers": [target], "switch": switch, "value": value})).unwrap();
         s.execute("edit.deselectAll", json!({})).unwrap();
         let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(move |_| EffectcraftApp::new(s));
-        h.state_mut().ui.tool = effectcraft_ui_egui::state::Tool::Type;
+        h.state_mut().ui.tool = studio_ui_egui::state::Tool::Type;
         h.run_steps(3);
         let comp = rect(&h, "viewer.comp");
         let k = comp.width() / 640.0;
@@ -87,13 +87,13 @@ fn type_tool_skips_hidden_and_unsoloed_text_layers() {
 fn modal_blocks_background_text_events() {
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_eframe(|_| app());
     h.run_steps(3);
-    h.state_mut().ui.tool = effectcraft_ui_egui::state::Tool::Type;
+    h.state_mut().ui.tool = studio_ui_egui::state::Tool::Type;
     h.run_steps(1);
     let p = rect(&h, "viewer.comp").center();
     click(&mut h, p, Modifiers::NONE);
     type_text(&mut h, "Preserve");
     let before = edited(&h).1;
-    h.state_mut().dialog = Some(effectcraft_ui_egui::Dialog::About);
+    h.state_mut().dialog = Some(studio_ui_egui::Dialog::About);
     h.run_steps(3);
     h.input_mut().events.push(Event::Text("changed".into()));
     h.input_mut().events.push(Event::Paste("pasted".into()));
@@ -106,7 +106,7 @@ fn type_tool_click_type_edit_and_commit() {
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_eframe(|_| app());
     h.state_mut().show_panel(PanelKind::Composition);
     h.run_steps(3);
-    h.state_mut().ui.tool = effectcraft_ui_egui::state::Tool::Type;
+    h.state_mut().ui.tool = studio_ui_egui::state::Tool::Type;
     h.run_steps(1);
     let comp = rect(&h, "viewer.comp");
     // Click: a point text layer in edit mode, caret ready.
@@ -179,7 +179,7 @@ fn clicking_another_panel_stops_typing_into_text() {
         // (Its row moves down as text layers are added.)
         let row = |h: &Harness<'_, EffectcraftApp>| rect(h, &format!("timeline.layer.{solid}.row")).center();
         if type_tool {
-            h.state_mut().ui.tool = effectcraft_ui_egui::state::Tool::Type;
+            h.state_mut().ui.tool = studio_ui_egui::state::Tool::Type;
             h.run_steps(1);
             let at = rect(&h, "viewer.comp").center();
             click(&mut h, at, Modifiers::NONE);
@@ -218,7 +218,7 @@ fn clicking_another_panel_stops_typing_into_text() {
         h.run_steps(2);
         assert_eq!(layer_doc(&h.state().session, LayerId(lid)).unwrap().text, text, "type_tool {type_tool}: the text is unchanged");
         assert!(h.state().playback.playing, "type_tool {type_tool}: Space plays");
-        assert_eq!(type_tool, matches!(h.state().ui.tool, effectcraft_ui_egui::state::Tool::Type), "the tool is kept");
+        assert_eq!(type_tool, matches!(h.state().ui.tool, studio_ui_egui::state::Tool::Type), "the tool is kept");
     }
 }
 
@@ -235,7 +235,7 @@ fn opening_a_formatting_tab_keeps_the_text_selection() {
     h.run_steps(3);
     let ctx = h.ctx.clone();
     // Effects & Presets shown, Properties, Character and Paragraph behind it.
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.workspace", json!({"name": "Undocked Panels"})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "window.workspace", json!({"name": "Undocked Panels"})).unwrap();
     h.state_mut().session.execute("text.edit", json!({"layer": lid})).unwrap();
     h.state_mut().session.execute("text.setSelection", json!({"anchor": 0, "caret": 5})).unwrap();
     h.run_steps(3);
@@ -296,7 +296,7 @@ fn switching_from_type_to_selection_commits_and_moves_text_layer() {
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_eframe(|_| app());
     h.state_mut().show_panel(PanelKind::Composition);
     h.run_steps(3);
-    h.state_mut().ui.tool = effectcraft_ui_egui::state::Tool::Type;
+    h.state_mut().ui.tool = studio_ui_egui::state::Tool::Type;
     h.run_steps(1);
     let comp = rect(&h, "viewer.comp");
     let k = comp.width() / 640.0;
@@ -309,7 +309,7 @@ fn switching_from_type_to_selection_commits_and_moves_text_layer() {
     let original_text = layer_doc(&h.state().session, layer_id).unwrap().text;
     let before = layer_position(&h);
 
-    h.state_mut().ui.tool = effectcraft_ui_egui::state::Tool::Selection;
+    h.state_mut().ui.tool = studio_ui_egui::state::Tool::Selection;
     h.run_steps(2);
     assert!(h.state().session.state.text_edit.is_none(), "leaving the Type tool commits text editing");
     type_text(&mut h, " ignored");
@@ -358,7 +358,7 @@ fn double_click_enters_editing_and_selects_words() {
     let r = rect(&h, "paragraph.right");
     click(&mut h, r.center(), Modifiers::NONE);
     let doc = layer_doc(&h.state().session, LayerId(lid)).unwrap();
-    assert_eq!(doc.justify, effectcraft_engine::keyframe::Justify::Right);
+    assert_eq!(doc.justify, studio_engine::keyframe::Justify::Right);
     for id in
         ["paragraph.indentLeft", "paragraph.spaceBefore", "paragraph.direction", "paragraph.composer", "paragraph.hangingPunctuation", "paragraph.justifyAll"]
     {
@@ -371,7 +371,7 @@ fn type_tool_drag_makes_paragraph_text_with_box_handles() {
     let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_eframe(|_| app());
     h.state_mut().show_panel(PanelKind::Composition);
     h.run_steps(3);
-    h.state_mut().ui.tool = effectcraft_ui_egui::state::Tool::Type;
+    h.state_mut().ui.tool = studio_ui_egui::state::Tool::Type;
     h.run_steps(1);
     let comp = rect(&h, "viewer.comp");
     let a = comp.min + egui::vec2(comp.width() * 0.2, comp.height() * 0.2);
@@ -425,7 +425,7 @@ fn layer_new_text_menu_and_shortcut_start_typing_into_source_text() {
             key(&mut h, Key::T, Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT);
         } else {
             let ctx = h.ctx.clone();
-            effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.newText", json!({})).unwrap();
+            studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "layer.newText", json!({})).unwrap();
             h.run_steps(2);
         }
         let (lid, text, _, _) = edited(&h);
@@ -550,7 +550,7 @@ fn type_tool_selected_text_preference_skips_ineligible_layers_and_falls_back_to_
             "inactive" => {
                 let cid = a.session.active_comp_id().unwrap();
                 std::sync::Arc::make_mut(&mut a.session.project).comp_mut(cid).unwrap().layer_mut(LayerId(original)).unwrap().out_point =
-                    effectcraft_engine::time::Tick::ZERO;
+                    studio_engine::time::Tick::ZERO;
             }
             "unsoloed" => {
                 a.session.execute("layer.setSwitch", json!({"layers": [topmost], "switch": "solo", "value": true})).unwrap();
@@ -561,7 +561,7 @@ fn type_tool_selected_text_preference_skips_ineligible_layers_and_falls_back_to_
             _ => {}
         }
         a.session.state.selected_layers = if exclusion == "unselected" { vec![] } else { vec![LayerId(original)] };
-        a.ui.tool = effectcraft_ui_egui::state::Tool::Type;
+        a.ui.tool = studio_ui_egui::state::Tool::Type;
         let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_eframe(move |_| a);
         h.run_steps(3);
         let comp = rect(&h, "viewer.comp");

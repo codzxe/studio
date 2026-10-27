@@ -2,7 +2,7 @@
 //! Composition Settings, Solid Settings and the command palette (Camera/Light Settings live in `dialogs_3d`).
 
 use crate::i18n::{tr, tr_args};
-use effectcraft_engine::project::{ItemId, ItemKind, LayerId, LayerSource};
+use studio_engine::project::{ItemId, ItemKind, LayerId, LayerSource};
 use egui::{Align2, Color32, Rect, Sense, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -38,7 +38,7 @@ pub struct DialogState {
     /// Settings dialog page id (`general`, `appearance`…).
     pub settings_page: String,
     /// Settings when the dialog opened (Cancel restores them).
-    pub prefs_snapshot: Option<effectcraft_engine::prefs::Prefs>,
+    pub prefs_snapshot: Option<studio_engine::prefs::Prefs>,
     /// Keyboard Shortcuts editor.
     pub shortcuts: super::shortcut_editor::EditorState,
     /// The open parameter form.
@@ -101,7 +101,7 @@ pub fn open_comp_settings_for(app: &mut EffectcraftApp, cid: ItemId) -> Result<(
         adaptive_limit: c.motion_blur_adaptive_limit,
         preserve_frame_rate: c.preserve_frame_rate,
         preserve_resolution: c.preserve_resolution,
-        advanced_3d: c.renderer == effectcraft_engine::project::Renderer::Advanced3D,
+        advanced_3d: c.renderer == studio_engine::project::Renderer::Advanced3D,
         ..Default::default()
     };
     app.dialog_state.editing_existing = true;
@@ -112,7 +112,7 @@ pub fn open_comp_settings_for(app: &mut EffectcraftApp, cid: ItemId) -> Result<(
 
 pub fn open_new_solid(app: &mut EffectcraftApp) -> Result<(), String> {
     let c = app.session.active_comp().ok_or("no composition is open")?;
-    let n = app.session.project.items.values().filter(|i| matches!(i.kind, effectcraft_engine::project::ItemKind::Solid(_))).count() + 1;
+    let n = app.session.project.items.values().filter(|i| matches!(i.kind, studio_engine::project::ItemKind::Solid(_))).count() + 1;
     let d = &mut app.dialog_state;
     d.solid_name = format!("Solid {n}");
     d.solid_size = [c.width, c.height];
@@ -339,10 +339,10 @@ fn about_main(app: &mut EffectcraftApp, ui: &mut egui::Ui, t: &Tokens, cmd: &mut
     ui.label(tr("A clean-room, open-source compositor for motion graphics and visual effects: native on macOS, Windows and Linux, and in the browser."));
     ui.add_space(14.0);
     let all_links: [(Icon, &str, &str, &'static str); 4] = [
-        (Icon::Chat, "Join the community", effectcraft_engine::links::DISCORD, "help.discord"),
-        (Icon::Globe, "Website", effectcraft_engine::links::WEBSITE, "help.website"),
-        (Icon::Sparkle, "Home page", effectcraft_engine::links::APP_PAGE, "help.appPage"),
-        (Icon::Code, "Source code on GitHub", effectcraft_engine::links::GITHUB, "help.github"),
+        (Icon::Chat, "Join the community", studio_engine::links::DISCORD, "help.discord"),
+        (Icon::Globe, "Website", studio_engine::links::WEBSITE, "help.website"),
+        (Icon::Sparkle, "Home page", studio_engine::links::APP_PAGE, "help.appPage"),
+        (Icon::Code, "Source code on GitHub", studio_engine::links::GITHUB, "help.github"),
     ];
     let links: Vec<(Icon, &str, &str, &'static str)> = all_links.into_iter().filter(|l| !l.2.is_empty()).collect();
     for (icon, label, url, c) in links {
@@ -596,7 +596,7 @@ fn palette(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
             .filter(|m| m.enabled)
             .map(|m| (m.path.join(" ▸ ") + " ▸ " + &m.label, m.id, if m.params.is_null() { json!({}) } else { m.params }, m.shortcut.unwrap_or_default()))
             .collect();
-        for c in effectcraft_engine::command_specs().iter().filter(|c| c.menu.is_empty() && c.journal && c.params == "{}") {
+        for c in studio_engine::command_specs().iter().filter(|c| c.menu.is_empty() && c.journal && c.params == "{}") {
             if app.session.is_enabled(c.id) {
                 v.push((c.label.to_string(), c.id.to_string(), json!({}), c.shortcut.unwrap_or("").to_string()));
             }
@@ -673,7 +673,7 @@ mod tests {
 
     fn app() -> (EffectcraftApp, egui::Context) {
         let ctx = egui::Context::default();
-        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        let mut app = EffectcraftApp::new(studio_engine::Session::default());
         crate::theme::install(&ctx, &app.tokens, crate::i18n::language(&app));
         app.session.execute("comp.new", json!({"name": "Main", "width": 640, "height": 360})).unwrap();
         (app, ctx)

@@ -1,5 +1,5 @@
 /**
- * @studio/editor-bridge — the typed `window.effectcraft` bridge
+ * @studio/editor-bridge — the typed `window.studioEngine` bridge
  * (PRODUCT_ARCHITECTURE §6.2) for the frozen EffectCraft editor iframe.
  *
  * Production entry: `import { attachEditorBridge, forwardShortcut } from "@studio/editor-bridge"`.
@@ -49,7 +49,7 @@ export {
   CommandInfoSchema,
   CommandSchemaSchema,
   EditorInfoSchema,
-  EffectcraftLoadInfoSchema,
+  StudioEngineLoadInfoSchema,
   LayerNodeSchema,
   ProjectItemSummarySchema,
   ProjectSummarySchema,
@@ -68,9 +68,9 @@ export {
   type EditorEventName,
   type EditorEventHandler,
   type EditorInfo,
-  type EffectcraftGlobal,
-  type EffectcraftLoad,
-  type EffectcraftWindow,
+  type StudioEngineGlobal,
+  type StudioEngineLoad,
+  type StudioEngineWindow,
   type FileEntry,
   type LayerNode,
   type ProjectItemSummary,

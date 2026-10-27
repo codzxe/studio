@@ -9,7 +9,7 @@
 use crate::i18n::tr;
 use std::sync::Arc;
 
-use effectcraft_engine::project::ItemId;
+use studio_engine::project::ItemId;
 use egui::{Align2, Color32, Rect, Sense, pos2, vec2};
 use serde_json::json;
 
@@ -21,7 +21,7 @@ use crate::theme::Tokens;
 /// A passive viewer's texture: the frame it shows.
 pub enum PassiveTexture {
     Cpu(egui::TextureHandle),
-    Gpu(egui::TextureId, Arc<effectcraft_gpu::DisplayFrame>),
+    Gpu(egui::TextureId, Arc<studio_gpu::DisplayFrame>),
 }
 
 impl PassiveTexture {
@@ -76,7 +76,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: u32, rect: Rect) {
     if id == app.ui.active_viewer {
         // A comp opened earlier this frame (the Project panel) is routed next frame by
         // `on_open_comp`, which needs the comp this viewer showed (to keep it when locked).
-        if app.session.events.iter().any(|e| matches!(e, effectcraft_engine::Event::OpenComp(_))) {
+        if app.session.events.iter().any(|e| matches!(e, studio_engine::Event::OpenComp(_))) {
             ui.ctx().request_repaint();
         } else {
             let c = app.session.active_comp_id().map(|c| c.0);
@@ -102,7 +102,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, id: u32, rect: Rect) {
             app.request_frame(cid, frame, scale);
             let key = app.frame_key(cid, frame, scale);
             if let Some((key, img)) = app.frames.get_for_viewer(&key, app.passive_tex.get(&id).map(|(k, _)| k)) {
-                let dc = effectcraft_engine::viewer::DisplayColor::of(&app.session);
+                let dc = studio_engine::viewer::DisplayColor::of(&app.session);
                 let dkey = display_hash(&super::viewer_tools::display_key(app, dc.is_some()));
                 set_texture(app, &ctx, id, key, img, dc, dkey);
             }
@@ -134,7 +134,7 @@ fn set_texture(
     id: u32,
     key: FrameKey,
     img: FrameImage,
-    dc: Option<effectcraft_engine::viewer::DisplayColor>,
+    dc: Option<studio_engine::viewer::DisplayColor>,
     dkey: u64,
 ) {
     let dc_id = egui::Id::new(("passive-viewer-display", id));

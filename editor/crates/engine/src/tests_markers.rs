@@ -75,7 +75,7 @@ fn layer_markers_convert_and_update_from_source() {
     s.execute("layer.timing", json!({"layers": [l], "start": 1.0})).unwrap();
     s.execute("markers.set", json!({"layer": l, "new": true, "time": 2.0, "comment": "hit"})).unwrap();
     let c = s.active_comp().unwrap();
-    let lay = c.layer(effectcraft_project::LayerId(l)).unwrap();
+    let lay = c.layer(studio_project::LayerId(l)).unwrap();
     assert_eq!(lay.markers[0].time.seconds(), 1.0);
     assert_eq!(s.execute("markers.list", json!({"layer": l})).unwrap()[0]["time"], 2.0);
     // Layer → comp marker keeps the comp time.
@@ -111,7 +111,7 @@ fn layer_markers_convert_and_update_from_source() {
 
 #[test]
 fn precompose_leave_and_move_attributes() {
-    use effectcraft_project::{ItemId, LayerId, LayerSource};
+    use studio_project::{ItemId, LayerId, LayerSource};
     let (mut s, l) = setup();
     s.execute("prop.set", json!({"layer": l, "path": "transform/position", "value": [50, 60]})).unwrap();
     let outer = s.active_comp_id().unwrap();

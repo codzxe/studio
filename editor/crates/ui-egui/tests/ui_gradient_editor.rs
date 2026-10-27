@@ -4,12 +4,12 @@
 //! and Escape change nothing; on an animated gradient only the keyframe at that time changes, with
 //! a warning when its stop counts no longer match a neighbour's.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::keyframe::{Gradient, Value};
-use effectcraft_engine::project::{LayerId, PropGroup};
-use effectcraft_engine::time::Tick;
-use effectcraft_ui_egui::panels::gradient_editor::Track;
-use effectcraft_ui_egui::{Dialog, EffectcraftApp};
+use studio_engine::Session;
+use studio_engine::keyframe::{Gradient, Value};
+use studio_engine::project::{LayerId, PropGroup};
+use studio_engine::time::Tick;
+use studio_ui_egui::panels::gradient_editor::Track;
+use studio_ui_egui::{Dialog, EffectcraftApp};
 use egui::accesskit::Role;
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, pos2};
 use egui_kittest::Harness;
@@ -101,7 +101,7 @@ fn key(h: &mut Harness<'_, EffectcraftApp>, k: Key) {
     h.run_steps(3);
 }
 
-fn colors_prop(h: &Harness<'_, EffectcraftApp>, l: u64, uid: u64) -> effectcraft_engine::project::Property {
+fn colors_prop(h: &Harness<'_, EffectcraftApp>, l: u64, uid: u64) -> studio_engine::project::Property {
     h.state().session.active_comp().unwrap().layer(LayerId(l)).unwrap().props.find(uid).unwrap().clone()
 }
 
@@ -427,12 +427,12 @@ fn edit_gradient_by_id_rejects_bad_targets() {
     for (p, err) in [(json!({"layer": 9999, "prop": colors}), "no layer"), (json!({"layer": l, "prop": opacity}), "not a gradient")] {
         let e = h.state_mut().session.execute_checked("prop.editGradient", p.clone()).expect_err("the engine refuses it");
         assert!(e.to_string().contains(err), "{p}: {e}");
-        let e = effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "prop.editGradient", p.clone()).expect_err("so does the UI");
+        let e = studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "prop.editGradient", p.clone()).expect_err("so does the UI");
         assert!(e.contains(err), "{p}: {e}");
         h.run_steps(2);
         assert_eq!(h.state().dialog, None, "{p}");
     }
-    let r = effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "prop.editGradient", json!({"layer": l, "prop": colors}));
+    let r = studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "prop.editGradient", json!({"layer": l, "prop": colors}));
     assert!(r.is_ok(), "{r:?}");
     h.run_steps(2);
     assert_eq!(h.state().dialog, Some(Dialog::GradientEditor));

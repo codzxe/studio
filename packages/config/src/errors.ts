@@ -111,13 +111,13 @@ export const ERROR_CATALOG = {
     hint: "The quota resets with your billing cycle, or you can upgrade now.",
     retryable: false,
   },
-  /** 500 — worker cannot find the effectcraft-cli binary (operator action needed). */
+  /** 500 — worker cannot find the studio-cli binary (operator action needed). */
   RENDER_CLI_MISSING: {
     message: "The rendering tool isn't available right now.",
     hint: "We're on it. You were not charged for this render.",
     retryable: false,
   },
-  /** 500 — effectcraft-cli ran but exited non-zero; safe to retry (mirrors RENDER_FAILED). */
+  /** 500 — studio-cli ran but exited non-zero; safe to retry (mirrors RENDER_FAILED). */
   RENDER_CLI_FAILED: {
     message: "The render worker couldn't finish this job.",
     hint: "Retry the render, or contact support if it keeps failing. You were not charged.",

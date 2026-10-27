@@ -3,10 +3,10 @@
 //! it on or off per item; renders follow Render Settings ▸ Proxy Use (the viewer uses each
 //! item's switch).
 
-use effectcraft_project::render_queue::{Channels, OutputFormat, OutputModule, PostRenderAction, ProResProfile, RenderQuality, RenderQueueItem, TimeSpan};
-use effectcraft_project::render_templates::TemplateSlot;
-use effectcraft_project::{Footage, ItemId, ItemKind, Proxy};
-use effectcraft_time::Tick;
+use studio_project::render_queue::{Channels, OutputFormat, OutputModule, PostRenderAction, ProResProfile, RenderQuality, RenderQueueItem, TimeSpan};
+use studio_project::render_templates::TemplateSlot;
+use studio_project::{Footage, ItemId, ItemKind, Proxy};
+use studio_time::Tick;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, b_p, bad, has_project_selection, str_p};

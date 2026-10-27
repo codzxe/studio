@@ -1,10 +1,10 @@
 //! Project panel rows: a folder's twirl and an item's label swatch take their own clicks, over
 //! the row's click / drag area (#152).
 
-use effectcraft_engine::Session;
-use effectcraft_engine::color::Label;
-use effectcraft_engine::project::{Footage, FootageKind, ItemId, ItemKind};
-use effectcraft_ui_egui::{Dialog, EffectcraftApp};
+use studio_engine::Session;
+use studio_engine::color::Label;
+use studio_engine::project::{Footage, FootageKind, ItemId, ItemKind};
+use studio_ui_egui::{Dialog, EffectcraftApp};
 use egui::{Color32, Event, Modifiers, Pos2, Rect, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;

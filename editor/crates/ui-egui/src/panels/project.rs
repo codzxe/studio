@@ -9,8 +9,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use effectcraft_engine::color::Label;
-use effectcraft_engine::project::{Item, ItemId, ItemKind};
+use studio_engine::color::Label;
+use studio_engine::project::{Item, ItemId, ItemKind};
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
@@ -28,9 +28,9 @@ fn item_icon(it: &Item) -> Icon {
         ItemKind::Comp(_) => Icon::Comp,
         ItemKind::Solid(_) => Icon::Solid,
         ItemKind::Footage(f) => match f.kind {
-            effectcraft_engine::project::FootageKind::Still | effectcraft_engine::project::FootageKind::Sequence => Icon::Image,
-            effectcraft_engine::project::FootageKind::Audio => Icon::Audio,
-            effectcraft_engine::project::FootageKind::Model => Icon::Cube,
+            studio_engine::project::FootageKind::Still | studio_engine::project::FootageKind::Sequence => Icon::Image,
+            studio_engine::project::FootageKind::Audio => Icon::Audio,
+            studio_engine::project::FootageKind::Model => Icon::Cube,
             _ => Icon::Footage,
         },
     }
@@ -114,7 +114,7 @@ fn sort_by_size(items: &mut [&Item], desc: bool, mut size_of: impl FnMut(&Item) 
 }
 
 /// Where a drop at a row lands: into a folder row, else into the row's folder; `None` row = root.
-pub fn drop_folder(project: &effectcraft_engine::project::Project, row: Option<ItemId>) -> Option<ItemId> {
+pub fn drop_folder(project: &studio_engine::project::Project, row: Option<ItemId>) -> Option<ItemId> {
     let it = project.item(row?)?;
     if it.is_folder() { Some(it.id) } else { it.parent }
 }
@@ -836,7 +836,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                     app.ui.project_open_folders.insert(id.0);
                 }
                 // Footage (not data) and solids open in the Footage panel.
-                ItemKind::Footage(f) if f.kind != effectcraft_engine::project::FootageKind::Data => {
+                ItemKind::Footage(f) if f.kind != studio_engine::project::FootageKind::Data => {
                     actions.push(("footage.open".into(), json!({"item": id.0})))
                 }
                 ItemKind::Solid(_) => actions.push(("footage.open".into(), json!({"item": id.0}))),
@@ -1125,7 +1125,7 @@ pub fn set_column(cols: &mut Vec<String>, key: &str, on: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effectcraft_engine::project::{Footage, Project};
+    use studio_engine::project::{Footage, Project};
 
     struct SizeFiles(std::path::PathBuf);
 
@@ -1133,7 +1133,7 @@ mod tests {
         fn new() -> Self {
             static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!("effectcraft-size-{}-{n}", std::process::id()));
+            let path = std::env::temp_dir().join(format!("studio-size-{}-{n}", std::process::id()));
             std::fs::create_dir(&path).unwrap();
             Self(path)
         }
@@ -1266,8 +1266,8 @@ mod tests {
 
     #[test]
     fn folders_sort_with_items_by_name() {
-        let mut p = effectcraft_engine::project::Project::default();
-        let l = effectcraft_engine::color::Label::Yellow;
+        let mut p = studio_engine::project::Project::default();
+        let l = studio_engine::color::Label::Yellow;
         p.add_item("Solids", l, None, ItemKind::Folder);
         p.add_item("Precomps", l, None, ItemKind::Folder);
         p.add_item("Studio Intro", l, None, ItemKind::Folder);
@@ -1281,8 +1281,8 @@ mod tests {
 
     #[test]
     fn drop_targets_and_column_toggles() {
-        let mut p = effectcraft_engine::project::Project::default();
-        let l = effectcraft_engine::color::Label::Yellow;
+        let mut p = studio_engine::project::Project::default();
+        let l = studio_engine::color::Label::Yellow;
         let f = p.add_item("F", l, None, ItemKind::Folder);
         let inner = p.add_item("I", l, Some(f), ItemKind::Folder);
         assert_eq!(drop_folder(&p, Some(f)), Some(f));

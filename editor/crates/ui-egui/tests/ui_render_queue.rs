@@ -1,9 +1,9 @@
 //! Render Queue panel input: choosing a Render Settings template from an item's menu (#117).
 
-use effectcraft_engine::Session;
-use effectcraft_engine::project::render_queue::RenderQuality;
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_engine::Session;
+use studio_engine::project::render_queue::RenderQuality;
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui::{Event, Modifiers, Pos2, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;

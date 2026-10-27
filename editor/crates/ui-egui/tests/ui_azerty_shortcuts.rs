@@ -1,6 +1,6 @@
 //! Layout collisions must not dispatch both the physical and logical shortcuts.
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
 use egui::{Event, Key, Modifiers, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -74,7 +74,7 @@ fn timeline_shift_p_reveals_instead_of_adding_a_text_animator() {
     app.session.execute("shortcuts.set", json!({"command": "layer.addTextAnimator", "params": {"properties": ["position"]}, "keys": "Shift+P"})).unwrap();
     let mut h = Harness::builder().with_size(vec2(1200.0, 800.0)).build_eframe(|_| app);
     h.run_steps(3);
-    h.state_mut().ui.focused = effectcraft_ui_egui::dock::PanelKind::Timeline;
+    h.state_mut().ui.focused = studio_ui_egui::dock::PanelKind::Timeline;
     h.event(Event::Key { key: Key::P, physical_key: Some(Key::P), pressed: true, repeat: false, modifiers: Modifiers::SHIFT });
     h.step();
     assert!(h.state().ui.timeline.reveal.contains(&"position".to_string()));

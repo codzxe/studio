@@ -4,8 +4,8 @@
 //! Everything runs `footage.*` commands (state in `EditorState::footage_panel`).
 
 use crate::i18n::{tr, tr_args};
-use effectcraft_engine::project::{FootageKind, ItemKind};
-use effectcraft_engine::time::Tick;
+use studio_engine::project::{FootageKind, ItemKind};
+use studio_engine::time::Tick;
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
@@ -39,7 +39,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let (dur, fr) = match &footage {
         Some(f) if f.kind != FootageKind::Still && f.duration > Tick::ZERO => (f.duration, f.frame_rate),
         Some(f) => (Tick::from_seconds_f64(10.0), f.frame_rate),
-        None => (Tick::from_seconds_f64(10.0), effectcraft_engine::time::FrameRate::FPS_30),
+        None => (Tick::from_seconds_f64(10.0), studio_engine::time::FrameRate::FPS_30),
     };
     // Title strip.
     let top = Rect::from_min_size(rect.min, vec2(rect.width(), 24.0));
@@ -121,7 +121,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     p.text(
         pos2(x, bar.center().y),
         Align2::LEFT_CENTER,
-        effectcraft_engine::commands::footage_panel::timecode(Some(&item), fr, fr.frame_at(view.time)),
+        studio_engine::commands::footage_panel::timecode(Some(&item), fr, fr.frame_at(view.time)),
         Tokens::mono(12.0),
         t.timecode,
     );

@@ -8,16 +8,16 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use effectcraft_color::Label;
-use effectcraft_export::render_queue::{
+use studio_color::Label;
+use studio_export::render_queue::{
     AudioOutput, CodecProfile, OpusApplication, OutputFormat, OutputModule, RateControlMode, RenderSettings, TimeSpan, WebmVideoCodec,
 };
-use effectcraft_export::{Job, Progress, export};
-use effectcraft_media::MediaPool;
-use effectcraft_project::{Comp, ItemId, ItemKind, LayerSource, Project, Solid, build};
-use effectcraft_raster::Image;
-use effectcraft_render::{FootageSource, NoFootage};
-use effectcraft_time::{FrameRate, Tick};
+use studio_export::{Job, Progress, export};
+use studio_media::MediaPool;
+use studio_project::{Comp, ItemId, ItemKind, LayerSource, Project, Solid, build};
+use studio_raster::Image;
+use studio_render::{FootageSource, NoFootage};
+use studio_time::{FrameRate, Tick};
 
 const W: u32 = 64;
 const H: u32 = 48;
@@ -40,7 +40,7 @@ fn project(audio: Option<&Path>) -> (Project, ItemId) {
     l.in_point = comp.frame_rate.tick_of(5);
     comp.layers.push(l);
     if let Some(path) = audio {
-        let f = effectcraft_media::probe(path).expect("probe wav");
+        let f = studio_media::probe(path).expect("probe wav");
         let fid = p.add_item("tone.wav", Label::SeaFoam, None, ItemKind::Footage(f));
         let l = build::layer(&mut p, &comp, "tone", LayerSource::Footage { item: fid }, (0, 0), None);
         comp.layers.push(l);
@@ -49,7 +49,7 @@ fn project(audio: Option<&Path>) -> (Project, ItemId) {
     (p, cid)
 }
 
-fn run(p: &Project, cid: ItemId, footage: &dyn FootageSource, om: &OutputModule, path: &Path) -> effectcraft_export::Report {
+fn run(p: &Project, cid: ItemId, footage: &dyn FootageSource, om: &OutputModule, path: &Path) -> studio_export::Report {
     let s = RenderSettings { time_span: TimeSpan::LengthOfComp, ..Default::default() };
     let path = path.to_string_lossy().to_string();
     let job = Job {
@@ -92,8 +92,8 @@ fn check_frame(img: &Image, k: u64, tol: f32) {
 }
 
 /// Import our file through the media layer and check every frame.
-fn decode_movie(path: &Path, tol: f32) -> effectcraft_project::Footage {
-    let f = effectcraft_media::probe(path).expect("probe our output");
+fn decode_movie(path: &Path, tol: f32) -> studio_project::Footage {
+    let f = studio_media::probe(path).expect("probe our output");
     assert_eq!((f.width, f.height), (W, H));
     assert!(f.has_video);
     let n = f.frame_rate.frame_at(f.duration - Tick(1)) + 1;
@@ -268,7 +268,7 @@ fn webm_low_bitrate_opus_modes() {
         om.opus_application = app;
         let path = d.join(name);
         assert!(run(&p, cid, &pool, &om, &path).audio);
-        let f = effectcraft_media::probe(&path).expect("probe");
+        let f = studio_media::probe(&path).expect("probe");
         let s = MediaPool::new().audio_samples(&f, Tick::from_seconds_f64(0.3), 24_000, 48_000);
         let l = rms(s.iter().step_by(2).copied());
         assert!((l - 0.3536).abs() < 0.08, "{name}: left RMS {l}");

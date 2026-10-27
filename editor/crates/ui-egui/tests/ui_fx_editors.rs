@@ -3,11 +3,11 @@
 //! colour map and Reshape's correspondence points (Effect Controls buttons and viewer handles).
 //! Each edit goes through `prop.set` and undoes in one step.
 
-use effectcraft_engine::Session;
-use effectcraft_engine::keyframe::Value as KV;
-use effectcraft_engine::project::{LayerId, Node, PropGroup};
-use effectcraft_ui_egui::EffectcraftApp;
-use effectcraft_ui_egui::dock::PanelKind;
+use studio_engine::Session;
+use studio_engine::keyframe::Value as KV;
+use studio_engine::project::{LayerId, Node, PropGroup};
+use studio_ui_egui::EffectcraftApp;
+use studio_ui_egui::dock::PanelKind;
 use egui::{Event, Pos2, pos2};
 use egui_kittest::Harness;
 use serde_json::json;
@@ -271,7 +271,7 @@ fn mesh_warp_vertices_drag_on_the_viewer() {
     assert_eq!(s(value(&h, l, fx, "mesh")), "");
     let undo_len = h.state().session.history.undo.len();
     drag(&mut h, mid, mid + egui::vec2(40.0, 0.0));
-    let mesh = effectcraft_engine::effects::parse_mesh(&s(value(&h, l, fx, "mesh")));
+    let mesh = studio_engine::effects::parse_mesh(&s(value(&h, l, fx, "mesh")));
     assert_eq!(mesh.len(), 9, "{mesh:?}");
     assert!(mesh[4].0 > 10.0 && mesh[4].1.abs() < 1.0, "the centre vertex moved right: {mesh:?}");
     assert!(mesh.iter().enumerate().all(|(i, o)| i == 4 || *o == (0.0, 0.0)), "{mesh:?}");

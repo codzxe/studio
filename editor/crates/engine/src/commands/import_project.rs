@@ -3,8 +3,8 @@
 //! items land in a folder named after the file; every id is shifted past the current project's
 //! so nothing collides, and the whole import is one undo step.
 
-use effectcraft_color::Label;
-use effectcraft_project::{ItemId, ItemKind, LayerSource, Project, essential};
+use studio_color::Label;
+use studio_project::{ItemId, ItemKind, LayerSource, Project, essential};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, str_p};
@@ -24,7 +24,7 @@ fn read_project(s: &Session, path: &str) -> Result<(Project, Option<String>)> {
     let text = String::from_utf8(bytes).map_err(|_| bad(C, format!("{path} is not a text project file")))?;
     let text = if crate::xml_project::is_xml(&text) { crate::xml_project::from_xml(&text).map_err(EngineError::Other)? } else { text };
     let project = Project::from_json(&text).map_err(|e| bad(C, format!("{path} is not a project Studio can open: {e}")))?;
-    Ok((project, effectcraft_project::saved_by(&text)))
+    Ok((project, studio_project::saved_by(&text)))
 }
 
 /// Footage paths stored in the imported project are resolved against its file
@@ -96,8 +96,8 @@ fn import_project(s: &mut Session, p: &Value) -> Result<Value> {
         .collect();
     let primary = if let [one] = roots.as_slice() { Some(one.0) } else { None };
     let mut warnings = vec![];
-    if let Some(v) = saved_by.as_deref().filter(|v| effectcraft_project::is_newer_version(v, effectcraft_project::APP_VERSION)) {
-        warnings.push(format!("saved by Studio {v}, newer than this version ({})", effectcraft_project::APP_VERSION));
+    if let Some(v) = saved_by.as_deref().filter(|v| studio_project::is_newer_version(v, studio_project::APP_VERSION)) {
+        warnings.push(format!("saved by Studio {v}, newer than this version ({})", studio_project::APP_VERSION));
     }
     if !missing.is_empty() {
         warnings.push(format!("{} footage file{} missing", missing.len(), if missing.len() == 1 { " is" } else { "s are" }));

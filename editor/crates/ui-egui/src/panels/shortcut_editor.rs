@@ -17,7 +17,7 @@
 //! `shortcuts.resetPreset`, `shortcuts.close`.
 
 use crate::i18n::{tr, tr_args};
-use effectcraft_engine::shortcuts::{APP_SCOPE, Bindable, DEFAULT_PRESET, normalize};
+use studio_engine::shortcuts::{APP_SCOPE, Bindable, DEFAULT_PRESET, normalize};
 use egui::{Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -665,7 +665,7 @@ mod tests {
 
     #[test]
     fn the_ok_button_stays_inside_the_dialog_in_a_small_window() {
-        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        let mut app = EffectcraftApp::new(studio_engine::Session::default());
         let ctx = egui::Context::default();
         crate::theme::install(&ctx, &app.tokens, crate::i18n::language(&app));
         open(&mut app);
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn enter_is_ok_except_while_recording_or_renaming() {
         let enter = || egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() };
-        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        let mut app = EffectcraftApp::new(studio_engine::Session::default());
         let ctx = egui::Context::default();
         crate::theme::install(&ctx, &app.tokens, crate::i18n::language(&app));
         // Recording: Enter is the recorded key.
@@ -718,7 +718,7 @@ mod tests {
             frame(app, ctx, vec![]);
             frame(app, ctx, vec![]);
         }
-        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        let mut app = EffectcraftApp::new(studio_engine::Session::default());
         let ctx = egui::Context::default();
         crate::theme::install(&ctx, &app.tokens, crate::i18n::language(&app));
         app.session.execute("shortcuts.preset", json!({"op": "duplicate", "from": DEFAULT_PRESET, "name": "Mine"})).unwrap();
@@ -750,7 +750,7 @@ mod tests {
 
     #[test]
     fn recording_a_shortcut_does_not_also_type_the_key_into_the_field() {
-        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        let mut app = EffectcraftApp::new(studio_engine::Session::default());
         let ctx = egui::Context::default();
         crate::theme::install(&ctx, &app.tokens, crate::i18n::language(&app));
         open(&mut app);

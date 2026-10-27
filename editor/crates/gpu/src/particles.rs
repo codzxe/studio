@@ -1,11 +1,11 @@
-//! GPU particles (`particles.wgsl`): the stepped particle systems of `effectcraft-effects`
-//! ([`effectcraft_effects::psim`]) simulated with one invocation per particle. States stay on
+//! GPU particles (`particles.wgsl`): the stepped particle systems of `studio-effects`
+//! ([`studio_effects::psim`]) simulated with one invocation per particle. States stay on
 //! the GPU as checkpoints (per system key, like the CPU's `SimCache`), so playback advances from
 //! the previous frame's state instead of simulating from layer time 0.
 
 use std::sync::{Mutex, OnceLock};
 
-use effectcraft_effects::psim::{ParticleSystem, SimParticle, SimRequest};
+use studio_effects::psim::{ParticleSystem, SimParticle, SimRequest};
 
 use crate::context::GpuContext;
 
@@ -73,7 +73,7 @@ fn pipes(g: &GpuContext) -> &Pipes {
 
 /// The shader's parameter block.
 fn uniforms(req: &SimRequest, n: u32, s0: u64, prev_n: u32) -> Vec<u8> {
-    let dt = (1.0 / effectcraft_effects::psim::SPS) as f32;
+    let dt = (1.0 / studio_effects::psim::SPS) as f32;
     let mut u = [n, s0 as u32, req.steps as u32, 0];
     let u2;
     let mut f = [[0.0f32; 4]; 6];
@@ -106,7 +106,7 @@ fn uniforms(req: &SimRequest, n: u32, s0: u64, prev_n: u32) -> Vec<u8> {
     out
 }
 
-/// Simulate `req` (see [`effectcraft_effects::psim::ParticleSim`]).
+/// Simulate `req` (see [`studio_effects::psim::ParticleSim`]).
 ///
 /// With deferred readbacks (a browser worker) the state's readback is keyed by the request
 /// ([`crate::deferred`]): the first pass starts it and gets no particles (the pass misses and is

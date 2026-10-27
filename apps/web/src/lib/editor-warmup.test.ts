@@ -82,7 +82,7 @@ function teeableBody(chunks: number[][]) {
   };
 }
 
-const wasmUrl = () => "/editor/effectcraft_web_bg.wasm";
+const wasmUrl = () => "/editor/studio_web_bg.wasm";
 
 afterEach(() => {
   __resetEditorWarmupForTests();
@@ -313,11 +313,11 @@ describe("prefetchEditorDist", () => {
     // The HTTP cache key includes the query string — prefetching
     // /editor/index.html would be a cache MISS for the iframe's /editor/?empty.
     expect(urls).toContain("/editor/?empty");
-    expect(urls).toContain("/editor/effectcraft_web.js");
+    expect(urls).toContain("/editor/studio_web.js");
     expect(urls).toContain("/editor/sw.js");
     // The 48 MB wasm is NEVER a plain prefetch — it goes through
     // warmEditorWasm (progress + the compiled module).
-    expect(urls).not.toContain("/editor/effectcraft_web_bg.wasm");
+    expect(urls).not.toContain("/editor/studio_web_bg.wasm");
   });
 
   it("derives the content-hashed snippet from the dist's sw.js manifest — a rebuilt hash still prefetches (w3-b06)", async () => {
@@ -326,8 +326,8 @@ describe("prefetchEditorDist", () => {
     // `cargo xtask web` with the build's file list) names it — the prefetch
     // reads THAT, so a rebuilt hash (here: a DIFFERENT one than any old pin)
     // is discovered instead of silently 404ing.
-    const rebuiltHash = "effectcraft-web-00000000deadbeef";
-    const swManifest = `const VERSION = "d0049f28f42ad009";\nconst FILES = ["./", "./effectcraft_web.js", "./snippets/${rebuiltHash}/js/host.js", "./worker.js"];\n`;
+    const rebuiltHash = "studio-web-00000000deadbeef";
+    const swManifest = `const VERSION = "d0049f28f42ad009";\nconst FILES = ["./", "./studio_web.js", "./snippets/${rebuiltHash}/js/host.js", "./worker.js"];\n`;
     const fetchImpl = vi.fn(async (url: string) => {
       if (url === "/editor/sw.js") {
         return { ok: true, text: async () => swManifest } as unknown as Response;
@@ -396,11 +396,11 @@ describe("prewarmEditor", () => {
     prewarmEditor(probe);
 
     await vi.waitFor(() =>
-      expect(globalFetch).toHaveBeenCalledWith("/editor/effectcraft_web_bg.wasm"),
+      expect(globalFetch).toHaveBeenCalledWith("/editor/studio_web_bg.wasm"),
     );
     // The dist prefetch files were requested through the same seam.
     await vi.waitFor(() => expect(globalFetch).toHaveBeenCalledWith("/editor/?empty"));
-    expect(globalFetch).toHaveBeenCalledWith("/editor/effectcraft_web.js");
+    expect(globalFetch).toHaveBeenCalledWith("/editor/studio_web.js");
     // The engine download was published for the dist to adopt.
     expect((window as WarmupWindow).__studioEditorWasm).toBeInstanceOf(Promise);
     expect(probe).toHaveBeenCalledTimes(1);

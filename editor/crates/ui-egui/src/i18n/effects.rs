@@ -1,7 +1,7 @@
 //! Effect names in the interface language, keyed by effect id (#821).
 //!
 //! The generated Effect menu, Effect Controls, the Timeline and Effects & Presets draw an
-//! effect's name. The registry (`effectcraft_effects`) keeps the English name: scripts,
+//! effect's name. The registry (`studio_effects`) keeps the English name: scripts,
 //! expressions, MCP and the control channel match on it, and the property tree stores it as the
 //! effect group's name. Only the *drawing* goes through this catalog, so a project file stays
 //! identical whichever interface language opens it.
@@ -522,7 +522,7 @@ const SIMPLIFIED_CHINESE_CATEGORIES: &[(&str, &str)] = &[
 mod tests {
     use super::*;
     use crate::i18n::set_current;
-    use effectcraft_engine::effects;
+    use studio_engine::effects;
 
     /// Every effect in the registry has a row, and that row still carries the registry's English
     /// name. A new effect, a rename or a removal fails here rather than drawing an English name

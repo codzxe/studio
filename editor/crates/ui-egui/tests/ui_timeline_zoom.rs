@@ -2,8 +2,8 @@
 //! (#158); the Time Navigator's ends drag to zoom and `;` toggles frame level / the whole comp
 //! (#159); markers dragged out of the composition marker bin (#275).
 
-use effectcraft_engine::Session;
-use effectcraft_ui_egui::EffectcraftApp;
+use studio_engine::Session;
+use studio_ui_egui::EffectcraftApp;
 use egui::{Event, Modifiers, MouseWheelUnit, Pos2, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -155,11 +155,11 @@ fn semicolon_toggles_frame_level_and_the_whole_comp() {
     h.state_mut().session.execute("time.set", json!({"time": 120.0})).unwrap();
     h.run_steps(3);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFrameToggle", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFrameToggle", json!({})).unwrap();
     h.run_steps(2);
     let (a, b) = visible(&h);
     assert!(a < 120.0 && 120.0 < b && b - a < 1.0, "frame level around the CTI: {a}..{b}");
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFrameToggle", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFrameToggle", json!({})).unwrap();
     assert_eq!(h.state().ui.timeline.pps, None);
 }
 
@@ -170,19 +170,19 @@ fn shift_semicolon_toggles_the_whole_comp_and_the_span_before() {
     h.state_mut().session.execute("time.set", json!({"time": 120.0})).unwrap();
     h.run_steps(3);
     let ctx = h.ctx.clone();
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFrameToggle", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFrameToggle", json!({})).unwrap();
     h.run_steps(2);
     let before = (h.state().ui.timeline.start, h.state().ui.timeline.pps);
     assert!(before.1.is_some());
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFit", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFit", json!({})).unwrap();
     assert_eq!(h.state().ui.timeline.pps, None);
     h.run_steps(2);
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFit", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFit", json!({})).unwrap();
     assert_eq!((h.state().ui.timeline.start, h.state().ui.timeline.pps), before);
     // With nothing to go back to, the whole comp stays.
     h.state_mut().ui.timeline.pps = None;
     h.state_mut().ui.timeline.before_fit = None;
-    effectcraft_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFit", json!({})).unwrap();
+    studio_ui_egui::menus::invoke(h.state_mut(), &ctx, "timeline.zoomFit", json!({})).unwrap();
     assert_eq!(h.state().ui.timeline.pps, None);
 }
 
@@ -373,7 +373,7 @@ fn numpad_star_marks_the_selected_layer() {
         |h: &Harness<'_, EffectcraftApp>| -> Vec<f64> { h.state().session.active_comp().unwrap().markers.iter().map(|m| m.time.seconds()).collect() };
     let layer_markers = |h: &Harness<'_, EffectcraftApp>| -> Vec<f64> {
         let comp = h.state().session.active_comp().unwrap();
-        comp.layer(effectcraft_engine::project::LayerId(layer)).unwrap().markers.iter().map(|m| m.time.seconds()).collect()
+        comp.layer(studio_engine::project::LayerId(layer)).unwrap().markers.iter().map(|m| m.time.seconds()).collect()
     };
     let star = |h: &mut Harness<'_, EffectcraftApp>, time: f64| {
         h.state_mut().session.execute("time.set", json!({"time": time})).unwrap();
@@ -441,7 +441,7 @@ fn the_timeline_follows_the_cti_past_its_edges() {
     // Playback past the visible span pages the view to the CTI.
     let (s3, e3) = visible(&h);
     let t = e3 + 20.0;
-    h.state_mut().session.set_time(effectcraft_engine::time::Tick::from_seconds_f64(t));
+    h.state_mut().session.set_time(studio_engine::time::Tick::from_seconds_f64(t));
     let now = h.ctx.input(|i| i.time);
     h.state_mut().play(now);
     assert!(h.state().playback.playing);

@@ -1,5 +1,5 @@
 //! Home ▸ Templates: the New from Template gallery (engine model in
-//! `effectcraft_engine::templates`). Built-in templates are original projects authored in code;
+//! `studio_engine::templates`). Built-in templates are original projects authored in code;
 //! user templates come from File ▸ Save as Template… (the config Templates folder). Thumbnails
 //! are rendered by our own renderer, one per frame, the first time the gallery shows them.
 //!
@@ -12,7 +12,7 @@
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::json;
 
-use effectcraft_engine::templates::{self, THUMB_H, THUMB_W, TemplateInfo};
+use studio_engine::templates::{self, THUMB_H, THUMB_W, TemplateInfo};
 
 use crate::icons::{self, Icon};
 use crate::theme::Tokens;
@@ -252,7 +252,7 @@ mod tests {
     }
 
     fn app_with_store() -> EffectcraftApp {
-        let s = effectcraft_engine::Session { config: Some(std::sync::Arc::new(effectcraft_engine::config::MemoryConfig::default())), ..Default::default() };
+        let s = studio_engine::Session { config: Some(std::sync::Arc::new(studio_engine::config::MemoryConfig::default())), ..Default::default() };
         EffectcraftApp::new(s)
     }
 
@@ -346,7 +346,7 @@ mod tests {
         p["gamma"] = json!(1.8);
         app.session.execute("view.customRgb", p).unwrap();
         assert_eq!(app.session.prefs.custom_rgb.gamma, 1.8);
-        assert_eq!(app.session.state.viewer.simulation.profile, effectcraft_engine::viewer::SimProfile::MyCustom);
+        assert_eq!(app.session.state.viewer.simulation.profile, studio_engine::viewer::SimProfile::MyCustom);
         let item = crate::menus::menu_items(&app).into_iter().find(|m| m.id == "view.customRgb").unwrap();
         assert_eq!(item.checked, Some(true));
     }

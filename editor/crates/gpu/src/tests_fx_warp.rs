@@ -2,12 +2,12 @@
 //! Emboss, Cartoon) vs the CPU effects (the oracle): direct on a buffer at full and half
 //! resolution, as adjustment, and composited at 8 and 32 bpc.
 
-use effectcraft_effects::MaskShape;
-use effectcraft_keyframe::{ShapePath, Value};
-use effectcraft_project::build::{self, Ids};
-use effectcraft_project::{BitDepth, MaskMode};
-use effectcraft_render::RenderOpts;
-use effectcraft_time::Tick;
+use studio_effects::MaskShape;
+use studio_keyframe::{ShapePath, Value};
+use studio_project::build::{self, Ids};
+use studio_project::{BitDepth, MaskMode};
+use studio_render::RenderOpts;
+use studio_time::Tick;
 
 use crate::tests::{Scene, c, check, compare_at, diff, effect_case, gpu, n, opts, pattern};
 
@@ -86,29 +86,29 @@ fn outlines() -> Vec<MaskShape> {
 /// The effect alone on a buffer with masks (`effect_direct` with the layer's masks).
 fn direct_with_masks(id: &str, vals: &[(&str, Value)]) {
     let Some(g) = gpu() else { return };
-    let spec = effectcraft_effects::find(id).unwrap();
+    let spec = studio_effects::find(id).unwrap();
     let size = [70.0, 44.0];
     let masks = outlines();
     let mut params =
-        effectcraft_effects::Params { values: spec.params.iter().map(|ps| (ps.id.to_string(), effectcraft_effects::default_value(ps, size))).collect() };
+        studio_effects::Params { values: spec.params.iter().map(|ps| (ps.id.to_string(), studio_effects::default_value(ps, size))).collect() };
     for (k, v) in vals {
         params.values.insert(k.to_string(), v.clone());
     }
     for adjustment in [false, true] {
         for scale in [1.0, 0.5] {
             let img = pattern(7, (size[0] * scale) as u32, (size[1] * scale) as u32);
-            let buf = effectcraft_effects::Buf { img, offset: [0.0, 0.0], scale };
-            let ctx = || effectcraft_effects::EffectCtx {
+            let buf = studio_effects::Buf { img, offset: [0.0, 0.0], scale };
+            let ctx = || studio_effects::EffectCtx {
                 params: &params,
                 time: 0.25,
                 layer_size: size,
                 seed: 11,
                 adjustment,
-                env: effectcraft_effects::EffectEnv { masks: &masks, ..Default::default() },
+                env: studio_effects::EffectEnv { masks: &masks, ..Default::default() },
             };
             let cpu = (spec.render)(&ctx(), buf.clone());
             let out =
-                effectcraft_render::Accelerator::effects(g, &[effectcraft_render::FxStep { spec, ctx: ctx() }], &buf, None).expect("the GPU runs the effect");
+                studio_render::Accelerator::effects(g, &[studio_render::FxStep { spec, ctx: ctx() }], &buf, None).expect("the GPU runs the effect");
             assert_eq!((out.offset, out.scale), (cpu.offset, cpu.scale), "{id}: geometry");
             assert!(cpu.img.data != buf.img.data, "{id} {vals:?}: the case changes the picture");
             let d = diff(&cpu.img, &out.img, 1.0 / 255.0);

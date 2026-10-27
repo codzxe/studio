@@ -1,10 +1,10 @@
 //! Shape layer contents ↔ Lottie shape items (`gr`, `rc`, `el`, `sr`, `sh`, `fl`, `st`, `gf`,
 //! `gs`, `tm`, `rp`, `rd`, `op`, `pb`, `tw`, `zz`, `mm`, `tr`).
 
-use effectcraft_color::BlendMode;
-use effectcraft_keyframe::{Gradient, ShapePath, Value};
-use effectcraft_project::build::{self, Ids};
-use effectcraft_project::{Node, PropGroup};
+use studio_color::BlendMode;
+use studio_keyframe::{Gradient, ShapePath, Value};
+use studio_project::build::{self, Ids};
+use studio_project::{Node, PropGroup};
 use serde_json::{Map, Value as Json, json};
 
 use crate::anim::{self, Ex, Im, export_prop, import_prop};

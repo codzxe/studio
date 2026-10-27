@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use effectcraft_segment::Task;
+use studio_segment::Task;
 use serde_json::json;
 
 use crate::Session;
@@ -64,7 +64,7 @@ fn models_are_listed_chosen_and_verified() {
         wait_loaded(&mut s, Task::Mask);
         assert_eq!(s.models.status(Task::Mask).active.as_deref(), Some("mobilesam"));
         // Roto Brush 3.0 (the default version) now segments with it.
-        let params = crate::effects::Params { values: [("version".to_string(), effectcraft_keyframe::Value::Enum(2))].into_iter().collect() };
+        let params = crate::effects::Params { values: [("version".to_string(), studio_keyframe::Value::Enum(2))].into_iter().collect() };
         assert_eq!(crate::effects::roto::model_for(&params).map(|m| m.info().id), Some("mobilesam"));
         s.execute_checked("roto.model.select", json!({"id": "classical"})).unwrap();
         assert!(crate::effects::roto::model_for(&params).is_none());

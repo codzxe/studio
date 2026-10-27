@@ -8,9 +8,9 @@
 //! | PNG / JPEG / TIFF sequence | one file per frame | 8-bit | PNG, TIFF | — |
 //! | OpenEXR sequence | one file per frame | 32-bit float, linear light, premultiplied | yes | — |
 //! | Animated GIF | GIF89a | 256-colour palette per frame (NeuQuant) | 1-bit | — |
-//! | WebM | WebM (Matroska) | VP9 profile 0 (`effectcraft-vp9enc`: key + inter frames, a key frame every 2 s, loop filter), 8-bit 4:2:0; or AV1 (`effectcraft-av1enc`) | VP9 alpha (BlockAdditional) | Opus (`effectcraft-opusenc`: SILK / hybrid / CELT by bitrate and application), 48 kHz |
-//! | HEVC | MP4 (`hvc1`) | `effectcraft-hevcenc` Main / Main 10 4:2:0, I + P slices, bitrate or constant quality, level, key-frame interval | no | AAC-LC (FilmCraft) |
-//! | AV1 | MP4 (`av01`) | `effectcraft-av1enc` Main 8/10-bit 4:2:0, key + inter frames | no | AAC-LC (FilmCraft) |
+//! | WebM | WebM (Matroska) | VP9 profile 0 (`studio-vp9enc`: key + inter frames, a key frame every 2 s, loop filter), 8-bit 4:2:0; or AV1 (`studio-av1enc`) | VP9 alpha (BlockAdditional) | Opus (`studio-opusenc`: SILK / hybrid / CELT by bitrate and application), 48 kHz |
+//! | HEVC | MP4 (`hvc1`) | `studio-hevcenc` Main / Main 10 4:2:0, I + P slices, bitrate or constant quality, level, key-frame interval | no | AAC-LC (FilmCraft) |
+//! | AV1 | MP4 (`av01`) | `studio-av1enc` Main 8/10-bit 4:2:0, key + inter frames | no | AAC-LC (FilmCraft) |
 //! | WAV / AIFF | RIFF WAVE / AIFF (AIFF-C for float) | — | — | PCM 16/24-bit or 32-bit float, mono/stereo (audio only) |
 //!
 //! Every frame goes through [`pipeline`]: the Render Settings overrides (Effects, Solo Switches,
@@ -42,13 +42,13 @@ mod webm_av1;
 
 use web_time::Instant;
 
-use effectcraft_project::render_queue::{AudioOutput, Channels, OutputFormat, OutputModule, RenderLog, RenderQuality, RenderSettings, sequence_path};
-use effectcraft_project::{Comp, ItemId, Project};
-use effectcraft_raster::Image;
-use effectcraft_render::{ExprHost, FootageSource};
+use studio_project::render_queue::{AudioOutput, Channels, OutputFormat, OutputModule, RenderLog, RenderQuality, RenderSettings, sequence_path};
+use studio_project::{Comp, ItemId, Project};
+use studio_raster::Image;
+use studio_render::{ExprHost, FootageSource};
 
-pub use effectcraft_project::render_queue;
-pub use effectcraft_project::render_queue::StorageQuota;
+pub use studio_project::render_queue;
+pub use studio_project::render_queue::StorageQuota;
 pub use out::Sink;
 pub(crate) use pipeline::Cx;
 
@@ -79,7 +79,7 @@ pub struct Job<'a> {
     pub expr: Option<&'a dyn ExprHost>,
     /// GPU compositor: used for every frame of the job when the project's renderer is Mercury
     /// GPU Acceleration (frames it declines render on the CPU).
-    pub accel: Option<&'a dyn effectcraft_render::Accelerator>,
+    pub accel: Option<&'a dyn studio_render::Accelerator>,
     pub comp: ItemId,
     pub settings: &'a RenderSettings,
     pub output: &'a OutputModule,
@@ -158,18 +158,18 @@ pub fn wants_audio(job: &Job) -> bool {
         && match job.output.audio {
             AudioOutput::On => true,
             AudioOutput::Off => false,
-            AudioOutput::Auto => effectcraft_render::audio::comp_has_audio(job.project, job.comp),
+            AudioOutput::Auto => studio_render::audio::comp_has_audio(job.project, job.comp),
         }
 }
 
 /// Run the export (blocking). `progress` is called after every batch; returning `false` cancels.
 pub fn export(job: &Job, progress: &mut dyn FnMut(&Progress) -> bool) -> Result<Report> {
-    effectcraft_render::passes::block_on(export_async(job, progress))
+    studio_render::passes::block_on(export_async(job, progress))
 }
 
 /// [`export`] as a future: with an accelerator whose readbacks are deferred (WebGPU in a
 /// browser worker) every frame renders in passes, awaiting the device in between
-/// ([`effectcraft_render::passes`]); otherwise it never waits and frames render in parallel
+/// ([`studio_render::passes`]); otherwise it never waits and frames render in parallel
 /// batches as in [`export`].
 pub async fn export_async(job: &Job<'_>, progress: &mut dyn FnMut(&Progress) -> bool) -> Result<Report> {
     let t0 = Instant::now();

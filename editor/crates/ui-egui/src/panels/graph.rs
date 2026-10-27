@@ -5,11 +5,11 @@
 //!
 //! Every edit is an engine command (`keys.set`, `keys.setEase`, `keys.select`, `keys.*`).
 
-use effectcraft_engine::KeyRef;
-use effectcraft_engine::keyframe::{Interp, Value, side_ease};
-use effectcraft_engine::project::{Comp, Layer, LayerId, Property};
-use effectcraft_engine::render::EvalCtx;
-use effectcraft_engine::time::Tick;
+use studio_engine::KeyRef;
+use studio_engine::keyframe::{Interp, Value, side_ease};
+use studio_engine::project::{Comp, Layer, LayerId, Property};
+use studio_engine::render::EvalCtx;
+use studio_engine::time::Tick;
 use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use serde_json::json;
 
@@ -112,9 +112,9 @@ fn shown_dims(l: &Layer, pr: &Property) -> usize {
 /// The speed graph's value of dimension `d` at layer time `lt` (one curve for a spatial property).
 fn speed_at(pr: &Property, spatial: bool, d: usize, lt: Tick) -> f64 {
     if spatial {
-        effectcraft_engine::keyframe::speed(&pr.keys, lt, true)
+        studio_engine::keyframe::speed(&pr.keys, lt, true)
     } else {
-        effectcraft_engine::keyframe::velocity(&pr.keys, lt, false).get(d).copied().unwrap_or(0.0).abs()
+        studio_engine::keyframe::velocity(&pr.keys, lt, false).get(d).copied().unwrap_or(0.0).abs()
     }
 }
 

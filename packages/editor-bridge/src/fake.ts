@@ -1,13 +1,13 @@
 /**
  * The deterministic fake editor (task W1-d): an in-memory implementation of the
- * `window.effectcraft` surface for unit tests and E2E fixtures. Also the basis
+ * `window.studioEngine` surface for unit tests and E2E fixtures. Also the basis
  * for the later Playwright mock mode: install the returned object as
- * `window.effectcraft` in a test page and drive it with `script()`.
+ * `window.studioEngine` in a test page and drive it with `script()`.
  *
  * It mirrors the verified upstream semantics, not just the shape:
- * - `request` rejects with plain strings (editor/apps/effectcraft-web/src/api.rs).
+ * - `request` rejects with plain strings (editor/apps/studio-web/src/api.rs).
  * - `addFile` keeps only the last path segment of the name
- *   (`editor/apps/effectcraft-web/src/files.rs` `path_for`).
+ *   (`editor/apps/studio-web/src/files.rs` `path_for`).
  * - `engine.batch` resolves `$N.key` references, rolls back a failing atomic
  *   batch, and folds the run into ONE undo step whose label is the batch label
  *   (editor/crates/engine/src/commands/batch.rs).
@@ -152,7 +152,7 @@ export interface FakeEditorScriptResult {
 }
 
 export interface FakeEditor {
-  // -- the `window.effectcraft` surface (verified in web/index.html) ---------
+  // -- the `window.studioEngine` surface (verified in web/index.html) ---------
   request(method: string, params?: unknown): Promise<unknown>;
   execute(command: string, params?: unknown): Promise<unknown>;
   commands(): Promise<unknown>;
@@ -211,7 +211,7 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
-/** `editor/apps/effectcraft-web/src/files.rs` `path_for`: keep the last path segment. */
+/** `editor/apps/studio-web/src/files.rs` `path_for`: keep the last path segment. */
 export function fakePathFor(name: string): string {
   const base = name.split(/[/\\]/).pop() ?? name;
   return `/${base.length > 0 ? base : "effectcraft-output"}`;
