@@ -118,8 +118,6 @@ packages/*/src/**/*.d.ts
 /tool-results/
 /.local/
 
-# round-13 army scratch (audit reports, manifests, ledger — session artifacts, never product)
-/army/
 
 # W1-A3 junk purge (2026-10-23): backup-file extensions never belong in git
 *.bak
