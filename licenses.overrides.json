@@ -318,6 +318,41 @@
     "esbuild": {
       "license": "MIT",
       "source": "evanw/esbuild (MIT, LICENSE.md in the installed package 0.25.12); build-only devDependency of apps/web — compiles api-src/gateway.ts into the committed api/gateway.mjs artifact, its code never ships to users"
+    },
+    "@ai-sdk/openai-compatible": {
+      "license": "Apache-2.0",
+      "source": "npm package license field (vercel/ai ecosystem, Apache-2.0)",
+      "note": "services/gateway runtime dep — the Vercel AI SDK OpenAI-compatible provider"
+    },
+    "@aws-sdk/client-s3": {
+      "license": "Apache-2.0",
+      "source": "npm package license field (aws/aws-sdk-js-v3, Apache-2.0)",
+      "note": "services/gateway runtime dep — S3 storage driver"
+    },
+    "@aws-sdk/s3-request-presigner": {
+      "license": "Apache-2.0",
+      "source": "npm package license field (aws/aws-sdk-js-v3, Apache-2.0)",
+      "note": "services/gateway runtime dep — signed S3 URLs"
+    },
+    "@vercel/analytics": {
+      "license": "MIT",
+      "source": "npm package license field (vercel/analytics, MIT)",
+      "note": "apps/web runtime dep — added by the Vercel bot PR #43"
+    },
+    "@vercel/speed-insights": {
+      "license": "MIT",
+      "source": "npm package license field (vercel/speed-insights, MIT)",
+      "note": "apps/web runtime dep — added by the Vercel bot PR #43"
+    },
+    "audiobuffer-to-wav": {
+      "license": "MIT",
+      "source": "npm package license field (MIT)",
+      "note": "apps/web runtime dep — the chat's render_audio tool WAV encode"
+    },
+    "tone": {
+      "license": "MIT",
+      "source": "npm package license field (Tonejs/Tone.js, MIT)",
+      "note": "apps/web runtime dep — model-authored music-from-code rendering"
     }
   }
 }

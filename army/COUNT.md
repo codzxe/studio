@@ -46,3 +46,7 @@ Every agent invocation is logged with its delivery state. Honest ledger, no padd
 | - | w1-a29 | W1-audit | S271-S282 worker+infra | DELIVERED (HIGH SSRF Caddyfile, license gate gap, NV key) |
 | - | w1-a30 | W1-audit | S283-S294 CI+docs | DELIVERED (HIGH ghost BUILD_PROMPT, pricing trio) |
 | - | w1-a31 | W1-audit | S295-S300 security docs+root cfg | DELIVERED (4x HIGH pre-pivot ghosts) |
+| - | W3-fix | b01-b06 | credits/billing/apply/purge/merge/chat | 6 DELIVERED + pushed (d96c3af 748ef21 84a7aa0 336d5f2 1f8aadf 4a0db4e) |
+| - | W3-fix | lead A-stream | rename+brand+fonts+purge+sw/wasm+dist | DELIVERED (afd5688 c4546fa 955acb4) |
+| - | W4-verify | gates | web 1726, gateway 380, contracts 272, text 178, pdf 104, cargo check EXIT 0 | PARTIAL: engine-class Rust suites blocked by 9.9G box disk (documented) |
+| - | TOTAL | 31 W1 + 7 W3 + 2 W4 | 40 agent invocations this session (26 full deliveries + 2 file-written + rest killed by backend resets, relaunched to done) | honest count |
