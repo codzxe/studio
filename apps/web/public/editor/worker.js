@@ -9,7 +9,7 @@
 //   it; a frame then takes several passes, awaiting the device's readbacks in between.
 // Messages are handled one at a time, in order: a frame awaiting its readbacks finishes before
 // the next message (a project sync, the next request) is looked at.
-import init, * as ec from "./effectcraft_web.js";
+import init, * as ec from "./studio_web.js";
 
 // Ask for the high-performance GPU on every WebGPU adapter request that does not
 // name a preference: the engine's worker devices send none by default, so
@@ -39,7 +39,7 @@ self.onmessage = (e) => {
   const m = e.data;
   if (m.type === "init") {
     ready = (async () => {
-      await init({ module_or_path: m.module ?? new URL("effectcraft_web_bg.wasm", m.base) });
+      await init({ module_or_path: m.module ?? new URL("studio_web_bg.wasm", m.base) });
       ec.workerInit();
       if (m.frames) await ec.workerFrameInit(!!m.gpu);
       else await ec.workerJobInit(!!m.gpu);

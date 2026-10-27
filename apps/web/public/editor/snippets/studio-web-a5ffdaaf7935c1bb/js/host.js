@@ -9,8 +9,77 @@
 
 // ------------------------------------------------------------------ storage
 
-const DIR = "effectcraft";
-const DB = "effectcraft";
+// Identity: pre-rename data ("effectcraft" OPFS dir / IndexedDB DB) is migrated
+// into the current names on first boot — see `migrateLegacyStorage()`.
+const DIR = "studio";
+const DB = "studio";
+const LEGACY_DIR = "effectcraft";
+const LEGACY_DB = "effectcraft";
+
+// One-shot migration: copy the pre-rename OPFS directory and IndexedDB rows
+// into the current names. Idempotent (a copied entry lands under the new key;
+// re-running only copies what is missing), best-effort (a failure leaves the
+// legacy data intact — the user loses nothing).
+async function migrateLegacyStorage() {
+  try {
+    if (navigator.storage?.getDirectory) {
+      const root = await navigator.storage.getDirectory();
+      try {
+        const old = await root.getDirectoryHandle(LEGACY_DIR, { create: false });
+        const cur = await root.getDirectoryHandle(DIR, { create: true });
+        for await (const [name, h] of old.entries()) {
+          if (h.kind !== "file" || name.startsWith(".") || name.endsWith(".crswap")) continue;
+          if (await cur.getFileHandle(name, { create: false }).then(() => true, () => false)) continue;
+          const f = await h.getFile();
+          const w = await (await cur.getFileHandle(name, { create: true })).createWritable();
+          await w.write(new Uint8Array(await f.arrayBuffer()));
+          await w.close();
+        }
+      } catch (e) {
+        if (e?.name !== "NotFoundError") console.warn("legacy OPFS migration skipped:", e);
+      }
+    }
+    migrateLegacyIDB().catch((e) => console.warn("legacy IDB migration skipped:", e));
+  } catch (e) {
+    console.warn("legacy storage migration skipped:", e);
+  }
+}
+
+function migrateLegacyIDB() {
+  return new Promise((resolve) => {
+    const req = indexedDB.open(LEGACY_DB);
+    req.onupgradeneeded = () => {}; // read-only intent; never upgrade the legacy DB
+    req.onerror = () => resolve();
+    req.onsuccess = () => {
+      const old = req.result;
+      const tx = old.transaction(STORE, "readonly");
+      const getAll = tx.objectStore(STORE).getAll();
+      getAll.onerror = () => { old.close(); resolve(); };
+      getAll.onsuccess = () => {
+        const rows = getAll.result || [];
+        old.close();
+        if (!rows.length) return resolve();
+        const open = indexedDB.open(DB, 1);
+        open.onupgradeneeded = () => open.result.createObjectStore(STORE);
+        open.onerror = () => resolve();
+        open.onsuccess = () => {
+          const cur = open.result;
+          const wtx = cur.transaction(STORE, "readwrite");
+          const store = wtx.objectStore(STORE);
+          for (const row of rows) {
+            if (row && row.key != null) {
+              const g = store.getKey(row.key);
+              g.onsuccess = () => { if (!g.result) store.put(row); };
+            }
+          }
+          wtx.oncomplete = () => { cur.close(); resolve(); };
+          wtx.onerror = () => { cur.close(); resolve(); };
+        };
+      };
+    };
+  });
+}
+migrateLegacyStorage();
 const STORE = "entries";
 let backend = null;
 
@@ -226,7 +295,7 @@ export async function audioStart(workletUrl) {
         c.__ecWorklet = true;
       }
       if (gen !== generation) return;
-      node = new AudioWorkletNode(c, "effectcraft-output", { numberOfInputs: 0, outputChannelCount: [2] });
+      node = new AudioWorkletNode(c, "studio-output", { numberOfInputs: 0, outputChannelCount: [2] });
       node.port.onmessage = (e) => { if (e.data && e.data.underrun) underruns += e.data.underrun; };
       kind = "worklet";
     } catch (e) {
@@ -314,7 +383,7 @@ export function setJobWorkerGpu(on) {
 }
 
 function spawn(base) {
-  const worker = new Worker(new URL("worker.js", base), { type: "module", name: "effectcraft-worker" });
+  const worker = new Worker(new URL("worker.js", base), { type: "module", name: "studio-worker" });
   const w = { worker, files: new Map(), ready: null, gpu: null };
   w.ready = new Promise((res, rej) => {
     worker.onmessage = (e) => {
@@ -410,7 +479,7 @@ export function frameWorkerStart(base, onMessage, gpu) {
   const index = frameWorkers.length;
   let worker;
   try {
-    worker = new Worker(new URL("worker.js", base), { type: "module", name: `effectcraft-frames-${index}` });
+    worker = new Worker(new URL("worker.js", base), { type: "module", name: `studio-frames-${index}` });
   } catch (e) {
     // The constructor throws at once when the page's origin is opaque (a sandboxed iframe). The
     // slot stays, and the failure is reported like a worker that died, after the caller has
@@ -435,13 +504,13 @@ export function frameWorkerStart(base, onMessage, gpu) {
 // ------------------------------------------------------------------ disk cache (OPFS)
 
 // The disk cache (src/diskcache.rs): one file per frame under
-// effectcraft-cache/v1/frames/<32 hex>.ecc and one per layer buffer under
-// effectcraft-cache/v1/layers/<32 hex>.ecc in the Origin Private File System (entry names with a
+// studio-cache/v1/frames/<32 hex>.ecc and one per layer buffer under
+// studio-cache/v1/layers/<32 hex>.ecc in the Origin Private File System (entry names with a
 // `layers/` prefix are layer buffers). Frame workers write them with synchronous access handles
 // (a temporary file moved into place, so a reader never sees a partial entry; every entry also
 // ends in a checksum) and read the layer buffers they prefetch; the page lists, reads and
 // deletes.
-const CACHE_ROOT = "effectcraft-cache";
+const CACHE_ROOT = "studio-cache";
 const CACHE_KINDS = ["frames", "layers", "mattes"];
 const cacheDirHandles = {};
 
@@ -555,7 +624,7 @@ export function frameWorkerPost(index, msg, transfer) {
 // "name/sub/file" → FileSystemFileHandle}. Their handles are remembered in IndexedDB so the
 // folders come back on the next visit (once the browser grants access again).
 const folders = new Map();
-const HANDLES_DB = "effectcraft-handles";
+const HANDLES_DB = "studio-handles";
 const MAX_ENTRIES = 20000;
 
 async function handlesDb() {
@@ -601,7 +670,7 @@ export function browseCanPickFolder() {
 
 /// Ask for a folder; resolves with {name, entries: [{path, dir, size, modified}]}.
 export async function browsePickFolder() {
-  const handle = await self.showDirectoryPicker({ id: "effectcraft-media", mode: "read" });
+  const handle = await self.showDirectoryPicker({ id: "studio-media", mode: "read" });
   return openFolder(handle, true);
 }
 

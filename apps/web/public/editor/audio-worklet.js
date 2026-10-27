@@ -1,7 +1,7 @@
 // Studio audio output (AudioWorklet): plays interleaved stereo blocks posted by the page
 // (src/audio.rs feeds them from the preview mixdown). Running dry plays silence, reported back
 // as underrun frames.
-class EffectcraftOutput extends AudioWorkletProcessor {
+class StudioEngineOutput extends AudioWorkletProcessor {
   constructor() {
     super();
     this.queue = [];
@@ -41,4 +41,4 @@ class EffectcraftOutput extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor("effectcraft-output", EffectcraftOutput);
+registerProcessor("studio-output", StudioEngineOutput);
