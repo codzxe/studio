@@ -108,6 +108,27 @@ export interface ProjectManifest {
 }
 
 /**
+ * `GET /v1/projects/resolve/:slug` (perf): the by-slug resolution that used to
+ * be a client/RSC fan-out (`/v1/me` → per-workspace `GET /v1/projects` pages →
+ * `GET /v1/projects/:id/manifest`, each call re-running the auth+workspace
+ * middleware and better-auth's per-org lookups — ~90 sequential DB roundtrips
+ * on a many-workspace account, a measured 7-10s editor TTFB). ONE auth pass,
+ * ONE joined SQL, the manifest included: everything the editor/history RSC
+ * routes and the client render-resolver need. 404 when the slug matches no
+ * LIVE (non-deleted, non-archived — list-view parity) project across the
+ * caller's own memberships; `?workspace=<id-or-slug>` narrows the search
+ * (the history page's `?ws=` filter).
+ */
+export interface ProjectResolve {
+  readonly workspaceId: Id;
+  readonly workspace: { readonly id: Id; readonly name: string; readonly slug: string };
+  readonly viewerId: Id;
+  readonly role: "owner" | "admin" | "editor" | "viewer";
+  readonly project: Project;
+  readonly manifest: ProjectManifest;
+}
+
+/**
  * `POST /v1/projects/:id/duplicate` (W1-c, §9.1): copies the project and its
  * CURRENT version snapshot into a new project named "<name> (copy)". No body;
  * the response is the new `Project` row (201). Cross-tenant ids are 404

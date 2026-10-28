@@ -2,6 +2,7 @@ import { EmptyState } from "@studio/ui";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 
+import type { ProjectResolve } from "@studio/contracts";
 import { HistoryPageView } from "@/components/versions/history-view";
 import { gatewayCall, isGatewayHttpError } from "@/lib/gateway";
 import { pageMetadata } from "@/lib/seo";
@@ -11,11 +12,15 @@ import { pageMetadata } from "@/lib/seo";
  * the version timeline (labels, §9.3 restore-with-confirmation, diff
  * summaries) and the activity feed, plus the admin-only audit export.
  *
- * RSC resolution mirrors the editor route: the project is resolved by slug
- * across the user's workspaces (`/v1/me → memberships`, then each workspace's
- * project pages matched on `slug` — there is no by-slug gateway endpoint).
- * `?ws=<id or slug>` narrows the scan (the workspace-switcher seam; an
- * explicit-but-unknown `?ws` is a 404, hard rule 3).
+ * RSC resolution: `GET /v1/projects/resolve/:slug` — ONE gateway call (one
+ * auth pass + one joined SQL; the perf round's TTFB fix). The pre-fix code
+ * mirrored the editor route's fan-out (`/v1/me` → per-workspace project
+ * pages → manifest-shaped reads), paying the auth+workspace middleware once
+ * per call — ~90 sequential DB roundtrips on a many-workspace account.
+ * `?ws=<id or slug>` narrows the resolution (the workspace-switcher seam; an
+ * explicit-but-unknown `?ws` 404s, hard rule 3). On a 404 the resolution
+ * falls back to a single `/v1/me` ONLY to keep the honest empty state: a
+ * user with no workspaces at all sees `no-workspace`, everyone else a 404.
  *
  * - Missing project, soft-deleted project, or a project in a workspace this
  *   user is not a member of → `notFound()` (hard rule 3: cross-tenant 404).
@@ -40,19 +45,6 @@ interface MembershipWire {
   readonly role: "owner" | "admin" | "editor" | "viewer";
   readonly workspace: { readonly id: string; readonly name: string; readonly slug: string };
 }
-
-interface ProjectRowWire {
-  readonly id: string;
-  readonly name: string;
-  readonly slug: string;
-  readonly deletedAt: string | null;
-  readonly currentVersionId: string | null;
-  readonly createdBy: string | null;
-}
-
-/** Bounded slug scan: §7.2 pages are 50 rows; 4 pages per workspace is ample. */
-const PROJECT_PAGE_LIMIT = 50;
-const MAX_PROJECT_PAGES = 4;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -90,44 +82,8 @@ function parseMemberships(value: unknown): MembershipWire[] {
 }
 
 /** The calling user's id from `/v1/me` (hub "You" labels); malformed → null. */
-function parseViewerId(value: unknown): string | null {
-  if (!isRecord(value) || !isRecord(value.user)) return null;
-  return typeof value.user.id === "string" ? value.user.id : null;
-}
-
-function parseProjectRow(value: unknown): ProjectRowWire | null {
-  if (!isRecord(value)) return null;
-  if (
-    typeof value.id !== "string" ||
-    typeof value.slug !== "string" ||
-    typeof value.name !== "string"
-  ) {
-    return null;
-  }
-  return {
-    id: value.id,
-    name: value.name,
-    slug: value.slug,
-    deletedAt: typeof value.deletedAt === "string" ? value.deletedAt : null,
-    currentVersionId: typeof value.currentVersionId === "string" ? value.currentVersionId : null,
-    createdBy: typeof value.createdBy === "string" ? value.createdBy : null,
-  };
-}
-
-async function listProjects(
-  workspaceId: string,
-  cursor?: string,
-): Promise<{ items: ProjectRowWire[]; nextCursor: string | null }> {
-  const query = new URLSearchParams({ limit: String(PROJECT_PAGE_LIMIT) });
-  if (cursor !== undefined) query.set("cursor", cursor);
-  const data = await gatewayCall<{ items?: unknown; nextCursor?: unknown }>(
-    `/v1/projects?${query.toString()}`,
-    { workspaceId },
-  );
-  const rows = Array.isArray(data?.items) ? data.items : [];
-  const items = rows.map(parseProjectRow).filter((row): row is ProjectRowWire => row !== null);
-  return { items, nextCursor: typeof data?.nextCursor === "string" ? data.nextCursor : null };
-}
+// (parseViewerId removed with the scan: the resolve endpoint carries
+// `viewerId` directly.)
 
 // ---------------------------------------------------------------------------
 // Resolution
@@ -166,60 +122,43 @@ type HistoryResolution =
  */
 const resolveHistoryProject = cache(
   async (slug: string, ws: string | undefined): Promise<HistoryResolution> => {
-    const me = await gatewayCall<unknown>("/v1/me");
-    const memberships = parseMemberships(me);
-    if (memberships.length === 0) {
-      return { status: "no-workspace" };
-    }
-    const viewerId = parseViewerId(me);
-
-    // ?ws=<id or slug> — the workspace-switcher seam; unknown → 404 (rule 3).
-    const scoped =
-      ws === undefined
-        ? memberships
-        : memberships.filter(
-            (membership) =>
-              membership.workspaceId === ws ||
-              membership.workspace.slug === ws ||
-              membership.workspace.id === ws,
-          );
-    if (ws !== undefined && scoped.length === 0) {
-      return { status: "missing" };
-    }
-
-    for (const membership of scoped) {
-      let cursor: string | undefined = undefined;
-      for (let page = 0; page < MAX_PROJECT_PAGES; page++) {
-        const { items, nextCursor } = await listProjects(membership.workspaceId, cursor);
-        const match = items.find((project) => project.slug === slug && project.deletedAt === null);
-        if (match !== undefined) {
-          return {
-            status: "ready",
-            payload: {
-              project: {
-                id: match.id,
-                name: match.name,
-                slug: match.slug,
-                currentVersionId: match.currentVersionId,
-                createdBy: match.createdBy,
-              },
-              workspaceId: membership.workspaceId,
-              // Gateway re-checks every capability (viewer+ reads, editor+
-              // mutations, admin export); these flags only shape the UI.
-              canEdit:
-                membership.role === "owner" ||
-                membership.role === "admin" ||
-                membership.role === "editor",
-              canExport: membership.role === "owner" || membership.role === "admin",
-              viewerId,
-            },
-          };
+    const query = ws === undefined ? "" : `?workspace=${encodeURIComponent(ws)}`;
+    let resolved: ProjectResolve;
+    try {
+      resolved = await gatewayCall<ProjectResolve>(
+        `/v1/projects/resolve/${encodeURIComponent(slug)}${query}`,
+      );
+    } catch (error) {
+      // Keep the two honest 404 flavors: a user with NO workspaces at all
+      // sees the no-workspace empty state; everyone else a plain 404. This
+      // single `/v1/me` fires only on the resolution-404 path.
+      if (isGatewayHttpError(error) && error.isNotFound) {
+        const me = await gatewayCall<unknown>("/v1/me");
+        if (parseMemberships(me).length === 0) {
+          return { status: "no-workspace" };
         }
-        if (nextCursor === null) break;
-        cursor = nextCursor;
+        return { status: "missing" };
       }
+      throw error;
     }
-    return { status: "missing" };
+    return {
+      status: "ready",
+      payload: {
+        project: {
+          id: resolved.project.id,
+          name: resolved.project.name,
+          slug: resolved.project.slug,
+          currentVersionId: resolved.project.currentVersionId,
+          createdBy: resolved.project.createdBy,
+        },
+        workspaceId: resolved.workspaceId,
+        // Gateway re-checks every capability (viewer+ reads, editor+
+        // mutations, admin export); these flags only shape the UI.
+        canEdit: resolved.role === "owner" || resolved.role === "admin" || resolved.role === "editor",
+        canExport: resolved.role === "owner" || resolved.role === "admin",
+        viewerId: resolved.viewerId,
+      },
+    };
   },
 );
 

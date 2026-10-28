@@ -73,6 +73,27 @@ export interface ProjectsRepo {
   softDelete(workspaceId: WorkspaceId, projectId: string): Promise<Project>;
   manifest(workspaceId: WorkspaceId, projectId: string): Promise<ProjectManifest>;
   /**
+   * By-slug resolution across the USER's own memberships (the perf fix for
+   * the /w/:slug/editor TTFB: replaces the RSC's `/v1/me` + per-workspace
+   * project-page scan + manifest fetch — ~90 sequential DB roundtrips on a
+   * many-workspace account — with ONE joined query). List-view parity: only
+   * LIVE projects (deleted_at NULL, archived FALSE) are resolvable, matching
+   * what the page scan could ever see. `workspaceFilter` (id or slug)
+   * narrows the search (the history page's `?ws=`); a slug living in several
+   * of the user's workspaces resolves most-recently-updated first.
+   */
+  resolveBySlug(
+    userId: string,
+    slug: string,
+    workspaceFilter?: string | null,
+  ): Promise<{
+    workspaceId: WorkspaceId;
+    workspaceName: string;
+    workspaceSlug: string;
+    role: string;
+    project: Project;
+  } | null>;
+  /**
    * W1-c (§M2.5 maxProjects quota): live (non-soft-deleted) project count
    * for a workspace. Archived rows COUNT — archiving hides a project from
    * the default list but its bytes stay in storage, so it keeps consuming
@@ -291,6 +312,45 @@ export function createProjectsRepo(db: StudioDb): ProjectsRepo {
           height: asset.height,
           durationTicks: asset.durationTicks,
         })),
+      };
+    },
+
+    async resolveBySlug(userId, slug, workspaceFilter) {
+      // ONE joined query: memberships × live projects with this slug. The
+      // member_user_idx carries the user cut; organization joins in for the
+      // slug form of the workspace filter (id-or-slug, the history ?ws=).
+      const { projects, member, organization } = tablesFor(db);
+      const [row] = await db
+        .select({
+          project: projects,
+          workspaceId: member.organizationId,
+          workspaceName: organization.name,
+          workspaceSlug: organization.slug,
+          role: member.role,
+        })
+        .from(member)
+        .innerJoin(projects, eq(projects.workspaceId, member.organizationId))
+        .innerJoin(organization, eq(organization.id, member.organizationId))
+        .where(
+          and(
+            eq(member.userId, userId),
+            eq(projects.slug, slug),
+            isNull(projects.deletedAt),
+            eq(projects.archived, false),
+            workspaceFilter
+              ? or(eq(member.organizationId, workspaceFilter), eq(organization.slug, workspaceFilter))
+              : undefined,
+          ),
+        )
+        .orderBy(desc(projects.updatedAt), desc(projects.id))
+        .limit(1);
+      if (row === undefined) return null;
+      return {
+        workspaceId: row.workspaceId,
+        workspaceName: row.workspaceName,
+        workspaceSlug: row.workspaceSlug,
+        role: row.role,
+        project: row.project,
       };
     },
   };

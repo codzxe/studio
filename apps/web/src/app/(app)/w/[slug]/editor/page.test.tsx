@@ -1,6 +1,7 @@
 /**
- * The editor RSC route tests — project resolution by slug, manifest mapping
- * into the host payload, and the 404/redirect semantics (hard rule 3).
+ * The editor RSC route tests — project resolution by slug (ONE
+ * `GET /v1/projects/resolve/:slug` call, the perf round's TTFB fix), manifest
+ * mapping into the host payload, and the 404/redirect semantics (hard rule 3).
  * `@/lib/gateway` is mocked (the seam's own tests cover the unwrap);
  * `EditorHost` is stubbed so this stays an RSC-logic test. The §8.7
  * `EditorCapabilityGate` stays REAL (the page mounts it around the host) —
@@ -94,28 +95,16 @@ function stubWebgl2(context: WebGL2RenderingContext | null) {
 }
 
 // ---------------------------------------------------------------------------
-// Wire fixtures (the real §7.2 shapes)
+// Wire fixture (the real §7.2 ProjectResolve shape the endpoint returns)
 // ---------------------------------------------------------------------------
 
-const MEMBERSHIPS = [
-  {
-    workspaceId: "ws_first",
-    role: "owner",
-    workspace: { id: "ws_first", name: "First Films", slug: "first-films" },
-  },
-  {
-    workspaceId: "ws_second",
-    role: "viewer",
-    workspace: { id: "ws_second", name: "Second Studio", slug: "second-studio" },
-  },
-];
-
-const PROJECT_ROW = {
+const PROJECT_DTO = {
   id: "prj_demo_launch_film",
   workspaceId: "ws_second",
   name: "Launch film",
   slug: "launch-film",
   thumbnailUrl: null,
+  archived: false,
   currentVersionId: "ver_demo_2",
   createdBy: "usr_demo",
   createdAt: "2026-10-20T00:00:00Z",
@@ -149,26 +138,20 @@ const MANIFEST = {
   updatedAt: "2026-10-21T00:00:00Z",
 };
 
-/** Script `/v1/me` + per-workspace project pages + the manifest in one go. */
+/** The `GET /v1/projects/resolve/:slug` answer (everything in ONE call). */
+const RESOLVE = {
+  workspaceId: "ws_second",
+  workspace: { id: "ws_second", name: "Second Studio", slug: "second-studio" },
+  viewerId: "usr_demo",
+  role: "viewer",
+  project: PROJECT_DTO,
+  manifest: MANIFEST,
+};
+
+/** Script the single by-slug resolution call. */
 function scriptHappyPath(): void {
-  gatewayMock.mockImplementation((path: string, init?: { workspaceId?: string }) => {
-    if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-    if (path.startsWith("/v1/projects?")) {
-      // Page 1 in ws_first pages forward once, then the match in ws_second.
-      if (init?.workspaceId === "ws_first" && path.includes("cursor=ws1-page-2")) {
-        return Promise.resolve({ items: [], nextCursor: null });
-      }
-      if (init?.workspaceId === "ws_first") {
-        return Promise.resolve({
-          items: [{ ...PROJECT_ROW, id: "prj_other", slug: "other", workspaceId: "ws_first" }],
-          nextCursor: "ws1-page-2",
-        });
-      }
-      return Promise.resolve({ items: [PROJECT_ROW], nextCursor: null });
-    }
-    if (path === "/v1/projects/prj_demo_launch_film/manifest") {
-      return Promise.resolve(MANIFEST);
-    }
+  gatewayMock.mockImplementation((path: string) => {
+    if (path === "/v1/projects/resolve/launch-film") return Promise.resolve(RESOLVE);
     throw new Error(`unexpected gateway path: ${path}`);
   });
 }
@@ -195,7 +178,7 @@ afterEach(() => {
 });
 
 describe("editor RSC route", () => {
-  it("resolves the project by slug across workspaces and passes the mapped payload", async () => {
+  it("resolves the project by slug in ONE gateway call and passes the mapped payload", async () => {
     scriptHappyPath();
     const page = await renderPage("launch-film");
     render(<>{page}</>);
@@ -231,8 +214,11 @@ describe("editor RSC route", () => {
         sizeBytes: 128,
       },
     ]);
-    // Exactly one manifest fetch — the RSC payload is the single source.
-    expect(gatewayMock.mock.calls.filter(([path]) => path.endsWith("/manifest"))).toHaveLength(1);
+    // THE PERF PIN: the by-slug resolution is exactly ONE gateway call — no
+    // `/v1/me`, no per-workspace project pages, no second manifest fetch (the
+    // pre-fix fan-out paid the auth+workspace middleware once per call).
+    expect(gatewayMock).toHaveBeenCalledTimes(1);
+    expect(gatewayMock).toHaveBeenCalledWith("/v1/projects/resolve/launch-film");
   });
 
   it("blocks the editor host when the browser has neither WebGPU nor WebGL2 (§8.7 gate)", async () => {
@@ -257,29 +243,22 @@ describe("editor RSC route", () => {
     );
   });
 
-  it("404s when no workspace has the slug (cross-tenant = 404, hard rule 3)", async () => {
+  it("404s an unresolvable slug — missing, deleted, archived or foreign are indistinguishable (hard rule 3)", async () => {
     gatewayMock.mockImplementation((path: string) => {
-      if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-      if (path.startsWith("/v1/projects?")) {
-        return Promise.resolve({ items: [], nextCursor: null });
+      if (path === "/v1/projects/resolve/does-not-exist") {
+        return Promise.reject(
+          new GatewayHttpError({
+            status: 404,
+            code: "PROJECT_NOT_FOUND",
+            message: "We couldn't find that project.",
+          }),
+        );
       }
       throw new Error(`unexpected gateway path: ${path}`);
     });
     await expect(renderPage("does-not-exist")).rejects.toThrow("__NOT_FOUND__");
-  });
-
-  it("404s soft-deleted projects", async () => {
-    gatewayMock.mockImplementation((path: string) => {
-      if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-      if (path.startsWith("/v1/projects?")) {
-        return Promise.resolve({
-          items: [{ ...PROJECT_ROW, deletedAt: "2026-10-22T00:00:00Z" }],
-          nextCursor: null,
-        });
-      }
-      throw new Error(`unexpected gateway path: ${path}`);
-    });
-    await expect(renderPage("launch-film")).rejects.toThrow("__NOT_FOUND__");
+    // Cross-tenant probes learn NOTHING: exactly one call, one 404 shape.
+    expect(gatewayMock).toHaveBeenCalledTimes(1);
   });
 
   it("redirects an expired session to /sign-in with a next round-trip", async () => {
@@ -293,26 +272,15 @@ describe("editor RSC route", () => {
     );
   });
 
-  it("404s the gateway's NOT_FOUND (cross-tenant manifest reach)", async () => {
-    gatewayMock.mockImplementation((path: string) => {
-      if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-      if (path.startsWith("/v1/projects?")) {
-        return Promise.resolve({ items: [PROJECT_ROW], nextCursor: null });
-      }
-      return Promise.reject(
-        new GatewayHttpError({ status: 404, code: "NOT_FOUND", message: "Not found." }),
-      );
-    });
-    await expect(renderPage("launch-film")).rejects.toThrow("__NOT_FOUND__");
-  });
-
   it("boots the editor start-from-scratch for a project without snapshots", async () => {
     gatewayMock.mockImplementation((path: string) => {
-      if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-      if (path.startsWith("/v1/projects?")) {
-        return Promise.resolve({ items: [PROJECT_ROW], nextCursor: null });
+      if (path === "/v1/projects/resolve/launch-film") {
+        return Promise.resolve({
+          ...RESOLVE,
+          manifest: { ...MANIFEST, currentVersion: null, assets: [] },
+        });
       }
-      return Promise.resolve({ ...MANIFEST, currentVersion: null, assets: [] });
+      throw new Error(`unexpected gateway path: ${path}`);
     });
     const page = await renderPage("launch-film");
     render(<>{page}</>);

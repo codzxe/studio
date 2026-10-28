@@ -1,10 +1,11 @@
 /**
- * The history RSC route tests — project resolution by slug across the user's
- * workspaces (the editor-route pattern), the `?ws=` switcher seam, the
- * role-derived permission flags handed to the client view, and the
- * 404/redirect/empty-state semantics (hard rule 3; §7.3 sanitized errors).
- * `@/lib/gateway` is mocked (the seam's own tests cover the unwrap);
- * `HistoryPageView` is stubbed so this stays an RSC-logic test.
+ * The history RSC route tests — project resolution by slug through the ONE
+ * `GET /v1/projects/resolve/:slug` call (the perf round's TTFB fix), the
+ * `?ws=` switcher seam, the role-derived permission flags handed to the
+ * client view, and the 404/redirect/empty-state semantics (hard rule 3;
+ * §7.3 sanitized errors). `@/lib/gateway` is mocked (the seam's own tests
+ * cover the unwrap); `HistoryPageView` is stubbed so this stays an
+ * RSC-logic test.
  */
 
 import type { HistoryPageViewProps } from "@/components/versions/history-view";
@@ -59,47 +60,59 @@ function capturedProps(): HistoryPageViewProps {
 }
 
 // ---------------------------------------------------------------------------
-// Wire fixtures (the real §7.2 shapes)
+// Wire fixture (the real §7.2 ProjectResolve shape the endpoint returns)
 // ---------------------------------------------------------------------------
 
-const MEMBERSHIPS = [
-  {
-    workspaceId: "ws_first",
-    role: "viewer",
-    workspace: { id: "ws_first", name: "First Films", slug: "first-films" },
-  },
-  {
+const RESOLVE_BASE = {
+  workspaceId: "ws_second",
+  workspace: { id: "ws_second", name: "Second Studio", slug: "second-studio" },
+  viewerId: "usr_viewer_01",
+  role: "admin",
+  project: {
+    id: "prj_demo_launch_film",
     workspaceId: "ws_second",
-    role: "admin",
-    workspace: { id: "ws_second", name: "Second Studio", slug: "second-studio" },
+    name: "Launch film",
+    slug: "launch-film",
+    thumbnailUrl: null,
+    archived: false,
+    currentVersionId: "ver_demo_2",
+    createdBy: "usr_owner_01",
+    createdAt: "2026-10-20T00:00:00Z",
+    updatedAt: "2026-10-21T00:00:00Z",
+    deletedAt: null,
   },
-];
-
-const PROJECT_ROW = {
-  id: "prj_demo_launch_film",
-  name: "Launch film",
-  slug: "launch-film",
-  deletedAt: null,
-  currentVersionId: "ver_demo_2",
+  manifest: {
+    projectId: "prj_demo_launch_film",
+    currentVersion: null,
+    assets: [],
+    updatedAt: "2026-10-21T00:00:00Z",
+  },
 };
 
-/** Script `/v1/me` + per-workspace project pages in one go. */
-function scriptHappyPath(): void {
-  gatewayMock.mockImplementation((path: string, init?: { workspaceId?: string }) => {
-    if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-    if (path.startsWith("/v1/projects?")) {
-      // ws_first has one forward page, then empty; the match is in ws_second.
-      if (init?.workspaceId === "ws_first" && path.includes("cursor=ws1-page-2")) {
-        return Promise.resolve({ items: [], nextCursor: null });
-      }
-      if (init?.workspaceId === "ws_first") {
-        return Promise.resolve({
-          items: [{ ...PROJECT_ROW, id: "prj_other", slug: "other-film" }],
-          nextCursor: "ws1-page-2",
-        });
-      }
-      return Promise.resolve({ items: [PROJECT_ROW], nextCursor: null });
+/** Script the single by-slug resolution call (overridable fixture pieces). */
+function scriptResolve(overrides: Record<string, unknown> = {}): void {
+  gatewayMock.mockImplementation((path: string) => {
+    if (path.startsWith("/v1/projects/resolve/")) {
+      return Promise.resolve({ ...RESOLVE_BASE, ...overrides });
     }
+    throw new Error(`unexpected gateway path: ${path}`);
+  });
+}
+
+/** Script the resolution 404 + the `/v1/me` fallback the page needs for its
+ * honest empty state (the fallback fires ONLY on the 404 path). */
+function scriptResolve404(memberships: unknown[]): void {
+  gatewayMock.mockImplementation((path: string) => {
+    if (path.startsWith("/v1/projects/resolve/")) {
+      return Promise.reject(
+        new GatewayHttpError({
+          status: 404,
+          code: "PROJECT_NOT_FOUND",
+          message: "We couldn't find that project.",
+        }),
+      );
+    }
+    if (path === "/v1/me") return Promise.resolve({ memberships });
     throw new Error(`unexpected gateway path: ${path}`);
   });
 }
@@ -117,8 +130,8 @@ beforeEach(() => {
 });
 
 describe("history RSC route", () => {
-  it("resolves the project by slug across workspaces (paged scan) and passes the mapped payload", async () => {
-    scriptHappyPath();
+  it("resolves the project by slug in ONE gateway call and passes the mapped payload", async () => {
+    scriptResolve();
     const page = await renderPage("launch-film");
     render(page);
 
@@ -134,24 +147,13 @@ describe("history RSC route", () => {
     expect(props.canExport).toBe(true);
     expect(typeof props.nowIso).toBe("string");
     expect(Number.isNaN(Date.parse(props.nowIso))).toBe(false);
+    // THE PERF PIN: exactly ONE gateway call — no `/v1/me`, no project pages.
+    expect(gatewayMock).toHaveBeenCalledTimes(1);
+    expect(gatewayMock).toHaveBeenCalledWith("/v1/projects/resolve/launch-film");
   });
 
-  it("hands the hub the viewer id (me.user.id) and the project's createdBy (ownerId)", async () => {
-    gatewayMock.mockImplementation((path: string, init?: { workspaceId?: string }) => {
-      if (path === "/v1/me") {
-        return Promise.resolve({
-          user: { id: "usr_viewer_01", name: "Viewer", email: "viewer@example.test" },
-          memberships: MEMBERSHIPS,
-        });
-      }
-      if (path.startsWith("/v1/projects?")) {
-        return Promise.resolve({
-          items: [{ ...PROJECT_ROW, createdBy: "usr_owner_01" }],
-          nextCursor: null,
-        });
-      }
-      throw new Error(`unexpected gateway path: ${path}`);
-    });
+  it("hands the hub the viewer id (resolve.viewerId) and the project's createdBy (ownerId)", async () => {
+    scriptResolve();
     const page = await renderPage("launch-film");
     render(page);
 
@@ -160,28 +162,19 @@ describe("history RSC route", () => {
     expect(props.ownerId).toBe("usr_owner_01");
   });
 
-  it("degrades the hub ids to null when the wire omits them (never a stack)", async () => {
-    scriptHappyPath();
-    const page = await renderPage("launch-film");
-    render(page);
-
-    const props = capturedProps();
-    expect(props.viewerId).toBeNull();
-    expect(props.ownerId).toBeNull();
-  });
-
-  it("narrows the scan to the ?ws workspace (the switcher seam)", async () => {
-    gatewayMock.mockImplementation((path: string, init?: { workspaceId?: string }) => {
-      if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-      if (path.startsWith("/v1/projects?")) {
-        // The viewer workspace is scanned FIRST and matches — ?ws must pin it.
-        if (init?.workspaceId === "ws_first") {
-          return Promise.resolve({
-            items: [{ ...PROJECT_ROW, id: "prj_first", currentVersionId: "ver_first" }],
-            nextCursor: null,
-          });
-        }
-        return Promise.resolve({ items: [PROJECT_ROW], nextCursor: null });
+  it("narrows the resolution to the ?ws workspace (the switcher seam)", async () => {
+    // The ?ws= filter rides the resolve call as ?workspace= (id or slug —
+    // the repo join narrows; the RSC never fans out to /v1/me here).
+    gatewayMock.mockImplementation((path: string) => {
+      if (path === "/v1/projects/resolve/launch-film?workspace=second-studio") {
+        return Promise.resolve(RESOLVE_BASE);
+      }
+      if (path === "/v1/projects/resolve/launch-film") {
+        return Promise.resolve({
+          ...RESOLVE_BASE,
+          workspaceId: "ws_first",
+          workspace: { id: "ws_first", name: "First Films", slug: "first-films" },
+        });
       }
       throw new Error(`unexpected gateway path: ${path}`);
     });
@@ -189,19 +182,20 @@ describe("history RSC route", () => {
     render(page);
     expect(capturedProps().workspaceId).toBe("ws_second");
 
-    // Without ?ws the first membership wins the same slug.
+    // Without ?ws the unfiltered resolution answers.
     const first = await renderPage("launch-film");
     render(first);
     expect(capturedProps().workspaceId).toBe("ws_first");
   });
 
   it("404s an explicit-but-unknown ?ws (hard rule 3)", async () => {
-    gatewayMock.mockImplementation((path: string) => {
-      if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-      throw new Error(`unexpected gateway path: ${path}`);
-    });
+    scriptResolve404([
+      { workspaceId: "ws_first", role: "viewer", workspace: { id: "ws_first", slug: "first-films" } },
+    ]);
     await expect(renderPage("launch-film", "ws_nope")).rejects.toThrow("__NOT_FOUND__");
-    expect(gatewayMock).toHaveBeenCalledTimes(1);
+    // The resolve call plus the one `/v1/me` fallback — nothing else.
+    expect(gatewayMock).toHaveBeenCalledTimes(2);
+    expect(gatewayMock).toHaveBeenCalledWith("/v1/projects/resolve/launch-film?workspace=ws_nope");
   });
 
   it("derives the permission flags per role (viewer reads; editor edits; admin exports)", async () => {
@@ -213,23 +207,8 @@ describe("history RSC route", () => {
     ] as const;
     for (const [role, canEdit, canExport] of roles) {
       lastViewProps = null;
-      gatewayMock.mockImplementation((path: string) => {
-        if (path === "/v1/me") {
-          return Promise.resolve({
-            memberships: [
-              {
-                workspaceId: "ws_only",
-                role,
-                workspace: { id: "ws_only", name: "Only Films", slug: "only-films" },
-              },
-            ],
-          });
-        }
-        if (path.startsWith("/v1/projects?")) {
-          return Promise.resolve({ items: [PROJECT_ROW], nextCursor: null });
-        }
-        throw new Error(`unexpected gateway path: ${path}`);
-      });
+      gatewayMock.mockReset();
+      scriptResolve({ role });
       const page = await renderPage("launch-film");
       render(page);
       const props = capturedProps();
@@ -238,27 +217,12 @@ describe("history RSC route", () => {
     }
   });
 
-  it("404s when no workspace has the slug, and skips soft-deleted projects", async () => {
-    gatewayMock.mockImplementation((path: string) => {
-      if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-      if (path.startsWith("/v1/projects?")) {
-        return Promise.resolve({
-          items: [{ ...PROJECT_ROW, deletedAt: "2026-10-22T00:00:00Z" }],
-          nextCursor: null,
-        });
-      }
-      throw new Error(`unexpected gateway path: ${path}`);
-    });
+  it("404s an unresolvable slug — the resolution-404 path checks /v1/me exactly once", async () => {
+    scriptResolve404([
+      { workspaceId: "ws_first", role: "viewer", workspace: { id: "ws_first", slug: "first-films" } },
+    ]);
     await expect(renderPage("launch-film")).rejects.toThrow("__NOT_FOUND__");
-
-    gatewayMock.mockImplementation((path: string) => {
-      if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-      if (path.startsWith("/v1/projects?")) {
-        return Promise.resolve({ items: [], nextCursor: null });
-      }
-      throw new Error(`unexpected gateway path: ${path}`);
-    });
-    await expect(renderPage("launch-film")).rejects.toThrow("__NOT_FOUND__");
+    expect(gatewayMock).toHaveBeenCalledTimes(2);
   });
 
   it("redirects an expired session to /sign-in with a next round-trip", async () => {
@@ -276,26 +240,16 @@ describe("history RSC route", () => {
     );
   });
 
-  it("404s the gateway's NOT_FOUND on the project scan", async () => {
-    gatewayMock.mockImplementation((path: string) => {
-      if (path === "/v1/me") return Promise.resolve({ memberships: MEMBERSHIPS });
-      return Promise.reject(
-        new GatewayHttpError({ status: 404, code: "NOT_FOUND", message: "Not found." }),
-      );
-    });
-    await expect(renderPage("launch-film")).rejects.toThrow("__NOT_FOUND__");
-  });
-
   it("renders an honest empty state for a user with no workspace", async () => {
-    gatewayMock.mockImplementation((path: string) => {
-      if (path === "/v1/me") return Promise.resolve({ memberships: [] });
-      throw new Error(`unexpected gateway path: ${path}`);
-    });
+    // The resolution 404s, the single /v1/me fallback reveals zero
+    // memberships — the no-workspace empty state, never a 404 (law #1).
+    scriptResolve404([]);
     const page = await renderPage("launch-film");
     render(page);
     expect(screen.getByTestId("history-no-workspace")).toHaveTextContent(
       "You don't belong to a workspace yet.",
     );
     expect(lastViewProps).toBeNull();
+    expect(gatewayMock).toHaveBeenCalledTimes(2);
   });
 });
