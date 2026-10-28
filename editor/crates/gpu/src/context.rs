@@ -870,8 +870,16 @@ impl GpuContext {
             max_buffer_size: limits.max_buffer_size,
             ..wgpu::Limits::default()
         };
+        // NOTE (browser boot): adapters below the WebGPU spec floor (the
+        // stub/software class — requestDevice rejects with e.g. "Limit
+        // 'max_compute_workgroups_per_dimension' value 65535 is better than
+        // allowed 0") reject this request no matter which limits we ask for.
+        // The page's pre-flight (index.html) and the Studio host's probe
+        // (editor-warmup.ts) detect that class BEFORE the engine loads and
+        // boot the proven WebGL2 compatibility mode instead, so on the web
+        // `request()` only ever runs on adapters that can create a device.
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor { label: Some("effectcraft gpu"), required_limits, ..Default::default() })
+            .request_device(&wgpu::DeviceDescriptor { label: Some("studio gpu"), required_limits, ..Default::default() })
             .await
             .map_err(|e| match by_name {
             true => format!("no device on {} (picked by WGPU_ADAPTER_NAME): {e}", adapter.get_info().name),

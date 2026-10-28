@@ -201,6 +201,62 @@
         adapter = null;
       }
       webgpu = adapter != null;
+      // An adapter that ANSWERS is not yet a device: on the stub-adapter class
+      // (driver blocklists, RDP/VM and software WebGPU stacks) the adapter
+      // reports limits below the spec's guaranteed floor — requestDevice
+      // rejects with e.g. "Limit 'max_compute_workgroups_per_dimension' value
+      // 65535 is better than allowed 0" — so the engine's wgpu request (it
+      // asks for the spec defaults explicitly) can never succeed and the boot
+      // would die AFTER the whole engine download. Probe the load-bearing
+      // limit with a throwaway device before committing the boot to WebGPU;
+      // a broken adapter enters the proven compatibility mode NOW — the same
+      // ?gpu=webgl2&nogpuworkers path the device-loss breaker uses: poison the
+      // adapter so eframe takes the WebGL2 backend, arm the marker so reloads
+      // stay in the mode, and normalize the URL so the frame/job workers skip
+      // their GPU too (their devices would die the same way).
+      if (webgpu) {
+        let usable = false;
+        try {
+          const workgroups = Number(adapter.limits?.maxComputeWorkgroupsPerDimension);
+          if (Number.isFinite(workgroups) && workgroups >= 1) {
+            if (typeof adapter.requestDevice !== "function") {
+              // Browsers that ship requestAdapter always ship requestDevice;
+              // shape alone is not evidence of a broken adapter.
+              usable = true;
+            } else {
+              const probe = await adapter.requestDevice({
+                requiredLimits: { maxComputeWorkgroupsPerDimension: 65535 },
+              });
+              probe?.destroy?.();
+              usable = probe != null;
+            }
+          }
+        } catch {
+          usable = false;
+        }
+        if (!usable) {
+          try {
+            sessionStorage.setItem("studio:editor-gpu-fallback", "1");
+          } catch {
+            // Storage blocked: this boot still degrades below.
+          }
+          gpuFallback = true;
+          if (!gpuParams.has("nogpuworkers") && !gpuParams.has("noworkers")) {
+            gpuParams.set("gpu", "webgl2");
+            gpuParams.set("nogpuworkers", "");
+            history.replaceState(null, "", `?${gpuParams}${location.hash}`);
+          }
+          if (gpu && typeof gpu.requestAdapter === "function") {
+            gpu.requestAdapter = () => Promise.resolve(null);
+            gpu.__studioHighPerformance = true;
+          }
+          adapter = null;
+          webgpu = false;
+          console.warn(
+            "Studio: this machine's WebGPU adapter cannot create a device — starting the editor in WebGL2 compatibility mode.",
+          );
+        }
+      }
       const gpuInfo = { webgpu, webgl2: false, renderer: "", software: false, fallback: gpuFallback };
       if (adapter) {
         // Hybrid-graphics visibility: record WHICH adapter the engine got

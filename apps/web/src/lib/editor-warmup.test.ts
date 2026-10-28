@@ -91,6 +91,14 @@ afterEach(() => {
   // "Absent" for the probe is undefined (biome bans `delete`; a
   // defined-undefined property is the honest stub).
   (navigator as Navigator & { gpu?: unknown }).gpu = undefined;
+  // The stub-adapter probe tests arm the compat breaker; the prefetch/prewarm
+  // expectations below read the iframe's document URL through the same marker,
+  // so every test starts on the default (WebGPU) boot path.
+  try {
+    sessionStorage.removeItem("studio:editor-gpu-fallback");
+  } catch {
+    // Storage blocked in this environment — nothing to clear.
+  }
 });
 
 describe("warmEditorWasm", () => {
@@ -221,10 +229,36 @@ describe("warmEditorWasm", () => {
 /** A requestAdapter stub the probe can call (records its options). */
 function adapterStub(result: "adapter" | "null" | "throw") {
   return vi.fn(async (_options?: unknown) => {
-    if (result === "adapter") return { adapter: true };
+    if (result === "adapter") return healthyAdapter();
     if (result === "null") return null;
     throw new Error("WebGPU is unavailable (hardware acceleration off)");
   });
+}
+
+/** A faithful, healthy adapter: spec-floor limits + a working requestDevice
+ * (records its descriptor; the probe must destroy the throwaway device). */
+function healthyAdapter() {
+  return {
+    limits: { maxComputeWorkgroupsPerDimension: 65535 },
+    requestDevice: vi.fn(async (_descriptor?: unknown) => ({
+      destroy: vi.fn(),
+    })),
+  };
+}
+
+/** A stub adapter — requestAdapter ANSWERS but no device can be created
+ * (the "Limit 'max_compute_workgroups_per_dimension' value 65535 is better
+ * than allowed 0" class): either limits below the spec floor
+ * (`workgroups`) or a requestDevice that always rejects (`rejectDevice`). */
+function stubAdapter(behaviour: { readonly workgroups?: number; readonly rejectDevice?: Error } = {}) {
+  return {
+    limits: { maxComputeWorkgroupsPerDimension: behaviour.workgroups ?? 65535 },
+    requestDevice: behaviour.rejectDevice
+      ? vi.fn(async () => {
+          throw behaviour.rejectDevice;
+        })
+      : vi.fn(async (_descriptor?: unknown) => ({ destroy: vi.fn() })),
+  };
 }
 
 /** Define (or clear) navigator.gpu with a given requestAdapter behaviour. */
@@ -237,22 +271,54 @@ function stubNavigatorGpu(requestAdapter?: ReturnType<typeof adapterStub>): void
   });
 }
 
+/** Define navigator.gpu whose requestAdapter resolves a custom adapter. */
+function stubNavigatorGpuAdapter(adapter: unknown): void {
+  stubNavigatorGpu(vi.fn(async () => adapter));
+}
+
+/** The compat-breaker marker (armed by the probe on unusable adapters). */
+const FALLBACK_MARKER = "studio:editor-gpu-fallback";
+
+function markerArmed(): boolean {
+  try {
+    return sessionStorage.getItem(FALLBACK_MARKER) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Mock (or unmock) the probe canvas's WebGL2 floor. */
+function mockWebgl2(context: unknown) {
+  return vi
+    .spyOn(HTMLCanvasElement.prototype, "getContext")
+    .mockReturnValue(context as WebGL2RenderingContext | null);
+}
+
 describe("probeEditorGpu", () => {
-  it("a WebGPU adapter answers: true, and the request asks for the high-performance GPU", async () => {
-    const requestAdapter = adapterStub("adapter");
+  it("a WebGPU adapter answers with a creatable device: true, high-performance GPU, throwaway device destroyed", async () => {
+    const adapter = healthyAdapter();
+    const requestAdapter = vi.fn(async (_options?: unknown) => adapter);
     stubNavigatorGpu(requestAdapter);
+    sessionStorage.removeItem(FALLBACK_MARKER);
 
     await expect(probeEditorGpu()).resolves.toBe(true);
     // The dist's own boot pre-flight asks the same: the high-performance GPU,
     // not the browser's default (power-saving) adapter.
     expect(requestAdapter).toHaveBeenCalledWith({ powerPreference: "high-performance" });
+    // The device probe reproduces the engine's load-bearing limit request —
+    // and never leaks its throwaway device.
+    expect(adapter.requestDevice).toHaveBeenCalledWith({
+      requiredLimits: { maxComputeWorkgroupsPerDimension: 65535 },
+    });
+    const device = await (adapter.requestDevice as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    expect(device?.destroy).toHaveBeenCalled();
+    // A usable adapter never arms the compatibility breaker.
+    expect(markerArmed()).toBe(false);
   });
 
   it("navigator.gpu exists but every adapter request is refused with no WebGL2: false", async () => {
     stubNavigatorGpu(adapterStub("null"));
-    const getContext = vi
-      .spyOn(HTMLCanvasElement.prototype, "getContext")
-      .mockReturnValue(null as WebGL2RenderingContext | null);
+    const getContext = mockWebgl2(null);
 
     await expect(probeEditorGpu()).resolves.toBe(false);
     expect(getContext).toHaveBeenCalledWith("webgl2");
@@ -260,18 +326,14 @@ describe("probeEditorGpu", () => {
 
   it("a throwing adapter request (broken WebGPU) falls through to the WebGL2 floor: true", async () => {
     stubNavigatorGpu(adapterStub("throw"));
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
-      {} as WebGL2RenderingContext | null,
-    );
+    mockWebgl2({});
 
     await expect(probeEditorGpu()).resolves.toBe(true);
   });
 
   it("no navigator.gpu at all (WebGL2-only browser): the floor alone decides", async () => {
     stubNavigatorGpu(undefined);
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
-      {} as WebGL2RenderingContext | null,
-    );
+    mockWebgl2({});
 
     await expect(probeEditorGpu()).resolves.toBe(true);
   });
@@ -283,6 +345,42 @@ describe("probeEditorGpu", () => {
     await expect(probeEditorGpu()).resolves.toBe(true);
     await expect(probeEditorGpu()).resolves.toBe(true);
     expect(requestAdapter).toHaveBeenCalledTimes(1);
+  });
+
+  it("the stub-adapter class (limits below the spec floor — 'allowed 0') arms the compat breaker and falls to WebGL2: true", async () => {
+    // The field report: requestAdapter answers, but the adapter reports
+    // zero compute workgroups — no requestDevice can ever succeed.
+    stubNavigatorGpuAdapter(stubAdapter({ workgroups: 0 }));
+    mockWebgl2({});
+    sessionStorage.removeItem(FALLBACK_MARKER);
+
+    await expect(probeEditorGpu()).resolves.toBe(true);
+    // The editor iframe boots ?gpu=webgl2&nogpuworkers (editorIframeSrc reads
+    // this marker) instead of dying after the engine download.
+    expect(markerArmed()).toBe(true);
+  });
+
+  it("requestDevice rejecting (the '65535 is better than allowed 0' class) arms the breaker and falls to WebGL2: true", async () => {
+    stubNavigatorGpuAdapter(
+      stubAdapter({
+        rejectDevice: new Error(
+          "Limit 'max_compute_workgroups_per_dimension' value 65535 is better than allowed 0.",
+        ),
+      }),
+    );
+    mockWebgl2({});
+    sessionStorage.removeItem(FALLBACK_MARKER);
+
+    await expect(probeEditorGpu()).resolves.toBe(true);
+    expect(markerArmed()).toBe(true);
+  });
+
+  it("the stub-adapter class with WebGL2 also missing: false (the machine truly cannot run the editor)", async () => {
+    stubNavigatorGpuAdapter(stubAdapter({ workgroups: 0 }));
+    mockWebgl2(null);
+    sessionStorage.removeItem(FALLBACK_MARKER);
+
+    await expect(probeEditorGpu()).resolves.toBe(false);
   });
 });
 
@@ -395,9 +493,7 @@ describe("prewarmEditor", () => {
 
     prewarmEditor(probe);
 
-    await vi.waitFor(() =>
-      expect(globalFetch).toHaveBeenCalledWith("/editor/studio_web_bg.wasm"),
-    );
+    await vi.waitFor(() => expect(globalFetch).toHaveBeenCalledWith("/editor/studio_web_bg.wasm"));
     // The dist prefetch files were requested through the same seam.
     await vi.waitFor(() => expect(globalFetch).toHaveBeenCalledWith("/editor/?empty"));
     expect(globalFetch).toHaveBeenCalledWith("/editor/studio_web.js");

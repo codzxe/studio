@@ -80,21 +80,38 @@ export function BootOverlay({ projectName, warmup }: BootOverlayProps) {
   );
 }
 
-/** The dist's boot errors that mean "the browser refused the GPU" (§8.7). */
-const GPU_FAILURE_PATTERN = /webgl2|webgpu|wgpu|surface|getcontext|hardware/i;
+/** The dist's boot errors that mean "the browser refused the GPU" (§8.7) —
+ * including the stub-adapter device-creation class ("no device: Limit
+ * 'max_compute_workgroups_per_dimension' value 65535 is better than allowed 0"),
+ * whose remedy is the WebGL2 compatibility mode rather than the
+ * hardware-acceleration setting. */
+const GPU_FAILURE_PATTERN = /webgl2|webgpu|wgpu|surface|getcontext|hardware|adapter|device|limit/i;
 
 export interface BootFailureBannerProps {
   /** The dist's own error string (helps support; copy stays non-technical). */
   readonly bootError?: string;
   readonly onRetry: () => void;
+  /** Offer the WebGL2 compatibility mode (GPU-class failures only): arm the
+   * breaker and reload the page. Absent — the offer is not rendered (tests,
+   * or any host without the breaker seam). */
+  readonly onCompatibilityMode?: () => void;
+  /** The tab is ALREADY in compatibility mode — the offer would be a no-op. */
+  readonly compatibilityModeActive?: boolean;
 }
 
-export function BootFailureBanner({ bootError, onRetry }: BootFailureBannerProps) {
+export function BootFailureBanner({
+  bootError,
+  onRetry,
+  onCompatibilityMode,
+  compatibilityModeActive = false,
+}: BootFailureBannerProps) {
   // The most common boot failure is the browser refusing every GPU backend
   // with hardware acceleration off (the machine can still have a fine GPU) —
   // name the remedy instead of a bare retry.
   const gpuHint =
     typeof bootError === "string" && bootError.length > 0 && GPU_FAILURE_PATTERN.test(bootError);
+  const offerCompat =
+    gpuHint && !compatibilityModeActive && typeof onCompatibilityMode === "function";
   return (
     <div
       data-testid="editor-boot-failed"
@@ -120,9 +137,21 @@ export function BootFailureBanner({ bootError, onRetry }: BootFailureBannerProps
           </p>
         ) : null}
       </div>
-      <Button onClick={onRetry} data-testid="editor-boot-retry">
-        Retry
-      </Button>
+      <div className="flex flex-col items-center gap-2">
+        <Button onClick={onRetry} data-testid="editor-boot-retry">
+          Retry
+        </Button>
+        {offerCompat ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onCompatibilityMode}
+            data-testid="editor-boot-compat"
+          >
+            Try compatibility mode (WebGL2)
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }

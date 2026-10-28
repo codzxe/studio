@@ -27,7 +27,7 @@
  *   user was going to spend anyway, not on the editor-open critical path.
  */
 
-import { editorIframeSrc } from "./editor-gpu-fallback";
+import { activateGpuFallback, editorIframeSrc } from "./editor-gpu-fallback";
 
 export type EditorWarmupPhase = "idle" | "downloading" | "compiling" | "done" | "failed";
 
@@ -142,20 +142,72 @@ export function warmEditorWasm(
 // `prewarmEditor`, the one entry point the shell mounts once per session.
 // ---------------------------------------------------------------------------
 
-/** A structural stand-in for the not-yet-typed `navigator.gpu`. */
+/** Structural stand-ins for the not-yet-typed `navigator.gpu` (the probe
+ * only touches these three shapes — no @webgpu/types dependency). */
+type GpuDeviceLike = {
+  readonly destroy?: (() => void) | undefined;
+};
+type GpuAdapterLike = {
+  readonly limits?: Readonly<Record<string, number>> | undefined;
+  readonly requestDevice?:
+    | ((descriptor?: { readonly requiredLimits?: Record<string, number> }) =>
+        | Promise<GpuDeviceLike | null>
+        | undefined)
+    | undefined;
+};
 type GpuLike = {
   readonly requestAdapter?: (options?: {
     readonly powerPreference?: "low-power" | "high-performance" | undefined;
-  }) => Promise<unknown>;
+  }) => Promise<GpuAdapterLike | null> | undefined;
 };
+
+/**
+ * Can a device actually be CREATED on this adapter? An adapter that merely
+ * ANSWERS `requestAdapter` is not proof the engine can run: on the
+ * stub-adapter class (driver blocklists, RDP/VM and software WebGPU stacks)
+ * the adapter reports limits below the spec's guaranteed defaults — the
+ * field report is `requestDevice` rejecting with "Limit
+ * 'max_compute_workgroups_per_dimension' value 65535 is better than allowed
+ * 0" — so the engine's device request (wgpu asks for the full spec-default
+ * limit set explicitly) can never succeed and the boot dies after the whole
+ * engine download. The probe reproduces the load-bearing member of that
+ * exact request with a throwaway device: one create + destroy on healthy
+ * machines, a decisive rejection on broken ones.
+ */
+async function webgpuDeviceUsable(adapter: GpuAdapterLike): Promise<boolean> {
+  try {
+    // The spec floor: an adapter reporting zero compute workgroups cannot
+    // dispatch a single kernel — nothing above it matters.
+    const workgroups = Number(adapter.limits?.maxComputeWorkgroupsPerDimension);
+    if (!Number.isFinite(workgroups) || workgroups < 1) return false;
+    if (typeof adapter.requestDevice !== "function") {
+      // Browsers that ship requestAdapter always ship requestDevice; shape
+      // alone is not evidence of a broken adapter — don't downgrade on it.
+      return true;
+    }
+    const probe = await adapter.requestDevice({
+      requiredLimits: { maxComputeWorkgroupsPerDimension: 65535 },
+    });
+    probe?.destroy?.();
+    return probe != null;
+  } catch {
+    // Any rejection — including the "better than allowed" spec-floor class —
+    // is exactly what the engine's own request would hit.
+    return false;
+  }
+}
 
 /**
  * Browser capability probe (§8.7, moved from the capability gate so the gate
  * and the prewarm share ONE verdict — and ONE adapter request — per page
- * session): a working WebGPU adapter (the dist's preferred backend, asked for
- * the high-performance GPU — the same request its own boot pre-flight makes)
- * or the WebGL2 floor. Pure DOM read — no side effects beyond the throwaway
- * probe canvas.
+ * session): a USABLE WebGPU device (the dist's preferred backend, asked for
+ * the high-performance GPU — the same request its own boot pre-flight makes
+ * — plus the device-creation probe above) or the WebGL2 floor. An adapter
+ * that answers but cannot create a device arms the tab-scoped compatibility
+ * breaker (the same marker the device-loss recovery arms) so the editor
+ * iframe boots `?gpu=webgl2&nogpuworkers` instead of failing after the
+ * engine download; the WebGL2 floor below still decides whether the machine
+ * can run the editor at all.
  */
 async function probeEditorGpuSupport(): Promise<boolean> {
   if (typeof navigator === "undefined") return false;
@@ -164,7 +216,13 @@ async function probeEditorGpuSupport(): Promise<boolean> {
   if (typeof gpu?.requestAdapter === "function") {
     try {
       const adapter = await gpu.requestAdapter({ powerPreference: "high-performance" });
-      if (adapter != null) return true;
+      if (adapter != null) {
+        if (await webgpuDeviceUsable(adapter)) return true;
+        // The stub-adapter class: requestAdapter answers, requestDevice
+        // never succeeds. WebGPU is unusable on this machine, not merely
+        // absent — arm the breaker and let the WebGL2 floor decide below.
+        activateGpuFallback();
+      }
     } catch {
       // A broken WebGPU (blocklisted driver, crashed GPU process) falls
       // through to the WebGL2 floor.

@@ -10,8 +10,8 @@
  */
 
 import type { EditorWarmupSnapshot } from "@/lib/editor-warmup";
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BootFailureBanner, BootOverlay } from "./banners";
 
 const MB = 1024 * 1024;
@@ -104,5 +104,38 @@ describe("BootFailureBanner — the GPU remedy hint", () => {
     );
     expect(screen.getByTestId("editor-boot-error")).toHaveTextContent("network error");
     expect(screen.queryByTestId("editor-boot-gpu-hint")).not.toBeInTheDocument();
+  });
+
+  it("offers the WebGL2 compatibility mode for the stub-adapter device failure (the 'allowed 0' class)", () => {
+    const onCompatibilityMode = vi.fn();
+    render(
+      <BootFailureBanner
+        bootError="no device: Limit 'max_compute_workgroups_per_dimension' value 65535 is better than allowed 0."
+        onRetry={() => {}}
+        onCompatibilityMode={onCompatibilityMode}
+      />,
+    );
+    expect(screen.getByTestId("editor-boot-gpu-hint")).toBeInTheDocument();
+    const compat = screen.getByTestId("editor-boot-compat");
+    expect(compat).toHaveTextContent("Try compatibility mode (WebGL2)");
+    fireEvent.click(compat);
+    expect(onCompatibilityMode).toHaveBeenCalledTimes(1);
+  });
+
+  it("never offers the compatibility mode when the tab is already in it", () => {
+    render(
+      <BootFailureBanner
+        bootError="no device: Limit 'max_compute_workgroups_per_dimension' value 65535 is better than allowed 0."
+        onRetry={() => {}}
+        onCompatibilityMode={() => {}}
+        compatibilityModeActive
+      />,
+    );
+    expect(screen.queryByTestId("editor-boot-compat")).not.toBeInTheDocument();
+  });
+
+  it("never offers the compatibility mode without the handler (non-GPU hosts)", () => {
+    render(<BootFailureBanner bootError="failed to create wgpu surface" onRetry={() => {}} />);
+    expect(screen.queryByTestId("editor-boot-compat")).not.toBeInTheDocument();
   });
 });

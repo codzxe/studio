@@ -4,6 +4,7 @@ import { PresenceStrip } from "@/components/presence/presence-strip";
 import { type PresenceBeatContext, usePresence } from "@/components/presence/use-presence";
 import type { MentionItem } from "@/lib/chat/mentions";
 import { ChatProvider } from "@/lib/chat/provider";
+import { activateGpuFallback } from "@/lib/editor-gpu-fallback";
 import {
   type ReadOnlyGateHandle,
   createReadOnlyGate,
@@ -373,7 +374,25 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
           <BootOverlay projectName={projectName} warmup={warmup} />
         ) : null}
         {bootFailed && (
-          <BootFailureBanner bootError={state.bootError} onRetry={session.retryBoot} />
+          <BootFailureBanner
+            bootError={state.bootError}
+            onRetry={session.retryBoot}
+            compatibilityModeActive={session.gpuFallback}
+            onCompatibilityMode={
+              session.gpuFallback
+                ? undefined
+                : () => {
+                    // The GPU-class escape hatch: the probes should have caught
+                    // the broken-adapter classes BEFORE the boot, but when a
+                    // machine slips through (a new driver-bug class, a device
+                    // that dies between probe and boot), arm the proven WebGL2
+                    // compatibility mode and reload — the iframe src is read
+                    // once per page load, so the reload is what re-routes it.
+                    activateGpuFallback();
+                    window.location.reload();
+                  }
+            }
+          />
         )}
 
         {/* Hard load failure (manifest/download/open) — reload is the remedy. */}

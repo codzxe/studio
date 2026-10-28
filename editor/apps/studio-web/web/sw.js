@@ -2,8 +2,10 @@
 //
 // `cargo xtask web` fills in the build's file list and version. Every file is precached into a
 // cache named after the version, served cache-first (responses keep the server's headers, so
-// the page stays cross-origin isolated: COOP/COEP), and old versions are dropped once the new
-// one activates. Anything else same-origin is fetched from the network and cached for next time.
+// the page stays cross-origin isolated: COOP/COEP) — except the boot shell (index.html
+// navigations), which is network-first so shell fixes reach returning users on the first
+// reload after a deploy. Old versions are dropped once the new one activates. Anything else
+// same-origin is fetched from the network and cached for next time.
 const VERSION = "__EC_VERSION__";
 const FILES = __EC_FILES__;
 const CACHE = `studio-${VERSION}`;
@@ -38,9 +40,34 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     (async () => {
       const cache = await caches.open(CACHE);
-      // The page itself regardless of its query (?empty, ?demo…).
-      const key = req.mode === "navigate" ? new URL("./", self.registration.scope).href : req;
-      const hit = await cache.match(key, { ignoreSearch: req.mode === "navigate" });
+      // The boot shell (navigations, query ignored) is NETWORK-FIRST: a fixed
+      // index.html must reach returning users on their first reload after a
+      // deploy, not one service-worker update cycle later. The shell is
+      // ~14 KB — the wasm stays the lazily-cached heavy asset. Offline (or a
+      // non-ok response) falls back to the precached shell.
+      if (req.mode === "navigate") {
+        const shell = new URL("./", self.registration.scope).href;
+        try {
+          const fresh = await fetch(req);
+          if (fresh.ok) {
+            try {
+              await cache.put(new Request(shell, { cache: "reload" }), fresh.clone());
+            } catch (e) {
+              // A quota/write failure must never break the page load.
+              console.warn("sw: shell cache write skipped:", e);
+            }
+            return fresh;
+          }
+        } catch {
+          // Offline below — the precached shell answers.
+        }
+        const hit = await cache.match(shell, { ignoreSearch: true });
+        if (hit) return hit;
+        return fetch(req);
+      }
+      // Subresources stay cache-first: immutable build files + the lazily
+      // cached wasm (one full download, then cached).
+      const hit = await cache.match(req);
       if (hit) return hit;
       const res = await fetch(req);
       // Same-origin successes are cached for next time (the wasm rides this
