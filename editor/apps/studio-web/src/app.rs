@@ -220,7 +220,29 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                     display_handle: None,
                     power_preference: eframe::egui_wgpu::wgpu::PowerPreference::HighPerformance,
                     native_adapter_selector: None,
-                    device_descriptor: Arc::new(|_| Default::default()),
+                    // The compatibility path (no/broken WebGPU → egui-wgpu's WebGL2
+                    // backend) must not ask for WebGPU-class limits: WebGL2 has no
+                    // compute shaders at all and wgpu's GL adapter reports
+                    // max_compute_workgroups_per_dimension = 0, so the default
+                    // descriptor's explicit 65535 request failed device creation
+                    // with exactly "Limit 'max_compute_workgroups_per_dimension'
+                    // value 65535 is better than allowed 0" — the whole browser
+                    // boot died AFTER the engine download (the 2026-10-27 wgpu-30
+                    // dist rebuild regression; the pre-rename dist asked for
+                    // downlevel-friendly limits). Ask GL adapters for the
+                    // documented WebGL2 floor; every other backend keeps the full
+                    // WebGPU defaults.
+                    device_descriptor: Arc::new(|adapter| {
+                        if adapter.get_info().backend == eframe::egui_wgpu::wgpu::Backend::Gl {
+                            eframe::egui_wgpu::wgpu::DeviceDescriptor {
+                                label: Some("studio presentation (webgl2)"),
+                                required_limits: eframe::egui_wgpu::wgpu::Limits::downlevel_webgl2_defaults(),
+                                ..Default::default()
+                            }
+                        } else {
+                            Default::default()
+                        }
+                    }),
                 },
             ),
             ..Default::default()
