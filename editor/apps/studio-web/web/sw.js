@@ -4,7 +4,11 @@
 // cache named after the version, served cache-first (responses keep the server's headers, so
 // the page stays cross-origin isolated: COOP/COEP) — except the boot shell (index.html
 // navigations), which is network-first so shell fixes reach returning users on the first
-// reload after a deploy. Old versions are dropped once the new one activates. Anything else
+// reload after a deploy. Old versions are dropped once the new one activates. Network fetches
+// use `cache: "reload"`: a browser whose HTTP cache still holds a year-long immutable entry
+// for the stable-named engine files (the pre-fix deploy policy) must not serve those stale
+// bytes THROUGH this worker's own fetch() — reload forces the origin roundtrip once per file
+// per build, and this version-named cache absorbs every load after that. Anything else
 // same-origin is fetched from the network and cached for next time.
 const VERSION = "__EC_VERSION__";
 const FILES = __EC_FILES__;
@@ -48,7 +52,9 @@ self.addEventListener("fetch", (event) => {
       if (req.mode === "navigate") {
         const shell = new URL("./", self.registration.scope).href;
         try {
-          const fresh = await fetch(req);
+          // cache:"reload" — never let a stale immutable HTTP-cache entry for the
+          // stable-named shell answer what must be the freshest deploy.
+          const fresh = await fetch(req, { cache: "reload" });
           if (fresh.ok) {
             try {
               await cache.put(new Request(shell, { cache: "reload" }), fresh.clone());
@@ -65,11 +71,12 @@ self.addEventListener("fetch", (event) => {
         if (hit) return hit;
         return fetch(req);
       }
-      // Subresources stay cache-first: immutable build files + the lazily
-      // cached wasm (one full download, then cached).
+      // Subresources stay cache-first; a miss re-downloads ONCE per build because
+      // the worker's own fetch bypasses any poisoned immutable HTTP-cache entry
+      // (cache:"reload" — the stable-named wasm + glue are the heavy assets here).
       const hit = await cache.match(req);
       if (hit) return hit;
-      const res = await fetch(req);
+      const res = await fetch(req, { cache: "reload" });
       // Same-origin successes are cached for next time (the wasm rides this
       // lazy path — one full download, then cached).
       if (res.ok && res.type === "basic") {

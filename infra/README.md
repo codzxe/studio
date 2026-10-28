@@ -57,10 +57,15 @@ Caddy; see `systemd/README.md`.
 - `/editor/*` is served same-origin by Caddy from the frozen wasm build with
   `Cross-Origin-Opener-Policy: same-origin` +
   `Cross-Origin-Embedder-Policy: require-corp` (SharedArrayBuffer).
-- Caching: hashed assets (`snippets/*`, wasm + glue — safe: the EffectCraft
-  service worker precaches with `cache:"reload"` into a version-named cache)
-  are `immutable, max-age=31536000`; `index.html` + `sw.js` are `no-cache`;
-  manifest/icons/helpers 1h. `.wasm` is sent as `application/wasm`.
+- Caching: only content-hashed assets (`snippets/*`) are
+  `immutable, max-age=31536000`. The stable-named engine files
+  (`studio_web.js`, `studio_web_bg.wasm`, `worker.js`, `audio-worklet.js`)
+  are `public, max-age=0, must-revalidate` — the SW's own `fetch()` goes
+  through the HTTP cache, so a year-long immutable policy on stable names
+  served stale engine bytes across deploys (the M3 boot-fix incident);
+  the SW's `cache:"reload"` network fetches rescue already-poisoned caches.
+  `index.html` + `sw.js` are `no-cache`; manifest/icons 1h. `.wasm` is
+  sent as `application/wasm`.
 - The app mounts the editor at `EDITOR_PUBLIC_PATH` (default `/editor`) with
   `?empty` so no stale browser session leaks in (§6.3).
 

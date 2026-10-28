@@ -23,9 +23,14 @@ import type { NextConfig } from "next";
  * Headers:
  * - COOP/COEP on `/editor/:path*` — the WASM editor needs a cross-origin
  *   isolated context (SharedArrayBuffer).
- * - `/editor/:build*` — the dist output is content-hashed
- *   (`/editor/<build>/assets/…`), so those assets are immutable and get a
- *   one-year cache.
+ * - `/editor/:path*` revalidates on every use. The dist is STABLE-NAMED
+ *   (`studio_web.js`, `studio_web_bg.wasm`), so a year-long immutable
+ *   Cache-Control poisoned returning browsers across deploys: the HTTP
+ *   cache kept serving the old engine wasm even after refresh (the service
+ *   worker's own fetch() also goes through it) and users re-hit fixed bugs.
+ *   A 304 roundtrip is cheap and the dist's versioned SW cache keeps repeat
+ *   boots off the network anyway. Only wasm-bindgen's content-hashed
+ *   `snippets/` dirs stay immutable below.
  * - Global: nosniff + strict-origin-when-cross-origin.
  */
 
@@ -109,8 +114,16 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        // Hashed editor dist assets (`/editor/<build>/…`) are content-addressed.
-        source: "/editor/:build*",
+        // Stable-named dist files (studio_web.js / studio_web_bg.wasm / index.html
+        // / sw.js) must REVALIDATE on every use — see the header comment above
+        // for the cache-poisoning incident that proved immutable wrong here.
+        source: "/editor/:path*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=0, must-revalidate" }],
+      },
+      {
+        // wasm-bindgen emits snippets under a content-hashed dir per build —
+        // immutable is provably safe for exactly these.
+        source: "/editor/snippets/:path*",
         headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
       },
       {

@@ -4293,3 +4293,15 @@ Stage Summary:
 - Production verified twice (local dist + live URL) in the GPU-less environment class; healthy-WebGPU machines unchanged (probe passes through; engine keeps full limits).
 - New reusable assets: scripts/provision-editor-fonts.py (fresh-box font provisioning), scripts/boot-verify-editor.mjs (one-shot boot E2E with pass/fail exit).
 - Backlog noted: worker IDB object-store mismatch (frames render on CPU instead), residual Inter attribution string in wasm, /api/gateway direct path redundancy.
+
+## M3 tail 7 — editor "still broken in prod" was cache poisoning, not code (2026-10-28 PM)
+
+Field re-report: same 'max_compute_workgroups_per_dimension 65535 better than allowed 0' — but prod was verified booting (readyMs 3579ms) and serves the new 51,420,252-byte wasm (etag-checked). Root cause of the discrepancy:
+- apps/web/next.config.ts + infra/caddy Caddyfile served the ENTIRE /editor/* tree as `public, max-age=31536000, immutable` (a rule written for an old `/editor/<build>/…` content-addressed layout; today's dist is STABLE-NAMED).
+- The user's browser holds year-long immutable entries for index.html / studio_web.js / studio_web_bg.wasm. Plain refresh revalidates the document but NOT subresources (immutable), and the SW's own `fetch()` also consults the HTTP cache — so the SW network-first path kept re-serving the old shell + old engine.
+Fix (3 surfaces, all committed):
+- next.config.ts: /editor/:path* → `public, max-age=0, must-revalidate`; immutable ONLY for /editor/snippets/:path* (genuinely content-hashed per build).
+- infra/caddy/Caddyfile: @hashed now snippets/* only; new @engine (studio_web.js, studio_web_bg.wasm, studio_web_opt.wasm, worker.js, audio-worklet.js) → must-revalidate; helpers moved out of the 1h shared-cache bucket.
+- sw.js (template + dist, dist VERSION → 9bda4682a68c9a08): network fetches now `cache:"reload"` — a SW-cache miss forces the origin roundtrip, RESCUING browsers already poisoned by the old immutable entries (once per file per build; the version-named SW cache absorbs everything after). infra/README.md contract updated.
+- Why not content-address the wasm: worker.js imports the glue module-relative and the engine resolves helper paths from multiple bases — a rename fan-out across dist+template+glue+warmup+tests for zero additional correctness over must-revalidate + SW rescue. Noted as possible future hardening.
+Verification (post-deploy): curl headers (must-revalidate on engine files, immutable on snippets, COOP/COEP intact), fresh-profile agent-browser E2E readyMs, and a poisoned-profile simulation (year-long immutable entry served → SW reload fetch bypasses it).

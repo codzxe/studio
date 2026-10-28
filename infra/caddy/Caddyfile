@@ -53,31 +53,34 @@
                         Cross-Origin-Embedder-Policy require-corp
                 }
 
-                # Hashed build assets → immutable (§6.1 "long cache for hashed assets").
-                # snippets/* paths carry per-build hashes. The stable-named wasm + glue
-                # are safe to long-cache because EffectCraft's sw.js precaches with
-                # cache:"reload" into a version-named cache and sw.js itself is no-cache:
-                # deploys never serve stale bytes through the service worker.
-                @hashed {
-                        path /snippets/*
+                # Only CONTENT-HASHED assets are immutable (§6.1 "long cache for
+                # hashed assets"): snippets/* carry per-build wasm-bindgen hashes.
+                @hashed path /snippets/*
+                header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+                # Stable-named engine files revalidate on EVERY use. A year-long
+                # immutable policy here poisoned returning browsers across deploys:
+                # the HTTP cache kept serving the old engine wasm even after refresh
+                # (the service worker's own fetch() also goes through it), so fixed
+                # boot bugs re-appeared for users who had the old build cached.
+                @engine {
                         path /studio_web.js
                         path /studio_web_bg.wasm
                         path /studio_web_opt.wasm
+                        path /worker.js
+                        path /audio-worklet.js
                 }
-                header @hashed Cache-Control "public, max-age=31536000, immutable"
+                header @engine Cache-Control "public, max-age=0, must-revalidate"
 
                 # Entry points revalidate on every load so new deploys are picked up.
                 @entry path /index.html /sw.js
                 header @entry Cache-Control "no-cache"
 
-                # PWA manifest, icons and small helper scripts: short shared cache
-                # (§6.1: manifest 1h).
+                # PWA manifest and icons: short shared cache (§6.1: manifest 1h).
                 @media {
                         path /manifest.webmanifest
                         path /favicon.svg
                         path /icon-*
-                        path /worker.js
-                        path /audio-worklet.js
                         path /js/*
                 }
                 header @media Cache-Control "public, max-age=3600"
