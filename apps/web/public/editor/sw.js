@@ -6,7 +6,7 @@
 // navigations), which is network-first so shell fixes reach returning users on the first
 // reload after a deploy. Old versions are dropped once the new one activates. Anything else
 // same-origin is fetched from the network and cached for next time.
-const VERSION = "eeb258308202fc8e";
+const VERSION = "0bcd67dc44c6a5e5";
 const FILES = ["./", "./audio-worklet.js", "./favicon.svg", "./icon-256.png", "./icon-512.png", "./index.html", "./manifest.webmanifest", "./snippets/studio-web-a5ffdaaf7935c1bb/js/host.js", "./studio_web.js", "./worker.js"];
 const CACHE = `studio-${VERSION}`;
 
