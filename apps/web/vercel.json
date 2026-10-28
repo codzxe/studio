@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/gateway.ts": {
+    "api/gateway.mjs": {
       "maxDuration": 60,
       "memory": 1024
     }

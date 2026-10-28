@@ -131213,8 +131213,8 @@ var ENV_VAR_SPECS = [
   },
   // ── render (M8 worker — BUILD_PLAN §2.3 feature-flag family) ─────────────
   {
-    name: "EFFECTCRAFT_CLI_PATH",
-    purpose: "Absolute path to the effectcraft-cli binary the render worker spawns. Resolution order: this value, else <repo>/editor/target/release/effectcraft-cli if present, else a PATH lookup.",
+    name: "STUDIO_ENGINE_CLI_PATH",
+    purpose: "Absolute path to the studio-cli binary the render worker spawns. Resolution order: this value, else <repo>/editor/target/release/studio-cli if present, else a PATH lookup.",
     group: "render",
     required: false,
     secret: false,
@@ -131420,7 +131420,7 @@ var envSchema = external_exports.object({
   LEASE_HEARTBEAT_MS: wholeNumber(1).default(12e4),
   LEASE_TTL_MS: wholeNumber(1).default(3e5),
   // render (M8 worker)
-  EFFECTCRAFT_CLI_PATH: external_exports.string().min(1).optional(),
+  STUDIO_ENGINE_CLI_PATH: external_exports.string().min(1).optional(),
   RENDER_WORKER_ENABLED: envBool.default(true),
   RENDER_WORKER_CONCURRENCY: wholeNumber(1).default(2),
   RENDER_JOB_TIMEOUT_SECONDS: wholeNumber(1).default(1800),
@@ -131605,7 +131605,7 @@ function groupEnv(flat) {
       ttlMs: flat.LEASE_TTL_MS
     },
     render: {
-      cliPath: flat.EFFECTCRAFT_CLI_PATH,
+      cliPath: flat.STUDIO_ENGINE_CLI_PATH,
       workerEnabled: flat.RENDER_WORKER_ENABLED,
       workerConcurrency: flat.RENDER_WORKER_CONCURRENCY,
       jobTimeoutSeconds: flat.RENDER_JOB_TIMEOUT_SECONDS,
@@ -131759,13 +131759,13 @@ var ERROR_CATALOG = {
     hint: "The quota resets with your billing cycle, or you can upgrade now.",
     retryable: false
   },
-  /** 500 — worker cannot find the effectcraft-cli binary (operator action needed). */
+  /** 500 — worker cannot find the studio-cli binary (operator action needed). */
   RENDER_CLI_MISSING: {
     message: "The rendering tool isn't available right now.",
     hint: "We're on it. You were not charged for this render.",
     retryable: false
   },
-  /** 500 — effectcraft-cli ran but exited non-zero; safe to retry (mirrors RENDER_FAILED). */
+  /** 500 — studio-cli ran but exited non-zero; safe to retry (mirrors RENDER_FAILED). */
   RENDER_CLI_FAILED: {
     message: "The render worker couldn't finish this job.",
     hint: "Retry the render, or contact support if it keeps failing. You were not charged.",
@@ -134679,9 +134679,6 @@ var TOOL_LIST = [
 var TOOL_CATALOG = Object.fromEntries(
   TOOL_LIST.map((tool2) => [tool2.id, tool2])
 );
-function getTool(id) {
-  return TOOL_CATALOG[id];
-}
 
 // ../../packages/contracts/src/routes/common.ts
 init_zod();
@@ -135797,9 +135794,15 @@ var LocalFSDriver = class {
 var S3Driver = class {
   client;
   bucket;
-  constructor(env3) {
+  /**
+   * The optional `client` is an injection point for unit tests (a structural
+   * S3Client stand-in whose `send` answers in-memory — no network). Production
+   * callers go through createStorage(), which always constructs the real
+   * client from the env.
+   */
+  constructor(env3, client) {
     this.bucket = env3.storage.bucket;
-    this.client = new import_client_s3.S3Client({
+    this.client = client ?? new import_client_s3.S3Client({
       region: env3.storage.region,
       endpoint: env3.storage.endpoint,
       credentials: {
@@ -135903,7 +135906,19 @@ var S3Driver = class {
     await this.client.send(new import_client_s3.DeleteObjectCommand(this.object(key)));
   }
   async read(key) {
-    return null;
+    try {
+      const out = await this.client.send(new import_client_s3.GetObjectCommand(this.object(key)));
+      const body = out.Body;
+      if (body === void 0) return null;
+      const chunks = [];
+      for await (const chunk of body) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      return Buffer.concat(chunks);
+    } catch (error64) {
+      if (error64.name === "NoSuchKey") return null;
+      throw error64;
+    }
   }
 };
 function createStorage(env3, fsRoot) {
@@ -137131,9 +137146,10 @@ async function reconcileWorkspace(workspaceId, window2, deps, options = {}) {
     const row = await deps.sources.runRow(workspaceId, runId);
     const ledgerCommits = -runEntries.filter((entry) => entry.kind === "commit").reduce((total, entry) => total + entry.amount, 0);
     if (settledInWindow.has(runId)) {
-      usageByRun.set(runId, row?.committedCredits ?? 0);
-      if ((row?.committedCredits ?? 0) !== ledgerCommits) {
-        runDrift.push({ runId, ledgerCommits, rowCommitted: row?.committedCredits ?? 0 });
+      const rowCommittedMicro = Math.round((row?.committedCredits ?? 0) * MICROCREDITS_PER_CREDIT);
+      usageByRun.set(runId, rowCommittedMicro);
+      if (rowCommittedMicro !== ledgerCommits) {
+        runDrift.push({ runId, ledgerCommits, rowCommitted: rowCommittedMicro });
       }
     }
     if (outstanding > 0) {
@@ -137195,12 +137211,13 @@ async function reconcileWorkspace(workspaceId, window2, deps, options = {}) {
       external.perModel = perModel;
       external.spendCredits = spendTotal;
       external.unknownModels = unknown2;
-      if (spendTotal !== sums.commits) {
+      const spendMicro = spendTotal * MICROCREDITS_PER_CREDIT;
+      if (spendMicro !== sums.commits) {
         discrepancies.push({
           code: "external_spend_mismatch",
           ledgerCommitSum: sums.commits,
           externalSpendCredits: spendTotal,
-          delta: spendTotal - sums.commits,
+          delta: spendMicro - sums.commits,
           byModel: perModel
         });
       }
@@ -138042,21 +138059,18 @@ function billingRoutes(deps) {
       });
     }
     const event = verified.event;
+    const outcome = await handleStripeEvent(stripe, event);
+    let duplicate = false;
     const webhookEvents3 = webhookEventsRepo(deps.repos);
     if (webhookEvents3 !== null) {
       const durable = await webhookEvents3.seenOrRecord("stripe", event.id, {
         type: event.type,
         payload: event
       });
-      if (durable.seen) {
-        return ok2(c5, { received: true, duplicate: true });
-      }
+      duplicate = durable.seen;
     }
-    if (stripe.seenEvent(event.id)) {
-      return ok2(c5, { received: true, duplicate: true });
-    }
-    const outcome = await handleStripeEvent(stripe, event);
-    return ok2(c5, { received: true, ...outcome });
+    stripe.markEventSeen(event.id);
+    return ok2(c5, duplicate ? { received: true, duplicate: true } : { received: true, ...outcome });
   });
   async function guardedTransition(organizationId, input2) {
     if (subscriptions3 === null) return false;
@@ -138670,11 +138684,7 @@ function leasesRoutes(deps) {
       const callerId = c5.get("auth").user.id;
       const now3 = /* @__PURE__ */ new Date();
       const snapshot = await deps.repos.leases.get(workspace.id, projectId);
-      let queue = await deps.repos.leases.requestQueue(workspace.id, projectId);
-      if (snapshot !== null && !snapshot.isHeld && queue.length > 0) {
-        await deps.repos.leases.electNextHolder(workspace.id, projectId);
-        queue = await deps.repos.leases.requestQueue(workspace.id, projectId);
-      }
+      const queue = await deps.repos.leases.requestQueue(workspace.id, projectId);
       const active = snapshot?.isHeld ? snapshot.lease : null;
       const holder = active === null ? null : {
         userId: active.userId,
@@ -139781,26 +139791,16 @@ function runsRoutes(deps) {
       if (isTerminalRunStatus(run.status)) {
         return ok2(c5, { runId, status: run.status, cancelled: false });
       }
-      const log = deps.runs.get(runId);
-      if (log === null) {
-        await deps.repos.runs.update(workspace.id, runId, {
-          status: "cancelled",
-          errorCode: "RUN_CANCELLED"
-        });
-        await deps.repos.ledger.refundAll(workspace.id, {
-          runId,
-          idempotencyKey: `chat:${runId}:refund`
-        });
-        await audit(deps, c5, workspace.id, "run.cancelled", runId);
-        return ok2(c5, { runId, status: "cancelled", cancelled: true });
-      }
-      const cancelled = deps.runs.cancel(runId);
-      deps.runner.cancel(runId);
-      if (!cancelled) {
-        return ok2(c5, { runId, status: run.status, cancelled: false });
-      }
+      await deps.repos.runs.update(workspace.id, runId, {
+        status: "cancelled",
+        errorCode: "RUN_CANCELLED"
+      });
+      await deps.repos.ledger.refundAll(workspace.id, {
+        runId,
+        idempotencyKey: `chat:${runId}:refund`
+      });
       await audit(deps, c5, workspace.id, "run.cancelled", runId);
-      return ok2(c5, { runId, status: "cancelling", cancelled: true });
+      return ok2(c5, { runId, status: "cancelled", cancelled: true });
     }
   );
   app.post(
@@ -139819,7 +139819,7 @@ function runsRoutes(deps) {
         });
       }
       const event = parsed.data;
-      const { run } = await deps.repos.runs.get(workspace.id, runId);
+      const { run, steps } = await deps.repos.runs.get(workspace.id, runId);
       if (isTerminalRunStatus(run.status)) {
         throw new GatewayError("RUN_NOT_ACTIVE", "This run already finished.", {
           status: 409,
@@ -139827,35 +139827,13 @@ function runsRoutes(deps) {
           requestId
         });
       }
-      const log = deps.runs.get(runId);
-      if (log === null) {
-        throw new GatewayError("RUN_NOT_ACTIVE", "This run is not accepting events right now.", {
-          status: 409,
-          hint: "The run must be streaming; reconnect via the chat route.",
-          requestId
-        });
-      }
-      const { steps } = await deps.repos.runs.get(workspace.id, runId);
       const nextSeq = steps.length;
       if (event.type === "tool.result") {
-        const tool2 = log.toolNameFor(event.toolCallId);
-        if (tool2 === null) {
-          throw new GatewayError("VALIDATION_FAILED", "Unknown toolCallId for this run.", {
-            status: 400,
-            hint: "Report results only for tool calls this run started.",
-            requestId
-          });
-        }
-        const definition = getTool(tool2);
-        if (tool2 === "studio.plan_edit" || definition?.kind === "write") {
-          throw new GatewayError("VALIDATION_FAILED", "This tool call is resolved server-side.", {
-            status: 400,
-            hint: "The editor reports results for its own read tools only.",
-            requestId
-          });
-        }
-        log.emit({ type: "tool.result", toolCallId: event.toolCallId, result: event.result });
-        return ok2(c5, { runId, recorded: true });
+        throw new GatewayError("RUN_NOT_ACTIVE", "This run is not accepting events right now.", {
+          status: 409,
+          hint: "Tool results travel in the next turn's body; apply results use POST /v1/runs/:id/apply.",
+          requestId
+        });
       }
       if (!event.ok) {
         const errorCode = event.errorCode ?? "RUN_FAILED";
@@ -139868,18 +139846,11 @@ function runsRoutes(deps) {
         });
         await deps.repos.runs.update(workspace.id, runId, {
           status: "failed",
-          errorCode,
-          planJson: log.currentPlan ?? void 0
+          errorCode
         });
         await deps.repos.ledger.refundAll(workspace.id, {
           runId,
           idempotencyKey: `chat:${runId}:refund`
-        });
-        log.emit({
-          type: "run.failed",
-          code: errorCode,
-          message: event.errorMessage ?? "The planned edit failed to apply.",
-          retryable: false
         });
         return ok2(c5, { runId, recorded: true, status: "failed" });
       }
@@ -139903,22 +139874,19 @@ function runsRoutes(deps) {
           agentRunId: runId,
           createdBy: c5.get("auth").user.id
         });
-        const committed = Math.min(
-          run.reservedCredits,
-          Math.max(1, Math.ceil(run.reservedCredits / 2))
-        );
+        const committedUsage = Math.max(1, run.committedCredits);
         const settled = await deps.repos.ledger.settle(workspace.id, {
           runId,
-          actualCost: committed,
+          actualCost: creditsToLedgerMicrocredits(committedUsage),
           idempotencyKey: `chat:${runId}:settle`
         });
         const balance = await deps.repos.ledger.balance(workspace.id);
-        const actualCommit = settled.commit !== null ? -settled.commit.amount : 0;
+        const settleCommit = settled.commit !== null ? microcreditsToWholeCredits(-settled.commit.amount) : 0;
+        const committedRow = Math.max(run.committedCredits, settleCommit);
         await deps.repos.runs.update(workspace.id, runId, {
           status: "completed",
-          committedCredits: actualCommit,
-          resultVersionId: version4.id,
-          planJson: log.currentPlan ?? void 0
+          committedCredits: committedRow,
+          resultVersionId: version4.id
         });
         await deps.repos.runs.addStep(workspace.id, {
           runId,
@@ -139927,16 +139895,11 @@ function runsRoutes(deps) {
           status: "success",
           resultJson: { versionId: version4.id, sha256: sha }
         });
-        log.emit({
-          type: "credits",
-          reserved: run.reservedCredits,
-          committed: actualCommit,
-          balance
-        });
-        log.emit({ type: "run.completed", versionId: version4.id });
         await audit(deps, c5, workspace.id, "run.applied", run.projectId, {
           runId,
-          versionId: version4.id
+          versionId: version4.id,
+          creditsCommitted: committedRow,
+          balanceMicrocredits: balance
         });
         return ok2(c5, { runId, recorded: true, status: "completed", versionId: version4.id });
       } catch (error64) {
@@ -139947,12 +139910,6 @@ function runsRoutes(deps) {
         await deps.repos.ledger.refundAll(workspace.id, {
           runId,
           idempotencyKey: `chat:${runId}:refund`
-        });
-        log.emit({
-          type: "run.failed",
-          code: "PROJECT_VERSION_CONFLICT",
-          message: "The project changed while you were working.",
-          retryable: false
         });
         throw error64;
       }
@@ -159895,7 +159852,7 @@ function turnRoutes(deps) {
     const workspace = c5.get("workspace");
     const runId = pathParam(c5, "id");
     const body = await c5.req.json().catch(() => null);
-    const rawPlan = body?.plan ?? (body !== null && "end" in body ? void 0 : body);
+    const rawPlan = body?.plan ?? (body !== null && body.end === true ? void 0 : body);
     const planChecked = rawPlan === void 0 ? null : EDIT_PLAN_SCHEMA.safeParse(rawPlan);
     if (planChecked !== null && !planChecked.success) {
       throw new GatewayError("VALIDATION_FAILED", "That plan didn't look right.", {
@@ -160276,7 +160233,11 @@ async function settleEchoedToolResults(deps, threadId, request) {
         result: part.result
       }
     }).catch(() => void 0);
-    await deps.repos.runs.completeToolStep({ toolCallId: part.toolCallId, resultJson: part.result, runId: request.runId }).catch(() => void 0);
+    await deps.repos.runs.completeToolStep({
+      toolCallId: part.toolCallId,
+      resultJson: part.result,
+      runId: request.runId
+    }).catch(() => void 0);
   }
 }
 function safeJson(raw2) {
