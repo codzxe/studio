@@ -4248,3 +4248,26 @@ Work Log:
 Stage Summary:
 - 17 commits pushed this round (4bd1088 -> 955acb4 + license row), all on origin/main, every unit committed+pushed immediately per the product owner's standing order (box resets must never lose work again).
 - Remaining for the next session: (1) engine/ui-egui/script/automation/lottie/export Rust suites on a box with disk; (2) the 200-agent harness-hardening fleet from round 12's order (separate from this round's 500-agent bug army); (3) production deploy of the new dist + live editor boot probe (S305) — Vercel CLI auth was wiped by the sandbox reset; (4) probe-cleanup for any new probe rows; (5) NVIDIA key rotation (leaked in git history); (6) ec.* effect ids frozen as legacy (D-30 candidate decision recorded in the rename commit).
+
+---
+Task ID: r13-deploy-unblock
+Agent: lead (main session)
+Task: User supplied Vercel token; diagnose why every production deployment since 10-26 21:54 failed, fix, push, and verify production end-to-end.
+
+Work Log:
+- Stored Vercel token at ~/.vercel-token (chmod 600, outside repo, never committed). Validated: user codzxe, team team_szVObEYKi8eIUHNTwKEPFsjl.
+- Listed deployments: ALL ERROR since 4bd10888 (10-26 21:54) — 13 army fix commits never went live.
+- Pulled build logs of dpl_GKeAPxbDzv774oCG1DVVmwLdkvha: fatal `[conflicting_file_path] api/gateway.mjs conflicts with api/gateway.ts`.
+- Root cause 1: cd24d1d resurrected apps/web/api/gateway.ts beside the canonical prebuilt api/gateway.mjs (build script bundles api-src/gateway.ts -> api/gateway.mjs; route.ts + src/lib/gateway.ts import the mjs). Removed the stray .ts; repointed apps/web/vercel.json functions config at api/gateway.mjs.
+- Root cause 2 (caught by local `pnpm build` before wasting a Vercel cycle): cd24d1d also resurrected three pre-refactor route artifacts — w/page.tsx (old TEMPORARY stub), w/billing/, w/[slug]/history/ — colliding with their (shell)/ counterparts. Verified at git tree 4bd10888 they were absent; removed all three.
+- Root cause 3: committed api/gateway.mjs predated w3-b02 (748ef21 billing fixes) and w3-b03 (84a7aa0 auto-apply gate). Regenerated via the canonical esbuild command from apps/web/package.json; node --check clean; +69/-108 vs old bundle; markers verified (dedup x14, runStatus, micro x47).
+- pnpm 9.15.9 reinstalled (NPM_CONFIG_PREFIX=~/.local npm i -g), workspace install 12s (store cache), local Turbopack build GREEN with canonical route set.
+- Committed e9aed3a "fix(deploy): unblock production builds — three blockers cleared", pushed to origin/main.
+- Watched deploy via API: dpl_6Di3DPjHLwGDiRyytJhdXJqhWSMm -> READY (~3 min).
+- Production probes (motiongra.vercel.app): / 200; /editor/ 200 (title Studio, 0 effectcraft strings); /editor/studio_web_bg.wasm 200 application/wasm content-length 48388721 == local, cache-control immutable 1y; old /editor/effectcraft_web_bg.wasm 404; /editor/studio_web.js 200 (180KB, 0 effectcraft); sw.js 200 — CACHE=studio-${VERSION}, PRECACHE explicitly filters /\.wasm$/ (ERR_CACHE_WRITE_FAILURE root cause fixed), lazy fetch-handler caching for wasm, activate purges legacy effectcraft-* caches; /v1/health -> {"status":"ok","db":true}; /api/thdiag 404 (standing order clean); manifest name "Studio".
+- wasm font strings verified: Instrument Sans Regular/Medium/SemiBold + JetBrains Mono embedded (brand match). Residual "Inter, JetBrains Mono (OFL)" attribution string + one InterJetBrains Mono UI string remain — minor, for next wasm rebuild.
+
+Stage Summary:
+- Production unblocked after ~29h of failed deploys; e9aed3a READY; all 13 stranded army commits live.
+- Vercel token secured outside repo; deployment watch + probe pattern established via API (no CLI needed).
+- Remaining known minors: residual Inter strings in wasm; /api/gateway direct function path returns Next 404 (canonical path is /v1/*, not a blocker).

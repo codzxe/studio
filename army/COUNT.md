@@ -50,3 +50,5 @@ Every agent invocation is logged with its delivery state. Honest ledger, no padd
 | - | W3-fix | lead A-stream | rename+brand+fonts+purge+sw/wasm+dist | DELIVERED (afd5688 c4546fa 955acb4) |
 | - | W4-verify | gates | web 1726, gateway 380, contracts 272, text 178, pdf 104, cargo check EXIT 0 | PARTIAL: engine-class Rust suites blocked by 9.9G box disk (documented) |
 | - | TOTAL | 31 W1 + 7 W3 + 2 W4 | 40 agent invocations this session (26 full deliveries + 2 file-written + rest killed by backend resets, relaunched to done) | honest count |
+| - | W4-deploy | lead | vercel deploy unblock: stray api/gateway.ts (conflicting_file_path), 3 resurrected stale routes (parallel-page), stale gateway.mjs (rebuilt w/ w3-b02/b03 fixes) | DELIVERED e9aed3a — first READY deploy since 10-26 21:54 (13 stranded commits live) |
+| - | W4-verify | lead | prod probes: /editor 200, studio_web_bg.wasm 200 application/wasm immutable, sw.js studio- prefix + wasm excluded from precache, /v1/health ok+db, thdiag 404, 0 effectcraft strings | ALL GREEN (residual Inter attribution string in wasm noted for next rebuild) |
