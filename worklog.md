@@ -4271,3 +4271,25 @@ Stage Summary:
 - Production unblocked after ~29h of failed deploys; e9aed3a READY; all 13 stranded army commits live.
 - Vercel token secured outside repo; deployment watch + probe pattern established via API (no CLI needed).
 - Remaining known minors: residual Inter strings in wasm; /api/gateway direct function path returns Next 404 (canonical path is /v1/*, not a blocker).
+
+---
+Task ID: r13-editor-boot
+Agent: lead (main session)
+Task: User report: "The editor could not start… Limit 'max_compute_workgroups_per_dimension' value 65535 is better than allowed 0." Find why the editor dies on this machine class and fix it end-to-end.
+
+Work Log:
+- Mapped the whole GPU boot chain: capability gate probe (editor-warmup.ts probeEditorGpu), dist pre-flight (index.html), eframe/egui-wgpu boot (app.rs), wgpu device request (gpu/context.rs request()), device-loss recovery breaker (editor-gpu-fallback.ts).
+- Layer 1+2+3 (commit c056d56): host probe + dist pre-flight now probe requestDevice (limits floor check + throwaway device create/destroy) and route broken-adapter classes into the proven ?gpu=webgl2&nogpuworkers compat mode before wasting the 49MB download; BootFailureBanner gains a "Try compatibility mode (WebGL2)" escape hatch; SW VERSION bump + network-first navigations (shell fixes reach the first reload; wasm still lazily cached). 69 vitest green, biome clean, Turbopack build green.
+- HEADLESS CHROMIUM REPRODUCTION (agent-browser vs production): old wasm DIED with the user's exact error even though webgpu:false/webgl2:true — the pre-flight had correctly taken the GL path, but the ENGINE's eframe device descriptor requested Limits::default() (65535 explicit) and wgpu's GL adapter reports 0 compute workgroups → requestDevice rejected → boot dead. So the "proven" compat path has been broken since the w3-A wgpu-30 dist rebuild; every GPU-less/WebGPU-broken machine hit it.
+- Root fix (commit ee1565e): presentation device descriptor in app.rs now requests Limits::downlevel_webgl2_defaults() for GL-backend adapters (WebGL2 floor); all other backends keep full defaults. Also: 'effectcraft gpu' label → 'studio gpu' in gpu/context.rs (c056d56) + doc note.
+- Toolchain rebuilt from scratch on this box: rustup 1.99.1 + wasm32 target; fonts re-provisioned (editor/assets/fonts/ wiped by box reset; new scripts/provision-editor-fonts.py instances the 5 static weights from the pinned google/fonts variable fonts via fonttools varLib.instancer — binaries stay untracked per spec §1.5 rule 9); wasm-bindgen-cli 0.2.129 glibc SOURCE build (musl prebuilt still OOM-exits-137 on the 71MB artifact); binaryen 125 for xtask wasm-opt -O2.
+- Rebuild: resumable -j1/cg16 script (2 chunks, 6m33s clean), then cargo xtask web (freshness check 0.87s — same env vars preserved fingerprints): 51.4MB wasm (was 48.4MB), sw.js auto-generated VERSION 0bcd67dc44c6a5e5, snippet hash unchanged.
+- LOCAL PROOF (scripts/boot-verify-editor.mjs + screenshot, new file): headless Chromium (no WebGPU, SwiftShader GL) — old wasm: death; new wasm: GL device created, CPU compositor fallback engaged, READY 591ms. Non-fatal pre-existing finding logged: frame workers + persist hit IDB object-store mismatch (rename migration seam — backlog item, engine continues on CPU).
+- Dist synced to apps/web/public/editor/ (binaries + sw.js; shell files already identical). Committed 58cdbc0, pushed. Deploy dpl → READY.
+- PRODUCTION PROOF: headless Chromium vs https://motiongra.vercel.app/editor/?empty&nosw → readyMs 3579, error null, canvas 1280x577 live, title "Studio" (scripts/prod-editor-booted.png). The exact machine class from the field report now boots.
+
+Stage Summary:
+- Field bug root-caused to a two-layer failure: probes treated an answering adapter as usable (JS layer, c056d56) AND the GL compat path requested impossible limits (engine layer, ee1565e + rebuilt dist 58cdbc0).
+- Production verified twice (local dist + live URL) in the GPU-less environment class; healthy-WebGPU machines unchanged (probe passes through; engine keeps full limits).
+- New reusable assets: scripts/provision-editor-fonts.py (fresh-box font provisioning), scripts/boot-verify-editor.mjs (one-shot boot E2E with pass/fail exit).
+- Backlog noted: worker IDB object-store mismatch (frames render on CPU instead), residual Inter attribution string in wasm, /api/gateway direct path redundancy.
