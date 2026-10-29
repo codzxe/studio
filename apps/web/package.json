@@ -4,6 +4,14 @@
   "private": true,
   "type": "module",
   "description": "Studio web app — Next.js marketing site, auth pages and (later) the SaaS shell (docs/UI_DESIGN_SYSTEM.md §8)",
+  "browserslist": [
+    "chrome >= 92",
+    "edge >= 92",
+    "firefox >= 90",
+    "safari >= 15.4",
+    "ios_saf >= 15.4",
+    "and_chr >= 92"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "node ../../scripts/fetch-web-fonts.mjs && esbuild --bundle api-src/gateway.ts --tsconfig=api-src/tsconfig.json --platform=node --format=esm --target=node22 --banner:js=\"import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);\" --outfile=api/gateway.mjs && next build",

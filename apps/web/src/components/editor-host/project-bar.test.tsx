@@ -161,7 +161,9 @@ describe("ProjectBar — the real Share dialog", () => {
     );
     openShareDialog();
 
-    expect(screen.getByTestId("editor-share-dialog")).toBeInTheDocument();
+    // Lazy dialog: the ShareDialog module resolves on the click-triggered
+    // dynamic import, so the dialog surfaces asynchronously.
+    expect(await screen.findByTestId("editor-share-dialog")).toBeInTheDocument();
     expect(screen.getByTestId("editor-share-title")).toHaveTextContent("Test Project");
 
     // Loading → the two links with their honest metadata.
