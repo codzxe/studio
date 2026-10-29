@@ -127519,6 +127519,23 @@ function createLedgerRepo(db) {
   };
 }
 
+// ../../packages/db/src/repos/memberships.ts
+function createMembershipsRepo(db) {
+  const { member: member4, organization: organization4 } = tablesFor(db);
+  return {
+    async listForUser(userId) {
+      const caller = requireNonEmpty(userId, "userId");
+      const rows = await db.select({
+        workspaceId: member4.organizationId,
+        workspaceName: organization4.name,
+        workspaceSlug: organization4.slug,
+        role: member4.role
+      }).from(member4).innerJoin(organization4, eq(organization4.id, member4.organizationId)).where(eq(member4.userId, caller)).orderBy(asc(member4.createdAt), asc(member4.id));
+      return rows;
+    }
+  };
+}
+
 // ../../packages/db/src/repos/presence.ts
 var PRESENCE_TTL_MS = 24e4;
 var COMP_ID_MAX = 120;
@@ -129019,6 +129036,7 @@ function createRepos(db) {
     threads: createThreadsRepo(db),
     runs: createRunsRepo(db),
     ledger: createLedgerRepo(db),
+    memberships: createMembershipsRepo(db),
     comments: createCommentsRepo(db),
     renders: createRendersRepo(db),
     audit: createAuditRepo(db),
@@ -138913,19 +138931,21 @@ function meRoutes(deps) {
   app.use("/v1/me", requireAuth());
   app.get("/v1/me", async (c5) => {
     const { user: user3 } = c5.get("auth");
-    const headers = c5.req.raw.headers;
-    const orgs = await deps.auth.listOrganizations(headers);
+    const rows = await deps.repos.memberships.listForUser(user3.id);
     const memberships = [];
     let activeWorkspaceId = c5.get("auth").session.activeOrganizationId;
-    for (const org of orgs) {
-      const full = await deps.auth.getFullWorkspace(headers, org.id);
-      const role2 = full?.members.find((member4) => member4.userId === user3.id)?.role ?? "viewer";
+    for (const org of rows) {
+      const role2 = org.role;
       memberships.push({
-        workspaceId: org.id,
+        workspaceId: org.workspaceId,
         role: role2 === "owner" || role2 === "admin" || role2 === "editor" || role2 === "viewer" ? role2 : "viewer",
-        workspace: { id: org.id, name: org.name, slug: org.slug }
+        workspace: {
+          id: org.workspaceId,
+          name: org.workspaceName,
+          slug: org.workspaceSlug
+        }
       });
-      if (activeWorkspaceId === null) activeWorkspaceId = org.id;
+      if (activeWorkspaceId === null) activeWorkspaceId = org.workspaceId;
     }
     let creditsBalance = 0;
     if (activeWorkspaceId !== null) {

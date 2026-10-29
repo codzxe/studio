@@ -613,6 +613,22 @@ export function fakeRepos(auth: FakeGatewayAuth): { repos: Repos; calls: RepoCal
         throw new Error("runs.create not faked");
       },
     },
+    // The /v1/me joined-SQL membership read (perf round part 2) — backed by
+    // the FakeGatewayAuth org registry so the stub suite exercises the SAME
+    // route path as Postgres boots.
+    memberships: {
+      async listForUser(userId: string) {
+        record("memberships.listForUser");
+        return [...auth.orgs.values()]
+          .filter((org) => org.members.has(userId))
+          .map((org) => ({
+            workspaceId: org.id,
+            workspaceName: org.name,
+            workspaceSlug: org.slug,
+            role: org.members.get(userId) ?? "viewer",
+          }));
+      },
+    },
     ledger: {
       async balance() {
         record("ledger.balance");

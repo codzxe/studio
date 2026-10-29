@@ -1,5 +1,13 @@
 // @studio/gateway — GET /v1/me (§7.2): user + memberships + plan summary.
 //
+// PERF ROUND, PART 2: memberships come from ONE joined SQL
+// (`repos.memberships.listForUser`) instead of better-auth's per-org
+// `getFullWorkspace` fan-out — the old loop fetched EVERY workspace's full
+// member list to find one role, ~3 queries × N workspaces sequential, a
+// measured ~2 s on a 30-workspace account (and every shell-wrapped page
+// with it). Role coercion and the activeWorkspaceId fallback keep their
+// exact pre-fix semantics.
+//
 // W1-04 stub purge: the plan block is now the SAME truthful derivation the
 // other billing reads use — the active workspace's subscription row (M6-D
 // subscriptions repo) through the shared pure `effectivePlan` (D-4: a
@@ -45,23 +53,28 @@ export function meRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
   app.get("/v1/me", async (c: AppContext): Promise<Response> => {
     const { user } = c.get("auth");
-    const headers = c.req.raw.headers;
 
-    const orgs = await deps.auth.listOrganizations(headers);
+    // ONE joined SQL (member × organization) — see the file header. Roles
+    // pass through as better-auth stores them; the wire coercion below is
+    // the pre-fix one exactly (unknown/default roles read as viewer).
+    const rows = await deps.repos.memberships.listForUser(user.id);
     const memberships: Membership[] = [];
     let activeWorkspaceId = c.get("auth").session.activeOrganizationId;
-    for (const org of orgs) {
-      const full = await deps.auth.getFullWorkspace(headers, org.id);
-      const role = full?.members.find((member) => member.userId === user.id)?.role ?? "viewer";
+    for (const org of rows) {
+      const role = org.role;
       memberships.push({
-        workspaceId: org.id,
+        workspaceId: org.workspaceId,
         role:
           role === "owner" || role === "admin" || role === "editor" || role === "viewer"
             ? role
             : "viewer",
-        workspace: { id: org.id, name: org.name, slug: org.slug },
+        workspace: {
+          id: org.workspaceId,
+          name: org.workspaceName,
+          slug: org.workspaceSlug,
+        },
       });
-      if (activeWorkspaceId === null) activeWorkspaceId = org.id;
+      if (activeWorkspaceId === null) activeWorkspaceId = org.workspaceId;
     }
 
     let creditsBalance = 0;

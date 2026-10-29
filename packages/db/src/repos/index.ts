@@ -6,6 +6,7 @@ import { type CommentsRepo, createCommentsRepo } from "./comments.js";
 import { type InvoicesRepo, createInvoicesRepo } from "./invoices.js";
 import { type LeasesRepo, createLeasesRepo } from "./leases.js";
 import { type LedgerRepo, createLedgerRepo } from "./ledger.js";
+import { type MembershipsRepo, createMembershipsRepo } from "./memberships.js";
 import { type PresenceRepo, createPresenceRepo } from "./presence.js";
 import { type ProjectsRepo, createProjectsRepo } from "./projects.js";
 import { type RendersRepo, createRendersRepo } from "./renders.js";
@@ -51,6 +52,9 @@ export type {
 export { RUN_STALE_AFTER_MS, RUN_ABANDONED_ERROR_CODE } from "./runs.js";
 export type { LedgerRepo } from "./ledger.js";
 export type { LedgerScope } from "./ledger.js";
+// Perf round part 2: the /v1/me membership fan-out (per-org getFullWorkspace
+// × N workspaces) replaced by ONE member × organization join.
+export type { MembershipsRepo, MembershipRow } from "./memberships.js";
 export type { CommentsRepo } from "./comments.js";
 export type { RendersRepo } from "./renders.js";
 // M8-A job-queue surface (additive; the worker wave codes against these).
@@ -99,6 +103,8 @@ export interface Repos {
   readonly threads: ThreadsRepo;
   readonly runs: RunsRepo;
   readonly ledger: LedgerRepo;
+  /** Perf round part 2: /v1/me memberships in one joined SQL. */
+  readonly memberships: MembershipsRepo;
   readonly comments: CommentsRepo;
   readonly renders: RendersRepo;
   readonly audit: AuditRepo;
@@ -122,6 +128,7 @@ export function createRepos(db: StudioDb): Repos {
     threads: createThreadsRepo(db),
     runs: createRunsRepo(db),
     ledger: createLedgerRepo(db),
+    memberships: createMembershipsRepo(db),
     comments: createCommentsRepo(db),
     renders: createRendersRepo(db),
     audit: createAuditRepo(db),

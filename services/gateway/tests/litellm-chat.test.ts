@@ -194,7 +194,12 @@ describe("createRunnerForEnv (D-16)", () => {
     ]);
   });
 
-  it("MOCK_MODEL=false selects the LiteLLM runner wired to env.litellm", async () => {
+  it("round-12 retirement: MOCK_MODEL=false no longer selects the LiteLLM runner — the seam is mock-only (the real loop lives in turn-engine.ts)", async () => {
+    // The server-side runner was retired by the round-12 client-driven loop;
+    // createRunnerForEnv now serves ONLY the legacy runs-route cancel path and
+    // test harnesses, always returning the MockRunner. The wire contract
+    // (LiteLLM base URL, virtual-key bearer, model alias) is pinned by
+    // turn-engine.test.ts instead.
     const env = testEnv({
       MOCK_MODEL: "false",
       LITELLM_BASE_URL: "http://127.0.0.1:4567",
@@ -209,21 +214,27 @@ describe("createRunnerForEnv (D-16)", () => {
     const state = makeStream();
     const outcome = await runner.start(makeRun(), fakeStream(state));
 
-    expect(outcome).toEqual({ kind: "completed", committedCredits: 1 });
-    expect(state.events.map((event) => event.type)).toEqual(["run.started", "message.delta"]);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchSpy.mock.calls[0] as unknown as [
-      string,
-      { headers: Record<string, string>; body: string },
-    ];
-    expect(url).toBe("http://127.0.0.1:4567/v1/chat/completions");
-    expect(init.headers.authorization).toBe("Bearer sk-virtual-ws");
-    const body = JSON.parse(init.body) as { model: string; messages: unknown[] };
-    expect(body.model).toBe("studio-fast");
-    expect(Array.isArray(body.messages)).toBe(true);
+    // The mock signature (the same event shape the MOCK_MODEL=true arm pins)
+    // and the mock's credit accounting: ceil(reservedCredits / 2), capped at
+    // reserved — ceil(5/2) = 3 for makeRun()'s reservedCredits: 5.
+    expect(outcome).toEqual({ kind: "completed", committedCredits: 3 });
+    expect(state.events.map((event) => event.type)).toEqual([
+      "run.started",
+      "message.delta",
+      "message.delta",
+      "plan",
+      "tool.started",
+      "tool.result",
+    ]);
+    // The legacy seam NEVER talks to a provider.
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("falls back to the platform key when no virtual key is set", async () => {
+  it("the mock-only seam ignores the platform key too (the auth pin lives in turn-engine.test.ts)", async () => {
+    // The virtual-vs-platform-key bearer choice moved to the turn engine's
+    // wire (turn-engine.test.ts: “falls back to the platform apiKey bearer
+    // when no virtual key is set”). Here we pin that the legacy seam makes no
+    // network call at all regardless of the litellm env.
     const env = testEnv({
       MOCK_MODEL: "false",
       LITELLM_API_KEY: "sk-platform-only",
@@ -233,11 +244,8 @@ describe("createRunnerForEnv (D-16)", () => {
     vi.stubGlobal("fetch", fetchSpy);
     const runner = createRunnerForEnv(env);
     const state = makeStream();
-    await runner.start(makeRun(), fakeStream(state));
-    const [, init] = fetchSpy.mock.calls[0] as unknown as [
-      string,
-      { headers: Record<string, string> },
-    ];
-    expect(init.headers.authorization).toBe("Bearer sk-platform-only");
+    const outcome = await runner.start(makeRun(), fakeStream(state));
+    expect(outcome).toEqual({ kind: "completed", committedCredits: 3 });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

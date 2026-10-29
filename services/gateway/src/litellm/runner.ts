@@ -199,11 +199,14 @@ export const RUNNER_WRITE_TOOLS: readonly ToolDefinition[] = WRITE_TOOL_IDS.map(
   getTool(studioWriteToolId(id)),
 ).filter((tool): tool is ToolDefinition => tool !== undefined && tool.kind === "write");
 
-/** Everything registered on the provider wire: 5 read + 8 write = 13. */
-export const RUNNER_TOOLS: readonly ToolDefinition[] = [
-  ...RUNNER_READ_TOOLS,
-  ...RUNNER_WRITE_TOOLS,
-];
+/**
+ * Everything registered on the provider wire — the full v3 catalog in
+ * TOOL_LIST's CANONICAL order (the exact order the turn engine registers too;
+ * the read-filter + write-map reconstruction re-ordered the generative tools
+ * ahead of the writes and drifted the §8.4 wire pin). Same 21 definitions,
+ * same objects (getTool reads from the catalog TOOL_LIST itself builds).
+ */
+export const RUNNER_TOOLS: readonly ToolDefinition[] = TOOL_LIST;
 
 const TOOL_BY_ID: ReadonlyMap<string, ToolDefinition> = new Map(
   RUNNER_TOOLS.map((tool) => [tool.id, tool]),
