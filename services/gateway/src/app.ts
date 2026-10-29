@@ -5,6 +5,7 @@
 // fake repos/auth/storage and production wires real ones (index.ts).
 
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 
 import type { AppBindings, GatewayDeps } from "./context.js";
 import { AUTH_MOUNT_PATH } from "./env.js";
@@ -48,6 +49,20 @@ export interface BuildAppOptions {
   readonly deps: GatewayDeps;
 }
 
+/**
+ * AUD-M2: the JSON-plane body ceiling (plans can run large — MAX_PLAN_BYTES
+ * is 8MB — so 10MB leaves margin; the biggest legit JSON body in v1).
+ */
+const JSON_BODY_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * AUD-M2: byte-stream routes exempt from the JSON ceiling — they enforce
+ * their own env-driven caps (PROJECT_MAX_BYTES / ASSET_MAX_BYTES) with
+ * pre-buffer content-length checks + post-buffer byteLength validation.
+ */
+const BLOB_BODY_ROUTES =
+  /^\/v1\/projects\/[^/]+\/versions$|^\/v1\/assets(\/|$)|^\/v1\/local-storage\//;
+
 export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
   const { deps } = options;
   const app = new Hono<AppBindings>();
@@ -62,6 +77,19 @@ export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
   app.use("*", accessLogMiddleware());
   app.use("*", corsMiddleware(deps.env.app.url));
   app.use("*", rateLimitMiddleware());
+  // AUD-M2 (2026-10-30 deep audit): a hard request-body ceiling on the JSON
+  // planes. Pre-fix NO route had one — every POST buffered its body to
+  // completion before Zod's length caps ever ran (Vercel caps ~4.5MB
+  // platform-side, but the §14 self-hosted Caddy edge had none at all), so
+  // any authenticated caller could memory-bomb the isolate. The BLOB
+  // routes (version snapshots, assets, local-storage uploads) are exempt —
+  // they enforce their own env-driven PROJECT_MAX_BYTES / ASSET_MAX_BYTES
+  // ceilings with pre-buffer content-length checks.
+  const jsonBodyLimit = bodyLimit({ maxSize: JSON_BODY_MAX_BYTES });
+  app.use("*", (c, next) => {
+    if (BLOB_BODY_ROUTES.test(c.req.path)) return next();
+    return jsonBodyLimit(c, next);
+  });
 
   // Error boundary (§7.3): every failure renders a safe Err envelope; stacks,
   // paths, URLs and provider errors stay in server-side logs only.

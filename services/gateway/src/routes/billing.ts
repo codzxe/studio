@@ -70,7 +70,7 @@ import type {
 } from "../context.js";
 import { GatewayError } from "../errors.js";
 import { ok, page } from "../http.js";
-import { requireAuth, requireWorkspace } from "../middleware.js";
+import { assertCapability, requireAuth, requireWorkspace } from "../middleware.js";
 import { effectivePlan, installSubscriptionReader, isAdminRole } from "../plan.js";
 import { outstandingReserveForWorkspace } from "./credits.js";
 
@@ -793,14 +793,17 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
   // The §M6 wire read for the invoices the webhook persists (invoice.paid /
   // invoice.voided → repos.invoices.record, M6-D): newest-first,
   // cursor-paginated, workspace-scoped (law #3 — cross-tenant rows are never
-  // visible, a stranger's list is simply empty). `viewer` is the member floor:
-  // every workspace member can read their billing history; no money moves on
-  // a GET. `amountCents` is MONEY in Stripe minor units, never credits (D-12
+  // visible, a stranger's list is simply empty). AUD-F6 (2026-10-30): the
+  // floor is ADMIN + the manageBilling capability — rows carry Stripe
+  // HOSTED INVOICE URLs, which are long-lived bearer links to money
+  // documents; a viewer reading them was out of line with §3.3's capability
+  // matrix. `amountCents` is MONEY in Stripe minor units, never credits (D-12
   // keeps the credit ledger in its own µc domain).
   app.get(
     "/v1/billing/invoices",
-    requireWorkspace("viewer"),
+    requireWorkspace("admin"),
     async (c: AppContext): Promise<Response> => {
+      assertCapability("manageBilling", c);
       const parsed = INVOICES_QUERY_SCHEMA.safeParse({
         cursor: c.req.query("cursor"),
         limit: c.req.query("limit"),
@@ -922,16 +925,29 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
       // D-4: the trial state lives on the STARTER row, trialEnd from the
       // M6-A catalog. The card is never charged by this route.
+      // AUD-M5: the check + upsert is ONE fingerprint-keyed advisory-locked
+      // section — two parallel POSTs from different workspaces with the same
+      // card can no longer both claim a 14-day trial.
       const trialDays = PLAN_CATALOG.trial.trialDays ?? 14;
       const trialEnd = new Date(Date.now() + trialDays * DAY_MS);
-      await subscriptions.upsertState(workspaceId, {
-        planId: "starter",
-        status: "trialing",
-        stripeSubscriptionId: null,
-        currentPeriodEnd: trialEnd,
-        trialEnd,
-        cancelAtPeriodEnd: false,
+      const claim = await subscriptions.claimTrial(workspaceId, {
+        fingerprint,
+        state: {
+          planId: "starter",
+          status: "trialing",
+          stripeSubscriptionId: null,
+          currentPeriodEnd: trialEnd,
+          trialEnd,
+          cancelAtPeriodEnd: false,
+        },
       });
+      if (!claim.claimed) {
+        throw new GatewayError("FORBIDDEN", "That payment method already started a trial.", {
+          status: 403,
+          hint: "Trials are limited to one per payment method.",
+          requestId,
+        });
+      }
       const body: TrialResponse = { trialStarted: true, trialEnd: trialEnd.toISOString() };
       return ok(c, body, 201);
     },
@@ -1093,6 +1109,18 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
     const kind = object.metadata?.kind ?? null;
     if (kind === "topup") {
+      // AUD-A9 (2026-10-30 deep audit): Stripe completes Checkout sessions for
+      // async payment methods with `payment_status: "unpaid"` — the money
+      // has NOT settled when the event fires. Pre-fix the grant ran on
+      // completion regardless, minting credits before money. Only "paid"
+      // grants; an unpaid session's eventual settlement re-fires through
+      // the invoice arm, which is idempotent on the invoice id.
+      const checkoutObject = object as unknown as Record<string, unknown>;
+      const paymentStatus =
+        typeof checkoutObject.payment_status === "string" ? checkoutObject.payment_status : "";
+      if (paymentStatus !== "" && paymentStatus !== "paid") {
+        return { ignored: `topup.${paymentStatus}` };
+      }
       const granted = await grantTopUp(
         organizationId,
         event,
@@ -1306,6 +1334,38 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
           graceEnd: null,
         });
         if (healed) handled = "invoice.paid-healed";
+      }
+    }
+
+    // AUD-A9 fix — the plan's MONTHLY CREDIT ALLOWANCE finally has a granting
+    // path. Pre-fix the allowance (trial 50 / starter 500 / pro 2000 /
+    // studio 10000) was ADVERTISED on /v1/credits, /v1/me and billing/state
+    // but no code path ever granted it: a paid subscription started at 0
+    // credits (a pure pricing bug, user-hostile). The subscription invoice is
+    // the once-per-period money event Stripe guarantees; the grant is
+    // idempotent on the invoice id so redeliveries can never double-grant.
+    // Top-up invoices never carry the allowance (their credits are the pack).
+    if (
+      subscriptions !== null &&
+      object.metadata?.kind !== "topup" &&
+      organizationId !== null
+    ) {
+      const row = await subscriptions.getByOrganization(organizationId);
+      if (row !== null) {
+        const allowance = entitlementsFor(row.planId).monthlyCreditAllowance;
+        if (allowance > 0) {
+          await deps.repos.ledger.grant(organizationId, {
+            amount: creditsToMicrocredits(allowance),
+            idempotencyKey: `stripe:sub-allowance:${invoiceId}`,
+            metadata: {
+              kind: "subscription-allowance",
+              planId: row.planId,
+              stripeInvoiceId: invoiceId,
+            },
+          });
+          // A dunning heal is the more specific outcome — keep its label.
+          if (handled === "invoice.paid") handled = "invoice.allowance-granted";
+        }
       }
     }
     return { handled };

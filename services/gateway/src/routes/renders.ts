@@ -70,7 +70,7 @@ import {
   renderOutputSeconds,
 } from "@studio/config";
 
-import type { Project, Render } from "@studio/db";
+import { DbError, type Project, type Render } from "@studio/db";
 
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { microcreditsToDisplayCredits } from "../credits-display.js";
@@ -473,16 +473,36 @@ export function rendersRoutes(deps: GatewayDeps): Hono<AppBindings> {
       "{renderId}",
       request.format === "png-seq" ? "zip" : "mp4",
     );
-    const render = await deps.repos.renders.create(workspace.id, {
-      projectId: quote.project.id,
-      versionId: quote.versionId,
-      compId: request.compId,
-      format: request.format,
-      settingsJson: quote.storedSettings,
-      credits: detail.totalUc,
-      createdBy: c.get("auth").user.id,
-      objectKey,
-    });
+    // AUD-M1: the plan's concurrency cap rides into the repo's advisory-locked
+    // create — the pre-check above stays as a fast, friendly 429, but the
+    // authoritative assertion happens inside the lock, where parallel queue
+    // POSTs can no longer slip past it together.
+    let render;
+    try {
+      render = await deps.repos.renders.create(
+        workspace.id,
+        {
+          projectId: quote.project.id,
+          versionId: quote.versionId,
+          compId: request.compId,
+          format: request.format,
+          settingsJson: quote.storedSettings,
+          credits: detail.totalUc,
+          createdBy: c.get("auth").user.id,
+          objectKey,
+        },
+        { maxConcurrent: entitlements.maxConcurrentRenders },
+      );
+    } catch (error) {
+      if (
+        error instanceof DbError &&
+        error.code === "CONFLICT" &&
+        error.message.includes("RENDER_CONCURRENCY_LIMIT")
+      ) {
+        throw new StudioError("RENDER_CONCURRENCY_LIMIT", { requestId });
+      }
+      throw error;
+    }
 
     // (h) Hold the credits, scoped to the render. A refusal (the balance can
     // dip between the precheck and the hold — a rare race) must never orphan

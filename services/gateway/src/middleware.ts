@@ -6,7 +6,7 @@
 // with app.onError (§7.3 envelope, never leak internals) and app.notFound
 // ({code: NOT_FOUND}) wrapping everything.
 
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 
 import type { MiddlewareHandler } from "hono";
 
@@ -27,8 +27,10 @@ function asStatus(status: number): ContentfulStatusCode {
 export function requestIdMiddleware(): MiddlewareHandler<AppBindings> {
   return async (c, next) => {
     const incoming = c.req.header("x-request-id");
+    // AUD-L1: charset-validated, not just length-checked — a hostile header
+    // value otherwise rides verbatim into logs and the echoed response header.
     const id =
-      incoming !== undefined && incoming.length > 0 && incoming.length <= 128
+      incoming !== undefined && REQUEST_ID_PATTERN.test(incoming)
         ? incoming
         : `req_${randomUUID().replaceAll("-", "")}`;
     c.set("requestId", id);
@@ -36,6 +38,9 @@ export function requestIdMiddleware(): MiddlewareHandler<AppBindings> {
     c.header("x-request-id", id);
   };
 }
+
+/** Request ids are opaque tokens — printable ASCII, no control/whitespace. */
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:\-]{1,128}$/;
 
 /** 2. Access log: method, path, status, ms, requestId, workspaceId (never bodies). */
 export function accessLogMiddleware(): MiddlewareHandler<AppBindings> {
@@ -105,8 +110,17 @@ export function rateLimitMiddleware(): MiddlewareHandler<AppBindings> {
 export function clientIp(c: Parameters<MiddlewareHandler<AppBindings>>[0]): string {
   const forwarded = c.req.header("x-forwarded-for");
   if (typeof forwarded === "string" && forwarded.length > 0) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first !== undefined && first !== "") return first;
+    // AUD-A6 (2026-10-30 deep audit): X-Forwarded-For APPENDS one entry per
+    // proxy hop — the client-supplied spoof sits FIRST, the trusted edge's
+    // verdict LAST (Vercel and the §14 Caddy edge both append). Reading the
+    // FIRST entry let any caller mint a fresh rate-limit bucket per request
+    // (unlimited turns, brute-forceable auth + share passwords).
+    const parts = forwarded
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part !== "");
+    const trusted = parts[parts.length - 1];
+    if (trusted !== undefined && trusted !== "") return trusted;
   }
   return c.req.header("x-real-ip") ?? "unknown";
 }
@@ -163,8 +177,19 @@ export function idempotencyMiddleware(): MiddlewareHandler<AppBindings> {
       });
     }
 
+    // AUD-A7 (2026-10-30 deep audit): the store key is namespaced by the
+    // CALLER IDENTITY — a sha256 of the credential material the request
+    // itself carries (Authorization header + cookie jar + workspace hint).
+    // Pre-fix the store keyed the RAW header only and replayed BEFORE
+    // requireAuth, so a leaked/colliding key returned ANOTHER user's stored
+    // response body cross-tenant with zero authentication. With the scope
+    // hash, an identical key + body from a different session reads as a
+    // different store key — the replay is confined to the credential that
+    // originally produced it.
+    const storeKey = `${idempotencyScopeOf(c)}::${key}`;
+
     const payloadHash = await fingerprintPayload(c.req.raw);
-    const stored = deps.idempotency.lookup(key);
+    const stored = deps.idempotency.lookup(storeKey);
     if (stored !== null) {
       if (stored.payloadHash !== payloadHash) {
         throw new GatewayError(
@@ -179,8 +204,8 @@ export function idempotencyMiddleware(): MiddlewareHandler<AppBindings> {
       }
       if (!stored.complete) {
         // Concurrent duplicate: wait for the in-flight handler, then replay.
-        await deps.idempotency.waitFor(key);
-        const after = deps.idempotency.lookup(key);
+        await deps.idempotency.waitFor(storeKey);
+        const after = deps.idempotency.lookup(storeKey);
         if (after?.complete) {
           c.header("x-idempotent-replay", "true");
           return c.newResponse(JSON.stringify(after.body), asStatus(after.status), {
@@ -196,10 +221,10 @@ export function idempotencyMiddleware(): MiddlewareHandler<AppBindings> {
       });
     }
 
-    if (!deps.idempotency.begin(key, payloadHash)) {
+    if (!deps.idempotency.begin(storeKey, payloadHash)) {
       // Lost a begin race: wait for the in-flight handler, then replay.
-      await deps.idempotency.waitFor(key);
-      const after = deps.idempotency.lookup(key);
+      await deps.idempotency.waitFor(storeKey);
+      const after = deps.idempotency.lookup(storeKey);
       if (after?.complete) {
         c.header("x-idempotent-replay", "true");
         return c.newResponse(JSON.stringify(after.body), asStatus(after.status), {
@@ -227,17 +252,35 @@ export function idempotencyMiddleware(): MiddlewareHandler<AppBindings> {
       const snapshot = c.res.clone();
       const body = await snapshot.text();
       deps.idempotency.complete(
-        key,
+        storeKey,
         payloadHash,
         c.res.status,
         safeJsonParse(body),
         contentTypeOf(c.res.headers),
       );
     } catch (error) {
-      deps.idempotency.release(key);
+      deps.idempotency.release(storeKey);
       throw error;
     }
   };
+}
+
+/**
+ * AUD-A7: stable, non-reversible scope for the idempotency store key — the
+ * credential material THIS request carries. Same session + same workspace →
+ * same scope → same-key replays stay inside one caller. A different session
+ * (or an anonymous replay of a leaked key) lands in a different namespace
+ * and can never read the original response.
+ */
+function idempotencyScopeOf(c: Parameters<MiddlewareHandler<AppBindings>>[0]): string {
+  const authorization = c.req.header("authorization") ?? "";
+  const cookie = c.req.header("cookie") ?? "";
+  const workspace = c.req.header("x-workspace-id") ?? "";
+  if (authorization === "" && cookie === "") return "anon";
+  return createHash("sha256")
+    .update(`${authorization}\n${cookie}\n${workspace}`)
+    .digest("hex")
+    .slice(0, 32);
 }
 
 function contentTypeOf(headers: Headers): string {
@@ -265,8 +308,54 @@ export function requireAuth(): MiddlewareHandler<AppBindings> {
       throw new StudioError("AUTH_REQUIRED", { requestId: c.get("requestId") });
     }
     c.set("auth", { user: session.user, session: session.session });
+    // AUD-A8 (2026-10-30 deep audit): API-key sessions are content-plane
+    // PATs — pre-fix a leaked `projects:read` key acted with the minting
+    // user's FULL powers (scopes are stored/displayed but never enforced
+    // anywhere in the gateway), including minting MORE keys, inviting
+    // members and driving better-auth's own /v1/auth/* mutations. Until the
+    // per-scope capability middleware lands, keys are confined to the data
+    // plane: every /v1/auth/* route and every workspace-admin / money
+    // surface answers a typed 403.
+    if (session.viaApiKey === true) {
+      assertApiKeySurface(c.req.method, c.req.path, c.get("requestId"));
+    }
     await next();
   };
+}
+
+/**
+ * AUD-A8: the v1 API-key surface — everything a Bearer-minted session may
+ * NOT touch. Cookie sessions are unaffected. GETs on data-plane resources
+ * (projects, renders, threads, credits) stay allowed for automation keys.
+ */
+function assertApiKeySurface(method: string, path: string, requestId: string): void {
+  // better-auth's own mount — a key session must never drive auth mutations
+  // (update-user, organization member/invite operations, key minting…).
+  if (path === "/v1/auth" || path.startsWith("/v1/auth/")) {
+    throw new GatewayError("API_KEY_FORBIDDEN", "API keys cannot use the auth surface.", {
+      status: 403,
+      hint: "Use a cookie session for account and workspace management.",
+      requestId,
+    });
+  }
+  // Workspace administration (members, invites, api-keys, audit export) and
+  // the money plane (billing checkout/topup/portal/trial, reconcile) are
+  // cookie-only. `switch` stays allowed (it only selects the active org).
+  const isAdminSurface =
+    path.startsWith("/v1/workspaces/") &&
+    method !== "GET" &&
+    !/^\/+v1\/+workspaces\/+[^/]+\/+switch$/.test(path);
+  if (isAdminSurface || path.startsWith("/v1/billing/") || path === "/v1/credits/reconcile") {
+    throw new GatewayError(
+      "API_KEY_FORBIDDEN",
+      "API keys cannot manage workspaces, members or billing.",
+      {
+        status: 403,
+        hint: "Use a cookie session for workspace and billing operations.",
+        requestId,
+      },
+    );
+  }
 }
 
 /**

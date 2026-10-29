@@ -183,11 +183,15 @@ export function sharePublicRoutes(deps: GatewayDeps): Hono<AppBindings> {
    * Password gate for protected tokens: the header must verify. Missing and
    * wrong are the SAME 401 (no oracle); attempts count against a per-IP
    * window BEFORE the comparison so brute force can't outrun the throttle.
+   * AUD-A6: the window key is (token, ip) — with the clientIp trusted-hop
+   * fix a rotating XFF no longer mints buckets, and binding the token keeps
+   * one attacker from burning a legitimate user's per-IP budget.
    */
   async function gatePassword(c: AppContext, token: ShareToken): Promise<void> {
     if (token.passwordHash === null) return; // open link
     const ip = clientIp(c);
-    const decision = passwordLimiter.check(ip);
+    // AUD-A6: (token, ip) window key — bind attempts to the share link too.
+    const decision = passwordLimiter.check(`${token.tokenHash}:${ip}`);
     if (!decision.allowed) rateLimited(c, decision.retryAfterSeconds);
     if (!verifySharePassword(c.req.header(SHARE_PASSWORD_HEADER), token.passwordHash)) {
       throw new GatewayError("AUTH_REQUIRED", "This share link is protected.", {
@@ -199,11 +203,17 @@ export function sharePublicRoutes(deps: GatewayDeps): Hono<AppBindings> {
   }
 
   // GET /v1/share/:token — metadata only, never content (§M7 task 5).
+  // AUD-F7 (2026-10-30 deep audit): the project NAME is the password-gated
+  // content's identity — pre-fix this endpoint handed it out before the
+  // password was verified, leaking the protected project's name (and its
+  // id) to anyone holding the bare link. Password-protected tokens now get
+  // a redacted card; the name appears only through the gated manifest.
   app.get("/v1/share/:token", async (c: AppContext): Promise<Response> => {
     const { token, projectId, projectName } = await resolveShare(c);
+    const protectedShare = token.passwordHash !== null;
     const body: ShareInfo = {
-      projectId,
-      projectName,
+      projectId: protectedShare ? null : projectId,
+      projectName: protectedShare ? null : projectName,
       compId: null, // v1: a token shares the whole project
       expiresAt: token.expiresAt !== null ? token.expiresAt.toISOString() : null,
       hasPassword: token.passwordHash !== null,

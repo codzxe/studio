@@ -173,6 +173,11 @@ export class LocalTokenRegistry {
     const entry = this.tokens.get(token);
     if (entry === undefined) return null;
     if (entry.expiresAt <= now || entry.method !== method) return null;
+    // AUD-L2 (2026-10-30 deep audit): a consumed token is now DELETED —
+    // single-use semantics. Pre-fix the entry stayed in the map for its whole
+    // TTL, so a local-storage URL observed in logs/referrer replayed freely
+    // until expiry.
+    this.tokens.delete(token);
     return entry.key;
   }
 }

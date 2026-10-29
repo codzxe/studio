@@ -24,6 +24,18 @@ import { isAdminRole, resolvePlan } from "../plan.js";
 import { countPendingInvites } from "./billing.js";
 
 /**
+ * AUD-F5: invite role ladder — the gateway-side mirror of members.ts's
+ * owner-target rules. Nobody invites to a rank above their own; only owners
+ * hand out owner invitations.
+ */
+const INVITE_ROLE_RANK: Readonly<Record<string, number>> = Object.freeze({
+  viewer: 1,
+  editor: 2,
+  admin: 3,
+  owner: 4,
+});
+
+/**
  * The M6 invite-time seat gate (the sibling of billing.ts's checkout
  * pre-check — that route's comment is now true).
  *
@@ -80,12 +92,25 @@ export function invitesRoutes(deps: GatewayDeps): Hono<AppBindings> {
   app.post("/v1/workspaces/:id/invites", async (c: AppContext): Promise<Response> => {
     const candidate = pathParam(c, "id");
     const context = await resolveWorkspaceContext(c, candidate, "admin");
-
     const parsed = INVITE_MEMBER_SCHEMA.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) {
       throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
         status: 400,
         hint: "Invite with a valid email and a role of owner, admin, editor or viewer.",
+        requestId: c.get("requestId"),
+      });
+    }
+
+    // AUD-F5 (2026-10-30 deep audit): owner-targeted invites were guarded ONLY
+    // by the better-auth plugin's internal creator-role check — the gateway
+    // itself applied owner-target rules everywhere EXCEPT here, so any plugin
+    // behavior change (or a future seam) would silently re-open admin→owner
+    // escalation. Mirror members.ts: an owner-role invite requires an owner
+    // caller, and nobody may invite to a role above their own rank.
+    if ((INVITE_ROLE_RANK[parsed.data.role] ?? 0) > (INVITE_ROLE_RANK[context.role] ?? 0)) {
+      throw new GatewayError("FORBIDDEN", "You can't invite someone to a role above yours.", {
+        status: 403,
+        hint: "Only owners can mint owner invitations.",
         requestId: c.get("requestId"),
       });
     }

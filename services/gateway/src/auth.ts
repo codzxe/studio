@@ -43,6 +43,14 @@ export interface AuthSession {
 export interface AuthContext {
   readonly user: AuthUser;
   readonly session: AuthSession;
+  /**
+   * AUD-A8: true when this session was minted through the
+   * `Authorization: Bearer <api-key>` seam (the better-auth apiKey plugin's
+   * session hook) rather than a cookie — requireAuth enforces the key
+   * surface rules (no /v1/auth/*, no workspace-admin/money mutations).
+   * Optional so test fakes stay valid.
+   */
+  readonly viaApiKey?: boolean;
 }
 
 export interface WorkspaceSummary {
@@ -292,6 +300,11 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
 
     async getSession(headers) {
       let result: unknown;
+      // AUD-A8: the better-auth apiKey plugin's Bearer-only getter owns the
+      // authorization seam — a PRIMARY resolution with an Authorization
+      // header present means the session was minted FOR THE KEY. The
+      // invalid-key fallback below flips the marker off (cookie session).
+      let viaApiKey = headers.get("authorization") !== null;
       try {
         result = await auth.api.getSession({ headers });
       } catch (error) {
@@ -303,6 +316,7 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
         // the header-stripped retry below). Cookie-only requests rethrow —
         // infrastructure failures must stay loud.
         if (headers.get("authorization") !== null && error instanceof APIError) {
+          viaApiKey = false; // the key was rejected — the retry below is cookie-only
           const withoutBearer = new Headers(headers);
           withoutBearer.delete("authorization");
           try {
@@ -332,6 +346,7 @@ export function adaptBetterAuth(auth: Auth): GatewayAuth {
           userId: asString(session.userId) ?? "",
           activeOrganizationId: asString(session.activeOrganizationId),
         },
+        viaApiKey,
       };
     },
 
