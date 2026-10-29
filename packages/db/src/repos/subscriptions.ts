@@ -1,6 +1,6 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
-import type { StudioDb } from "../db.js";
+import { type Executor, type StudioDb, getDialect } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
 import type { PlanId, StripeCustomer, Subscription, SubscriptionStatus } from "../schema.js";
@@ -92,6 +92,21 @@ export interface SubscriptionsRepo {
    * abuse check; several workspaces may legitimately share a card).
    */
   cardFingerprintUsed(fingerprint: string): Promise<{ organizationId: string } | null>;
+  /**
+   * AUD-M5 (2026-10-30 deep audit): claim a trial on a payment method under
+   * a FINGERPRINT-KEYED advisory lock — the check-then-upsert on the route
+   * was racy: two workspaces presenting the same card in parallel both
+   * passed `cardFingerprintUsed` and both got a 14-day trial. Returns
+   * `{ claimed: false }` when the card (now) belongs to another workspace;
+   * sqlite skips the advisory lock (single serialized connection).
+   */
+  claimTrial(
+    workspaceId: WorkspaceId,
+    input: {
+      readonly fingerprint: string;
+      readonly state: SubscriptionUpsertInput;
+    },
+  ): Promise<{ readonly claimed: boolean; readonly subscription: Subscription | null }>;
 }
 
 const PLAN_IDS: readonly PlanId[] = ["trial", "starter", "pro", "studio"];
@@ -132,6 +147,48 @@ async function requireOrganization(db: StudioDb, workspaceId: WorkspaceId): Prom
   if (!row) throw DbError.notFound("workspace");
 }
 
+/** The upsert body, shared by upsertState and claimTrial (tx-agnostic). */
+async function upsertStateTx(
+  exec: Executor,
+  workspaceId: WorkspaceId,
+  input: {
+    readonly planId: PlanId;
+    readonly status: SubscriptionStatus;
+    readonly stripeSubscriptionId?: string | null;
+    readonly currentPeriodEnd?: Date | null;
+    readonly trialEnd?: Date | null;
+    readonly cancelAtPeriodEnd?: boolean;
+    readonly graceEnd?: Date | null;
+  },
+  subscriptionsTable: typeof import("../schema.js").subscriptions,
+): Promise<Subscription> {
+  const planId = requirePlanId(input.planId);
+  const status = requireSubscriptionStatus(input.status);
+  const set = {
+    planId,
+    status,
+    updatedAt: new Date(),
+    ...(input.stripeSubscriptionId !== undefined
+      ? { stripeSubscriptionId: input.stripeSubscriptionId }
+      : {}),
+    ...(input.currentPeriodEnd !== undefined
+      ? { currentPeriodEnd: input.currentPeriodEnd }
+      : {}),
+    ...(input.trialEnd !== undefined ? { trialEnd: input.trialEnd } : {}),
+    ...(input.cancelAtPeriodEnd !== undefined
+      ? { cancelAtPeriodEnd: input.cancelAtPeriodEnd }
+      : {}),
+    ...(input.graceEnd !== undefined ? { graceEnd: input.graceEnd } : {}),
+  };
+  const [row] = await exec
+    .insert(subscriptionsTable)
+    .values({ id: createId("sub"), organizationId: workspaceId, ...set })
+    .onConflictDoUpdate({ target: subscriptionsTable.organizationId, set })
+    .returning();
+  if (!row) throw DbError.conflict("Could not upsert subscription");
+  return row;
+}
+
 export function createSubscriptionsRepo(db: StudioDb): SubscriptionsRepo {
   // Dialect-aware tables (W3-A, tables.ts seam) — see createProjectsRepo.
   const { organization, stripeCustomers, subscriptions } = tablesFor(db);
@@ -146,36 +203,8 @@ export function createSubscriptionsRepo(db: StudioDb): SubscriptionsRepo {
     },
 
     async upsertState(workspaceId, input) {
-      const planId = requirePlanId(input.planId);
-      const status = requireSubscriptionStatus(input.status);
       await requireOrganization(db, workspaceId);
-
-      const set = {
-        planId,
-        status,
-        updatedAt: new Date(),
-        ...(input.stripeSubscriptionId !== undefined
-          ? { stripeSubscriptionId: input.stripeSubscriptionId }
-          : {}),
-        ...(input.currentPeriodEnd !== undefined
-          ? { currentPeriodEnd: input.currentPeriodEnd }
-          : {}),
-        ...(input.trialEnd !== undefined ? { trialEnd: input.trialEnd } : {}),
-        ...(input.cancelAtPeriodEnd !== undefined
-          ? { cancelAtPeriodEnd: input.cancelAtPeriodEnd }
-          : {}),
-        ...(input.graceEnd !== undefined ? { graceEnd: input.graceEnd } : {}),
-      };
-
-      // Atomic upsert on the unique organization_id — concurrent upserts can
-      // never produce two rows for one workspace.
-      const [row] = await db
-        .insert(subscriptions)
-        .values({ id: createId("sub"), organizationId: workspaceId, ...set })
-        .onConflictDoUpdate({ target: subscriptions.organizationId, set })
-        .returning();
-      if (!row) throw DbError.conflict("Could not upsert subscription");
-      return row;
+      return upsertStateTx(db, workspaceId, input, subscriptions);
     },
 
     async transitionStatus(workspaceId, input) {
@@ -274,6 +303,32 @@ export function createSubscriptionsRepo(db: StudioDb): SubscriptionsRepo {
         .where(eq(stripeCustomers.cardFingerprint, cardFingerprint))
         .limit(1);
       return row ?? null;
+    },
+
+    async claimTrial(workspaceId, input) {
+      const fingerprint = requireNonEmpty(input.fingerprint, "fingerprint");
+      await requireOrganization(db, workspaceId);
+      return db.transaction(async (tx) => {
+        // AUD-M5: serialize every claimant of THIS card — the lock is keyed
+        // on the fingerprint (cross-workspace), not the workspace, so the
+        // used-check + upsert inside is one indivisible section. The sqlite
+        // dev twin is one serialized connection — the lock is a no-op there.
+        if (getDialect(db) === "postgres") {
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`trial:${fingerprint}`}))`);
+        }
+        const { stripeCustomers: customersTx } = tablesFor(tx);
+        const [used] = await tx
+          .select({ organizationId: customersTx.organizationId })
+          .from(customersTx)
+          .where(eq(customersTx.cardFingerprint, fingerprint))
+          .limit(1);
+        if (used !== undefined && used.organizationId !== workspaceId) {
+          return { claimed: false as const, subscription: null as Subscription | null };
+        }
+        const { subscriptions: subscriptionsTx } = tablesFor(tx);
+        const subscription = await upsertStateTx(tx, workspaceId, input.state, subscriptionsTx);
+        return { claimed: true as const, subscription };
+      });
     },
   };
 }

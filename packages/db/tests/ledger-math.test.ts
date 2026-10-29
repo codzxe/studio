@@ -86,6 +86,19 @@ describe("planSettlement", () => {
     expect(planSettlement(24, 40)).toEqual({ commit: 24, refund: 24 });
   });
 
+  // AUD-C1 (2026-10-30 deep audit): the turn path settles UNCAPPED so a
+  // client-reachable mid-flight refundAll (abandon/cancel/abort) can never
+  // zero the commit of a turn whose output was already streamed.
+  it("uncapped: the commit is the FULL actual cost even after a concurrent refund zeroed the hold", () => {
+    // Normal overage — committed in full (the hold was a solvency gate).
+    expect(planSettlement(24, 40, { uncapped: true })).toEqual({ commit: 40, refund: 24 });
+    // The exploit interleaving: refundAll won the race, outstanding = 0 —
+    // the delivered usage still bills.
+    expect(planSettlement(0, 40, { uncapped: true })).toEqual({ commit: 40, refund: 0 });
+    // Under-estimate case: identical to the capped shape.
+    expect(planSettlement(24, 18, { uncapped: true })).toEqual({ commit: 18, refund: 24 });
+  });
+
   it("zero cost after reserve: everything is refunded", () => {
     expect(planSettlement(24, 0)).toEqual({ commit: 0, refund: 24 });
   });

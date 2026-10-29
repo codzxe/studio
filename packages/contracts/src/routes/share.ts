@@ -116,8 +116,13 @@ export interface ShareLinkRevoked {
  * activity feed.
  */
 export interface ShareInfo {
-  readonly projectId: Id;
-  readonly projectName: string;
+  /**
+   * AUD-F7: null while the share is password-protected AND unverified — the
+   * identity of the gated content (name + id) is part of what the password
+   * protects. Open links carry the real values.
+   */
+  readonly projectId: Id | null;
+  readonly projectName: string | null;
   readonly compId: string | null;
   readonly expiresAt: string | null;
   readonly hasPassword: boolean;

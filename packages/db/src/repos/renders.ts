@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
-import { type StudioDb, getDialect } from "../db.js";
+import { type Executor, type StudioDb, getDialect } from "../db.js";
 import { DbError } from "../errors-lite.js";
 import { createId } from "../ids.js";
 import type { Render, RenderStatus } from "../schema.js";
@@ -113,7 +113,17 @@ export interface RenderClaimOptions {
 }
 
 export interface RendersRepo {
-  create(workspaceId: WorkspaceId, input: RenderCreateInput): Promise<Render>;
+  /**
+   * AUD-M1: `limits.maxConcurrent` re-asserts the plan's concurrency cap
+   * INSIDE a workspace-keyed advisory-locked transaction (the route-level
+   * countActive pre-check is check-then-act). Optional — legacy callers
+   * and test fakes keep the bare shape.
+   */
+  create(
+    workspaceId: WorkspaceId,
+    input: RenderCreateInput,
+    limits?: { readonly maxConcurrent: number },
+  ): Promise<Render>;
   markRunning(workspaceId: WorkspaceId, renderId: string): Promise<Render>;
   markCompleted(
     workspaceId: WorkspaceId,
@@ -245,7 +255,7 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
   }
 
   return {
-    async create(workspaceId, input) {
+    async create(workspaceId, input, limits) {
       const compId = requireNonEmpty(input.compId, "compId");
       const format = requireNonEmpty(input.format, "format");
       const versionId = requireNonEmpty(input.versionId, "versionId");
@@ -268,30 +278,62 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
         .limit(1);
       if (!version) throw DbError.notFound("version");
 
-      // The id is generated here so the M8-G objectKey template can resolve
-      // against it (see RenderCreateInput.objectKey).
-      const renderId = createId("rdr");
-      const [render] = await db
-        .insert(renders)
-        .values({
-          id: renderId,
-          projectId: project.id,
-          versionId: version.id,
-          compId,
-          format,
-          settingsJson: input.settingsJson,
-          status: "queued",
-          credits: input.credits ?? 0,
-          createdBy: input.createdBy,
-          // M8-G: the route-precreated §9.2 output key (queue-time, so the
-          // worker never guesses layout); NULL when the caller omits it.
-          objectKey: resolveObjectKey(input.objectKey, renderId),
-          // Job-queue defaults come from the DB (migration 0005):
-          // attempts=0, frames_done=0, frames_total=0, cancel_requested=false.
-        })
-        .returning();
-      if (!render) throw DbError.conflict("Could not queue render");
-      return render;
+      // AUD-M1 (2026-10-30 deep audit): when the route passes the plan's
+      // concurrency cap, the active-count is RE-ASSERTED inside a
+      // workspace-keyed advisory-locked transaction — the route-level
+      // countActive pre-check was check-then-act, so N parallel queue POSTs
+      // all passed it before any row existed. The sqlite dev twin is one
+      // serialized connection (the lock is a no-op there).
+      const doInsert = async (exec: Executor): Promise<Render> => {
+        const renderId = createId("rdr");
+        const [render] = await exec
+          .insert(renders)
+          .values({
+            id: renderId,
+            projectId: project.id,
+            versionId: version.id,
+            compId,
+            format,
+            settingsJson: input.settingsJson,
+            status: "queued",
+            credits: input.credits ?? 0,
+            createdBy: input.createdBy,
+            // M8-G: the route-precreated §9.2 output key (queue-time, so the
+            // worker never guesses layout); NULL when the caller omits it.
+            objectKey: resolveObjectKey(input.objectKey, renderId),
+            // Job-queue defaults come from the DB (migration 0005):
+            // attempts=0, frames_done=0, frames_total=0, cancel_requested=false.
+          })
+          .returning();
+        if (!render) throw DbError.conflict("Could not queue render");
+        return render;
+      };
+
+      if (limits !== undefined) {
+        const cap = requirePositiveInt(limits.maxConcurrent, "maxConcurrent");
+        return db.transaction(async (tx) => {
+          if (getDialect(db) === "postgres") {
+            await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`);
+          }
+          const { renders: rendersTx, projects: projectsTx } = tablesFor(tx);
+          // Portable cast: `::int` is Postgres-only, sqlite rejects it.
+          const [row] = await tx
+            .select({ count: sql<number>`cast(count(*) as int)` })
+            .from(rendersTx)
+            .innerJoin(projectsTx, eq(rendersTx.projectId, projectsTx.id))
+            .where(
+              and(
+                eq(projectsTx.workspaceId, workspaceId),
+                or(eq(rendersTx.status, "queued"), eq(rendersTx.status, "running")),
+              ),
+            );
+          if ((row?.count ?? 0) >= cap) {
+            throw DbError.conflict("RENDER_CONCURRENCY_LIMIT");
+          }
+          return doInsert(tx);
+        });
+      }
+      return doInsert(db);
     },
 
     markRunning: (workspaceId, renderId) => transition(workspaceId, renderId, "running", {}),

@@ -78,6 +78,13 @@ export interface SettleInput extends LedgerScope {
   readonly actualCost: number;
   readonly idempotencyKey: string;
   readonly metadata?: unknown;
+  /**
+   * AUD-C1 fix: commit the FULL server-measured actual cost even when the
+   * scope's outstanding hold was concurrently refunded (abandon/cancel/
+   * abort are all client-reachable mid-flight). Default false keeps the
+   * legacy capped shape for apply/§8.7 callers.
+   */
+  readonly uncapped?: boolean;
 }
 
 export interface AdjustInput {
@@ -399,7 +406,9 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
         if (existingCommit) return { commit: existingCommit, refund: null, replayed: true };
 
         const outstanding = await scopeOutstanding(tx, workspaceId, scope);
-        const plan = planSettlement(outstanding, input.actualCost);
+        const plan = planSettlement(outstanding, input.actualCost, {
+          uncapped: input.uncapped === true,
+        });
         const balance = await balanceUnderLock(tx, workspaceId);
 
         let commitEntry: LedgerEntry | null = null;

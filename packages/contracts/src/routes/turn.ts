@@ -143,8 +143,10 @@ export const TURN_REQUEST_SCHEMA = z
   .strictObject({
     /** Client-generated uuid, stable for the whole run. */
     runId: z.string().min(1).max(128),
-    /** 0-based; increments per model call. */
-    stepIndex: z.number().int().min(0),
+    /** 0-based; increments per model call. Server-side abuse bound
+     * (AUD-M5): the client loop caps at 24 steps — a scripted caller must
+     * not mint unbounded steps on one run row. */
+    stepIndex: z.number().int().min(0).max(63),
     model: MODEL_ID_SCHEMA.optional(),
     /** The CURRENT RUN transcript only (never the whole thread history). */
     messages: z.array(TURN_MESSAGE_SCHEMA).min(1).max(MAX_TURN_MESSAGE_PARTS),

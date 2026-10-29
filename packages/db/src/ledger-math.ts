@@ -61,13 +61,25 @@ export function outstandingReserve(
 }
 
 /**
- * Split an actual cost against a run's outstanding hold. The commit is
- * capped by the hold; the FULL hold is refunded so the run nets −commit
- * (see the header: balance = SUM, the reserve already deducted).
+ * Split an actual cost against a run's outstanding hold.
+ *
+ * DEFAULT (capped): the commit is capped by the hold; the FULL hold is
+ * refunded so the run nets −commit (see the header). Legacy callers
+ * (apply, the §8.7 events sink) keep this shape.
+ *
+ * UNCAPPED (`{ uncapped: true }` — turn charges, AUD-C1 fix): the commit is
+ * the FULL server-measured actual cost, even when it exceeds the remaining
+ * hold. The hold becomes a pre-flight SOLVENCY gate, never a charge ceiling:
+ * a concurrent `refundAll` on the same run scope (abandon/cancel/abort —
+ * all client-reachable) can no longer zero the commit of an in-flight turn
+ * that already streamed its output. Net effect: delivered usage is always
+ * billed; a refunded hold plus an uncapped settle nets −actualCost exactly
+ * like the normal path.
  */
 export function planSettlement(
   outstanding: number,
   actualCost: number,
+  options?: { readonly uncapped?: boolean },
 ): {
   commit: number;
   refund: number;
@@ -78,7 +90,8 @@ export function planSettlement(
   if (!Number.isFinite(actualCost) || actualCost < 0) {
     throw DbError.validation("actualCost must be ≥ 0");
   }
-  const commit = Math.min(Math.ceil(actualCost), outstanding);
+  const ceiling = options?.uncapped === true ? Number.MAX_SAFE_INTEGER : outstanding;
+  const commit = Math.min(Math.ceil(actualCost), ceiling);
   const refund = outstanding;
   return { commit, refund };
 }
