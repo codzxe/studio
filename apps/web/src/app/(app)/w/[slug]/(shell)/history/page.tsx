@@ -2,10 +2,10 @@ import { EmptyState } from "@studio/ui";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 
-import type { ProjectResolve } from "@studio/contracts";
 import { HistoryPageView } from "@/components/versions/history-view";
 import { gatewayCall, isGatewayHttpError } from "@/lib/gateway";
 import { pageMetadata } from "@/lib/seo";
+import type { ProjectResolve } from "@studio/contracts";
 
 /**
  * The project history route (BUILD_PLAN §M7 task 4): `/w/:slug/history` —
@@ -154,7 +154,8 @@ const resolveHistoryProject = cache(
         workspaceId: resolved.workspaceId,
         // Gateway re-checks every capability (viewer+ reads, editor+
         // mutations, admin export); these flags only shape the UI.
-        canEdit: resolved.role === "owner" || resolved.role === "admin" || resolved.role === "editor",
+        canEdit:
+          resolved.role === "owner" || resolved.role === "admin" || resolved.role === "editor",
         canExport: resolved.role === "owner" || resolved.role === "admin",
         viewerId: resolved.viewerId,
       },

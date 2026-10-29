@@ -127747,6 +127747,32 @@ function createProjectsRepo(db) {
           durationTicks: asset.durationTicks
         }))
       };
+    },
+    async resolveBySlug(userId, slug, workspaceFilter) {
+      const { projects: projects4, member: member4, organization: organization4 } = tablesFor(db);
+      const [row] = await db.select({
+        project: projects4,
+        workspaceId: member4.organizationId,
+        workspaceName: organization4.name,
+        workspaceSlug: organization4.slug,
+        role: member4.role
+      }).from(member4).innerJoin(projects4, eq(projects4.workspaceId, member4.organizationId)).innerJoin(organization4, eq(organization4.id, member4.organizationId)).where(
+        and(
+          eq(member4.userId, userId),
+          eq(projects4.slug, slug),
+          isNull(projects4.deletedAt),
+          eq(projects4.archived, false),
+          workspaceFilter ? or(eq(member4.organizationId, workspaceFilter), eq(organization4.slug, workspaceFilter)) : void 0
+        )
+      ).orderBy(desc(projects4.updatedAt), desc(projects4.id)).limit(1);
+      if (row === void 0) return null;
+      return {
+        workspaceId: row.workspaceId,
+        workspaceName: row.workspaceName,
+        workspaceSlug: row.workspaceSlug,
+        role: row.role,
+        project: row.project
+      };
     }
   };
 }
@@ -136021,6 +136047,83 @@ function projectsRoutes(deps) {
     await audit(deps, c5, workspace.id, "project.created", project.id);
     return ok2(c5, toDto3(project), 201);
   });
+  app.get(
+    "/v1/projects/resolve/:slug",
+    async (c5) => {
+      const { user: user3 } = c5.get("auth");
+      const slugParam = pathParam(c5, "slug");
+      const workspaceFilter = c5.req.query("workspace") ?? null;
+      const resolved = await deps.repos.projects.resolveBySlug(
+        user3.id,
+        slugParam,
+        workspaceFilter
+      );
+      if (resolved === null) {
+        throw new GatewayError("PROJECT_NOT_FOUND", "We couldn't find that project.", {
+          status: 404,
+          hint: "It may have been deleted or archived, or belong to another workspace.",
+          requestId: c5.get("requestId")
+        });
+      }
+      const manifest = await deps.repos.projects.manifest(
+        resolved.workspaceId,
+        resolved.project.id
+      );
+      const currentVersion = manifest.currentVersion;
+      let versionBlock = null;
+      if (currentVersion !== null) {
+        const signed = await deps.storage.getSignedUrl(
+          currentVersion.objectKey,
+          SIGNED_URL_TTL_SECONDS,
+          { method: "GET" }
+        );
+        versionBlock = {
+          id: currentVersion.id,
+          version: currentVersion.version,
+          sha256: currentVersion.sha256,
+          label: currentVersion.label,
+          sizeBytes: currentVersion.sizeBytes,
+          createdAt: currentVersion.createdAt.toISOString(),
+          url: signed.url
+        };
+      }
+      const assets3 = await Promise.all(
+        manifest.assets.map(async (asset) => {
+          const signed = await deps.storage.getSignedUrl(asset.objectKey, SIGNED_URL_TTL_SECONDS, {
+            method: "GET"
+          });
+          return {
+            id: asset.id,
+            name: asset.name,
+            mime: asset.mime,
+            sizeBytes: asset.sizeBytes,
+            width: asset.width,
+            height: asset.height,
+            durationTicks: asset.durationTicks,
+            url: signed.url
+          };
+        })
+      );
+      const body = {
+        workspaceId: resolved.workspaceId,
+        workspace: {
+          id: resolved.workspaceId,
+          name: resolved.workspaceName,
+          slug: resolved.workspaceSlug
+        },
+        viewerId: user3.id,
+        role: resolved.role === "owner" || resolved.role === "admin" || resolved.role === "editor" || resolved.role === "viewer" ? resolved.role : "viewer",
+        project: toDto3(resolved.project),
+        manifest: {
+          projectId: manifest.project.id,
+          currentVersion: versionBlock,
+          assets: assets3,
+          updatedAt: manifest.project.updatedAt.toISOString()
+        }
+      };
+      return ok2(c5, body);
+    }
+  );
   app.get(
     "/v1/projects/:id/manifest",
     requireWorkspace("viewer"),

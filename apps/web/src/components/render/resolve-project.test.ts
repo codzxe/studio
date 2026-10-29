@@ -13,12 +13,12 @@ import type { RenderClient } from "./types";
 
 /** A fetch-shaped fake answering the resolve call. */
 function fetchAnswering(status: number, body: unknown): typeof fetch {
-  return (vi.fn().mockResolvedValue(
+  return vi.fn().mockResolvedValue(
     new Response(JSON.stringify(body), {
       status,
       headers: { "content-type": "application/json" },
     }),
-  ) as unknown) as typeof fetch;
+  ) as unknown as typeof fetch;
 }
 
 const RESOLVE_BODY = {
@@ -67,9 +67,7 @@ describe("createRouteScopeResolver", () => {
     expect(clients).toEqual(["ws_second"]);
     // THE PERF PIN: exactly one network call — no /v1/me, no project pages.
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect((fetchImpl as unknown as { calls: unknown[][] }).calls?.[0]?.[0]).toBe(
-      "/v1/projects/resolve/launch-film",
-    );
+    expect(vi.mocked(fetchImpl).mock.calls[0]?.[0]).toBe("/v1/projects/resolve/launch-film");
   });
 
   it("URL-encodes the slug", async () => {
@@ -80,9 +78,7 @@ describe("createRouteScopeResolver", () => {
       createClient: () => ({}) as RenderClient,
     });
     await resolver();
-    expect((fetchImpl as unknown as { calls: unknown[][] }).calls?.[0]?.[0]).toBe(
-      "/v1/projects/resolve/launch%20film",
-    );
+    expect(vi.mocked(fetchImpl).mock.calls[0]?.[0]).toBe("/v1/projects/resolve/launch%20film");
   });
 
   it("maps 401 → unauthorized, 404 → not-found, 5xx → failed", async () => {
@@ -102,7 +98,7 @@ describe("createRouteScopeResolver", () => {
   });
 
   it("maps a network throw and a malformed body to failed (never throws)", async () => {
-    const throwing = (vi.fn().mockRejectedValue(new TypeError("offline")) as unknown) as typeof fetch;
+    const throwing = vi.fn().mockRejectedValue(new TypeError("offline")) as unknown as typeof fetch;
     const resolver = createRouteScopeResolver({
       pathname: () => "/w/launch-film/editor",
       fetchImpl: throwing,

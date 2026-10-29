@@ -149,7 +149,7 @@ describe("history RSC route", () => {
     expect(Number.isNaN(Date.parse(props.nowIso))).toBe(false);
     // THE PERF PIN: exactly ONE gateway call — no `/v1/me`, no project pages.
     expect(gatewayMock).toHaveBeenCalledTimes(1);
-    expect(gatewayMock).toHaveBeenCalledWith("/v1/projects/resolve/launch-film");
+    expect(gatewayMock).toHaveBeenCalledWith("/v1/projects/resolve/launch-film", undefined);
   });
 
   it("hands the hub the viewer id (resolve.viewerId) and the project's createdBy (ownerId)", async () => {
@@ -190,12 +190,22 @@ describe("history RSC route", () => {
 
   it("404s an explicit-but-unknown ?ws (hard rule 3)", async () => {
     scriptResolve404([
-      { workspaceId: "ws_first", role: "viewer", workspace: { id: "ws_first", slug: "first-films" } },
+      {
+        workspaceId: "ws_first",
+        role: "viewer",
+        // The page's parseMemberships is STRICT (a malformed row is skipped,
+        // not half-honored): every workspace field it reads must be present,
+        // or the fixture silently degrades to the no-workspace state.
+        workspace: { id: "ws_first", name: "First Films", slug: "first-films" },
+      },
     ]);
     await expect(renderPage("launch-film", "ws_nope")).rejects.toThrow("__NOT_FOUND__");
     // The resolve call plus the one `/v1/me` fallback — nothing else.
     expect(gatewayMock).toHaveBeenCalledTimes(2);
-    expect(gatewayMock).toHaveBeenCalledWith("/v1/projects/resolve/launch-film?workspace=ws_nope");
+    expect(gatewayMock).toHaveBeenCalledWith(
+      "/v1/projects/resolve/launch-film?workspace=ws_nope",
+      undefined,
+    );
   });
 
   it("derives the permission flags per role (viewer reads; editor edits; admin exports)", async () => {
@@ -219,7 +229,14 @@ describe("history RSC route", () => {
 
   it("404s an unresolvable slug — the resolution-404 path checks /v1/me exactly once", async () => {
     scriptResolve404([
-      { workspaceId: "ws_first", role: "viewer", workspace: { id: "ws_first", slug: "first-films" } },
+      {
+        workspaceId: "ws_first",
+        role: "viewer",
+        // The page's parseMemberships is STRICT (a malformed row is skipped,
+        // not half-honored): every workspace field it reads must be present,
+        // or the fixture silently degrades to the no-workspace state.
+        workspace: { id: "ws_first", name: "First Films", slug: "first-films" },
+      },
     ]);
     await expect(renderPage("launch-film")).rejects.toThrow("__NOT_FOUND__");
     expect(gatewayMock).toHaveBeenCalledTimes(2);

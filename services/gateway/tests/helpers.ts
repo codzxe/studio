@@ -170,7 +170,10 @@ export class CookieJar {
 
 export interface JsonRequestInit {
   readonly method?: string;
-  readonly jar?: CookieJar;
+  /** Absent = no session (anonymous). `null` is accepted as anonymous too —
+   *  tests that type their own helpers `CookieJar | null` pass null for the
+   *  unauthenticated case and must not crash the jar read. */
+  readonly jar?: CookieJar | null;
   readonly headers?: Record<string, string>;
   readonly body?: unknown;
   readonly rawBody?: BodyInit;
@@ -190,7 +193,7 @@ export async function api(
     ...init.headers,
   };
   const jar = init.jar;
-  if (jar !== undefined && jar.header !== "") headers.cookie = jar.header;
+  if (jar != null && jar.header !== "") headers.cookie = jar.header;
   const method = init.method ?? "GET";
   let body: BodyInit | undefined;
   if (init.rawBody !== undefined) {

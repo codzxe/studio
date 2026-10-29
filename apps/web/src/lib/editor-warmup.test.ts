@@ -250,7 +250,9 @@ function healthyAdapter() {
  * (the "Limit 'max_compute_workgroups_per_dimension' value 65535 is better
  * than allowed 0" class): either limits below the spec floor
  * (`workgroups`) or a requestDevice that always rejects (`rejectDevice`). */
-function stubAdapter(behaviour: { readonly workgroups?: number; readonly rejectDevice?: Error } = {}) {
+function stubAdapter(
+  behaviour: { readonly workgroups?: number; readonly rejectDevice?: Error } = {},
+) {
   return {
     limits: { maxComputeWorkgroupsPerDimension: behaviour.workgroups ?? 65535 },
     requestDevice: behaviour.rejectDevice

@@ -68,20 +68,30 @@ import EditorPage from "./page";
 // ---------------------------------------------------------------------------
 // Capability-probe stubs (§8.7) — mirror capability-gate.test.tsx: jsdom has
 // neither a working navigator.gpu nor WebGL2, so without a stub the real gate
-// blocks the editor-host stub in every supported-path render. "Present" now
-// means an adapter actually ANSWERS (the gate probes requestAdapter, not the
-// property's existence).
+// blocks the editor-host stub in every supported-path render. "Present" means
+// an adapter that can actually CREATE A DEVICE (the post-boot-bug probe does
+// a floor-check + throwaway requestDevice, not a mere requestAdapter ping).
 // ---------------------------------------------------------------------------
 
 /**
  * Define (or clear) navigator.gpu. `undefined` is the honest "absent" stub
- * (biome bans `delete`); the present form carries a requestAdapter that
- * resolves an adapter, exactly what the gate's probe awaits.
+ * (biome bans `delete`); the present form carries the FULL post-boot-bug
+ * probe contract (lib/editor-warmup.ts webgpuDeviceUsable): the adapter must
+ * report a sane spec floor (`limits.maxComputeWorkgroupsPerDimension`) AND
+ * `requestDevice` must create a throwaway device — an adapter that answers
+ * without a usable device is the stub-adapter class the probe REJECTS.
  */
 function stubNavigatorGpu(present: boolean): void {
   const nav = navigator as Navigator & { gpu?: unknown };
   Object.defineProperty(nav, "gpu", {
-    value: present ? { requestAdapter: async () => ({}) } : undefined,
+    value: present
+      ? {
+          requestAdapter: async () => ({
+            limits: { maxComputeWorkgroupsPerDimension: 65535 },
+            requestDevice: async () => ({ destroy: () => undefined }),
+          }),
+        }
+      : undefined,
     configurable: true,
     writable: true,
   });
@@ -218,7 +228,7 @@ describe("editor RSC route", () => {
     // `/v1/me`, no per-workspace project pages, no second manifest fetch (the
     // pre-fix fan-out paid the auth+workspace middleware once per call).
     expect(gatewayMock).toHaveBeenCalledTimes(1);
-    expect(gatewayMock).toHaveBeenCalledWith("/v1/projects/resolve/launch-film");
+    expect(gatewayMock).toHaveBeenCalledWith("/v1/projects/resolve/launch-film", undefined);
   });
 
   it("blocks the editor host when the browser has neither WebGPU nor WebGL2 (§8.7 gate)", async () => {
