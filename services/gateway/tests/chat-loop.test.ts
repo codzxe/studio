@@ -64,7 +64,7 @@ import {
   type TurnMessage,
   WRITE_TOOL_IDS,
 } from "@studio/contracts";
-import type { AgentRun } from "@studio/db";
+import { RUN_ABANDONED_ERROR_CODE, type AgentRun } from "@studio/db";
 
 import { wireToolName } from "../src/litellm/openai.js";
 import { createRunnerForEnv } from "../src/runner.js";
@@ -998,10 +998,15 @@ d("M4-K gateway agent-loop E2E — the real turn engine over the real SSE wire",
     expect(final.committedCredits).toBe(0);
   });
 
-  it("4. stop: the client's ABANDON on a mid-flight run cancels it and refunds the outstanding per-turn hold", async () => {
-    // The round-12 stop gesture (the retired run.cancelled-on-the-wire arm
-    // died with the server loop — see the header deletions): POST
-    // /v1/runs/:id/abandon lands the run cancelled + refunds the hold.
+  it("4. stop: the client's ABANDON on a mid-flight run cancels it; the FAILED turn refunds its own hold (AUD-C1)", async () => {
+    // The round-12 stop gesture: POST /v1/runs/:id/abandon lands the run
+    // cancelled. AUD-C1 (2026-10-30 deep audit): pre-fix the abandon ALSO
+    // refunded the run's outstanding hold MID-FLIGHT — firing it parallel to
+    // a live turn zeroed the later settle's commit cap (free streamed turns,
+    // the exact devtools exploit the audit pinned). Now the racing refund is
+    // SKIPPED while the turn is in flight (this isolate: the turnFlights
+    // guard; cross-isolate: the uncapped settle), and the hold is released
+    // by the turn's OWN terminal (failure → refund; success/abort → settle).
     const fx = await newFixture("stop");
     const runId = unique("run");
 
@@ -1022,7 +1027,7 @@ d("M4-K gateway agent-loop E2E — the real turn engine over the real SSE wire",
       async () => (await getRun(fx, runId)).status === "cancelled",
     );
     const record = await getRun(fx, runId);
-    expect(record.errorCode).toBe("RUN_ABANDONED");
+    expect(record.errorCode).toBe(RUN_ABANDONED_ERROR_CODE);
     expect(record.committedCredits).toBe(0);
     expect(record.completedAt).not.toBeNull();
 
@@ -1033,15 +1038,21 @@ d("M4-K gateway agent-loop E2E — the real turn engine over the real SSE wire",
     expect(failed).toMatchObject({ code: "RUN_MODEL_UNAVAILABLE", retryable: true });
     expect(failed.credits).toEqual({ committed: 0 });
 
-    // Full refund: the ABANDON refunded the outstanding hold
-    // (turn:${runId}:abandon:refund); the failed turn's own refundAll was a
-    // no-op (outstanding already 0). One reserve, one refund, no commits.
+    // Full refund — but through the turn's OWN terminal key
+    // (turn:R:0:refund), NOT the racing abandon gesture: the provider failed
+    // and delivered nothing, so the honest outcome is a free turn. One
+    // reserve, one refund, no commits; the abandon refund is ABSENT.
     const ledger = await server.deps.repos.ledger.list(fx.workspaceId, {});
     const runEntries = ledger.items.filter((entry) => entry.runId === runId);
     expect(runEntries.filter((entry) => entry.kind === "reserve").length).toBe(1);
     const refunds = runEntries.filter((entry) => entry.kind === "refund");
     expect(refunds.length).toBe(1);
-    expect(refunds[0]?.idempotencyKey).toBe(`turn:${runId}:abandon:refund`);
+    expect(refunds[0]?.idempotencyKey).toBe(`turn:${runId}:0:refund`);
+    expect(
+      runEntries.some(
+        (entry) => entry.idempotencyKey === `turn:${runId}:abandon:refund`,
+      ),
+    ).toBe(false);
     expect(runEntries.filter((entry) => entry.kind === "commit").length).toBe(0);
     expect(await balanceOf(fx.workspaceId)).toBe(100 * MICRO); // full refund
   });

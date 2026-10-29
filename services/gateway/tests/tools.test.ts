@@ -371,7 +371,7 @@ describe("POST /v1/threads/:id/tools/web_search (12-w3-i7)", () => {
     expect(repos.ledgerCalls[0]?.amount).toBe(-MICROCREDITS_PER_CREDIT);
   });
 
-  it("provider 429 → retryable WEB_SEARCH_UNAVAILABLE 503, never charged", async () => {
+  it("provider 429 → retryable WEB_SEARCH_UNAVAILABLE 503, refunded to net zero", async () => {
     const owner = auth.signUp("owner");
     stubFetch(() => new Response("rate limited", { status: 429 }));
     const { status, error } = await errOf(
@@ -380,10 +380,18 @@ describe("POST /v1/threads/:id/tools/web_search (12-w3-i7)", () => {
     expect(status).toBe(503);
     expect(error.code).toBe("WEB_SEARCH_UNAVAILABLE");
     expect(error.retryable).toBe(true);
-    expect(repos.ledgerCalls).toEqual([]);
+    // AUD-C5: charge lands BEFORE the provider call, so a failure leaves a
+    // compensating (charge, refund) pair — the workspace balance nets zero.
+    expect(repos.ledgerCalls).toHaveLength(2);
+    expect(repos.ledgerCalls[0]?.amount).toBe(-MICROCREDITS_PER_CREDIT);
+    expect(repos.ledgerCalls[0]?.idempotencyKey).toMatch(/^tool:web_search:/);
+    expect(repos.ledgerCalls[1]?.amount).toBe(MICROCREDITS_PER_CREDIT);
+    expect(repos.ledgerCalls[1]?.idempotencyKey).toBe(
+      `${repos.ledgerCalls[0]?.idempotencyKey}:refund`,
+    );
   });
 
-  it("network failure → the same retryable 503 envelope, never charged", async () => {
+  it("network failure → the same retryable 503 envelope, refunded to net zero", async () => {
     const owner = auth.signUp("owner");
     stubFetch(() => {
       throw new TypeError("fetch failed");
@@ -394,7 +402,10 @@ describe("POST /v1/threads/:id/tools/web_search (12-w3-i7)", () => {
     expect(status).toBe(503);
     expect(error.code).toBe("WEB_SEARCH_UNAVAILABLE");
     expect(error.retryable).toBe(true);
-    expect(repos.ledgerCalls).toEqual([]);
+    // AUD-C5: same net-zero contract as the 429 case.
+    expect(repos.ledgerCalls).toHaveLength(2);
+    expect(repos.ledgerCalls[0]?.amount).toBe(-MICROCREDITS_PER_CREDIT);
+    expect(repos.ledgerCalls[1]?.amount).toBe(MICROCREDITS_PER_CREDIT);
   });
 
   it("402 INSUFFICIENT_CREDITS on a zero balance, before any provider call", async () => {
@@ -484,7 +495,7 @@ describe("POST /v1/threads/:id/tools/generate_image (12-w3-i7)", () => {
     expect(repos.ledgerCalls[0]?.amount).toBe(-8 * MICROCREDITS_PER_CREDIT);
   });
 
-  it("provider non-2xx → retryable 503 IMAGE_GENERATION_UNAVAILABLE, never charged", async () => {
+  it("provider non-2xx → retryable 503 IMAGE_GENERATION_UNAVAILABLE, refunded to net zero", async () => {
     process.env.STUDIO_IMAGE_API_BASE_URL = "https://img.example.com/v1";
     process.env.STUDIO_IMAGE_API_KEY = "sk-img-test";
     process.env.STUDIO_IMAGE_API_MODEL = "studio-image-xl";
@@ -496,10 +507,16 @@ describe("POST /v1/threads/:id/tools/generate_image (12-w3-i7)", () => {
     expect(status).toBe(503);
     expect(error.code).toBe("IMAGE_GENERATION_UNAVAILABLE");
     expect(error.retryable).toBe(true);
-    expect(repos.ledgerCalls).toEqual([]);
+    // AUD-C5: upfront charge + compensating refund — the workspace nets zero.
+    expect(repos.ledgerCalls).toHaveLength(2);
+    expect(repos.ledgerCalls[0]?.amount).toBe(-8 * MICROCREDITS_PER_CREDIT);
+    expect(repos.ledgerCalls[1]?.amount).toBe(8 * MICROCREDITS_PER_CREDIT);
+    expect(repos.ledgerCalls[1]?.idempotencyKey).toBe(
+      `${repos.ledgerCalls[0]?.idempotencyKey}:refund`,
+    );
   });
 
-  it("rejects provider bodies over 10MB with the 503 envelope and never charges", async () => {
+  it("rejects provider bodies over 10MB with the 503 envelope and refunds to net zero", async () => {
     process.env.STUDIO_IMAGE_API_BASE_URL = "https://img.example.com/v1";
     process.env.STUDIO_IMAGE_API_KEY = "sk-img-test";
     process.env.STUDIO_IMAGE_API_MODEL = "studio-image-xl";
@@ -511,6 +528,9 @@ describe("POST /v1/threads/:id/tools/generate_image (12-w3-i7)", () => {
     expect(status).toBe(503);
     expect(error.code).toBe("IMAGE_GENERATION_UNAVAILABLE");
     expect(error.retryable).toBe(true);
-    expect(repos.ledgerCalls).toEqual([]);
+    // AUD-C5: same net-zero contract.
+    expect(repos.ledgerCalls).toHaveLength(2);
+    expect(repos.ledgerCalls[0]?.amount).toBe(-8 * MICROCREDITS_PER_CREDIT);
+    expect(repos.ledgerCalls[1]?.amount).toBe(8 * MICROCREDITS_PER_CREDIT);
   });
 });

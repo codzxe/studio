@@ -721,6 +721,12 @@ export interface RunningTestServer {
   readonly base: string;
   readonly port: number;
   readonly deps: GatewayDeps;
+  /**
+   * The raw db handle (real-app suites only) — used for fixture surgery the
+   * repos don't expose, e.g. promoting a caller to platform staff
+   * (AUD-A3: reconcile mode is staff-gated).
+   */
+  readonly db: import("@studio/db").StudioDb;
   close(): Promise<void>;
 }
 
@@ -783,6 +789,7 @@ export async function bootServer(options: ServerOptions = {}): Promise<RunningTe
     base: `http://127.0.0.1:${server.port}`,
     port: server.port,
     deps,
+    db,
     close: async () => {
       await new Promise<void>((resolveClose) => server.server.close(() => resolveClose()));
       try {

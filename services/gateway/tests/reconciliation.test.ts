@@ -16,8 +16,11 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { eq } from "drizzle-orm";
+
 import { StudioError } from "@studio/config";
 import { MODEL_CATALOG } from "@studio/contracts";
+import { user as userTable } from "@studio/db";
 
 import type { LogFields, Logger } from "../src/logger.js";
 import {
@@ -1162,6 +1165,9 @@ d("route: POST /v1/credits/reconcile", () => {
 
   it('writes the true-up only with mode "reconcile", ledger-idempotent per window', async () => {
     const ws = await newWorkspace();
+    // AUD-A3: destructive mode is PLATFORM-STAFF-only — promote this fixture's
+    // caller so the test exercises the staff path (workspace admins get 403).
+    await server.db.update(userTable).set({ role: "admin" }).where(eq(userTable.id, ws.userId));
     const fx = await newFixture(ws);
     const t0 = Date.now();
     await grant(ws, 100);

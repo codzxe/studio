@@ -150,7 +150,9 @@ export function ShareReview({ token, info, port }: ShareReviewProps) {
           data-testid="share-project-name"
           className="font-display text-display-m text-balance text-primary"
         >
-          {info.projectName}
+          {/* AUD-F7: the gateway redacts the name until the password is
+              verified — render a neutral title for locked shares. */}
+          {info.projectName ?? "A shared project"}
         </h1>
         <p className="max-w-[68ch] text-body-s text-secondary">
           Read the preview, leave anchored comments and let the team know what to change.

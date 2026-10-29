@@ -592,6 +592,33 @@ function makeTurnRepos() {
         });
         return { entry: null, refunded: 1, replayed: false };
       },
+      // AUD-C2: the turn route's reserve-replay triage resolves the turn's
+      // durable outcome through this seam (mirrors the real repo's key
+      // lookup, including the settle's derived `:commit` sub-key).
+      async getEntryByIdempotencyKey(
+        workspaceId: string,
+        idempotencyKey: string,
+      ): Promise<{
+        id: string;
+        workspaceId: string;
+        amount: number;
+        createdAt: Date;
+      } | null> {
+        // settle(key) records its commit as deriveIdempotencyKey(key, "commit")
+        // — strip the `:commit` suffix and unescape the %3A colons to recover
+        // the base settle key the fake recorded.
+        const seen = (key: string): boolean => seenLedgerKeys.has(key);
+        const derivedCommitSeen =
+          idempotencyKey.endsWith(":commit") &&
+          seen(idempotencyKey.slice(0, -":commit".length).replaceAll("%3A", ":"));
+        if (!seen(idempotencyKey) && !derivedCommitSeen) return null;
+        return {
+          id: `led_${idempotencyKey}`,
+          workspaceId,
+          amount: 0,
+          createdAt: new Date(),
+        };
+      },
     },
     settings: {
       async getUserAutoApply(userId: string): Promise<boolean> {
@@ -1376,7 +1403,7 @@ describe("turn failure semantics (failed turns refund and never persist the turn
     ).toBe(true);
   });
 
-  it("a request aborted mid-turn racing a failure → turn.failed TURN_CANCELLED + refundAll", async () => {
+  it("a request aborted mid-turn with delivered output → TURN_CANCELLED + the partial usage SETTLES (AUD-C1)", async () => {
     const runId = unique("run");
     const gate = fakes.gateAssistantInsert(true);
     const controller = new AbortController();
@@ -1409,14 +1436,23 @@ describe("turn failure semantics (failed turns refund and never persist the turn
     expect(failed.code).toBe("TURN_CANCELLED");
     expect(failed.message).toBe("The turn was cancelled.");
     expect(failed.retryable).toBe(false);
-    expect(failed.credits).toEqual({ committed: 0 });
 
-    // The reserved hold is refunded; the turnKey never persisted.
+    // AUD-C1 abort-honesty: the stream DELIVERED deltas before the abort, so
+    // the turn settles the server-measured partial usage instead of the
+    // pre-fix free full refund — "stream then abort at 95%" now bills what
+    // it consumed (the §8.8 min-1 floor guarantees a visible charge).
+    expect(typeof failed.credits.committed).toBe("number");
+    expect(failed.credits.committed).toBeGreaterThanOrEqual(1);
+    expect(
+      fakes.ledgerOps.some(
+        (op) => op.op === "settle" && op.idempotencyKey === `turn:${runId}:0:settle`,
+      ),
+    ).toBe(true);
     expect(
       fakes.ledgerOps.some(
         (op) => op.op === "refundAll" && op.idempotencyKey === `turn:${runId}:0:refund`,
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(fakes.assistantRows()).toHaveLength(1); // the partial-text failed row only
     expect(contentOf(fakes.assistantRows()[0])).toMatchObject({
       message: STEP0_TEXT,
@@ -1455,7 +1491,13 @@ describe("POST /v1/runs/:id/plan (the client's merged plan lands at run end)", (
       resolutionRequests?: unknown[];
     };
     expect(body.runId).toBe(runId);
-    expect(body.plan).toEqual(plan);
+    // AUD-H2: the stored/returned plan carries the SERVER-recompiled credit
+    // estimate, never the client's own number — a devtools client posting a
+    // lowballed estimatedCredits must not become the billed estimate.
+    expect(body.plan).toEqual({
+      ...plan,
+      estimatedCredits: Math.max(1, Math.ceil(body.estimatedCredits ?? 0)),
+    });
     expect(body.baseVersionId).toBe(BASE_VERSION_ID);
     expect(body.compiledBatch?.steps.map((step) => step.command)).toEqual([
       "comp.new",
@@ -1470,11 +1512,16 @@ describe("POST /v1/runs/:id/plan (the client's merged plan lands at run end)", (
     // route marks the run COMPLETED first — what makes /v1/runs/:id/apply's
     // D-11 plannable-status gate pass — then stores plan_json (the
     // authoritative copy) on the same run row.
+    // AUD-H2: the stored plan carries the SERVER-recompiled estimate.
+    const stampedPlan = {
+      ...plan,
+      estimatedCredits: Math.max(1, Math.ceil(body.estimatedCredits ?? 0)),
+    };
     expect(fakes.runUpdates).toHaveLength(2);
     expect(fakes.runUpdates[0]?.input).toEqual({ status: "completed" });
-    expect(fakes.runUpdates[1]?.input).toEqual({ planJson: plan });
+    expect(fakes.runUpdates[1]?.input).toEqual({ planJson: stampedPlan });
     expect(fakes.runRow(runId)?.status).toBe("completed");
-    expect(fakes.runRow(runId)?.planJson).toEqual(plan);
+    expect(fakes.runRow(runId)?.planJson).toEqual(stampedPlan);
     expect(fakes.countAutoApplyReads()).toBe(1);
   });
 
