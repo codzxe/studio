@@ -131687,7 +131687,6 @@ function getEnv(source = process.env) {
 init_zod();
 
 // ../../packages/config/src/ids.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
 var ID_PREFIXES = {
   /** Project (`prj_`). */
   project: "prj",
@@ -131705,7 +131704,11 @@ var ID_PREFIXES = {
   request: "req"
 };
 function defaultIdGenerator() {
-  return randomUUID4().replace(/-/g, "");
+  const uuid5 = globalThis.crypto?.randomUUID?.();
+  if (uuid5 !== void 0) return uuid5.replace(/-/g, "");
+  throw new Error(
+    "@studio/config ids: globalThis.crypto.randomUUID() is unavailable \u2014 it ships in Node 22+, every evergreen browser and worker runtimes"
+  );
 }
 function newId(kind, generate = defaultIdGenerator) {
   return `${ID_PREFIXES[kind]}_${generate()}`;
@@ -132573,7 +132576,7 @@ function dbEnvelope(error64, requestId) {
 }
 
 // ../../services/gateway/src/middleware.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 
 // ../../services/gateway/src/idempotency.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -132683,7 +132686,7 @@ function asStatus(status) {
 function requestIdMiddleware() {
   return async (c5, next) => {
     const incoming = c5.req.header("x-request-id");
-    const id = incoming !== void 0 && incoming.length > 0 && incoming.length <= 128 ? incoming : `req_${randomUUID5().replaceAll("-", "")}`;
+    const id = incoming !== void 0 && incoming.length > 0 && incoming.length <= 128 ? incoming : `req_${randomUUID4().replaceAll("-", "")}`;
     c5.set("requestId", id);
     await next();
     c5.header("x-request-id", id);
@@ -159506,7 +159509,7 @@ function registeredToolFor(name5) {
 }
 
 // ../../services/gateway/src/runner.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 var TERMINAL_TYPES = /* @__PURE__ */ new Set(["run.completed", "run.failed", "run.cancelled"]);
 var RunLog = class {
   runId;
@@ -159751,7 +159754,7 @@ function createMockRunner() {
       stream.emit(enrichedMockPlanEvent(mockEditPlan()));
       await stream.yieldToStream();
       if (stream.signal.aborted) return { kind: "cancelled" };
-      const toolCallId = `${MOCK_TOOL_CALL_ID_PREFIX}_${randomUUID6().replaceAll("-", "").slice(0, 12)}`;
+      const toolCallId = `${MOCK_TOOL_CALL_ID_PREFIX}_${randomUUID5().replaceAll("-", "").slice(0, 12)}`;
       stream.expectToolCall(toolCallId, "studio.get_context");
       stream.emit({
         type: "tool.started",

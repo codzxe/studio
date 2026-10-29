@@ -22,6 +22,9 @@ vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`__REDIRECT__:${to}`);
   },
+  // The real gate's checking arm renders EditorTopBar (the ROUND-13 LCP fix),
+  // which calls useRouter at render time.
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
 
 const gatewayMock = vi.fn();

@@ -5,6 +5,8 @@ import { probeEditorGpu, warmEditorWasm } from "@/lib/editor-warmup";
 import { X } from "lucide-react";
 import { type ReactElement, type ReactNode, useEffect, useState } from "react";
 
+import { EditorTopBar } from "./editor-top-bar";
+
 /**
  * EditorCapabilityGate — §8.7/§8.11 (UI_DESIGN_SYSTEM) + §13 responsive rule.
  *
@@ -27,13 +29,26 @@ import { type ReactElement, type ReactNode, useEffect, useState } from "react";
  *             no GPU needed (§8.11 "offer a rendered preview").
  *
  * The probe is async (one adapter request — or an already-cached answer), so
- * the first client frame(s) render NOTHING while "checking" — a one-frame
- * dark page instead of a broken-canvas flash; supported machines mount the
- * editor a few milliseconds later, and the moment the verdict lands the
- * engine's 49 MB download + compile starts (`warmEditorWasm`) so it overlaps
- * the iframe's own load instead of waiting behind it. When the shell's
- * prewarm already started the download, `warmEditorWasm` is its own one-shot
- * no-op — the gate's call is just the direct-visit fallback.
+ * the first client frame(s) render the CHECKING SHELL — the persistent top
+ * bar plus an empty canvas area — and supported machines mount the editor a
+ * few milliseconds later, at which point the engine's 49 MB download +
+ * compile starts (`warmEditorWasm`) so it overlaps the iframe's own load
+ * instead of waiting behind it. When the shell's prewarm already started the
+ * download, `warmEditorWasm` is its own one-shot no-op — the gate's call is
+ * just the direct-visit fallback.
+ *
+ * ROUND-13 LCP FIX: the checking arm used to render an EMPTY <main> — the
+ * whole page body, including the top bar's project-name breadcrumb (the
+ * page's LCP text element), was invisible until the entire client bundle
+ * (~1.7MB across 21 chunks) had downloaded, compiled and executed, React
+ * had hydrated, AND the async GPU probe had answered: a measured 816ms
+ * render delay on an LCP of 878ms. The checking arm now renders the SAME
+ * top bar the host renders once supported (the swap is visually seamless —
+ * identical markup), so the breadcrumb paints with the SSR HTML + CSS,
+ * before a single chunk executes. Only the canvas area stays dark while
+ * probing, and on unsupported machines the full-page swap to the §8.7 state
+ * replaces the shell (a brief chrome flash on machines that cannot run the
+ * editor at all — the right trade: every supported visit paints instantly).
  *
  * §13: below 1024px the editor stays usable but shows a DISMISSIBLE
  * "best on desktop" note (never a blocking overlay — the editor is
@@ -46,12 +61,18 @@ const NARROW_EDITOR_QUERY = "(max-width: 1023px)";
 export interface EditorCapabilityGateProps {
   /** The project slug — routes the static-preview offer to its history page. */
   readonly slug: string;
+  /**
+   * The project's display name — SSRs the top-bar breadcrumb chrome during
+   * the GPU probe (the ROUND-13 LCP fix; see the component docblock).
+   */
+  readonly projectName: string;
   /** The editor host — mounted only when the browser can run the canvas. */
   readonly children: ReactNode;
 }
 
 export function EditorCapabilityGate({
   slug,
+  projectName,
   children,
 }: EditorCapabilityGateProps): ReactElement | null {
   // "checking" until the client probe decides (SSR renders this too).
@@ -108,9 +129,23 @@ export function EditorCapabilityGate({
     );
   }
 
-  // Checking (first client frame) → nothing: never flash a broken canvas.
+  // Checking (first client frame) → the SSR'd shell: the persistent top bar
+  // (the LCP text paints with the HTML, before any chunk executes) + an empty
+  // canvas area. Same bar the host renders once supported — seamless swap.
+  // The iframe deliberately does NOT mount yet: unsupported machines must
+  // never fetch the 49MB engine dist (see ROUND-13 LCP FIX above).
   if (supported === null) {
-    return <main id="main" data-testid="editor-capability-gate" data-gate-state="checking" />;
+    return (
+      <main
+        id="main"
+        data-testid="editor-capability-gate"
+        data-gate-state="checking"
+        className="fixed inset-0 flex flex-col overflow-hidden bg-app"
+      >
+        <EditorTopBar projectName={projectName} projectSlug={slug} />
+        <div data-testid="editor-gate-surface" className="relative min-h-0 flex-1" />
+      </main>
+    );
   }
 
   return (

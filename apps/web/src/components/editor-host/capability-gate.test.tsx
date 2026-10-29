@@ -34,6 +34,15 @@ vi.mock("@/lib/editor-warmup", () => ({
   warmEditorWasm: vi.fn(),
 }));
 
+// The checking arm renders the real EditorTopBar (the ROUND-13 LCP fix —
+// the SSR chrome), which speaks the app router: the top-bar test's house
+// pattern (useRouter mocked, next/link stays real).
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/w/launch-film/editor",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -72,14 +81,24 @@ function stubProbe(supported: boolean): void {
   vi.mocked(probeEditorGpu).mockResolvedValue(supported);
 }
 
+/**
+ * Freeze the probe forever (a never-settling promise) — pins the gate on its
+ * checking arm, the frame the server renders (the ROUND-13 LCP test).
+ */
+function freezeProbe(): void {
+  vi.mocked(probeEditorGpu).mockImplementation(
+    () => new Promise<boolean>(() => {}) as Promise<boolean>,
+  );
+}
+
 /** The gate's children — presence is the whole contract in supported arms. */
 function Children() {
   return <div data-testid="gate-child">editor host</div>;
 }
 
-function renderGate(slug = "launch-film"): void {
+function renderGate(slug = "launch-film", projectName = "Launch Film"): void {
   render(
-    <EditorCapabilityGate slug={slug}>
+    <EditorCapabilityGate slug={slug} projectName={projectName}>
       <Children />
     </EditorCapabilityGate>,
   );
@@ -91,6 +110,29 @@ function renderGate(slug = "launch-film"): void {
 // ---------------------------------------------------------------------------
 
 describe("EditorCapabilityGate — gate arms", () => {
+  it("while checking (the SSR'd first frame): the top-bar chrome with the project-name breadcrumb is already visible — the ROUND-13 LCP fix", () => {
+    // Probe never resolves → the gate stays on the checking arm, which is
+    // exactly what the server renders. The LCP text (the breadcrumb) must
+    // be present WITHOUT any probe answer — it paints with the HTML.
+    freezeProbe();
+    renderGate("launch-film", "Launch Film");
+
+    const gate = screen.getByTestId("editor-capability-gate");
+    expect(gate).toHaveAttribute("data-gate-state", "checking");
+    expect(screen.getByTestId("editor-top-bar")).toBeInTheDocument();
+
+    // The LCP element itself: the project name, linking to its history hub.
+    const crumb = screen.getByTestId("editor-breadcrumb-project");
+    expect(crumb).toHaveTextContent("Launch Film");
+    expect(crumb).toHaveAttribute("href", "/w/launch-film/history");
+    expect(screen.getByTestId("editor-breadcrumb-editor")).toHaveTextContent("Editor");
+
+    // The canvas area stays EMPTY while probing (no iframe on unsupported
+    // machines) — but the empty surface is there so the layout holds.
+    expect(screen.getByTestId("editor-gate-surface")).toBeInTheDocument();
+    expect(screen.queryByTestId("gate-child")).not.toBeInTheDocument();
+  });
+
   it("a supported verdict: mounts the editor children and starts the engine warm-up", async () => {
     stubProbe(true);
     renderGate();

@@ -3,7 +3,15 @@
 // cuid2-style ids built on `crypto.randomUUID` (Node 22+, browsers, workers):
 // short lowercase prefix + underscore + 32 hex chars (`prj_0f9a…`). Prefixes keep
 // ids readable in URLs, logs and support conversations without leaking anything.
-import { randomUUID } from "node:crypto";
+//
+// ROUND-13 BUNDLE RULE: this file must NEVER `import ... from "node:crypto"`.
+// The @studio/config barrel is pulled into EVERY client bundle (`Brand` is
+// imported by the root layout), and a node:crypto import makes Next/
+// Turbopack ship its compiled crypto-browserify polyfill — elliptic +
+// asn1.js + browserify-sign, ~300KB of curve math — to every browser for
+// this one call (measured in the prod /w/:slug/editor chunks: the 470KB
+// "shared" chunk was ~2/3 crypto polyfill). The WebCrypto global is the same
+// API on every runtime this package targets.
 import { z } from "zod";
 
 /** Entity kinds with a stable prefix (`prj_`, `ver_`, `ast_`, `thr_`, `run_`, `rnd_`, `req_`). */
@@ -32,7 +40,14 @@ const ID_BODY_PATTERN = /^[0-9a-f]{32}$/;
 
 /** Default id generator — deterministic seam for tests. */
 export function defaultIdGenerator(): string {
-  return randomUUID().replace(/-/g, "");
+  // `globalThis.crypto.randomUUID` — the cross-runtime WebCrypto surface
+  // (Node 22+, all evergreen browsers, workers). Do not swap this back to a
+  // `node:crypto` import: see the ROUND-13 BUNDLE RULE in the file header.
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid !== undefined) return uuid.replace(/-/g, "");
+  throw new Error(
+    "@studio/config ids: globalThis.crypto.randomUUID() is unavailable — it ships in Node 22+, every evergreen browser and worker runtimes",
+  );
 }
 
 /**

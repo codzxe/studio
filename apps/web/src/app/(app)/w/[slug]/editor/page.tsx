@@ -1,4 +1,4 @@
-import { CommentsRegion } from "@/components/comments/comments-region";
+import { IdleCommentsRegion } from "@/components/comments/idle-comments-region";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 
@@ -120,7 +120,7 @@ export default async function EditorPage({ params }: EditorPageProps) {
         static-preview offer (the project's history page) instead of a broken
         canvas, and <1024px viewports get the dismissible §13 desktop note.
       */}
-      <EditorCapabilityGate slug={slug}>
+      <EditorCapabilityGate slug={slug} projectName={payload.manifest.project.name}>
         <EditorHost payload={payload} />
       </EditorCapabilityGate>
       {/*
@@ -135,8 +135,13 @@ export default async function EditorPage({ params }: EditorPageProps) {
             projectName={payload.manifest.project.name}
             client={sessionHandle.api} bridge={chatBridge} />
         and DELETE this slot (one mount, never two).
+
+        ROUND-13: the slot renders through IdleCommentsRegion — the region's
+        ~160KB of chunks (panel UI + tooltips) left the editor's critical
+        path and now load once the browser goes idle after first paint (the
+        LCP/INP fix; see idle-comments-region.tsx).
       */}
-      <CommentsRegion
+      <IdleCommentsRegion
         workspaceId={payload.workspaceId}
         projectId={payload.manifest.project.id}
         projectName={payload.manifest.project.name}

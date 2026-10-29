@@ -14,7 +14,10 @@ import { chromium } from "playwright";
 import { setTimeout as delay } from "node:timers/promises";
 
 const args = process.argv.slice(2);
-const urlFlag = args.find((a) => !a.startsWith("--"));
+// Positional args are URLs ONLY if they parse as http(s) — a bare numeric
+// value (e.g. someone passing the budget without --budget-ms) must never be
+// mistaken for a URL ("Cannot navigate to invalid URL 150000").
+const urlFlag = args.find((a) => a.startsWith("http://") || a.startsWith("https://"));
 const URL_TO_PROBE =
   urlFlag ?? process.env.PROD_EDITOR_URL ?? "https://motiongra.vercel.app/editor/?empty&nosw";
 const budgetIdx = args.indexOf("--budget-ms");
