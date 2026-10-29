@@ -2,6 +2,7 @@
 
 import { UnsupportedGpuState } from "@/components/system/system-states";
 import { probeEditorGpu, warmEditorWasm } from "@/lib/editor-warmup";
+import { Spinner } from "@studio/ui";
 import { X } from "lucide-react";
 import { type ReactElement, type ReactNode, useEffect, useState } from "react";
 
@@ -130,10 +131,13 @@ export function EditorCapabilityGate({
   }
 
   // Checking (first client frame) → the SSR'd shell: the persistent top bar
-  // (the LCP text paints with the HTML, before any chunk executes) + an empty
-  // canvas area. Same bar the host renders once supported — seamless swap.
-  // The iframe deliberately does NOT mount yet: unsupported machines must
-  // never fetch the 49MB engine dist (see ROUND-13 LCP FIX above).
+  // (the LCP text paints with the HTML, before any chunk executes) + the
+  // boot overlay's own "Preparing…" copy, so the LARGEST text (the overlay
+  // paragraph, not the small breadcrumb) ALSO paints server-side — the
+  // measured LCP element. When the host mounts, its real BootOverlay renders
+  // the same words in the same place: a seamless handoff. The iframe
+  // deliberately does NOT mount yet: unsupported machines must never fetch
+  // the 49MB engine dist (see ROUND-13 LCP FIX above).
   if (supported === null) {
     return (
       <main
@@ -143,7 +147,18 @@ export function EditorCapabilityGate({
         className="fixed inset-0 flex flex-col overflow-hidden bg-app"
       >
         <EditorTopBar projectName={projectName} projectSlug={slug} />
-        <div data-testid="editor-gate-surface" className="relative min-h-0 flex-1" />
+        <div data-testid="editor-gate-surface" className="relative min-h-0 flex-1">
+          {/* The BootOverlay's exact markup (banners.tsx) minus the live
+              progress seam — the host's real overlay takes over on mount. */}
+          <output
+            className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-app"
+            aria-label={`Preparing the editor for ${projectName}`}
+          >
+            <Spinner size={24} label={`Preparing the editor for ${projectName}`} />
+            <p className="text-body text-secondary">Preparing “{projectName}”…</p>
+            <p className="text-caption text-muted">The editor loads once per session.</p>
+          </output>
+        </div>
       </main>
     );
   }

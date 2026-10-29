@@ -128,8 +128,11 @@ describe("EditorCapabilityGate — gate arms", () => {
     expect(screen.getByTestId("editor-breadcrumb-editor")).toHaveTextContent("Editor");
 
     // The canvas area stays EMPTY while probing (no iframe on unsupported
-    // machines) — but the empty surface is there so the layout holds.
+    // machines) — but the layout holds, and the boot overlay's own copy is
+    // SSR'd so the LARGEST text paints server-side too (the LCP element the
+    // DevTools trace measured was the overlay paragraph, not the crumb).
     expect(screen.getByTestId("editor-gate-surface")).toBeInTheDocument();
+    expect(screen.getByText(/Preparing “Launch Film”…/)).toBeInTheDocument();
     expect(screen.queryByTestId("gate-child")).not.toBeInTheDocument();
   });
 
