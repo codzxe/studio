@@ -6,18 +6,19 @@
 // server-side provider (the key must never ship to the client), so the client
 // POSTs them here mid-run and echoes the JSON result into the next turn.
 //
-// Metering (§8.8): web_search = exactly 1 credit, generate_image = exactly 8,
-// charged through the SAME credit_ledger repo seam chat runs use
-// (deps.repos.ledger), converted to integer microcredits at the boundary
-// (D-12 — credits-display.ts). Tool calls have no run row (the round-12 loop
-// is client-owned, so there is no producer scope to hold against), so the
-// charge is an UNSCOPED negative `adjust` — the repo's only unscoped mutator
-// besides grant. The idempotency-key path mirrors the other metered routes
-// (`chat:${runId}:reserve`, `render:reserve:${render.id}`): the request's own
-// Idempotency-Key header (required on POST /v1 mutations by the middleware)
-// is namespaced per tool — `tool:${tool}:${header}` — and the ledger's unique
-// idempotency index makes a double-charge impossible even if the in-memory
-// replay store dies with the isolate.
+// Metering (§8.8): web_search = exactly 1 credit, generate_image = exactly 8.
+// AUD-C5 fix (2026-10-30 deep audit): the charge is now an ATOMIC UPFRONT
+// unscoped negative `adjust` — CHARGE-BEFORE-WORK — through the same
+// credit_ledger repo seam. The ledger's unique idempotency index doubles as
+// the DURABLE execution gate: a replayed charge key means this exact
+// Idempotency-Key already executed a provider call and the route answers a
+// typed 409 instead of re-running the provider for free. Pre-fix the charge
+// landed AFTER the work while the in-memory replay store (10-min TTL,
+// per-isolate) was the only execution guard — replaying the same key after
+// the TTL (or on a second warm isolate) re-called the provider while the
+// ledger replayed the charge: pay 8 credits once, generate images forever.
+// A failed provider call refunds the charge (idempotent `…:refund` key), so
+// failures still never cost the user.
 //
 // Failure posture (law #1): network errors, provider non-2xx/429s and
 // malformed provider bodies NEVER leak upstream details — the caller gets
@@ -30,6 +31,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 
 import { StudioError } from "@studio/config";
+import { DbError } from "@studio/db";
 
 import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { creditsToLedgerMicrocredits } from "../credits-display.js";
@@ -88,7 +90,8 @@ function imageProviderConfig(): { baseUrl: string; apiKey: string; model: string
 /**
  * §8.8 precheck (chat.ts pattern): the balance read happens BEFORE anything —
  * a workspace that cannot cover the flat cost never triggers the provider
- * call. The ledger is integer µc (D-12 — credits-display.ts).
+ * call. The UPFRONT charge below is the authoritative atomic gate; this
+ * precheck only makes the common insufficient case a fast, refund-free 402.
  */
 async function assertToolCredits(input: {
   readonly deps: GatewayDeps;
@@ -103,14 +106,14 @@ async function assertToolCredits(input: {
 }
 
 /**
- * The commit half — an UNSCOPED negative `adjust` through the same
- * deps.repos.ledger seam (tools have no run row; adjust is the repo's only
- * unscoped mutator besides grant). Runs only after a successful provider
- * response, so failures never charge. Idempotency path mirrors the other
- * metered routes (`chat:${runId}:reserve`, `render:reserve:${render.id}`):
- * the request's own Idempotency-Key header namespaced per tool.
+ * AUD-C5 fix — the atomic upfront charge, BEFORE the provider call. The
+ * unscoped negative `adjust` serializes on the workspace's advisory lock, so
+ * N parallel calls with the same key resolve exactly once: the winner pays,
+ * everyone else reads `replayed: true` and gets a typed 409 (no provider
+ * call, no free ride). An adjust that would push the balance negative maps
+ * to INSUFFICIENT_CREDITS (racing spend, e.g. a concurrent turn settle).
  */
-async function chargeToolCredits(input: {
+async function chargeToolCreditsUpfront(input: {
   readonly deps: GatewayDeps;
   readonly workspaceId: string;
   readonly requestId: string;
@@ -120,11 +123,65 @@ async function chargeToolCredits(input: {
   readonly threadId: string;
 }): Promise<void> {
   const anchor = input.idempotencyHeader ?? input.requestId;
-  await input.deps.repos.ledger.adjust(input.workspaceId, {
-    amount: -creditsToLedgerMicrocredits(input.credits),
-    idempotencyKey: `tool:${input.tool}:${anchor}`,
-    metadata: { tool: input.tool, threadId: input.threadId, credits: input.credits },
-  });
+  try {
+    const charged = await input.deps.repos.ledger.adjust(input.workspaceId, {
+      amount: -creditsToLedgerMicrocredits(input.credits),
+      idempotencyKey: `tool:${input.tool}:${anchor}`,
+      metadata: { tool: input.tool, threadId: input.threadId, credits: input.credits },
+    });
+    if (charged.replayed) {
+      // This key ALREADY executed a provider call (the ledger is the durable
+      // record). A same-key retry after the in-memory replay TTL must not
+      // re-run it for free — the honest answer is a typed 409 + fresh-key hint.
+      throw new GatewayError(
+        "TOOL_CALL_ALREADY_PROCESSED",
+        "This tool call was already processed.",
+        {
+          status: 409,
+          retryable: false,
+          hint: "Generate a fresh Idempotency-Key to run the tool again.",
+          requestId: input.requestId,
+        },
+      );
+    }
+  } catch (error) {
+    if (error instanceof DbError && error.code === "VALIDATION_FAILED") {
+      // The only validation the adjust itself throws here is the negative-
+      // balance guard — a racing spend drained the balance between the
+      // precheck and the lock.
+      throw new StudioError("INSUFFICIENT_CREDITS", { requestId: input.requestId });
+    }
+    throw error;
+  }
+}
+
+/**
+ * Refund half of the upfront charge — ONLY on a failed/absent provider call.
+ * Idempotent (`…:refund` key), so a redelivery of the same logical request
+ * refunds at most once and a refund race no-ops.
+ */
+async function refundToolCredits(input: {
+  readonly deps: GatewayDeps;
+  readonly workspaceId: string;
+  readonly idempotencyHeader: string | undefined;
+  readonly tool: "web_search" | "generate_image";
+  readonly credits: number;
+  readonly threadId: string;
+  readonly requestId: string;
+}): Promise<void> {
+  const anchor = input.idempotencyHeader ?? input.requestId;
+  await input.deps.repos.ledger
+    .adjust(input.workspaceId, {
+      amount: creditsToLedgerMicrocredits(input.credits),
+      idempotencyKey: `tool:${input.tool}:${anchor}:refund`,
+      metadata: {
+        tool: input.tool,
+        threadId: input.threadId,
+        credits: input.credits,
+        refund: true,
+      },
+    })
+    .catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +243,19 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
       // §8.8: the balance gate comes BEFORE the provider call (chat.ts's
       // "never start on a zero balance" ordering — no free search side effects).
       await assertToolCredits({ deps, workspaceId: workspace.id, requestId, credits: 1 });
+      // AUD-C5: the charge lands BEFORE the Tavily call — the ledger's replay
+      // is the durable execution gate (a same-key retry after the in-memory
+      // TTL answers 409 instead of re-running the provider for free).
+      const idempotencyHeader = c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key");
+      await chargeToolCreditsUpfront({
+        deps,
+        workspaceId: workspace.id,
+        requestId,
+        idempotencyHeader,
+        tool: "web_search",
+        credits: 1,
+        threadId,
+      });
 
       // Keyless by default; TAVILY_API_KEY (optional) switches to Bearer auth.
       const key = tavilyApiKey();
@@ -214,6 +284,15 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
           threadId,
           detail: providerDetail(error),
         });
+        await refundToolCredits({
+          deps,
+          workspaceId: workspace.id,
+          requestId,
+          idempotencyHeader,
+          tool: "web_search",
+          credits: 1,
+          threadId,
+        });
         throw webSearchUnavailable(requestId);
       }
       if (!response.ok) {
@@ -221,6 +300,15 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
           requestId,
           threadId,
           detail: `tavily status ${response.status}`,
+        });
+        await refundToolCredits({
+          deps,
+          workspaceId: workspace.id,
+          requestId,
+          idempotencyHeader,
+          tool: "web_search",
+          credits: 1,
+          threadId,
         });
         throw webSearchUnavailable(requestId);
       }
@@ -234,6 +322,15 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
           threadId,
           detail: "malformed provider body",
         });
+        await refundToolCredits({
+          deps,
+          workspaceId: workspace.id,
+          requestId,
+          idempotencyHeader,
+          tool: "web_search",
+          credits: 1,
+          threadId,
+        });
         throw webSearchUnavailable(requestId);
       }
       const results = body.results.map((row) => ({
@@ -243,16 +340,6 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
           typeof row?.content === "string" ? row.content.slice(0, TAVILY_CONTENT_MAX_CHARS) : "",
       }));
 
-      // Charged only on a successful, mappable provider response.
-      await chargeToolCredits({
-        deps,
-        workspaceId: workspace.id,
-        requestId,
-        idempotencyHeader: c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key"),
-        tool: "web_search",
-        credits: 1,
-        threadId,
-      });
       return ok(c, { results });
     },
   );
@@ -281,6 +368,7 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
       const provider = imageProviderConfig();
       if (provider === null) {
         // Honest, non-retryable: the deployment has no image backend wired.
+        // (Checked BEFORE the AUD-C5 upfront charge — a 501 must never bill.)
         throw new GatewayError(
           "IMAGE_GENERATION_UNAVAILABLE",
           "Image generation is not configured for this workspace's deployment.",
@@ -291,6 +379,20 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
           },
         );
       }
+
+      // AUD-C5: atomic charge BEFORE the provider call — the ledger's replay
+      // is the durable execution gate (same-key retry after the in-memory
+      // TTL → 409, never a free second generation).
+      const idempotencyHeader = c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key");
+      await chargeToolCreditsUpfront({
+        deps,
+        workspaceId: workspace.id,
+        requestId,
+        idempotencyHeader,
+        tool: "generate_image",
+        credits: 8,
+        threadId,
+      });
 
       let response: Response;
       try {
@@ -314,6 +416,15 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
           threadId,
           detail: providerDetail(error),
         });
+        await refundToolCredits({
+          deps,
+          workspaceId: workspace.id,
+          requestId,
+          idempotencyHeader,
+          tool: "generate_image",
+          credits: 8,
+          threadId,
+        });
         throw imageGenerationUnavailable(requestId);
       }
       if (!response.ok) {
@@ -321,6 +432,15 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
           requestId,
           threadId,
           detail: `provider status ${response.status}`,
+        });
+        await refundToolCredits({
+          deps,
+          workspaceId: workspace.id,
+          requestId,
+          idempotencyHeader,
+          tool: "generate_image",
+          credits: 8,
+          threadId,
         });
         throw imageGenerationUnavailable(requestId);
       }
@@ -331,6 +451,15 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
           requestId,
           threadId,
           detail: "provider body exceeded 10MB",
+        });
+        await refundToolCredits({
+          deps,
+          workspaceId: workspace.id,
+          requestId,
+          idempotencyHeader,
+          tool: "generate_image",
+          credits: 8,
+          threadId,
         });
         throw imageGenerationUnavailable(requestId);
       }
@@ -362,19 +491,18 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
           threadId,
           detail: "provider body carried no image",
         });
+        await refundToolCredits({
+          deps,
+          workspaceId: workspace.id,
+          requestId,
+          idempotencyHeader,
+          tool: "generate_image",
+          credits: 8,
+          threadId,
+        });
         throw imageGenerationUnavailable(requestId);
       }
 
-      // Charged only on a successful, mappable provider response.
-      await chargeToolCredits({
-        deps,
-        workspaceId: workspace.id,
-        requestId,
-        idempotencyHeader: c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key"),
-        tool: "generate_image",
-        credits: 8,
-        threadId,
-      });
       return ok(c, image);
     },
   );

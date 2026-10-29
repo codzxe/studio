@@ -32,7 +32,9 @@ import { creditsToLedgerMicrocredits, microcreditsToWholeCredits } from "../cred
 import { GatewayError } from "../errors.js";
 import { ok, pathParam } from "../http.js";
 import { requireAuth, requireWorkspace } from "../middleware.js";
+import { requireLeaseForMutation } from "../lease-guard.js";
 import { snapshotKey } from "../storage.js";
+import { hasInFlightTurns } from "./turn.js";
 import { audit } from "./projects.js";
 
 export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
@@ -120,22 +122,27 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
         return ok(c, { runId, status: run.status, cancelled: false });
       }
 
-      // ROUND-12 TRUTH (w1-a27 S248/S255, W3-b02): the RunRegistry/runner
-      // consultation that used to sit here was the retired round-10 chat
-      // loop's seam — nothing in the mounted app ever registers a run, so the
-      // "no live stream" branch below was the ONLY live branch anyway. The
-      // DB row is the authority: finalize directly — cancel status + full
-      // refund (§8.9). A live turn's own settle/refund keys are idempotent,
-      // so a cancel racing a turn finalize fails safe (refundAll no-ops on a
-      // zero outstanding hold).
+      // ROUND-12 TRUTH (w1-a27 S248/S255, W3-b02): the DB row is the
+      // authority: finalize directly — cancel status + full refund (§8.9).
+      // A live turn's own settle/refund keys are idempotent, so a cancel
+      // racing a turn finalize fails safe (refundAll no-ops on a zero
+      // outstanding hold).
+      //
+      // AUD-C1 (2026-10-30 deep audit): the refund is SKIPPED while one of
+      // the run's turns is still streaming on this isolate — the turn's own
+      // uncapped settle both commits the delivered usage and releases the
+      // hold. Money-safety no longer depends on this check (settle is
+      // uncapped); it keeps the ledger shape honest.
       await deps.repos.runs.update(workspace.id, runId, {
         status: "cancelled",
         errorCode: "RUN_CANCELLED",
       });
-      await deps.repos.ledger.refundAll(workspace.id, {
-        runId,
-        idempotencyKey: `chat:${runId}:refund`,
-      });
+      if (!hasInFlightTurns(runId)) {
+        await deps.repos.ledger.refundAll(workspace.id, {
+          runId,
+          idempotencyKey: `chat:${runId}:refund`,
+        });
+      }
       await audit(deps, c, workspace.id, "run.cancelled", runId);
       return ok(c, { runId, status: "cancelled", cancelled: true });
     },
@@ -198,23 +205,45 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
           status: "failed",
           errorCode,
         });
-        await deps.repos.ledger.refundAll(workspace.id, {
-          runId,
-          idempotencyKey: `chat:${runId}:refund`,
-        });
+        // AUD-C1: same in-flight guard as cancel — a live turn's uncapped
+        // settle owns its own hold release.
+        if (!hasInFlightTurns(runId)) {
+          await deps.repos.ledger.refundAll(workspace.id, {
+            runId,
+            idempotencyKey: `chat:${runId}:refund`,
+          });
+        }
         return ok(c, { runId, recorded: true, status: "failed" });
       }
 
       // Apply succeeded: register the new version (repo owns the 409 check).
+      // AUD-F3 (2026-10-30 deep audit): the §8.7 sink bypassed BOTH the
+      // single-writer lease (the real versions/apply routes gate on it) and
+      // the storage-existence check — any editor could advance the project
+      // head onto a PHANTOM snapshot (a sha256 whose bytes were never
+      // uploaded) while another member held the lease. Both gates now match
+      // the mounted apply surface.
       if (event.sha256 === undefined) {
         throw new GatewayError("VALIDATION_FAILED", "A successful apply requires the new sha256.", {
           status: 400,
           requestId,
         });
       }
+      await requireLeaseForMutation(deps, c, run.projectId);
       const sha = event.sha256;
       const objectKey = snapshotKey(workspace.id, run.projectId, sha);
       const head = await deps.storage.head(objectKey);
+      if (head === null) {
+        throw new GatewayError(
+          "SNAPSHOT_NOT_FOUND",
+          "That snapshot was never uploaded — a version must point at real bytes.",
+          {
+            status: 400,
+            hint: "Upload the snapshot bytes before reporting the apply result.",
+            requestId,
+          },
+        );
+      }
       try {
         const { version } = await deps.repos.versions.upload(workspace.id, {
           projectId: run.projectId,
@@ -281,10 +310,12 @@ export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
             errorCode: "PROJECT_VERSION_CONFLICT",
           })
           .catch(() => undefined);
-        await deps.repos.ledger.refundAll(workspace.id, {
-          runId,
-          idempotencyKey: `chat:${runId}:refund`,
-        });
+        if (!hasInFlightTurns(runId)) {
+          await deps.repos.ledger.refundAll(workspace.id, {
+            runId,
+            idempotencyKey: `chat:${runId}:refund`,
+          });
+        }
         throw error;
       }
     },

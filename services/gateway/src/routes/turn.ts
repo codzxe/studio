@@ -55,6 +55,7 @@ import type { AppContext, GatewayDeps } from "../context.js";
 import { creditsToLedgerMicrocredits } from "../credits-display.js";
 import { GatewayError } from "../errors.js";
 import { pathParam } from "../http.js";
+import { deriveIdempotencyKey } from "@studio/db";
 import type { AggregatedToolCall, OpenAIChatMessage } from "../litellm/openai.js";
 import {
   type OpenAITurnDeps,
@@ -81,9 +82,26 @@ const TURN_KEEPALIVE_MS = 15_000;
 const REPLAY_SCAN_ROWS = 60;
 
 // ---------------------------------------------------------------------------
-// Model selection (plan entitlements — ported verbatim from the retired chat
-// route; §8.2 "Plan gating", §10.1, M4 Seam 1)
+// Per-isolate single-flight (bounded duplicate protection while a turn is
+// IN FLIGHT; the durable idempotency record is the assistant row's turnKey)
 // ---------------------------------------------------------------------------
+
+const turnFlights = new Map<string, RunLog>();
+
+/**
+ * AUD note: run-scoped refund surfaces (abandon in this module, cancel and
+ * the §8.7 events sink in routes/runs.ts) consult this map so a client-side
+ * refund never races a turn that is still streaming on THIS isolate. With
+ * the uncapped settle (AUD-C1) the race is no longer a money hole, but
+ * skipping the refund keeps the ledger shape honest (holds are released by
+ * the turn's own settle, not by a second request).
+ */
+export function hasInFlightTurns(runId: string): boolean {
+  for (const key of turnFlights.keys()) {
+    if (key.startsWith(`${runId}:`)) return true;
+  }
+  return false;
+}
 
 export function resolveChatModel(input: {
   readonly requested: ModelId | undefined;
@@ -102,11 +120,50 @@ export function resolveChatModel(input: {
 }
 
 // ---------------------------------------------------------------------------
-// Per-isolate single-flight (bounded duplicate protection while a turn is
-// IN FLIGHT; the durable idempotency record is the assistant row's turnKey)
+// AUD-C2 fix — reserve-replay triage. The durable idempotency record of a
+// turn key is the LEDGER pair (reserve + settle), which lives forever; the
+// assistant-row replay scan only reads the newest 40 history rows, so a
+// scripted re-POST of an OLD turn key used to fall through the replay miss
+// into a FRESH model call whose reserve and settle both replayed (hold 0,
+// charge 0 — free generation forever). Before re-executing a reserve-replayed
+// key, prove it is genuinely retryable:
+//   1. a settle commit entry exists → the turn fully processed → 409, never
+//      a free re-execution;
+//   2. a refund entry exists (the turn failed and was refunded) → honest
+//      retry: the uncapped settle bills the re-execution normally;
+//   3. neither (a fresh reserve with no outcome) → crash-recovery retry —
+//      the pinned contract ("a turn that dies mid-stream is simply retried
+//      with the same key") stands. A cross-isolate duplicate in this window
+//      double-spends PROVIDER tokens but never under-charges (the settle key
+//      replays; the M6 platform-cost residual lands with the multi-instance
+//      Valkey wave's durable flight markers).
 // ---------------------------------------------------------------------------
 
-const turnFlights = new Map<string, RunLog>();
+async function assertFreshTurnKey(
+  deps: GatewayDeps,
+  workspaceId: string,
+  turnKey: string,
+  requestId: string,
+): Promise<void> {
+  const settledCommit = await deps.repos.ledger.getEntryByIdempotencyKey(
+    workspaceId,
+    deriveIdempotencyKey(`turn:${turnKey}:settle`, "commit"),
+  );
+  if (settledCommit !== null) {
+    throw new GatewayError("TURN_ALREADY_PROCESSED", "This turn was already completed.", {
+      status: 409,
+      retryable: false,
+      hint: "The outcome is in the thread history; start a new run to continue.",
+      requestId,
+    });
+  }
+  const refunded = await deps.repos.ledger.getEntryByIdempotencyKey(
+    workspaceId,
+    `turn:${turnKey}:refund`,
+  );
+  if (refunded !== null) return; // failed turn, honestly refunded → retryable
+  // Fresh reserve with no outcome → crash-recovery retry.
+}
 
 // ---------------------------------------------------------------------------
 // Route
@@ -186,6 +243,16 @@ export function turnRoutes(deps: GatewayDeps): Hono {
         const existing = await deps.repos.runs.get(workspace.id, request.runId).catch(() => null);
         if (existing === null || existing.run.threadId !== threadId) throw error;
         runExisted = true;
+        // AUD-M5: a terminal run is not a free re-entry ticket — the run row
+        // is the authority on run liveness, and its terminal states must
+        // gate step-0 retries exactly like step>0 below.
+        if (isTerminalRunStatus(existing.run.status)) {
+          throw new GatewayError("RUN_NOT_ACTIVE", "This run already finished.", {
+            status: 409,
+            hint: "Start a new run to keep working.",
+            requestId,
+          });
+        }
       }
       if (!runExisted) {
         const userMessage = lastUserText(request.messages);
@@ -209,6 +276,16 @@ export function turnRoutes(deps: GatewayDeps): Hono {
       if (run.threadId !== threadId) {
         throw new GatewayError("RUN_NOT_ACTIVE", "This run belongs to another thread.", {
           status: 404,
+          requestId,
+        });
+      }
+      // AUD-M5: the run row's liveness gates EVERY step > 0 — pre-fix a
+      // scripted loop could keep driving turns on an abandoned/cancelled run
+      // (and with the refund race, for free).
+      if (isTerminalRunStatus(run.status)) {
+        throw new GatewayError("RUN_NOT_ACTIVE", "This run already finished.", {
+          status: 409,
+          hint: "Start a new run to keep working.",
           requestId,
         });
       }
@@ -236,11 +313,18 @@ export function turnRoutes(deps: GatewayDeps): Hono {
     );
     const reserveAmount = reserveAmountFor(estimate);
     const reserveMicrocredits = creditsToLedgerMicrocredits(reserveAmount);
-    await deps.repos.ledger.reserve(workspace.id, {
+    const reserved = await deps.repos.ledger.reserve(workspace.id, {
       runId: request.runId,
       amount: reserveMicrocredits,
       idempotencyKey: `turn:${turnKey}:reserve`,
     });
+    // AUD-C2: a reserve REPLAY means this exact turn key was seen before.
+    // Refuse the re-execution when the turn already completed (its settle
+    // commit is a durable record) — pre-fix the replay miss on old turns
+    // re-ran the model while both ledger keys replayed (free generation).
+    if (reserved.replayed) {
+      await assertFreshTurnKey(deps, workspace.id, turnKey, requestId);
+    }
 
     // Local run log: one request, one log — no cross-request state.
     const log = new RunLog(request.runId);
@@ -374,10 +458,19 @@ export function turnRoutes(deps: GatewayDeps): Hono {
             userAutoApplyEnabled: userAutoApply.enabled === true,
           })
         : AUTO_APPLY_SETTING_UNAVAILABLE;
-    await deps.repos.runs.update(workspace.id, runId, { planJson: plan });
+    // AUD-H2 fix: store the SERVER-recompiled estimate, never the client's
+    // number — `planJson.estimatedCredits` is exactly what the apply path's
+    // planCreditsOf trusts, and a devtools client could post 0.0001 on a
+    // plan whose compiled cost is far higher. The returned payload carries
+    // the same server-stamped plan so the client's plan card is honest.
+    const storedPlan =
+      compiled.ok && Number.isFinite(compiled.estimatedCredits)
+        ? { ...plan, estimatedCredits: Math.max(1, Math.ceil(compiled.estimatedCredits)) }
+        : plan;
+    await deps.repos.runs.update(workspace.id, runId, { planJson: storedPlan });
     const payload: Record<string, unknown> = {
       runId,
-      plan,
+      plan: storedPlan,
       autoApply: decision,
       baseVersionId: run.baseVersionId ?? undefined,
     };
@@ -410,10 +503,17 @@ export function turnRoutes(deps: GatewayDeps): Hono {
     const { run } = await deps.repos.runs.get(workspace.id, runId);
     if (!isTerminalRunStatus(run.status)) {
       await deps.repos.runs.markRunAbandoned({ runId });
-      await deps.repos.ledger.refundAll(workspace.id, {
-        runId,
-        idempotencyKey: `turn:${runId}:abandon:refund`,
-      });
+      // AUD-C1 belt-and-braces: never refund a run-scope hold while one of
+      // its turns is still streaming on this isolate — the turn's own
+      // uncapped settle is the only thing that may release the hold now.
+      // (Money-safety no longer depends on this check; it keeps the ledger
+      // shape honest.)
+      if (!hasInFlightTurns(runId)) {
+        await deps.repos.ledger.refundAll(workspace.id, {
+          runId,
+          idempotencyKey: `turn:${runId}:abandon:refund`,
+        });
+      }
     }
     return Response.json(
       { runId, status: "abandoned" },
@@ -448,15 +548,17 @@ async function runTurn(
   log.emit({ type: "turn.started", stepIndex: request.stepIndex });
 
   const mockModel = deps.env.app.mockModel === true;
+  // AUD-C1: hoisted so the abort path can bill the tokens the side calls
+  // (studio.plan_edit) already spent before the stream was cut.
+  let sideUsage: { inputTokens: number; outputTokens: number } = {
+    inputTokens: 0,
+    outputTokens: 0,
+  };
   try {
     let text: string;
     let toolCalls: TurnToolCall[];
     let usage: { inputTokens: number; outputTokens: number };
     let committed: number;
-    let sideUsage: { inputTokens: number; outputTokens: number } = {
-      inputTokens: 0,
-      outputTokens: 0,
-    };
 
     if (mockModel) {
       const mock = await mockTurn(deps, request, input);
@@ -554,10 +656,18 @@ async function runTurn(
     }
 
     // §8.8: settle the per-turn hold with the ACTUAL cost; heartbeat the run.
+    // AUD-C1 fix — `uncapped`: the commit is the FULL server-measured
+    // actual cost even when a concurrent abandon/cancel/abort already
+    // refunded the run-scope hold mid-flight. Pre-fix, the cap
+    // (min(actualCost, outstanding)) silently zeroed the charge of every
+    // in-flight turn whenever ANY client-reachable refund path won the
+    // race — streamed output was delivered + persisted for free.
     await deps.repos.ledger.settle(input.workspaceId, {
       runId: request.runId,
       actualCost: creditsToLedgerMicrocredits(committed),
       idempotencyKey: `turn:${input.turnKey}:settle`,
+      uncapped: true,
+      metadata: { turnKey: input.turnKey, stepIndex: request.stepIndex },
     });
     await deps.repos.runs.touchRunHeartbeat({
       runId: request.runId,
@@ -600,12 +710,44 @@ async function runTurn(
         })
         .catch(() => undefined);
     }
-    await deps.repos.ledger
-      .refundAll(input.workspaceId, {
-        runId: request.runId,
-        idempotencyKey: `turn:${input.turnKey}:refund`,
-      })
-      .catch(() => undefined);
+
+    // AUD-C1 abort-honesty fix: a client abort is no longer a free-partial-
+    // output gesture. When the caller cut the stream AFTER deltas were
+    // delivered, the turn settles the server-measured usage (emitted deltas
+    // for the output, the assembled prompt for the input, plus any tokens
+    // the plan_edit side call already spent) — exactly like a completed
+    // turn, so "stream then abort at 95%" costs what it consumed. An abort
+    // with NOTHING delivered stays free (honest instant cancel), and
+    // provider-side failures (non-abort) keep the full-refund posture.
+    let committedOnAbort = 0;
+    if (aborted && partialText !== "") {
+      committedOnAbort = committedCreditsFor(
+        input.model,
+        {
+          inputTokens:
+            Math.ceil(JSON.stringify(input.promptMessages).length / 4) + sideUsage.inputTokens,
+          outputTokens: Math.ceil(partialText.length / 4) + sideUsage.outputTokens,
+          usageSeen: true,
+        },
+        input.promptMessages,
+      );
+      await deps.repos.ledger
+        .settle(input.workspaceId, {
+          runId: request.runId,
+          actualCost: creditsToLedgerMicrocredits(committedOnAbort),
+          idempotencyKey: `turn:${input.turnKey}:settle`,
+          uncapped: true,
+          metadata: { turnKey: input.turnKey, stepIndex: request.stepIndex, aborted: true },
+        })
+        .catch(() => undefined);
+    } else {
+      await deps.repos.ledger
+        .refundAll(input.workspaceId, {
+          runId: request.runId,
+          idempotencyKey: `turn:${input.turnKey}:refund`,
+        })
+        .catch(() => undefined);
+    }
     input.logger.error("turn_failed", {
       turnKey: input.turnKey,
       detail: error instanceof Error ? `${error.name}: ${error.message}` : "unknown",
@@ -616,7 +758,7 @@ async function runTurn(
       code,
       message,
       retryable,
-      credits: { committed: 0 },
+      credits: { committed: committedOnAbort },
     });
   }
 }

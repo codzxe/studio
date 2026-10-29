@@ -123,13 +123,14 @@ export function creditsRoutes(deps: GatewayDeps): Hono<AppBindings> {
 
   // ── Reconciliation job (BUILD_PLAN §M6 task 3; core in ../reconciliation.ts) ──
   //
-  // REPORT-ONLY unless the caller passes { mode: "reconcile" }. Admin role;
-  // Idempotency-Key is enforced by the global POST middleware (§7.2). The
-  // external spend seam is createSpendSource(deps.env) — null on boxes without
-  // LITELLM_SPEND_KEY (the local/test reality), so the job degrades to
-  // local-ledger-only reconciliation. Batch/cron callers use
-  // runReconciliationSweep() (services/gateway/src/reconciliation.ts header
-  // has the operator recipe — no scheduler is wired in v1).
+  // REPORT-ONLY for workspace admins; the destructive `mode: "reconcile"
+  // (window true-ups that APPEND adjustment entries — money movement) is
+  // restricted to PLATFORM STAFF (the better-auth user role, the same
+  // isAdminRole seam plan.ts uses). AUD-A3 (2026-10-30 deep audit):
+  // pre-fix any workspace admin could run reconcile mode against shifted,
+  // overlapping windows — the module's own header admits "re-true-upping an
+  // OVERLAPPING SHIFTED window double-adjusts the overlap" — turning the
+  // workspace's own ledger into a repeatable credit mint.
   app.post(
     "/v1/credits/reconcile",
     requireWorkspace("admin"),
@@ -141,6 +142,17 @@ export function creditsRoutes(deps: GatewayDeps): Hono<AppBindings> {
           hint: "Send sinceTs and uptoTs as ISO-8601 window bounds.",
           requestId: c.get("requestId"),
         });
+      }
+      if (parsed.data.mode === "reconcile" && !isAdminRole(c.get("auth").user.role)) {
+        throw new GatewayError(
+          "FORBIDDEN",
+          "Destructive reconciliation is a platform operation.",
+          {
+            status: 403,
+            hint: "Workspace admins can run mode \"report\"; true-ups are staff-only.",
+            requestId: c.get("requestId"),
+          },
+        );
       }
       const sinceTs = new Date(parsed.data.sinceTs);
       const uptoTs = new Date(parsed.data.uptoTs);
