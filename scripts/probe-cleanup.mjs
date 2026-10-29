@@ -9,6 +9,11 @@
 //   node scripts/probe-cleanup.mjs --list        # dry-run: show every marker row
 //   node scripts/probe-cleanup.mjs --delete     # delete ALL marker rows
 //
+// Round-13 perf probes (scripts/prod-signup-jar.mjs +
+// perf-fabricate-heavy-account.mjs): probe-r13t-<stamp>@test.local users;
+// perf-bulk-<stamp>-<n> org slugs (the fabricated heavy-account workspaces);
+// light-ws-<stamp> (the light-account control workspace).
+//
 // Deletion mechanics (packages/db/src/schema.ts FK rules):
 //   DELETE FROM organization → cascades member, projects → agent_threads →
 //   agent_messages/agent_runs → agent_steps, credit_ledger, audit_log.
@@ -39,8 +44,8 @@ if (!url || !/^postgres(ql)?:\/\//.test(url)) {
   process.exit(1);
 }
 
-const PROBE_EMAIL = /^probe-(r9-(dbg-)?\d+|r10-(ap-)?\d+|check-\d+)@test\.local$/;
-const PROBE_SLUG = /^probe-(r9-ws-|r10-(ap-)?ws-|ws-)\d+$/;
+const PROBE_EMAIL = /^probe-(r9-(dbg-)?\d+|r10-(ap-)?\d+|r13t-\d+|check-\d+)@test\.local$/;
+const PROBE_SLUG = /^probe-(r9-ws-|r10-(ap-)?ws-|ws-)\d+$|^perf-bulk-\d+-\d+$|^light-ws-\d+$/;
 
 const args = process.argv.slice(2);
 const list = args.includes("--list");
@@ -65,6 +70,7 @@ const orgs = await sql`
   left join "user" u on u.id = m.user_id
   where o.slug like 'probe-ws-%' or o.slug like 'probe-r9-ws-%'
     or o.slug like 'probe-r10-ws-%' or o.slug like 'probe-r10-ap-ws-%'
+    or o.slug like 'perf-bulk-%' or o.slug like 'light-ws-%'
   order by o.created_at`;
 
 // Guard: every candidate must match the strict marker patterns (never touch
