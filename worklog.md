@@ -4341,3 +4341,11 @@ User report (after the TTFB fix landed): /w/:slug/editor LCP 878ms with 816ms re
 Also: prod-boot-probe.mjs URL-arg bug (bare numeric arg parsed as URL → "Cannot navigate to invalid URL 150000"); new scripts/prod-editor-scripts.mjs (authenticated editor-route chunk census — signs up, fabricates a workspace+project, lists every script src + sizes + SSR-content checks). Engine health re-verified on prod before the fix: boot probe READY 3,228ms (wasm 3,038ms) in the GPU-less probe env — the earlier "did not become ready within 60000 ms" report was the critical-path machine, not the engine.
 
 Tests: web 1,724 green (+4 new), config 153, contracts 272, api-client 186, editor-bridge 71, ui 133. Gateway bundle (api/gateway.mjs) rebuilt with the ids.ts change. Post-deploy verification: chunk census + SSR-chrome grep + boot probe (below).
+
+Post-deploy verification (ef9a5ac, prod, authenticated headless probe scripts/prod-lcp-probe.mjs ×4 runs):
+- LCP 878ms (user trace, 816ms render delay) → **260/404/496ms** (median 404ms), TTFB 24-28ms held; LCP is now network+parse bound, not JS-execution bound.
+- The SSR HTML carries the LCP text verbatim: breadcrumb `<a data-testid="editor-breadcrumb-project">Probe Editor JS</a>` AND the boot overlay copy `Preparing “Probe Editor JS”…` (probe-census "boot overlay text SSR'd: true").
+- Critical path 21 scripts/1,712KB → 20 scripts/**1,229KB** (−28%); biggest chunk 481KB crypto → 230KB React. Zero elliptic/OID markers in any client chunk.
+- Engine regression check: boot probe READY 824ms (wasm 676ms warm) — the 60s-timeout class of report cannot reproduce; the earlier report was the empty-shell critical path (the page LOOKED dead for ~1s while 1.7MB compiled, and the engine start serialized behind it).
+- Second commit (ef9a5ac): the gate's checking arm SSRs the BootOverlay's exact markup (Spinner + same copy) — the headless probe showed the LCP element was the overlay paragraph (larger text than the crumb), so the largest text now paints server-side too; the host's real overlay takes over seamlessly on mount.
+- New probe row class: probe-r13js-<stamp>@test.local ×2 (cleanup same standing DATABASE_URL blocker as probe-r13t).
