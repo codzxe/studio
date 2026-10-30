@@ -183,7 +183,7 @@ export function buildApp(options: BuildAppOptions): Hono<AppBindings> {
   app.route("/", assetsRoutes(deps));
   app.route("/", threadsRoutes(deps));
   // ROUND 12: the client-driven agent loop — the stateless turn route
-  // (research/round12-design.md) replaces the retired in-request /chat loop.
+  // (docs/research/round12-design.md) replaces the retired in-request /chat loop.
   app.route("/", turnRoutes(deps));
   // ROUND 12: agent generative tools (web_search / generate_image) — keyless
   // Tavily by default, env-configured image provider when set.

@@ -86,13 +86,14 @@ type SubscriptionTransitionInput = Parameters<Repos["subscriptions"]["transition
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * credit_ledger.amount is a drizzle `integer` (int32) today; M6-A flagged the
- * Studio monthly allowance (10B µc) as over-range until the column moves to
- * bigint. Webhook grants parsed from external metadata are range-checked
- * against this ceiling — a hostile amount is audited-ignored, never a 500
- * that would make Stripe retry the poison forever.
+ * credit_ledger.amount moved to bigint in migration 0003 — the old int32
+ * ceiling was over-range for the Studio allowance (10B µc). Grants are
+ * still range-checked against a sane ceiling (1e15 µc = 1B credits, well
+ * under Number.MAX_SAFE_INTEGER): a hostile/corrupted amount is
+ * audited-ignored, never minted, never a 500 that would make Stripe retry
+ * the poison forever.
  */
-const MAX_LEDGER_AMOUNT = 2_147_483_647;
+const MAX_LEDGER_AMOUNT = 1_000_000_000_000_000;
 
 /**
  * Past-due dunning window (§M6 task 2 "grace period"). The M6-B fake harness
@@ -739,9 +740,23 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
         throw new StudioError("VALIDATION_FAILED", { requestId: c.get("requestId") });
       }
       const customerId = await ensureWorkspaceCustomer(c, workspace, stripe);
+      // SEC-06 (2026-10-30 audit): Stripe does not restrict per-session
+      // return_url domains — an absolute attacker URL would redirect the
+      // user off-site on portal exit. Only same-origin URLs pass; anything
+      // else falls back to the app's own billing page.
+      const appOrigin = new URL(appBase()).origin;
+      let returnUrl = `${appBase()}/billing`;
+      try {
+        const candidate = new URL(parsed.data.returnUrl ?? `${appBase()}/billing`, appBase());
+        if (candidate.origin === appOrigin) {
+          returnUrl = candidate.origin + candidate.pathname + candidate.search;
+        }
+      } catch {
+        // Unparseable — keep the safe default.
+      }
       const session = await stripe.portal({
         customerId,
-        returnUrl: parsed.data.returnUrl ?? `${appBase()}/billing`,
+        returnUrl,
       });
       const body: PortalResponse = { url: session.url };
       return ok(c, body);
@@ -1116,10 +1131,14 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
       // grants; an unpaid session's eventual settlement re-fires through
       // the invoice arm, which is idempotent on the invoice id.
       const checkoutObject = object as unknown as Record<string, unknown>;
+      // BIL-05 (2026-10-30 audit): fail CLOSED — only an explicit "paid"
+      // grants. The old `!== ""` special case granted when the field was
+      // absent; real Stripe payment-mode sessions always carry it, and a
+      // money arm must never trust its absence.
       const paymentStatus =
         typeof checkoutObject.payment_status === "string" ? checkoutObject.payment_status : "";
-      if (paymentStatus !== "" && paymentStatus !== "paid") {
-        return { ignored: `topup.${paymentStatus}` };
+      if (paymentStatus !== "paid") {
+        return { ignored: `topup.${paymentStatus || "unknown"}` };
       }
       const granted = await grantTopUp(
         organizationId,
@@ -1345,17 +1364,20 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
     // the once-per-period money event Stripe guarantees; the grant is
     // idempotent on the invoice id so redeliveries can never double-grant.
     // Top-up invoices never carry the allowance (their credits are the pack).
-    if (
-      subscriptions !== null &&
-      object.metadata?.kind !== "topup" &&
-      organizationId !== null
-    ) {
+    if (subscriptions !== null && object.metadata?.kind !== "topup" && organizationId !== null) {
       const row = await subscriptions.getByOrganization(organizationId);
       if (row !== null) {
         const allowance = entitlementsFor(row.planId).monthlyCreditAllowance;
-        if (allowance > 0) {
+        // BIL-01 (2026-10-30 audit): monthlyCreditAllowance is ALREADY in µc
+        // (plans.ts: 50/500/2000/10_000 × MICROCREDITS_PER_CREDIT). The old
+        // creditsToMicrocredits() wrapper double-converted — every paid plan
+        // was over-granted ×10⁶ (Starter buyers got 500,000,000 credits for
+        // $12) and the studio tier RangeError'd into a Stripe retry poison
+        // loop. Grant the catalog value directly, behind the same ceiling
+        // as top-ups (BIL-07 defense-in-depth).
+        if (allowance > 0 && allowance <= MAX_LEDGER_AMOUNT) {
           await deps.repos.ledger.grant(organizationId, {
-            amount: creditsToMicrocredits(allowance),
+            amount: allowance,
             idempotencyKey: `stripe:sub-allowance:${invoiceId}`,
             metadata: {
               kind: "subscription-allowance",

@@ -19,7 +19,7 @@
 //     artifact the browser tier ever sees (~10 KB): the full catalog never rides
 //     the client bundle (packages/allowed-commands.js imports just this file).
 //
-// Grammar (editor/crates/engine/src/commands/mod.rs:119-153):
+// Grammar (apps/editor/crates/engine/src/commands/mod.rs:119-153):
 //   cmd!(id, label, [menus], shortcut, "{params doc}", enabled_guard, handler)
 //   query!(id, label, "{params doc}", handler)                 // journal: false — read-only
 //
@@ -69,7 +69,7 @@
 // fails loudly and this list gains the id.
 //
 // Known, deliberate scope (see the M5-J worklog for the full survey):
-//   * Only `editor/crates/engine/src/commands/*.rs` is scanned, per the M5 seam. The
+//   * Only `apps/editor/crates/engine/src/commands/*.rs` is scanned, per the M5 seam. The
 //     live engine ALSO registers a handful of ids elsewhere: models.rs / templates.rs /
 //     storage.rs / preview.rs / learn.rs (~26 `cmd!`/`query!` — model install/download,
 //     template file ops, storage.clear, tutorials: all file-system or destructive, so
@@ -92,8 +92,8 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = path.resolve(PACKAGE_DIR, "..", "..");
-const COMMANDS_DIR = path.join(REPO_ROOT, "editor", "crates", "engine", "src", "commands");
-const UPSTREAM_MD = path.join(REPO_ROOT, "editor", "UPSTREAM.md");
+const COMMANDS_DIR = path.join(REPO_ROOT, "apps", "editor", "crates", "engine", "src", "commands");
+const UPSTREAM_MD = path.join(REPO_ROOT, "apps", "editor", "UPSTREAM.md");
 const FIXTURE_PATH = path.join(PACKAGE_DIR, "fixtures", "engine-command-ids.json");
 const GENERATED_DIR = path.join(PACKAGE_DIR, "src", "generated");
 const CATALOG_PATH = path.join(GENERATED_DIR, "engine-catalog.json");
@@ -349,7 +349,7 @@ function unquote(literal) {
   return inner[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
 }
 
-/** The vendored engine pin, from the `Pinned commit` row of editor/UPSTREAM.md. */
+/** The vendored engine pin, from the `Pinned commit` row of apps/editor/UPSTREAM.md. */
 function readEnginePin() {
   const upstream = fs.readFileSync(UPSTREAM_MD, "utf8");
   const row = /^\|\s*Pinned commit\s*\|\s*`([0-9a-f]{7,40})`\s*\|/m.exec(upstream);

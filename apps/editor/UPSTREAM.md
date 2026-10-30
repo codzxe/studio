@@ -60,6 +60,13 @@ listed below.
 | Patch | Subject | Fork commit | Scope |
 |---|---|---|---|
 | [0001-debrand.patch](patches/0001-debrand.patch) | De-brand the editor for the commercial product (ADR-0006 decision 10) | `0afc18e` | 77 files |
+| [0002-brand-path-apps-editor.patch](patches/0002-brand-path-apps-editor.patch) | Repo restructure 2026-10-30: `editor/` moved to `apps/editor/` — amend `crates/brand/build.rs`'s repo-root `brand.json` path from 3 to 4 levels up (build/integration change, ADR-0006-preferred category; no UI change) | studio main (post-a32d1f0) | 1 file |
+
+**0002 brand path (2026-10-30).** The vendored tree moved from `<repo>/editor/`
+to `<repo>/apps/editor/` in the monorepo restructure; the brand build script's
+`brand.json` resolution (`crates/brand/build.rs`) needed one more `../`. Without
+this there is **no build error** — the crate silently falls back to its compiled-in
+defaults and brand-token changes stop reaching the editor.
 
 **0001 de-brand (2026-10-22).** Renames the user-visible `EffectCraft`/`ArtCraft`
 strings to `Studio` across the engine menus, the i18n catalogs (all 10 locales, keys and

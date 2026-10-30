@@ -22,7 +22,7 @@ list) -- the main agent rules; do not guess.
 
 Non-negotiable (BUILD_PLAN header, ADR 0006, PA 6.6, ECUX 1, UI_DS header): EffectCraft's
 editor UI is FROZEN. No redesign, reskin, panel/menu/timeline change. Chat is additive.
-Any work that edits `editor/crates/ui-egui` for visual reasons fails the milestone.
+Any work that edits `apps/editor/crates/ui-egui` for visual reasons fails the milestone.
 
 v1 "done" (BUILD_PLAN 1): landing -> sign up -> workspace -> trial (card) -> dashboard ->
 project -> editor loads (unmodified EffectCraft) -> upload assets -> chat "make this title
@@ -32,7 +32,7 @@ shows credits. Not done when the editor loads or chat streams; done when the ful
 works for a new user on a clean machine with tenant isolation, credits and recovery.
 
 Repo-state note (observed, not assumed): `editor/` is already vendored with pin
-`9db7f3b21700fd821f215782ed1c82afe077880f` (editor/UPSTREAM.md, "studio Wave 0,
+`9db7f3b21700fd821f215782ed1c82afe077880f` (apps/editor/UPSTREAM.md, "studio Wave 0,
 2026-10-22"), `.git` exists, and the old PhotoCraft dirs (`vendor/`, `engine-patches/`,
 `apps/gateway`, `apps/worker`, `packages/agent|tools|engine-client|evals`) are already
 gone from the tree. BUILD_PLAN's status line still says "Implementation not started"
@@ -62,7 +62,7 @@ Remove the old PhotoCraft critical path without losing salvageable work.
 |---|---|
 | M0.1 | Preserve the current tree before deleting anything: git init, baseline commit, remote, tag `pre-effectcraft-baseline` (zip outside repo if no remote); delete nothing before this. |
 | M0.2 | Audit and classify old code: keep/adapt `packages/billing` (ledger/tests), `packages/storage` (validation, S3), `packages/config` (env parsing), selected UI primitives, auth patterns; reference-only `packages/agent`, `packages/tools`, `packages/engine-client`, `apps/worker`; archive `vendor/photocraft`, `engine-patches`, PhotoCraft fixtures, mock coffee demo, static-design templates; delete from active path only after archive tag. |
-| M0.3 | Fork EffectCraft into `editor/`: pin exact commit in `editor/UPSTREAM.md`; upstream remote; verify `cargo test --workspace` + native CLI; build web editor (`cargo xtask web`), record wasm size / load time / browser requirements; verify `window.effectcraft` methods (execute, request, inspect, renderFrame, addFile, readFile, saveToBrowser, screenshot); verify `engine.batch` atomicity, `$N` references, rollback, one-undo-step with a real project; record every patch in UPSTREAM.md, zero UI patches. |
+| M0.3 | Fork EffectCraft into `editor/`: pin exact commit in `apps/editor/UPSTREAM.md`; upstream remote; verify `cargo test --workspace` + native CLI; build web editor (`cargo xtask web`), record wasm size / load time / browser requirements; verify `window.effectcraft` methods (execute, request, inspect, renderFrame, addFile, readFile, saveToBrowser, screenshot); verify `engine.batch` atomicity, `$N` references, rollback, one-undo-step with a real project; record every patch in UPSTREAM.md, zero UI patches. |
 | M0.4 | Create target monorepo skeleton: `apps/web`, `services/gateway`, `services/worker`, `packages/ui`, `packages/contracts`, `packages/editor-bridge`, `packages/config`; rebuild a clean Hono gateway rather than repairing `openapi.ts` if cleaner. |
 | M0.5 | Local environment without Docker: native Postgres, Valkey, MinIO; LiteLLM in Python venv with one model alias; `.env.example` with every variable + fail-fast startup check; `pnpm dev` starts web + gateway. |
 | M0.6 | CI skeleton: web typecheck/lint/unit/build; gateway typecheck/tests/migration check; editor `cargo test`, `cargo clippy`, wasm build at the pin; licence/attribution check. |
@@ -298,7 +298,7 @@ beta cohort completes the loop without manual intervention.
 | Product definition, locked decisions, domain terms, roles matrix | PRODUCT_ARCHITECTURE 1-3 | ECUX 5.4 (system primer); UI_DS 2.1 (naming) |
 | Repo shape, build commands, CI jobs | PRODUCT_ARCHITECTURE 4, 4.2, 4.3 | BUILD_PLAN M0.4/M0.6 |
 | Runtime architecture, trust boundaries | PRODUCT_ARCHITECTURE 5, 5.1 | -- |
-| Editor boundary: serving, bridge API, load sequence, autosave, context bridge | PRODUCT_ARCHITECTURE 6 (6.1-6.6) | ECUX 1-2; UI_DS 8.7; editor/docs/web.md (upstream) |
+| Editor boundary: serving, bridge API, load sequence, autosave, context bridge | PRODUCT_ARCHITECTURE 6 (6.1-6.6) | ECUX 1-2; UI_DS 8.7; apps/editor/docs/web.md (upstream) |
 | SaaS control plane: auth, API surface, envelopes, SSE events | PRODUCT_ARCHITECTURE 7 (7.1-7.4) | ECUX 8.2-8.3 (client side) |
 | Agent architecture: stack, model routing, context assembly, tools, engine.batch, EditPlan, apply/undo, credits, failure semantics | PRODUCT_ARCHITECTURE 8 (8.1-8.9) | ECUX 4-7; BUILD_PLAN M4-M5 |
 | Data model (Postgres tables, object storage, versions/conflict) | PRODUCT_ARCHITECTURE 9 | BUILD_PLAN M2 |
@@ -412,7 +412,7 @@ items below extend it.
 | # | File | What is stale | Must be rewritten | Candidate task |
 |---|---|---|---|---|
 | D1 | `/README.md` (root) | Entirely PhotoCraft-era: "real layered documents", `.pcraft`, PNG/JPG/PSD export, `vendor/photocraft` shallow clone + ADR-0001 pin `872748fb`, `photocraft-cli`, engine-pool/mock-engine architecture diagram, old phase 0-4 status table, `demo:coffee` quickstart, Docker-Compose quickstart (new plan is native, no Docker), "BUILD_PROMPT.md source of truth" pointer, section-refs to the old spec | Rewrite to the EffectCraft product definition (PA 1), status = pivot accepted / build in waves per BUILD_PLAN, quickstart per PA 14.1 (native Postgres/Valkey/MinIO + LiteLLM venv + `pnpm dev` + `cargo xtask web --serve 8765`), repo map per PA 4, docs pointer to `docs/README.md` read order, licence/attribution per ADR 0006 (MIT OR Apache-2.0, pin, no EffectCraft marks) | DOC-1 (tech lead review) |
-| D2 | `docs/AGENTS.md` | Pre-pivot law: authoritative spec = BUILD_PROMPT; engine = `vendor/photocraft` pin 872748fb with `engine-patches/` policy; protocol truth = `vendor/photocraft/docs/control-protocol.md` + `rpc.rs` + `commands.rs`; reference apps `vendor/next-saas-stripe-starter`/`magicui`/`astrowind`; "DO NOT run pnpm install / cargo build" rule (conflicts with M0/M3 which require local wasm builds); section-refs (1.5, 16.1, 16.5, 25); CRAFT_FONTS_DIR; git-sync fleet protocol; Drizzle bits are still valid (keep) | Point at BUILD_PLAN + ADR 0006 as law; mark PhotoCraft sections historical (per M0.7); replace protocol-truth pointers with `editor/` + `window.effectcraft` + `editor/docs/control-protocol.md`; restate the build/CI rule for the new local-build reality; keep git-sync/worklog/ownership/style sections that still apply | DOC-2 (M0.7 proper) |
+| D2 | `docs/AGENTS.md` | Pre-pivot law: authoritative spec = BUILD_PROMPT; engine = `vendor/photocraft` pin 872748fb with `engine-patches/` policy; protocol truth = `vendor/photocraft/docs/control-protocol.md` + `rpc.rs` + `commands.rs`; reference apps `vendor/next-saas-stripe-starter`/`magicui`/`astrowind`; "DO NOT run pnpm install / cargo build" rule (conflicts with M0/M3 which require local wasm builds); section-refs (1.5, 16.1, 16.5, 25); CRAFT_FONTS_DIR; git-sync fleet protocol; Drizzle bits are still valid (keep) | Point at BUILD_PLAN + ADR 0006 as law; mark PhotoCraft sections historical (per M0.7); replace protocol-truth pointers with `editor/` + `window.effectcraft` + `apps/editor/docs/control-protocol.md`; restate the build/CI rule for the new local-build reality; keep git-sync/worklog/ownership/style sections that still apply | DOC-2 (M0.7 proper) |
 | D3 | `CHANGELOG.md` | Only `0.1.0-beta.0` (old PhotoCraft product: engine-patches, photocraft-serve, mock engine, template tools, demo:coffee). No entry for the pivot; no 0.2.0/Unreleased section | Add an `Unreleased`/`0.2.0` entry: pivot to EffectCraft per ADR 0006, archive/removal of the PhotoCraft path, `editor/` fork + pin `9db7f3b2`, new monorepo skeleton, link to BUILD_PLAN milestones; keep 0.1.0 as history | DOC-3 |
 | D4 | `docs/BUILD_PROMPT.md` | Header still says "source of truth ... on top of the PhotoCraft editor"; no supersession banner (only docs/README.md says its sections are superseded) | Add a prominent banner: superseded by ADR 0006 + BUILD_PLAN for sections 2, 7-10, 20, 24; principles in 1, 3, 5, 11-19, 25 remain baseline where not contradicted (per ADR 0006 "Supersedes") | DOC-4 |
 | D5 | `docs/phases/phase-exit-audit.md`, `docs/phases/acceptance-matrix.md` | Confirmed OLD product: S19/S20 PhotoCraft gates, `photocraft-cli`, `.pcraft`, mock-engine evidence, 0.1.0-beta.0 waves W0-W10. Not valid for the new plan | Mark clearly as archived/legacy at the top (or move to `docs/phases/legacy/`); start the new per-milestone exit checklists `docs/phases/M0.md`..`M10.md` required by BUILD_PLAN 2.3/13 | DOC-5 |

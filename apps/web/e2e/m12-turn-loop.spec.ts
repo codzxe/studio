@@ -1,6 +1,6 @@
 /**
  * M12 turn loop — the ROUND-10 "stuck in loop" KILLER regression (the
- * round-12 design doc's P0: research/round12-design.md "The production
+ * round-12 design doc's P0: docs/research/round12-design.md "The production
  * 'stuck in loop' (ROOT-CAUSED, must die)").
  *
  * THE BUG (round 10): the agent loop executed INSIDE the SSE request on a

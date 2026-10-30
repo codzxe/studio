@@ -1,4 +1,4 @@
-import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lt, or, sql } from "drizzle-orm";
 
 import { type Page, clampLimit, decodeCursor, encodeCursor } from "../cursor.js";
 import { type Executor, type StudioDb, type StudioTx, getDialect } from "../db.js";
@@ -141,6 +141,16 @@ export interface LedgerRepo {
     workspaceId: WorkspaceId,
     idempotencyKey: string,
   ): Promise<LedgerEntry | null>;
+  /**
+   * BIL-03 (2026-10-30 audit): render scopes with an outstanding
+   * (un-settled) hold — the worker sweep's settle-replay input. Optional so
+   * existing test fakes stay structurally compatible; the real repo always
+   * implements it. Mirrors ledger-math's outstandingReserve: −Σ(amount)
+   * over the scope's reserve+refund rows (commits never consume a hold).
+   */
+  outstandingRenderScopes?(): Promise<
+    ReadonlyArray<{ workspaceId: WorkspaceId; renderId: string; outstanding: number }>
+  >;
 }
 
 async function balanceUnderLock(exec: Executor, workspaceId: WorkspaceId): Promise<number> {
@@ -403,7 +413,15 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
       const refundKey = deriveIdempotencyKey(input.idempotencyKey, "refund");
       return withWorkspaceLock(db, workspaceId, async (tx) => {
         const existingCommit = await findExisting(tx, commitKey);
-        if (existingCommit) return { commit: existingCommit, refund: null, replayed: true };
+        if (existingCommit) {
+          // SEC-09 (2026-10-30 audit): a key replaying under a DIFFERENT
+          // workspace is a cross-tenant leak, not a replay — same typed
+          // CONFLICT the grant arm has always raised.
+          if (existingCommit.workspaceId !== workspaceId) {
+            throw DbError.conflict("Idempotency key already used by another workspace");
+          }
+          return { commit: existingCommit, refund: null, replayed: true };
+        }
 
         const outstanding = await scopeOutstanding(tx, workspaceId, scope);
         const plan = planSettlement(outstanding, input.actualCost, {
@@ -445,6 +463,11 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
       return withWorkspaceLock(db, workspaceId, async (tx) => {
         const existing = await findExisting(tx, input.idempotencyKey);
         if (existing) {
+          // SEC-09 (2026-10-30 audit): same cross-workspace replay guard as
+          // grant/settle — the ledger's idempotency namespace is global.
+          if (existing.workspaceId !== workspaceId) {
+            throw DbError.conflict("Idempotency key already used by another workspace");
+          }
           return { entry: existing, refunded: existing.amount, replayed: true };
         }
         const outstanding = await scopeOutstanding(tx, workspaceId, scope);
@@ -553,6 +576,40 @@ export function createLedgerRepo(db: StudioDb): LedgerRepo {
         )
         .limit(1);
       return row ?? null;
+    },
+
+    async outstandingRenderScopes() {
+      // BIL-03 (2026-10-30 audit): SQL mirror of ledger-math's
+      // outstandingReserve — outstanding = −Σ(amount) over the scope's
+      // reserve+refund rows (commit entries never consume a hold: settle
+      // refunds the FULL hold while charging the actual cost on top).
+      const outstanding = sql<string>`-coalesce(sum(${creditLedger.amount}), 0)`;
+      const rows = await db
+        .select({
+          workspaceId: creditLedger.workspaceId,
+          renderId: creditLedger.renderId,
+          outstanding,
+        })
+        .from(creditLedger)
+        .where(
+          and(
+            isNotNull(creditLedger.renderId),
+            inArray(creditLedger.kind, ["reserve", "refund"] as LedgerKind[]),
+          ),
+        )
+        .groupBy(creditLedger.workspaceId, creditLedger.renderId)
+        .having(sql`-coalesce(sum(${creditLedger.amount}), 0) > 0`);
+      return rows.flatMap((row) =>
+        row.renderId === null
+          ? []
+          : [
+              {
+                workspaceId: row.workspaceId,
+                renderId: row.renderId,
+                outstanding: Number(row.outstanding),
+              },
+            ],
+      );
     },
   };
 }

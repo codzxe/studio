@@ -117,7 +117,7 @@ Two profiles by design:
 - `/v1/*` -> `gateway:8787` with `flush_interval -1` (SSE passthrough);
   fallback -> `web:3000`.
 - Dockerfile: Caddy 2.11 builder + `ueffel/caddy-brotli v1.7.0`, COPY Caddyfile,
-  COPY prebuilt `editor-dist/` (gitignored prebuilt input; editor/target stays
+  COPY prebuilt `editor-dist/` (gitignored prebuilt input; apps/editor/target stays
   out of Docker by design).
 
 ### litellm (infra/litellm/config.yaml)
@@ -199,7 +199,7 @@ a live box. Infra verdict: files COMPLETE and coherent, runtime evidence ZERO.
   box, so editor CI must run on a GitHub runner). turbo.json defines
   build/dev/typecheck/lint/test with `^build` ordering; biome.json: strict-ish
   (noExplicitAny error, noConsole warn, noNonNullAssertion error), ignores
-  dist/.next/md/fixtures/archive/editor/target.
+  dist/.next/md/fixtures/archive/apps/editor/target.
 - M0 task 6 (CI skeleton: web typecheck+lint+unit+build; gateway
   typecheck+tests+migration check; editor cargo test/clippy + wasm at the pin;
   licence check) is therefore PARTIAL: the harness commands exist, the
@@ -226,7 +226,7 @@ a live box. Infra verdict: files COMPLETE and coherent, runtime evidence ZERO.
   `AUTH_SECRET=...` suggestion to stdout only (never writes it). Never
   hand-edit .env.example.
 - `serve-editor.py` - localhost-only static server for
-  `editor/target/web/dist` (default :8765) sending the same headers as
+  `apps/editor/target/web/dist` (default :8765) sending the same headers as
   `cargo xtask web --serve`: COOP same-origin, COEP require-corp, nosniff,
   `application/wasm` for .wasm. Purpose: editor dev/proxy target behind the
   app's EDITOR_DEV_SERVER_URL without a cargo round-trip.

@@ -1,5 +1,5 @@
 // @studio/contracts — the generated ENGINE command catalog, tier 1 (round-12
-// "Tool catalog v3", research/round12-design.md + 12-w2-a5 §6 Option B).
+// "Tool catalog v3", docs/research/round12-design.md + 12-w2-a5 §6 Option B).
 //
 // GATEWAY-ONLY module — exposed via the package subpath
 // `@studio/contracts/catalog`, deliberately NOT re-exported from the barrel
@@ -78,7 +78,7 @@ export function findEngineCommand(id: string): EngineCatalogCommand | undefined 
 // ENGINE_CATALOG_DIGEST — the compact prompt string (categories + exemplars)
 // ---------------------------------------------------------------------------
 //
-// research/round12-design.md + 12-w1-a1 §4a-4: the system prompt NEVER carries
+// docs/research/round12-design.md + 12-w1-a1 §4a-4: the system prompt NEVER carries
 // the full catalog (~100 KB of params docs) and never ships 731 tool defs —
 // the model gets this ~2-3 KB digest (allowed categories, counts, one-line
 // descriptions, the params-doc grammar, ~20 exemplar ids), then discovers

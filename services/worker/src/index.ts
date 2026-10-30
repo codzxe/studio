@@ -71,7 +71,11 @@ export interface TickResult {
 export async function runOnce(deps: WorkerDeps): Promise<TickResult> {
   if (!deps.env.render.workerEnabled) {
     deps.logger.warn("render_worker_disabled", {});
-    return { claimed: 0, outcomes: [], swept: { requeuedOrFailed: 0, outputsExpired: 0 } };
+    return {
+      claimed: 0,
+      outcomes: [],
+      swept: { requeued: 0, failed: 0, holdsReleased: 0, outputsExpired: 0 },
+    };
   }
   const swept = await runSweeps(deps);
   const workerId = `wrk_once_${randomUUID().slice(0, 8)}`;
@@ -128,6 +132,9 @@ export async function startWorker(deps: WorkerDeps): Promise<WorkerHandle> {
   const active = new Set<Promise<void>>();
   let stopRequested = false;
   let ticks = 0;
+  // PERF-06 (2026-10-30 audit): idle-tick counter for the adaptive poll
+  // backoff — a fixed 1s poll ≈ 112k idle DB queries per worker per day.
+  let idleTicks = 0;
   const isAborted = (): boolean => signal?.aborted === true;
 
   const startJob = (row: ScopedRenderRow): void => {
@@ -168,6 +175,10 @@ export async function startWorker(deps: WorkerDeps): Promise<WorkerHandle> {
         });
         return [];
       });
+    // Any claim or running job means "not idle" — snap back to the fast
+    // cadence; only a fully idle worker (no rows claimed, nothing running)
+    // accumulates backoff.
+    idleTicks = rows.length > 0 || active.size > 0 ? 0 : idleTicks + 1;
     for (const row of rows) startJob(row);
   };
 
@@ -179,7 +190,13 @@ export async function startWorker(deps: WorkerDeps): Promise<WorkerHandle> {
     });
     await tick();
     while (!stopRequested && !isAborted()) {
-      await sleep(env.render.pollIntervalMs, signal);
+      // PERF-06: geometric backoff while idle (capped at 10s so the sweep
+      // cadence stays honest); the configured cadence whenever busy.
+      const interval =
+        idleTicks === 0
+          ? env.render.pollIntervalMs
+          : Math.min(env.render.pollIntervalMs * idleTicks, 10_000);
+      await sleep(interval, signal);
       if (stopRequested || isAborted()) break;
       await tick();
     }

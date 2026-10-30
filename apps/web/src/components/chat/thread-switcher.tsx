@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * ThreadSwitcher — ROUND 12 "Chat UI v3" (research/round12-design.md
+ * ThreadSwitcher — ROUND 12 "Chat UI v3" (docs/research/round12-design.md
  * "History on reload + thread switcher (list/create/switch)").
  *
  * Pure PRESENTATION dropdown: rows come in as props (the slot's

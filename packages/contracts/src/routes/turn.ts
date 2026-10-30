@@ -1,5 +1,5 @@
 // @studio/contracts — POST /v1/threads/:id/turn (round-12 TURN WIRE CONTRACT,
-// research/round12-design.md — pinned, additive only).
+// docs/research/round12-design.md — pinned, additive only).
 //
 // The client-driven agent loop: the browser owns the loop and the engine, the
 // gateway is STATELESS per turn (auth → load thread → credit RESERVE → ONE

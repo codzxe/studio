@@ -36,7 +36,7 @@ pnpm db:seed
 
 # 3. editor dist → caddy build context (see ../caddy/Dockerfile header)
 (cd ../../editor && cargo xtask web)
-mkdir -p ../caddy/editor-dist && cp -r ../../editor/target/web/dist/. ../caddy/editor-dist/
+mkdir -p ../caddy/editor-dist && cp -r ../../apps/editor/target/web/dist/. ../caddy/editor-dist/
 
 # 4. app plane (once apps/web + services/gateway + services/worker Dockerfiles exist)
 docker compose --env-file ../../.env --profile apps up -d --build
@@ -96,6 +96,6 @@ compensating adjustments, never roll back ledger rows).
   the directory is gitignored inside `infra/caddy/`.
 - FLEET NOTE (app wave): the `apps`-profile services build with context =
   repo root. The current root `.dockerignore` predates the Studio pivot and
-  does NOT exclude `editor/` (incl. `editor/target`, multi-GB) or `.local/`
+  does NOT exclude `editor/` (incl. `apps/editor/target`, multi-GB) or `.local/`
   (portable dev binaries) — extend it when wiring the app Dockerfiles, or
   contexts will upload gigabytes.

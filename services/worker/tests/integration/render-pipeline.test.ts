@@ -400,7 +400,7 @@ describe.skipIf(skipReason !== null)(
 
         // The next tick: sweep requeues the stale row, then claims + runs it.
         const tick = await runOnce(deps);
-        expect(tick.swept.requeuedOrFailed).toBeGreaterThanOrEqual(1);
+        expect(tick.swept.requeued + tick.swept.failed).toBeGreaterThanOrEqual(1);
         expect(tick.claimed).toBe(1);
         const outcome = tick.outcomes.find((entry) => entry.renderId === renderId);
         expect(outcome?.outcome).toBe("completed");

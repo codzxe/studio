@@ -759,6 +759,9 @@ d("POST /v1/webhooks/stripe", () => {
       id: `cs_premarked_${unique("s")}`,
       object: "checkout_session",
       mode: "payment",
+      // BIL-05 (2026-10-30 audit): real Stripe payment-mode sessions always
+      // carry payment_status; the grant arm now fails CLOSED without it.
+      payment_status: "paid",
       customer: `cus_premarked_${unique("c")}`,
       metadata: {
         organizationId: ws.id,
@@ -895,6 +898,38 @@ d("POST /v1/webhooks/stripe", () => {
     row = await subscriptionRow(ws.id);
     expect(row?.status).toBe("active");
     expect(row?.graceEnd).toBeNull();
+  });
+
+  it("BIL-01 regression: a subscription invoice grants the CATALOG µc allowance exactly (never ×10⁶)", async () => {
+    const ws = await newWorkspace();
+    const flow = await subscribeWorkspace(ws, "starter");
+    // A renewal invoice for the existing subscription (kind: subscription).
+    // Pre-fix (2026-10-30 audit): the grant wrapped the already-µc catalog
+    // value in creditsToMicrocredits() — Starter buyers got 500,000,000
+    // credits for $12 and the studio tier RangeError'd into a Stripe retry
+    // poison loop. The pin: exactly the catalog µc, handled label included.
+    const renewal = script(flow.fake, "invoice.paid", {
+      id: `in_allowance_${unique("i")}`,
+      object: "invoice",
+      customer: flow.customer,
+      subscription: flow.subId,
+      amount_paid: 1200,
+      currency: "usd",
+      status: "paid",
+      period_start: flow.periodEnd,
+      period_end: flow.periodEnd + 30 * DAY,
+      metadata: { organizationId: ws.id, kind: "subscription" },
+    });
+    const renewed = await deliver(flow.fake, renewal);
+    expect(renewed.status).toBe(200);
+    expect(renewed.data).toMatchObject({ handled: "invoice.allowance-granted" });
+    // Starter = 500 credits = 500,000,000 µc — the catalog value, NOT ×10⁶.
+    expect(await balanceOf(ws.id)).toBe(500 * 1_000_000);
+    // A redelivery of the SAME event is a duplicate — it mints nothing.
+    const again = await deliver(flow.fake, renewal);
+    expect(again.status).toBe(200);
+    expect(again.data).toMatchObject({ received: true, duplicate: true });
+    expect(await balanceOf(ws.id)).toBe(500 * 1_000_000);
   });
 
   it("two CONCURRENT subscription transitions: exactly one applies (the loser is a guarded 200)", async () => {
@@ -1039,6 +1074,9 @@ d("POST /v1/webhooks/stripe", () => {
         id: `cs_hostile_${unique("s")}`,
         object: "checkout_session",
         mode: "payment",
+        // BIL-05: real sessions always carry payment_status — the hostile
+        // amount must be rejected by the AMOUNT check, not the status gate.
+        payment_status: "paid",
         customer: `cus_hostile_${unique("c")}`,
         metadata: {
           organizationId: ws.id,

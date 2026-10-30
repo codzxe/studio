@@ -35,7 +35,7 @@ Re-apply: allowed only while base_version_id matches the client's current
   model-facing; results are PROPOSED batches (never direct execution).
 - Curated command registry (NEW `@studio/contracts` `command-registry.ts`):
   the allowlist compiled from the REAL engine registry (558 `cmd!` ids in
-  `editor/crates/engine/src/commands/*.rs`). Verified seed ids:
+  `apps/editor/crates/engine/src/commands/*.rs`). Verified seed ids:
   `comp.new`, `layer.newText`, `layer.newSolid`, `layer.newNull`,
   `layer.newAdjustment`, `layer.rename`, `layer.arrange`, `layer.setBlendMode`,
   `text.insert`, `text.addSelector`, `prop.set`, `prop.addKey`,

@@ -2,7 +2,7 @@
 // PRODUCT_ARCHITECTURE §8.4/§8.7, M5-SEAMS "write-tools" seam).
 //
 // M5.1 pinned EIGHT write tools; round 12 ("Tool catalog v3",
-// research/round12-design.md) adds THREE more, appended in this file so the
+// docs/research/round12-design.md) adds THREE more, appended in this file so the
 // original eight stay first and byte-compatible: engine_commands (the generic
 // catalog-validated escape hatch), run_script (the approval-time scripting
 // seam — script.run is never batchable, the engine's NOT_IN_BATCH refuses it)

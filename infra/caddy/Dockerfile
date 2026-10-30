@@ -5,15 +5,16 @@
 #   docker build infra/caddy
 #   # via compose: docker compose --env-file ../../.env build caddy
 #
-# EDITOR DIST IS A PREBUILT INPUT (§6.1): editor/target is gitignored and the
-# Rust/wasm toolchain is not part of this image. Build it outside Docker and
+# EDITOR DIST IS A PREBUILT INPUT (§6.1): apps/apps/editor/target is gitignored and
+# the Rust/wasm toolchain is not part of this image. Build it outside Docker and
 # stage it into the build context before `docker build`:
-#   cd editor && cargo xtask web                      # → editor/target/web/dist
+#   cd apps/editor && cargo xtask web              # → apps/apps/editor/target/web/dist
 #   mkdir -p infra/caddy/editor-dist
-#   cp -r editor/target/web/dist/. infra/caddy/editor-dist/
+#   cp -r apps/apps/editor/target/web/dist/. infra/caddy/editor-dist/
 # editor-dist/ is gitignored (infra/caddy/.gitignore) — the ~17MB wasm never
-# belongs in git. Optional: precompress for the best first-paint (Caddy's
-# `encode` serves sidecar files automatically):
+# belongs in git. Precompress for the best first-paint — the Caddyfile's
+# `file_server precompressed` serves the sidecar directly (build-editor-dist.sh
+# stage 4 now does this automatically):
 #   brotli -q 11 infra/caddy/editor-dist/studio_web_bg.wasm
 
 ARG CADDY_VERSION=2.11

@@ -11,7 +11,7 @@ const WRITE = process.argv.includes("--write");
 function findManifests(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-    if (entry.name === "editor" || entry.name === "archive") continue; // vendored upstream + archive
+    if (entry.name === "editor" || entry.name === "archive") continue; // vendored upstream (apps/editor) + archive
     const p = join(dir, entry.name);
     if (entry.isDirectory()) findManifests(p, out);
     else if (entry.name === "package.json") out.push(p);

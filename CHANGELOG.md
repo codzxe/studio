@@ -10,8 +10,8 @@ Dates are ISO 8601 (`YYYY-MM-DD`).
 ### Changed
 
 - Product pivot (ADR-0006, 2026-10-21): the product is an agentic
-  motion-graphics SaaS built on the EffectCraft editor, vendored at `editor/`
-  (pinned `9db7f3b2`, v0.13.0, per `editor/UPSTREAM.md`). The editor UI is
+  motion-graphics SaaS built on the EffectCraft editor, vendored at `apps/editor/`
+  (pinned `9db7f3b2`, v0.13.0, per `apps/editor/UPSTREAM.md`). The editor UI is
   frozen — the chat is an additive overlay, never a redesign — and the domain
   language is projects & compositions. The 0.1.0-beta.0 baseline below
   describes the pre-pivot product and stays for the historical record only:

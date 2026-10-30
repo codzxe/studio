@@ -33,8 +33,9 @@ describe("resolveCliPath (spike §1 order)", () => {
   it("falls back to the repo release build when present", () => {
     const root = mkdtempSync(join(tmpdir(), "cli-resolve-"));
     try {
-      mkdirSync(join(root, "editor", "target", "release"), { recursive: true });
-      const bin = join(root, "editor", "target", "release", "studio-cli");
+      // 2026-10-30 restructure: the vendored engine lives at apps/editor/.
+      mkdirSync(join(root, "apps", "editor", "target", "release"), { recursive: true });
+      const bin = join(root, "apps", "editor", "target", "release", "studio-cli");
       writeFileSync(bin, "#!/bin/sh\n", { mode: 0o755 });
       expect(resolveCliPath(undefined, root)).toEqual({ path: bin, source: "repo-build" });
     } finally {
@@ -53,10 +54,14 @@ describe("resolveCliPath (spike §1 order)", () => {
   it("treats a blank env value as unset (the .env.example default)", () => {
     const root = mkdtempSync(join(tmpdir(), "cli-resolve-"));
     try {
-      mkdirSync(join(root, "editor", "target", "release"), { recursive: true });
-      writeFileSync(join(root, "editor", "target", "release", "studio-cli"), "#!/bin/sh\n", {
-        mode: 0o755,
-      });
+      mkdirSync(join(root, "apps", "editor", "target", "release"), { recursive: true });
+      writeFileSync(
+        join(root, "apps", "editor", "target", "release", "studio-cli"),
+        "#!/bin/sh\n",
+        {
+          mode: 0o755,
+        },
+      );
       expect(resolveCliPath("  ", root).source).toBe("repo-build");
     } finally {
       rmSync(root, { recursive: true, force: true });

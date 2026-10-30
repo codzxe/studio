@@ -213,22 +213,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: editor
+          workspaces: apps/editor
       # Fonts are NEVER committed (spec §1.5 rule 9, licence gate enforced) — but
       # crates/text/src/fonts.rs `include_bytes!`s editor/assets/fonts/*.ttf at
       # compile time, so a fresh checkout cannot compile studio-text at all
       # (the 2026-10-25 + 2026-10-26 editor-cargo failures; worklog "fresh CI
       # checkouts no longer contain the fonts"). Fetch the exact bytes our
       # vendored pin ships — upstream storytold/effectcraft @ 9db7f3b2, the pin
-      # in editor/UPSTREAM.md — sha256-verified, so the fetch is integrity-pinned
+      # in apps/editor/UPSTREAM.md — sha256-verified, so the fetch is integrity-pinned
       # even though raw.githubusercontent is not content-addressed. No font
       # binary ever lands in THIS repo's history; the files live only on the
       # runner workspace for this job.
       - name: "Provision editor fonts (from the upstream pin, sha256-verified)"
         run: |
           set -euo pipefail
-          mkdir -p editor/assets/fonts
-          cd editor/assets/fonts
+          mkdir -p apps/editor/assets/fonts
+          cd apps/editor/assets/fonts
           base="https://raw.githubusercontent.com/storytold/effectcraft/9db7f3b21700fd821f215782ed1c82afe077880f/assets/fonts"
           while read -r sum name; do
             printf '%s  %s\n' "$sum" "$name" >> SHA256SUMS
@@ -244,7 +244,7 @@ jobs:
           FONTS
           sha256sum -c SHA256SUMS
       - name: "cargo check (release, cli crate only)"
-        working-directory: editor
+        working-directory: apps/editor
         run: cargo check --release -p studio-cli
       # OWED (deliberately not here — needs a beefier runner): `cargo test
       # --workspace` (root `editor:test`), clippy, and the wasm dist rebuild
@@ -337,10 +337,10 @@ jobs:
           edition = "2021"
 
           [dependencies]
-          studio-project = { path = "REPO_PATH/editor/crates/project" }
-          studio-time = { path = "REPO_PATH/editor/crates/time" }
-          studio-keyframe = { path = "REPO_PATH/editor/crates/keyframe" }
-          studio-color = { path = "REPO_PATH/editor/crates/color" }
+          studio-project = { path = "REPO_PATH/apps/editor/crates/project" }
+          studio-time = { path = "REPO_PATH/apps/editor/crates/time" }
+          studio-keyframe = { path = "REPO_PATH/apps/editor/crates/keyframe" }
+          studio-color = { path = "REPO_PATH/apps/editor/crates/color" }
           serde_json = "1.0.151"
           EOF
           sed -i "s|REPO_PATH|$REPO|g" /tmp/ecf-fixture/Cargo.toml

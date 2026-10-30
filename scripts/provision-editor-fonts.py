@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision editor/assets/fonts/ static weights for the wasm build.
+"""Provision apps/editor/assets/fonts/ static weights for the wasm build.
 
 The editor embeds STATIC font weights via include_bytes! (crates/text/src/fonts.rs,
 crates/ui-egui/src/theme.rs) but the pinned google/fonts repo (pin
@@ -8,7 +8,7 @@ uses for the web app) only ships Instrument Sans and JetBrains Mono as VARIABLE 
 The static instances are produced here with fonttools varLib.instancer —
 deterministic axis pinning (wdth=100 + wght=400/500/600) — plus the static-only
 Instrument Serif copied as-is. Font binaries are never committed (spec §1.5 rule 9;
-editor/assets/fonts/ is gitignored) — this script re-provisions them on fresh boxes.
+apps/editor/assets/fonts/ is gitignored) — this script re-provisions them on fresh boxes.
 """
 
 import shutil
@@ -18,7 +18,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SRC = REPO / "apps/web/src/app/fonts"          # fetch-web-fonts.mjs output (sha256-verified)
-OUT = REPO / "editor/assets/fonts"             # include_bytes! targets (gitignored)
+OUT = REPO / "apps/editor/assets/fonts"             # include_bytes! targets (gitignored)
 
 # (source, axis overrides, output name)
 JOBS = [

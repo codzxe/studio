@@ -29,7 +29,7 @@ const SPEC_TOOLS: readonly { id: string; kind: "read" | "write" }[] = [
   { id: "studio.save_version", kind: "write" },
 ];
 
-/** Round-12 "Tool catalog v3" additions (research/round12-design.md), appended
+/** Round-12 "Tool catalog v3" additions (docs/research/round12-design.md), appended
  * after the §8.4 table: writes first (they auto-register from write-tools.ts),
  * then the client-executed reads/generative tools. */
 const ROUND12_TOOLS: readonly { id: string; kind: "read" | "write" }[] = [

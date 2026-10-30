@@ -2,7 +2,7 @@
 
 /**
  * useThreadHistory — ROUND 12 "Chat UI v3": history on reload + the thread
- * list for the switcher (research/round12-design.md "History on reload +
+ * list for the switcher (docs/research/round12-design.md "History on reload +
  * thread switcher"; audit gap #1: `threads.messages()` existed but was
  * called NOWHERE in apps/web).
  *

@@ -1,6 +1,9 @@
 // Final-artifact smoke: drive the prebuilt gateway bundle the same way the
 // /v1 Next route does — gatewayFetch(Request) with the real /v1 path.
-import { gatewayFetch } from "/home/z/my-project/apps/web/api/gateway.mjs";
+// SEC-12 (2026-10-30 audit): resolve the bundle RELATIVE TO THE REPO — the
+// old absolute /home/z/... import could never run from a fresh clone, which
+// is exactly why the stale-bundle regression (SEC-01) went unnoticed.
+import { gatewayFetch } from "../apps/web/api/gateway.mjs";
 
 const APP_URL = process.env.APP_URL ?? "https://motiongra.vercel.app";
 

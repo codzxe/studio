@@ -141,7 +141,7 @@ through the ledger before that happens.
 
 The seed documents its `.ecproj` bytes as a placeholder the **engine cannot
 open** (`{"format":"ecproj",...}` — the real `Project` serde needs
-`schema`/`settings`/`items`/`next_id`; see `editor/crates/project/src/lib.rs`).
+`schema`/`settings`/`items`/`next_id`; see `apps/editor/crates/project/src/lib.rs`).
 The editor would park on the load-failure banner, the chat would never mount.
 So before the first run, stage **real, engine-verified project bytes** at the
 seeded object keys of the gateway's local storage driver.
@@ -162,10 +162,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-effectcraft-project = { path = "REPO_PATH/editor/crates/project" }
-effectcraft-time = { path = "REPO_PATH/editor/crates/time" }
-effectcraft-keyframe = { path = "REPO_PATH/editor/crates/keyframe" }
-effectcraft-color = { path = "REPO_PATH/editor/crates/color" }
+studio-project = { path = "REPO_PATH/apps/editor/crates/project" }
+studio-time = { path = "REPO_PATH/apps/editor/crates/time" }
+studio-keyframe = { path = "REPO_PATH/apps/editor/crates/keyframe" }
+studio-color = { path = "REPO_PATH/apps/editor/crates/color" }
 serde_json = "1.0.151"
 EOF
 sed -i "s|REPO_PATH|$REPO|g" /tmp/ecf-fixture/Cargo.toml

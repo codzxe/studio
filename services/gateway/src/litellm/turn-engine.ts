@@ -1,5 +1,5 @@
 // @studio/gateway — the round-12 TURN ENGINE (client-driven agent loop,
-// research/round12-design.md "TURN WIRE CONTRACT").
+// docs/research/round12-design.md "TURN WIRE CONTRACT").
 //
 // STATELESS per turn: the browser owns the agent loop and the engine tools;
 // the gateway does auth → history → ONE AI-SDK model call → write-tool compile

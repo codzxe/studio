@@ -13,16 +13,16 @@ surface. No product code touched. Evidence paths are given inline.
 
 ## 1. Pin + licence status
 
-- Pin (editor/UPSTREAM.md): upstream `storytold/effectcraft`, commit
+- Pin (apps/editor/UPSTREAM.md): upstream `storytold/effectcraft`, commit
   `9db7f3b21700fd821f215782ed1c82afe077880f`, version 0.13.0, pinned by
-  studio Wave 0. Matches `editor/Cargo.toml` (version 0.13.0,
+  studio Wave 0. Matches `apps/editor/Cargo.toml` (version 0.13.0,
   license "MIT OR Apache-2.0", repository storytold/effectcraft).
 - Licence files vendored and complete in `editor/`: `LICENSE-MIT`,
   `LICENSE-APACHE`, `NOTICE`, `ATTRIBUTION.md`. Surfaced in the product
   licences page (`apps/web/src/app/(marketing)/legal/licences/page.tsx`,
   component "EffectCraft"). ADR-0006 decision 10 respected.
-- `editor/UPSTREAM.md` records the tree as byte-identical to the pin with no
-  product patches. `editor/patches/` EXISTS and is EMPTY — consistent with the
+- `apps/editor/UPSTREAM.md` records the tree as byte-identical to the pin with no
+  product patches. `apps/editor/patches/` EXISTS and is EMPTY — consistent with the
   build/integration-only patch policy; nothing has been needed yet.
 - The local reference clone `<repo-root>/effectcraft-upstream` named in
   UPSTREAM.md is NOT present on this box (informational; re-pin procedure only).
@@ -30,18 +30,18 @@ surface. No product code touched. Evidence paths are given inline.
 ## 2. Prebuilt dist: DOES NOT EXIST (critical)
 
 Verdict: there is NO built editor anywhere in the repo.
-- `editor/target/` is absent, and `editor/.gitignore` ignores `target/`, so a
+- `apps/editor/target/` is absent, and `editor/.gitignore` ignores `target/`, so a
   build there is never committable as-is.
 - Zero `.wasm` files exist in the repo (outside `node_modules`).
 - `apps/web` has no `public/` directory; nothing at `/editor/` is servable.
 
-What the dist would be (evidence: `editor/xtask/src/main.rs` `web()`,
-lines 261-317; `editor/docs/web.md`):
+What the dist would be (evidence: `apps/editor/xtask/src/main.rs` `web()`,
+lines 261-317; `apps/editor/docs/web.md`):
 - `cargo xtask web [--dev] [--serve PORT]` builds `-p effectcraft-web` for
   wasm32-unknown-unknown, runs `wasm-bindgen --target web` (CLI pinned
   exactly 0.2.129), optional `wasm-opt -O2`, copies `apps/effectcraft-web/web/*`
   (index.html, favicon.svg, manifest.webmanifest, sw.js, worker.js,
-  audio-worklet.js) plus app icons into a FLAT `editor/target/web/dist/`
+  audio-worklet.js) plus app icons into a FLAT `apps/editor/target/web/dist/`
   containing `index.html`, `effectcraft_web.js`, `effectcraft_web_bg.wasm`
   (~58 MB uncompressed). The service worker precache list/version is injected.
 - All URLs in `apps/effectcraft-web/web/index.html` are RELATIVE
@@ -49,7 +49,7 @@ lines 261-317; `editor/docs/web.md`):
   works mounted under any same-origin base path, including `/editor/`.
 
 How it is supposed to be served today (expects the dist):
-- `scripts/serve-editor.py` serves `editor/target/web/dist` on 127.0.0.1:8765
+- `scripts/serve-editor.py` serves `apps/editor/target/web/dist` on 127.0.0.1:8765
   with COOP/COEP + `application/wasm` (mirrors `cargo xtask web --serve`).
 - `apps/web/next.config.ts`: sets COOP/COEP headers on `/editor/:path*`,
   `skipTrailingSlashRedirect: true` (protects the editor's relative URLs from
@@ -83,7 +83,7 @@ c) Test-only stopgap already available: the deterministic fake editor
 Wrapper: `editor/apps/effectcraft-web/web/index.html` lines 50-90 (the JS shim
 installed on `window.effectcraft`), backed by wasm-bindgen exports in
 `editor/apps/effectcraft-web/src/api.rs` and control-channel methods in
-`editor/crates/ui-egui/src/control.rs`.
+`apps/editor/crates/ui-egui/src/control.rs`.
 
 | Method | Upstream | Evidence |
 |---|---|---|
@@ -124,7 +124,7 @@ Read-side command surface (all upstream, no gap for the curated Studio tools):
 
 ## 4. engine.batch semantics — confirmed from source
 
-File: `editor/crates/engine/src/commands/batch.rs` (with unit test at :128).
+File: `apps/editor/crates/engine/src/commands/batch.rs` (with unit test at :128).
 - Request: `{steps: [{command, params?}], label? (default "Batch"),
   atomic? (default true)}` -> `{steps: n, results: [...]}`.
 - `$N` references: 1-based, `$1.layer` or nested `$N.key.0.key`, substituted

@@ -14,5 +14,5 @@ set -euo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_BUILD_JOBS=1
 export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
-cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/editor"
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/apps/editor"
 exec cargo build --target wasm32-unknown-unknown -p studio-web --profile release

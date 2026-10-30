@@ -1,7 +1,7 @@
 /**
  * studio.render_audio — audio-from-code, client-executed
- * (round-12 "Tool catalog v3"; research/round12-design.md +
- * research/ecosystem-2026.md §1).
+ * (round-12 "Tool catalog v3"; docs/research/round12-design.md +
+ * docs/research/ecosystem-2026.md §1).
  *
  * The model writes JavaScript synthesis code; this module renders it OFFLINE
  * with Tone.js (`Tone.Offline` — faster than real time, via an
@@ -68,7 +68,7 @@ import { ClientToolError, isClientToolError } from "./client-tool-error";
 
 /** Default render length when the call names no `duration` (seconds). */
 export const DEFAULT_AUDIO_DURATION_SECONDS = 10;
-/** Design pin: 44.1 kHz stereo (research/round12-design.md). */
+/** Design pin: 44.1 kHz stereo (docs/research/round12-design.md). */
 export const AUDIO_SAMPLE_RATE = 44_100;
 export const AUDIO_CHANNELS = 2;
 /** Design pin: the whole offline render races a 20 s timeout. */

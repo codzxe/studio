@@ -1,6 +1,6 @@
 // @studio/worker — the studio-cli runner (docs/phases/m8-cli-spike.md §1–§3).
 //
-// Binary resolution (§1): STUDIO_ENGINE_CLI_PATH → <repo>/editor/target/release/
+// Binary resolution (§1): STUDIO_ENGINE_CLI_PATH → <repo>/apps/editor/target/release/
 // studio-cli when present → bare `studio-cli` on PATH.
 //
 // The argv (§2): `--project <workdir>/project.ecproj render --comp <id>
@@ -39,7 +39,7 @@ export function resolveCliPath(cliPath: string | undefined, repoRoot: string): R
   if (cliPath !== undefined && cliPath.trim() !== "") {
     return { path: cliPath, source: "env" };
   }
-  const repoBuild = join(repoRoot, "editor", "target", "release", "studio-cli");
+  const repoBuild = join(repoRoot, "apps", "editor", "target", "release", "studio-cli");
   if (existsSync(repoBuild)) {
     return { path: repoBuild, source: "repo-build" };
   }

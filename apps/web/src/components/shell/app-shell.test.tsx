@@ -35,11 +35,13 @@ vi.mock("@/lib/auth-client", () => ({
   SESSION_COOKIE_NAME: "better-auth.session_token",
 }));
 
-// The shell mounts <EditorPrewarm /> (W3-D) — the engine prewarm is the
-// warmup module's own tested concern; here it must stay inert (jsdom has no
-// WebGPU/WebGL2, and the 49 MB warm-up must never touch a test network).
+// The shell mounts <EditorPrewarm /> on editor-intent paths (W3-D + the
+// 2026-10-30 audit gate) — the engine prewarm is the warmup module's own
+// tested concern; here it must stay inert (jsdom has no WebGPU/WebGL2, and
+// the 49 MB warm-up must never touch a test network).
 vi.mock("@/lib/editor-warmup", () => ({
   prewarmEditor: vi.fn(),
+  isEditorIntentPath: vi.fn((pathname: string | null) => pathname?.startsWith("/w/proj") === true),
 }));
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@ UX in [`EDITOR_CHAT_UX.md`](EDITOR_CHAT_UX.md), and the visual system in
 
 > **Non-negotiable:** EffectCraft's editor UI is frozen. No milestone may include a
 > redesign, reskin, panel change, menu change or timeline change. The chat is additive.
-> Any work that edits `editor/crates/ui-egui` for visual reasons fails the milestone.
+> Any work that edits `apps/editor/crates/ui-egui` for visual reasons fails the milestone.
 
 ---
 
@@ -106,8 +106,8 @@ Tasks:
    - Archive: `vendor/photocraft`, `engine-patches`, PhotoCraft fixtures, the mock
      coffee demo, static-design templates.
    - Delete from the active path only after the archive tag exists.
-3. **Fork EffectCraft into `editor/`.**
-   - Pin an exact commit in `editor/UPSTREAM.md`.
+3. **Vendor EffectCraft into `apps/editor/` (moved from `editor/` 2026-10-30).**
+   - Pin an exact commit in `apps/editor/UPSTREAM.md`.
    - Add the upstream remote; verify `cargo test --workspace` and the native CLI build.
    - Build the web editor (`cargo xtask web`) and record wasm size, load time and
      browser requirements.
@@ -116,7 +116,7 @@ Tasks:
      `saveToBrowser`, `screenshot`.
    - Verify `engine.batch` atomicity, `$N` references, rollback and one-undo-step
      behavior with a real project.
-   - Record every build/integration patch in `editor/UPSTREAM.md`; there should be
+   - Record every build/integration patch in `apps/editor/UPSTREAM.md`; there should be
      zero UI patches.
 4. **Create the target monorepo skeleton.**
    - `apps/web`, `services/gateway`, `services/worker`, `packages/ui`,
@@ -145,7 +145,7 @@ Tasks:
 **Exit criteria**
 
 - `git log` has a baseline commit and an EffectCraft pin commit.
-- `editor/` builds native + wasm from a clean checkout.
+- `apps/editor/` builds native + wasm from a clean checkout.
 - The editor opens at `/editor/` with COOP/COEP and no console errors.
 - The SaaS shell starts with a health page.
 - One real LiteLLM chat completion succeeds from a script.
@@ -789,8 +789,8 @@ A concrete start, in order:
 1. **Day 1:** `git init`, baseline commit, tag, remote. Zip backup. Write `M0.md`.
 2. **Day 1–2:** archive PhotoCraft paths; classify reusable packages; record in
    `docs/legacy-inventory.md`.
-3. **Day 2–3:** clone EffectCraft at a pinned commit into `editor/`; build native CLI;
-   run tests; write `editor/UPSTREAM.md`.
+3. **Day 2–3:** clone EffectCraft at a pinned commit into `apps/editor/`; build native CLI;
+   run tests; write `apps/editor/UPSTREAM.md`.
 4. **Day 3–4:** build the wasm editor; serve it; verify `window.effectcraft` methods;
    record size/load time.
 5. **Day 4:** verify `engine.batch` atomicity/undo with a real project; save evidence.

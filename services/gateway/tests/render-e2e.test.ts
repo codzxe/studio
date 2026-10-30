@@ -587,7 +587,7 @@ beforeAll(async () => {
       claimNext: async () => claimOwned(),
       // Inert sweeps in the shared parallel test DB (requeue/retention are
       // proven by the db suite; a journey tick must never touch foreign rows).
-      requeueStale: async () => 0,
+      requeueStale: async () => ({ requeued: 0, failed: [] }),
       listExpiredOutputs: async () => [],
     },
   };

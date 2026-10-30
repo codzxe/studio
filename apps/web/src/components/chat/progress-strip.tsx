@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * RunProgressStrip — ROUND 12 "Chat UI v3" (research/round12-design.md
+ * RunProgressStrip — ROUND 12 "Chat UI v3" (docs/research/round12-design.md
  * "Live progress strip: per-turn tool chips (pending/running/done/error)").
  *
  * A compact row under the composer while a run is live. The chips fold from

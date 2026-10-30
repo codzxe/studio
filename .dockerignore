@@ -31,5 +31,10 @@ docs
 infra
 engine-patches
 
+# 2026-10-30 restructure: the archived deprecated trees and the vendored Rust
+# engine source (builds happen on the host/CI; images consume dist artifacts).
+archive
+apps/editor
+
 # Scratch/demo output dirs anywhere in the tree.
 **/.demo-output

@@ -7,10 +7,10 @@
 //
 // Provenance (SEAMS: "never invent a command id"):
 //   * Every id below is a real `cmd!` macro registration in the vendored EffectCraft
-//     engine at pin 9db7f3b2 (editor/UPSTREAM.md), extracted by
+//     engine at pin 9db7f3b2 (apps/apps/editor/UPSTREAM.md), extracted by
 //     scripts/extract-engine-registry.mjs into fixtures/engine-command-ids.json
 //     (580 mutating `cmd!` ids + 63 read-only `query!` ids across
-//     editor/crates/engine/src/commands/*.rs). Tests/command-registry.test.ts enforces
+//     apps/editor/crates/engine/src/commands/*.rs). Tests/command-registry.test.ts enforces
 //     curated id ⊆ fixture id for every entry.
 //   * `title` and the `params` doc are transcribed VERBATIM from the Rust registration
 //     (file:line pinned per entry in AGENT_COMMAND_SOURCES). The `params` docs are then
@@ -226,7 +226,7 @@ function commandDescription(doc: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 interface CommandSource {
-  /** Rust registration site, e.g. "editor/crates/engine/src/commands/comp.rs:277". */
+  /** Rust registration site, e.g. "apps/editor/crates/engine/src/commands/comp.rs:277". */
   readonly source: string;
   /** The command's menu label, verbatim. */
   readonly title: string;
@@ -237,66 +237,66 @@ interface CommandSource {
 const AGENT_COMMAND_SOURCES: Readonly<Record<string, CommandSource>> = {
   // -- compositions ----------------------------------------------------------
   "comp.new": {
-    source: "editor/crates/engine/src/commands/comp.rs:277",
+    source: "apps/editor/crates/engine/src/commands/comp.rs:277",
     title: "New Composition...",
     params:
       "{name?, width?, height?, frameRate?, duration? (s), startTime? (s) | startTimecode?, background? [r,g,b]|#hex, pixelAspect?, shutterAngle?, shutterPhase?, motionBlurSamples?, adaptiveSampleLimit? (16–256), preserveFrameRate?: bool, preserveResolution?: bool, renderer?: classic3D|advanced3D, anchor?, open?}",
   },
   "comp.open": {
-    source: "editor/crates/engine/src/commands/comp.rs:297",
+    source: "apps/editor/crates/engine/src/commands/comp.rs:297",
     title: "Open Composition",
     params: "{comp: id|name}",
   },
   "comp.close": {
-    source: "editor/crates/engine/src/commands/comp.rs:298",
+    source: "apps/editor/crates/engine/src/commands/comp.rs:298",
     title: "Close Composition",
     params: "{comp?}",
   },
   "comp.addMarker": {
-    source: "editor/crates/engine/src/commands/comp.rs:301",
+    source: "apps/editor/crates/engine/src/commands/comp.rs:301",
     title: "Add Marker",
     params: "{time?, comment?}",
   },
 
   // -- layers ----------------------------------------------------------------
   "layer.newText": {
-    source: "editor/crates/engine/src/commands/layer.rs:1592",
+    source: "apps/editor/crates/engine/src/commands/layer.rs:1592",
     title: "Text",
     params:
       "{text?, name? (layer name; default the text), position? [x,y], box? [x,y,w,h] (paragraph text, comp space), vertical?, edit? (start editing), font?, style?, size?, fill?, stroke?, applyFill?, applyStroke?, strokeWidth?, tracking?, leading?, baselineShift?, hScale?, vScale?, tsume?, fauxBold?, fauxItalic?, allCaps?, smallCaps?, baseline?, superscript?, subscript?, kerning?, ligatures?, justify?, indentLeft?, indentRight?, indentFirst?, spaceBefore?, spaceAfter?, direction?, composer?, hangingPunctuation?, strokeOverFill?} (attributes as layer.setText)",
   },
   "layer.newSolid": {
-    source: "editor/crates/engine/src/commands/layer.rs:1601",
+    source: "apps/editor/crates/engine/src/commands/layer.rs:1601",
     title: "Solid...",
     params: "{name?, color? #hex|[r,g,b], width?, height?, pixelAspect?}",
   },
   "layer.newNull": {
-    source: "editor/crates/engine/src/commands/layer.rs:1602",
+    source: "apps/editor/crates/engine/src/commands/layer.rs:1602",
     title: "Null Object",
     params: "{name?}",
   },
   "layer.newAdjustment": {
-    source: "editor/crates/engine/src/commands/layer.rs:1612",
+    source: "apps/editor/crates/engine/src/commands/layer.rs:1612",
     title: "Adjustment Layer",
     params: "{name?}",
   },
   "layer.rename": {
-    source: "editor/crates/engine/src/commands/layer.rs:1653",
+    source: "apps/editor/crates/engine/src/commands/layer.rs:1653",
     title: "Rename",
     params: "{layer?, name}",
   },
   "layer.arrange": {
-    source: "editor/crates/engine/src/commands/layer.rs:1698",
+    source: "apps/editor/crates/engine/src/commands/layer.rs:1698",
     title: "Arrange",
     params: "{layers?, to: front|forward|backward|back, index?, above?: layer}",
   },
   "layer.setBlendMode": {
-    source: "editor/crates/engine/src/commands/layer.rs:1655",
+    source: "apps/editor/crates/engine/src/commands/layer.rs:1655",
     title: "Blending Mode",
     params: "{layers?, mode?: Normal|Multiply|Screen|…, step?: ±1}",
   },
   "layer.setText": {
-    source: "editor/crates/engine/src/commands/layer.rs:1727",
+    source: "apps/editor/crates/engine/src/commands/layer.rs:1727",
     title: "Edit Text",
     params:
       '{layer?, range?: [start, end] (characters; default all), text?, font?, style?, size?, fill?, stroke?, applyFill?, applyStroke?, strokeWidth?, tracking?, leading?: px|"auto", baselineShift? px, hScale? %, vScale? %, tsume? %, fauxBold?, fauxItalic?, allCaps?, smallCaps?, baseline?: normal|superscript|subscript, superscript?, subscript?, kerning?: metrics|optical|number, ligatures?, discretionaryLigatures? (OpenType), contextualAlternates?, stylisticAlternates?, stylisticSets?: [1–20], ss01?, ss02?, ss03?, ss04?, ss05?, ss06?, ss07?, ss08?, ss09?, ss10?, ss11?, ss12?, ss13?, ss14?, ss15?, ss16?, ss17?, ss18?, ss19?, ss20?, swash?, titling?, ordinals?, fractions?, allSmallCaps?, figureStyle?: default|lining|oldStyle, figureWidth?: default|proportional|tabular, figures?, variations?: {tag: value} (variable font axes; null resets), justify?: left|center|right|justifyLeft|justifyCenter|justifyRight|justifyAll, indentLeft?, indentRight?, indentFirst?, spaceBefore?, spaceAfter?, direction?: ltr|rtl, composer?: everyLine|singleLine, hangingPunctuation?, strokeOverFill?, box?: [x,y,w,h]|null (layer space), vertical?}',
@@ -304,22 +304,22 @@ const AGENT_COMMAND_SOURCES: Readonly<Record<string, CommandSource>> = {
 
   // -- text ------------------------------------------------------------------
   "text.insert": {
-    source: "editor/crates/engine/src/commands/text_edit.rs:587",
+    source: "apps/editor/crates/engine/src/commands/text_edit.rs:587",
     title: "Type Text",
     params: "{layer?, text, range?: [start, end], merge?} (replaces the selection)",
   },
   "text.delete": {
-    source: "editor/crates/engine/src/commands/text_edit.rs:588",
+    source: "apps/editor/crates/engine/src/commands/text_edit.rs:588",
     title: "Delete Text",
     params: "{layer?, direction?: backward|forward, word?, range?: [start, end], merge?}",
   },
   "text.addSelector": {
-    source: "editor/crates/engine/src/commands/animation.rs:494",
+    source: "apps/editor/crates/engine/src/commands/animation.rs:494",
     title: "Add Text Selector",
     params: "{layer?, animator?: uid|index, kind: range|wiggly|expression}",
   },
   "layer.applyTextPreset": {
-    source: "editor/crates/engine/src/commands/text_anim.rs:467",
+    source: "apps/editor/crates/engine/src/commands/text_anim.rs:467",
     title: "Apply Text Animation Preset",
     params:
       "{layer?, preset: typewriter|fadeUpCharacters|bounceInWords|trackingIn|scramble|blurIn|jitter|dropInLines}",
@@ -327,28 +327,28 @@ const AGENT_COMMAND_SOURCES: Readonly<Record<string, CommandSource>> = {
 
   // -- properties ------------------------------------------------------------
   "prop.set": {
-    source: "editor/crates/engine/src/commands/prop.rs:1303",
+    source: "apps/editor/crates/engine/src/commands/prop.rs:1303",
     title: "Set Property Value",
     params:
       "{layer?, path|prop, value, time? (layer s by default), timeBase?: layer|comp, merge?, selected? (also the other selected layers), offset? (them by the same change), proportional? (with offset: Proportional Scrubbing, each layer by its share in selection order, the first none, the last all), dims? (with selected, a typed value: the components edited, e.g. [2] for Z; the other layers keep the rest of their own value)}",
   },
   "prop.addKey": {
-    source: "editor/crates/engine/src/commands/prop.rs:1313",
+    source: "apps/editor/crates/engine/src/commands/prop.rs:1313",
     title: "Add Keyframe",
     params: "{layer?, path|prop, time? (layer s by default), timeBase?: layer|comp, value?}",
   },
   "prop.toggleAnimation": {
-    source: "editor/crates/engine/src/commands/prop.rs:1312",
+    source: "apps/editor/crates/engine/src/commands/prop.rs:1312",
     title: "Toggle Stopwatch",
     params: "{layer?, path|prop, value?, merge?, selected?}",
   },
   "prop.toggleKey": {
-    source: "editor/crates/engine/src/commands/prop.rs:1314",
+    source: "apps/editor/crates/engine/src/commands/prop.rs:1314",
     title: "Add or Remove Keyframe at Current Time",
     params: "{layer?, path|prop, selected?}",
   },
   "prop.reset": {
-    source: "editor/crates/engine/src/commands/prop.rs:1333",
+    source: "apps/editor/crates/engine/src/commands/prop.rs:1333",
     title: "Reset Property",
     params:
       "{layer?, path|prop, default?} → removes the expression; the value becomes `default`, else the property's own (an effect parameter's, a Transform property's), as a keyframe at the current time when the property is animated",
@@ -356,90 +356,90 @@ const AGENT_COMMAND_SOURCES: Readonly<Record<string, CommandSource>> = {
 
   // -- keyframes / animation -------------------------------------------------
   "anim.addKeyframe": {
-    source: "editor/crates/engine/src/commands/animation.rs:484",
+    source: "apps/editor/crates/engine/src/commands/animation.rs:484",
     title: "Add Keyframe",
     params: "{} — keys the selected properties at the CTI",
   },
   "anim.applyPreset": {
-    source: "editor/crates/engine/src/commands/animation.rs:483",
+    source: "apps/editor/crates/engine/src/commands/animation.rs:483",
     title: "Apply Animation Preset...",
     params: "{path | preset, layers?}",
   },
   "anim.applyBuiltinPreset": {
-    source: "editor/crates/engine/src/commands/anim_presets.rs:199",
+    source: "apps/editor/crates/engine/src/commands/anim_presets.rs:199",
     title: "Apply Built-in Animation Preset",
     params: "{preset: id|name (see anim.builtinPresets), layers?}",
   },
   "keys.set": {
-    source: "editor/crates/engine/src/commands/anim.rs:543",
+    source: "apps/editor/crates/engine/src/commands/anim.rs:543",
     title: "Edit Keyframe",
     params:
       "{layer?, path|prop, time (layer s by default), newTime? (same base), timeBase?: layer|comp, value?, merge?}",
   },
   "keys.move": {
-    source: "editor/crates/engine/src/commands/prop.rs:1362",
+    source: "apps/editor/crates/engine/src/commands/prop.rs:1362",
     title: "Move Keyframes",
     params: "{delta (s), merge?}",
   },
   "keys.easyEase": {
-    source: "editor/crates/engine/src/commands/prop.rs:1364",
+    source: "apps/editor/crates/engine/src/commands/prop.rs:1364",
     title: "Easy Ease",
     params: "{which?: both|in|out}",
   },
 
   // -- effects ---------------------------------------------------------------
   "effect.apply": {
-    source: "editor/crates/engine/src/commands/effect.rs:619",
+    source: "apps/editor/crates/engine/src/commands/effect.rs:619",
     title: "Apply Effect",
     params: "{effect: id|name (e.g. Gaussian Blur), layers?}",
   },
   "effect.remove": {
-    source: "editor/crates/engine/src/commands/effect.rs:637",
+    source: "apps/editor/crates/engine/src/commands/effect.rs:637",
     title: "Remove Effect",
     params: "{layer?, effect: index|uid|name}",
   },
   "effect.reorder": {
-    source: "editor/crates/engine/src/commands/effect.rs:640",
+    source: "apps/editor/crates/engine/src/commands/effect.rs:640",
     title: "Reorder Effect",
     params: "{layer?, effect, index}",
   },
   "effect.toggle": {
-    source: "editor/crates/engine/src/commands/effect.rs:638",
+    source: "apps/editor/crates/engine/src/commands/effect.rs:638",
     title: "Toggle Effect",
     params: "{layer?, effect, value?}",
   },
   "effect.reset": {
-    source: "editor/crates/engine/src/commands/effect.rs:644",
+    source: "apps/editor/crates/engine/src/commands/effect.rs:644",
     title: "Reset Effect",
     params: "{layer?, effect}",
   },
 
   // -- layer styles ----------------------------------------------------------
   "layer.style.add": {
-    source: "editor/crates/engine/src/commands/styles.rs:222",
+    source: "apps/editor/crates/engine/src/commands/styles.rs:222",
     title: "Add Layer Style",
     params:
       "{style: dropShadow|innerShadow|outerGlow|innerGlow|bevelEmboss|satin|colorOverlay|gradientOverlay|stroke (or display name), layers?}",
   },
   "layer.style.remove": {
-    source: "editor/crates/engine/src/commands/styles.rs:231",
+    source: "apps/editor/crates/engine/src/commands/styles.rs:231",
     title: "Remove Layer Style",
     params: "{layer?, style: id|name|uid|layerStyles}",
   },
   "layer.style.toggle": {
-    source: "editor/crates/engine/src/commands/styles.rs:232",
+    source: "apps/editor/crates/engine/src/commands/styles.rs:232",
     title: "Toggle Layer Style",
     params: "{layer?, style: id|name|uid|layerStyles, value?}",
   },
 
   // -- history ---------------------------------------------------------------
   "edit.undo": {
-    source: "editor/crates/engine/src/commands/edit.rs:862",
+    source: "apps/editor/crates/engine/src/commands/edit.rs:862",
     title: "Undo",
     params: "{}",
   },
   "edit.redo": {
-    source: "editor/crates/engine/src/commands/edit.rs:863",
+    source: "apps/editor/crates/engine/src/commands/edit.rs:863",
     title: "Redo",
     params: "{}",
   },

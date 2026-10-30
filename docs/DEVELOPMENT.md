@@ -190,11 +190,11 @@ permissive-licenses-only gate).
 
 ## 6. Editor notes
 
-The EffectCraft editor is vendored at `editor/` (pin `9db7f3b2`, v0.13.0 —
-never edit it for product reasons; see `editor/UPSTREAM.md` and ADR-0006). The
+The EffectCraft editor is vendored at `apps/editor/` (pin `9db7f3b2`, v0.13.0 —
+never edit it for product reasons; see `apps/editor/UPSTREAM.md` and ADR-0006). The
 wasm dist is committed at `apps/web/public/editor/`; rebuild it with
 `corepack pnpm editor:web` (or `scripts/build-editor-dist.sh`, which also
-stages it) and record size + date in `editor/UPSTREAM.md`.
+stages it) and record size + date in `apps/editor/UPSTREAM.md`.
 
 ## 7. Agent fleet protocol
 
@@ -208,7 +208,7 @@ rules:
 2. **Non-overlapping file ownership.** You own ONLY the paths your task lists.
    Shared/registry files (root configs, barrels) only if explicitly listed.
    Need a change elsewhere? Note it in your report + the worklog — don't do it.
-   `editor/` (vendored upstream Rust) is never edited.
+   `apps/editor/` (vendored upstream Rust) is never edited.
 3. **Append-only `worklog.md`.** `tail -n 120` before starting; append your
    record at the end (never rewrite): `---`, `Task ID`, `Agent`, `Task`,
    `Work Log:` bullets, `Stage Summary:` bullets.

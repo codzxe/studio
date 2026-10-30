@@ -4,7 +4,7 @@ A user types a prompt and AI agents create or edit **real motion-graphics
 compositions** — layers, keyframes, effects, text, footage — inside a
 professional After Effects–style editor. The product is built on
 **[EffectCraft]**, an open-source Rust motion-graphics engine + editor,
-vendored at `editor/` and used **exactly as it is**: its UI is frozen
+vendored at `apps/editor/` and used **exactly as it is**: its UI is frozen
 (ADR-0006) and Studio adds the cloud control plane around it — workspaces,
 **projects & compositions** (`.ecproj`), versions, assets, a microcredit
 ledger, renders — plus a Cursor-style chat that plans, previews and applies
@@ -16,7 +16,7 @@ agent edits as **one atomic `engine.batch` = one undo step = one version**.
 > (MIT OR Apache-2.0) credited in `ATTRIBUTION.md` — its marks, icons and name
 > never appear in the commercial UI.
 
-[EffectCraft]: editor/UPSTREAM.md
+[EffectCraft]: apps/editor/UPSTREAM.md
 
 ## Status
 
@@ -132,9 +132,9 @@ services/worker    render worker — claims jobs, hydrates the pinned version +
                    assets, drives effectcraft-cli, uploads, settles credits
 packages/          ui · contracts · editor-bridge · api-client · config ·
                    db (Drizzle pg schema + sqlite twin + repos) · storage
-editor/            vendored EffectCraft — Rust Cargo workspace, pin 9db7f3b2
+apps/editor/         vendored EffectCraft — Rust Cargo workspace, pin 9db7f3b2
                    (v0.13.0). UI-FROZEN: never edit for product reasons
-                   (ADR-0006; patches only in editor/patches/)
+                   (ADR-0006; patches only in apps/editor/patches/)
 scripts/           dev-sqlite.sh · dev-stack.sh · dev-postgres.sh ·
                    dev-valkey.sh · dev-litellm.sh · gen-env.sh ·
                    git-sync.sh · check-licenses.mjs · editor build helpers

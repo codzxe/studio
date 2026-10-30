@@ -175,7 +175,7 @@ export const RUN_CANCELLED_EVENT_SCHEMA = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// Round-12 turn events (client-driven loop — research/round12-design.md
+// Round-12 turn events (client-driven loop — docs/research/round12-design.md
 // "TURN WIRE CONTRACT"). Additive to the §7.4 set: the 12 original event
 // types are untouched; turn.* events ride the same union so ONE parser handles
 // the whole stream. The reducer stays PASSIVE for turn.* — the round-12

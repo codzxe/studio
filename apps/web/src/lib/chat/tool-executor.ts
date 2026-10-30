@@ -1,6 +1,6 @@
 /**
  * apps/web — the CLIENT-side agent tool executor v2 (round-12 client-driven
- * loop, research/round12-design.md "Tool catalog v3"; M4-SEAMS seam 6 for the
+ * loop, docs/research/round12-design.md "Tool catalog v3"; M4-SEAMS seam 6 for the
  * four curated editor reads).
  *
  * THE CONTRACT FLIP: the old executor POSTed every outcome to
