@@ -3,7 +3,46 @@
 // SEC-12 (2026-10-30 audit): resolve the bundle RELATIVE TO THE REPO — the
 // old absolute /home/z/... import could never run from a fresh clone, which
 // is exactly why the stale-bundle regression (SEC-01) went unnoticed.
-import { gatewayFetch } from "../apps/web/api/gateway.mjs";
+//
+// SQLITE-TWIN RUNS (DATABASE_URL=file:…): the bundle's lazy requires
+// (better-sqlite3, drizzle-orm/better-sqlite3 — "@studio/db"'s deps, not
+// apps/web's) resolve from apps/web/api upward; a pnpm workspace does not
+// link them into apps/web/node_modules. ensureSqliteTwinLinks() symlinks the
+// exact .pnpm store copies in when missing so a fresh clone can run this
+// smoke without touching any manifest or lockfile.
+import { existsSync, symlinkSync } from "node:fs";
+import { readdirSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+
+function ensureSqliteTwinLinks() {
+  const webModules = join(REPO_ROOT, "apps", "web", "node_modules");
+  const pnpmDir = join(REPO_ROOT, "node_modules", ".pnpm");
+  if (!existsSync(pnpmDir)) return; // not a pnpm install layout — leave as-is
+  for (const packageName of ["better-sqlite3", "drizzle-orm"]) {
+    const linkPath = join(webModules, packageName);
+    if (existsSync(linkPath)) continue;
+    const storeEntry = readdirSync(pnpmDir)
+      .filter((entry) => entry.startsWith(`${packageName}@`))
+      .sort()
+      .at(-1);
+    if (storeEntry === undefined) continue;
+    const target = join(pnpmDir, storeEntry, "node_modules", packageName);
+    if (!existsSync(target)) continue;
+    try {
+      symlinkSync(relative(webModules, target), linkPath);
+    } catch {
+      // Read-only checkout / raced with a parallel run — the require failure
+      // below will explain, and Postgres smokes never need these links.
+    }
+  }
+}
+
+ensureSqliteTwinLinks();
+
+const { gatewayFetch } = await import("../apps/web/api/gateway.mjs");
 
 const APP_URL = process.env.APP_URL ?? "https://motiongra.vercel.app";
 

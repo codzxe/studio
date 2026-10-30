@@ -53,10 +53,16 @@ thread_local! {
     pub static RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+// ENG-02 (2026-10-30 audit): the wall-clock budget is `web_time::Instant` —
+// `std::time::Instant` panics (or reads garbage) under wasm, which is why the
+// budget used to be hardcoded `false` on the web and a crafted expression
+// could loop ~2×10¹⁰ interpreted iterations (minutes-to-forever frozen tab;
+// agent-written expressions are USER DATA here). `web_time` is a zero-cost
+// re-export of `std::time` on native targets, so this is one semantic change:
+// the budget now RUNS on the web too.
 thread_local! {
     /// When the outermost evaluation on this thread began.
-    pub static STARTED: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+    pub static STARTED: std::cell::Cell<Option<web_time::Instant>> = const { std::cell::Cell::new(None) };
 }
 
 struct Runtime {
@@ -330,14 +336,13 @@ fn evaluate_in_time(script: &Script, ctx: &mut Context) -> Option<JsResult<JsVal
     }
 }
 
+/// Test hook: this thread's time budget (tests of the run-count budget lift it so that a
+/// loaded machine cannot reach the clock first).
 #[cfg(test)]
 thread_local! {
-    /// Test hook: this thread's time budget (tests of the run-count budget lift it so that a
-    /// loaded machine cannot reach the clock first).
     pub static TIME_LIMIT: std::cell::Cell<std::time::Duration> = const { std::cell::Cell::new(crate::MAX_TIME) };
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn max_time() -> std::time::Duration {
     #[cfg(test)]
     {
@@ -351,14 +356,7 @@ fn max_time() -> std::time::Duration {
 
 /// Whether the outermost evaluation on this thread has used up [`crate::MAX_TIME`].
 pub fn out_of_time() -> bool {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        STARTED.with(|s| s.get()).is_some_and(|t| t.elapsed() > max_time())
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        false
-    }
+    STARTED.with(|s| s.get()).is_some_and(|t| t.elapsed() > max_time())
 }
 
 /// Copy a JS value out of the heap.

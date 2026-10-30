@@ -54,6 +54,13 @@ export interface ApiKeysRepo {
   list(workspaceId: WorkspaceId, options?: ApiKeysListOptions): Promise<Page<ApiKeyRecord>>;
   /** One key bound to the workspace, or null (cross-tenant reads as null). */
   get(workspaceId: WorkspaceId, keyId: string): Promise<ApiKeyRecord | null>;
+  /**
+   * SEC-03: one key by id — the requireAuth scope/workspace-binding lookup.
+   * No workspace filter: the id comes from the AUTHENTICATED session (the
+   * apiKey plugin's Bearer session-mock sets session.id = apiKey.id), never
+   * from request input. The hashed `key` column is never selected.
+   */
+  findById(keyId: string): Promise<ApiKeyRecord | null>;
 }
 
 /**
@@ -140,6 +147,15 @@ export function createApiKeysRepo(db: StudioDb): ApiKeysRepo {
         .select(RECORD_COLUMNS)
         .from(apiKeyTable)
         .where(and(eq(apiKeyTable.id, keyId), inWorkspace(db, workspaceId)))
+        .limit(1);
+      return row === undefined ? null : toRecord(row);
+    },
+
+    async findById(keyId) {
+      const [row] = await db
+        .select(RECORD_COLUMNS)
+        .from(apiKeyTable)
+        .where(eq(apiKeyTable.id, keyId))
         .limit(1);
       return row === undefined ? null : toRecord(row);
     },

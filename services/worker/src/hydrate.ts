@@ -19,7 +19,8 @@
 // exits 0 (spike §4), so CLI success alone proves nothing; this pre-validation
 // is the guarantee that a completed render actually used real footage.
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Asset, Page, Repos } from "@studio/db";
@@ -39,6 +40,57 @@ const MAX_ASSET_PAGES = 50;
 export function scratchRoot(repoRoot: string): string {
   return join(repoRoot, ".local", "render-jobs");
 }
+
+/**
+ * PERF-03 (2026-10-30 audit): the cross-job asset cache root. Assets are
+ * IMMUTABLE and content-addressed (`assets_workspace_sha_idx`, upload-time
+ * sha256), so a byte-for-byte copy under `.local/asset-cache/<sha256>` is
+ * reusable by every later render of the same workspace — pre-fix EVERY job
+ * re-downloaded EVERY project asset sequentially (50 assets × 10 MB = 500 MB
+ * + 2.5–10 s object-store latency per render). Lives under the repo's
+ * `.local/` (the render-jobs precedent) instead of `~/.cache` so one
+ * `rm -rf .local` reclaims it; bounded by the workspace's unique asset bytes.
+ */
+export function assetCacheRoot(repoRoot: string): string {
+  return join(repoRoot, ".local", "asset-cache");
+}
+
+/**
+ * PERF-03: materialize one asset's bytes — cache hit reads the local copy,
+ * miss downloads once and publishes atomically (temp + rename, so a parallel
+ * job never reads a half-written cache entry). Null = the object is absent
+ * from storage (the caller's typed RENDER_ASSET_MISSING).
+ */
+async function cachedAssetBytes(
+  repoRoot: string,
+  storage: StorageChoice,
+  asset: Asset,
+): Promise<Buffer | null> {
+  const cachePath = join(assetCacheRoot(repoRoot), asset.sha256);
+  const cached = await readFile(cachePath).then(
+    (bytes) => bytes,
+    () => null,
+  );
+  if (cached !== null) return cached;
+
+  const bytes = await readObjectBytes(storage, asset.objectKey);
+  if (bytes === null) return null;
+
+  await mkdir(assetCacheRoot(repoRoot), { recursive: true });
+  const tempPath = `${cachePath}.tmp-${randomUUID()}`;
+  try {
+    await writeFile(tempPath, bytes);
+    await rename(tempPath, cachePath);
+  } catch {
+    // A cache write failure (disk full, permissions) must never fail a
+    // render that CAN proceed — the bytes are already in hand.
+    await rm(tempPath, { force: true }).catch(() => {});
+  }
+  return bytes;
+}
+
+/** PERF-03: assets hydrate in bounded-parallel groups (4) instead of one-by-one. */
+const ASSET_HYDRATE_CONCURRENCY = 4;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Pure .ecproj parsing helpers (unit-tested)
@@ -256,6 +308,9 @@ async function hydrateInto(args: HydrateArgs, workdir: string): Promise<Hydrated
   await writeFile(projectPath, projectText, { encoding: "utf8" });
 
   // 4. Every project asset, under exactly the browser-assigned name.
+  // PERF-03: bytes resolve through the sha-keyed cross-job cache, fetched in
+  // bounded-parallel groups — a 50-asset project drops from 50 sequential
+  // object-store round trips to ≤ 13 (cache-cold) or zero (cache-warm).
   let assetCount = 0;
   let cursor: string | null = null;
   for (let page = 0; page < MAX_ASSET_PAGES; page += 1) {
@@ -264,15 +319,24 @@ async function hydrateInto(args: HydrateArgs, workdir: string): Promise<Hydrated
       limit: 100,
       ...(cursor === null ? {} : { cursor }),
     });
-    for (const asset of result.items) {
-      const bytes = await readObjectBytes(args.storage, asset.objectKey);
-      if (bytes === null) {
-        throw new RenderJobError("RENDER_ASSET_MISSING", { raw: "asset bytes absent" });
-      }
-      // Collisions sanitize to the same name → last write wins (the editor
-      // itself cannot import two files with the same name into one project).
-      await writeFile(join(workdir, sanitizeAssetName(asset.name)), bytes);
-      assetCount += 1;
+    for (let offset = 0; offset < result.items.length; offset += ASSET_HYDRATE_CONCURRENCY) {
+      const group = result.items.slice(offset, offset + ASSET_HYDRATE_CONCURRENCY);
+      // Errors collect (never unhandled); the FIRST failure re-throws typed.
+      const outcomes = await Promise.all(
+        group.map(async (asset): Promise<RenderJobError | null> => {
+          const bytes = await cachedAssetBytes(args.repoRoot, args.storage, asset);
+          if (bytes === null) {
+            return new RenderJobError("RENDER_ASSET_MISSING", { raw: "asset bytes absent" });
+          }
+          // Collisions sanitize to the same name → last write wins (the editor
+          // itself cannot import two files with the same name into one project).
+          await writeFile(join(workdir, sanitizeAssetName(asset.name)), bytes);
+          return null;
+        }),
+      );
+      const failure = outcomes.find((outcome) => outcome !== null);
+      if (failure !== undefined) throw failure;
+      assetCount += group.length;
     }
     if (result.nextCursor === null) break;
     cursor = result.nextCursor;

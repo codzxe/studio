@@ -178,6 +178,60 @@ jobs:
       - name: "typecheck every package: tsc --noEmit"
         run: corepack pnpm -r --filter './packages/*' exec tsc --noEmit
 
+  # ── gateway bundle drift gate (SEC-01 recurrence prevention) ───────────────
+  gateway-bundle-drift:
+    name: "gateway bundle: rebuild == committed (SEC-01 gate)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The bundle diff needs the FULL history-agnostic checkout (default
+          # shallow fetch is fine — only the working tree is compared).
+          fetch-depth: 1
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies (frozen lockfile)
+        run: corepack pnpm install --frozen-lockfile
+      # SEC-01 (2026-10-30 audit): the committed 6.9 MB apps/web/api/gateway.mjs
+      # had drifted 3 security commits behind its own source — the /v1 route
+      # served pre-fix vulnerabilities while the repo's source (and tests) told
+      # a different story. As long as the artifact stays committed (Vercel
+      # serves it via the /v1 route), CI must refuse a source change that does
+      # not ship its rebuilt bundle: rebuild deterministically, then demand a
+      # byte-identical tree. When the artifact moves to CI-built release
+      # assets (AUDIT §5.1 sketch), delete this job WITH the artifact.
+      - name: "Rebuild the gateway bundle (esbuild, deterministic)"
+        run: corepack pnpm --filter @studio/web bundle:gateway
+      - name: "Fail when the committed bundle is stale (git diff --exit-code)"
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code -- apps/web/api/gateway.mjs; then
+            echo "::error::apps/web/api/gateway.mjs is STALE — the committed bundle does not match a rebuild of the committed source. Run: corepack pnpm --filter @studio/web bundle:gateway  (then commit the result). This gate exists because a stale bundle once shipped pre-fix security regressions (SEC-01)."
+            exit 1
+          fi
+      - name: "Smoke the rebuilt bundle (boots the /v1 stack on a sqlite twin)"
+        env:
+          APP_URL: http://localhost:3000
+          APP_ENV: local
+          DATABASE_URL: file:/tmp/gateway-bundle-smoke.db
+          ASSET_MAX_BYTES: "10485760"
+          PROJECT_MAX_BYTES: "20971520"
+          STRIPE_WEBHOOK_SECRET: whsec_test_not_configured
+          STRIPE_PRICE_IDS: '{"starter":"price_test","pro":"price_test","studio":"price_test"}'
+          AUTH_SECRET: test-secret-test-secret-test-secret-32
+          AUTH_GOOGLE_ID: disabled
+          AUTH_GOOGLE_SECRET: disabled
+          AUTH_GITHUB_ID: disabled
+          AUTH_GITHUB_SECRET: disabled
+          LITELLM_BASE_URL: http://127.0.0.1:4000
+          LITELLM_API_KEY: sk-test-not-configured
+          CHAT_MAX_STEPS: "20"
+        run: corepack pnpm exec node scripts/gateway-bundle-smoke.mjs
+
   # ── licence gate ────────────────────────────────────────────────────────────
   licence-gate:
     name: "licence gate: check:licenses"

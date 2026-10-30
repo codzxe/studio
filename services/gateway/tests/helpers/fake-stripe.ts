@@ -184,6 +184,12 @@ export class FakeStripe {
   readonly subscriptions = new Map<string, FakeSubscription>();
   readonly sessions = new Map<string, FakeCheckoutSession>();
   readonly clocks = new Map<string, FakeTestClock>();
+  /**
+   * BIL-04: card fingerprints by Checkout session id — models what REAL
+   * Stripe exposes through the session's payment chain (the fake's metadata
+   * path stays available; tests choose which model to exercise).
+   */
+  readonly cardFingerprintBySession = new Map<string, string>();
 
   /** Every emitted event, in creation order (replay/ordering tests read this). */
   readonly eventLog: FakeStripeEvent[] = [];
@@ -251,6 +257,35 @@ export class FakeStripe {
           };
           this.sessions.set(id, session);
           return Promise.resolve({ id, url: `https://checkout.stripe.com/fake/${id}` });
+        },
+        // BIL-04: the session retrieve the seam's card-fingerprint read uses.
+        // Unknown id → the SDK's 404 shape; a fingerprint set via
+        // cardFingerprintBySession models the expanded payment chain.
+        retrieve: (id: string) => {
+          this.maybeFail();
+          const session = this.sessions.get(id);
+          if (session === undefined) {
+            throw new FakeStripeSdkError({
+              type: "invalid_request_error",
+              statusCode: 404,
+              message: "No such checkout session",
+            });
+          }
+          const fingerprint = this.cardFingerprintBySession.get(id);
+          const paymentMethod =
+            fingerprint === undefined ? null : { id: `pm_fake_${id}`, card: { fingerprint } };
+          return Promise.resolve({
+            id: session.id,
+            payment_status: session.status === "complete" ? "paid" : "unpaid",
+            payment_method: null,
+            payment_intent: {
+              id: `pi_fake_${session.id}`,
+              latest_charge:
+                paymentMethod === null
+                  ? null
+                  : { id: `ch_fake_${session.id}`, payment_method: paymentMethod },
+            },
+          });
         },
       },
     },
@@ -449,6 +484,37 @@ export class FakeStripe {
         };
       }
       return { ok: true as const, data: this.snapshotOf(sub) };
+    },
+
+    // BIL-04: the card-fingerprint read route-level tests exercise through
+    // the facade — same store the sdk retrieve walks. Typed failures mirror
+    // the real seam's guarded() envelope (a scripted session id that is not
+    // in the store reads as not_found, never a throw).
+    checkoutSessionCardFingerprint: async (sessionId) => {
+      let session: Awaited<ReturnType<typeof this.sdk.checkout.sessions.retrieve>>;
+      try {
+        session = await this.sdk.checkout.sessions.retrieve(sessionId);
+      } catch {
+        return {
+          ok: false as const,
+          code: "not_found" as const,
+          reason: "no such checkout session in the fake store",
+        };
+      }
+      const intent = session.payment_intent;
+      if (typeof intent === "object" && intent !== null) {
+        const charge = intent.latest_charge;
+        if (typeof charge === "object" && charge !== null) {
+          const method = charge.payment_method;
+          if (typeof method === "object" && method !== null && method.card != null) {
+            const fingerprint = method.card.fingerprint;
+            if (typeof fingerprint === "string" && fingerprint !== "") {
+              return { ok: true as const, data: { fingerprint } };
+            }
+          }
+        }
+      }
+      return { ok: true as const, data: { fingerprint: null } };
     },
 
     updateSubscription: async (customerId, params) => {

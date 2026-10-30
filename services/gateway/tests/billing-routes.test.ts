@@ -1213,6 +1213,77 @@ d("POST /v1/billing/trial", () => {
     expect(state).toMatchObject({ plan: "trial", status: "trialing" });
   });
 
+  it("BIL-04: the fingerprint lands from the SESSION (real-Stripe shape), not metadata", async () => {
+    // Real Stripe never carries cardFingerprint metadata — the webhook must
+    // FETCH it from the completed session's payment chain. Pre-fix this path
+    // 400'd forever: the card-required gate found no fingerprint, so the
+    // card-required trial was unreachable in production.
+    const ws = await newWorkspace();
+    const fake = freshFake();
+    setStripe(server, fake);
+    const fingerprint = unique("realcard");
+    const session = await fake.sdk.checkout.sessions.create({
+      mode: "payment",
+      line_items: [{ price: "price_test", quantity: 1 }],
+      customer_email: "real-stripe-shape@w3gw.test",
+      success_url: "https://app.test/success",
+      cancel_url: "https://app.test/cancel",
+      // NO cardFingerprint in metadata — the real-Stripe shape (the fake's
+      // legacy card model deliberately omitted).
+      metadata: {
+        organizationId: ws.id,
+        kind: "topup",
+        packId: "credits100",
+        microcredits: "1000000",
+      },
+    });
+    fake.cardFingerprintBySession.set(session.id, fingerprint);
+
+    const events = reid(fake.completeCheckout(session.id));
+    expect(events).toHaveLength(1);
+    const delivered = await deliver(fake, at(events, 0));
+    expect(delivered.status).toBe(200);
+
+    // The customer row carries the FETCHED fingerprint — the trial gate opens.
+    const customer = await repos().subscriptions.findStripeCustomer(ws.id);
+    expect(customer?.cardFingerprint).toBe(fingerprint);
+
+    const trial = await billingPost("/v1/billing/trial", ws, {});
+    expect(trial.status).toBe(201);
+    expect(((await okData(trial)) as { trialStarted: boolean }).trialStarted).toBe(true);
+  });
+
+  it("BIL-04: a session with NO resolvable card still lands the customer (fingerprint null)", async () => {
+    const ws = await newWorkspace();
+    const fake = freshFake();
+    setStripe(server, fake);
+    const session = await fake.sdk.checkout.sessions.create({
+      mode: "payment",
+      line_items: [{ price: "price_test", quantity: 1 }],
+      customer_email: "no-card@w3gw.test",
+      success_url: "https://app.test/success",
+      cancel_url: "https://app.test/cancel",
+      metadata: {
+        organizationId: ws.id,
+        kind: "topup",
+        packId: "credits100",
+        microcredits: "1000000",
+      },
+    });
+    // No cardFingerprintBySession entry: the payment chain carries no card.
+
+    const events = reid(fake.completeCheckout(session.id));
+    const delivered = await deliver(fake, at(events, 0));
+    expect(delivered.status).toBe(200);
+
+    const customer = await repos().subscriptions.findStripeCustomer(ws.id);
+    expect(customer).not.toBeNull();
+    expect(customer?.cardFingerprint).toBeNull(); // no card modeled — stays cardless
+
+    const trial = await billingPost("/v1/billing/trial", ws, {});
+    expect(trial.status).toBe(400); // VALIDATION_FAILED: a payment method is required
+  });
+
   it("one trial per workspace: any prior subscription row (even canceled) is a 409", async () => {
     const ws = await newWorkspace();
     await deliverCardCheckout(ws, unique("fp"));

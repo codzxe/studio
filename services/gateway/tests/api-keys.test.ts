@@ -365,3 +365,123 @@ d("Authorization: Bearer <key> (the PAT model through requireAuth)", () => {
     expect(body.error.code).toBe("AUTH_REQUIRED");
   });
 });
+
+d("SEC-03 — stored scopes are ENFORCED (real plugin mint + Bearer)", () => {
+  it("a projects:read key reads projects (200) but creating gets 403 naming projects:write", async () => {
+    const jar = await signUp();
+    const ws = await createWorkspace(jar);
+    const created = await mintKey(jar, ws.id, { name: "Read only", scopes: ["projects:read"] });
+    expect(created.status).toBe(201);
+
+    const list = await api(server.base, "/v1/projects?limit=10", {
+      headers: { authorization: `Bearer ${created.minted?.key}`, "x-workspace-id": ws.id },
+    });
+    expect(list.status).toBe(200);
+
+    const create = await api(server.base, "/v1/projects", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${created.minted?.key}`,
+        "x-workspace-id": ws.id,
+        "idempotency-key": unique("sec03"),
+      },
+      body: { name: "Key-Made Project" },
+    });
+    expect(create.status).toBe(403);
+    const body = (await create.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("API_KEY_FORBIDDEN");
+    expect(body.error.message).toContain("projects:write");
+  });
+
+  it("a renders:queue key cannot read the project plane (403 naming projects:read)", async () => {
+    const jar = await signUp();
+    const ws = await createWorkspace(jar);
+    const created = await mintKey(jar, ws.id, { name: "Render bot", scopes: ["renders:queue"] });
+    expect(created.status).toBe(201);
+
+    const response = await api(server.base, "/v1/projects?limit=10", {
+      headers: { authorization: `Bearer ${created.minted?.key}`, "x-workspace-id": ws.id },
+    });
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as { error: { code: string; message: string } };
+    expect(body.error.message).toContain("projects:read");
+  });
+
+  it("a * key gets billing:read reads but never the billing mutations", async () => {
+    const jar = await signUp();
+    const ws = await createWorkspace(jar);
+    const created = await mintKey(jar, ws.id, { name: "Full key", scopes: ["*"] });
+    expect(created.status).toBe(201);
+
+    const credits = await api(server.base, "/v1/credits", {
+      headers: { authorization: `Bearer ${created.minted?.key}`, "x-workspace-id": ws.id },
+    });
+    expect(credits.status).toBe(200);
+
+    const checkout = await api(server.base, "/v1/billing/checkout", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${created.minted?.key}`,
+        "x-workspace-id": ws.id,
+        "idempotency-key": unique("sec03b"),
+      },
+      body: { tier: "starter" },
+    });
+    expect(checkout.status).toBe(403);
+    const body = (await checkout.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("API_KEY_FORBIDDEN");
+  });
+
+  it("share-link minting stays cookie-only even for a * key", async () => {
+    const jar = await signUp();
+    const ws = await createWorkspace(jar);
+    const projectResponse = await api(server.base, "/v1/projects", {
+      method: "POST",
+      jar,
+      headers: { "x-workspace-id": ws.id, "idempotency-key": unique("prj") },
+      body: { name: "Share source" },
+    });
+    expect(projectResponse.status).toBe(201);
+    const project = (await projectResponse.json()) as { data: { id: string } };
+
+    const created = await mintKey(jar, ws.id, { name: "Full key", scopes: ["*"] });
+    expect(created.status).toBe(201);
+
+    const response = await api(server.base, `/v1/projects/${project.data.id}/share-links`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${created.minted?.key}`,
+        "x-workspace-id": ws.id,
+        "idempotency-key": unique("shr"),
+      },
+      body: {},
+    });
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("API_KEY_FORBIDDEN");
+  });
+
+  it("the workspace binding confines the key to its minted workspace (§12.1 404)", async () => {
+    const jar = await signUp();
+    const wsA = await createWorkspace(jar);
+    const wsB = await createWorkspace(jar); // same owner, second workspace
+    expect(wsA.id).not.toBe(wsB.id);
+
+    const created = await mintKey(jar, wsA.id, { name: "Bound to A", scopes: ["*"] });
+    expect(created.status).toBe(201);
+
+    // Same owner, other workspace → 404 (never 403: no existence leak).
+    const cross = await api(server.base, "/v1/projects?limit=10", {
+      headers: { authorization: `Bearer ${created.minted?.key}`, "x-workspace-id": wsB.id },
+    });
+    expect(cross.status).toBe(404);
+    const body = (await cross.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("WORKSPACE_NOT_FOUND");
+
+    // The minted workspace still works.
+    const home = await api(server.base, "/v1/projects?limit=10", {
+      headers: { authorization: `Bearer ${created.minted?.key}`, "x-workspace-id": wsA.id },
+    });
+    expect(home.status).toBe(200);
+  });
+});

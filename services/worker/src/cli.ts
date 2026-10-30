@@ -19,6 +19,8 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+import { MAX_RENDER_FRAME_RATE } from "@studio/contracts";
+
 import type { RenderFailureCode } from "./errors.js";
 import type { CompFacts } from "./hydrate.js";
 
@@ -104,12 +106,17 @@ export function resolveRenderKnobs(input: {
   const { settings, comp } = input;
   const cliFormat = input.format === "png-seq" ? "png" : "h264";
 
-  const fps =
+  // BIL-06: clamp the effective rate into [1, MAX_RENDER_FRAME_RATE] — the
+  // stored settings are schema-capped at queue time, but LEGACY rows and the
+  // comp's NATIVE fps (attacker-controlled project metadata) are not. The
+  // clamp matches the gateway's quote-side clamp so cost == rendered.
+  const rawFps =
     settings.frameRate !== undefined && settings.frameRate > 0
       ? settings.frameRate
       : comp.frameRate > 0
         ? comp.frameRate
         : 30; // defensive: unreachable (comp facts always carry a rate)
+  const fps = Math.min(Math.max(rawFps, 1), MAX_RENDER_FRAME_RATE);
 
   const start = settings.timeFrom !== undefined ? settings.timeFrom : undefined;
   const end = settings.timeTo !== undefined ? settings.timeTo : undefined;

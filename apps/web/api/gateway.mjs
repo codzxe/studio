@@ -4071,11 +4071,14 @@ var init_alias2 = __esm({
 });
 
 // ../../node_modules/.pnpm/drizzle-orm@0.45.4_@types+better-sqlite3@9.6.0_better-sqlite3@12.11.1_kysely@0.29.7_postgres@3.4.9/node_modules/drizzle-orm/sqlite-core/checks.js
-var CheckBuilder, Check;
+function check2(name5, value) {
+  return new CheckBuilder2(name5, value);
+}
+var CheckBuilder2, Check2;
 var init_checks = __esm({
   "../../node_modules/.pnpm/drizzle-orm@0.45.4_@types+better-sqlite3@9.6.0_better-sqlite3@12.11.1_kysely@0.29.7_postgres@3.4.9/node_modules/drizzle-orm/sqlite-core/checks.js"() {
     init_entity();
-    CheckBuilder = class {
+    CheckBuilder2 = class {
       constructor(name5, value) {
         this.name = name5;
         this.value = value;
@@ -4083,10 +4086,10 @@ var init_checks = __esm({
       static [entityKind] = "SQLiteCheckBuilder";
       brand;
       build(table2) {
-        return new Check(table2, this);
+        return new Check2(table2, this);
       }
     };
-    Check = class {
+    Check2 = class {
       constructor(table2, builder) {
         this.table = table2;
         this.name = builder.name;
@@ -13349,7 +13352,7 @@ function isRecursive(inst, stack, resolve3) {
     return PROVEN;
   stack.add(inst);
   let result = NONE;
-  const check3 = (child) => {
+  const check5 = (child) => {
     if (result !== PROVEN && child?._zod) {
       const answer = isRecursive(child, stack, resolve3);
       if (answer > result)
@@ -13378,32 +13381,32 @@ function isRecursive(inst, stack, resolve3) {
     case "object": {
       const raw2 = rawShape(def);
       merge3(raw2 ? shape(raw2, true) : ASSUMED);
-      check3(def.catchall);
+      check5(def.catchall);
       break;
     }
     case "array":
-      check3(def.element);
+      check5(def.element);
       break;
     case "tuple":
       for (const el of def.items)
-        check3(el);
-      check3(def.rest);
+        check5(el);
+      check5(def.rest);
       break;
     case "record":
     case "map":
-      check3(def.keyType);
-      check3(def.valueType);
+      check5(def.keyType);
+      check5(def.valueType);
       break;
     case "set":
-      check3(def.valueType);
+      check5(def.valueType);
       break;
     case "union":
       for (const el of def.options)
-        check3(el);
+        check5(el);
       break;
     case "intersection":
-      check3(def.left);
-      check3(def.right);
+      check5(def.left);
+      check5(def.right);
       break;
     case "optional":
     case "nullable":
@@ -13414,15 +13417,15 @@ function isRecursive(inst, stack, resolve3) {
     case "nonoptional":
     case "promise":
     case "success":
-      check3(def.innerType);
+      check5(def.innerType);
       break;
     case "pipe":
-      check3(def.in);
-      check3(def.out);
+      check5(def.in);
+      check5(def.out);
       break;
     case "function":
-      check3(def.input);
-      check3(def.output);
+      check5(def.input);
+      check5(def.output);
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
@@ -13463,10 +13466,10 @@ function isRecursive(inst, stack, resolve3) {
         if (!value || typeof value !== "object")
           continue;
         if (value._zod)
-          check3(value);
+          check5(value);
         else if (Array.isArray(value))
           for (const el of value)
-            check3(el);
+            check5(el);
       }
     }
   }
@@ -21853,8 +21856,8 @@ function generateChecks(doc, ctx, schema3, accessor) {
   if (!schemaChecks2 || schemaChecks2.length === 0)
     return accessor;
   let currentAccessor = accessor;
-  for (const check3 of schemaChecks2) {
-    const def = check3._zod.def;
+  for (const check5 of schemaChecks2) {
+    const def = check5._zod.def;
     if (def.when && !WHEN_DEFAULTED_CHECKS.has(def.check)) {
       throw new ZodCompileUnsupportedError(`check with a custom "when" condition`);
     }
@@ -21902,7 +21905,7 @@ function generateChecks(doc, ctx, schema3, accessor) {
         currentAccessor = generateStringFormatCheck(doc, ctx, def, currentAccessor);
         break;
       case "custom":
-        currentAccessor = generateCustomRefineCheck(doc, ctx, check3, currentAccessor);
+        currentAccessor = generateCustomRefineCheck(doc, ctx, check5, currentAccessor);
         break;
       case "bigint_format":
         generateBigIntFormatCheck(doc, def, currentAccessor);
@@ -21918,7 +21921,7 @@ function generateChecks(doc, ctx, schema3, accessor) {
         break;
       case "overwrite": {
         const newAccessor = newVar(ctx);
-        generateOverwriteCheck(doc, ctx, check3, currentAccessor, newAccessor);
+        generateOverwriteCheck(doc, ctx, check5, currentAccessor, newAccessor);
         currentAccessor = newAccessor;
         break;
       }
@@ -22041,8 +22044,8 @@ function generatePropertyCheck(doc, ctx, def, accessor) {
   const propAccessor = `${accessor}[${JSON.stringify(def.property)}]`;
   generateCheck(doc, ctx, def.schema, propAccessor);
 }
-function generateOverwriteCheck(doc, ctx, check3, currentAccessor, newAccessor) {
-  const tx = check3._zod.def.tx;
+function generateOverwriteCheck(doc, ctx, check5, currentAccessor, newAccessor) {
+  const tx = check5._zod.def.tx;
   if (!tx) {
     throw new ZodCompileUnsupportedError("overwrite check without a transform function");
   }
@@ -22058,8 +22061,8 @@ function throwAsync() {
 function pushIssue(issue2) {
   this.issues.push(issue2);
 }
-function generateCustomRefineCheck(doc, ctx, check3, accessor) {
-  const def = check3._zod.def;
+function generateCustomRefineCheck(doc, ctx, check5, accessor) {
+  const def = check5._zod.def;
   if (def.fn) {
     if (isAsyncFunction(def.fn)) {
       throw new ZodCompileAsyncError("z.compile: async .refine() predicates are not supported");
@@ -22072,11 +22075,11 @@ function generateCustomRefineCheck(doc, ctx, check3, accessor) {
     doc.write(`if (!${resVar}) return INVALID;`);
     return accessor;
   }
-  if (check3._zod.check) {
-    if (isAsyncFunction(check3._zod.check)) {
+  if (check5._zod.check) {
+    if (isAsyncFunction(check5._zod.check)) {
       throw new ZodCompileAsyncError("z.compile: async .superRefine() / check functions are not supported");
     }
-    const checkFn = check3._zod.check;
+    const checkFn = check5._zod.check;
     const helperFn = (value) => {
       const fakePayload = { value, issues: [], addIssue: pushIssue };
       const result = checkFn(fakePayload);
@@ -22672,8 +22675,8 @@ function generateNullableCheck(doc, ctx, schema3, accessor, buildsValue = true) 
   return outputVar;
 }
 function generateSizeGate(doc, schema3, size2) {
-  for (const [max, check3] of sizeCaps(schema3._zod.def.checks)) {
-    doc.write(`if (${size2} > ${numericOperand(max, check3._zod.def.check)}) return INVALID;`);
+  for (const [max, check5] of sizeCaps(schema3._zod.def.checks)) {
+    doc.write(`if (${size2} > ${numericOperand(max, check5._zod.def.check)}) return INVALID;`);
   }
 }
 function generateArrayCheck(doc, ctx, schema3, accessor, buildsValue = true) {
@@ -26300,7 +26303,7 @@ __export(schemas_exports2, {
   bigint: () => bigint3,
   boolean: () => boolean3,
   catch: () => _catch2,
-  check: () => check,
+  check: () => check3,
   cidrv4: () => cidrv42,
   cidrv6: () => cidrv62,
   codec: () => codec,
@@ -26831,7 +26834,7 @@ function _function(params) {
     output: params?.output ?? unknown()
   });
 }
-function check(fn) {
+function check3(fn) {
   const ch = new $ZodCheck({
     check: "custom"
     // ...util.normalizeParams(params),
@@ -26923,8 +26926,8 @@ var init_schemas2 = __esm({
         reg.add(this, meta3);
         return this;
       },
-      refine(check3, params) {
-        return this.check(refine(check3, params));
+      refine(check5, params) {
+        return this.check(refine(check5, params));
       },
       superRefine(refinement, params) {
         return this.check(superRefine(refinement, params));
@@ -29023,7 +29026,7 @@ __export(external_exports, {
   bigint: () => bigint3,
   boolean: () => boolean3,
   catch: () => _catch2,
-  check: () => check,
+  check: () => check3,
   cidrv4: () => cidrv42,
   cidrv6: () => cidrv62,
   clone: () => clone,
@@ -33130,16 +33133,16 @@ async function calculateJwkThumbprint(key, digestAlgorithm) {
   let requiredMembers;
   switch (jwk.kty) {
     case "AKP":
-      check2(jwk.alg, '"alg" (Algorithm) Parameter'), check2(jwk.pub, '"pub" (Public key) Parameter'), requiredMembers = { alg: jwk.alg, kty: jwk.kty, pub: jwk.pub };
+      check4(jwk.alg, '"alg" (Algorithm) Parameter'), check4(jwk.pub, '"pub" (Public key) Parameter'), requiredMembers = { alg: jwk.alg, kty: jwk.kty, pub: jwk.pub };
       break;
     case "EC":
-      check2(jwk.crv, '"crv" (Curve) Parameter'), check2(jwk.x, '"x" (X Coordinate) Parameter'), check2(jwk.y, '"y" (Y Coordinate) Parameter'), requiredMembers = { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y };
+      check4(jwk.crv, '"crv" (Curve) Parameter'), check4(jwk.x, '"x" (X Coordinate) Parameter'), check4(jwk.y, '"y" (Y Coordinate) Parameter'), requiredMembers = { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y };
       break;
     case "OKP":
-      check2(jwk.crv, '"crv" (Subtype of Key Pair) Parameter'), check2(jwk.x, '"x" (Public Key) Parameter'), requiredMembers = { crv: jwk.crv, kty: jwk.kty, x: jwk.x };
+      check4(jwk.crv, '"crv" (Subtype of Key Pair) Parameter'), check4(jwk.x, '"x" (Public Key) Parameter'), requiredMembers = { crv: jwk.crv, kty: jwk.kty, x: jwk.x };
       break;
     case "RSA":
-      check2(jwk.e, '"e" (Exponent) Parameter'), check2(jwk.n, '"n" (Modulus) Parameter'), requiredMembers = { e: jwk.e, kty: jwk.kty, n: jwk.n };
+      check4(jwk.e, '"e" (Exponent) Parameter'), check4(jwk.n, '"n" (Modulus) Parameter'), requiredMembers = { e: jwk.e, kty: jwk.kty, n: jwk.n };
       break;
     case "oct":
       if (typeof jwk.k != "string")
@@ -33152,7 +33155,7 @@ async function calculateJwkThumbprint(key, digestAlgorithm) {
   const thumbprintInput = encode3(JSON.stringify(requiredMembers));
   return encode4(await digest(digestAlgorithm, thumbprintInput));
 }
-var check2;
+var check4;
 var init_thumbprint = __esm({
   "../../node_modules/.pnpm/jose@6.2.13/node_modules/jose/dist/webapi/jwk/thumbprint.js"() {
     init_buffer_utils();
@@ -33161,7 +33164,7 @@ var init_thumbprint = __esm({
     init_key();
     init_validate();
     init_export();
-    check2 = (value, description) => {
+    check4 = (value, description) => {
       if (typeof value != "string" || !value)
         throw new JWKInvalid(`${description} missing or invalid`);
     };
@@ -36481,10 +36484,10 @@ function invalidateSchemaChecks(database) {
   const revision = schemaRevisions.get(database);
   if (revision) revision.value++;
 }
-function registerSchemaCheck(adapter, check3, options = {}) {
+function registerSchemaCheck(adapter, check5, options = {}) {
   const runtimeEnabled = options.runtimeEnabled ?? true;
   schemaChecks.set(adapter, {
-    check: check3,
+    check: check5,
     runtimeEnabled
   });
 }
@@ -79730,8 +79733,8 @@ var init_checkRegion = __esm({
   "../../node_modules/.pnpm/@smithy+core@3.36.2/node_modules/@smithy/core/dist-es/submodules/config/config-resolver/regionConfig/checkRegion.js"() {
     init_transport();
     validRegions = /* @__PURE__ */ new Set();
-    checkRegion = (region, check3 = isValidHostLabel) => {
-      if (!validRegions.has(region) && !check3(region)) {
+    checkRegion = (region, check5 = isValidHostLabel) => {
+      if (!validRegions.has(region) && !check5(region)) {
         if (region === "*") {
           console.warn(`@smithy/config-resolver WARN - Please use the caller region instead of "*". See "sigv4a" in https://github.com/aws/aws-sdk-js-v3/blob/main/supplemental-docs/CLIENTS.md.`);
         } else {
@@ -112806,6 +112809,34 @@ __export(schema_exports, {
 });
 import { randomUUID as randomUUID2 } from "node:crypto";
 
+// ../../node_modules/.pnpm/drizzle-orm@0.45.4_@types+better-sqlite3@9.6.0_better-sqlite3@12.11.1_kysely@0.29.7_postgres@3.4.9/node_modules/drizzle-orm/pg-core/checks.js
+init_entity();
+var CheckBuilder = class {
+  constructor(name5, value) {
+    this.name = name5;
+    this.value = value;
+  }
+  static [entityKind] = "PgCheckBuilder";
+  brand;
+  /** @internal */
+  build(table2) {
+    return new Check(table2, this);
+  }
+};
+var Check = class {
+  constructor(table2, builder) {
+    this.table = table2;
+    this.name = builder.name;
+    this.value = builder.value;
+  }
+  static [entityKind] = "PgCheck";
+  name;
+  value;
+};
+function check(name5, value) {
+  return new CheckBuilder(name5, value);
+}
+
 // ../../node_modules/.pnpm/drizzle-orm@0.45.4_@types+better-sqlite3@9.6.0_better-sqlite3@12.11.1_kysely@0.29.7_postgres@3.4.9/node_modules/drizzle-orm/pg-core/db.js
 init_entity();
 
@@ -116566,7 +116597,27 @@ var creditLedger = pgTable(
     uniqueIndex("credit_ledger_idempotency_uniq").on(t.idempotencyKey),
     index("credit_ledger_workspace_created_idx").on(t.workspaceId, t.createdAt.desc()),
     index("credit_ledger_run_idx").on(t.runId),
-    index("credit_ledger_render_idx").on(t.renderId)
+    index("credit_ledger_render_idx").on(t.renderId),
+    // BIL-07 (2026-10-30 audit): DB-level money invariants — the money table
+    // had NO CHECK constraints (a buggy writer could mint a negative grant or
+    // a positive reserve). Signs mirror repos/ledger.ts's validated writers:
+    // grant ≥ 1, refund ≥ 1, reserve ≤ −1, commit ≤ 0 (a zero-cost settle is
+    // legal), adjust unconstrained (staff true-ups are ±). Ceiling = the
+    // SEC-10 1e15 µc in-code cap. balance_after is deliberately NOT floored
+    // at 0 — uncapped settles may drive balances negative (BIL-08, a product
+    // decision); a floor here would turn that path into a 500.
+    check(
+      "credit_ledger_kind_check",
+      sql`${t.kind} in ('grant', 'reserve', 'commit', 'refund', 'adjust')`
+    ),
+    check(
+      "credit_ledger_amount_sign_check",
+      sql`((${t.kind} = 'grant' and ${t.amount} > 0) or (${t.kind} = 'refund' and ${t.amount} > 0) or (${t.kind} = 'reserve' and ${t.amount} < 0) or (${t.kind} = 'commit' and ${t.amount} <= 0) or ${t.kind} = 'adjust')`
+    ),
+    check(
+      "credit_ledger_amount_ceiling_check",
+      sql`${t.amount} <= 1000000000000000 and ${t.amount} >= -1000000000000000`
+    )
   ]
 );
 var renders = pgTable(
@@ -120010,7 +120061,20 @@ var creditLedger2 = sqliteTable(
     uniqueIndex2("credit_ledger_idempotency_uniq").on(t.idempotencyKey),
     index2("credit_ledger_workspace_created_idx").on(t.workspaceId, sql`${t.createdAt} desc`),
     index2("credit_ledger_run_idx").on(t.runId),
-    index2("credit_ledger_render_idx").on(t.renderId)
+    index2("credit_ledger_render_idx").on(t.renderId),
+    // BIL-07 twin: the same money invariants as the pg schema (see schema.ts).
+    check2(
+      "credit_ledger_kind_check",
+      sql`${t.kind} in ('grant', 'reserve', 'commit', 'refund', 'adjust')`
+    ),
+    check2(
+      "credit_ledger_amount_sign_check",
+      sql`((${t.kind} = 'grant' and ${t.amount} > 0) or (${t.kind} = 'refund' and ${t.amount} > 0) or (${t.kind} = 'reserve' and ${t.amount} < 0) or (${t.kind} = 'commit' and ${t.amount} <= 0) or ${t.kind} = 'adjust')`
+    ),
+    check2(
+      "credit_ledger_amount_ceiling_check",
+      sql`${t.amount} <= 1000000000000000 and ${t.amount} >= -1000000000000000`
+    )
   ]
 );
 var renders2 = sqliteTable(
@@ -120445,7 +120509,7 @@ var BOOTSTRAP_DDL = [
   "CREATE TABLE IF NOT EXISTS `agent_steps` (\n	`id` text PRIMARY KEY NOT NULL,\n	`run_id` text NOT NULL,\n	`seq` integer NOT NULL,\n	`tool` text NOT NULL,\n	`args_json` text,\n	`result_json` text,\n	`command_batch_json` text,\n	`status` text DEFAULT 'pending' NOT NULL,\n	`duration_ms` integer,\n	`tool_call_id` text,\n	FOREIGN KEY (`run_id`) REFERENCES `agent_runs`(`id`) ON UPDATE no action ON DELETE cascade\n);",
   "CREATE UNIQUE INDEX IF NOT EXISTS `agent_steps_run_seq_uniq` ON `agent_steps` (`run_id`,`seq`);",
   "CREATE INDEX IF NOT EXISTS `agent_steps_tool_call_idx` ON `agent_steps` (`tool_call_id`);",
-  "CREATE TABLE IF NOT EXISTS `credit_ledger` (\n	`id` text PRIMARY KEY NOT NULL,\n	`workspace_id` text NOT NULL,\n	`kind` text NOT NULL,\n	`amount` integer NOT NULL,\n	`balance_after` integer NOT NULL,\n	`run_id` text,\n	`render_id` text,\n	`idempotency_key` text NOT NULL,\n	`metadata` text,\n	`created_at` integer DEFAULT (unixepoch('subsec') * 1000) NOT NULL,\n	FOREIGN KEY (`workspace_id`) REFERENCES `organization`(`id`) ON UPDATE no action ON DELETE cascade\n);",
+  'CREATE TABLE IF NOT EXISTS `credit_ledger` (\n	`id` text PRIMARY KEY NOT NULL,\n	`workspace_id` text NOT NULL,\n	`kind` text NOT NULL,\n	`amount` integer NOT NULL,\n	`balance_after` integer NOT NULL,\n	`run_id` text,\n	`render_id` text,\n	`idempotency_key` text NOT NULL,\n	`metadata` text,\n	`created_at` integer DEFAULT (unixepoch(\'subsec\') * 1000) NOT NULL,\n	FOREIGN KEY (`workspace_id`) REFERENCES `organization`(`id`) ON UPDATE no action ON DELETE cascade,\n	CONSTRAINT "credit_ledger_kind_check" CHECK("credit_ledger"."kind" in (\'grant\', \'reserve\', \'commit\', \'refund\', \'adjust\')),\n	CONSTRAINT "credit_ledger_amount_sign_check" CHECK((("credit_ledger"."kind" = \'grant\' and "credit_ledger"."amount" > 0) or ("credit_ledger"."kind" = \'refund\' and "credit_ledger"."amount" > 0) or ("credit_ledger"."kind" = \'reserve\' and "credit_ledger"."amount" < 0) or ("credit_ledger"."kind" = \'commit\' and "credit_ledger"."amount" <= 0) or "credit_ledger"."kind" = \'adjust\')),\n	CONSTRAINT "credit_ledger_amount_ceiling_check" CHECK("credit_ledger"."amount" <= 1000000000000000 and "credit_ledger"."amount" >= -1000000000000000)\n);',
   "CREATE UNIQUE INDEX IF NOT EXISTS `credit_ledger_idempotency_uniq` ON `credit_ledger` (`idempotency_key`);",
   'CREATE INDEX IF NOT EXISTS `credit_ledger_workspace_created_idx` ON `credit_ledger` (`workspace_id`,"created_at" desc);',
   "CREATE INDEX IF NOT EXISTS `credit_ledger_run_idx` ON `credit_ledger` (`run_id`);",
@@ -126467,6 +126531,10 @@ function createApiKeysRepo(db) {
     },
     async get(workspaceId, keyId) {
       const [row] = await db.select(RECORD_COLUMNS).from(apiKeyTable).where(and(eq(apiKeyTable.id, keyId), inWorkspace(db, workspaceId))).limit(1);
+      return row === void 0 ? null : toRecord(row);
+    },
+    async findById(keyId) {
+      const [row] = await db.select(RECORD_COLUMNS).from(apiKeyTable).where(eq(apiKeyTable.id, keyId)).limit(1);
       return row === void 0 ? null : toRecord(row);
     }
   };
@@ -132731,401 +132799,7 @@ function dbEnvelope(error64, requestId) {
 
 // ../../services/gateway/src/middleware.ts
 import { randomUUID as randomUUID4, createHash as createHash3 } from "node:crypto";
-
-// ../../services/gateway/src/idempotency.ts
-import { createHash as createHash2 } from "node:crypto";
-var IDEMPOTENCY_TTL_MS = 10 * 60 * 1e3;
-function createInMemoryIdempotencyStore() {
-  const entries = /* @__PURE__ */ new Map();
-  function sweep(now3) {
-    for (const [key, entry] of entries) {
-      if (entry.expiresAt <= now3) entries.delete(key);
-    }
-  }
-  return {
-    lookup(key, now3 = Date.now()) {
-      sweep(now3);
-      const entry = entries.get(key);
-      if (entry === void 0) return null;
-      if (entry.expiresAt <= now3) {
-        entries.delete(key);
-        return null;
-      }
-      return entry;
-    },
-    begin(key, payloadHash, now3 = Date.now()) {
-      sweep(now3);
-      const existing = entries.get(key);
-      if (existing !== void 0 && existing.expiresAt > now3) return false;
-      let resolve3 = () => {
-      };
-      const done = new Promise((res) => {
-        resolve3 = res;
-      });
-      entries.set(key, {
-        payloadHash,
-        status: 0,
-        body: null,
-        contentType: "application/json",
-        expiresAt: now3 + IDEMPOTENCY_TTL_MS,
-        complete: false,
-        done,
-        resolve: resolve3
-      });
-      return true;
-    },
-    complete(key, payloadHash, status, body, contentType, now3 = Date.now()) {
-      const existing = entries.get(key);
-      if (existing === void 0) return;
-      const entry = {
-        payloadHash,
-        status,
-        body,
-        contentType,
-        expiresAt: now3 + IDEMPOTENCY_TTL_MS,
-        complete: true,
-        done: null
-      };
-      entries.set(key, entry);
-      existing.resolve?.();
-    },
-    release(key) {
-      const existing = entries.get(key);
-      if (existing !== void 0 && !existing.complete) {
-        entries.delete(key);
-        existing.resolve?.();
-      }
-    },
-    async waitFor(key) {
-      const existing = entries.get(key);
-      if (existing === void 0) return;
-      if (existing.complete || existing.done === null) return;
-      await existing.done;
-    },
-    reset() {
-      entries.clear();
-    }
-  };
-}
-async function fingerprintPayload(request) {
-  const contentType = request.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    try {
-      const parsed = await request.clone().json();
-      const hash3 = createHash2("sha256");
-      hash3.update(JSON.stringify(parsed));
-      return hash3.digest("hex");
-    } catch {
-    }
-  }
-  const hash2 = createHash2("sha256");
-  hash2.update(
-    `${request.method} ${request.url} ${contentType} ${request.headers.get("content-length") ?? ""}`
-  );
-  return hash2.digest("hex");
-}
-
-// ../../services/gateway/src/route-class.ts
-function routeClassFor(method, path3) {
-  if (path3.startsWith("/v1/auth/") || path3 === "/v1/auth") return "auth";
-  if (method === "POST" && /^\/v1\/threads\/[^/]+\/(chat|turn)$/.test(path3)) return "chat";
-  if (method === "POST" && /^\/v1\/threads\/[^/]+\/tools\//.test(path3)) return "chat";
-  if (method === "POST" && path3 === "/v1/renders") return "chat";
-  if (method === "GET" || method === "HEAD") return "read";
-  return "mutation";
-}
-
-// ../../services/gateway/src/middleware.ts
-function asStatus(status) {
-  return status >= 200 && status < 600 ? status : 200;
-}
-function requestIdMiddleware() {
-  return async (c5, next) => {
-    const incoming = c5.req.header("x-request-id");
-    const id = incoming !== void 0 && REQUEST_ID_PATTERN.test(incoming) ? incoming : `req_${randomUUID4().replaceAll("-", "")}`;
-    c5.set("requestId", id);
-    await next();
-    c5.header("x-request-id", id);
-  };
-}
-var REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:\-]{1,128}$/;
-function accessLogMiddleware() {
-  return async (c5, next) => {
-    const start = Date.now();
-    await next();
-    const deps = c5.get("deps");
-    deps.logger.info("http_request", {
-      requestId: c5.get("requestId"),
-      method: c5.req.method,
-      path: c5.req.path,
-      status: c5.res.status,
-      ms: Date.now() - start,
-      workspaceId: safeWorkspace(c5)
-    });
-  };
-}
-function safeWorkspace(c5) {
-  const workspace = c5.get("workspace");
-  return workspace === void 0 ? void 0 : workspace.id;
-}
-function corsMiddleware(appUrl) {
-  return async (c5, next) => {
-    const origin = c5.req.header("origin");
-    if (origin !== void 0 && origin === appUrl) {
-      c5.header("access-control-allow-origin", origin);
-      c5.header("access-control-allow-credentials", "true");
-      c5.header("vary", "Origin");
-    }
-    if (c5.req.method === "OPTIONS") {
-      c5.header("access-control-allow-methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
-      c5.header(
-        "access-control-allow-headers",
-        "content-type, x-workspace-id, x-request-id, idempotency-key, x-idempotency-key, last-event-id, authorization"
-      );
-      c5.header("access-control-max-age", "86400");
-      return c5.body(null, 204);
-    }
-    await next();
-  };
-}
-function rateLimitMiddleware() {
-  return async (c5, next) => {
-    const deps = c5.get("deps");
-    const ip = clientIp(c5);
-    const routeClass = routeClassFor(c5.req.method, c5.req.path);
-    const decision = deps.limiter.check(ip, routeClass);
-    if (!decision.allowed) {
-      c5.header("retry-after", String(decision.retryAfterSeconds));
-      throw new StudioError("RATE_LIMITED", {
-        requestId: c5.get("requestId"),
-        retryable: true
-      });
-    }
-    await next();
-  };
-}
-function clientIp(c5) {
-  const forwarded = c5.req.header("x-forwarded-for");
-  if (typeof forwarded === "string" && forwarded.length > 0) {
-    const parts = forwarded.split(",").map((part) => part.trim()).filter((part) => part !== "");
-    const trusted = parts[parts.length - 1];
-    if (trusted !== void 0 && trusted !== "") return trusted;
-  }
-  return c5.req.header("x-real-ip") ?? "unknown";
-}
-var IDEMPOTENCY_EXCLUDED_PATHS = [
-  /^\/v1\/auth(\/|$)/,
-  /^\/v1\/threads\/[^/]+\/chat$/,
-  // ROUND-12: the turn route carries its OWN durable idempotency (the
-  // `Idempotency-Key: runId:stepIndex` header + the assistant-row turnKey
-  // replay inside routes/turn.ts) — the generic body-store middleware would
-  // wrap the SSE stream in a JSON envelope and kill the replay path.
-  /^\/v1\/threads\/[^/]+\/turn$/,
-  /^\/v1\/webhooks\//,
-  // M8-G (M8-C pin): POST /v1/renders/estimate is a PURE READ — the body has
-  // no idempotencyKey and no hold is taken; the Idempotency-Key header gate
-  // would make every quote need a throwaway key for nothing.
-  /^\/v1\/renders\/estimate$/
-];
-function idempotencyMiddleware() {
-  return async (c5, next) => {
-    const path3 = c5.req.path;
-    if (c5.req.method !== "POST") {
-      await next();
-      return;
-    }
-    if (!path3.startsWith("/v1/")) {
-      await next();
-      return;
-    }
-    for (const pattern of IDEMPOTENCY_EXCLUDED_PATHS) {
-      if (pattern.test(path3)) {
-        await next();
-        return;
-      }
-    }
-    const key = c5.req.header("idempotency-key") ?? c5.req.header("x-idempotency-key");
-    const deps = c5.get("deps");
-    const requestId = c5.get("requestId");
-    if (key === void 0 || key.length < 8 || key.length > 128) {
-      throw new GatewayError("VALIDATION_FAILED", "Mutations require an Idempotency-Key header.", {
-        status: 400,
-        hint: "Send a unique Idempotency-Key (8-128 chars) with every POST; the same key replays the same result.",
-        requestId
-      });
-    }
-    const storeKey = `${idempotencyScopeOf(c5)}::${key}`;
-    const payloadHash = await fingerprintPayload(c5.req.raw);
-    const stored = deps.idempotency.lookup(storeKey);
-    if (stored !== null) {
-      if (stored.payloadHash !== payloadHash) {
-        throw new GatewayError(
-          "VALIDATION_FAILED",
-          "This Idempotency-Key was used with a different payload.",
-          {
-            status: 400,
-            hint: "Generate a fresh key for a new request.",
-            requestId
-          }
-        );
-      }
-      if (!stored.complete) {
-        await deps.idempotency.waitFor(storeKey);
-        const after = deps.idempotency.lookup(storeKey);
-        if (after?.complete) {
-          c5.header("x-idempotent-replay", "true");
-          return c5.newResponse(JSON.stringify(after.body), asStatus(after.status), {
-            "content-type": after.contentType
-          });
-        }
-        await next();
-        return;
-      }
-      c5.header("x-idempotent-replay", "true");
-      return c5.newResponse(JSON.stringify(stored.body), asStatus(stored.status), {
-        "content-type": stored.contentType
-      });
-    }
-    if (!deps.idempotency.begin(storeKey, payloadHash)) {
-      await deps.idempotency.waitFor(storeKey);
-      const after = deps.idempotency.lookup(storeKey);
-      if (after?.complete) {
-        c5.header("x-idempotent-replay", "true");
-        return c5.newResponse(JSON.stringify(after.body), asStatus(after.status), {
-          "content-type": after.contentType
-        });
-      }
-      throw new GatewayError("CONFLICT", "An identical request is already in progress.", {
-        status: 409,
-        retryable: true,
-        hint: "Retry with the same Idempotency-Key shortly.",
-        requestId
-      });
-    }
-    try {
-      await next();
-      const snapshot = c5.res.clone();
-      const body = await snapshot.text();
-      deps.idempotency.complete(
-        storeKey,
-        payloadHash,
-        c5.res.status,
-        safeJsonParse(body),
-        contentTypeOf(c5.res.headers)
-      );
-    } catch (error64) {
-      deps.idempotency.release(storeKey);
-      throw error64;
-    }
-  };
-}
-function idempotencyScopeOf(c5) {
-  const authorization = c5.req.header("authorization") ?? "";
-  const cookie = c5.req.header("cookie") ?? "";
-  const workspace = c5.req.header("x-workspace-id") ?? "";
-  if (authorization === "" && cookie === "") return "anon";
-  return createHash3("sha256").update(`${authorization}
-${cookie}
-${workspace}`).digest("hex").slice(0, 32);
-}
-function contentTypeOf(headers) {
-  return headers.get("content-type")?.split(";")[0] ?? "application/json";
-}
-function safeJsonParse(body) {
-  try {
-    return JSON.parse(body);
-  } catch {
-    return { data: body };
-  }
-}
-function requireAuth() {
-  return async (c5, next) => {
-    const deps = c5.get("deps");
-    const session3 = await deps.auth.getSession(c5.req.raw.headers);
-    if (session3 === null) {
-      throw new StudioError("AUTH_REQUIRED", { requestId: c5.get("requestId") });
-    }
-    c5.set("auth", { user: session3.user, session: session3.session });
-    if (session3.viaApiKey === true) {
-      assertApiKeySurface(c5.req.method, c5.req.path, c5.get("requestId"));
-    }
-    await next();
-  };
-}
-function assertApiKeySurface(method, path3, requestId) {
-  if (path3 === "/v1/auth" || path3.startsWith("/v1/auth/")) {
-    throw new GatewayError("API_KEY_FORBIDDEN", "API keys cannot use the auth surface.", {
-      status: 403,
-      hint: "Use a cookie session for account and workspace management.",
-      requestId
-    });
-  }
-  const isAdminSurface = path3.startsWith("/v1/workspaces/") && method !== "GET" && !/^\/+v1\/+workspaces\/+[^/]+\/+switch$/.test(path3);
-  if (isAdminSurface || path3.startsWith("/v1/billing/") || path3 === "/v1/credits/reconcile") {
-    throw new GatewayError(
-      "API_KEY_FORBIDDEN",
-      "API keys cannot manage workspaces, members or billing.",
-      {
-        status: 403,
-        hint: "Use a cookie session for workspace and billing operations.",
-        requestId
-      }
-    );
-  }
-}
-function requireWorkspace(minimumRole) {
-  return async (c5, next) => {
-    const candidate = c5.req.header("x-workspace-id") ?? "";
-    await resolveWorkspaceContext(c5, candidate, minimumRole);
-    await next();
-  };
-}
-async function resolveWorkspaceContext(c5, candidate, minimumRole) {
-  const deps = c5.get("deps");
-  const requestId = c5.get("requestId");
-  if (candidate === "") {
-    throw new GatewayError("VALIDATION_FAILED", "Missing workspace.", {
-      status: 400,
-      hint: "Send the workspace id or slug in the x-workspace-id header.",
-      requestId
-    });
-  }
-  const full = await deps.auth.getFullWorkspace(c5.req.raw.headers, candidate);
-  if (full === null) {
-    throw new StudioError("WORKSPACE_NOT_FOUND", { requestId });
-  }
-  const role2 = roleForUser(full, c5.get("auth").user.id);
-  if (role2 === null) {
-    throw new StudioError("WORKSPACE_NOT_FOUND", { requestId });
-  }
-  if (!atLeast(role2, minimumRole)) {
-    throw new StudioError("FORBIDDEN", { requestId });
-  }
-  const context = {
-    id: full.organization.id,
-    slug: full.organization.slug,
-    role: role2,
-    members: full.members,
-    organization: full.organization
-  };
-  c5.set("workspace", context);
-  return context;
-}
-function roleForUser(full, userId) {
-  const member4 = full.members.find((entry) => entry.userId === userId);
-  if (member4 === void 0) return null;
-  const role2 = member4.role.split(",")[0]?.trim() ?? "";
-  return isRoleOrNull(role2);
-}
-function isRoleOrNull(value) {
-  return value === "owner" || value === "admin" || value === "editor" || value === "viewer" ? value : null;
-}
-function assertCapability(capability, c5) {
-  const workspace = c5.get("workspace");
-  if (!can(workspace.role, capability)) {
-    throw new StudioError("FORBIDDEN", { requestId: c5.get("requestId") });
-  }
-}
+import { isIPv6 as isIPv62 } from "node:net";
 
 // ../../packages/contracts/src/envelope.ts
 init_zod();
@@ -134423,7 +134097,7 @@ function hasNoDunderSegments(path3) {
 }
 function isJsonSerializableValue(value) {
   const onPath = /* @__PURE__ */ new WeakSet();
-  const check3 = (node2) => {
+  const check5 = (node2) => {
     if (node2 === null) return true;
     if (typeof node2 === "string" || typeof node2 === "boolean") return true;
     if (typeof node2 === "number") return Number.isFinite(node2);
@@ -134432,15 +134106,15 @@ function isJsonSerializableValue(value) {
     onPath.add(node2);
     let result;
     if (Array.isArray(node2)) {
-      result = node2.every(check3);
+      result = node2.every(check5);
     } else {
       const proto = Object.getPrototypeOf(node2);
-      result = (proto === Object.prototype || proto === null) && Object.values(node2).every(check3);
+      result = (proto === Object.prototype || proto === null) && Object.values(node2).every(check5);
     }
     onPath.delete(node2);
     return result;
   };
-  return check3(value);
+  return check5(value);
 }
 function freeFormValueIssues(value) {
   const dunder = firstDunderKeyLocation(value);
@@ -135334,12 +135008,15 @@ var RENDER_FORMATS2 = [
 ];
 var RENDER_FORMAT_SCHEMA = external_exports.enum(RENDER_FORMATS2);
 var RENDER_QUALITY_SCHEMA = external_exports.enum(["draft", "good", "best"]);
+var MAX_RENDER_FRAME_RATE = 240;
+var MAX_RENDER_FRAMES = 15e5;
 var RENDER_SETTINGS_SCHEMA = external_exports.strictObject({
   timeFrom: external_exports.number().nonnegative().optional(),
   timeTo: external_exports.number().nonnegative().optional(),
   width: external_exports.number().int().positive().optional(),
   height: external_exports.number().int().positive().optional(),
-  frameRate: external_exports.number().positive().optional(),
+  // BIL-06: 1..MAX_RENDER_FRAME_RATE (fractional allowed — 29.97 etc.).
+  frameRate: external_exports.number().min(1).max(MAX_RENDER_FRAME_RATE).optional(),
   quality: RENDER_QUALITY_SCHEMA.optional(),
   /** Format-specific passthrough knobs; server validates against the plan. */
   extra: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
@@ -135577,6 +135254,501 @@ var PATCH_WORKSPACE_SCHEMA = external_exports.strictObject(PATCH_WORKSPACE_SHAPE
   (body) => body.name !== void 0 || body.slug !== void 0,
   "at least one of name or slug is required"
 );
+
+// ../../services/gateway/src/idempotency.ts
+import { createHash as createHash2 } from "node:crypto";
+var IDEMPOTENCY_TTL_MS = 10 * 60 * 1e3;
+function createInMemoryIdempotencyStore() {
+  const entries = /* @__PURE__ */ new Map();
+  function sweep(now3) {
+    for (const [key, entry] of entries) {
+      if (entry.expiresAt <= now3) entries.delete(key);
+    }
+  }
+  return {
+    lookup(key, now3 = Date.now()) {
+      sweep(now3);
+      const entry = entries.get(key);
+      if (entry === void 0) return null;
+      if (entry.expiresAt <= now3) {
+        entries.delete(key);
+        return null;
+      }
+      return entry;
+    },
+    begin(key, payloadHash, now3 = Date.now()) {
+      sweep(now3);
+      const existing = entries.get(key);
+      if (existing !== void 0 && existing.expiresAt > now3) return false;
+      let resolve3 = () => {
+      };
+      const done = new Promise((res) => {
+        resolve3 = res;
+      });
+      entries.set(key, {
+        payloadHash,
+        status: 0,
+        body: null,
+        contentType: "application/json",
+        expiresAt: now3 + IDEMPOTENCY_TTL_MS,
+        complete: false,
+        done,
+        resolve: resolve3
+      });
+      return true;
+    },
+    complete(key, payloadHash, status, body, contentType, now3 = Date.now()) {
+      const existing = entries.get(key);
+      if (existing === void 0) return;
+      const entry = {
+        payloadHash,
+        status,
+        body,
+        contentType,
+        expiresAt: now3 + IDEMPOTENCY_TTL_MS,
+        complete: true,
+        done: null
+      };
+      entries.set(key, entry);
+      existing.resolve?.();
+    },
+    release(key) {
+      const existing = entries.get(key);
+      if (existing !== void 0 && !existing.complete) {
+        entries.delete(key);
+        existing.resolve?.();
+      }
+    },
+    async waitFor(key) {
+      const existing = entries.get(key);
+      if (existing === void 0) return;
+      if (existing.complete || existing.done === null) return;
+      await existing.done;
+    },
+    reset() {
+      entries.clear();
+    }
+  };
+}
+async function fingerprintPayload(request) {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    try {
+      const parsed = await request.clone().json();
+      const hash3 = createHash2("sha256");
+      hash3.update(JSON.stringify(parsed));
+      return hash3.digest("hex");
+    } catch {
+    }
+  }
+  const hash2 = createHash2("sha256");
+  hash2.update(
+    `${request.method} ${request.url} ${contentType} ${request.headers.get("content-length") ?? ""}`
+  );
+  return hash2.digest("hex");
+}
+
+// ../../services/gateway/src/route-class.ts
+function routeClassFor(method, path3) {
+  if (path3.startsWith("/v1/auth/") || path3 === "/v1/auth") return "auth";
+  if (method === "POST" && /^\/v1\/threads\/[^/]+\/(chat|turn)$/.test(path3)) return "chat";
+  if (method === "POST" && /^\/v1\/threads\/[^/]+\/tools\//.test(path3)) return "chat";
+  if (method === "POST" && path3 === "/v1/renders") return "chat";
+  if (method === "GET" || method === "HEAD") return "read";
+  return "mutation";
+}
+
+// ../../services/gateway/src/middleware.ts
+function asStatus(status) {
+  return status >= 200 && status < 600 ? status : 200;
+}
+function requestIdMiddleware() {
+  return async (c5, next) => {
+    const incoming = c5.req.header("x-request-id");
+    const id = incoming !== void 0 && REQUEST_ID_PATTERN.test(incoming) ? incoming : `req_${randomUUID4().replaceAll("-", "")}`;
+    c5.set("requestId", id);
+    await next();
+    c5.header("x-request-id", id);
+  };
+}
+var REQUEST_ID_PATTERN = /^[A-Za-z0-9_.:\-]{1,128}$/;
+function accessLogMiddleware() {
+  return async (c5, next) => {
+    const start = Date.now();
+    await next();
+    const deps = c5.get("deps");
+    deps.logger.info("http_request", {
+      requestId: c5.get("requestId"),
+      method: c5.req.method,
+      path: c5.req.path,
+      status: c5.res.status,
+      ms: Date.now() - start,
+      workspaceId: safeWorkspace(c5)
+    });
+  };
+}
+function safeWorkspace(c5) {
+  const workspace = c5.get("workspace");
+  return workspace === void 0 ? void 0 : workspace.id;
+}
+function corsMiddleware(appUrl) {
+  return async (c5, next) => {
+    const origin = c5.req.header("origin");
+    if (origin !== void 0 && origin === appUrl) {
+      c5.header("access-control-allow-origin", origin);
+      c5.header("access-control-allow-credentials", "true");
+      c5.header("vary", "Origin");
+    }
+    if (c5.req.method === "OPTIONS") {
+      c5.header("access-control-allow-methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
+      c5.header(
+        "access-control-allow-headers",
+        "content-type, x-workspace-id, x-request-id, idempotency-key, x-idempotency-key, last-event-id, authorization"
+      );
+      c5.header("access-control-max-age", "86400");
+      return c5.body(null, 204);
+    }
+    await next();
+  };
+}
+function rateLimitMiddleware() {
+  return async (c5, next) => {
+    const deps = c5.get("deps");
+    const ip = clientIp(c5);
+    const routeClass = routeClassFor(c5.req.method, c5.req.path);
+    const decision = deps.limiter.check(ip, routeClass);
+    if (!decision.allowed) {
+      c5.header("retry-after", String(decision.retryAfterSeconds));
+      throw new StudioError("RATE_LIMITED", {
+        requestId: c5.get("requestId"),
+        retryable: true
+      });
+    }
+    await next();
+  };
+}
+function clientIp(c5) {
+  const forwarded = c5.req.header("x-forwarded-for");
+  if (typeof forwarded === "string" && forwarded.length > 0) {
+    const parts = forwarded.split(",").map((part) => part.trim()).filter((part) => part !== "");
+    const trusted = parts[parts.length - 1];
+    if (trusted !== void 0 && trusted !== "") return normalizeRateLimitIp(trusted);
+  }
+  return normalizeRateLimitIp(c5.req.header("x-real-ip") ?? "unknown");
+}
+function normalizeRateLimitIp(ip) {
+  const bare = (ip.split("%")[0] ?? ip).trim();
+  if (bare === "" || bare.includes(".") || !isIPv62(bare)) return ip;
+  const halves = bare.split("::");
+  if (halves.length > 2) return ip;
+  const toGroups = (text4) => text4.split(":").filter((group4) => group4 !== "").map((group4) => Number.parseInt(group4, 16));
+  const head = toGroups(halves[0] ?? "");
+  const tail = halves.length === 2 ? toGroups(halves[1] ?? "") : [];
+  if (halves.length === 1 ? head.length !== 8 : head.length + tail.length > 8) {
+    return ip;
+  }
+  const middle = Array.from({ length: 8 - head.length - tail.length }, () => 0);
+  const groups = [...head, ...middle, ...tail].map(
+    (group4) => group4.toString(16)
+  );
+  return `${groups.slice(0, 4).join(":")}::/64`;
+}
+var IDEMPOTENCY_EXCLUDED_PATHS = [
+  /^\/v1\/auth(\/|$)/,
+  /^\/v1\/threads\/[^/]+\/chat$/,
+  // ROUND-12: the turn route carries its OWN durable idempotency (the
+  // `Idempotency-Key: runId:stepIndex` header + the assistant-row turnKey
+  // replay inside routes/turn.ts) — the generic body-store middleware would
+  // wrap the SSE stream in a JSON envelope and kill the replay path.
+  /^\/v1\/threads\/[^/]+\/turn$/,
+  /^\/v1\/webhooks\//,
+  // M8-G (M8-C pin): POST /v1/renders/estimate is a PURE READ — the body has
+  // no idempotencyKey and no hold is taken; the Idempotency-Key header gate
+  // would make every quote need a throwaway key for nothing.
+  /^\/v1\/renders\/estimate$/
+];
+function idempotencyMiddleware() {
+  return async (c5, next) => {
+    const path3 = c5.req.path;
+    if (c5.req.method !== "POST") {
+      await next();
+      return;
+    }
+    if (!path3.startsWith("/v1/")) {
+      await next();
+      return;
+    }
+    for (const pattern of IDEMPOTENCY_EXCLUDED_PATHS) {
+      if (pattern.test(path3)) {
+        await next();
+        return;
+      }
+    }
+    const key = c5.req.header("idempotency-key") ?? c5.req.header("x-idempotency-key");
+    const deps = c5.get("deps");
+    const requestId = c5.get("requestId");
+    if (key === void 0 || key.length < 8 || key.length > 128) {
+      throw new GatewayError("VALIDATION_FAILED", "Mutations require an Idempotency-Key header.", {
+        status: 400,
+        hint: "Send a unique Idempotency-Key (8-128 chars) with every POST; the same key replays the same result.",
+        requestId
+      });
+    }
+    const storeKey = `${idempotencyScopeOf(c5)}::${key}`;
+    const payloadHash = await fingerprintPayload(c5.req.raw);
+    const stored = deps.idempotency.lookup(storeKey);
+    if (stored !== null) {
+      if (stored.payloadHash !== payloadHash) {
+        throw new GatewayError(
+          "VALIDATION_FAILED",
+          "This Idempotency-Key was used with a different payload.",
+          {
+            status: 400,
+            hint: "Generate a fresh key for a new request.",
+            requestId
+          }
+        );
+      }
+      if (!stored.complete) {
+        await deps.idempotency.waitFor(storeKey);
+        const after = deps.idempotency.lookup(storeKey);
+        if (after?.complete) {
+          c5.header("x-idempotent-replay", "true");
+          return c5.newResponse(JSON.stringify(after.body), asStatus(after.status), {
+            "content-type": after.contentType
+          });
+        }
+        await next();
+        return;
+      }
+      c5.header("x-idempotent-replay", "true");
+      return c5.newResponse(JSON.stringify(stored.body), asStatus(stored.status), {
+        "content-type": stored.contentType
+      });
+    }
+    if (!deps.idempotency.begin(storeKey, payloadHash)) {
+      await deps.idempotency.waitFor(storeKey);
+      const after = deps.idempotency.lookup(storeKey);
+      if (after?.complete) {
+        c5.header("x-idempotent-replay", "true");
+        return c5.newResponse(JSON.stringify(after.body), asStatus(after.status), {
+          "content-type": after.contentType
+        });
+      }
+      throw new GatewayError("CONFLICT", "An identical request is already in progress.", {
+        status: 409,
+        retryable: true,
+        hint: "Retry with the same Idempotency-Key shortly.",
+        requestId
+      });
+    }
+    try {
+      await next();
+      const snapshot = c5.res.clone();
+      const body = await snapshot.text();
+      deps.idempotency.complete(
+        storeKey,
+        payloadHash,
+        c5.res.status,
+        safeJsonParse(body),
+        contentTypeOf(c5.res.headers)
+      );
+    } catch (error64) {
+      deps.idempotency.release(storeKey);
+      throw error64;
+    }
+  };
+}
+function idempotencyScopeOf(c5) {
+  const authorization = c5.req.header("authorization") ?? "";
+  const cookie = c5.req.header("cookie") ?? "";
+  const workspace = c5.req.header("x-workspace-id") ?? "";
+  if (authorization === "" && cookie === "") return "anon";
+  return createHash3("sha256").update(`${authorization}
+${cookie}
+${workspace}`).digest("hex").slice(0, 32);
+}
+function contentTypeOf(headers) {
+  return headers.get("content-type")?.split(";")[0] ?? "application/json";
+}
+function safeJsonParse(body) {
+  try {
+    return JSON.parse(body);
+  } catch {
+    return { data: body };
+  }
+}
+function requireAuth() {
+  return async (c5, next) => {
+    const deps = c5.get("deps");
+    const requestId = c5.get("requestId");
+    const session3 = await deps.auth.getSession(c5.req.raw.headers);
+    if (session3 === null) {
+      throw new StudioError("AUTH_REQUIRED", { requestId });
+    }
+    if (session3.viaApiKey === true) {
+      const record2 = await deps.repos.apiKeys.findById(session3.session.id);
+      if (record2 === null) {
+        throw new StudioError("AUTH_REQUIRED", { requestId });
+      }
+      const principal = {
+        id: record2.id,
+        workspaceId: workspaceBindingOf(record2.metadata),
+        scopes: scopesOfKey(record2.permissions)
+      };
+      c5.set("auth", { user: session3.user, session: session3.session, apiKey: principal });
+      enforceApiKeyAccess(principal, c5.req.method, c5.req.path, requestId);
+    } else {
+      c5.set("auth", { user: session3.user, session: session3.session });
+    }
+    await next();
+  };
+}
+function workspaceBindingOf(metadata) {
+  if (metadata === null) return null;
+  try {
+    const parsed = JSON.parse(metadata);
+    return typeof parsed.workspaceId === "string" ? parsed.workspaceId : null;
+  } catch {
+    return null;
+  }
+}
+function scopesOfKey(permissions) {
+  if (permissions === null) return [];
+  try {
+    return apiKeyStatementsToScopes(JSON.parse(permissions));
+  } catch {
+    return [];
+  }
+}
+function apiKeyRouteAccess(method, path3) {
+  const m3 = method.toUpperCase();
+  const p3 = path3;
+  if (p3 === "/v1/auth" || p3.startsWith("/v1/auth/")) {
+    return { kind: "cookie-only", surface: "auth" };
+  }
+  if (p3.startsWith("/v1/invites/")) {
+    return { kind: "cookie-only", surface: "invites" };
+  }
+  if (p3 === "/v1/me" || p3 === "/v1/me/settings" || p3 === "/v1/models") {
+    return m3 === "GET" ? { kind: "any-key" } : { kind: "cookie-only", surface: "account" };
+  }
+  if (p3 === "/v1/workspaces" || p3.startsWith("/v1/workspaces/")) {
+    if (m3 === "GET" && /^\/v1\/workspaces\/[^/]+$/.test(p3)) return { kind: "any-key" };
+    if (m3 === "POST" && /^\/v1\/workspaces\/[^/]+\/switch$/.test(p3)) {
+      return { kind: "any-key" };
+    }
+    if (m3 === "GET" && p3 === "/v1/workspaces") return { kind: "any-key" };
+    return { kind: "cookie-only", surface: "workspace administration" };
+  }
+  if (p3 === "/v1/billing" || p3.startsWith("/v1/billing/")) {
+    return m3 === "GET" ? { kind: "scope", scope: "billing:read" } : { kind: "cookie-only", surface: "billing" };
+  }
+  if (p3 === "/v1/credits" || p3 === "/v1/credits/ledger") {
+    return m3 === "GET" ? { kind: "scope", scope: "billing:read" } : { kind: "cookie-only", surface: "billing" };
+  }
+  if (p3 === "/v1/credits/reconcile") {
+    return { kind: "cookie-only", surface: "billing" };
+  }
+  if (m3 === "POST" && /^\/v1\/projects\/[^/]+\/share-links$/.test(p3)) {
+    return { kind: "cookie-only", surface: "share-link minting" };
+  }
+  if (m3 === "DELETE" && /^\/v1\/share\/[^/]+$/.test(p3)) {
+    return { kind: "cookie-only", surface: "share-link management" };
+  }
+  if (/^\/v1\/projects\/[^/]+\/threads$/.test(p3) || p3.startsWith("/v1/threads/") || p3.startsWith("/v1/runs/")) {
+    return { kind: "scope", scope: "chat:run" };
+  }
+  if (p3 === "/v1/renders" || p3.startsWith("/v1/renders/")) {
+    return { kind: "scope", scope: "renders:queue" };
+  }
+  if (p3 === "/v1/projects" || p3.startsWith("/v1/projects/") || p3 === "/v1/assets" || p3.startsWith("/v1/assets/") || p3.startsWith("/v1/comments/")) {
+    return m3 === "GET" || m3 === "HEAD" ? { kind: "scope", scope: "projects:read" } : { kind: "scope", scope: "projects:write" };
+  }
+  return { kind: "cookie-only", surface: "this surface" };
+}
+function enforceApiKeyAccess(principal, method, path3, requestId) {
+  const access = apiKeyRouteAccess(method, path3);
+  if (access.kind === "any-key") return;
+  if (access.kind === "cookie-only") {
+    throw new GatewayError(
+      "API_KEY_FORBIDDEN",
+      `API keys cannot use ${access.surface}.`,
+      {
+        status: 403,
+        hint: "Use a cookie session for this operation.",
+        requestId
+      }
+    );
+  }
+  if (principal.scopes.includes("*") || principal.scopes.includes(access.scope)) return;
+  throw new GatewayError(
+    "API_KEY_FORBIDDEN",
+    `This API key lacks the required scope: ${access.scope}.`,
+    {
+      status: 403,
+      hint: `Mint a key with the "${access.scope}" scope (Settings \u2192 API keys) or use a cookie session.`,
+      requestId
+    }
+  );
+}
+function requireWorkspace(minimumRole) {
+  return async (c5, next) => {
+    const candidate = c5.req.header("x-workspace-id") ?? "";
+    await resolveWorkspaceContext(c5, candidate, minimumRole);
+    await next();
+  };
+}
+async function resolveWorkspaceContext(c5, candidate, minimumRole) {
+  const deps = c5.get("deps");
+  const requestId = c5.get("requestId");
+  if (candidate === "") {
+    throw new GatewayError("VALIDATION_FAILED", "Missing workspace.", {
+      status: 400,
+      hint: "Send the workspace id or slug in the x-workspace-id header.",
+      requestId
+    });
+  }
+  const full = await deps.auth.getFullWorkspace(c5.req.raw.headers, candidate);
+  if (full === null) {
+    throw new StudioError("WORKSPACE_NOT_FOUND", { requestId });
+  }
+  const role2 = roleForUser(full, c5.get("auth").user.id);
+  if (role2 === null) {
+    throw new StudioError("WORKSPACE_NOT_FOUND", { requestId });
+  }
+  if (!atLeast(role2, minimumRole)) {
+    throw new StudioError("FORBIDDEN", { requestId });
+  }
+  const apiKey4 = c5.get("auth").apiKey;
+  if (apiKey4 !== void 0 && apiKey4.workspaceId !== full.organization.id) {
+    throw new StudioError("WORKSPACE_NOT_FOUND", { requestId });
+  }
+  const context = {
+    id: full.organization.id,
+    slug: full.organization.slug,
+    role: role2,
+    members: full.members,
+    organization: full.organization
+  };
+  c5.set("workspace", context);
+  return context;
+}
+function roleForUser(full, userId) {
+  const member4 = full.members.find((entry) => entry.userId === userId);
+  if (member4 === void 0) return null;
+  const role2 = member4.role.split(",")[0]?.trim() ?? "";
+  return isRoleOrNull(role2);
+}
+function isRoleOrNull(value) {
+  return value === "owner" || value === "admin" || value === "editor" || value === "viewer" ? value : null;
+}
+function assertCapability(capability, c5) {
+  const workspace = c5.get("workspace");
+  if (!can(workspace.role, capability)) {
+    throw new StudioError("FORBIDDEN", { requestId: c5.get("requestId") });
+  }
+}
 
 // ../../services/gateway/src/http.ts
 function ok2(c5, data, status = 200) {
@@ -137888,21 +138060,22 @@ async function countPendingInvites(deps, headers, organizationId) {
       organizationId,
       detail: error64 instanceof Error ? error64.message : "unknown"
     });
-    return 0;
+    throw seatCountUnavailable(organizationId);
   }
   if (!response.ok) {
     deps.logger.warn("seat_count_auth_rejected", { organizationId, status: response.status });
-    return 0;
+    throw seatCountUnavailable(organizationId);
   }
   let body;
   try {
     body = await response.json();
   } catch {
     deps.logger.warn("seat_count_auth_malformed", { organizationId });
-    return 0;
+    throw seatCountUnavailable(organizationId);
   }
   if (!Array.isArray(body)) {
-    return 0;
+    deps.logger.warn("seat_count_auth_nonarray", { organizationId });
+    throw seatCountUnavailable(organizationId);
   }
   const now3 = Date.now();
   let pending = 0;
@@ -137915,6 +138088,18 @@ async function countPendingInvites(deps, headers, organizationId) {
     }
   }
   return pending;
+}
+function seatCountUnavailable(organizationId) {
+  return new GatewayError(
+    "SERVICE_UNAVAILABLE",
+    "Seat availability cannot be verified right now.",
+    {
+      status: 503,
+      hint: "The invite service is temporarily unavailable; try again shortly.",
+      retryable: true,
+      cause: new Error(`list-invitations failed for ${organizationId}`)
+    }
+  );
 }
 function mapStripeStatus(status) {
   switch (status) {
@@ -138458,10 +138643,19 @@ function billingRoutes(deps) {
     });
     return true;
   }
-  async function recordCustomer(organizationId, object2) {
+  async function recordCustomer(stripe, organizationId, object2) {
     const customerId = nonEmptyString(object2.customer);
     if (subscriptions3 === null || customerId === null) return;
-    const fingerprint = nonEmptyString(object2.metadata?.cardFingerprint);
+    let fingerprint = nonEmptyString(object2.metadata?.cardFingerprint);
+    if (fingerprint === null) {
+      const sessionId = nonEmptyString(object2.id);
+      if (sessionId !== null) {
+        const fetched = await stripe.checkoutSessionCardFingerprint(sessionId);
+        if (fetched.ok && fetched.data.fingerprint !== null) {
+          fingerprint = fetched.data.fingerprint;
+        }
+      }
+    }
     await subscriptions3.ensureStripeCustomer(organizationId, {
       stripeCustomerId: customerId,
       ...fingerprint !== null ? { cardFingerprint: fingerprint } : {}
@@ -138483,7 +138677,7 @@ function billingRoutes(deps) {
     const object2 = event.data.object;
     const organizationId = organizationIdOf(object2);
     if (organizationId === null) return { ignored: "unattributed" };
-    await recordCustomer(organizationId, object2);
+    await recordCustomer(stripe, organizationId, object2);
     const kind = object2.metadata?.kind ?? null;
     if (kind === "topup") {
       const checkoutObject = object2;
@@ -139861,13 +140055,21 @@ async function resolveRenderQuote(deps, workspaceId, requestId, input2, settings
   const width = settings.width ?? comp.width;
   const height = settings.height ?? comp.height;
   const longEdgePx = Math.max(width, height);
-  const frameRate = settings.frameRate ?? comp.frameRate;
+  const rawFrameRate = settings.frameRate ?? comp.frameRate;
+  const frameRate = Math.min(Math.max(rawFrameRate, 1), MAX_RENDER_FRAME_RATE);
   const clampedTo = settings.timeTo !== void 0 ? Math.min(settings.timeTo, comp.durationSeconds) : void 0;
   const outputSeconds = renderOutputSeconds({
     durationSeconds: comp.durationSeconds,
     timeFrom: settings.timeFrom,
     timeTo: clampedTo
   });
+  if (Math.ceil(outputSeconds * frameRate) > MAX_RENDER_FRAMES) {
+    throw new StudioError("RENDER_QUOTA_EXCEEDED", {
+      requestId,
+      message: `This render needs more than ${MAX_RENDER_FRAMES.toLocaleString("en-US")} frames.`,
+      hint: "Render a shorter range or a lower frame rate."
+    });
+  }
   return {
     project,
     versionId,
@@ -140296,9 +140498,9 @@ function registryHas(registry2, id) {
   return Object.prototype.hasOwnProperty.call(registry2, id);
 }
 function predicateAllows(predicate, id) {
-  const check3 = predicate ?? isAllowedEngineCommand;
+  const check5 = predicate ?? isAllowedEngineCommand;
   try {
-    return check3(id) === true;
+    return check5(id) === true;
   } catch {
     return false;
   }
@@ -143076,17 +143278,17 @@ function parseBigintDef(def) {
     format: "int64"
   };
   if (!def.checks) return res;
-  for (const check3 of def.checks) switch (check3.kind) {
+  for (const check5 of def.checks) switch (check5.kind) {
     case "min":
-      if (check3.inclusive) res.minimum = check3.value;
-      else res.exclusiveMinimum = check3.value;
+      if (check5.inclusive) res.minimum = check5.value;
+      else res.exclusiveMinimum = check5.value;
       break;
     case "max":
-      if (check3.inclusive) res.maximum = check3.value;
-      else res.exclusiveMaximum = check3.value;
+      if (check5.inclusive) res.maximum = check5.value;
+      else res.exclusiveMaximum = check5.value;
       break;
     case "multipleOf":
-      res.multipleOf = check3.value;
+      res.multipleOf = check5.value;
   }
   return res;
 }
@@ -143123,12 +143325,12 @@ var integerDateParser = (def) => {
     type: "integer",
     format: "unix-time"
   };
-  for (const check3 of def.checks) switch (check3.kind) {
+  for (const check5 of def.checks) switch (check5.kind) {
     case "min":
-      res.minimum = check3.value;
+      res.minimum = check5.value;
       break;
     case "max":
-      res.maximum = check3.value;
+      res.maximum = check5.value;
   }
   return res;
 };
@@ -143237,99 +143439,99 @@ var zodPatterns = {
 };
 function parseStringDef(def, refs) {
   const res = { type: "string" };
-  if (def.checks) for (const check3 of def.checks) switch (check3.kind) {
+  if (def.checks) for (const check5 of def.checks) switch (check5.kind) {
     case "min":
-      res.minLength = typeof res.minLength === "number" ? Math.max(res.minLength, check3.value) : check3.value;
+      res.minLength = typeof res.minLength === "number" ? Math.max(res.minLength, check5.value) : check5.value;
       break;
     case "max":
-      res.maxLength = typeof res.maxLength === "number" ? Math.min(res.maxLength, check3.value) : check3.value;
+      res.maxLength = typeof res.maxLength === "number" ? Math.min(res.maxLength, check5.value) : check5.value;
       break;
     case "email":
       switch (refs.emailStrategy) {
         case "format:email":
-          addFormat(res, "email", check3.message, refs);
+          addFormat(res, "email", check5.message, refs);
           break;
         case "format:idn-email":
-          addFormat(res, "idn-email", check3.message, refs);
+          addFormat(res, "idn-email", check5.message, refs);
           break;
         case "pattern:zod":
-          addPattern2(res, zodPatterns.email, check3.message, refs);
+          addPattern2(res, zodPatterns.email, check5.message, refs);
       }
       break;
     case "url":
-      addFormat(res, "uri", check3.message, refs);
+      addFormat(res, "uri", check5.message, refs);
       break;
     case "uuid":
-      addFormat(res, "uuid", check3.message, refs);
+      addFormat(res, "uuid", check5.message, refs);
       break;
     case "regex":
-      addPattern2(res, check3.regex, check3.message, refs);
+      addPattern2(res, check5.regex, check5.message, refs);
       break;
     case "cuid":
-      addPattern2(res, zodPatterns.cuid, check3.message, refs);
+      addPattern2(res, zodPatterns.cuid, check5.message, refs);
       break;
     case "cuid2":
-      addPattern2(res, zodPatterns.cuid2, check3.message, refs);
+      addPattern2(res, zodPatterns.cuid2, check5.message, refs);
       break;
     case "startsWith":
-      addPattern2(res, RegExp(`^${escapeLiteralCheckValue(check3.value, refs)}`), check3.message, refs);
+      addPattern2(res, RegExp(`^${escapeLiteralCheckValue(check5.value, refs)}`), check5.message, refs);
       break;
     case "endsWith":
-      addPattern2(res, RegExp(`${escapeLiteralCheckValue(check3.value, refs)}$`), check3.message, refs);
+      addPattern2(res, RegExp(`${escapeLiteralCheckValue(check5.value, refs)}$`), check5.message, refs);
       break;
     case "datetime":
-      addFormat(res, "date-time", check3.message, refs);
+      addFormat(res, "date-time", check5.message, refs);
       break;
     case "date":
-      addFormat(res, "date", check3.message, refs);
+      addFormat(res, "date", check5.message, refs);
       break;
     case "time":
-      addFormat(res, "time", check3.message, refs);
+      addFormat(res, "time", check5.message, refs);
       break;
     case "duration":
-      addFormat(res, "duration", check3.message, refs);
+      addFormat(res, "duration", check5.message, refs);
       break;
     case "length":
-      res.minLength = typeof res.minLength === "number" ? Math.max(res.minLength, check3.value) : check3.value;
-      res.maxLength = typeof res.maxLength === "number" ? Math.min(res.maxLength, check3.value) : check3.value;
+      res.minLength = typeof res.minLength === "number" ? Math.max(res.minLength, check5.value) : check5.value;
+      res.maxLength = typeof res.maxLength === "number" ? Math.min(res.maxLength, check5.value) : check5.value;
       break;
     case "includes":
-      addPattern2(res, RegExp(escapeLiteralCheckValue(check3.value, refs)), check3.message, refs);
+      addPattern2(res, RegExp(escapeLiteralCheckValue(check5.value, refs)), check5.message, refs);
       break;
     case "ip":
-      if (check3.version !== "v6") addFormat(res, "ipv4", check3.message, refs);
-      if (check3.version !== "v4") addFormat(res, "ipv6", check3.message, refs);
+      if (check5.version !== "v6") addFormat(res, "ipv4", check5.message, refs);
+      if (check5.version !== "v4") addFormat(res, "ipv6", check5.message, refs);
       break;
     case "base64url":
-      addPattern2(res, zodPatterns.base64url, check3.message, refs);
+      addPattern2(res, zodPatterns.base64url, check5.message, refs);
       break;
     case "jwt":
-      addPattern2(res, zodPatterns.jwt, check3.message, refs);
+      addPattern2(res, zodPatterns.jwt, check5.message, refs);
       break;
     case "cidr":
-      if (check3.version !== "v6") addPattern2(res, zodPatterns.ipv4Cidr, check3.message, refs);
-      if (check3.version !== "v4") addPattern2(res, zodPatterns.ipv6Cidr, check3.message, refs);
+      if (check5.version !== "v6") addPattern2(res, zodPatterns.ipv4Cidr, check5.message, refs);
+      if (check5.version !== "v4") addPattern2(res, zodPatterns.ipv6Cidr, check5.message, refs);
       break;
     case "emoji":
-      addPattern2(res, zodPatterns.emoji(), check3.message, refs);
+      addPattern2(res, zodPatterns.emoji(), check5.message, refs);
       break;
     case "ulid":
-      addPattern2(res, zodPatterns.ulid, check3.message, refs);
+      addPattern2(res, zodPatterns.ulid, check5.message, refs);
       break;
     case "base64":
       switch (refs.base64Strategy) {
         case "format:binary":
-          addFormat(res, "binary", check3.message, refs);
+          addFormat(res, "binary", check5.message, refs);
           break;
         case "contentEncoding:base64":
           res.contentEncoding = "base64";
           break;
         case "pattern:zod":
-          addPattern2(res, zodPatterns.base64, check3.message, refs);
+          addPattern2(res, zodPatterns.base64, check5.message, refs);
       }
       break;
     case "nanoid":
-      addPattern2(res, zodPatterns.nanoid, check3.message, refs);
+      addPattern2(res, zodPatterns.nanoid, check5.message, refs);
   }
   return res;
 }
@@ -143588,20 +143790,20 @@ function parseNullableDef(def, refs) {
 function parseNumberDef(def) {
   const res = { type: "number" };
   if (!def.checks) return res;
-  for (const check3 of def.checks) switch (check3.kind) {
+  for (const check5 of def.checks) switch (check5.kind) {
     case "int":
       res.type = "integer";
       break;
     case "min":
-      if (check3.inclusive) res.minimum = check3.value;
-      else res.exclusiveMinimum = check3.value;
+      if (check5.inclusive) res.minimum = check5.value;
+      else res.exclusiveMinimum = check5.value;
       break;
     case "max":
-      if (check3.inclusive) res.maximum = check3.value;
-      else res.exclusiveMaximum = check3.value;
+      if (check5.inclusive) res.maximum = check5.value;
+      else res.exclusiveMaximum = check5.value;
       break;
     case "multipleOf":
-      res.multipleOf = check3.value;
+      res.multipleOf = check5.value;
   }
   return res;
 }
@@ -144654,8 +144856,8 @@ function parseSpeechStreamPart(text4) {
 function isString$1(value) {
   return typeof value === "string";
 }
-function isOptional$1(value, check3) {
-  return value === void 0 || check3(value);
+function isOptional$1(value, check5) {
+  return value === void 0 || check5(value);
 }
 var knownWarningTypes = /* @__PURE__ */ new Set([
   "compatibility",
@@ -145024,8 +145226,8 @@ function isString2(value) {
 function isNumber2(value) {
   return typeof value === "number";
 }
-function isOptional(value, check3) {
-  return value === void 0 || check3(value);
+function isOptional(value, check5) {
+  return value === void 0 || check5(value);
 }
 function isWarning(value) {
   return isRecord2(value) && isString2(value.type);
@@ -180279,6 +180481,41 @@ function createStripeSeam(env3, options = {}) {
         };
       }
       return { ok: true, data: snapshotOf(listed.data) };
+    },
+    // BIL-04: resolve a completed Checkout session's card fingerprint —
+    // `payment_method` directly when present, else through the payment
+    // intent's latest charge. Null when the chain carries no card (bank
+    // transfers, free sessions); typed failures, never throws.
+    async checkoutSessionCardFingerprint(sessionId) {
+      const fetched = await guarded(
+        "checkout.sessions.retrieve",
+        () => stripe.checkout.sessions.retrieve(sessionId, {
+          expand: ["payment_intent.latest_charge.payment_method"]
+        })
+      );
+      if (!fetched.ok) return fetched;
+      const session3 = fetched.data;
+      const direct = session3.payment_method;
+      if (typeof direct === "object" && direct !== null && direct.card != null) {
+        const fingerprint = direct.card.fingerprint;
+        if (typeof fingerprint === "string" && fingerprint !== "") {
+          return { ok: true, data: { fingerprint } };
+        }
+      }
+      const intent = session3.payment_intent;
+      if (typeof intent === "object" && intent !== null) {
+        const charge = intent.latest_charge;
+        if (typeof charge === "object" && charge !== null) {
+          const method = charge.payment_method;
+          if (typeof method === "object" && method !== null && method.card != null) {
+            const fingerprint = method.card.fingerprint;
+            if (typeof fingerprint === "string" && fingerprint !== "") {
+              return { ok: true, data: { fingerprint } };
+            }
+          }
+        }
+      }
+      return { ok: true, data: { fingerprint: null } };
     },
     async updateSubscription(customerId, params) {
       const listed = await guarded("subscriptions.list", () => latestSubscription(customerId));

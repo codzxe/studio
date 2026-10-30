@@ -21,6 +21,9 @@ export type RenderFailureCode =
   | "RENDER_CLI_FAILED"
   | "RENDER_PROJECT_INVALID"
   | "RENDER_ASSET_MISSING"
+  // BIL-06/ENG-05: the spawn-time frame-ceiling guard (legacy rows queued
+  // before the gateway's queue-time guard; catalog code, 429 on the API).
+  | "RENDER_QUOTA_EXCEEDED"
   | "RENDER_INTERNAL";
 
 /**

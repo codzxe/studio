@@ -6,14 +6,16 @@
 // with app.onError (§7.3 envelope, never leak internals) and app.notFound
 // ({code: NOT_FOUND}) wrapping everything.
 
-import { randomUUID, createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { isIPv6 } from "node:net";
 
 import type { MiddlewareHandler } from "hono";
 
 import { StudioError } from "@studio/config";
+import { apiKeyStatementsToScopes } from "@studio/contracts";
 import { type Role, atLeast, can } from "@studio/db";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import type { AppBindings, WorkspaceContext } from "./context.js";
+import type { ApiKeyPrincipal, AppBindings, WorkspaceContext } from "./context.js";
 import { GatewayError } from "./errors.js";
 import { fingerprintPayload } from "./idempotency.js";
 import type { RouteClass } from "./rate-limit.js";
@@ -120,9 +122,43 @@ export function clientIp(c: Parameters<MiddlewareHandler<AppBindings>>[0]): stri
       .map((part) => part.trim())
       .filter((part) => part !== "");
     const trusted = parts[parts.length - 1];
-    if (trusted !== undefined && trusted !== "") return trusted;
+    if (trusted !== undefined && trusted !== "") return normalizeRateLimitIp(trusted);
   }
-  return c.req.header("x-real-ip") ?? "unknown";
+  return normalizeRateLimitIp(c.req.header("x-real-ip") ?? "unknown");
+}
+
+/**
+ * SEC-05 (2026-10-30 audit follow-up): IPv6 rate-limit keys normalize to the
+ * /64 prefix. A /64 is the standard ISP delegation — one attacker cycling
+ * host bits (every interface identifier inside their allocation) otherwise
+ * mints an unbounded number of fresh limiter buckets and brute-forces the
+ * scrypt share-password gate (and every other (ip, route-class) limit) at
+ * full speed. IPv4 and unparseable values pass through untouched.
+ */
+export function normalizeRateLimitIp(ip: string): string {
+  const bare = (ip.split("%")[0] ?? ip).trim();
+  // IPv4-mapped/compatible forms ("::ffff:192.0.2.1") carry a dotted quad —
+  // they cannot be split into hex groups; pass through per-address (no
+  // worse than the pre-fix posture, and never merges unrelated clients).
+  if (bare === "" || bare.includes(".") || !isIPv6(bare)) return ip;
+  // Expand "::" compression to the full 8 groups, then keep the first 4
+  // (the /64 network half). Groups are lowercase hex without leading zeros —
+  // the canonical form makes every host inside the /64 share ONE key.
+  const halves = bare.split("::");
+  if (halves.length > 2) return ip; // malformed (multiple ::) — untouched
+  const toGroups = (text: string): number[] =>
+    text
+      .split(":")
+      .filter((group) => group !== "")
+      .map((group) => Number.parseInt(group, 16));
+  const head = toGroups(halves[0] ?? "");
+  const tail = halves.length === 2 ? toGroups(halves[1] ?? "") : [];
+  if (halves.length === 1 ? head.length !== 8 : head.length + tail.length > 8) {
+    return ip; // not a shape we can safely expand — untouched
+  }
+  const middle = Array.from({ length: 8 - head.length - tail.length }, () => 0);
+  const groups = [...head, ...middle, ...tail].map((group) => group.toString(16));
+  return `${groups.slice(0, 4).join(":")}::/64`;
 }
 
 const IDEMPOTENCY_EXCLUDED_PATHS = [
@@ -303,59 +339,187 @@ function safeJsonParse(body: string): unknown {
 export function requireAuth(): MiddlewareHandler<AppBindings> {
   return async (c, next) => {
     const deps = c.get("deps");
+    const requestId = c.get("requestId");
     const session = await deps.auth.getSession(c.req.raw.headers);
     if (session === null) {
-      throw new StudioError("AUTH_REQUIRED", { requestId: c.get("requestId") });
+      throw new StudioError("AUTH_REQUIRED", { requestId });
     }
-    c.set("auth", { user: session.user, session: session.session });
-    // AUD-A8 (2026-10-30 deep audit): API-key sessions are content-plane
-    // PATs — pre-fix a leaked `projects:read` key acted with the minting
-    // user's FULL powers (scopes are stored/displayed but never enforced
-    // anywhere in the gateway), including minting MORE keys, inviting
-    // members and driving better-auth's own /v1/auth/* mutations. Until the
-    // per-scope capability middleware lands, keys are confined to the data
-    // plane: every /v1/auth/* route and every workspace-admin / money
-    // surface answers a typed 403.
     if (session.viaApiKey === true) {
-      assertApiKeySurface(c.req.method, c.req.path, c.get("requestId"));
+      // SEC-03 (2026-10-30 deep audit follow-up): API-key sessions were
+      // confined to the data plane but the key's stored scopes were NEVER
+      // consulted — a `projects:read` key could spend credits, delete
+      // projects and drive the full agent loop. The better-auth apiKey
+      // plugin's Bearer session-mock sets session.id = apiKey.id, so the
+      // row (statements + workspace binding) resolves by that id; the id
+      // comes from the authenticated session, never from request input.
+      const record = await deps.repos.apiKeys.findById(session.session.id);
+      if (record === null) {
+        // Verified by the plugin but no row — treat as unauthenticated.
+        throw new StudioError("AUTH_REQUIRED", { requestId });
+      }
+      const principal: ApiKeyPrincipal = {
+        id: record.id,
+        workspaceId: workspaceBindingOf(record.metadata),
+        scopes: scopesOfKey(record.permissions),
+      };
+      c.set("auth", { user: session.user, session: session.session, apiKey: principal });
+      enforceApiKeyAccess(principal, c.req.method, c.req.path, requestId);
+    } else {
+      c.set("auth", { user: session.user, session: session.session });
     }
     await next();
   };
 }
 
+/** `metadata.workspaceId` — null when absent or unparseable (fails closed). */
+function workspaceBindingOf(metadata: string | null): string | null {
+  if (metadata === null) return null;
+  try {
+    const parsed = JSON.parse(metadata) as { workspaceId?: unknown };
+    return typeof parsed.workspaceId === "string" ? parsed.workspaceId : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Stored statements JSON → wire scopes; null/garbage → [] (fail safe). */
+function scopesOfKey(permissions: string | null): readonly string[] {
+  if (permissions === null) return [];
+  try {
+    return apiKeyStatementsToScopes(JSON.parse(permissions) as unknown);
+  } catch {
+    return [];
+  }
+}
+
+/** What a Bearer API-key session may do with one route (SEC-03). */
+export type ApiKeyRouteAccess =
+  | { readonly kind: "any-key" }
+  | { readonly kind: "scope"; readonly scope: string }
+  | { readonly kind: "cookie-only"; readonly surface: string };
+
 /**
- * AUD-A8: the v1 API-key surface — everything a Bearer-minted session may
- * NOT touch. Cookie sessions are unaffected. GETs on data-plane resources
- * (projects, renders, threads, credits) stay allowed for automation keys.
+ * SEC-03: the v1 API-key capability table. Cookie sessions bypass it
+ * entirely. `any-key` = principal introspection every authenticated caller
+ * needs; `scope` = the @studio/contracts vocabulary the settings UI sells;
+ * `cookie-only` = surfaces a key may NEVER touch regardless of scopes.
+ * UNMAPPED /v1 ROUTES DEFAULT TO cookie-only — a new route must declare its
+ * key posture here or keys are locked out of it (fail closed).
  */
-function assertApiKeySurface(method: string, path: string, requestId: string): void {
-  // better-auth's own mount — a key session must never drive auth mutations
-  // (update-user, organization member/invite operations, key minting…).
-  if (path === "/v1/auth" || path.startsWith("/v1/auth/")) {
-    throw new GatewayError("API_KEY_FORBIDDEN", "API keys cannot use the auth surface.", {
+export function apiKeyRouteAccess(method: string, path: string): ApiKeyRouteAccess {
+  const m = method.toUpperCase();
+  const p = path;
+
+  // better-auth's own mount — keys never drive auth mutations.
+  if (p === "/v1/auth" || p.startsWith("/v1/auth/")) {
+    return { kind: "cookie-only", surface: "auth" };
+  }
+  // Membership mutation (invite acceptance) — account surface.
+  if (p.startsWith("/v1/invites/")) {
+    return { kind: "cookie-only", surface: "invites" };
+  }
+  // Principal introspection — every authenticated caller (§7.1).
+  if (p === "/v1/me" || p === "/v1/me/settings" || p === "/v1/models") {
+    return m === "GET" ? { kind: "any-key" } : { kind: "cookie-only", surface: "account" };
+  }
+
+  // Workspace surface: list/show/switch are introspection; EVERYTHING else
+  // (create, rename, members, invites, api-key management, audit export,
+  // ownership transfer) is administration — cookie-only.
+  if (p === "/v1/workspaces" || p.startsWith("/v1/workspaces/")) {
+    if (m === "GET" && /^\/v1\/workspaces\/[^/]+$/.test(p)) return { kind: "any-key" };
+    if (m === "POST" && /^\/v1\/workspaces\/[^/]+\/switch$/.test(p)) {
+      return { kind: "any-key" };
+    }
+    if (m === "GET" && p === "/v1/workspaces") return { kind: "any-key" };
+    return { kind: "cookie-only", surface: "workspace administration" };
+  }
+
+  // Money plane: reads are scope-gated (billing:read), mutations and the
+  // staff reconcile tool are cookie-only. (/v1/webhooks/stripe is public —
+  // signature-verified, never reaches requireAuth.)
+  if (p === "/v1/billing" || p.startsWith("/v1/billing/")) {
+    return m === "GET"
+      ? { kind: "scope", scope: "billing:read" }
+      : { kind: "cookie-only", surface: "billing" };
+  }
+  if (p === "/v1/credits" || p === "/v1/credits/ledger") {
+    return m === "GET"
+      ? { kind: "scope", scope: "billing:read" }
+      : { kind: "cookie-only", surface: "billing" };
+  }
+  if (p === "/v1/credits/reconcile") {
+    return { kind: "cookie-only", surface: "billing" };
+  }
+
+  // Share-link management: minting/revoking PUBLIC capability tokens is a
+  // cookie-only action by design (§5.3 sketch); listing is project data.
+  if (m === "POST" && /^\/v1\/projects\/[^/]+\/share-links$/.test(p)) {
+    return { kind: "cookie-only", surface: "share-link minting" };
+  }
+  if (m === "DELETE" && /^\/v1\/share\/[^/]+$/.test(p)) {
+    return { kind: "cookie-only", surface: "share-link management" };
+  }
+
+  // The agent loop: threads, turns, tools, runs (incl. apply/undo) — chat:run.
+  if (
+    /^\/v1\/projects\/[^/]+\/threads$/.test(p) ||
+    p.startsWith("/v1/threads/") ||
+    p.startsWith("/v1/runs/")
+  ) {
+    return { kind: "scope", scope: "chat:run" };
+  }
+
+  // The render pipeline end-to-end (queue, estimate, poll, cancel).
+  if (p === "/v1/renders" || p.startsWith("/v1/renders/")) {
+    return { kind: "scope", scope: "renders:queue" };
+  }
+
+  // Project content plane: reads → projects:read, mutations → projects:write.
+  if (
+    p === "/v1/projects" ||
+    p.startsWith("/v1/projects/") ||
+    p === "/v1/assets" ||
+    p.startsWith("/v1/assets/") ||
+    p.startsWith("/v1/comments/")
+  ) {
+    return m === "GET" || m === "HEAD"
+      ? { kind: "scope", scope: "projects:read" }
+      : { kind: "scope", scope: "projects:write" };
+  }
+
+  // Fail closed: unknown surfaces require a cookie session.
+  return { kind: "cookie-only", surface: "this surface" };
+}
+
+/** Apply the SEC-03 capability table to one authenticated key session. */
+function enforceApiKeyAccess(
+  principal: ApiKeyPrincipal,
+  method: string,
+  path: string,
+  requestId: string,
+): void {
+  const access = apiKeyRouteAccess(method, path);
+  if (access.kind === "any-key") return;
+  if (access.kind === "cookie-only") {
+    throw new GatewayError("API_KEY_FORBIDDEN", `API keys cannot use ${access.surface}.`, {
       status: 403,
-      hint: "Use a cookie session for account and workspace management.",
+      hint: "Use a cookie session for this operation.",
       requestId,
     });
   }
-  // Workspace administration (members, invites, api-keys, audit export) and
-  // the money plane (billing checkout/topup/portal/trial, reconcile) are
-  // cookie-only. `switch` stays allowed (it only selects the active org).
-  const isAdminSurface =
-    path.startsWith("/v1/workspaces/") &&
-    method !== "GET" &&
-    !/^\/+v1\/+workspaces\/+[^/]+\/+switch$/.test(path);
-  if (isAdminSurface || path.startsWith("/v1/billing/") || path === "/v1/credits/reconcile") {
-    throw new GatewayError(
-      "API_KEY_FORBIDDEN",
-      "API keys cannot manage workspaces, members or billing.",
-      {
-        status: 403,
-        hint: "Use a cookie session for workspace and billing operations.",
-        requestId,
-      },
-    );
-  }
+  // A "*" key stores the FULL statement map (mint-time expansion), which
+  // apiKeyStatementsToScopes normalizes back to ["*"] — grant every scope.
+  if (principal.scopes.includes("*") || principal.scopes.includes(access.scope)) return;
+  throw new GatewayError(
+    "API_KEY_FORBIDDEN",
+    `This API key lacks the required scope: ${access.scope}.`,
+    {
+      status: 403,
+      hint: `Mint a key with the "${access.scope}" scope (Settings → API keys) or use a cookie session.`,
+      requestId,
+    },
+  );
 }
 
 /**
@@ -400,6 +564,15 @@ export async function resolveWorkspaceContext(
   }
   if (!atLeast(role, minimumRole)) {
     throw new StudioError("FORBIDDEN", { requestId });
+  }
+  // SEC-03: a Bearer API key is bound to the workspace it was minted for
+  // (metadata.workspaceId). Even the minting user's OTHER workspaces read as
+  // 404 — a leaked key stays inside one tenant, and §12.1 means the denial
+  // never confirms the workspace exists. A key with no parsable binding
+  // (foreign mint path) fails closed the same way.
+  const apiKey = c.get("auth").apiKey;
+  if (apiKey !== undefined && apiKey.workspaceId !== full.organization.id) {
+    throw new StudioError("WORKSPACE_NOT_FOUND", { requestId });
   }
   const context: WorkspaceContext = {
     id: full.organization.id,

@@ -132,6 +132,33 @@ describe("resolveRenderKnobs (spike §2 mapping)", () => {
     expect(knobs.flags.fps).toBeUndefined();
     expect(knobs.effective.fps).toBe(COMP.frameRate);
   });
+
+  it("BIL-06: a hostile comp-native fps clamps to MAX_RENDER_FRAME_RATE", () => {
+    const hostile = { ...COMP, frameRate: 1_000_000 };
+    const knobs = resolveRenderKnobs({ format: "mp4", settings: {}, comp: hostile });
+    expect(knobs.effective.fps).toBe(240);
+    expect(knobs.flags.fps).toBe(240); // forced onto the CLI, not the comp rate
+  });
+
+  it("BIL-06: a legacy row's over-ceiling stored fps clamps to 240 too", () => {
+    const knobs = resolveRenderKnobs({
+      format: "mp4",
+      // Schema-capped at queue time since BIL-06; rows queued before are clamped.
+      settings: { frameRate: 1000 },
+      comp: COMP,
+    });
+    expect(knobs.effective.fps).toBe(240);
+    expect(knobs.flags.fps).toBe(240);
+  });
+
+  it("BIL-06: a sub-1 fps clamps up to 1 (no zero/negative frame counts)", () => {
+    const knobs = resolveRenderKnobs({
+      format: "mp4",
+      settings: { frameRate: 0.01 },
+      comp: COMP,
+    });
+    expect(knobs.effective.fps).toBe(1);
+  });
 });
 
 describe("renderOutputPaths (spike §2/§5)", () => {

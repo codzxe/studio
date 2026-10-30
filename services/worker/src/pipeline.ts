@@ -32,7 +32,7 @@ import { readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { type RenderFormatId, entitlementsFor } from "@studio/config";
-import { RENDER_SETTINGS_SCHEMA } from "@studio/contracts";
+import { MAX_RENDER_FRAMES, RENDER_SETTINGS_SCHEMA } from "@studio/contracts";
 import { isDbError } from "@studio/db";
 
 import {
@@ -184,6 +184,16 @@ export async function runJob(
     const repoRoot = defaultRepoRoot();
     const cli = resolveCliPath(deps.env.render.cliPath, repoRoot);
     const knobs = resolveRenderKnobs({ format, settings: settings.data, comp: hydrated.comp });
+    // BIL-06/ENG-05 (host-side frame-count guard): the gateway refuses
+    // over-ceiling jobs at QUEUE time, but legacy rows queued before that
+    // guard (and any path that bypasses the quote) stop HERE — typed, before
+    // any CLI spawn, so the hold refunds instead of burning worker CPU.
+    if (Math.ceil(knobs.effective.outputSeconds * knobs.effective.fps) > MAX_RENDER_FRAMES) {
+      return await fail(
+        "RENDER_QUOTA_EXCEEDED",
+        `frames>${MAX_RENDER_FRAMES} (seconds=${knobs.effective.outputSeconds}, fps=${knobs.effective.fps})`,
+      );
+    }
     const paths = renderOutputPaths(format, hydrated.workdir);
     const args = buildRenderArgs({
       projectPath: hydrated.projectPath,

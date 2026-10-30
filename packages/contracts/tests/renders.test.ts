@@ -106,6 +106,14 @@ describe("renders: settings schema (unchanged fields, timeTo refine kept)", () =
     expect(RENDER_SETTINGS_SCHEMA.safeParse({ width: 1080.5 }).success).toBe(false); // int
     expect(RENDER_SETTINGS_SCHEMA.safeParse({ frameRate: 0 }).success).toBe(false); // positive
   });
+
+  it("BIL-06: frameRate is capped to 1..240 (fractional OK)", () => {
+    expect(RENDER_SETTINGS_SCHEMA.safeParse({ frameRate: 240 }).success).toBe(true);
+    expect(RENDER_SETTINGS_SCHEMA.safeParse({ frameRate: 29.97 }).success).toBe(true);
+    expect(RENDER_SETTINGS_SCHEMA.safeParse({ frameRate: 0.5 }).success).toBe(false);
+    expect(RENDER_SETTINGS_SCHEMA.safeParse({ frameRate: 241 }).success).toBe(false);
+    expect(RENDER_SETTINGS_SCHEMA.safeParse({ frameRate: 1e6 }).success).toBe(false);
+  });
 });
 
 describe("renders: queue request (unchanged shape; server pins the version)", () => {

@@ -255,12 +255,15 @@ function planRank(planId: string): number {
  * rides the seam's RAW `handler` member — the exact better-auth HTTP
  * surface app.ts mounts at `/v1/auth/*`, called in-process with the
  * caller's forwarded session headers (GET /organization/list-invitations,
- * membership-checked by the org plugin itself). The response is parsed
- * defensively: anything that is not a JSON array of invitation-shaped rows
- * counts as ZERO pending — fail-open, never a crash (the members count
- * alone still enforces the hard floor; the gateway logs a warn). When a
- * typed listInvitations seam member lands on GatewayAuth, this function
- * body is the only cleanup (noted in the W1-e worklog).
+ * membership-checked by the org plugin itself).
+ *
+ * SEC-11 (2026-10-30 audit follow-up): this used to fail OPEN (any auth
+ * error → 0 pending → the seat gate under-counted and admitted invites
+ * past the paid seat limit). It now fails CLOSED: a transport failure, a
+ * non-OK auth answer, a malformed body or a non-array body renders a typed
+ * 503 SERVICE_UNAVAILABLE so the invite/checkout mutation is REFUSED until
+ * the seat count is knowable. (A real better-auth always answers a JSON
+ * array here; anything else means auth is misbehaving.)
  */
 export async function countPendingInvites(
   deps: GatewayDeps,
@@ -282,28 +285,29 @@ export async function countPendingInvites(
   try {
     response = await deps.auth.handler(new Request(url, { method: "GET", headers: forwarded }));
   } catch (error) {
+    // SEC-11: fail closed — the seat gate cannot run without this count.
     deps.logger.warn("seat_count_auth_unavailable", {
       organizationId,
       detail: error instanceof Error ? error.message : "unknown",
     });
-    return 0;
+    throw seatCountUnavailable(organizationId);
   }
   if (!response.ok) {
     deps.logger.warn("seat_count_auth_rejected", { organizationId, status: response.status });
-    return 0;
+    throw seatCountUnavailable(organizationId);
   }
   let body: unknown;
   try {
     body = await response.json();
   } catch {
     deps.logger.warn("seat_count_auth_malformed", { organizationId });
-    return 0;
+    throw seatCountUnavailable(organizationId);
   }
   if (!Array.isArray(body)) {
-    // The stub auth handler answers {"ok":true} — no invitation list, so
-    // stub-mode tests exercise the members side of the gate only (the
-    // DB-gated suite proves the real better-auth pending count).
-    return 0;
+    // SEC-11: a real better-auth answers an invitation array; anything else
+    // is an auth malfunction — refuse the seat-gated mutation, never guess.
+    deps.logger.warn("seat_count_auth_nonarray", { organizationId });
+    throw seatCountUnavailable(organizationId);
   }
   const now = Date.now();
   let pending = 0;
@@ -322,6 +326,20 @@ export async function countPendingInvites(
     }
   }
   return pending;
+}
+
+/** SEC-11: the seat count is unknowable → the seat-gated mutation is refused. */
+function seatCountUnavailable(organizationId: string): GatewayError {
+  return new GatewayError(
+    "SERVICE_UNAVAILABLE",
+    "Seat availability cannot be verified right now.",
+    {
+      status: 503,
+      hint: "The invite service is temporarily unavailable; try again shortly.",
+      retryable: true,
+      cause: new Error(`list-invitations failed for ${organizationId}`),
+    },
+  );
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1078,14 +1096,37 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
     return true;
   }
 
-  /** Records a Stripe customer + card fingerprint from a verified event. */
+  /**
+   * Records a Stripe customer + card fingerprint from a verified event.
+   *
+   * BIL-04 (2026-10-30 audit): real Stripe NEVER carries `cardFingerprint`
+   * metadata (that was the fake harness's model) — so on a completed
+   * Checkout the fingerprint is FETCHED from the session's payment chain
+   * (direct PM, or the payment intent's latest charge) and persisted.
+   * Without this, POST /v1/billing/trial 400s for every real customer:
+   * the card-required gate found no fingerprint, ever. Metadata (the fake
+   * harness) still wins when present so existing tests model cards as before.
+   */
   async function recordCustomer(
+    stripe: StripeSeam,
     organizationId: string,
     object: StripeEventLike["data"]["object"],
   ): Promise<void> {
     const customerId = nonEmptyString(object.customer);
     if (subscriptions === null || customerId === null) return;
-    const fingerprint = nonEmptyString(object.metadata?.cardFingerprint);
+    let fingerprint = nonEmptyString(object.metadata?.cardFingerprint);
+    if (fingerprint === null) {
+      const sessionId = nonEmptyString(object.id);
+      if (sessionId !== null) {
+        const fetched = await stripe.checkoutSessionCardFingerprint(sessionId);
+        if (fetched.ok && fetched.data.fingerprint !== null) {
+          fingerprint = fetched.data.fingerprint;
+        }
+        // A typed failure (session expired/purged) leaves fingerprint null —
+        // the customer row still lands; the trial route simply keeps asking
+        // for a card until a session resolves one.
+      }
+    }
     await subscriptions.ensureStripeCustomer(organizationId, {
       stripeCustomerId: customerId,
       ...(fingerprint !== null ? { cardFingerprint: fingerprint } : {}),
@@ -1118,9 +1159,9 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
     if (organizationId === null) return { ignored: "unattributed" };
 
     // Customer + payment-method bookkeeping (§M6 task 5): the repo is the
-    // durable customer mapping; cardFingerprint metadata is the fake's card
-    // model (real Stripe attaches the fingerprint with the payment method).
-    await recordCustomer(organizationId, object);
+    // durable customer mapping; BIL-04 resolves the card fingerprint from
+    // the completed session (real Stripe) or its metadata (the fake harness).
+    await recordCustomer(stripe, organizationId, object);
 
     const kind = object.metadata?.kind ?? null;
     if (kind === "topup") {
