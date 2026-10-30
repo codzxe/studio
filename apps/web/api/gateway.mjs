@@ -132798,7 +132798,7 @@ function dbEnvelope(error64, requestId) {
 }
 
 // ../../services/gateway/src/middleware.ts
-import { randomUUID as randomUUID4, createHash as createHash3 } from "node:crypto";
+import { createHash as createHash3, randomUUID as randomUUID4 } from "node:crypto";
 import { isIPv6 as isIPv62 } from "node:net";
 
 // ../../packages/contracts/src/envelope.ts
@@ -135448,9 +135448,7 @@ function normalizeRateLimitIp(ip) {
     return ip;
   }
   const middle = Array.from({ length: 8 - head.length - tail.length }, () => 0);
-  const groups = [...head, ...middle, ...tail].map(
-    (group4) => group4.toString(16)
-  );
+  const groups = [...head, ...middle, ...tail].map((group4) => group4.toString(16));
   return `${groups.slice(0, 4).join(":")}::/64`;
 }
 var IDEMPOTENCY_EXCLUDED_PATHS = [
@@ -135671,15 +135669,11 @@ function enforceApiKeyAccess(principal, method, path3, requestId) {
   const access = apiKeyRouteAccess(method, path3);
   if (access.kind === "any-key") return;
   if (access.kind === "cookie-only") {
-    throw new GatewayError(
-      "API_KEY_FORBIDDEN",
-      `API keys cannot use ${access.surface}.`,
-      {
-        status: 403,
-        hint: "Use a cookie session for this operation.",
-        requestId
-      }
-    );
+    throw new GatewayError("API_KEY_FORBIDDEN", `API keys cannot use ${access.surface}.`, {
+      status: 403,
+      hint: "Use a cookie session for this operation.",
+      requestId
+    });
   }
   if (principal.scopes.includes("*") || principal.scopes.includes(access.scope)) return;
   throw new GatewayError(
