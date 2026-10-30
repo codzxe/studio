@@ -176,7 +176,7 @@ export function reserveFor(estimatedCredits: number): number {
 // Plan merging (round 12 — pure port of the gateway's mergedCarrierPlan)
 // ---------------------------------------------------------------------------
 //
-// The client-driven loop (research/round12-design.md "TURN WIRE CONTRACT")
+// The client-driven loop (docs/research/round12-design.md "TURN WIRE CONTRACT")
 // accumulates one proposal carrier per write-tool call, then merges them into
 // ONE plan and POSTs `/v1/runs/:id/apply { plan }` — the server RE-compiles
 // authoritatively and re-judges the D-28 verdict, exactly like the existing

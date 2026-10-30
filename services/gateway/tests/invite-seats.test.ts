@@ -269,9 +269,10 @@ describe("invite seat gate (stub deps)", () => {
     expect(errCode(invite.body).code).toBe("SEATS_EXCEEDED");
   });
 
-  it("a non-invitation-shaped auth handler fails OPEN (members floor still enforced)", async () => {
-    // The plain fake answers {"ok":true} — pending count 0, so only the
-    // members side of the gate can refuse. This pins the defensive parse.
+  it("SEC-11: a non-invitation-shaped auth answer fails CLOSED (503, no invite minted)", async () => {
+    // The plain fake answers {"ok":true} — a real better-auth ALWAYS answers
+    // an invitation array, so this is an auth malfunction: the seat-gated
+    // mutation is refused (retryable 503), never under-counted open.
     const auth = new FakeGatewayAuth();
     const { org } = auth.signUp("owner");
     const repos = reposWithSubscription(auth, subscriptionRow("starter", "active"));
@@ -286,7 +287,35 @@ describe("invite seat gate (stub deps)", () => {
       },
       body: JSON.stringify({ email: uniqueEmail("mate"), role: "viewer" }),
     });
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(503);
+    const error = errCode((await response.json()) as Record<string, unknown>);
+    expect(error.code).toBe("SERVICE_UNAVAILABLE");
+    expect(error.retryable).toBe(true);
+    expect(auth.inviteLog).toHaveLength(0);
+  });
+
+  it("SEC-11: a thrown auth handler fails CLOSED (503, no invite minted)", async () => {
+    const auth = new SeatCountingAuth();
+    auth.handler = async () => {
+      throw new Error("auth is down");
+    };
+    const { org } = auth.signUp("owner");
+    const repos = reposWithSubscription(auth, subscriptionRow("starter", "active"));
+    const deps = stubDeps(ENV, { auth, repos });
+    const app = buildApp({ deps });
+    const response = await app.request(`/v1/workspaces/${org.id}/invites`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: "w3gw=fake-session-token-1",
+        "idempotency-key": unique("seat-inv"),
+      },
+      body: JSON.stringify({ email: uniqueEmail("mate"), role: "viewer" }),
+    });
+    expect(response.status).toBe(503);
+    const error = errCode((await response.json()) as Record<string, unknown>);
+    expect(error.code).toBe("SERVICE_UNAVAILABLE");
+    expect(auth.inviteLog).toHaveLength(0);
   });
 });
 

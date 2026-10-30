@@ -1,6 +1,6 @@
 /**
  * M4-L/M5-Q — the WEB full-loop integration test, ROUND-12 EDITION (docs/
- * phases/M4-SEAMS.md Seam 7; research/round12-design.md "Architecture" +
+ * phases/M4-SEAMS.md Seam 7; docs/research/round12-design.md "Architecture" +
  * "TURN WIRE CONTRACT"): the flagship that composes the REAL browser-side
  * client-driven agent loop and fakes ONLY the wire.
  *

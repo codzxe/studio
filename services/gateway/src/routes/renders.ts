@@ -53,6 +53,8 @@ import { Hono } from "hono";
 import {
   CANCEL_RENDER_SCHEMA,
   type EstimateResult,
+  MAX_RENDER_FRAMES,
+  MAX_RENDER_FRAME_RATE,
   QUEUE_RENDER_SCHEMA,
   RENDERS_QUERY_SCHEMA,
   RENDER_ESTIMATE_REQUEST_SCHEMA,
@@ -264,10 +266,13 @@ async function resolveRenderQuote(
   const height = settings.height ?? comp.height;
   const longEdgePx = Math.max(width, height);
 
-  // Effective frame rate for the ROW (the monthly-minutes accounting reads
-  // settingsJson.frameRate — materializing the comp's native fps keeps the
-  // usage sum honest when the client omits one).
-  const frameRate = settings.frameRate ?? comp.frameRate;
+  // BIL-06: the effective frame rate is clamped into [1, MAX_RENDER_FRAME_RATE]
+  // BEFORE it can touch pricing or the stored row — the comp's NATIVE fps is
+  // attacker-controlled project metadata (a hostile .ecproj claiming 1e6 fps
+  // inflated the frame count and the monthly-minutes accounting). Clamping
+  // keeps the price == stored == rendered invariant intact.
+  const rawFrameRate = settings.frameRate ?? comp.frameRate;
+  const frameRate = Math.min(Math.max(rawFrameRate, 1), MAX_RENDER_FRAME_RATE);
 
   // Range: the comp timeline is the bound — an out-point beyond the duration
   // is clamped so the priced range, the STORED range and the worker's range
@@ -280,6 +285,17 @@ async function resolveRenderQuote(
     timeFrom: settings.timeFrom,
     timeTo: clampedTo,
   });
+
+  // BIL-06/ENG-05: the per-job FRAME ceiling — the worker-bill DoS shape is a
+  // long-and-fast job (comp duration is unbounded engine-side; the plan gate
+  // bounds seconds but not seconds × fps). Refused typed at QUEUE time.
+  if (Math.ceil(outputSeconds * frameRate) > MAX_RENDER_FRAMES) {
+    throw new StudioError("RENDER_QUOTA_EXCEEDED", {
+      requestId,
+      message: `This render needs more than ${MAX_RENDER_FRAMES.toLocaleString("en-US")} frames.`,
+      hint: "Render a shorter range or a lower frame rate.",
+    });
+  }
 
   return {
     project,

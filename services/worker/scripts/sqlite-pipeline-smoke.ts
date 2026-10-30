@@ -255,7 +255,7 @@ async function main(): Promise<void> {
     const swept1 = await repos.renders.requeueStale(1, 3);
     const afterSweep1 = await repos.renders.get(workspaceId, renderA.id);
     assert(
-      swept1 === 1 && afterSweep1.status === "queued" && afterSweep1.attempts === 1,
+      swept1.requeued === 1 && afterSweep1.status === "queued" && afterSweep1.attempts === 1,
       "requeueStale: stale running → queued (branch 1)",
     );
     // claim again (attempt 2), go stale again → still under maxAttempts.
@@ -269,7 +269,9 @@ async function main(): Promise<void> {
     const swept2 = await repos.renders.requeueStale(1, 3);
     const terminal = await repos.renders.get(workspaceId, renderA.id);
     assert(
-      swept2 === 1 &&
+      swept2.requeued === 0 &&
+        swept2.failed.length === 1 &&
+        swept2.failed[0]?.workspaceId === workspaceId &&
         terminal.status === "failed" &&
         terminal.errorCode === "RENDER_INTERNAL" &&
         terminal.error === "worker lost mid-render",

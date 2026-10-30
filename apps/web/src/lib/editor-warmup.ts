@@ -344,6 +344,11 @@ let prewarmStarted = false;
 export function prewarmEditor(probe: () => Promise<boolean> = probeEditorGpu): void {
   if (prewarmStarted || typeof window === "undefined") return;
   prewarmStarted = true;
+  // PERF (2026-10-30 audit): honor Save-Data — users on metered/slow
+  // connections explicitly opted out of a ~50 MB speculative download;
+  // the editor's own fetch path is unaffected (they can still open it).
+  const connection = (navigator as { connection?: { saveData?: boolean } }).connection;
+  if (connection?.saveData === true) return;
   void probe().then(
     (supported) => {
       if (!supported) return;
@@ -367,4 +372,22 @@ export function __resetEditorWarmupForTests(): void {
   if (typeof window !== "undefined") {
     (window as WarmupWindow)[WARMUP_WINDOW_KEY] = undefined;
   }
+}
+
+/** Static (non-project) first segments under /w — no editor intent. */
+const NON_PROJECT_SEGMENTS = new Set(["projects", "billing", "settings"]);
+
+/**
+ * PERF (2026-10-30 audit): editor-intent surfaces for the wasm prewarm —
+ * project contexts only (`/w/<slug>…`). Pre-fix the shell mounted the
+ * prewarm on EVERY authenticated page, fetching + compiling the ~50 MB
+ * engine wasm for users browsing billing/settings who never open the
+ * editor. Static shell routes and the workspace root are excluded; the
+ * editor route itself matches (same project prefix).
+ */
+export function isEditorIntentPath(pathname: string | null): boolean {
+  if (pathname === null) return false;
+  const match = /^\/w\/([^/]+)/.exec(pathname);
+  if (match === null) return false;
+  return !NON_PROJECT_SEGMENTS.has(match[1] ?? "");
 }

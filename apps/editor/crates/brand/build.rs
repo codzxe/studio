@@ -7,12 +7,13 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    println!("cargo::rerun-if-changed=../../../brand.json");
+    println!("cargo::rerun-if-changed=../../../../brand.json");
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR");
     let dest = Path::new(&out_dir).join("brand_generated.rs");
 
-    // Repo root: crates/brand/build.rs -> up 3.
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../brand.json");
+    // Repo root: apps/editor/crates/brand/build.rs -> up 4
+    // (2026-10-30 restructure: editor/ moved under apps/, one level deeper).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../brand.json");
     let src = fs::read_to_string(&root).ok().and_then(|s| serde_json_min(&s));
 
     let get = |key: &str, fallback: &str| {

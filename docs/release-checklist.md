@@ -52,10 +52,10 @@ worklog W1-B / W1-D / W1-E / W1-C / W1-int-remediation):
 - [ ] Engine pin verified: vendor clone at `872748fb` (ADR-0001);
       `engine-patches/scripts/apply-engine-patches.sh --check` exits clean.
       *Superseded by the pivot (ADR-0006):* the engine is the vendored
-      EffectCraft editor at `editor/` (pin `9db7f3b2`, v0.13.0); its wasm dist
+      EffectCraft editor at `apps/editor/` (pin `9db7f3b2`, v0.13.0); its wasm dist
       is built + committed at `apps/web/public/editor/` (re-tuned + de-brand
       verified 2026-10-24 — W1-C). No external vendor clone or patch job
-      exists; the in-tree patch is `editor/patches/0001` (de-brand).
+      exists; the in-tree patch is `apps/editor/patches/0001` (de-brand).
 - [ ] `pnpm install` (lockfile is generated on first install — known limitation;
       do not commit a lockfile as part of this gate).
       *Stale — flipped 2026-10-24:* `pnpm-lock.yaml` IS committed and canonical
@@ -99,9 +99,9 @@ typecheck / licence gate / editor `cargo check` / e2e `continue-on-error`).
       `cargo check -p photocraft-engine` → `cargo test panic_hunt --ignored` —
       both green (job skips cleanly only when `engine-patches/**` is empty).
       *Pre-pivot, superseded:* no engine-patches job exists; the vendored
-      editor carries `editor/patches/0001` (de-brand) applied in-tree. The
+      editor carries `apps/editor/patches/0001` (de-brand) applied in-tree. The
       beefier-box Rust gates (`cargo test --workspace`, clippy, `cargo xtask
-      wasm`) remain owed per `editor/UPSTREAM.md`.
+      wasm`) remain owed per `apps/editor/UPSTREAM.md`.
 
 ## 2. Evals gates (§19 Phase 2)
 

@@ -35,7 +35,7 @@ with named layers, keyframes, effects and a render queue.
 |---|---|
 | Editor | EffectCraft fork, full upstream UI, **UI-frozen** |
 | Runtime | Web-first: WASM editor in the browser; native later |
-| Repo | One product monorepo; `editor/` is a self-contained EffectCraft subtree |
+| Repo | One product monorepo; `apps/editor/` is a self-contained EffectCraft subtree |
 | Editor boundary | Same-origin iframe at `/editor/`; `window.effectcraft` is the API |
 | Chat | React overlay inside the editor viewport; floating default, sidebar optional |
 | Models | Vercel AI SDK + self-hosted LiteLLM |
@@ -143,15 +143,15 @@ studio/
   docs/
 ```
 
-### 4.1 Why a self-contained `editor/`
+### 4.1 Why a self-contained `apps/editor/`
 
 - Upstream can be re-pinned without resolving a Cargo workspace conflict.
 - The UI-frozen rule is enforced by file ownership: no product PR touches
-  `editor/crates/ui-egui`.
-- The worker can call `editor/target/release/effectcraft-cli` without sharing Rust
+  `apps/editor/crates/ui-egui`.
+- The worker can call `apps/editor/target/release/effectcraft-cli` without sharing Rust
   types.
 - `craft-libs` and FilmCraft crates remain pinned git dependencies inside
-  `editor/Cargo.toml`. Do not vendor them unless CI must build offline.
+  `apps/editor/Cargo.toml`. Do not vendor them unless CI must build offline.
 
 ### 4.2 Build commands (target)
 
@@ -164,7 +164,7 @@ pnpm test
 pnpm e2e
 
 # Editor
-cd editor
+cd apps/editor
 cargo xtask web --serve 8765   # build + serve the WASM editor locally
 cargo xtask web                # production dist
 cargo test --workspace
@@ -259,7 +259,7 @@ session. The SaaS then loads the cloud project explicitly.
 
 ### 6.2 The bridge
 
-EffectCraft already exposes `window.effectcraft` (see `editor/docs/web.md`). We wrap it
+EffectCraft already exposes `window.effectcraft` (see `apps/editor/docs/web.md`). We wrap it
 in `packages/editor-bridge` with typed methods:
 
 ```ts
@@ -337,7 +337,7 @@ whole project JSON as chat context.
 
 ### 6.6 What we do not change
 
-- No edits to `editor/crates/ui-egui` panels, menus, timeline, toolbar, theme or
+- No edits to `apps/editor/crates/ui-egui` panels, menus, timeline, toolbar, theme or
   shortcuts.
 - No new native panel in v1.
 - No reskin of the editor. The chat overlay harmonizes with it; it does not restyle it.
@@ -888,7 +888,7 @@ The architecture is considered implemented when:
 
 1. `editor/` builds a pinned WASM editor and serves at `/editor/` with COOP/COEP.
 2. The editor UI is visually identical to upstream EffectCraft; no product changes in
-   `editor/crates/ui-egui`.
+   `apps/editor/crates/ui-egui`.
 3. A signed-in user can create a project, load it in the editor, edit, autosave a
    version, close and reopen it with the same composition tree.
 4. Assets upload, register under stable virtual paths and survive a reload.

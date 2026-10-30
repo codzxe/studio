@@ -1,5 +1,5 @@
 // @studio/gateway — POST /v1/threads/:id/turn (round-12 TURN WIRE CONTRACT,
-// research/round12-design.md): the STATELESS per-turn agent route.
+// docs/research/round12-design.md): the STATELESS per-turn agent route.
 //
 // The browser owns the agent loop; the gateway does ONE bounded model call
 // per request (the AI SDK v7 transport in litellm/openai.ts). Nothing
@@ -50,12 +50,12 @@ import {
 } from "@studio/contracts";
 
 import { StudioError } from "@studio/config";
+import { deriveIdempotencyKey } from "@studio/db";
 import { AUTO_APPLY_SETTING_UNAVAILABLE, autoApplyDecision } from "../auto-apply.js";
 import type { AppContext, GatewayDeps } from "../context.js";
 import { creditsToLedgerMicrocredits } from "../credits-display.js";
 import { GatewayError } from "../errors.js";
 import { pathParam } from "../http.js";
-import { deriveIdempotencyKey } from "@studio/db";
 import type { AggregatedToolCall, OpenAIChatMessage } from "../litellm/openai.js";
 import {
   type OpenAITurnDeps,
@@ -804,8 +804,13 @@ async function resolveToolCalls(
     }
     if (tool.id === "studio.plan_edit") {
       const goal = (validation.args as { goal?: string }).goal ?? "";
+      // PERF-08 (2026-10-30 audit): the structured plan side-call doesn't
+      // need the premium model — resending the full conversation on
+      // studio-smart roughly doubled input-token spend on plan-bearing
+      // turns. Route it to the fast alias (permitted on every plan,
+      // including trial) per the docs' own model table.
       const attempt = await serverSidePlan(input.modelDeps, {
-        model: input.model,
+        model: "studio-fast",
         goal,
         conversation: input.messages,
         signal: input.signal,

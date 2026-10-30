@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { relations, sql } from "drizzle-orm";
 import {
   type AnySQLiteColumn,
+  check,
   index,
   integer,
   primaryKey,
@@ -494,6 +495,19 @@ export const creditLedger = sqliteTable(
     index("credit_ledger_workspace_created_idx").on(t.workspaceId, sql`${t.createdAt} desc`),
     index("credit_ledger_run_idx").on(t.runId),
     index("credit_ledger_render_idx").on(t.renderId),
+    // BIL-07 twin: the same money invariants as the pg schema (see schema.ts).
+    check(
+      "credit_ledger_kind_check",
+      sql`${t.kind} in ('grant', 'reserve', 'commit', 'refund', 'adjust')`,
+    ),
+    check(
+      "credit_ledger_amount_sign_check",
+      sql`((${t.kind} = 'grant' and ${t.amount} > 0) or (${t.kind} = 'refund' and ${t.amount} > 0) or (${t.kind} = 'reserve' and ${t.amount} < 0) or (${t.kind} = 'commit' and ${t.amount} <= 0) or ${t.kind} = 'adjust')`,
+    ),
+    check(
+      "credit_ledger_amount_ceiling_check",
+      sql`${t.amount} <= 1000000000000000 and ${t.amount} >= -1000000000000000`,
+    ),
   ],
 );
 

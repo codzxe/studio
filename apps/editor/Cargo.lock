@@ -4151,6 +4151,7 @@ dependencies = [
  "studio-render",
  "studio-text",
  "studio-time",
+ "web-time",
 ]
 
 [[package]]

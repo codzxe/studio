@@ -54,14 +54,14 @@ pub const MAX_RUNS: usize = 20_000;
 /// Longest one outermost evaluation may take (its script runs and the expressions it reads),
 /// checked between runs and while a script runs: endless or very long loops, and a script that
 /// loops a while and then reads many values (re-running the loop once per value), stop here.
-/// Native builds only (the web build has no clock here; loops stop at the loop limit there).
+/// ENG-02: enforced on BOTH targets — web_time::Instant works under wasm.
 pub const MAX_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Start the work budget of an outermost evaluation.
 fn budget_start() {
     RUNS.with(|r| r.set(0));
-    #[cfg(not(target_arch = "wasm32"))]
-    runtime::STARTED.with(|s| s.set(Some(std::time::Instant::now())));
+    // ENG-02: web_time::Instant — the budget runs on the web too now.
+    runtime::STARTED.with(|s| s.set(Some(web_time::Instant::now())));
 }
 
 /// An error once the outermost evaluation has used up its runs or its time.

@@ -86,13 +86,14 @@ type SubscriptionTransitionInput = Parameters<Repos["subscriptions"]["transition
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * credit_ledger.amount is a drizzle `integer` (int32) today; M6-A flagged the
- * Studio monthly allowance (10B µc) as over-range until the column moves to
- * bigint. Webhook grants parsed from external metadata are range-checked
- * against this ceiling — a hostile amount is audited-ignored, never a 500
- * that would make Stripe retry the poison forever.
+ * credit_ledger.amount moved to bigint in migration 0003 — the old int32
+ * ceiling was over-range for the Studio allowance (10B µc). Grants are
+ * still range-checked against a sane ceiling (1e15 µc = 1B credits, well
+ * under Number.MAX_SAFE_INTEGER): a hostile/corrupted amount is
+ * audited-ignored, never minted, never a 500 that would make Stripe retry
+ * the poison forever.
  */
-const MAX_LEDGER_AMOUNT = 2_147_483_647;
+const MAX_LEDGER_AMOUNT = 1_000_000_000_000_000;
 
 /**
  * Past-due dunning window (§M6 task 2 "grace period"). The M6-B fake harness
@@ -254,12 +255,15 @@ function planRank(planId: string): number {
  * rides the seam's RAW `handler` member — the exact better-auth HTTP
  * surface app.ts mounts at `/v1/auth/*`, called in-process with the
  * caller's forwarded session headers (GET /organization/list-invitations,
- * membership-checked by the org plugin itself). The response is parsed
- * defensively: anything that is not a JSON array of invitation-shaped rows
- * counts as ZERO pending — fail-open, never a crash (the members count
- * alone still enforces the hard floor; the gateway logs a warn). When a
- * typed listInvitations seam member lands on GatewayAuth, this function
- * body is the only cleanup (noted in the W1-e worklog).
+ * membership-checked by the org plugin itself).
+ *
+ * SEC-11 (2026-10-30 audit follow-up): this used to fail OPEN (any auth
+ * error → 0 pending → the seat gate under-counted and admitted invites
+ * past the paid seat limit). It now fails CLOSED: a transport failure, a
+ * non-OK auth answer, a malformed body or a non-array body renders a typed
+ * 503 SERVICE_UNAVAILABLE so the invite/checkout mutation is REFUSED until
+ * the seat count is knowable. (A real better-auth always answers a JSON
+ * array here; anything else means auth is misbehaving.)
  */
 export async function countPendingInvites(
   deps: GatewayDeps,
@@ -281,28 +285,29 @@ export async function countPendingInvites(
   try {
     response = await deps.auth.handler(new Request(url, { method: "GET", headers: forwarded }));
   } catch (error) {
+    // SEC-11: fail closed — the seat gate cannot run without this count.
     deps.logger.warn("seat_count_auth_unavailable", {
       organizationId,
       detail: error instanceof Error ? error.message : "unknown",
     });
-    return 0;
+    throw seatCountUnavailable(organizationId);
   }
   if (!response.ok) {
     deps.logger.warn("seat_count_auth_rejected", { organizationId, status: response.status });
-    return 0;
+    throw seatCountUnavailable(organizationId);
   }
   let body: unknown;
   try {
     body = await response.json();
   } catch {
     deps.logger.warn("seat_count_auth_malformed", { organizationId });
-    return 0;
+    throw seatCountUnavailable(organizationId);
   }
   if (!Array.isArray(body)) {
-    // The stub auth handler answers {"ok":true} — no invitation list, so
-    // stub-mode tests exercise the members side of the gate only (the
-    // DB-gated suite proves the real better-auth pending count).
-    return 0;
+    // SEC-11: a real better-auth answers an invitation array; anything else
+    // is an auth malfunction — refuse the seat-gated mutation, never guess.
+    deps.logger.warn("seat_count_auth_nonarray", { organizationId });
+    throw seatCountUnavailable(organizationId);
   }
   const now = Date.now();
   let pending = 0;
@@ -321,6 +326,20 @@ export async function countPendingInvites(
     }
   }
   return pending;
+}
+
+/** SEC-11: the seat count is unknowable → the seat-gated mutation is refused. */
+function seatCountUnavailable(organizationId: string): GatewayError {
+  return new GatewayError(
+    "SERVICE_UNAVAILABLE",
+    "Seat availability cannot be verified right now.",
+    {
+      status: 503,
+      hint: "The invite service is temporarily unavailable; try again shortly.",
+      retryable: true,
+      cause: new Error(`list-invitations failed for ${organizationId}`),
+    },
+  );
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -739,9 +758,23 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
         throw new StudioError("VALIDATION_FAILED", { requestId: c.get("requestId") });
       }
       const customerId = await ensureWorkspaceCustomer(c, workspace, stripe);
+      // SEC-06 (2026-10-30 audit): Stripe does not restrict per-session
+      // return_url domains — an absolute attacker URL would redirect the
+      // user off-site on portal exit. Only same-origin URLs pass; anything
+      // else falls back to the app's own billing page.
+      const appOrigin = new URL(appBase()).origin;
+      let returnUrl = `${appBase()}/billing`;
+      try {
+        const candidate = new URL(parsed.data.returnUrl ?? `${appBase()}/billing`, appBase());
+        if (candidate.origin === appOrigin) {
+          returnUrl = candidate.origin + candidate.pathname + candidate.search;
+        }
+      } catch {
+        // Unparseable — keep the safe default.
+      }
       const session = await stripe.portal({
         customerId,
-        returnUrl: parsed.data.returnUrl ?? `${appBase()}/billing`,
+        returnUrl,
       });
       const body: PortalResponse = { url: session.url };
       return ok(c, body);
@@ -1063,14 +1096,37 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
     return true;
   }
 
-  /** Records a Stripe customer + card fingerprint from a verified event. */
+  /**
+   * Records a Stripe customer + card fingerprint from a verified event.
+   *
+   * BIL-04 (2026-10-30 audit): real Stripe NEVER carries `cardFingerprint`
+   * metadata (that was the fake harness's model) — so on a completed
+   * Checkout the fingerprint is FETCHED from the session's payment chain
+   * (direct PM, or the payment intent's latest charge) and persisted.
+   * Without this, POST /v1/billing/trial 400s for every real customer:
+   * the card-required gate found no fingerprint, ever. Metadata (the fake
+   * harness) still wins when present so existing tests model cards as before.
+   */
   async function recordCustomer(
+    stripe: StripeSeam,
     organizationId: string,
     object: StripeEventLike["data"]["object"],
   ): Promise<void> {
     const customerId = nonEmptyString(object.customer);
     if (subscriptions === null || customerId === null) return;
-    const fingerprint = nonEmptyString(object.metadata?.cardFingerprint);
+    let fingerprint = nonEmptyString(object.metadata?.cardFingerprint);
+    if (fingerprint === null) {
+      const sessionId = nonEmptyString(object.id);
+      if (sessionId !== null) {
+        const fetched = await stripe.checkoutSessionCardFingerprint(sessionId);
+        if (fetched.ok && fetched.data.fingerprint !== null) {
+          fingerprint = fetched.data.fingerprint;
+        }
+        // A typed failure (session expired/purged) leaves fingerprint null —
+        // the customer row still lands; the trial route simply keeps asking
+        // for a card until a session resolves one.
+      }
+    }
     await subscriptions.ensureStripeCustomer(organizationId, {
       stripeCustomerId: customerId,
       ...(fingerprint !== null ? { cardFingerprint: fingerprint } : {}),
@@ -1103,9 +1159,9 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
     if (organizationId === null) return { ignored: "unattributed" };
 
     // Customer + payment-method bookkeeping (§M6 task 5): the repo is the
-    // durable customer mapping; cardFingerprint metadata is the fake's card
-    // model (real Stripe attaches the fingerprint with the payment method).
-    await recordCustomer(organizationId, object);
+    // durable customer mapping; BIL-04 resolves the card fingerprint from
+    // the completed session (real Stripe) or its metadata (the fake harness).
+    await recordCustomer(stripe, organizationId, object);
 
     const kind = object.metadata?.kind ?? null;
     if (kind === "topup") {
@@ -1116,10 +1172,14 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
       // grants; an unpaid session's eventual settlement re-fires through
       // the invoice arm, which is idempotent on the invoice id.
       const checkoutObject = object as unknown as Record<string, unknown>;
+      // BIL-05 (2026-10-30 audit): fail CLOSED — only an explicit "paid"
+      // grants. The old `!== ""` special case granted when the field was
+      // absent; real Stripe payment-mode sessions always carry it, and a
+      // money arm must never trust its absence.
       const paymentStatus =
         typeof checkoutObject.payment_status === "string" ? checkoutObject.payment_status : "";
-      if (paymentStatus !== "" && paymentStatus !== "paid") {
-        return { ignored: `topup.${paymentStatus}` };
+      if (paymentStatus !== "paid") {
+        return { ignored: `topup.${paymentStatus || "unknown"}` };
       }
       const granted = await grantTopUp(
         organizationId,
@@ -1345,17 +1405,20 @@ export function billingRoutes(deps: GatewayDeps): Hono<AppBindings> {
     // the once-per-period money event Stripe guarantees; the grant is
     // idempotent on the invoice id so redeliveries can never double-grant.
     // Top-up invoices never carry the allowance (their credits are the pack).
-    if (
-      subscriptions !== null &&
-      object.metadata?.kind !== "topup" &&
-      organizationId !== null
-    ) {
+    if (subscriptions !== null && object.metadata?.kind !== "topup" && organizationId !== null) {
       const row = await subscriptions.getByOrganization(organizationId);
       if (row !== null) {
         const allowance = entitlementsFor(row.planId).monthlyCreditAllowance;
-        if (allowance > 0) {
+        // BIL-01 (2026-10-30 audit): monthlyCreditAllowance is ALREADY in µc
+        // (plans.ts: 50/500/2000/10_000 × MICROCREDITS_PER_CREDIT). The old
+        // creditsToMicrocredits() wrapper double-converted — every paid plan
+        // was over-granted ×10⁶ (Starter buyers got 500,000,000 credits for
+        // $12) and the studio tier RangeError'd into a Stripe retry poison
+        // loop. Grant the catalog value directly, behind the same ceiling
+        // as top-ups (BIL-07 defense-in-depth).
+        if (allowance > 0 && allowance <= MAX_LEDGER_AMOUNT) {
           await deps.repos.ledger.grant(organizationId, {
-            amount: creditsToMicrocredits(allowance),
+            amount: allowance,
             idempotencyKey: `stripe:sub-allowance:${invoiceId}`,
             metadata: {
               kind: "subscription-allowance",

@@ -1,4 +1,4 @@
-// Round-12 TURN WIRE CONTRACT tests (research/round12-design.md — pinned).
+// Round-12 TURN WIRE CONTRACT tests (docs/research/round12-design.md — pinned).
 //
 // POST /v1/threads/:id/turn request bodies, the TurnMessage role union, the
 // TurnToolCall proposal carrier, the turn.* SSE events and the reducer's

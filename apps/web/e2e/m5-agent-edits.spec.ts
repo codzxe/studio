@@ -13,7 +13,7 @@
  * recipe — env, seed, the staged `.ecproj` fixture, baselines).
  *
  * ----------------------------------------------------------------------------
- * ROUND-12 TRUTH — the client-driven turn loop (research/round12-design.md)
+ * ROUND-12 TRUTH — the client-driven turn loop (docs/research/round12-design.md)
  * ----------------------------------------------------------------------------
  *
  * The gateway is now STATELESS PER TURN: the run loop lives in the browser

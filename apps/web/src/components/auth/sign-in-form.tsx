@@ -13,13 +13,27 @@ import { type FormEvent, useState } from "react";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
+ * SEC-04 (2026-10-30 audit): only same-origin relative paths may drive the
+ * post-auth redirect. The raw `?next=` value was passed straight to
+ * router.push() — an absolute URL ("https://evil.example") or a
+ * protocol-relative one ("//evil.example") turned sign-in into an open
+ * redirect, ideal for post-authentication phishing. Anything that is not a
+ * safe in-app path falls back to the workspace home.
+ */
+function sanitizeNextPath(raw: string | null): string {
+  if (raw === null) return "/w";
+  if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return "/w";
+  return raw;
+}
+
+/**
  * Sign-in form (§8.2): OAuth first, email divider, email + password with
  * show/hide, forgot link, inline errors (never toasts), ?next= round-trip.
  */
 export function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get("next") ?? "/w";
+  const next = sanitizeNextPath(searchParams.get("next"));
   // M9-H: /reset-password sends the user here with ?reset=1 after a
   // successful password change — surfaced as an inline success note.
   const passwordReset = searchParams.get("reset") === "1";

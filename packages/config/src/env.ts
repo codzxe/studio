@@ -405,7 +405,7 @@ export const ENV_VAR_SPECS: readonly EnvVarMeta[] = [
   {
     name: "STUDIO_ENGINE_CLI_PATH",
     purpose:
-      "Absolute path to the studio-cli binary the render worker spawns. Resolution order: this value, else <repo>/editor/target/release/studio-cli if present, else a PATH lookup.",
+      "Absolute path to the studio-cli binary the render worker spawns. Resolution order: this value, else <repo>/apps/editor/target/release/studio-cli if present, else a PATH lookup.",
     group: "render",
     required: false,
     secret: false,

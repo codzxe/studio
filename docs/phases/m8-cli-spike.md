@@ -5,11 +5,11 @@ Evidence file for M8 (renders and export). Produced by the W6/M8-E spike
 Everything below was **verified empirically** on this box against the vendored
 pin (`editor/`, v0.13.0, built with rustc 1.99.1 `cargo build --release -p
 effectcraft-cli`, wall ~45 min cold, binary 86.5 MB at
-`editor/target/release/effectcraft-cli`).
+`apps/editor/target/release/effectcraft-cli`).
 
 ## 1. Binary resolution order (worker)
 
-`EFFECTCRAFT_CLI_PATH` env → else `<repo>/editor/target/release/effectcraft-cli`
+`EFFECTCRAFT_CLI_PATH` env → else `<repo>/apps/editor/target/release/effectcraft-cli`
 if it exists → else `effectcraft-cli` on PATH. The binary is a **build
 artifact, never committed** (only the wasm dist is a committed artifact per
 D-17); CI/ops rebuild it with the cargo command above (git deps

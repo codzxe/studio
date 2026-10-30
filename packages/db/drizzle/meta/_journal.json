@@ -64,6 +64,13 @@
       "when": 1793031066912,
       "tag": "0008_parallel_black_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793388922487,
+      "tag": "0009_rare_shinobi_shaw",
+      "breakpoints": true
     }
   ]
 }

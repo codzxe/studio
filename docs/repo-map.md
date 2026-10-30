@@ -105,9 +105,9 @@ see the .gitignore stale-tsc-emit block).
   token-styled; every primitive has a `*.example.tsx` gallery + unit tests).
   Key entries: `src/components/*`, `src/styles/tokens.css`.
 
-### `editor/` — vendored EffectCraft editor (the product editor)
+### `apps/editor/` — vendored EffectCraft editor (the product editor)
 
-Byte-identical upstream pin `9db7f3b2` (v0.13.0) per `editor/UPSTREAM.md` and
+Byte-identical upstream pin `9db7f3b2` (v0.13.0) per `apps/editor/UPSTREAM.md` and
 ADR-0006; the wasm dist is built with the Rust toolchain (`cargo xtask web`)
 and committed under `apps/web/public/editor/` (re-tuned 2026-10-24 to a
 49.4 MB wasm — W1-C/W1-E). Editor UI is frozen (law #7);
@@ -177,7 +177,7 @@ here), `e2e-probe-editor.mjs` (the committed editor-boot probe evidence),
 Editor: `build-editor-dist.sh` (canonical wasm-dist build + staging into
 `apps/web/public/editor/`), `build_editor_web.sh` (the 4 GB-box OOM-workaround
 chunked `cargo build` primitive behind it), `debrand_editor.py` +
-`make_studio_assets.py` (provenance: they generate the editor/patches/0001
+`make_studio_assets.py` (provenance: they generate the apps/editor/patches/0001
 de-brand patch per ADR-0006 d10 — keep for upstream re-pins). Captures:
 `captures/` (marketing/editor screenshot + webm tooling; `run-captures.sh`
 is the entry — off-limits to doc purges). License gate: `check-licenses.mjs`.

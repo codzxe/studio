@@ -154,15 +154,61 @@ function ecprojFixture(): { bytes: Buffer; sha256: string } {
   return { bytes, sha256: createHash("sha256").update(bytes).digest("hex") };
 }
 
+/**
+ * BIL-06 fixture: a project whose one comp ("Hostile Comp") carries an
+ * attacker-chosen duration + native frame rate — the worker-bill DoS shape
+ * (unbounded seconds × fps) the frame ceiling and the fps clamp must tame.
+ */
+function hostileCompProject(
+  durationSeconds: number,
+  frameRate: { num: number; den: number },
+): { bytes: Buffer; sha256: string } {
+  const project = {
+    schema: 2,
+    settings: {},
+    items: {
+      "1": {
+        id: 1,
+        name: "Hostile Comp",
+        comment: "",
+        label: "None",
+        parent: null,
+        kind: {
+          type: "Comp",
+          width: 1280,
+          height: 720,
+          pixel_aspect: 1.0,
+          frame_rate: frameRate,
+          duration: secondsToTicks(durationSeconds),
+          display_start: 0,
+          background: [0, 0, 0],
+          work_area: [0, secondsToTicks(durationSeconds)],
+          layers: [],
+          markers: [],
+        },
+      },
+    },
+    next_id: 2,
+  };
+  const bytes = Buffer.from(JSON.stringify(project), "utf8");
+  return { bytes, sha256: createHash("sha256").update(bytes).digest("hex") };
+}
+
 async function uploadVersion(
   ws: Workspace,
   projectId: string,
   fixture: { bytes: Buffer; sha256: string },
+  options: { baseVersionId?: string | null } = {},
 ): Promise<string> {
   const query = new URLSearchParams({
     sha256: fixture.sha256,
     sizeBytes: String(fixture.bytes.byteLength),
   });
+  // A non-first snapshot must declare its base (§9.3 PROJECT_VERSION_CONFLICT);
+  // null means an explicit first snapshot (no query param).
+  if (typeof options.baseVersionId === "string") {
+    query.set("baseVersionId", options.baseVersionId);
+  }
   const response = await api(
     server.base,
     `/v1/projects/${projectId}/versions?${query.toString()}`,
@@ -215,7 +261,7 @@ interface EstimateView {
 interface Envelope<T> {
   readonly status: number;
   readonly data?: T;
-  readonly error?: { code: string };
+  readonly error?: { code: string; message?: string };
 }
 
 async function call<T>(
@@ -342,6 +388,39 @@ d("POST /v1/renders: entitlement gates fire in order, each typed", () => {
     expect(result.status).toBe(422);
     expect(result.error?.code).toBe("VALIDATION_FAILED");
     expect(await server.deps.repos.renders.countActive(ws.id)).toBe(0);
+  });
+
+  it("(b2) BIL-06: the per-job FRAME ceiling refuses long-and-fast comps (429, named)", async () => {
+    // A hostile comp: 20,000s at 240fps = 4.8M frames — past the 1.5M
+    // ceiling BEFORE the monthly-minutes gate (20,000s also exceeds trial
+    // minutes; the frame guard fires first inside resolveRenderQuote).
+    const { ws, projectId, versionId } = await newRenderableWorkspace();
+    await grant(ws, 10);
+    const hostile = hostileCompProject(20_000, { num: 240, den: 1 });
+    await uploadVersion(ws, projectId, hostile, { baseVersionId: versionId });
+    const result = await queue(ws, projectId, "Hostile Comp");
+    expect(result.status).toBe(429);
+    expect(result.error?.code).toBe("RENDER_QUOTA_EXCEEDED");
+    // The estimate route shares resolveRenderQuote — the same guard fires.
+    const quote = await estimate(ws, projectId, "Hostile Comp");
+    expect(quote.status).toBe(429);
+    expect(quote.error?.code).toBe("RENDER_QUOTA_EXCEEDED");
+    expect(await server.deps.repos.renders.countActive(ws.id)).toBe(0);
+  });
+
+  it("(b3) BIL-06: a hostile comp-NATIVE fps clamps to 240 before the frame math", async () => {
+    // Native 1,000fps × 3,000s = 3M frames would trip the frame ceiling;
+    // clamped to 240fps it is 720k (legal) and the NEXT gate — the monthly
+    // minutes — is what refuses. The minutes copy (not the frames copy)
+    // proves the clamp ran first.
+    const { ws, projectId, versionId } = await newRenderableWorkspace();
+    await grant(ws, 10);
+    const hostile = hostileCompProject(3_000, { num: 1000, den: 1 });
+    await uploadVersion(ws, projectId, hostile, { baseVersionId: versionId });
+    const result = await queue(ws, projectId, "Hostile Comp");
+    expect(result.status).toBe(429);
+    expect(result.error?.code).toBe("RENDER_QUOTA_EXCEEDED");
+    expect(result.error?.message).not.toContain("frames");
   });
 
   it("(c) the workspace concurrency cap is 429 RENDER_CONCURRENCY_LIMIT", async () => {

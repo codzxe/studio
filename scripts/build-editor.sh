@@ -4,8 +4,13 @@
 #        -> release wasm build (the product editor) -> native CLI (worker renders)
 set -x
 export PATH="$HOME/.cargo/bin:$PATH"
-cd /home/z/my-project/studio/editor || exit 1
-LOG=/home/z/my-project/logs
+# 2026-10-30 restructure: repo-relative (was hardcoded /home/z/my-project/studio/editor
+# + /home/z/my-project/logs — unrunnable from any other checkout) and the
+# vendored engine moved to apps/editor/.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO/apps/editor" || exit 1
+LOG="$REPO/.local/logs"
+mkdir -p "$LOG"
 export CARGO_BUILD_JOBS=2
 
 echo "=== [1/5] rustup target add wasm32-unknown-unknown ===" >> "$LOG/editor-build.log"

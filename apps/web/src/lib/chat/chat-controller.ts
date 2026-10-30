@@ -1,6 +1,6 @@
 /**
  * Chat engine controller v2 — the ROUND-12 CLIENT-DRIVEN AGENT LOOP
- * (research/round12-design.md "Architecture"; Cursor-style; Seam 4 of
+ * (docs/research/round12-design.md "Architecture"; Cursor-style; Seam 4 of
  * docs/phases/M4-SEAMS.md; EDITOR_CHAT_UX §3.4 steer, §8.3 cancellation).
  *
  * The loop lives HERE, in the browser — the round-10 production "stuck in a
@@ -85,7 +85,7 @@ import type {
 } from "./types";
 
 // ---------------------------------------------------------------------------
-// Loop guards (PINNED — research/round12-design.md "Battle-testing")
+// Loop guards (PINNED — docs/research/round12-design.md "Battle-testing")
 // ---------------------------------------------------------------------------
 
 /** Per-run step cap (design doc: CHAT_MAX_STEPS default 24). */

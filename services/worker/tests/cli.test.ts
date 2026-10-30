@@ -33,8 +33,9 @@ describe("resolveCliPath (spike §1 order)", () => {
   it("falls back to the repo release build when present", () => {
     const root = mkdtempSync(join(tmpdir(), "cli-resolve-"));
     try {
-      mkdirSync(join(root, "editor", "target", "release"), { recursive: true });
-      const bin = join(root, "editor", "target", "release", "studio-cli");
+      // 2026-10-30 restructure: the vendored engine lives at apps/editor/.
+      mkdirSync(join(root, "apps", "editor", "target", "release"), { recursive: true });
+      const bin = join(root, "apps", "editor", "target", "release", "studio-cli");
       writeFileSync(bin, "#!/bin/sh\n", { mode: 0o755 });
       expect(resolveCliPath(undefined, root)).toEqual({ path: bin, source: "repo-build" });
     } finally {
@@ -53,10 +54,14 @@ describe("resolveCliPath (spike §1 order)", () => {
   it("treats a blank env value as unset (the .env.example default)", () => {
     const root = mkdtempSync(join(tmpdir(), "cli-resolve-"));
     try {
-      mkdirSync(join(root, "editor", "target", "release"), { recursive: true });
-      writeFileSync(join(root, "editor", "target", "release", "studio-cli"), "#!/bin/sh\n", {
-        mode: 0o755,
-      });
+      mkdirSync(join(root, "apps", "editor", "target", "release"), { recursive: true });
+      writeFileSync(
+        join(root, "apps", "editor", "target", "release", "studio-cli"),
+        "#!/bin/sh\n",
+        {
+          mode: 0o755,
+        },
+      );
       expect(resolveCliPath("  ", root).source).toBe("repo-build");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -126,6 +131,33 @@ describe("resolveRenderKnobs (spike §2 mapping)", () => {
     });
     expect(knobs.flags.fps).toBeUndefined();
     expect(knobs.effective.fps).toBe(COMP.frameRate);
+  });
+
+  it("BIL-06: a hostile comp-native fps clamps to MAX_RENDER_FRAME_RATE", () => {
+    const hostile = { ...COMP, frameRate: 1_000_000 };
+    const knobs = resolveRenderKnobs({ format: "mp4", settings: {}, comp: hostile });
+    expect(knobs.effective.fps).toBe(240);
+    expect(knobs.flags.fps).toBe(240); // forced onto the CLI, not the comp rate
+  });
+
+  it("BIL-06: a legacy row's over-ceiling stored fps clamps to 240 too", () => {
+    const knobs = resolveRenderKnobs({
+      format: "mp4",
+      // Schema-capped at queue time since BIL-06; rows queued before are clamped.
+      settings: { frameRate: 1000 },
+      comp: COMP,
+    });
+    expect(knobs.effective.fps).toBe(240);
+    expect(knobs.flags.fps).toBe(240);
+  });
+
+  it("BIL-06: a sub-1 fps clamps up to 1 (no zero/negative frame counts)", () => {
+    const knobs = resolveRenderKnobs({
+      format: "mp4",
+      settings: { frameRate: 0.01 },
+      comp: COMP,
+    });
+    expect(knobs.effective.fps).toBe(1);
   });
 });
 

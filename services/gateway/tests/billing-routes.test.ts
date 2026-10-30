@@ -759,6 +759,9 @@ d("POST /v1/webhooks/stripe", () => {
       id: `cs_premarked_${unique("s")}`,
       object: "checkout_session",
       mode: "payment",
+      // BIL-05 (2026-10-30 audit): real Stripe payment-mode sessions always
+      // carry payment_status; the grant arm now fails CLOSED without it.
+      payment_status: "paid",
       customer: `cus_premarked_${unique("c")}`,
       metadata: {
         organizationId: ws.id,
@@ -895,6 +898,38 @@ d("POST /v1/webhooks/stripe", () => {
     row = await subscriptionRow(ws.id);
     expect(row?.status).toBe("active");
     expect(row?.graceEnd).toBeNull();
+  });
+
+  it("BIL-01 regression: a subscription invoice grants the CATALOG µc allowance exactly (never ×10⁶)", async () => {
+    const ws = await newWorkspace();
+    const flow = await subscribeWorkspace(ws, "starter");
+    // A renewal invoice for the existing subscription (kind: subscription).
+    // Pre-fix (2026-10-30 audit): the grant wrapped the already-µc catalog
+    // value in creditsToMicrocredits() — Starter buyers got 500,000,000
+    // credits for $12 and the studio tier RangeError'd into a Stripe retry
+    // poison loop. The pin: exactly the catalog µc, handled label included.
+    const renewal = script(flow.fake, "invoice.paid", {
+      id: `in_allowance_${unique("i")}`,
+      object: "invoice",
+      customer: flow.customer,
+      subscription: flow.subId,
+      amount_paid: 1200,
+      currency: "usd",
+      status: "paid",
+      period_start: flow.periodEnd,
+      period_end: flow.periodEnd + 30 * DAY,
+      metadata: { organizationId: ws.id, kind: "subscription" },
+    });
+    const renewed = await deliver(flow.fake, renewal);
+    expect(renewed.status).toBe(200);
+    expect(renewed.data).toMatchObject({ handled: "invoice.allowance-granted" });
+    // Starter = 500 credits = 500,000,000 µc — the catalog value, NOT ×10⁶.
+    expect(await balanceOf(ws.id)).toBe(500 * 1_000_000);
+    // A redelivery of the SAME event is a duplicate — it mints nothing.
+    const again = await deliver(flow.fake, renewal);
+    expect(again.status).toBe(200);
+    expect(again.data).toMatchObject({ received: true, duplicate: true });
+    expect(await balanceOf(ws.id)).toBe(500 * 1_000_000);
   });
 
   it("two CONCURRENT subscription transitions: exactly one applies (the loser is a guarded 200)", async () => {
@@ -1039,6 +1074,9 @@ d("POST /v1/webhooks/stripe", () => {
         id: `cs_hostile_${unique("s")}`,
         object: "checkout_session",
         mode: "payment",
+        // BIL-05: real sessions always carry payment_status — the hostile
+        // amount must be rejected by the AMOUNT check, not the status gate.
+        payment_status: "paid",
         customer: `cus_hostile_${unique("c")}`,
         metadata: {
           organizationId: ws.id,
@@ -1173,6 +1211,77 @@ d("POST /v1/billing/trial", () => {
 
     const state = await billingState(ws);
     expect(state).toMatchObject({ plan: "trial", status: "trialing" });
+  });
+
+  it("BIL-04: the fingerprint lands from the SESSION (real-Stripe shape), not metadata", async () => {
+    // Real Stripe never carries cardFingerprint metadata — the webhook must
+    // FETCH it from the completed session's payment chain. Pre-fix this path
+    // 400'd forever: the card-required gate found no fingerprint, so the
+    // card-required trial was unreachable in production.
+    const ws = await newWorkspace();
+    const fake = freshFake();
+    setStripe(server, fake);
+    const fingerprint = unique("realcard");
+    const session = await fake.sdk.checkout.sessions.create({
+      mode: "payment",
+      line_items: [{ price: "price_test", quantity: 1 }],
+      customer_email: "real-stripe-shape@w3gw.test",
+      success_url: "https://app.test/success",
+      cancel_url: "https://app.test/cancel",
+      // NO cardFingerprint in metadata — the real-Stripe shape (the fake's
+      // legacy card model deliberately omitted).
+      metadata: {
+        organizationId: ws.id,
+        kind: "topup",
+        packId: "credits100",
+        microcredits: "1000000",
+      },
+    });
+    fake.cardFingerprintBySession.set(session.id, fingerprint);
+
+    const events = reid(fake.completeCheckout(session.id));
+    expect(events).toHaveLength(1);
+    const delivered = await deliver(fake, at(events, 0));
+    expect(delivered.status).toBe(200);
+
+    // The customer row carries the FETCHED fingerprint — the trial gate opens.
+    const customer = await repos().subscriptions.findStripeCustomer(ws.id);
+    expect(customer?.cardFingerprint).toBe(fingerprint);
+
+    const trial = await billingPost("/v1/billing/trial", ws, {});
+    expect(trial.status).toBe(201);
+    expect(((await okData(trial)) as { trialStarted: boolean }).trialStarted).toBe(true);
+  });
+
+  it("BIL-04: a session with NO resolvable card still lands the customer (fingerprint null)", async () => {
+    const ws = await newWorkspace();
+    const fake = freshFake();
+    setStripe(server, fake);
+    const session = await fake.sdk.checkout.sessions.create({
+      mode: "payment",
+      line_items: [{ price: "price_test", quantity: 1 }],
+      customer_email: "no-card@w3gw.test",
+      success_url: "https://app.test/success",
+      cancel_url: "https://app.test/cancel",
+      metadata: {
+        organizationId: ws.id,
+        kind: "topup",
+        packId: "credits100",
+        microcredits: "1000000",
+      },
+    });
+    // No cardFingerprintBySession entry: the payment chain carries no card.
+
+    const events = reid(fake.completeCheckout(session.id));
+    const delivered = await deliver(fake, at(events, 0));
+    expect(delivered.status).toBe(200);
+
+    const customer = await repos().subscriptions.findStripeCustomer(ws.id);
+    expect(customer).not.toBeNull();
+    expect(customer?.cardFingerprint).toBeNull(); // no card modeled — stays cardless
+
+    const trial = await billingPost("/v1/billing/trial", ws, {});
+    expect(trial.status).toBe(400); // VALIDATION_FAILED: a payment method is required
   });
 
   it("one trial per workspace: any prior subscription row (even canceled) is a 409", async () => {

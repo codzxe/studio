@@ -32,7 +32,7 @@ const LOCAL_DEFAULTS: Readonly<Record<string, string>> = {
   S3_ENDPOINT: "",
   // LiteLLM in a Python venv or infra/compose service, on loopback.
   LITELLM_BASE_URL: "http://127.0.0.1:4000",
-  // `cargo xtask web --serve 8765` from editor/ (dev only; rejected in production).
+  // `cargo xtask web --serve 8765` from apps/editor/ (dev only; rejected in production).
   EDITOR_DEV_SERVER_URL: "http://127.0.0.1:8765",
 };
 
@@ -75,7 +75,7 @@ const EXTRA_NOTES: Readonly<Record<string, readonly string[]>> = {
     '#   LITELLM_MODEL_MAP={"studio-fast":"deepseek-v4.1-flash:free","studio-smart":"th-rudder","studio-vision":"th-rudder"}',
   ],
   EDITOR_DEV_SERVER_URL: [
-    "# Local default: `cargo xtask web --serve 8765` from editor/, proxied under the editor path.",
+    "# Local default: `cargo xtask web --serve 8765` from apps/editor/, proxied under the editor path.",
   ],
 };
 

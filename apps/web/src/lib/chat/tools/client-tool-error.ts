@@ -1,6 +1,6 @@
 /**
  * ClientToolError — the typed failure every client-executed tool throws
- * (round-12 client-driven loop, research/round12-design.md).
+ * (round-12 client-driven loop, docs/research/round12-design.md).
  *
  * The OLD executor never threw: it POSTed `{error, message}` bodies to
  * `/v1/runs/:id/events` and the server runner fed them back to the model.

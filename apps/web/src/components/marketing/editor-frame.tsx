@@ -1,6 +1,6 @@
 /**
  * The editor section frame (§8.1 §4): a full-bleed 16:9 dark frame holding
- * the REAL editor capture (`/marketing/editor-frame.png`, 1600×900 from the
+ * the REAL editor capture (`/marketing/editor-frame.webp`, 1600×900 from the
  * live build — W5-02) with three labelled DOM/CSS callouts pinned to the
  * real regions: compositions left, keyframe timeline bottom, render queue
  * right (§16: no stylised fake editor UI — this is the actual viewport).
@@ -47,7 +47,7 @@ export function EditorFrame() {
         {/* The real editor — 1600×900 capture from the live build (W5-02). */}
         {/* eslint-disable-next-line @next/next/no-img-element — static public asset, no optimization needed */}
         <img
-          src="/marketing/editor-frame.png"
+          src="/marketing/editor-frame.webp"
           alt="The EffectCraft editor viewport: compositions panel on the left, keyframe timeline at the bottom, render queue on the right."
           width={1600}
           height={900}

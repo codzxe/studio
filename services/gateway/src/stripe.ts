@@ -248,6 +248,43 @@ export function createStripeSeam(
       return { ok: true as const, data: snapshotOf(listed.data) };
     },
 
+    // BIL-04: resolve a completed Checkout session's card fingerprint —
+    // `payment_method` directly when present, else through the payment
+    // intent's latest charge. Null when the chain carries no card (bank
+    // transfers, free sessions); typed failures, never throws.
+    async checkoutSessionCardFingerprint(sessionId) {
+      const fetched = await guarded("checkout.sessions.retrieve", () =>
+        stripe.checkout.sessions.retrieve(sessionId, {
+          expand: ["payment_intent.latest_charge.payment_method"],
+        }),
+      );
+      if (!fetched.ok) return fetched;
+      const session = fetched.data;
+      // Direct PM (payment-mode sessions, expanded): carry card details only
+      // when the SDK expanded it — else fall through to the intent chain.
+      const direct = session.payment_method;
+      if (typeof direct === "object" && direct !== null && direct.card != null) {
+        const fingerprint = direct.card.fingerprint;
+        if (typeof fingerprint === "string" && fingerprint !== "") {
+          return { ok: true as const, data: { fingerprint } };
+        }
+      }
+      const intent = session.payment_intent;
+      if (typeof intent === "object" && intent !== null) {
+        const charge = intent.latest_charge;
+        if (typeof charge === "object" && charge !== null) {
+          const method = charge.payment_method;
+          if (typeof method === "object" && method !== null && method.card != null) {
+            const fingerprint = method.card.fingerprint;
+            if (typeof fingerprint === "string" && fingerprint !== "") {
+              return { ok: true as const, data: { fingerprint } };
+            }
+          }
+        }
+      }
+      return { ok: true as const, data: { fingerprint: null } };
+    },
+
     async updateSubscription(customerId, params) {
       const listed = await guarded("subscriptions.list", () => latestSubscription(customerId));
       if (!listed.ok) return listed;

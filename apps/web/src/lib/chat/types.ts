@@ -2,7 +2,7 @@
  * Chat engine UI-state types — Seam 4 of docs/phases/M4-SEAMS.md
  * (EDITOR_CHAT_UX §8.1 M4 slice + §8.4; PRODUCT_ARCHITECTURE.md §7.4).
  *
- * ROUND 12 (client-driven loop, research/round12-design.md): the agent loop
+ * ROUND 12 (client-driven loop, docs/research/round12-design.md): the agent loop
  * lives in the browser chat-controller. It POSTs ONE bounded turn at a time
  * (`client.chat.turn`), folds the turn.* events, executes read/generative
  * tools LOCALLY through the injected `TurnToolExecutor` (i5's pinned seam),

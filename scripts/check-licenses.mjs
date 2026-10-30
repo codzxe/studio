@@ -24,7 +24,7 @@
 //      from CRAFT_FONTS_DIR, §1.5 rule 9) and no .env secret files are committed
 //      (.env.example/.env.sample templates are allowed). The scan walks the git
 //      index — i.e. what WOULD be committed — not the working tree: build-time
-//      font files under editor/assets/fonts/ and a developer's local .env live
+//      font files under apps/editor/assets/fonts/ and a developer's local .env live
 //      on disk untracked by design (W3-C4 fix, see listCommittedFiles()).
 //
 // Exit codes: 0 = pass; 1 = any DENY, any UNKNOWN/undeclared dependency, any
@@ -270,7 +270,7 @@ function isEnvSecretFile(name) {
 // rule 9 / AGENTS.md "Forbidden" (font binaries, .env secrets — the checks below
 // and their error messages all say "committed"). The pre-W3-C4 implementation
 // walked the whole working tree, which false-positived on legitimate UNTRACKED
-// local files: the editor build's font binaries under editor/assets/fonts/
+// local files: the editor build's font binaries under apps/editor/assets/fonts/
 // (required on disk by crates/text/src/fonts.rs include_bytes!, supplied by
 // CRAFT_FONTS_DIR) and a dev-box .env. Falls back to the working-tree walk only
 // when git is unavailable (e.g. an exported tree without .git), preserving the

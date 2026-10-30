@@ -18,7 +18,7 @@ import type { CommandParamInfo } from "../src/engine-batch.js";
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE_PATH = path.join(PACKAGE_DIR, "fixtures", "engine-command-ids.json");
 const EXTRACT_SCRIPT = path.join(PACKAGE_DIR, "scripts", "extract-engine-registry.mjs");
-const UPSTREAM_MD = path.resolve(PACKAGE_DIR, "..", "..", "editor", "UPSTREAM.md");
+const UPSTREAM_MD = path.resolve(PACKAGE_DIR, "..", "..", "apps", "editor", "UPSTREAM.md");
 
 /** The verified seed list from docs/phases/M5-SEAMS.md — the minimum curated surface. */
 const SEAMS_SEED_IDS: readonly string[] = [
@@ -61,12 +61,12 @@ function readFixture(): EngineFixture {
   return JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as EngineFixture;
 }
 
-/** The pinned commit from the live editor/UPSTREAM.md — the fixture must track it. */
+/** The pinned commit from the live apps/editor/UPSTREAM.md — the fixture must track it. */
 function liveEnginePin(): string {
   const row = /^\|\s*Pinned commit\s*\|\s*`([0-9a-f]{7,40})`\s*\|/m.exec(
     readFileSync(UPSTREAM_MD, "utf8"),
   );
-  expect(row, "editor/UPSTREAM.md must carry a Pinned commit row").not.toBeNull();
+  expect(row, "apps/editor/UPSTREAM.md must carry a Pinned commit row").not.toBeNull();
   return row?.[1] ?? "";
 }
 

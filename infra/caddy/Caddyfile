@@ -90,7 +90,15 @@
                 @wasm path *.wasm
                 header @wasm Content-Type application/wasm
 
-                file_server
+                # WASM Phase 0 (2026-10-30 audit): serve the PRECOMPRESSED
+                # .br/.gz siblings the build now ships next to each big file
+                # (brotli-11 measured 11.05 MB vs 13.7 MB on-the-fly q6 —
+                # −20% wire bytes AND no per-request compression CPU). Falls
+                # back to the site-level `encode` chain when a sibling is
+                # missing, so partial dists keep working.
+                file_server {
+                        precompressed zstd br gzip
+                }
         }
 
         # ── /v1/* — Hono gateway (API + SSE, §7.2/§7.4) ────────────────────────────

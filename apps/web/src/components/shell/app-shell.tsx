@@ -28,9 +28,10 @@
 
 import { type ApiClient, createApiClient } from "@studio/api-client";
 import type { BillingState } from "@studio/contracts";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
+import { isEditorIntentPath } from "@/lib/editor-warmup";
 import type { WorkspaceMembership } from "@/lib/workspace-membership";
 import { EditorPrewarm } from "../editor-host/editor-prewarm";
 import { OfflineBanner } from "./offline-banner";
@@ -153,6 +154,7 @@ export interface AppShellProps {
 export function AppShell({ payload, createPort, children }: AppShellProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const pathname = usePathname();
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const defaultMembership = useMemo(
@@ -235,10 +237,12 @@ export function AppShell({ payload, createPort, children }: AppShellProps) {
 
   return (
     <ShellToastHost>
-      {/* W3-D — the editor engine prewarms the moment the shell mounts (any
-          authenticated surface), so "Open editor" opens onto an engine that
-          is already downloaded + compiled. Renders nothing; one-shot. */}
-      <EditorPrewarm />
+      {/* W3-D — the editor engine prewarm, now gated to editor-intent
+          surfaces (PERF 2026-10-30 audit): project pages only. Pre-fix the
+          ~50 MB wasm was fetched + compiled on EVERY authenticated page
+          (billing, settings…) — multiplied egress for users who never open
+          the editor. The warmup still honors Save-Data internally. */}
+      {isEditorIntentPath(pathname) && <EditorPrewarm />}
       <div data-testid="app-shell" className="flex min-h-svh flex-col bg-app">
         <TopBar
           email={payload.user.email}

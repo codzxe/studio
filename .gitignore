@@ -42,10 +42,11 @@ target/
 .vscode/
 
 # editor wasm build output (built by cargo xtask web, never committed)
-editor/target/
-editor/dist/
+# (2026-10-30 restructure: the vendored engine moved editor/ → apps/editor/)
+apps/editor/target/
+apps/editor/dist/
 # rust tooling
-editor/rustc-*.json
+apps/editor/rustc-*.json
 
 # portable local services (native dev without Docker)
 .local/
@@ -55,7 +56,7 @@ editor/rustc-*.json
 # W3-C4 untracked the vendored bundle (7 .ttf + .attribution + OFL texts) — physical
 # files stay on disk for editor builds (crates/text/src/fonts.rs include_bytes!),
 # so ignore the whole directory; the old negation below re-included it into git.
-editor/assets/fonts/
+apps/editor/assets/fonts/
 
 # local reference clone for editor patch/pin work — never tracked (phantom
 # submodule removed W5-hygiene: fresh clones get editor/ only, which is the
@@ -92,8 +93,9 @@ packages/*/src/**/*.d.ts
 
 # repo purge (W1-01, user order 2026-10-23): these trees were deleted; the ignore
 # rules stay so nothing resurrects or re-commits them. Content lives in git
-# history only (`git log --oneline -- archive/`).
-/archive/
+# history only. (archive/ is NOT ignored: since the 2026-10-30 restructure it
+# is a live committed tree — deprecated-but-kept content per the owner's
+# "nothing gets deleted" rule.)
 /agent-ctx/
 # session scratch that regenerates constantly — committed once, purged in 59ef2d7,
 # came back; NEVER let it in again

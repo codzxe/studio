@@ -24,7 +24,15 @@ import { join } from "node:path";
 
 import { type ServerType, serve } from "@hono/node-server";
 import { type StudioEnv, parseEnv } from "@studio/config";
-import { type Repos, createAuth, createDb, createRepos, getDialect, isSqliteUrl } from "@studio/db";
+import {
+  type ApiKeyRecord,
+  type Repos,
+  createAuth,
+  createDb,
+  createRepos,
+  getDialect,
+  isSqliteUrl,
+} from "@studio/db";
 import type { Page } from "@studio/db";
 
 import { buildApp } from "../src/app.js";
@@ -292,6 +300,21 @@ interface FakeOrg {
   readonly members: Map<string, string>; // userId → role
 }
 
+/** SEC-03 fake: one minted key — statements + workspace binding included. */
+interface FakeApiKeyRow {
+  id: string;
+  name: string | null;
+  workspaceId: string;
+  referenceId: string;
+  enabled: boolean;
+  createdAt: string;
+  expiresAt: string | null;
+  /** The show-once plaintext (tests send it as the Bearer token). */
+  plaintext: string;
+  /** Better-auth access-control statements, as the plugin stores them. */
+  statements: Record<string, string[]>;
+}
+
 export class FakeGatewayAuth implements GatewayAuth {
   readonly users = new Map<string, FakeUser>();
   readonly orgs = new Map<string, FakeOrg>();
@@ -328,9 +351,43 @@ export class FakeGatewayAuth implements GatewayAuth {
     return this.users.get(`fake-session-token-${match[1]}`) ?? null;
   }
 
+  /** SEC-03 fake: resolve `Authorization: Bearer studio_fake_…` → its key row. */
+  private apiKeyFromBearer(
+    headers: Headers,
+  ): (FakeApiKeyRow & { plaintext: string; user: FakeUser }) | null {
+    const header = headers.get("authorization") ?? "";
+    const match = /^Bearer\s+(studio_fake_\S+)$/.exec(header);
+    if (match === null) return null;
+    const token = match[1] ?? "";
+    const entry = this.apiKeysMut.find((row) => row.plaintext === token);
+    if (entry === undefined || !entry.enabled) return null; // revoked → 401
+    const user = [...this.users.values()].find((candidate) => candidate.id === entry.referenceId);
+    if (user === undefined) return null;
+    return { ...entry, plaintext: token, user };
+  }
+
   handler = async (): Promise<Response> => new Response('{"ok":true}', { status: 200 });
 
   async getSession(headers: Headers) {
+    // SEC-03 fake: a Bearer key mints a session whose id IS the key id —
+    // mirroring the plugin's session-mock (session.id = apiKey.id) so
+    // requireAuth's findById lookup resolves the fake row.
+    const bearerKey = this.apiKeyFromBearer(headers);
+    if (bearerKey !== null) {
+      return {
+        user: {
+          id: bearerKey.user.id,
+          name: bearerKey.user.name,
+          email: bearerKey.user.email,
+        },
+        session: {
+          id: bearerKey.id,
+          userId: bearerKey.user.id,
+          activeOrganizationId: null,
+        },
+        viaApiKey: true,
+      };
+    }
     const user = this.sessionFrom(headers);
     if (user === null) return null;
     return {
@@ -340,7 +397,10 @@ export class FakeGatewayAuth implements GatewayAuth {
   }
 
   async listOrganizations(headers: Headers) {
-    const user = this.sessionFrom(headers);
+    // SEC-03 fake: Bearer keys act as their minting user on the org surface
+    // too (mirrors the real plugin session-mock).
+    const bearer = this.apiKeyFromBearer(headers);
+    const user = bearer?.user ?? this.sessionFrom(headers);
     if (user === null) return [];
     return [...this.orgs.values()]
       .filter((org) => org.members.has(user.id))
@@ -354,7 +414,8 @@ export class FakeGatewayAuth implements GatewayAuth {
   }
 
   async getFullWorkspace(headers: Headers, candidate: string) {
-    const user = this.sessionFrom(headers);
+    const bearer = this.apiKeyFromBearer(headers);
+    const user = bearer?.user ?? this.sessionFrom(headers);
     if (user === null) return null;
     const org =
       this.orgs.get(candidate) ??
@@ -439,15 +500,11 @@ export class FakeGatewayAuth implements GatewayAuth {
   }
 
   // ── W1-b fakes (GatewayAuth api-key seam): mint/show-once/revoke ──────────
-  private readonly apiKeysMut: {
-    id: string;
-    name: string | null;
-    workspaceId: string;
-    referenceId: string;
-    enabled: boolean;
-    createdAt: string;
-    expiresAt: string | null;
-  }[] = [];
+  private readonly apiKeysMut: FakeApiKeyRow[] = [];
+  /** SEC-03 fake: the key rows, for the fake apiKeys repo's findById. */
+  apiKeyRows(): readonly FakeApiKeyRow[] {
+    return this.apiKeysMut;
+  }
   /** Readable by tests: every revokeApiKey(keyId, referenceId) call. */
   readonly revokeLog: readonly { keyId: string; referenceId: string }[] = [];
   private readonly revokeLogMut: { keyId: string; referenceId: string }[] = [];
@@ -457,6 +514,7 @@ export class FakeGatewayAuth implements GatewayAuth {
     workspaceId: string;
     name: string;
     expiresInSeconds: number | null;
+    statements?: Record<string, string[]>;
   }) {
     const id = `fake_apikey_${this.apiKeysMut.length + 1}`;
     const createdAt = new Date().toISOString();
@@ -464,6 +522,7 @@ export class FakeGatewayAuth implements GatewayAuth {
       input.expiresInSeconds === null
         ? null
         : new Date(Date.now() + input.expiresInSeconds * 1000).toISOString();
+    const plaintext = `studio_fake_${id}_showonce`;
     this.apiKeysMut.push({
       id,
       name: input.name,
@@ -472,6 +531,8 @@ export class FakeGatewayAuth implements GatewayAuth {
       enabled: true,
       createdAt,
       expiresAt,
+      plaintext,
+      statements: input.statements ?? {},
     });
     return {
       id,
@@ -480,7 +541,7 @@ export class FakeGatewayAuth implements GatewayAuth {
       expiresAt,
       enabled: true,
       start: "studio_fake_",
-      key: `studio_fake_${id}_showonce`,
+      key: plaintext,
     };
   }
 
@@ -660,9 +721,30 @@ export function fakeRepos(auth: FakeGatewayAuth): { repos: Repos; calls: RepoCal
         };
       },
     },
+    // SEC-03: the requireAuth key lookup, backed by FakeGatewayAuth's mint
+    // log — statements/metadata serialized exactly like the plugin columns.
+    apiKeys: {
+      async findById(keyId: string): Promise<ApiKeyRecord | null> {
+        record("apiKeys.findById");
+        const row = auth.apiKeyRows().find((entry) => entry.id === keyId);
+        if (row === undefined) return null;
+        const createdAt = new Date(row.createdAt);
+        return {
+          id: row.id,
+          referenceId: row.referenceId,
+          name: row.name,
+          permissions: JSON.stringify(row.statements),
+          metadata: JSON.stringify({ workspaceId: row.workspaceId, createdBy: row.referenceId }),
+          enabled: row.enabled,
+          createdAt,
+          updatedAt: createdAt,
+          expiresAt: row.expiresAt !== null ? new Date(row.expiresAt) : null,
+          lastRequest: null,
+        };
+      },
+    },
   } as unknown as Repos;
 
-  void auth;
   return { repos, calls };
 }
 

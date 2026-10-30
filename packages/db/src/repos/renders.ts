@@ -88,6 +88,18 @@ export interface ScopedRender extends Render {
   readonly workspaceId: WorkspaceId;
 }
 
+/**
+ * BIL-02 (2026-10-30 audit): requeueStale's result. The terminal branch
+ * reports each failed row (id + owning workspace) so the worker sweep can
+ * refund the stranded credit hold — pre-fix the reserve was locked forever.
+ */
+export interface RequeueStaleResult {
+  /** Rows sent back to queued (attempts remaining). */
+  readonly requeued: number;
+  /** Rows terminally failed — their credit holds need releasing. */
+  readonly failed: ReadonlyArray<{ readonly id: string; readonly workspaceId: WorkspaceId }>;
+}
+
 /** Progress payload for `heartbeat` — both fields optional, monotonic once set. */
 export interface RenderHeartbeatInput {
   readonly framesDone?: number;
@@ -163,9 +175,11 @@ export interface RendersRepo {
    * attempts < maxAttempts (the sanctioned running→queued transition;
    * cancel_requested is reset), otherwise they fail terminally with
    * error 'worker lost mid-render' / error_code RENDER_INTERNAL.
-   * Returns the number of affected rows.
+   * BIL-02 (2026-10-30 audit): the result reports each terminally-failed
+   * row (id + owning workspace) so the worker sweep can refund the
+   * stranded credit hold.
    */
-  requeueStale(staleSeconds: number, maxAttempts: number): Promise<number>;
+  requeueStale(staleSeconds: number, maxAttempts: number): Promise<RequeueStaleResult>;
   /**
    * Retention sweep input (trusted-internal, workspace-free): completed rows
    * whose expires_at is before `before`, oldest first. After deleting the
@@ -540,19 +554,46 @@ export function createRendersRepo(db: StudioDb): RendersRepo {
         .where(and(stale, lt(renders.attempts, maxAttempts)))
         .returning({ id: renders.id });
 
-      // Branch 2: out of attempts → honest terminal failure.
-      const failed = await db
-        .update(renders)
-        .set({
-          status: "failed",
-          error: "worker lost mid-render",
-          errorCode: "RENDER_INTERNAL",
-          completedAt: new Date(),
-        })
-        .where(and(stale, gte(renders.attempts, maxAttempts)))
-        .returning({ id: renders.id });
+      // Branch 2: out of attempts → honest terminal failure. BIL-02
+      // (2026-10-30 audit): SELECT-first so the caller learns each failed
+      // row's owning workspace — the worker sweep refunds the stranded
+      // credit hold (pre-fix the terminal branch just failed the row and
+      // the user's reserve was locked forever with no recovery path).
+      // The UPDATE re-asserts the stale conditions so nothing races in
+      // between the two statements.
+      const doomed = await db
+        .select({ id: renders.id, workspaceId: projects.workspaceId })
+        .from(renders)
+        .innerJoin(projects, eq(renders.projectId, projects.id))
+        .where(and(stale, gte(renders.attempts, maxAttempts)));
+      const failed: Array<{ id: string; workspaceId: WorkspaceId }> = [];
+      if (doomed.length > 0) {
+        const terminal = await db
+          .update(renders)
+          .set({
+            status: "failed",
+            error: "worker lost mid-render",
+            errorCode: "RENDER_INTERNAL",
+            completedAt: new Date(),
+          })
+          .where(
+            and(
+              stale,
+              gte(renders.attempts, maxAttempts),
+              inArray(
+                renders.id,
+                doomed.map((row) => row.id),
+              ),
+            ),
+          )
+          .returning({ id: renders.id });
+        const terminalIds = new Set(terminal.map((row) => row.id));
+        for (const row of doomed) {
+          if (terminalIds.has(row.id)) failed.push(row);
+        }
+      }
 
-      return requeued.length + failed.length;
+      return { requeued: requeued.length, failed };
     },
 
     async listExpiredOutputs(before) {

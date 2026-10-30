@@ -15,7 +15,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 
-const DIST = resolve(import.meta.dirname, "..", "editor/target/web/dist");
+const DIST = resolve(import.meta.dirname, "..", "apps/editor/target/web/dist");
 const args = process.argv.slice(2);
 const flag = (name, def) => {
   const i = args.indexOf(`--${name}`);

@@ -1,6 +1,6 @@
 // @studio/worker — the studio-cli runner (docs/phases/m8-cli-spike.md §1–§3).
 //
-// Binary resolution (§1): STUDIO_ENGINE_CLI_PATH → <repo>/editor/target/release/
+// Binary resolution (§1): STUDIO_ENGINE_CLI_PATH → <repo>/apps/editor/target/release/
 // studio-cli when present → bare `studio-cli` on PATH.
 //
 // The argv (§2): `--project <workdir>/project.ecproj render --comp <id>
@@ -18,6 +18,8 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+
+import { MAX_RENDER_FRAME_RATE } from "@studio/contracts";
 
 import type { RenderFailureCode } from "./errors.js";
 import type { CompFacts } from "./hydrate.js";
@@ -39,7 +41,7 @@ export function resolveCliPath(cliPath: string | undefined, repoRoot: string): R
   if (cliPath !== undefined && cliPath.trim() !== "") {
     return { path: cliPath, source: "env" };
   }
-  const repoBuild = join(repoRoot, "editor", "target", "release", "studio-cli");
+  const repoBuild = join(repoRoot, "apps", "editor", "target", "release", "studio-cli");
   if (existsSync(repoBuild)) {
     return { path: repoBuild, source: "repo-build" };
   }
@@ -104,12 +106,17 @@ export function resolveRenderKnobs(input: {
   const { settings, comp } = input;
   const cliFormat = input.format === "png-seq" ? "png" : "h264";
 
-  const fps =
+  // BIL-06: clamp the effective rate into [1, MAX_RENDER_FRAME_RATE] — the
+  // stored settings are schema-capped at queue time, but LEGACY rows and the
+  // comp's NATIVE fps (attacker-controlled project metadata) are not. The
+  // clamp matches the gateway's quote-side clamp so cost == rendered.
+  const rawFps =
     settings.frameRate !== undefined && settings.frameRate > 0
       ? settings.frameRate
       : comp.frameRate > 0
         ? comp.frameRate
         : 30; // defensive: unreachable (comp facts always carry a rate)
+  const fps = Math.min(Math.max(rawFps, 1), MAX_RENDER_FRAME_RATE);
 
   const start = settings.timeFrom !== undefined ? settings.timeFrom : undefined;
   const end = settings.timeTo !== undefined ? settings.timeTo : undefined;

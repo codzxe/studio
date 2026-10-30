@@ -1,7 +1,7 @@
 /**
  * studio.list_commands / studio.describe_command — the round-12 catalog
  * discovery pair, client-executed like the other read tools
- * (research/round12-design.md "Tool catalog v3" + research/
+ * (docs/research/round12-design.md "Tool catalog v3" + research/
  * engine-command-surface.md §4a: the MCP-proven list → describe → propose
  * flow).
  *

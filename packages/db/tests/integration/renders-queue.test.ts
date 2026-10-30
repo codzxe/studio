@@ -372,7 +372,7 @@ describe.skipIf(!hasDb)("renders job queue (integration)", { timeout: 30_000 }, 
     expect(claimed.attempts).toBe(1);
 
     // fresh heartbeat → nothing is stale
-    expect(await repos.renders.requeueStale(3600, 2)).toBe(0);
+    expect((await repos.renders.requeueStale(3600, 2)).requeued).toBe(0);
 
     // simulate a crashed worker: heartbeat outside the window
     await db
@@ -380,7 +380,7 @@ describe.skipIf(!hasDb)("renders job queue (integration)", { timeout: 30_000 }, 
       .set({ heartbeatAt: new Date(Date.now() - 7_200_000) })
       .where(eq(schema.renders.id, render.id));
 
-    expect(await repos.renders.requeueStale(3600, 2)).toBe(1);
+    expect((await repos.renders.requeueStale(3600, 2)).requeued).toBe(1);
     const requeued = await repos.renders.get(wsA, render.id);
     expect(requeued.status).toBe("queued"); // the sanctioned running→queued edge
     expect(requeued.attempts).toBe(1); // attempts survive; incremented on claim
@@ -399,7 +399,13 @@ describe.skipIf(!hasDb)("renders job queue (integration)", { timeout: 30_000 }, 
       .where(eq(schema.renders.id, render.id));
 
     // attempts (2) >= maxAttempts (2) → honest terminal failure
-    expect(await repos.renders.requeueStale(3600, 2)).toBe(1);
+    // BIL-02: the result reports the failed row + its workspace so the
+    // sweep can refund the stranded hold.
+    const terminal = await repos.renders.requeueStale(3600, 2);
+    expect(terminal.requeued).toBe(0);
+    expect(terminal.failed).toHaveLength(1);
+    expect(terminal.failed[0]?.id).toBe(render.id);
+    expect(terminal.failed[0]?.workspaceId).toBe(wsA);
     const failed = await repos.renders.get(wsA, render.id);
     expect(failed.status).toBe("failed");
     expect(failed.error).toBe("worker lost mid-render");
@@ -412,7 +418,7 @@ describe.skipIf(!hasDb)("renders job queue (integration)", { timeout: 30_000 }, 
       .update(schema.renders)
       .set({ status: "running", attempts: 1, heartbeatAt: null, startedAt: new Date() })
       .where(eq(schema.renders.id, legacy.id));
-    expect(await repos.renders.requeueStale(3600, 5)).toBe(1);
+    expect((await repos.renders.requeueStale(3600, 5)).requeued).toBe(1);
     const legacyRow = await repos.renders.get(wsA, legacy.id);
     expect(legacyRow.status).toBe("queued");
     expect(legacyRow.attempts).toBe(1);

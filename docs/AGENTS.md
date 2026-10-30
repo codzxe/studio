@@ -6,8 +6,8 @@ Where code and instinct disagree, the docs win.
 ## Product truth (post-pivot)
 
 The product is an **agentic motion-graphics SaaS** built around the **EffectCraft**
-editor (MIT OR Apache-2.0), vendored at `editor/` (pin `9db7f3b2`, v0.13.0, per
-`editor/UPSTREAM.md` and ADR-0006). The old PhotoCraft product lived under `archive/`
+editor (MIT OR Apache-2.0), vendored at `apps/editor/` (pin `9db7f3b2`, v0.13.0, per
+`apps/editor/UPSTREAM.md` and ADR-0006). The old PhotoCraft product lived under `archive/`
 until it was **deleted by user order on 2026-10-23** (W1-01) — git history retains
 it (`git log --oneline -- archive/`); never import from it and never restore it.
 
@@ -135,16 +135,16 @@ against it — dev sqlite databases are THROWAWAY (delete the file to rebuild;
 ## Editor strategy on this box (critical)
 
 The **real EffectCraft editor** is the product editor — no mocks, no stand-ins.
-The vendored source at `editor/` (pin `9db7f3b2`, v0.13.0) is byte-identical to
+The vendored source at `apps/editor/` (pin `9db7f3b2`, v0.13.0) is byte-identical to
 upstream and IS the editor we ship. The wasm dist is built from it with the
 Rust toolchain (`rustup` → stable + `wasm32-unknown-unknown`, `wasm-bindgen-cli
-0.2.129`), emitted by `cargo xtask web` into `editor/target/web/dist`, and copied
+0.2.129`), emitted by `cargo xtask web` into `apps/editor/target/web/dist`, and copied
 to `apps/web/public/editor/` (served same-origin at `/editor/` with COOP/COEP,
 flat relative URLs, trailing-slash already handled by `next.config.ts`).
 
 Dist policy until the CI artifact pipeline lands: the built dist is committed
 under `apps/web/public/editor/` (it is a build artifact — record size + date in
-`editor/UPSTREAM.md` whenever it is rebuilt). Rebuild = `cargo xtask web` in
+`apps/editor/UPSTREAM.md` whenever it is rebuilt). Rebuild = `cargo xtask web` in
 `editor/` then re-copy; the bridge (`packages/editor-bridge`) binds to the real
 `window.effectcraft` surface. **Never mock the editor.**
 
@@ -161,7 +161,7 @@ under `apps/web/public/editor/` (it is a build artifact — record size + date i
 5. The model never sees raw engine commands or filesystem paths. Curated `@studio/contracts`
    tools only; plans compile to `engine.batch` **server-side**.
 6. Every agent edit = ONE atomic `engine.batch` = ONE undo step = ONE version.
-7. Editor UI is frozen: nothing under `editor/crates/ui-egui` may be edited for visual
+7. Editor UI is frozen: nothing under `apps/editor/crates/ui-egui` may be edited for visual
    reasons; nothing in the product may restructure `/editor`'s internals. The chat is
    an additive overlay only.
 8. Design system only via tokens (`packages/ui` styles): no raw hex in components;

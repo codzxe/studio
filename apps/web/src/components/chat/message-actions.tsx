@@ -2,7 +2,7 @@
 
 /**
  * MessageActions — ROUND 12 "Chat UI v3" per-message affordances
- * (research/round12-design.md "Per-message actions: copy, retry (re-run
+ * (docs/research/round12-design.md "Per-message actions: copy, retry (re-run
  * from that user message), edit+resend").
  *
  * Presentational pair used by the USER message row (message.tsx):

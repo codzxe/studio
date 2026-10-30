@@ -6,7 +6,7 @@
 //
 // Doc note: §8.4 says "~12 curated tools" and then lists exactly 13 rows —
 // all 13 are implemented (first, byte-compatible); the doc's "~" is the
-// wiggle room. ROUND 12 ("Tool catalog v3", research/round12-design.md)
+// wiggle room. ROUND 12 ("Tool catalog v3", docs/research/round12-design.md)
 // appends EIGHT tools after them: three writes (engine_commands, run_script,
 // add_asset — auto-registered from write-tools.ts) and five client-executed
 // reads/generative tools (list_commands, describe_command, web_search,

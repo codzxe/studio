@@ -131,6 +131,12 @@ const nextConfig: NextConfig = {
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          // SEC-07 (2026-10-30 audit): match the self-hosted Caddy edge —
+          // the Vercel serving path shipped none of these. HSTS pins TLS;
+          // XFO SAMEORIGIN blocks cross-site framing of authenticated pages
+          // (clickjacking) while keeping the same-origin editor iframe.
+          { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
         ],
       },
     ];

@@ -311,7 +311,7 @@ Corrections to the seams above, discovered while building:
 3. **`layer.tree` is PER-LAYER** (`{ layer?, comp?, depth?, time? }`; `layer`
    defaults to the FIRST selected layer — a bare `{comp, depth}` silently
    drops all but one selected layer). Verified against
-   `editor/crates/engine/src/commands/query.rs` + fake. Consequences:
+   `apps/editor/crates/engine/src/commands/query.rs` + fake. Consequences:
    - `studio.list_layers` = `comp.info {comp}` (authoritative layer list) +
      per-layer `layer.tree {comp, layer, depth}` (concurrency 4, `tree: null`
      on per-item failure).

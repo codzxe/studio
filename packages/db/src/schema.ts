@@ -5,6 +5,7 @@ import {
   bigint,
   boolean,
   char,
+  check,
   index,
   integer,
   jsonb,
@@ -558,6 +559,26 @@ export const creditLedger = pgTable(
     index("credit_ledger_workspace_created_idx").on(t.workspaceId, t.createdAt.desc()),
     index("credit_ledger_run_idx").on(t.runId),
     index("credit_ledger_render_idx").on(t.renderId),
+    // BIL-07 (2026-10-30 audit): DB-level money invariants — the money table
+    // had NO CHECK constraints (a buggy writer could mint a negative grant or
+    // a positive reserve). Signs mirror repos/ledger.ts's validated writers:
+    // grant ≥ 1, refund ≥ 1, reserve ≤ −1, commit ≤ 0 (a zero-cost settle is
+    // legal), adjust unconstrained (staff true-ups are ±). Ceiling = the
+    // SEC-10 1e15 µc in-code cap. balance_after is deliberately NOT floored
+    // at 0 — uncapped settles may drive balances negative (BIL-08, a product
+    // decision); a floor here would turn that path into a 500.
+    check(
+      "credit_ledger_kind_check",
+      sql`${t.kind} in ('grant', 'reserve', 'commit', 'refund', 'adjust')`,
+    ),
+    check(
+      "credit_ledger_amount_sign_check",
+      sql`((${t.kind} = 'grant' and ${t.amount} > 0) or (${t.kind} = 'refund' and ${t.amount} > 0) or (${t.kind} = 'reserve' and ${t.amount} < 0) or (${t.kind} = 'commit' and ${t.amount} <= 0) or ${t.kind} = 'adjust')`,
+    ),
+    check(
+      "credit_ledger_amount_ceiling_check",
+      sql`${t.amount} <= 1000000000000000 and ${t.amount} >= -1000000000000000`,
+    ),
   ],
 );
 

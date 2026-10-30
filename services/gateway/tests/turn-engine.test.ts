@@ -1,5 +1,5 @@
 // Round-12 TURN ENGINE unit tests (services/gateway/src/litellm/turn-engine.ts
-// — research/round12-design.md "TURN WIRE CONTRACT"). Battle-tested coverage of
+// — docs/research/round12-design.md "TURN WIRE CONTRACT"). Battle-tested coverage of
 // the stateless client-driven-loop seams, all deterministic and network-free
 // (the fake OpenAI SSE pattern from litellm-openai.test.ts):
 //

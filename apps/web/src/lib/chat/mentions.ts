@@ -1,6 +1,6 @@
 /**
  * @-mention parsing for the chat composer (ROUND 12 "Chat UI v3",
- * research/round12-design.md "@-mentions: @layer @comp resolved client-side").
+ * docs/research/round12-design.md "@-mentions: @layer @comp resolved client-side").
  *
  * PURE module — no React, no DOM, never throws. The composer detects the
  * mention segment at the caret (`detectMentionAtCaret`), filters the

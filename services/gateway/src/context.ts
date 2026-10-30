@@ -132,6 +132,36 @@ export interface StripeSdkSubscriptionLike {
  * typecheck); the in-process test harness (tests/helpers/fake-stripe.ts)
  * implements the same shape so tests never import Stripe or touch network.
  */
+export interface StripeSdkCheckoutSessionLike {
+  readonly id: string;
+  readonly payment_status?: string;
+  /** Payment mode sessions may carry the PM directly (expandable). */
+  readonly payment_method?:
+    | string
+    | { readonly id: string; readonly card?: { readonly fingerprint?: string | null } | null }
+    | null;
+  /** Subscription mode resolves the card through the intent's latest charge. */
+  readonly payment_intent?:
+    | string
+    | {
+        readonly id: string;
+        readonly latest_charge?:
+          | string
+          | {
+              readonly id: string;
+              readonly payment_method?:
+                | string
+                | {
+                    readonly id: string;
+                    readonly card?: { readonly fingerprint?: string | null } | null;
+                  }
+                | null;
+            }
+          | null;
+      }
+    | null;
+}
+
 export interface StripeSdkLike {
   readonly checkout: {
     readonly sessions: {
@@ -146,6 +176,15 @@ export interface StripeSdkLike {
         subscription_data?: { metadata?: Record<string, string> };
         payment_intent_data?: { metadata?: Record<string, string> };
       }): Promise<{ id: string; url: string | null }>;
+      /**
+       * BIL-04: retrieve a Checkout session (optionally expanded). The seam's
+       * card-fingerprint read walks the session's payment chain — the expand
+       * list is advisory for SDKs that support it.
+       */
+      retrieve(
+        id: string,
+        params?: { expand?: readonly string[] },
+      ): Promise<StripeSdkCheckoutSessionLike>;
     };
   };
   readonly billingPortal: {
@@ -240,6 +279,16 @@ export interface StripeSeam {
    */
   subscription(customerId: string): Promise<StripeSeamResult<SubscriptionSnapshot>>;
   /**
+   * BIL-04 (2026-10-30 audit): the card fingerprint of a COMPLETED Checkout
+   * session — the one-per-card key the card-required trial gates on. Resolves
+   * the session's payment method (directly, or through its payment intent's
+   * latest charge) and returns the card fingerprint; `{fingerprint: null}`
+   * when the session has no card on file. Typed failures, never throws.
+   */
+  checkoutSessionCardFingerprint(
+    sessionId: string,
+  ): Promise<StripeSeamResult<{ fingerprint: string | null }>>;
+  /**
    * Update the customer's latest subscription: swap the first item's price to
    * `planPriceKey` (a Stripe PRICE id, caller-resolved) and/or set
    * cancel-at-period-end. Omitted `cancelAtPeriodEnd` leaves it unchanged.
@@ -284,9 +333,25 @@ export interface GatewayDeps {
   readonly dbHealth: DbHealth;
 }
 
+/**
+ * SEC-03: the Bearer API-key principal, set by requireAuth when the session
+ * came from `Authorization: Bearer studio_…`. Carries everything the scope
+ * middleware and the workspace-binding gate need — never key material.
+ */
+export interface ApiKeyPrincipal {
+  /** The apikey row id (== the plugin session-mock's session.id). */
+  readonly id: string;
+  /** `metadata.workspaceId` — the workspace the key was minted for; null when absent/garbage. */
+  readonly workspaceId: string | null;
+  /** Wire scopes derived from the stored statements (null/garbage → [], fail safe). */
+  readonly scopes: readonly string[];
+}
+
 export interface AuthedUser {
   readonly user: AuthContext["user"];
   readonly session: AuthContext["session"];
+  /** Present iff the session was minted for a Bearer API key (SEC-03). */
+  readonly apiKey?: ApiKeyPrincipal;
 }
 
 export interface WorkspaceContext {

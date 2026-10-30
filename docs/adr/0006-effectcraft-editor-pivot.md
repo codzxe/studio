@@ -25,7 +25,7 @@ float inside the editor viewport and, optionally, dock as a sidebar.
    Cargo workspace and build the upstream web editor for the browser. The editor is
    **UI-frozen**: no changes to `crates/ui-egui` panels, menus, theme, layout or
    interaction model. Only build/integration changes that are strictly required to
-   host it are allowed, and each is recorded in `editor/UPSTREAM.md`.
+   host it are allowed, and each is recorded in `apps/editor/UPSTREAM.md`.
 3. **Editor runtime.** Web-first. The browser editor runs from a pinned EffectCraft
    web build. Native packaging is out of scope for v1.
 4. **Editor boundary.** The editor is served same-origin at `/editor/` and rendered in
@@ -77,10 +77,10 @@ float inside the editor viewport and, optionally, dock as a sidebar.
 
 ## Upstream policy
 
-- Pin an exact EffectCraft commit in `editor/UPSTREAM.md` and `ATTRIBUTION.md`.
+- Pin an exact EffectCraft commit in `apps/editor/UPSTREAM.md` and `ATTRIBUTION.md`.
 - Keep `editor/` a clean subtree with an `upstream` remote. Product changes do not go
-  into `editor/crates/ui-egui`.
-- If a bridge/API gap forces a patch, it goes in `editor/patches/` as a small,
+  into `apps/editor/crates/ui-egui`.
+- If a bridge/API gap forces a patch, it goes in `apps/editor/patches/` as a small,
   documented, upstreamable change; it is never a broad UI edit.
 - Run EffectCraft's own gates (`cargo xtask ci`, wasm build, relevant tests) at every
   pin bump.

@@ -17,7 +17,7 @@ One-box beta (PRODUCT_ARCHITECTURE §14.2): Caddy + Next.js + gateway + worker
 
 - **Node 22+** and **pnpm 9** (`corepack enable`)
 - **Rust 1.95+** with `wasm32-unknown-unknown` + `wasm-bindgen-cli` 0.2.129
-  (only for building the editor; see `editor/docs/web.md`)
+  (only for building the editor; see `apps/editor/docs/web.md`)
 - **Docker + compose v2** (container path) **or** native services (native path)
 - 2 vCPU / 4 GB RAM is enough for the beta
 
@@ -30,8 +30,8 @@ cp .env.example .env && chmod 600 .env && $EDITOR .env   # real secrets, APP_ENV
 cd infra/compose
 docker compose --env-file ../../.env up -d               # db, valkey, minio(+bucket), litellm
 cd ../.. && pnpm install && pnpm db:migrate && pnpm db:seed
-cd editor && cargo xtask web && cd ..                    # → editor/target/web/dist
-mkdir -p infra/caddy/editor-dist && cp -r editor/target/web/dist/. infra/caddy/editor-dist/
+cd apps/editor && cargo xtask web && cd ..                    # → apps/editor/target/web/dist
+mkdir -p infra/caddy/editor-dist && cp -r apps/editor/target/web/dist/. infra/caddy/editor-dist/
 cd infra/compose && docker compose --env-file ../../.env --profile apps up -d --build
 # Set SITE_ADDR + ACME_EMAIL (or DNS + ports 80/443 open) before the last step —
 # see compose/README.md for the full bring-up order.

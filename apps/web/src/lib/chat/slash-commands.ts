@@ -1,6 +1,6 @@
 /**
  * Slash-command parsing for the chat composer (ROUND 12 "Chat UI v3",
- * research/round12-design.md "Slash commands: /undo /redo /save /checkpoint
+ * docs/research/round12-design.md "Slash commands: /undo /redo /save /checkpoint
  * /clear /reset-panel").
  *
  * PURE module — no React, no DOM, never throws. The composer consumes the

@@ -50,6 +50,27 @@ export const RENDER_QUALITY_SCHEMA = z.enum(["draft", "good", "best"]);
 
 export type RenderQuality = z.infer<typeof RENDER_QUALITY_SCHEMA>;
 
+/**
+ * BIL-06 (2026-10-30 audit): the frame-rate ceiling for BOTH the requested
+ * setting and the effective rate a comp's native metadata may drive. 240
+ * covers every practical format (cinema 24, PAL 25, NTSC 29.97, web 60,
+ * slow-motion exports up to 240) — anything above is a CPU-farm shape, not
+ * a render. The gateway clamps the EFFECTIVE rate (comp-native included)
+ * to the same bound; the worker re-clamps before spawning.
+ */
+export const MAX_RENDER_FRAME_RATE = 240;
+
+/**
+ * BIL-06/ENG-05: the per-job FRAME ceiling — ceil(outputSeconds × frameRate).
+ * 1.5M frames passes the largest plan's full monthly budget at standard
+ * film rates (600 min × 60 s × 30 fps = 1.08M) while capping pathological
+ * long-and-fast jobs (the zero-net-credit CPU farm: a hostile comp that
+ * refunds fully after burning worker CPU). Jobs above it fail typed with
+ * RENDER_QUOTA_EXCEEDED — at queue time (gateway) and again at spawn time
+ * (worker, for legacy rows queued before this guard).
+ */
+export const MAX_RENDER_FRAMES = 1_500_000;
+
 /** Render settings (§7.2 `settings`); per-plan quotas are enforced server-side. */
 export const RENDER_SETTINGS_SCHEMA = z
   .strictObject({
@@ -57,7 +78,8 @@ export const RENDER_SETTINGS_SCHEMA = z
     timeTo: z.number().nonnegative().optional(),
     width: z.number().int().positive().optional(),
     height: z.number().int().positive().optional(),
-    frameRate: z.number().positive().optional(),
+    // BIL-06: 1..MAX_RENDER_FRAME_RATE (fractional allowed — 29.97 etc.).
+    frameRate: z.number().min(1).max(MAX_RENDER_FRAME_RATE).optional(),
     quality: RENDER_QUALITY_SCHEMA.optional(),
     /** Format-specific passthrough knobs; server validates against the plan. */
     extra: z.record(z.string(), z.unknown()).optional(),
