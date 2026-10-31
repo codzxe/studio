@@ -335,7 +335,10 @@ function childEnv({ webPort, gwPort }) {
   return {
     ...process.env,
     APP_ENV: "local",
-    MOCK_MODEL: "true",
+    // Explicit overrides pass through (e.g. MOCK_MODEL=false + a real
+    // LITELLM_BASE_URL/LITELLM_API_KEY pair) so dev:ready can boot against a
+    // live model seam; unset/empty keeps the offline canned-journey default.
+    MOCK_MODEL: process.env.MOCK_MODEL || "true",
     DATABASE_URL: `file:${DB_PATH}`,
     AUTH_SECRET: process.env.AUTH_SECRET || "dev-local-secret-0123456789abcdef0123456789abcdef",
     AUTH_GOOGLE_ID: "replace-me",
@@ -344,8 +347,8 @@ function childEnv({ webPort, gwPort }) {
     AUTH_GITHUB_SECRET: "replace-me",
     STRIPE_WEBHOOK_SECRET: "whsec_replace_me",
     STRIPE_PRICE_IDS: '{"starter":"price_starter","pro":"price_pro","studio":"price_studio"}',
-    LITELLM_BASE_URL: "http://localhost:4000",
-    LITELLM_API_KEY: "sk-litellm-replace-me",
+    LITELLM_BASE_URL: process.env.LITELLM_BASE_URL || "http://localhost:4000",
+    LITELLM_API_KEY: process.env.LITELLM_API_KEY || "sk-litellm-replace-me",
     ASSET_MAX_BYTES: "524288000",
     PROJECT_MAX_BYTES: "262144000",
     CHAT_MAX_STEPS: "50",
@@ -575,9 +578,7 @@ async function cmdStart(opts) {
     say(red(`      ✗ ${e.message}`));
     process.exit(1);
   }
-  say(
-    `      studio_web_bg.wasm — ${bold(fmtBytes(wasmInfo.size))}, magic ${green("\\0asm")} ✓`,
-  );
+  say(`      studio_web_bg.wasm — ${bold(fmtBytes(wasmInfo.size))}, magic ${green("\\0asm")} ✓`);
   if (wasmInfo.missing.length > 0) {
     say(
       yellow(
