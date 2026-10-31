@@ -639,7 +639,7 @@ function extractJsonObject(text: string): unknown {
 }
 
 function planValidationError(raw: unknown): string {
-  const checked = EDIT_PLAN_SCHEMA.safeParse(raw);
+  const checked = EDIT_PLAN_SCHEMA.safeParse(coerceStringifiedJson(raw));
   if (checked.success) return "";
   return checked.error.issues
     .slice(0, 3)
@@ -696,7 +696,7 @@ export async function serverSidePlan(
       inputTokens: usageAccumulator.inputTokens + round.inputTokens,
       outputTokens: usageAccumulator.outputTokens + round.outputTokens,
     };
-    const parsed = extractJsonObject(round.text);
+    const parsed = coerceStringifiedJson(extractJsonObject(round.text));
     const validation = planValidationError(parsed);
     if (parsed !== undefined && validation === "") {
       return { plan: EDIT_PLAN_SCHEMA.parse(parsed), usage: usageAccumulator };
@@ -747,7 +747,7 @@ export function validateToolCall(call: AggregatedToolCall): ValidatedToolCall {
       message: `Tool arguments for ${tool.id} must be a single valid JSON object.`,
     };
   }
-  const checked = tool.args.safeParse(parsedArgs);
+  const checked = tool.args.safeParse(coerceStringifiedJson(parsedArgs));
   if (!checked.success) {
     const detail = checked.error.issues
       .slice(0, 3)
@@ -762,6 +762,67 @@ export function validateToolCall(call: AggregatedToolCall): ValidatedToolCall {
 export function registeredToolFor(name: string): ToolDefinition | null {
   return TOOL_BY_ID.get(name) ?? null;
 }
+
+/**
+ * LLM arg repair: stringified JSON in structured fields.
+ *
+ * Some models (observed with glm-4-plus in the local bridge) emit
+ * array/object arguments as JSON-encoded STRINGS — `"[{\"name\":…}]"`
+ * instead of `[{"name":…}]`, `"[255, 255, 255]"` instead of `[255, 255,
+ * 255]`. The write-tool schemas are strict, so every such call fails
+ * validation: the run degrades (steps silently dropped, repair turns
+ * burned, plans that animate nothing). One bounded, depth-capped pass:
+ * any string that LOOKS like JSON (leading `{`/`[` after whitespace) and
+ * PARSES is replaced by its parsed value, recursively — then the strict
+ * schema still has the final say (shapes, bounds, dunder keys). A string
+ * that looks like JSON but does not parse is left untouched so the schema
+ * error still explains the real problem.
+ */
+export function coerceStringifiedJson(value: unknown, depth = 0): unknown {
+  if (depth > 6) return value;
+  if (typeof value === "string") {
+    const trimmed = value.trimStart();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return coerceStringifiedJson(JSON.parse(value), depth + 1);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((entry) => coerceStringifiedJson(entry, depth + 1));
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      out[key] =
+        NUMERIC_ARG_FIELDS.has(key) &&
+        typeof child === "string" &&
+        /^-?\d+(?:\.\d+)?$/.test(child.trim())
+          ? Number(child.trim())
+          : coerceStringifiedJson(child, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Object fields the curated write-tool schemas type as NUMBERS, observed
+ * stringified by weak models ("width":"1920"). Only clean integer/decimal
+ * strings under these names coerce — a bare scalar repair, never applied to
+ * names, paths, or free-form values (those stay strings so the strict schema
+ * still rejects genuinely wrong shapes).
+ */
+const NUMERIC_ARG_FIELDS: ReadonlySet<string> = new Set([
+  "width",
+  "height",
+  "frameRate",
+  "durationSeconds",
+  "size",
+  "timeSeconds",
+  "duration",
+]);
 
 /** Write tools are exactly the catalog's kind:"write" entries. */
 export function isWriteTool(tool: ToolDefinition): boolean {

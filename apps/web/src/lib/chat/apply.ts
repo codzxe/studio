@@ -507,6 +507,35 @@ async function listLayers(bridge: EditorBridge): Promise<readonly CompLayerEntry
 }
 
 /**
+ * Layer names the plan's OWN batch creates before it references them.
+ *
+ * The plan compiler leaves a `$request:` placeholder for EVERY layer-name
+ * site, and the client resolves those against the LIVE layer list before the
+ * batch runs — but a plan that builds a scene from scratch (create comp →
+ * create text → animate it) references layers that do not exist yet: on an
+ * empty project `comp.info` fails outright, and mid-batch creations can
+ * never resolve against a pre-batch snapshot. The engine accepts
+ * id|name|#n layer refs and resolves names at each batch step's execution
+ * time (commands run in order), so a name the batch itself creates can ride
+ * through AS THE NAME: it binds deterministically to the step that just
+ * made it. Anything else still resolves live (ambiguous/unknown = typed
+ * failure before any engine traffic — unchanged safety default).
+ */
+function batchCreatedLayerNames(steps: readonly BatchStep[]): ReadonlySet<string> {
+  const created = new Set<string>();
+  for (const step of steps) {
+    if (!BATCH_LAYER_CREATION_RE.test(step.command)) continue;
+    const name = (step.params as Record<string, unknown>).name;
+    if (typeof name === "string" && name.length > 0) created.add(name);
+  }
+  return created;
+}
+
+/** Engine commands whose params.name CREATES a layer with that name. */
+const BATCH_LAYER_CREATION_RE =
+  /^(?:layer\.new(?:3dPrimitive|Adjustment|Camera|Light|Model|Null|Primitive|Shape|Solid|Text))$/;
+
+/**
  * Resolves every request against the live layer list. Read-only: the only
  * bridge traffic is ONE `comp.info` query however many requests there are.
  * Ambiguous/unknown names fail BEFORE anything executes.
@@ -581,7 +610,7 @@ async function resolveRequests(
  */
 function patchPlaceholders(
   value: unknown,
-  resolvedById: Readonly<Record<string, number>>,
+  resolvedById: Readonly<Record<string, number | string>>,
 ): { patched: unknown; unresolved: string[] } {
   const unresolved: string[] = [];
   const walk = (node: unknown): unknown => {
@@ -1138,16 +1167,22 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
         revert.revertedAll ? outcome : { ...outcome, message: `${outcome.message}${revert.note}` },
       );
     };
-    let resolvedById: Readonly<Record<string, number>> = {};
+    let resolvedById: Readonly<Record<string, number | string>> = {};
     let resolvedForWire: readonly PostedResolvedLayer[] = [];
-    const requests = plan.resolutionRequests ?? [];
+    const allRequests = plan.resolutionRequests ?? [];
+    // Names the batch itself creates ride through as NAME strings (engine
+    // resolves them at each step's execution time — see
+    // batchCreatedLayerNames); only the rest hit the live layer list.
+    const createdNames = batchCreatedLayerNames(batchSteps);
+    const requests = allRequests.filter((r) => !createdNames.has(r.layerName));
+    const deferred = allRequests.filter((r) => createdNames.has(r.layerName));
     if (requests.length > 0) {
       const resolution = await resolveRequests(requests, bridge);
       if (!resolution.ok) return await failAfterPrePhase(resolution.outcome);
       notify({ type: "apply.resolved", runId: plan.runId, resolved: resolution.resolved });
       // Null-prototype accumulator (M4-N F-1): request ids are model-adjacent
       // strings — on a plain `{}` a `__proto__` id would hit the accessor.
-      const map = Object.create(null) as Record<string, number>;
+      const map = Object.create(null) as Record<string, number | string>;
       for (const entry of resolution.resolved) map[entry.requestId] = entry.layerId;
       resolvedById = map;
       // §8.7/M5-E: the name→id bindings ride the applyRun body (auditable
@@ -1156,6 +1191,14 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
         requestId: entry.requestId,
         layerId: entry.layerId,
       }));
+    }
+    // Batch-created names: bind the placeholder to the NAME ITSELF (string
+    // value — the patcher passes non-number bindings through verbatim).
+    if (deferred.length > 0) {
+      const map = Object.create(null) as Record<string, number | string>;
+      for (const [key, value] of Object.entries(resolvedById)) map[key] = value;
+      for (const request of deferred) map[request.requestId] = request.layerName;
+      resolvedById = map;
     }
 
     // 3. Patch the placeholders with the resolved ids (deterministic clone,

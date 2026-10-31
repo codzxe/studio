@@ -617,6 +617,14 @@ export function createFakeEditor(overrides: FakeEditorOverrides = {}): FakeEdito
     if (typeof ref === "number") id = ref;
     else if (typeof ref === "string" && /^\d+$/.test(ref)) id = Number(ref);
     else if (ref === undefined && selectedLayers.length > 0) id = selectedLayers[0] ?? null;
+    // commands/mod.rs resolve_layer: a non-# string is an EXACT NAME match in
+    // the active comp (id|name|#n refs) — mirror that here so batches that
+    // reference just-created layers by name behave like the real engine.
+    if (id === null && typeof ref === "string" && ref.length > 0 && !ref.startsWith("#")) {
+      const comp = activeCompOrNull();
+      const byName = comp === null ? undefined : compLayers(comp).find((l) => l.name === ref);
+      if (byName) return byName;
+    }
     const layer = id === null ? undefined : project.layers.find((l) => l.id === id);
     if (!layer) {
       throw activeCompOrNull() ? "select a layer first" : "no composition is open";

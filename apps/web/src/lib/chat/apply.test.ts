@@ -400,6 +400,99 @@ describe("createApplyController.apply — layer resolution", () => {
     expect(harness.applyCalls).toHaveLength(0);
   });
 
+  it("batch-created layer names ride through as names — no live resolution, no comp.info (empty-project scene build applies)", async () => {
+    const harness = await makeHarness({
+      // An EMPTY project: comp.info throws (no active composition) — the
+      // exact live state that made create-then-animate plans unappliable.
+      wrapBridge: (inner) => ({
+        ...inner,
+        query: async <T>(command: string, params?: unknown) => {
+          if (command === "comp.info") {
+            throw new Error("no active composition");
+          }
+          return inner.query<T>(command, params);
+        },
+      }),
+    });
+    const outcome = await harness.controller.apply(
+      helloPlan({
+        compiledBatch: {
+          label: "Agent: kinetic intro",
+          atomic: true,
+          steps: [
+            { command: "comp.new", params: { name: "Main", width: 1920, height: 1080 } },
+            {
+              command: "layer.newText",
+              params: { text: "STUDIO", name: "STUDIO", position: [960, 540] },
+            },
+            {
+              command: "prop.set",
+              params: { layer: "$request:r1", path: "transform/scale", value: [100, 100] },
+            },
+            {
+              command: "prop.set",
+              params: { layer: "$request:r2", path: "transform/opacity", value: 100 },
+            },
+          ],
+        },
+        resolutionRequests: [
+          { requestId: "r1", layerName: "STUDIO", disambiguation: [] },
+          { requestId: "r2", layerName: "STUDIO", disambiguation: [] },
+        ],
+      }),
+    );
+    expect(outcome).toMatchObject({ ok: true, versionId: "ver_applied_1" });
+    // comp.info must NEVER be hit: both requests were batch-created.
+    expect(harness.recorded.queryCalls).toHaveLength(0);
+    const batch = harness.recorded.executeCalls.find((c) => c.command === "engine.batch");
+    expect(batch).toBeDefined();
+    const steps = (batch?.params as { steps: Array<{ params: Record<string, unknown> }> }).steps;
+    const scaleStep = steps[2]?.params as { layer?: unknown } | undefined;
+    const opacityStep = steps[3]?.params as { layer?: unknown } | undefined;
+    expect(scaleStep?.layer).toBe("STUDIO"); // name string, not the token, not an id
+    expect(opacityStep?.layer).toBe("STUDIO");
+    expect(JSON.stringify(steps)).not.toContain("$request:");
+  });
+
+  it("live references still resolve against the comp even when other names are batch-created", async () => {
+    const harness = await makeHarness(); // comp "Main" with layer "Hello"
+    const outcome = await harness.controller.apply(
+      helloPlan({
+        compiledBatch: {
+          label: "Agent: mixed scene",
+          atomic: true,
+          steps: [
+            {
+              command: "layer.newText",
+              params: { text: "New", name: "Fresh", position: [10, 10] },
+            },
+            {
+              command: "prop.set",
+              params: { layer: "$request:r1", path: "transform/opacity", value: 50 },
+            },
+            {
+              command: "prop.set",
+              params: { layer: "$request:r2", path: "transform/opacity", value: 100 },
+            },
+          ],
+        },
+        resolutionRequests: [
+          { requestId: "r1", layerName: "Hello", disambiguation: [] }, // live
+          { requestId: "r2", layerName: "Fresh", disambiguation: [] }, // batch-created
+        ],
+      }),
+    );
+    expect(outcome).toMatchObject({ ok: true });
+    const batch = harness.recorded.executeCalls.find((c) => c.command === "engine.batch");
+    const steps = (batch?.params as { steps: Array<{ params: Record<string, unknown> }> }).steps;
+    const liveStep = steps[1]?.params as { layer?: unknown } | undefined;
+    const deferredStep = steps[2]?.params as { layer?: unknown } | undefined;
+    expect(liveStep?.layer).toBe(1); // live-resolved id of "Hello"
+    expect(deferredStep?.layer).toBe("Fresh"); // deferred name
+    // The wire binding only carries the live id (deferred names ride the batch).
+    expect(harness.applyCalls[0]?.body.resolvedLayers).toEqual([{ requestId: "r1", layerId: 1 }]);
+  });
+
   it("a malformed compiled batch → invalid-batch, nothing executes", async () => {
     const harness = await makeHarness();
     const outcome = await harness.controller.apply(

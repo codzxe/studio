@@ -270,6 +270,48 @@ const HISTORY_COMMANDS: ReadonlySet<string> = new Set(["edit.undo", "edit.redo"]
 /** A preset string that looks like a filesystem path (law #5 hazard). */
 const PRESET_PATH_LIKE = /(?:[\\/]|\.ecpreset$)/;
 
+/**
+ * The engine's text-animator preset ids (crates/engine/presets/
+ * text_animators.json via text_anim.rs PRESETS_JSON — the SAME list
+ * layer.applyTextPreset's paramsDoc documents). These route to
+ * layer.applyTextPreset, NOT anim.applyBuiltinPreset (whose library is
+ * transitions + backgrounds only).
+ */
+const TEXT_ANIMATOR_PRESET_IDS: ReadonlySet<string> = new Set([
+  "typewriter",
+  "fadeUpCharacters",
+  "bounceInWords",
+  "trackingIn",
+  "scramble",
+  "blurIn",
+  "jitter",
+  "dropInLines",
+]);
+
+/** Bare leaf names the engine keeps under the `transform` group. */
+const BARE_LEAF_PROPERTY_ALIASES: Readonly<Record<string, string>> = {
+  opacity: "transform/opacity",
+  scale: "transform/scale",
+  position: "transform/position",
+  rotation: "transform/rotation",
+  anchor: "transform/anchor",
+};
+
+/**
+ * Model property paths → engine paths (prop.rs groups).
+ *
+ * The engine addresses properties as slash GROUPS (`transform/opacity`,
+ * `transform/scale`) while models emit AE style (`transform.scale`) or bare
+ * leaf names (`opacity`), which the engine rejects ("no property
+ * `opacity`"). Normalize: dots → slashes, and a bare leaf name gets its
+ * canonical transform group. Grouped paths pass through untouched.
+ */
+function normalizePropertyPath(raw: string): string {
+  const path = raw.trim().replace(/\./g, "/");
+  if (path.includes("/")) return path;
+  return BARE_LEAF_PROPERTY_ALIASES[path.toLowerCase()] ?? path;
+}
+
 /** CLIENT-SPECIAL compiled step ids (round-12): the two steps the engine
  * cannot take through engine.batch — `script.run` (NOT_IN_BATCH; the client
  * apply seam executes it via bridge.execute with ONE undo group) and
@@ -749,7 +791,10 @@ class Compiler {
               }
               add("layer.rename", { layer, name: value });
             } else {
-              const params: Record<string, unknown> = { layer, path };
+              const params: Record<string, unknown> = {
+                layer,
+                path: normalizePropertyPath(path),
+              };
               if ("value" in property) params.value = property.value;
               add("prop.set", params);
             }
@@ -785,7 +830,9 @@ class Compiler {
           const interpolation = readString(key, "interpolation");
           for (const layer of layers) {
             const params: Record<string, unknown> = { layer };
-            if (propertyPath !== undefined) params.path = propertyPath;
+            if (propertyPath !== undefined) {
+              params.path = normalizePropertyPath(propertyPath);
+            }
             if (isFiniteNumber(time)) params.time = time;
             else if (time !== undefined) {
               unusable("keys", "entry timeSeconds is not a finite number");
@@ -872,6 +919,20 @@ class Compiler {
         if (preset === undefined) {
           unusable("preset", "needs a name or builtinId");
           compilesToNothing();
+          break;
+        }
+        // The text-animator library (crates/engine/presets/text_animators.json:
+        // typewriter, fadeUpCharacters, bounceInWords, trackingIn, scramble,
+        // blurIn, jitter, dropInLines) is NOT part of anim.applyBuiltinPreset's
+        // library (transitions + backgrounds only — anim_presets.rs presets());
+        // applying those ids there fails with "no animation preset". They have
+        // their own engine command — layer.applyTextPreset — so route by id
+        // (layer refs ride the same resolution sites either way).
+        if (TEXT_ANIMATOR_PRESET_IDS.has(preset)) {
+          for (const layer of layers) {
+            add("layer.applyTextPreset", { layer, preset });
+            addSite("layer", layer);
+          }
           break;
         }
         const params: Record<string, unknown> = { layers: [...layers], preset };
