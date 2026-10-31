@@ -128,6 +128,7 @@ export type PlanIssueCode =
   | "unresolvable_ref" // $N.key forward/self/out-of-range (§8.5)
   | "batch_mismatch" // the model's proposed batch disagrees with the translation
   | "uncompilable_arg" // client-state arg (effect params, easing, preset paths)
+  | "unit_normalized" // model wrote transform 0..1 fractions; compiled as percent
   | "undo_run_target" // undo_run named a run; the engine reverts the latest batch
   | "duplicate_save_version" // an earlier save_version step was superseded
   | "undeclared_layer" // a referenced layer is missing from affectedLayers
@@ -378,6 +379,46 @@ function predicateAllows(
   } catch {
     return false;
   }
+}
+
+/**
+ * Unit seam for model-written transform values (observed with glm-4-plus and
+ * any LLM really): the engine's `transform/opacity` and `transform/scale`
+ * are PERCENT (static defaults 100; keyframes like 0 → 130 for a bounce
+ * pop-in), while models habitually write 0..1 fractions (opacity 0 → 1,
+ * scale 0 → 1.3). Raw fractions compile and apply fine — and then animate
+ * nothing visible: a 1%-opacity tagline, a 1.3%-scale title (the 2026-10-31
+ * Neon Typography render bug). One bounded pass, applied ONLY when every
+ * numeric component sits in [0, 1] — an already-percent 0..100 value never
+ * matches, so this is idempotent and safe on mixed plans. Positions and
+ * everything else pass through untouched.
+ */
+export function normalizeTransformUnitForPath(
+  path: string,
+  value: unknown,
+): { value: unknown; converted: boolean } {
+  const segments = path.toLowerCase().split("/").filter((s) => s.length > 0);
+  const leaf = segments[segments.length - 1];
+  const isOpacity = leaf === "opacity";
+  const isScale = leaf === "scale";
+  if (!isOpacity && !isScale) return { value, converted: false };
+  if (isOpacity) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+      return { value, converted: false };
+    }
+    return { value: value * 100, converted: value !== 100 };
+  }
+  // scale: [x, y] or [x, y, z] — convert x/y fractions; leave anything else.
+  if (!Array.isArray(value) || value.length < 2 || value.length > 3) {
+    return { value, converted: false };
+  }
+  if (!value.every((c) => typeof c === "number" && Number.isFinite(c))) {
+    return { value, converted: false };
+  }
+  if (!value.every((c) => c >= 0 && c <= 1)) {
+    return { value, converted: false };
+  }
+  return { value: value.map((c) => c * 100), converted: true };
 }
 
 /** Deterministic, depth-capped canonical JSON (sorted object keys) used to
@@ -791,11 +832,22 @@ class Compiler {
               }
               add("layer.rename", { layer, name: value });
             } else {
+              const normalizedPath = normalizePropertyPath(path);
               const params: Record<string, unknown> = {
                 layer,
-                path: normalizePropertyPath(path),
+                path: normalizedPath,
               };
-              if ("value" in property) params.value = property.value;
+              if ("value" in property) {
+                const unit = normalizeTransformUnitForPath(normalizedPath, property.value);
+                params.value = unit.value;
+                if (unit.converted) {
+                  this.warn(
+                    "unit_normalized",
+                    `transform value written as a 0..1 fraction; compiled as percent (engine convention)`,
+                    { step: planStep, tool, param: "value" },
+                  );
+                }
+              }
               add("prop.set", params);
             }
             addSite("layer", layer);
@@ -837,7 +889,20 @@ class Compiler {
             else if (time !== undefined) {
               unusable("keys", "entry timeSeconds is not a finite number");
             }
-            if ("value" in key) params.value = key.value;
+            if ("value" in key) {
+              const unit = normalizeTransformUnitForPath(
+                propertyPath !== undefined ? normalizePropertyPath(propertyPath) : "",
+                key.value,
+              );
+              params.value = unit.value;
+              if (unit.converted) {
+                this.warn(
+                  "unit_normalized",
+                  `transform keyframe written as a 0..1 fraction; compiled as percent (engine convention)`,
+                  { step: planStep, tool, param: "value" },
+                );
+              }
+            }
             if (interpolation !== undefined && interpolation !== "linear") {
               this.warn(
                 "uncompilable_arg",
