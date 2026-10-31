@@ -52,30 +52,44 @@ function migrateLegacyIDB() {
     req.onerror = () => resolve();
     req.onsuccess = () => {
       const old = req.result;
-      const tx = old.transaction(STORE, "readonly");
-      const getAll = tx.objectStore(STORE).getAll();
-      getAll.onerror = () => { old.close(); resolve(); };
-      getAll.onsuccess = () => {
-        const rows = getAll.result || [];
-        old.close();
-        if (!rows.length) return resolve();
-        const open = indexedDB.open(DB, 1);
-        open.onupgradeneeded = () => open.result.createObjectStore(STORE);
-        open.onerror = () => resolve();
-        open.onsuccess = () => {
-          const cur = open.result;
-          const wtx = cur.transaction(STORE, "readwrite");
-          const store = wtx.objectStore(STORE);
-          for (const row of rows) {
-            if (row && row.key != null) {
-              const g = store.getKey(row.key);
-              g.onsuccess = () => { if (!g.result) store.put(row); };
+      // A legacy DB from an older build can carry a different shape (no
+      // `entries` store): the transaction below then throws SYNCHRONOUSLY
+      // inside this callback — an uncaught error that kills a frame worker
+      // at boot. Migration is best-effort: any failure just skips it.
+      try {
+        const tx = old.transaction(STORE, "readonly");
+        const getAll = tx.objectStore(STORE).getAll();
+        getAll.onerror = () => { old.close(); resolve(); };
+        getAll.onsuccess = () => {
+          const rows = getAll.result || [];
+          old.close();
+          if (!rows.length) return resolve();
+          const open = indexedDB.open(DB, 1);
+          open.onupgradeneeded = () => open.result.createObjectStore(STORE);
+          open.onerror = () => resolve();
+          open.onsuccess = () => {
+            const cur = open.result;
+            try {
+              const wtx = cur.transaction(STORE, "readwrite");
+              const store = wtx.objectStore(STORE);
+              for (const row of rows) {
+                if (row && row.key != null) {
+                  const g = store.getKey(row.key);
+                  g.onsuccess = () => { if (!g.result) store.put(row); };
+                }
+              }
+              wtx.oncomplete = () => { cur.close(); resolve(); };
+              wtx.onerror = () => { cur.close(); resolve(); };
+            } catch (e) {
+              try { cur.close(); } catch {}
+              resolve();
             }
-          }
-          wtx.oncomplete = () => { cur.close(); resolve(); };
-          wtx.onerror = () => { cur.close(); resolve(); };
+          };
         };
-      };
+      } catch (e) {
+        try { old.close(); } catch {}
+        resolve();
+      }
     };
   });
 }
@@ -148,9 +162,21 @@ function write(db, store, op) {
 
 async function idb() {
   if (!self.indexedDB) throw new Error("no IndexedDB");
-  const open = indexedDB.open(DB, 1);
-  open.onupgradeneeded = () => open.result.createObjectStore(STORE, { keyPath: "key" });
-  const db = await req(open);
+  const open = () => {
+    const o = indexedDB.open(DB, 1);
+    o.onupgradeneeded = () => o.result.createObjectStore(STORE, { keyPath: "key" });
+    return req(o);
+  };
+  let db = await open();
+  // Self-heal a STALE database: an older build's DB at the same version
+  // never re-runs onupgradeneeded, so a missing store would make every
+  // transaction throw NotFoundError (frame workers died on exactly this).
+  // Drop the stale DB once and let the reopen recreate the store.
+  if (!db.objectStoreNames.contains(STORE)) {
+    try { db.close(); } catch {}
+    await req(indexedDB.deleteDatabase(DB));
+    db = await open();
+  }
   const tx = (mode) => db.transaction(STORE, mode).objectStore(STORE);
   return {
     name: "indexeddb",
