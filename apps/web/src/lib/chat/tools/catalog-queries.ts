@@ -27,7 +27,12 @@
  * command's full params doc.
  */
 
-import { ALLOWED_COMMAND_IDS, isAllowedEngineCommand } from "@studio/contracts";
+import {
+  ALLOWED_COMMAND_IDS,
+  READ_QUERY_IDS,
+  isAllowedEngineCommand,
+  isReadEngineQuery,
+} from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { isBridgeError, messageOf } from "@studio/editor-bridge";
 
@@ -41,6 +46,22 @@ import { ClientToolError } from "./client-tool-error";
 function allowedIdsByCategory(): Map<string, string[]> {
   const groups = new Map<string, string[]>();
   for (const id of ALLOWED_COMMAND_IDS) {
+    const category = id.split(".")[0] ?? "";
+    const bucket = groups.get(category);
+    if (bucket === undefined) groups.set(category, [id]);
+    else bucket.push(id);
+  }
+  return groups;
+}
+
+/**
+ * Read-only query ids grouped by prefix (w8 harness fix) — the discovery
+ * surface for `query!` ids like anim.builtinPresets that list_commands used
+ * to hide entirely.
+ */
+function readQueryIdsByCategory(): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  for (const id of READ_QUERY_IDS) {
     const category = id.split(".")[0] ?? "";
     const bucket = groups.get(category);
     if (bucket === undefined) groups.set(category, [id]);
@@ -128,6 +149,17 @@ export interface CatalogListResult {
     readonly count: number;
     readonly commands: ReadonlyArray<{ readonly id: string; readonly title: string | null }>;
   }>;
+  /**
+   * Read-only engine queries, grouped by prefix (w8 harness fix). These are
+   * NEVER proposable engine_commands steps; they are listed so the model can
+   * discover and describe them instead of dead-ending on
+   * `"anim.builtinPresets" is not an allowed command id` loops.
+   */
+  readonly readQueries?: ReadonlyArray<{
+    readonly category: string;
+    readonly count: number;
+    readonly commands: ReadonlyArray<{ readonly id: string; readonly title: string | null }>;
+  }>;
   /** `"live"` = the engine registry; `"local"` = the bundled allowed-ids fallback. */
   readonly source: "live" | "local";
 }
@@ -153,6 +185,51 @@ export async function runListCommands(
     live = null; // old engine dist without the command.list query id — degrade below
   }
 
+  const readQueryGroups = (): CatalogListResult["readQueries"] => {
+    const toRows = (ids: readonly string[]): Array<{ id: string; title: string | null }> =>
+      ids.map((id) => ({ id, title: null }));
+    const grouped: Map<string, Array<{ id: string; title: string | null }>> =
+      live === null
+        ? (() => {
+            const out = new Map<string, Array<{ id: string; title: string | null }>>();
+            for (const [prefix, ids] of readQueryIdsByCategory()) {
+              if (category !== undefined && prefix !== category) continue;
+              out.set(prefix, toRows(ids));
+            }
+            return out;
+          })()
+        : (() => {
+            const groups = new Map<string, Array<{ id: string; title: string | null }>>();
+            for (const entry of live ?? []) {
+              const id = typeof entry.id === "string" ? entry.id : null;
+              if (id === null || !isReadEngineQuery(id)) continue;
+              if (category !== undefined && !id.startsWith(`${category}.`)) continue;
+              const label =
+                typeof entry.label === "string" && entry.label.length > 0 ? entry.label : null;
+              const prefix = id.split(".")[0] ?? "";
+              const bucket = groups.get(prefix);
+              const row = { id, title: label };
+              if (bucket === undefined) groups.set(prefix, [row]);
+              else bucket.push(row);
+            }
+            if (groups.size > 0) return groups;
+            const out = new Map<string, Array<{ id: string; title: string | null }>>();
+            for (const [prefix, ids] of readQueryIdsByCategory()) {
+              if (category !== undefined && prefix !== category) continue;
+              out.set(prefix, toRows(ids));
+            }
+            return out;
+          })();
+    if (grouped.size === 0) return undefined;
+    return [...grouped.entries()]
+      .map(([cat, commands]) => ({
+        category: cat,
+        count: commands.length,
+        commands,
+      }))
+      .sort((a, b) => (a.category < b.category ? -1 : 1));
+  };
+
   if (live !== null) {
     const grouped = new Map<string, Array<{ id: string; title: string | null }>>();
     for (const entry of live) {
@@ -167,6 +244,7 @@ export async function runListCommands(
       else bucket.push(row);
     }
     if (grouped.size > 0) {
+      const readQueries = readQueryGroups();
       return {
         categories: [...grouped.entries()]
           .map(([cat, commands]) => ({
@@ -175,6 +253,7 @@ export async function runListCommands(
             commands,
           }))
           .sort((a, b) => (a.category < b.category ? -1 : 1)),
+        ...(readQueries !== undefined ? { readQueries } : {}),
         source: "live",
       };
     }
@@ -192,7 +271,12 @@ export async function runListCommands(
       commands: ids.map((id) => ({ id, title: null })),
     });
   }
-  return { categories, source: "local" };
+  const readQueries = readQueryGroups();
+  return {
+    categories,
+    ...(readQueries !== undefined ? { readQueries } : {}),
+    source: "local",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +300,12 @@ export interface CatalogDescribeResult {
   /** Whether the command is currently enabled + the engine's "why" when not. */
   readonly enabled: boolean | null;
   readonly why: string | null;
+  /**
+   * `true` for read-only engine `query!` ids (w8 harness fix): the command is
+   * discoverable and describable but can NEVER be proposed as an
+   * studio.engine_commands step.
+   */
+  readonly readOnly?: boolean;
 }
 
 /**
@@ -233,6 +323,37 @@ export async function runDescribeCommand(
 ): Promise<CatalogDescribeResult> {
   const command = args.command;
   if (!isAllowedEngineCommand(command)) {
+    // w8 harness fix — read-only engine queries (anim.builtinPresets,
+    // text.presets, comp.presets, …) are REGISTERED engine ids the mutating
+    // commands' params docs keep pointing at ("see anim.builtinPresets"), so
+    // the model keeps proposing/describing them. They are describable (the
+    // bridge's command.describe answers for any registered id) but never
+    // batchable — answer with readOnly: true instead of the dead-end
+    // UNKNOWN_COMMAND that looped forever.
+    if (isReadEngineQuery(command)) {
+      let described: Record<string, unknown>;
+      try {
+        described = await bridge.query<Record<string, unknown>>("command.describe", { command });
+      } catch (error) {
+        throw catalogQueryError(error);
+      }
+      return {
+        command,
+        title:
+          typeof described.label === "string" && described.label.length > 0
+            ? described.label
+            : null,
+        paramsDoc:
+          typeof described.params === "string" && described.params.length > 0
+            ? described.params
+            : null,
+        schema: "schema" in described ? (described.schema as unknown) : null,
+        undoable: false,
+        enabled: typeof described.enabled === "boolean" ? described.enabled : null,
+        why: typeof described.why === "string" && described.why.length > 0 ? described.why : null,
+        readOnly: true,
+      };
+    }
     const closest = closestAllowedIds(command);
     const hint = closest.length > 0 ? ` Closest allowed ids: ${closest.join(", ")}.` : "";
     throw new ClientToolError(

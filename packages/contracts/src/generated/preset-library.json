@@ -1,0 +1,71 @@
+[
+  {
+    "category": "backgrounds",
+    "presets": [
+      "Soft Gradient Drift",
+      "Aurora Veil",
+      "Slow Fog",
+      "Cloud Bank",
+      "Dark Smoke",
+      "Ember Haze",
+      "Magma Flow",
+      "Ice Flow",
+      "Pastel Plasma",
+      "Cell Drift",
+      "Crystal Facets",
+      "Hex Mosaic",
+      "Mirrored Silk",
+      "Water Caustics",
+      "Blueprint Grid",
+      "Checker Scroll",
+      "Scrolling Stripes",
+      "Pulse Rings",
+      "Bokeh Drift",
+      "Spotlight Floor",
+      "Dawn Sky",
+      "Sweeping Light",
+      "Grainy Wash"
+    ]
+  },
+  {
+    "category": "text_animators",
+    "presets": [
+      "Typewriter",
+      "Fade Up Characters",
+      "Bounce In Words",
+      "Tracking In",
+      "Scramble",
+      "Blur In",
+      "Jitter",
+      "Drop In Lines"
+    ]
+  },
+  {
+    "category": "transitions",
+    "presets": [
+      "Fade In",
+      "Fade Out",
+      "Wipe In from Left",
+      "Wipe In from Right",
+      "Wipe In from Top",
+      "Wipe In from Bottom",
+      "Diagonal Sweep In",
+      "Wipe Out to Right",
+      "Clock Reveal",
+      "Fan Open",
+      "Clock Wipe Out",
+      "Blinds Open",
+      "Slats Down",
+      "Blinds Close",
+      "Pixel Dissolve In",
+      "Mosaic Fade In",
+      "Pixel Dissolve Out",
+      "Card Flip In",
+      "Card Flip Out",
+      "Grid Doors In",
+      "Lens Pop In",
+      "Line Sweep In",
+      "Jaws Close In"
+    ]
+  }
+]

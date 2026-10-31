@@ -24,6 +24,7 @@
 // pin bump; the run is idempotent (byte-stable when nothing changed).
 
 import catalogJson from "./generated/engine-catalog.json" with { type: "json" };
+import presetLibraryJson from "./generated/preset-library.json" with { type: "json" };
 
 import { ALLOWED_COMMAND_IDS, isAllowedEngineCommand } from "./allowed-commands.js";
 
@@ -160,16 +161,34 @@ function buildCatalogDigest(): string {
         `- ${category} (${counts.get(category) ?? 0}): ${CATEGORY_BLURBS[category] ?? "commands"}`,
     );
   const exemplars = EXEMPLAR_IDS.filter(isAllowedEngineCommand).join(", ");
+  // w8 harness fix — the built-in preset names ride the digest: the model
+  // needs actual NAMES for anim.applyBuiltinPreset {preset}, and the engine's
+  // own params doc points at anim.builtinPresets — a read-only query the
+  // tool surface can never execute (query! ids are not batchable). Shipping
+  // the names kills both the dead-end lookup AND the recurring
+  // "anim.builtinPresets is not an allowed command id" loop.
+  const presetLines = (
+    presetLibraryJson as ReadonlyArray<{
+      readonly category: string;
+      readonly presets: readonly string[];
+    }>
+  ).map((group) => `- ${group.category}: ${group.presets.join(", ")}`);
   return [
-    "ENGINE COMMAND CATALOG — allowed ids only. Discover exact params per id with " +
-      "studio.describe_command, then propose ids+params as steps of studio.engine_commands. " +
-      "Anything not listed here is denied; never invent an id.",
+    "ENGINE COMMAND CATALOG — allowed ids only. The full library is INLINE below; " +
+      "call studio.describe_command only when a params doc below is not enough, then propose " +
+      "ids+params as steps of studio.engine_commands. " +
+      "Anything not listed here is denied; never invent an id. Read-only engine queries " +
+      "(anim.builtinPresets, text.presets, comp.presets, comp.info, layer.tree, …) are NOT " +
+      "proposable steps — their data is already covered here or by the read tools.",
     "Params-doc grammar: {name? hint (description)} — a bare name is required, `name?` optional; " +
       "`|` before `:` lists alternative names (pass any one), after `:` lists value alternatives; " +
       "layers are referenced by id|name|#n; keyframe times are LAYER seconds by default " +
       '(pass timeBase: "comp" for comp seconds); in one batch `$N.key` reads an earlier step\'s result.',
     ...lines,
     `Exemplars: ${exemplars}.`,
+    "Built-in preset library (pass the name as `preset`; apply with anim.applyBuiltinPreset, " +
+      "layer.applyTextPreset, comp.applyPreset):",
+    ...presetLines,
   ].join("\n");
 }
 

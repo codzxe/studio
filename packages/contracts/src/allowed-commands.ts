@@ -17,6 +17,7 @@
 //     ENGINE_COMMAND_CATALOG + ENGINE_CATALOG_DIGEST — gateway-only.
 
 import allowedIdsJson from "./generated/allowed-command-ids.json" with { type: "json" };
+import readQueryIdsJson from "./generated/read-query-ids.json" with { type: "json" };
 
 /**
  * The ALLOWED engine command ids (sorted, frozen). Subset of the live registry
@@ -35,3 +36,26 @@ export function isAllowedEngineCommand(id: string): boolean {
 
 /** Size of {@link ALLOWED_COMMAND_IDS} (pinned by the contracts tests). */
 export const ALLOWED_COMMAND_COUNT = ALLOWED_COMMAND_IDS.length;
+
+/**
+ * The engine's read-only QUERY ids (sorted, frozen; w8 harness fix). `query!`
+ * registrations are never batchable — they can NEVER be proposed as
+ * studio.engine_commands steps — but the mutating commands' params docs
+ * reference them (anim.applyBuiltinPreset says "see anim.builtinPresets"), so
+ * the model needs to know they exist and why they are unproposable. Denied
+ * prefixes (app/view/ui/… session chrome) are already excluded by the
+ * extractor. Browser-safe: ids only, same tier as ALLOWED_COMMAND_IDS.
+ */
+export const READ_QUERY_IDS: readonly string[] = Object.freeze(
+  readQueryIdsJson satisfies readonly string[],
+);
+
+const READ_QUERY_ID_SET: ReadonlySet<string> = new Set(READ_QUERY_IDS);
+
+/** `true` when `id` is a known read-only engine query (never batchable). */
+export function isReadEngineQuery(id: string): boolean {
+  return READ_QUERY_ID_SET.has(id);
+}
+
+/** Size of {@link READ_QUERY_IDS}. */
+export const READ_QUERY_COUNT = READ_QUERY_IDS.length;

@@ -1377,7 +1377,11 @@ describe("prompt.ts (§8.3 / §5.4)", () => {
     expect(SYSTEM_PROMPT).toContain("DO THE WORK");
     expect(SYSTEM_PROMPT).toContain("applied to the project AUTOMATICALLY");
     expect(SYSTEM_PROMPT).toContain("the user's auto-apply setting is on by default");
-    expect(SYSTEM_PROMPT).toContain("one undo step, one saved version");
+    // w8 live-apply: per-turn application replaced the run-end atomic batch —
+    // the user watches the canvas build up, each turn saves its own version.
+    expect(SYSTEM_PROMPT).toContain("the moment that turn finishes");
+    expect(SYSTEM_PROMPT).toContain("every applied turn saves its own version");
+    expect(SYSTEM_PROMPT).toContain("the canvas build up as you work");
 
     // The destructive/export branch still waits for explicit review.
     expect(SYSTEM_PROMPT).toContain("always wait for the user to review");

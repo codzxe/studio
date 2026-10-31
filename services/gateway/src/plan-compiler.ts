@@ -99,6 +99,7 @@ import {
   checkBatchCommands,
   estimateCredits,
   isAllowedEngineCommand,
+  isReadEngineQuery,
   validateBatchRefs,
 } from "@studio/contracts";
 import type { ZodTypeAny } from "zod";
@@ -1082,9 +1083,16 @@ class Compiler {
             continue;
           }
           if (!predicateAllows(this.allowsEnginePredicate, command)) {
+            // w8 harness fix — a read-only engine query (anim.builtinPresets,
+            // text.presets, …) is a REGISTERED id the params docs keep
+            // referencing; the refusal must TEACH, not dead-end: the query is
+            // never batchable, its data lives in the read tools / the inline
+            // preset library of the system prompt.
             this.fatal(
               "command_not_allowed",
-              `engine command "${clip(command, 64)}" is not allowed for agents`,
+              isReadEngineQuery(command)
+                ? `engine command "${clip(command, 64)}" is a READ-ONLY engine query — it can never be a batch step; its data is already covered by the studio read tools and the inline preset library in your instructions`
+                : `engine command "${clip(command, 64)}" is not allowed for agents`,
               { step: planStep, tool, command },
             );
             denied = true;

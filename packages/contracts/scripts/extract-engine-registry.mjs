@@ -98,6 +98,9 @@ const FIXTURE_PATH = path.join(PACKAGE_DIR, "fixtures", "engine-command-ids.json
 const GENERATED_DIR = path.join(PACKAGE_DIR, "src", "generated");
 const CATALOG_PATH = path.join(GENERATED_DIR, "engine-catalog.json");
 const ALLOWED_PATH = path.join(GENERATED_DIR, "allowed-command-ids.json");
+const READ_QUERIES_PATH = path.join(GENERATED_DIR, "read-query-ids.json");
+const PRESETS_DIR = path.join(REPO_ROOT, "apps", "editor", "crates", "engine", "presets");
+const PRESET_LIBRARY_PATH = path.join(GENERATED_DIR, "preset-library.json");
 
 /** Catalog artifact format version (bump when the entry shape changes). */
 const CATALOG_VERSION = 1;
@@ -547,6 +550,61 @@ function main() {
   }
   allowedStatus = writeArtifact(ALLOWED_PATH, allowed, allowedStatus === "unchanged");
 
+  // Read-only query ids (tier 2 — w8 harness fix): `query!` registrations are
+  // never batchable, so they stay OUT of the allowed list — but the params
+  // docs REFERENCE them (anim.applyBuiltinPreset says "see anim.builtinPresets"),
+  // so the model keeps proposing them and the old describe_command answer
+  // ("not an allowed command id. Discover ids with studio.list_commands.")
+  // looped forever: list_commands filters to ALLOWED and can never surface
+  // them. Emit the non-denied query ids so describe_command can answer for
+  // them (readOnly: true) and the error can name the id honestly.
+  const readQueries = queries.filter((id) => {
+    const prefix = id.split(".")[0] ?? "";
+    return !DENY_PREFIXES.includes(prefix);
+  });
+  let readQueriesStatus = "wrote";
+  if (fs.existsSync(READ_QUERIES_PATH)) {
+    try {
+      if (arraysEqual(JSON.parse(fs.readFileSync(READ_QUERIES_PATH, "utf8")), readQueries))
+        readQueriesStatus = "unchanged";
+    } catch {
+      readQueriesStatus = "wrote";
+    }
+  }
+  readQueriesStatus = writeArtifact(READ_QUERIES_PATH, readQueries, readQueriesStatus === "unchanged");
+
+  // The built-in preset library (tier 2 — w8 harness fix): the model needs
+  // preset NAMES to call anim.applyBuiltinPreset/text.presets/comp.presets.
+  // The names live in the vendored engine's presets dir; emitting them here
+  // keeps the same engine-pin provenance as everything else. Names only —
+  // descriptions would bloat the digest.
+  const presetCategories = [];
+  if (fs.existsSync(PRESETS_DIR)) {
+    for (const fileName of fs.readdirSync(PRESETS_DIR).filter((f) => f.endsWith(".json")).sort()) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(PRESETS_DIR, fileName), "utf8"));
+        const items = Array.isArray(data) ? data : (data.presets ?? []);
+        const names = items
+          .map((item) => (item && typeof item === "object" ? item.name : null))
+          .filter((name) => typeof name === "string" && name.length > 0);
+        if (names.length > 0)
+          presetCategories.push({ category: fileName.replace(/\.json$/, ""), presets: names });
+      } catch (error) {
+        warnings.push(`preset-library: ${fileName} unreadable (${error.message}) — skipped`);
+      }
+    }
+  }
+  let presetStatus = "wrote";
+  if (fs.existsSync(PRESET_LIBRARY_PATH)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(PRESET_LIBRARY_PATH, "utf8"));
+      if (JSON.stringify(existing) === JSON.stringify(presetCategories)) presetStatus = "unchanged";
+    } catch {
+      presetStatus = "wrote";
+    }
+  }
+  presetStatus = writeArtifact(PRESET_LIBRARY_PATH, presetCategories, presetStatus === "unchanged");
+
   for (const warning of warnings)
     process.stderr.write(`extract-engine-registry: warning: ${warning}\n`);
   process.stdout.write(
@@ -560,6 +618,10 @@ function main() {
       status: fixtureStatus,
       catalogStatus,
       allowedStatus,
+      readQueriesStatus,
+      readQueries: readQueries.length,
+      presetStatus,
+      presets: presetCategories.reduce((sum, cat) => sum + cat.presets.length, 0),
       fixture: path.relative(REPO_ROOT, FIXTURE_PATH),
     })}\n`,
   );
