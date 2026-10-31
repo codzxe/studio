@@ -781,6 +781,23 @@ export function createChatController(options: CreateChatControllerOptions): Chat
           // synthesizes one through the EXISTING §7.4 fold so the card
           // settles with the proposed-batch payload.
           emitToolResult(run, call.toolCallId, call.resultForModel);
+        } else if (call.tool === "studio.plan_edit") {
+          // SERVER-SETTLED (§8.4): plan_edit is the gateway's structured
+          // side-call — it NEVER executes locally. A compiled proposal rides
+          // the write branch above; a DEGRADED entry (server compile failed,
+          // proposal absent) must still echo the gateway's verdict — its
+          // resultForModel carries {note, plan} on success or
+          // {error:"PLAN_INVALID"} on failure. Attempting a local run instead
+          // yields the misleading CLIENT_TOOL_UNAVAILABLE chip ("cannot run
+          // in this session") and feeds the model a FALSE failure on the
+          // next turn (w8 plan_edit-chip fix).
+          run.transcript.push({
+            role: "tool_result",
+            toolCallId: call.toolCallId,
+            tool: call.tool,
+            result: call.resultForModel,
+          });
+          emitToolResult(run, call.toolCallId, call.resultForModel);
         } else {
           // READ/GENERATIVE tool: execute locally, echo the real result.
           const executed = await executeTool(run, call);

@@ -1326,6 +1326,65 @@ describe("M4-L web chat integration — read-only guarantees (M4.6, round 12)", 
     await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
     expect(screen.getAllByTestId("chat-message")[1]?.textContent).toContain("apply a plan instead");
   });
+
+  it("echoes a degraded studio.plan_edit verdict — never a local refusal (w8 fix)", async () => {
+    const { harness } = await mountSeeded();
+    await waitForModels(harness);
+
+    // THE WIRE: the gateway settled plan_edit SERVER-side, but its plan
+    // compile degraded — the turn.completed entry carries no proposal, only
+    // the gateway's verdict in resultForModel. The loop must echo THAT (the
+    // model's real next-turn tool_result), never attempt a local run:
+    // plan_edit is not a client tool, and the old fall-through surfaced the
+    // misleading '"studio.plan_edit" cannot run in this session' chip while
+    // feeding the model a false CLIENT_TOOL_UNAVAILABLE failure (w8 fix).
+    act(() => {
+      harness.getApi().send({ message: "plan a bigger change" });
+    });
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
+    const queriesBefore = harness.bridgeCalls.queries.length;
+    const verdict = {
+      error: "PLAN_INVALID",
+      message: "The plan could not be generated.",
+    };
+    harness.wire.feed(
+      runStarted(0),
+      turnCompleted(1, 0, {
+        toolCalls: [
+          {
+            toolCallId: "call_plan_degraded",
+            tool: "studio.plan_edit",
+            args: { goal: "make it pop" },
+            resultForModel: verdict,
+            proposal: null,
+          },
+        ],
+      }),
+    );
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
+    const transcript = harness.wire.posts[1]?.body.messages as Array<Record<string, unknown>>;
+    expect(transcript[2]).toEqual({
+      role: "tool_result",
+      toolCallId: "call_plan_degraded",
+      tool: "studio.plan_edit",
+      result: verdict,
+    });
+    // ZERO new bridge activity: a server-settled tool never touches the editor.
+    expect(harness.bridgeCalls.queries).toHaveLength(queriesBefore);
+    expect(harness.bridgeCalls.executes).toEqual([]);
+    expect(harness.bridgeCalls.batches).toBe(0);
+
+    // The model recovers and the run completes.
+    harness.wire.feed(
+      runStarted(0),
+      turnCompleted(1, 1, {
+        assistantText: "The plan draft failed — tell me the goal in one line and I'll retry.",
+      }),
+    );
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
+  });
 });
 
 // ---------------------------------------------------------------------------
