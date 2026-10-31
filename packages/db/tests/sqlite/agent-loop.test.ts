@@ -472,7 +472,7 @@ describe("sqlite agent loop (round 12 persistence)", { timeout: 30_000 }, () => 
     });
   });
 
-  it("loadThreadHistory: row cap — 41 messages → the newest 40 (oldest dropped)", async () => {
+  it("loadThreadHistory: the default row cap is 2000 (round-13 'unlimited context') — 41 messages all kept; explicit caps still honored", async () => {
     const { threadId } = await makeThreadWithRun();
     const base = Date.now() - 120_000;
     for (let i = 0; i < 41; i += 1) {
@@ -484,13 +484,17 @@ describe("sqlite agent loop (round 12 persistence)", { timeout: 30_000 }, () => 
       });
     }
     const history = await repos.threads.loadThreadHistory(threadId);
-    expect(history.length).toBe(40);
-    // oldest-first: the kept window starts at m1 (m0 fell off), ends at m40
-    expect(history[0]?.text).toBe("m1");
+    // f62251b raised the default from 40 rows to 2000 ("give agents a context
+    // limit of unlimited for now") — a 41-message thread keeps EVERYTHING.
+    expect(history.length).toBe(41);
+    expect(history[0]?.text).toBe("m0");
     expect(history.at(-1)?.text).toBe("m40");
 
-    // a tighter explicit cap is honored too
-    expect((await repos.threads.loadThreadHistory(threadId, { maxMessages: 3 })).length).toBe(3);
+    // a tighter explicit cap is honored too (the window keeps the NEWEST rows)
+    const capped = await repos.threads.loadThreadHistory(threadId, { maxMessages: 3 });
+    expect(capped.length).toBe(3);
+    expect(capped[0]?.text).toBe("m38");
+    expect(capped.at(-1)?.text).toBe("m40");
   });
 
   it("loadThreadHistory: char cap — stop BEFORE exceeding (each row costs JSON.stringify(content_json).length)", async () => {

@@ -2,6 +2,69 @@
 
 Next entry:
 
+## 2026-10-31 (round 13) — the harness feels like a harness: live thinking, fluid pacing, graceful stops, plan-first execution
+
+Context: the user ran the agent against a real model and caught it red-handed — 20+ read-only
+`describe_command` calls, zero writes, "no apply button", a frozen "Thinking…" string, a DbError
+after every stop that raced a turn, and context amnesia after Stop. Round 12 (131d862, f62251b)
+had already inlined the tool catalog, fixed `anim.builtinPresets`, made apply LIVE per turn,
+unlimited context, and stop-remembered-steers. This round closes the remaining UX/discipline
+gaps — five commits, each suite-gated, all verified END TO END in the browser against real GLM
+through the new z-ai shim.
+
+- **bdc77d4 — live thinking + fluid pacing.** The full reasoning pipeline now flows:
+  openai.ts forwards the SDK's `reasoning-delta` parts (reasoning/reasoning_content, both
+  field shapes) → executeModelTurn streams `onReasoningDelta` + returns the thinking text →
+  the turn route emits `reasoning.delta` SSE frames live and stamps
+  `turn.completed.reasoningText` (persisted, replay-restored). contracts gains the event
+  (appended to the §7.4 catalogue); the web fold accumulates it with first-wins stamps; the
+  new ReasoningBlock renders it Claude-style (open while thinking — live text, caret, pulsing
+  dot, ticking clock; auto-collapsed to "Thought for Ns"; manual toggle wins) and upgrades
+  the no-reasoning case to a LIVE elapsed indicator. The "stuck at one speed" root cause was
+  upstream burst sizes (the z-ai seam hands over whole replies in 1-2 chunks): the new
+  stream pacer buffers message+reasoning deltas and releases them at an adaptive 50ms-cadence
+  (typing speed at the tail, fast-forward through bulk) with two safety contracts — non-delta
+  events are never delayed (flush-before-forward, so the authoritative terminal replace can't
+  race a stale tail) and every emitted event carries a strictly increasing rewritten seq.
+  The pacer lives on the ActiveRun, survives a TURN_PAUSED resume (the dispose finally is
+  guarded on finished/stopped — a parked run keeps its pacer), and dies with the run.
+- **3d02cb2 — graceful run-state recovery.** A stop/abandon racing a turn hit
+  `assertRunTransition` DbError CONFLICT in three places. Pre-stream heartbeat → the TYPED
+  RUN_NOT_ACTIVE (409, retryable:false — the raw DbError envelope's retryable-undefined sent
+  the transport into same-key re-POST loops → TURN_PAUSED noise). Post-model heartbeat →
+  logged + skipped (the durable outcome + settle already landed; the terminal row stays
+  terminal). Catch classification → TURN_CANCELLED (a cancellation, not INTERNAL "Something
+  went wrong on our side."). Client: the run-end plan POST answered RUN_NOT_ACTIVE is
+  swallowed — no more "The plan could not be submitted." after a stop.
+- **b4db6df — execution discipline.** The prompt TOLD the model to explore (plan_edit as the
+  way to "structure a larger change"; open-ended discovery). Now: "HOW TO WORK" — START
+  BUILDING IMMEDIATELY (write calls in the first turn; at most ONE read before the first
+  write; describe_command chains banned), PLAN FIRST as a numbered plan in the first reply,
+  then ONE STEP PER TURN (the deep-research harness pattern — researched up front:
+  Anthropic's long-running-agent harness + OpenAI-style deep research both converge on
+  plan-once + incremental-checkpointed execution; our checkpoint IS the per-turn live apply
+  + version save). plan_edit demoted to LAST RESORT. Golden pins updated (+ the old
+  "Prefer one studio.plan_edit" lines asserted GONE).
+- **41e4a00 — collapsible tool-calls bar.** ToolCallsBlock: the per-tool cards now sit under
+  ONE collapsible bar — open while the run streams (header names the RUNNING call with a
+  pulsing dot), folded to "Used N tool calls · X done · Y failed" when settled; manual toggle
+  wins. TOOL_CARD_LABELS covers all 21 tools (write tools stopped rendering raw studio.* ids).
+- **bd07abb — the z-ai shim + dev-ready storage pin.** scripts/dev/zai-shim.mjs: a local
+  OpenAI-compatible GLM proxy (the SDK's stream yields raw OpenAI SSE frames as byte arrays —
+  the shim is a pipe with framing repair; tool calls + multi-turn echo pass through; the SDK
+  resolves from node_modules/bun-cache/ZAI_SDK_PATH, never a repo dep). dev-ready.mjs now pins
+  STORAGE_FS_ROOT for the spawned gateway (e4610a6 parity — the gateway's cwd-relative
+  default missed the seed blobs and the editor 404'd "The project could not open").
+
+**Verified live in the browser (real GLM):** write tools in the FIRST turn; the numbered plan
+opening the reply; 14 tool calls landing step by step; the canvas LIVE mid-run ("Comp: Studio
+Intro" + "Selection: Studio Headline" read from engine state); versions v4-v7 saved per turn;
+the tool bar folding at run end; STOP mid-run clean (no DbError, no banner); the NEXT message
+reciting the earlier work from retained context. Suites: gateway 1,170 · web 1,762 ·
+contracts 19(events) · api-client green · typecheck 10/10 · biome clean.
+
+Next entry:
+
 ## 2026-10-30 (later) — audit follow-up wave 2: nine deferred fixes landed
 
 Context: the 2026-10-30 deep audit (AUDIT.md) shipped 14 fixes + the restructure but left a
