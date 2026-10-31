@@ -5,7 +5,7 @@
  */
 
 import type { ChatUiMessage, ToolCardState } from "@/lib/chat/types";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ChatMessageView } from "./message";
 
@@ -76,13 +76,59 @@ describe("ChatMessageView — streaming", () => {
     expect(screen.queryByTestId("chat-caret")).not.toBeInTheDocument();
   });
 
-  it("shows the Thinking… skeleton while the active assistant text is still empty", () => {
+  it("shows the live Thinking indicator (with elapsed clock) while the assistant text is still empty", () => {
     render(<ChatMessageView message={assistant({ text: "" })} isStreaming />);
-    expect(screen.getByTestId("chat-thinking")).toHaveTextContent("Thinking…");
+    // ROUND 13: the static "Thinking…" string became a LIVE indicator — pulsing
+    // dot + "Thinking" + a ticking elapsed clock (jsdom: no startedAt → no
+    // clock span yet; the dot + label still prove the alive state).
+    expect(screen.getByTestId("chat-thinking")).toHaveTextContent("Thinking");
+    expect(screen.getByTestId("chat-thinking-dot")).toBeInTheDocument();
     expect(screen.getByTestId("chat-caret")).toBeInTheDocument();
   });
 
-  it("shows no Thinking… line once text arrives, even while streaming", () => {
+  it("streams reasoning tokens into the collapsible thinking bar (round 13 live thinking)", () => {
+    render(
+      <ChatMessageView
+        message={assistant({
+          text: "",
+          reasoning: "Plan: one composition, then a text layer.",
+          reasoningStartedAt: Date.now() - 4_000,
+        })}
+        isStreaming
+      />,
+    );
+    // The bar replaces the indicator line while thinking tokens stream: open
+    // by default with the live text + caret, header shows the live clock.
+    const bar = screen.getByTestId("chat-reasoning");
+    expect(bar).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-thinking")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-reasoning-body")).toHaveTextContent(
+      "Plan: one composition, then a text layer.",
+    );
+    expect(screen.getByTestId("chat-reasoning-caret")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-reasoning-header")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("collapses the thinking bar to 'Thought for Ns' once the answer text starts", () => {
+    render(
+      <ChatMessageView
+        message={assistant({
+          text: "Building it now.",
+          reasoning: "Plan: one composition.",
+          reasoningStartedAt: Date.now() - 4_000,
+          reasoningEndedAt: Date.now() - 1_000,
+        })}
+        isStreaming
+      />,
+    );
+    expect(screen.getByTestId("chat-reasoning-done")).toHaveTextContent("Thought for 3s");
+    expect(screen.queryByTestId("chat-reasoning-body")).not.toBeInTheDocument();
+    // One click re-expands (the user's toggle wins).
+    fireEvent.click(screen.getByTestId("chat-reasoning-header"));
+    expect(screen.getByTestId("chat-reasoning-body")).toBeInTheDocument();
+  });
+
+  it("shows no Thinking line once text arrives, even while streaming", () => {
     render(<ChatMessageView message={assistant({ text: "partial answer" })} isStreaming />);
     expect(screen.queryByTestId("chat-thinking")).not.toBeInTheDocument();
     expect(screen.getByText("partial answer")).toBeInTheDocument();

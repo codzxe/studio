@@ -97,6 +97,12 @@ const THREAD_OTHER = "thr_turn_other";
 
 const USER_TEXT = "Please set up the demo composition.";
 const STEP0_TEXT = "I'll set up a demo for you — a new composition with a text layer. ";
+/** ROUND 13: the mock's thinking prefix (streamed as reasoning.delta frames). */
+const STEP0_REASONING = [
+  "The user wants a demo build. ",
+  "Plan: create one composition (1920x1080, 30fps, 4s), ",
+  "then a centered text layer — both are reversible writes, so they apply live.",
+].join("");
 const STEP1_TEXT = "Done — I created the Agent Demo composition with a text layer.";
 
 // ---------------------------------------------------------------------------
@@ -845,6 +851,14 @@ function deltaText(events: readonly SseEvent[]): string {
     .join("");
 }
 
+/** ROUND 13: the concatenated reasoning.delta payloads. */
+function reasoningText(events: readonly SseEvent[]): string {
+  return events
+    .filter((event) => event.data.type === "reasoning.delta")
+    .map((event) => (event.data as { delta: string }).delta)
+    .join("");
+}
+
 function eventTypes(events: readonly SseEvent[]): string[] {
   return events.map((event) => String(event.data.type));
 }
@@ -908,6 +922,11 @@ describe("POST /v1/threads/:id/turn — the mock turn loop (12-w5-t4)", () => {
     expect(eventTypes(events)).toEqual([
       "run.started",
       "turn.started",
+      // ROUND 13 (live thinking): the mock streams its plan as reasoning
+      // deltas BEFORE the text — the thinking bar renders live.
+      "reasoning.delta",
+      "reasoning.delta",
+      "reasoning.delta",
       "message.delta",
       "tool.started",
       "tool.started",
@@ -915,6 +934,7 @@ describe("POST /v1/threads/:id/turn — the mock turn loop (12-w5-t4)", () => {
     ]);
     expect(events[0]?.data).toMatchObject({ type: "run.started", model: "studio-fast" });
     expect(events[1]?.data).toMatchObject({ type: "turn.started", stepIndex: 0 });
+    expect(reasoningText(events)).toBe(STEP0_REASONING);
     expect(deltaText(events)).toBe(STEP0_TEXT);
 
     const completed = completedOf(events);
@@ -923,6 +943,7 @@ describe("POST /v1/threads/:id/turn — the mock turn loop (12-w5-t4)", () => {
     expect(completed.usage).toEqual({ inputTokens: 900, outputTokens: 200 });
     expect(completed.credits).toEqual({ committed: 1 });
     expect(completed.assistantText).toBe(STEP0_TEXT);
+    expect(completed.reasoningText).toBe(STEP0_REASONING);
     expect(completed.toolCalls).toHaveLength(2);
 
     const [composition, text] = completed.toolCalls;
@@ -989,6 +1010,7 @@ describe("POST /v1/threads/:id/turn — the mock turn loop (12-w5-t4)", () => {
       turnKey: `${runId}:0`,
       stepIndex: 0,
       committed: 1,
+      reasoning: STEP0_REASONING,
     });
 
     // §8.8 per-turn credits: balance precheck, reserve (exact µc), settle (1 credit).
@@ -1104,6 +1126,8 @@ describe("durable idempotent replay (the Idempotency-Key IS the turn key)", () =
     expect(replayed.finishReason).toBe(original.finishReason);
     expect(replayed.usage).toEqual(original.usage);
     expect(replayed.assistantText).toBe(original.assistantText);
+    // ROUND 13: the replay restores the thinking text too (no delta re-stream).
+    expect(replayed.reasoningText).toBe(original.reasoningText);
     expect(replayed.toolCalls).toEqual(original.toolCalls);
     // Documented replay semantics: credits were already committed by the
     // original turn, so the replay carries committed: 0.
@@ -1164,6 +1188,9 @@ describe("durable idempotent replay (the Idempotency-Key IS the turn key)", () =
     expect(eventTypes(events)).toEqual([
       "run.started",
       "turn.started",
+      "reasoning.delta",
+      "reasoning.delta",
+      "reasoning.delta",
       "message.delta",
       "tool.started",
       "tool.started",
@@ -1185,6 +1212,9 @@ describe("durable idempotent replay (the Idempotency-Key IS the turn key)", () =
     expect(eventTypes(retryEvents)).toEqual([
       "run.started",
       "turn.started",
+      "reasoning.delta",
+      "reasoning.delta",
+      "reasoning.delta",
       "message.delta",
       "tool.started",
       "tool.started",
@@ -1426,6 +1456,9 @@ describe("turn failure semantics (failed turns refund and never persist the turn
     expect(eventTypes(events)).toEqual([
       "run.started",
       "turn.started",
+      "reasoning.delta",
+      "reasoning.delta",
+      "reasoning.delta",
       "message.delta",
       "tool.started",
       "tool.started",

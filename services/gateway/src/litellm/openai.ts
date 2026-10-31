@@ -107,6 +107,7 @@ export interface AggregatedToolCall {
 
 export type ModelStreamEvent =
   | { readonly type: "text"; readonly delta: string }
+  | { readonly type: "reasoning"; readonly delta: string }
   | { readonly type: "tool_call"; readonly call: AggregatedToolCall }
   | { readonly type: "usage"; readonly usage: ModelUsage }
   | { readonly type: "finish"; readonly reason: string };
@@ -464,6 +465,26 @@ async function* streamOnce(
       if (part.type === "text-delta" && part.text !== "") {
         emitted = true;
         yield { type: "text", delta: part.text };
+        continue;
+      }
+      // ROUND 13 (live thinking): OpenAI-compatible providers surface chain-of-
+      // thought tokens as `reasoning` / `reasoning_content` chunk fields; the
+      // SDK maps them to `reasoning-delta` parts ({ id, text } — some provider
+      // builds carry `delta` instead; both are accepted). Forwarded verbatim —
+      // the turn SSE re-emits each as a `reasoning.delta` frame so the user
+      // watches the model think in real time (never a blank screen).
+      if (part.type === "reasoning-delta") {
+        const providerDelta = (part as { delta?: unknown }).delta;
+        const reasoningText =
+          typeof part.text === "string"
+            ? part.text
+            : typeof providerDelta === "string"
+              ? providerDelta
+              : "";
+        if (reasoningText !== "") {
+          emitted = true;
+          yield { type: "reasoning", delta: reasoningText };
+        }
         continue;
       }
       if (part.type === "tool-call") {

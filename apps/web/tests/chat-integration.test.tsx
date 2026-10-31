@@ -1002,10 +1002,15 @@ describe("M4-L web chat integration — resilience (replay, reconnect, pause, st
     expect(harness.wire.posts[1]?.seqBase).toBe(harness.wire.posts[0]?.seqBase);
 
     // The gateway replays seq 0–1: the normalizer's cursor drops them — the
-    // streamed text never doubles and nothing re-executes.
+    // streamed text never doubles and nothing re-executes. ROUND 13: text
+    // deltas now ride the stream pacer (50 ms cadence), so the assertion
+    // WAITS for the paced release instead of reading synchronously.
     harness.wire.feed(runStarted(0), delta(1, "Resuming"));
+    await waitFor(() => {
+      const bubble = screen.getAllByTestId("chat-message")[1];
+      expect(bubble?.textContent).toContain("Resuming");
+    });
     const assistant = screen.getAllByTestId("chat-message")[1];
-    expect(assistant?.textContent).toContain("Resuming");
     expect(assistant?.textContent).not.toContain("ResumingResuming");
     expect(harness.bridgeCalls.queries.filter((q) => q === "project.summary")).toHaveLength(
       summaryBefore,

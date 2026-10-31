@@ -1114,12 +1114,47 @@ describe("executeModelTurn (fake OpenAI SSE)", () => {
     expect(deltas).toEqual(["Hi ", "there"]);
     expect(result).toEqual({
       text: "Hi there",
+      reasoning: "",
       calls: [],
       inputTokens: 0,
       outputTokens: 0,
       usageSeen: false,
       finishReason: "stop",
     });
+  });
+
+  it("round 13: streams reasoning deltas via onReasoningDelta and returns the full thinking text", async () => {
+    const reasoningDeltas: string[] = [];
+    const textDeltas: string[] = [];
+    const result = await executeModelTurn(
+      turnDeps(
+        scriptedFetch([
+          sseResponse([
+            frame({ choices: [{ delta: { reasoning_content: "Planning. " } }] }),
+            frame({ choices: [{ delta: { reasoning_content: "Building." } }] }),
+            textDelta("Done."),
+            finish("stop"),
+            DONE,
+          ]),
+        ]),
+      ),
+      {
+        model: "studio-smart",
+        messages: [{ role: "user", content: "hello" }],
+        withTools: false,
+        signal: noAbort(),
+        onDelta: (delta) => {
+          textDeltas.push(delta);
+        },
+        onReasoningDelta: (delta) => {
+          reasoningDeltas.push(delta);
+        },
+      },
+    );
+    expect(reasoningDeltas).toEqual(["Planning. ", "Building."]);
+    expect(textDeltas).toEqual(["Done."]);
+    expect(result.reasoning).toBe("Planning. Building.");
+    expect(result.text).toBe("Done.");
   });
 
   it("aggregates tool calls, normalizes underscore echoes to dotted ids, and collects usage + finish", async () => {

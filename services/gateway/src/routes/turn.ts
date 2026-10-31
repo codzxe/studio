@@ -559,15 +559,28 @@ async function runTurn(
     let toolCalls: TurnToolCall[];
     let usage: { inputTokens: number; outputTokens: number };
     let committed: number;
+    // ROUND 13 (live thinking): the turn's full reasoning text — re-emitted on
+    // the terminal so a durable replay restores the thinking block without
+    // re-streaming its deltas.
+    let turnReasoning = "";
 
     if (mockModel) {
       const mock = await mockTurn(deps, request, input);
+      // ROUND 13: the offline journey streams a short thinking prefix so the
+      // live-thinking UI is exercisable end-to-end without a reasoning model.
+      const reasoningDeltas = mock.reasoningDeltas;
+      if (reasoningDeltas.length > 0) {
+        for (const delta of reasoningDeltas) {
+          log.emit({ type: "reasoning.delta", delta });
+        }
+      }
       if (mock.deltas.length > 0) {
         for (const delta of mock.deltas) {
           log.emit({ type: "message.delta", delta });
         }
       }
       text = mock.text;
+      turnReasoning = reasoningDeltas.join("");
       toolCalls = mock.toolCalls;
       usage = { inputTokens: 900, outputTokens: 200 };
       committed = 1;
@@ -586,8 +599,12 @@ async function runTurn(
         onDelta: (delta) => {
           log.emit({ type: "message.delta", delta });
         },
+        onReasoningDelta: (delta) => {
+          log.emit({ type: "reasoning.delta", delta });
+        },
       });
       text = round.text;
+      turnReasoning = round.reasoning;
       usage = { inputTokens: round.inputTokens, outputTokens: round.outputTokens };
       const resolvedCalls = await resolveToolCalls(deps, {
         calls: round.calls,
@@ -651,6 +668,7 @@ async function runTurn(
           toolCalls,
           usage,
           committed,
+          ...(turnReasoning !== "" ? { reasoning: turnReasoning } : {}),
         },
       });
     }
@@ -682,6 +700,7 @@ async function runTurn(
       usage,
       credits: { committed },
       ...(text !== "" ? { assistantText: text } : {}),
+      ...(turnReasoning !== "" ? { reasoningText: turnReasoning } : {}),
       toolCalls,
     });
   } catch (error) {
@@ -890,11 +909,21 @@ async function mockTurn(
     readonly log: RunLog;
     readonly signal: AbortSignal;
   },
-): Promise<{ text: string; deltas: string[]; toolCalls: TurnToolCall[] }> {
+): Promise<{
+  text: string;
+  deltas: string[];
+  reasoningDeltas: string[];
+  toolCalls: TurnToolCall[];
+}> {
   if (input.signal.aborted) {
     throw new DOMException("The turn was cancelled.", "AbortError");
   }
   if (request.stepIndex === 0) {
+    const reasoningDeltas = [
+      "The user wants a demo build. ",
+      "Plan: create one composition (1920x1080, 30fps, 4s), ",
+      "then a centered text layer — both are reversible writes, so they apply live.",
+    ];
     const deltas = ["I'll set up a demo for you — a new composition with a text layer. "];
     const toolCalls: TurnToolCall[] = [];
     const carriers: [string, unknown][] = [
@@ -925,10 +954,10 @@ async function mockTurn(
         proposal: proposal.proposal,
       });
     }
-    return { text: deltas.join(""), deltas, toolCalls };
+    return { text: deltas.join(""), deltas, reasoningDeltas, toolCalls };
   }
   const text = "Done — I created the Agent Demo composition with a text layer.";
-  return { text, deltas: [text], toolCalls: [] };
+  return { text, deltas: [text], reasoningDeltas: [], toolCalls: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -1039,6 +1068,7 @@ function isTerminalRunStatus(status: string): boolean {
 
 interface ReplayOutcome {
   readonly text: string;
+  readonly reasoning: string;
   readonly toolCalls: TurnToolCall[];
   readonly usage: { inputTokens: number; outputTokens: number };
   readonly committed: number;
@@ -1056,10 +1086,12 @@ function findReplayTurn(rows: readonly TurnHistoryRow[], turnKey: string): Repla
       usage?: unknown;
       committed?: unknown;
       model?: unknown;
+      reasoning?: unknown;
     };
     if (payload.turnKey !== turnKey) continue;
     return {
       text: row.text ?? "",
+      reasoning: typeof payload.reasoning === "string" ? payload.reasoning : "",
       toolCalls: Array.isArray(payload.toolCalls) ? (payload.toolCalls as TurnToolCall[]) : [],
       usage: {
         inputTokens:
@@ -1098,6 +1130,7 @@ function replayTurnOutcome(
     usage: outcome.usage,
     credits: { committed: 0 }, // already committed by the original turn
     ...(outcome.text !== "" ? { assistantText: outcome.text } : {}),
+    ...(outcome.reasoning !== "" ? { reasoningText: outcome.reasoning } : {}),
     toolCalls: outcome.toolCalls,
   });
   for (const event of log.all()) frames.push(sseFrame(event));

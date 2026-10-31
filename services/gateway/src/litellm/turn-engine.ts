@@ -319,6 +319,9 @@ export interface OpenAITurnDeps {
 
 export interface ModelTurnResult {
   readonly text: string;
+  /** The turn's full thinking text (ROUND 13 live thinking; "" when the
+   * provider emits no reasoning tokens). */
+  readonly reasoning: string;
   readonly calls: readonly AggregatedToolCall[];
   readonly inputTokens: number;
   readonly outputTokens: number;
@@ -326,7 +329,8 @@ export interface ModelTurnResult {
   readonly finishReason: string;
 }
 
-/** ONE streamed model call; deltas stream out live via `onDelta`. */
+/** ONE streamed model call; deltas stream out live via `onDelta` (text) and
+ * `onReasoningDelta` (thinking tokens — ROUND 13 live thinking). */
 export async function executeModelTurn(
   deps: OpenAITurnDeps,
   input: {
@@ -335,6 +339,7 @@ export async function executeModelTurn(
     readonly withTools: boolean;
     readonly signal: AbortSignal;
     readonly onDelta?: (delta: string) => void;
+    readonly onReasoningDelta?: (delta: string) => void;
   },
 ): Promise<ModelTurnResult> {
   const bearer =
@@ -346,6 +351,7 @@ export async function executeModelTurn(
     signal: input.signal,
   };
   let text = "";
+  let reasoning = "";
   const calls: AggregatedToolCall[] = [];
   let inputTokens = 0;
   let outputTokens = 0;
@@ -364,6 +370,9 @@ export async function executeModelTurn(
     if (event.type === "text") {
       text += event.delta;
       input.onDelta?.(event.delta);
+    } else if (event.type === "reasoning") {
+      reasoning += event.delta;
+      input.onReasoningDelta?.(event.delta);
     } else if (event.type === "tool_call") {
       calls.push(event.call);
     } else if (event.type === "usage") {
@@ -374,7 +383,7 @@ export async function executeModelTurn(
       finishReason = event.reason;
     }
   }
-  return { text, calls, inputTokens, outputTokens, usageSeen, finishReason };
+  return { text, reasoning, calls, inputTokens, outputTokens, usageSeen, finishReason };
 }
 
 // ---------------------------------------------------------------------------

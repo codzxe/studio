@@ -50,11 +50,7 @@
  * the canvas snapshot.
  */
 
-import {
-  EDIT_PLAN_SCHEMA,
-  isAutoApplicable,
-  mergeEditPlans,
-} from "@studio/contracts";
+import { EDIT_PLAN_SCHEMA, isAutoApplicable, mergeEditPlans } from "@studio/contracts";
 
 import type { TurnStreamHandle } from "@studio/api-client";
 import type {
@@ -78,6 +74,8 @@ import {
   foldEvent,
   planRuntimeOf,
 } from "./run-state";
+import { createStreamPacer } from "./stream-pacer";
+import type { StreamPacer } from "./stream-pacer";
 import { isClientToolError } from "./tool-executor";
 import type {
   ChatControllerClient,
@@ -511,6 +509,8 @@ interface ActiveRun {
   canvasEverIncluded: boolean;
   /** The last `turn.completed` seen by the event handler (the loop reads it). */
   completed: TurnCompletedEvent | null;
+  /** ROUND 13: the run's stream pacer (smooth typing for text + thinking). */
+  pacer: StreamPacer;
   /** w8 live-apply: ≥1 turn's compiled batch already executed + saved live. */
   liveApplied: boolean;
   /** w8 live-apply: a live apply FAILED — no further live attempts this run
@@ -707,9 +707,12 @@ export function createChatController(options: CreateChatControllerOptions): Chat
           ...(run.resumeCursor !== null ? { replayCursor: run.resumeCursor } : {}),
           onEvent: (event: StudioStreamEvent): void => {
             if (disposed || run.stopped) return;
-            if (event.seq >= run.seqBase) run.seqBase = event.seq + 1;
-            if (event.type === "turn.completed") run.completed = event;
-            emit(event);
+            // ROUND 13 (live thinking + fluid streaming): every event flows
+            // through the run's pacer — message/reasoning deltas release on a
+            // 50 ms adaptive cadence (never a frozen dump), everything else
+            // forwards immediately AFTER a synchronous flush, so ordering and
+            // the authoritative terminal replace are untouched.
+            run.pacer.push(event);
           },
           onReconnect: (): void => {
             if (disposed || run.stopped) return;
@@ -1088,6 +1091,16 @@ export function createChatController(options: CreateChatControllerOptions): Chat
       lastCanvasHash: null,
       canvasEverIncluded: false,
       completed: null,
+      // ROUND 13: smooth streaming — deltas drip at a typing cadence; the
+      // pacer rewrites seqs monotonically and forwards non-delta events
+      // (flush-first) untouched. Its emit-out carries the EXACT logic the old
+      // inline onEvent had (seqBase tracking + turn.completed capture + emit).
+      pacer: createStreamPacer((event: StudioStreamEvent): void => {
+        if (disposed || run.stopped) return;
+        if (event.seq >= run.seqBase) run.seqBase = event.seq + 1;
+        if (event.type === "turn.completed") run.completed = event;
+        emit(event);
+      }),
       liveApplied: false,
       liveBroken: false,
       liveVersionId: null,
@@ -1096,14 +1109,23 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     lastInput = input;
     activeRun = run;
     commit(applyClientAction(snapshot, { type: "chat.submit" }));
-    void runTurn(run).catch((error: unknown) => {
-      // runTurn is written never to reject; an escape must not surface as an
-      // unhandled rejection — fold the honest failure.
-      if (disposed || run.stopped) return;
-      raiseError(toUiError(error));
-      run.finished = true;
-      flushQueue();
-    });
+    void runTurn(run)
+      .catch((error: unknown) => {
+        // runTurn is written never to reject; an escape must not surface as an
+        // unhandled rejection — fold the honest failure.
+        if (disposed || run.stopped) return;
+        raiseError(toUiError(error));
+        run.finished = true;
+        flushQueue();
+      })
+      .finally(() => {
+        // ROUND 13: the pacer dies with the run — but NOT on a PARKED turn
+        // (TURN_PAUSED keeps the run alive; retry() re-enters runTurn with
+        // the SAME run + pacer, and a disposed pacer would silently eat every
+        // resumed event). Only a finished/stopped run tears it down, so no
+        // interval ever outlives the run while a resume stays possible.
+        if (run.finished || run.stopped || disposed) run.pacer.dispose();
+      });
   };
 
   const send = (input: ChatSendInput): void => {
@@ -1136,6 +1158,7 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     run.stopped = true;
     run.resumable = false;
     run.handle?.abort();
+    run.pacer.dispose();
     abandonOnce(run);
     // §3.4 (w3-b06): sends that raced the run's end (`queue`) and steers that
     // never rode a POST (`run.pendingSteers`) are CANCELLED with the run —
@@ -1214,6 +1237,7 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     if (run !== null) {
       run.stopped = true;
       run.handle?.abort();
+      run.pacer.dispose();
       if (!run.finished) abandonOnce(run);
     }
     listeners.clear();

@@ -149,6 +149,17 @@ export interface ChatUiMessage {
   readonly runId?: string;
   readonly toolCards: readonly ToolCardState[];
   /**
+   * ROUND 13 (live thinking): the active turn's thinking text, accumulated
+   * from `reasoning.delta` events and replaced authoritatively by
+   * `turn.completed.reasoningText`. Absent when the model emits no reasoning
+   * tokens (the block then shows the elapsed-time "Thinking…" indicator only).
+   */
+  readonly reasoning?: string;
+  /** Epoch-ms of the FIRST reasoning delta (first-wins; drives "Thought for Ns"). */
+  readonly reasoningStartedAt?: number;
+  /** Epoch-ms when thinking stopped (first text delta or the turn terminal). */
+  readonly reasoningEndedAt?: number;
+  /**
    * ROUND 12: the tool calls of the run's LATEST completed turn — the chips'
    * authoritative payload (`resultForModel`, the `proposal` carrier for write
    * tools). Absent on user messages and legacy replayed runs.

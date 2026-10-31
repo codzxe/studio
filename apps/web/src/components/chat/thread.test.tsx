@@ -130,7 +130,9 @@ describe("ChatThread — streaming caret (per phase)", () => {
         })}
       />,
     );
-    expect(screen.getByTestId("chat-thinking")).toHaveTextContent("Thinking…");
+    // ROUND 13: the static string became the LIVE thinking indicator.
+    expect(screen.getByTestId("chat-thinking")).toHaveTextContent("Thinking");
+    expect(screen.getByTestId("chat-thinking-dot")).toBeInTheDocument();
     expect(screen.getByTestId("chat-caret")).toBeInTheDocument();
   });
 });

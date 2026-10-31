@@ -219,6 +219,7 @@ export const STREAM_ERROR_CODE = "STREAM_ERROR";
  */
 export type UnboundStudioEvent =
   | { readonly type: "message.delta"; readonly delta: string }
+  | { readonly type: "reasoning.delta"; readonly delta: string }
   | {
       readonly type: "tool.started";
       readonly toolCallId: string;
@@ -347,6 +348,19 @@ export class StreamEventNormalizer {
         if (typeof delta !== "string") return [];
         return [{ type: "message.delta", delta }];
       }
+      case "reasoning-delta": {
+        // ROUND 13 (live thinking): AI SDK reasoning parts carry the thinking
+        // fragment in `text` (v5+ streamText parts) — `delta`/`textDelta`
+        // shapes are accepted for older/custom provider part streams.
+        const delta =
+          typeof part.text === "string"
+            ? part.text
+            : typeof part.delta === "string"
+              ? part.delta
+              : part.textDelta;
+        if (typeof delta !== "string" || delta === "") return [];
+        return [{ type: "reasoning.delta", delta }];
+      }
       case "tool-input-start": {
         if (typeof part.toolCallId !== "string" || typeof part.toolName !== "string") return [];
         return [
@@ -401,7 +415,8 @@ export class StreamEventNormalizer {
       }
       default:
         // start / start-step / text-start / text-end / tool-input-end /
-        // finish-step / finish / raw / reasoning-* have no §7.4 counterpart.
+        // finish-step / finish / raw / reasoning-start / reasoning-end have
+        // no §7.4 counterpart (reasoning-delta is mapped above).
         return [];
     }
   }

@@ -666,6 +666,28 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
         messages: mapActiveMessage(next, (message) => ({
           ...message,
           text: `${message.text}${event.delta}`,
+          // ROUND 13: the first visible text token ends the "thinking" clock
+          // (first-wins — later deltas of the same turn keep the stamp).
+          ...(message.reasoningEndedAt === undefined && message.text === ""
+            ? { reasoningEndedAt: Date.now() }
+            : {}),
+        })),
+      };
+      break;
+    }
+    case "reasoning.delta": {
+      // ROUND 13 (live thinking): thinking tokens stream into the SAME bubble
+      // under a collapsible bar — the user watches the model reason in real
+      // time instead of an empty screen. Timestamps are first-wins so a
+      // replayed/refolded sequence never moves the clock.
+      if (frozen) break;
+      next = {
+        ...next,
+        phase: resumeConfirm(next.phase),
+        messages: mapActiveMessage(next, (message) => ({
+          ...message,
+          ...(message.reasoningStartedAt === undefined ? { reasoningStartedAt: Date.now() } : {}),
+          reasoning: `${message.reasoning ?? ""}${event.delta}`,
         })),
       };
       break;
@@ -791,6 +813,13 @@ export function foldEvent(state: ChatUiState, event: StudioStreamEvent): ChatUiS
           message.text !== event.assistantText
             ? { text: event.assistantText }
             : {}),
+          // ROUND 13: the terminal is the thinking text's authority too — a
+          // durable replay (no deltas) restores the collapsible block, and the
+          // thinking clock stops (first-wins).
+          ...(event.reasoningText !== undefined && event.reasoningText !== ""
+            ? { reasoning: event.reasoningText }
+            : {}),
+          ...(message.reasoningEndedAt === undefined ? { reasoningEndedAt: Date.now() } : {}),
         })),
       };
       break;

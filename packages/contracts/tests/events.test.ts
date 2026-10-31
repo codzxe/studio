@@ -7,6 +7,7 @@ import {
   STUDIO_STREAM_EVENT_SCHEMA,
   STUDIO_STREAM_EVENT_TYPES,
   type StudioStreamEvent,
+  TURN_COMPLETED_EVENT_SCHEMA,
   applyEvents,
   isStudioStreamEvent,
   reduceEvents,
@@ -72,6 +73,20 @@ function allEventSamples(): StudioStreamEvent[] {
       retryable: false,
     },
     { type: "run.cancelled", runId: RUN_ID, seq: 9 },
+    // ROUND 13 (live thinking) — appended after the §7.4 twelve + turn trio.
+    { type: "reasoning.delta", runId: RUN_ID, seq: 10, delta: "Planning the build…" },
+    {
+      type: "turn.completed",
+      runId: RUN_ID,
+      seq: 11,
+      stepIndex: 0,
+      finishReason: "stop",
+      usage: { inputTokens: 100, outputTokens: 24 },
+      credits: { committed: 1 },
+      assistantText: "Done.",
+      reasoningText: "Planned, then built.",
+      toolCalls: [],
+    },
   ];
 }
 
@@ -95,13 +110,32 @@ describe("events: §7.4 catalogue", () => {
   });
 
   it("round-12 TURN WIRE CONTRACT appends turn.started/completed/failed after the twelve", () => {
-    expect([...STUDIO_STREAM_EVENT_TYPES]).toEqual([
+    // PRESERVED (round 12 → 13): the twelve + turn trio stay, in order, at the
+    // head — round 13 appends reasoning.delta AFTER them (see the next test).
+    expect([...STUDIO_STREAM_EVENT_TYPES].slice(0, 15)).toEqual([
       ...STUDIO_STREAM_EVENT_TYPES.slice(0, 12),
       "turn.started",
       "turn.completed",
       "turn.failed",
     ]);
-    expect(STUDIO_STREAM_EVENT_TYPES.length).toBe(15);
+  });
+
+  it("round-13 live thinking appends reasoning.delta after the twelve + turn trio (never reordered)", () => {
+    expect(STUDIO_STREAM_EVENT_TYPES.length).toBe(16);
+    expect(STUDIO_STREAM_EVENT_TYPES[15]).toBe("reasoning.delta");
+    // turn.completed carries the optional authoritative reasoningText.
+    const parsed = TURN_COMPLETED_EVENT_SCHEMA.safeParse({
+      type: "turn.completed",
+      runId: RUN_ID,
+      seq: 3,
+      stepIndex: 0,
+      finishReason: "stop",
+      usage: { inputTokens: 1, outputTokens: 1 },
+      credits: { committed: 0 },
+      toolCalls: [],
+      reasoningText: "Thought about it.",
+    });
+    expect(parsed.success).toBe(true);
   });
 
   it("every event sample parses, in any order of emission", () => {

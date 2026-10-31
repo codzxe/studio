@@ -242,6 +242,82 @@ describe("foldEvent — multiple runs in one thread", () => {
   });
 });
 
+describe("foldEvent — ROUND 13 live thinking (reasoning.delta)", () => {
+  it("accumulates reasoning deltas, then the terminal's reasoningText is authoritative", () => {
+    let state = foldEvent(withUserMessage(), START_A);
+    state = foldEvent(state, { type: "reasoning.delta", runId: RUN_A, seq: 1, delta: "Plan: " });
+    state = foldEvent(state, { type: "reasoning.delta", runId: RUN_A, seq: 2, delta: "one comp." });
+    let assistant = state.messages[1];
+    expect(assistant?.reasoning).toBe("Plan: one comp.");
+    expect(assistant?.reasoningStartedAt).toBeTypeOf("number");
+    // No visible text yet → the thinking clock has NOT stopped.
+    expect(assistant?.reasoningEndedAt).toBeUndefined();
+
+    state = foldEvent(state, {
+      type: "turn.completed",
+      runId: RUN_A,
+      seq: 3,
+      stepIndex: 0,
+      finishReason: "stop",
+      usage: { inputTokens: 10, outputTokens: 4 },
+      credits: { committed: 1 },
+      assistantText: "Built it.",
+      reasoningText: "Plan: one comp. (final)",
+      toolCalls: [],
+    });
+    assistant = state.messages[1];
+    expect(assistant?.reasoning).toBe("Plan: one comp. (final)");
+    expect(assistant?.reasoningEndedAt).toBeTypeOf("number");
+    expect(assistant?.text).toBe("Built it.");
+  });
+
+  it("the first text delta stops the thinking clock (first-wins)", () => {
+    let state = foldEvent(withUserMessage(), START_A);
+    state = foldEvent(state, { type: "reasoning.delta", runId: RUN_A, seq: 1, delta: "hmm" });
+    state = foldEvent(state, { type: "message.delta", runId: RUN_A, seq: 2, delta: "An" });
+    let assistant = state.messages[1];
+    const endedAt = assistant?.reasoningEndedAt;
+    expect(endedAt).toBeTypeOf("number");
+    // Later text deltas keep the stamp.
+    state = foldEvent(state, { type: "message.delta", runId: RUN_A, seq: 3, delta: "swer." });
+    assistant = state.messages[1];
+    expect(assistant?.reasoningEndedAt).toBe(endedAt);
+  });
+
+  it("reasoning deltas are replay-idempotent (seq cursor + first-wins stamps)", () => {
+    const events = [
+      START_A,
+      { type: "reasoning.delta", runId: RUN_A, seq: 1, delta: "think " },
+      { type: "message.delta", runId: RUN_A, seq: 2, delta: "reply" },
+    ] as const;
+    let once = withUserMessage();
+    for (const event of events) once = foldEvent(once, event);
+    let twice = withUserMessage();
+    for (const event of [...events, ...events]) twice = foldEvent(twice, event);
+    // Whole-state equality minus the wall-clock stamps (Date.now() may tick a
+    // millisecond between the two passes — the stamps are first-wins per pass).
+    expect(once.messages[1]?.text).toBe(twice.messages[1]?.text);
+    expect(once.messages[1]?.reasoning).toBe(twice.messages[1]?.reasoning);
+    expect(once.phase).toBe(twice.phase);
+    expect(once.lastSeq).toBe(twice.lastSeq);
+    expect(twice.messages[1]?.reasoningStartedAt).toBeTypeOf("number");
+    expect(twice.messages[1]?.reasoningEndedAt).toBeTypeOf("number");
+  });
+
+  it("reasoning for a frozen run is dropped (late tail after a second run)", () => {
+    let state = withUserMessage();
+    for (const event of APPLIED) state = foldEvent(state, event);
+    for (const event of UNDONE) state = foldEvent(state, event);
+    const late = foldEvent(state, {
+      type: "reasoning.delta",
+      runId: RUN_A,
+      seq: 99,
+      delta: "zombie thinking",
+    });
+    expect(late).toBe(state);
+  });
+});
+
 describe("foldEvent — terminal outcomes + reconciliation", () => {
   it("run.failed maps code/message/retryable and freezes the message", () => {
     let state = foldEvent(withUserMessage(), START_A);

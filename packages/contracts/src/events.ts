@@ -37,6 +37,21 @@ export const MESSAGE_DELTA_EVENT_SCHEMA = z.object({
   delta: z.string(),
 });
 
+/**
+ * ROUND 13 (live thinking): a reasoning/thinking token delta streamed the
+ * moment the model produces it — the SAME fire-and-forget shape as
+ * `message.delta`, one per reasoning fragment (OpenAI-compatible providers
+ * surface these as `reasoning` / `reasoning_content` chunk fields; the
+ * gateway forwards them verbatim). Not replayed on durable turn replay — the
+ * terminal `turn.completed.reasoningText` carries the full thinking text.
+ */
+export const REASONING_DELTA_EVENT_SCHEMA = z.object({
+  type: z.literal("reasoning.delta"),
+  runId: runIdField,
+  seq: seqField,
+  delta: z.string(),
+});
+
 export const TOOL_STARTED_EVENT_SCHEMA = z.object({
   type: z.literal("tool.started"),
   runId: runIdField,
@@ -234,6 +249,8 @@ export const TURN_COMPLETED_EVENT_SCHEMA = z.object({
   }),
   credits: z.strictObject({ committed: z.number().nonnegative() }),
   assistantText: z.string().optional(),
+  /** ROUND 13: the turn's full thinking text (authoritative replay payload). */
+  reasoningText: z.string().optional(),
   toolCalls: z.array(TURN_TOOL_CALL_SCHEMA),
 });
 
@@ -267,6 +284,8 @@ export const STUDIO_STREAM_EVENT_TYPES = [
   "turn.started",
   "turn.completed",
   "turn.failed",
+  // round 13 (live thinking — appended, never reordered):
+  "reasoning.delta",
 ] as const satisfies readonly string[];
 
 export type StudioStreamEventType = (typeof STUDIO_STREAM_EVENT_TYPES)[number];
@@ -287,6 +306,7 @@ export const STUDIO_STREAM_EVENT_SCHEMA = z.discriminatedUnion("type", [
   TURN_STARTED_EVENT_SCHEMA,
   TURN_COMPLETED_EVENT_SCHEMA,
   TURN_FAILED_EVENT_SCHEMA,
+  REASONING_DELTA_EVENT_SCHEMA,
 ]);
 
 export type StudioStreamEvent = z.infer<typeof STUDIO_STREAM_EVENT_SCHEMA>;

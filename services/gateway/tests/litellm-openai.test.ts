@@ -116,6 +116,36 @@ function clientDeps(overrides: Partial<Parameters<typeof streamChatCompletion>[0
 // ---------------------------------------------------------------------------
 
 describe("streamChatCompletion", () => {
+  it("forwards reasoning_content deltas as reasoning events before the text (round 13 live thinking)", async () => {
+    const fetchStub = scriptedFetch([
+      sseResponse([
+        frame({ choices: [{ delta: { reasoning_content: "Planning the build. " } }] }),
+        frame({ choices: [{ delta: { reasoning_content: "One composition, two layers." } }] }),
+        // Some providers use the `reasoning` field name instead.
+        frame({ choices: [{ delta: { reasoning: "Ready to write." } }] }),
+        textDelta("Building it now."),
+        finish("stop"),
+        DONE,
+      ]),
+    ]);
+
+    const events = await collect(
+      streamChatCompletion(clientDeps({ fetch: fetchStub }), {
+        model: "studio-smart",
+        messages,
+        signal: new AbortController().signal,
+      }),
+    );
+
+    expect(events).toEqual([
+      { type: "reasoning", delta: "Planning the build. " },
+      { type: "reasoning", delta: "One composition, two layers." },
+      { type: "reasoning", delta: "Ready to write." },
+      { type: "text", delta: "Building it now." },
+      { type: "finish", reason: "stop" },
+    ]);
+  });
+
   it("emits text deltas, aggregated tool calls, usage and finish in order", async () => {
     const fetchStub = scriptedFetch([
       sseResponse([

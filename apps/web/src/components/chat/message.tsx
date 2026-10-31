@@ -89,6 +89,7 @@ import {
   type PlanResolutionRequest,
 } from "./plan-card";
 import { PlanPreview } from "./plan-preview";
+import { ReasoningBlock } from "./reasoning-block";
 import { ToolCard } from "./tool-card";
 
 /**
@@ -522,13 +523,17 @@ export function ChatMessageView({
         )
       ) : (
         <div className="flex max-w-[72ch] min-w-0 flex-col items-start">
-          {message.text.length > 0 ? (
-            <Markdown text={message.text} />
-          ) : showCaret ? (
-            <p data-testid="chat-thinking" className="text-sm text-muted italic">
-              Thinking…
-            </p>
-          ) : null}
+          {/* ROUND 13 (live thinking): the collapsible reasoning bar — streams
+           * thinking tokens live (when the model emits them), or shows the
+           * animated elapsed-time indicator while the turn is still thinking.
+           * Auto-collapses to "Thought for Ns" once the answer text starts. */}
+          <ReasoningBlock
+            reasoning={message.reasoning ?? ""}
+            active={showCaret && message.text.length === 0}
+            startedAt={message.reasoningStartedAt}
+            endedAt={message.reasoningEndedAt}
+          />
+          {message.text.length > 0 ? <Markdown text={message.text} /> : null}
           {showCaret ? <StreamingCaret /> : null}
         </div>
       )}
