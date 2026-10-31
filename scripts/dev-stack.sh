@@ -9,7 +9,11 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$HOME/.local/bin:$PATH"
-export APP_URL=http://localhost:3000 APP_ENV=local MOCK_MODEL=true
+# Model seam — pre-exported env wins so a real backend can be dropped in
+# without editing this file (e.g. Token Harbor: MOCK_MODEL=false +
+# LITELLM_BASE_URL=https://tokenharbor.ai + LITELLM_API_KEY=thk_live_… +
+# LITELLM_MODEL_MAP='{"studio-fast":"…"}'; see packages/config/src/env.ts).
+export APP_URL=http://localhost:3000 APP_ENV=local MOCK_MODEL="${MOCK_MODEL:-true}"
 export DATABASE_URL="file:$REPO/.local/studio-dev.db"
 # Same root for gateway + seed blobs (see scripts/dev-sqlite.sh — the demo
 # .ecproj upload and the editor's download must resolve the SAME directory).
@@ -17,7 +21,8 @@ export STORAGE_FS_ROOT="${STORAGE_FS_ROOT:-$REPO/.local/storage}"
 export AUTH_SECRET="${AUTH_SECRET:-dev-local-secret-0123456789abcdef0123456789abcdef}"
 export AUTH_GOOGLE_ID=replace-me AUTH_GOOGLE_SECRET=replace-me AUTH_GITHUB_ID=replace-me AUTH_GITHUB_SECRET=replace-me
 export STRIPE_WEBHOOK_SECRET=whsec_replace_me STRIPE_PRICE_IDS='{"starter":"price_starter","pro":"price_pro","studio":"price_studio"}'
-export LITELLM_BASE_URL=http://localhost:4000 LITELLM_API_KEY=sk-litellm-replace-me
+export LITELLM_BASE_URL="${LITELLM_BASE_URL:-http://localhost:4000}" LITELLM_API_KEY="${LITELLM_API_KEY:-sk-litellm-replace-me}"
+export LITELLM_MODEL_MAP="${LITELLM_MODEL_MAP:-}"
 export ASSET_MAX_BYTES=524288000 PROJECT_MAX_BYTES=262144000 CHAT_MAX_STEPS=50
 export NEXT_PUBLIC_APP_URL=http://localhost:3000 GATEWAY_INTERNAL_URL=http://127.0.0.1:8787
 # NB: never export PORT — `next dev` honors it too and would steal 8787; the
