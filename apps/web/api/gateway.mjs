@@ -128877,7 +128877,18 @@ function createThreadsRepo(db) {
     async insertAssistantMessageRow(input2) {
       const threadId = requireNonEmpty(input2.threadId, "threadId");
       const runId = requireNonEmpty(input2.runId, "runId");
-      const text4 = input2.text === "" && input2.payload !== void 0 ? "" : (() => {
+      const text4 = input2.payload !== void 0 && input2.text.trim() === "" ? (
+        // A tool-call turn may carry (near-)empty assistant text —
+        // OpenAI-compatible models routinely emit whitespace-only content
+        // alongside tool_calls (observed live: GLM behind the LiteLLM seam
+        // sent "\n" + studio.create_text and the turn died on
+        // DbError "text is required"). With a payload riding along
+        // (toolCalls/usage — the turn route always sends one for
+        // tool-call turns), whitespace-only text normalizes to "" instead
+        // of failing the whole run; a text-only turn still requires real
+        // text. (12-w5-t2 replay pin: NON-empty text stays verbatim.)
+        ""
+      ) : (() => {
         if (input2.text.trim() === "") {
           throw DbError.validation("text is required");
         }

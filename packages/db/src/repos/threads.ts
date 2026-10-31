@@ -330,8 +330,17 @@ export function createThreadsRepo(db: StudioDb): ThreadsRepo {
       const threadId = requireNonEmpty(input.threadId, "threadId");
       const runId = requireNonEmpty(input.runId, "runId");
       const text =
-        input.text === "" && input.payload !== undefined
-          ? ""
+        input.payload !== undefined && input.text.trim() === ""
+          ? // A tool-call turn may carry (near-)empty assistant text —
+            // OpenAI-compatible models routinely emit whitespace-only content
+            // alongside tool_calls (observed live: GLM behind the LiteLLM seam
+            // sent "\n" + studio.create_text and the turn died on
+            // DbError "text is required"). With a payload riding along
+            // (toolCalls/usage — the turn route always sends one for
+            // tool-call turns), whitespace-only text normalizes to "" instead
+            // of failing the whole run; a text-only turn still requires real
+            // text. (12-w5-t2 replay pin: NON-empty text stays verbatim.)
+            ""
           : (() => {
               // Validate non-empty WITHOUT storing the trimmed value: turn
               // replay fidelity needs the VERBATIM assistant text (trailing

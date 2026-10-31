@@ -255,6 +255,35 @@ describe("sqlite agent loop (round 12 persistence)", { timeout: 30_000 }, () => 
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });
 
+  it('insertAssistantMessageRow: whitespace-only text + payload (a tool-call turn) normalizes to "" instead of failing the run', async () => {
+    const { threadId, runId } = await makeThreadWithRun();
+    // The live failure: GLM behind the LiteLLM seam returned "\n" alongside a
+    // studio.create_text tool call — the turn route always sends a payload for
+    // tool-call turns, so this must persist, not throw "text is required".
+    const row = await repos.threads.insertAssistantMessageRow({
+      threadId,
+      runId,
+      text: "\n",
+      status: "completed",
+      payload: { toolCalls: [{ toolCallId: "tc_1", tool: "studio.create_text", args: {} }] },
+    });
+    expect(row.role).toBe("assistant");
+    expect(row.contentJson).toMatchObject({
+      message: "",
+      status: "completed",
+      toolCalls: [{ toolCallId: "tc_1", tool: "studio.create_text" }],
+    });
+    // The text-only turn (no payload) still demands real text.
+    await expect(
+      repos.threads.insertAssistantMessageRow({
+        threadId,
+        runId,
+        text: "  ",
+        status: "completed",
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+  });
+
   it("linkUserMessageToRun: sets run_id on the user row only; anything else reads 404", async () => {
     const { threadId, runId } = await makeThreadWithRun();
     const userRow = await repos.threads.addMessage(workspaceId, {
