@@ -533,7 +533,9 @@ describe("golden prompts — the v3 system prompt (catalog v3 + client-driven lo
         "complete library of allowed engine command ids, inline, so you never need studio.list_commands " +
         "to see what exists.",
     );
-    expect(SYSTEM_PROMPT).toContain("=== ENGINE COMMAND CATALOG (the tool library — allowed ids, one list) ===");
+    expect(SYSTEM_PROMPT).toContain(
+      "=== ENGINE COMMAND CATALOG (the tool library — allowed ids, one list) ===",
+    );
     expect(SYSTEM_PROMPT).toContain("Never invent command ids or params.");
     // The digest body: the inline library actually names real ids + presets.
     expect(SYSTEM_PROMPT).toContain("- layer (");
@@ -545,10 +547,15 @@ describe("golden prompts — the v3 system prompt (catalog v3 + client-driven lo
     );
   });
 
-  it("pins the FULL-VIDEO guidance: complete piece in ONE run, audio first, no plan-stopping", () => {
+  it("pins the FULL-VIDEO guidance: complete piece in ONE run, plan-first steps, audio first, no plan-stopping", () => {
     expect(SYSTEM_PROMPT).toContain("make a motion graphics video");
     expect(SYSTEM_PROMPT).toContain("build the COMPLETE piece in ONE run");
-    expect(SYSTEM_PROMPT).toContain("studio.plan_edit first for changes of five or more steps");
+    // ROUND 13 execution discipline: the numbered plan lives in the FIRST
+    // REPLY's text (never a studio.plan_edit detour), executed one step per
+    // turn — the deep-research harness pattern.
+    expect(SYSTEM_PROMPT).toContain("Open with the numbered plan");
+    expect(SYSTEM_PROMPT).toContain("then execute it one step per turn");
+    expect(SYSTEM_PROMPT).not.toContain("studio.plan_edit first for changes");
     expect(SYSTEM_PROMPT).toContain("duration and framerate");
     expect(SYSTEM_PROMPT).toContain("text animators");
     expect(SYSTEM_PROMPT).toContain("shape layers");
@@ -557,6 +564,24 @@ describe("golden prompts — the v3 system prompt (catalog v3 + client-driven lo
     expect(SYSTEM_PROMPT).toContain(
       "Never stop at a plan; never ask when the request is concrete.",
     );
+  });
+
+  it("pins the ROUND-13 execution discipline: write tools immediately, plan-first, one step per turn", () => {
+    expect(SYSTEM_PROMPT).toContain("HOW TO WORK — execution discipline");
+    // START BUILDING IMMEDIATELY — the catalog is inline, discovery loops are
+    // banned (the 20x describe_command inspection loop the user caught).
+    expect(SYSTEM_PROMPT).toContain("START BUILDING IMMEDIATELY");
+    expect(SYSTEM_PROMPT).toContain("WRITE tool calls in your first turn");
+    expect(SYSTEM_PROMPT).toContain("no studio.describe_command chains");
+    expect(SYSTEM_PROMPT).toContain("At most ONE read call before your first write");
+    // PLAN FIRST, then ONE STEP PER TURN — small live-applied steps.
+    expect(SYSTEM_PROMPT).toContain("PLAN FIRST, THEN BUILD ONE STEP PER TURN");
+    expect(SYSTEM_PROMPT).toContain("short numbered plan as plain text");
+    expect(SYSTEM_PROMPT).toContain("ONE step per turn");
+    expect(SYSTEM_PROMPT).toContain("NEVER dump everything in one giant turn");
+    // plan_edit demoted to LAST RESORT (never the default path).
+    expect(SYSTEM_PROMPT).toContain("studio.plan_edit — LAST RESORT ONLY");
+    expect(SYSTEM_PROMPT).not.toContain("Prefer one studio.plan_edit");
   });
 
   it("pins the §8.3 security sentence VERBATIM (data, not instructions)", () => {
