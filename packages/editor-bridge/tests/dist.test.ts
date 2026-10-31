@@ -26,6 +26,8 @@
  * stay no-network and deterministic while every shape is the dist's.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { attachEditorBridge, editorLoadState } from "../src/bridge";
 import { type BridgeError, isBridgeError } from "../src/errors";
@@ -105,8 +107,28 @@ function mountDistEditor(fake: FakeEditor = createFakeEditor({ version: DIST_VER
     flush: () => fake.flush(),
     workerFrameCheck: (params) => fake.workerFrameCheck(params ?? {}),
   };
-  w.effectcraft = ec;
+  // The CURRENT dist defines `window.studioEngine = {...}` (the w3-A
+  // de-effectcraft rename). This mount used to install the fake under the
+  // pre-rename `effectcraft` while claiming to mirror the dist — which hid
+  // the rename drift that broke every real attach (bridge now accepts both
+  // names; this test exercises the real one).
+  w.studioEngine = ec;
   return { iframe, fake, w };
+}
+
+// The engine-global name(s) the shipped dist actually defines. The bridge
+// reads `window.studioEngine ?? window.effectcraft` (src/bridge.ts engineOf);
+// if the dist renames the global again, THIS is the test that fails first.
+function distGlobalNames(): string[] {
+  // Vitest transforms import.meta.url in the jsdom environment, so resolve
+  // from the package cwd (tests run with cwd = packages/editor-bridge).
+  const candidates = [resolve(process.cwd(), "../../apps/web/public/editor/index.html")];
+  const distPath = candidates.find((c) => existsSync(c));
+  const html = distPath ? readFileSync(distPath, "utf8") : "";
+  const names: string[] = [];
+  if (/window\.studioEngine\s*=/.test(html)) names.push("studioEngine");
+  if (/window\.effectcraft\s*=/.test(html)) names.push("effectcraft");
+  return names;
 }
 
 /** Drive the dist's boot sequence: wasm compile → start, or start failure. */
@@ -134,6 +156,33 @@ afterAll(() => {
 // ---------------------------------------------------------------------------
 // editorLoadState — the M3.7 failure seam
 // ---------------------------------------------------------------------------
+
+describe("shipped-dist drift gate (the engine global name)", () => {
+  it("the committed dist defines a global the bridge reads (studioEngine | effectcraft)", () => {
+    const names = distGlobalNames();
+    expect(
+      names.length > 0,
+      `apps/web/public/editor/index.html defines none of window.studioEngine / window.effectcraft — the bridge's engineOf() would never attach (this is exactly how the w3-A rename broke every real editor boot while these tests stayed green)`,
+    ).toBe(true);
+  });
+
+  it("the bridge attaches to the CURRENT dist's global name (studioEngine), not just the pre-rename one", async () => {
+    // The mount under `studioEngine` (mountDistEditor) must be enough — no
+    // `effectcraft` fallback present on the window at all.
+    const { iframe, fake, w } = mountDistEditor();
+    expect(w.studioEngine).toBeDefined();
+    expect(w.effectcraft).toBeUndefined();
+    boot(w);
+    const bridge = await attachEditorBridge(iframe);
+    expect(bridge.version()).toContain(DIST_VERSION);
+    // A real request round-trip proves the CALL layer resolves the same
+    // global the handshake did (both used to read `effectcraft` only).
+    const commands = await bridge.request("engine.commands", {});
+    expect(commands).toBeDefined();
+    bridge.dispose();
+    iframe.remove();
+  });
+});
 
 describe("editorLoadState: the dist's boot sequence", () => {
   it("is 'loading' before the dist's globals exist", () => {
@@ -197,7 +246,7 @@ describe("attachEditorBridge × shipped dist surface", () => {
     // from the window (authoritative) — values must match the booted state
     expect(info.load).toMatchObject({ wasmMs: 420, readyMs: 1337 });
     // the dist's info() extras pass through the loose schema
-    const raw = w.effectcraft?.info() as Record<string, unknown>;
+    const raw = w.studioEngine?.info() as Record<string, unknown>;
     expect(raw.crossOriginIsolated).toBe(true);
     expect(raw.serviceWorker).toBe(false);
 
@@ -293,8 +342,8 @@ describe("dist api.rs error strings", () => {
     const { iframe, w } = mountDistEditor();
     // Dist fidelity: api.rs's request() rejects with the plain string while the
     // control channel is down — the bridge must retry it exactly once.
-    const ec = w.effectcraft;
-    if (!ec) throw new Error("no effectcraft");
+    const ec = w.studioEngine;
+    if (!ec) throw new Error("no studioEngine");
     const original = ec.request.bind(ec);
     let calls = 0;
     ec.request = (method: string, params?: unknown) => {
@@ -316,8 +365,8 @@ describe("dist api.rs error strings", () => {
   it("maps 'request dropped' to EDITOR_DISCONNECTED (channel disconnect)", async () => {
     const { iframe, w } = mountDistEditor();
     boot(w, { wasmMs: 420, readyMs: 1337 });
-    const ec = w.effectcraft;
-    if (!ec) throw new Error("no effectcraft");
+    const ec = w.studioEngine;
+    if (!ec) throw new Error("no studioEngine");
     ec.request = () => Promise.reject("request dropped");
     const bridge = await attachEditorBridge(iframe);
     const err = (await bridge.request("engine.commands", {}).then(

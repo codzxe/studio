@@ -72,8 +72,13 @@ export interface StudioEngineGlobal {
 
 /** `Window` refined with the (optional) upstream globals; the bridge never assumes they are present. */
 export interface StudioEngineWindow extends Window {
+  /** The engine global, as the CURRENT dist names it (`web/index.html: window.studioEngine = {...}`). */
+  studioEngine?: StudioEngineGlobal;
+  /** The pre-rename name (dist ≤ w2); accepted for one release so an older frozen dist keeps working. */
   effectcraft?: StudioEngineGlobal;
   studioEngineLoad?: StudioEngineLoad;
+  studioEngineModule?: unknown;
+  /** Pre-rename spelling of `studioEngineModule`. */
   effectcraftModule?: unknown;
 }
 

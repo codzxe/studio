@@ -40,10 +40,6 @@ import {
   type EditorEventName,
   type EditorInfo,
   EditorInfoSchema,
-  type StudioEngineGlobal,
-  type StudioEngineLoad,
-  StudioEngineLoadInfoSchema,
-  type StudioEngineWindow,
   type RenderFrameParams,
   type RenderFrameResult,
   RenderFrameResultSchema,
@@ -51,6 +47,10 @@ import {
   type ScreenshotParams,
   type ScreenshotResult,
   ScreenshotResultSchema,
+  type StudioEngineGlobal,
+  type StudioEngineLoad,
+  StudioEngineLoadInfoSchema,
+  type StudioEngineWindow,
   type UiInspect,
   UiInspectSchema,
 } from "./types";
@@ -113,6 +113,20 @@ class EventBus {
 function contentWindowOf(iframe: HTMLIFrameElement): StudioEngineWindow | null {
   // The upstream surface is unknown-shaped; the structural cast only adds optional members.
   return iframe.contentWindow as StudioEngineWindow | null;
+}
+
+/**
+ * The engine global on the editor iframe's window. The CURRENT dist names it
+ * `window.studioEngine` (the w3-A de-effectcraft rename, dist rebuilt in
+ * c4546fa); the bridge used to read only the pre-rename `window.effectcraft`,
+ * which made every attach time out with EDITOR_NOT_READY against the renamed
+ * dist — the handshake poll requires the engine global AND `studioEngineLoad`,
+ * and a global that never exists fails both branches. Accept both names,
+ * prefer the current one; drop `effectcraft` when the pre-rename dists are
+ * gone from the wild.
+ */
+function engineOf(w: StudioEngineWindow | null | undefined): StudioEngineGlobal | undefined {
+  return w?.studioEngine ?? w?.effectcraft;
 }
 
 function delay(ms: number): Promise<void> {
@@ -192,7 +206,7 @@ async function waitForReady(iframe: HTMLIFrameElement, readyTimeoutMs: number): 
   const deadline = Date.now() + readyTimeoutMs;
   for (;;) {
     const w = contentWindowOf(iframe);
-    const ec = w?.effectcraft;
+    const ec = engineOf(w);
     const load = w?.studioEngineLoad;
     if (ec && load) {
       // Order matters: the dist sets `error` on any boot failure and never
@@ -389,7 +403,7 @@ export function attachEditorBridge(
           false,
         );
       }
-      const ec = w.effectcraft;
+      const ec = engineOf(w);
       if (!ec) {
         throw new BridgeError(
           "EDITOR_NOT_READY",
@@ -423,7 +437,7 @@ export function attachEditorBridge(
       throw new BridgeError("EDITOR_DISCONNECTED", "info(): bridge is disposed", false);
     }
     const w = contentWindowOf(iframe);
-    const ec = w?.effectcraft;
+    const ec = engineOf(w);
     if (!w || !ec) {
       throw new BridgeError("EDITOR_NOT_READY", "info(): window.studioEngine is missing", true);
     }
