@@ -628,12 +628,15 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
   const applyPorts = useMemo<ChatApplyPorts>(
     () => ({
       autosave: {
-        saveNow: (reason: string): Promise<SaveOutcome> => {
+        saveNow: (reason: string, options?: { agentRunId?: string }): Promise<SaveOutcome> => {
           const controller = autosaveRef.current;
           if (controller === null) {
             return Promise.resolve({ saved: false } satisfies SaveOutcome);
           }
-          return controller.saveNow(reason);
+          // The agent-apply save threads its run id — the gateway's apply
+          // route settles ONLY a version whose agentRunId equals the run
+          // (routes/apply.ts §9.3 scope guard).
+          return controller.saveNow(reason, options);
         },
         markDirty: (reason?: string): void => {
           autosaveRef.current?.markDirty(reason);

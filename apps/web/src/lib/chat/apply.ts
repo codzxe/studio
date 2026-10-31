@@ -336,8 +336,14 @@ export type ApplyEngineEvent =
 
 /** The slice of the M3-B autosave controller apply consumes (D-6). */
 export interface ApplyAutosavePort {
-  /** D-6 moments: `saveNow("agent-apply")` uploads the applied version. */
-  saveNow(reason: string): Promise<SaveOutcome>;
+  /**
+   * D-6 moments: `saveNow("agent-apply")` uploads the applied version.
+   * `options.agentRunId` tags the uploaded version row with the owning run —
+   * the gateway's apply route ONLY settles a version whose `agentRunId`
+   * equals the run (§9.3 scope guard); omitting it made EVERY apply answer
+   * 404 VERSION_NOT_FOUND ("The edit didn't apply — nothing changed.").
+   */
+  saveNow(reason: string, options?: { readonly agentRunId?: string }): Promise<SaveOutcome>;
   /** Belt-and-braces proactive dirty flag before the save (the M3-B lesson). */
   markDirty?(reason?: string): void;
 }
@@ -893,7 +899,9 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
    * report so the gateway always sees a version that exists), then report.
    */
   const saveAndReport = async (runId: string, record: RunApplyRecord): Promise<ApplyOutcome> => {
-    const saved: SaveOutcome = await autosave.saveNow(AGENT_APPLY_SAVE_REASON);
+    const saved: SaveOutcome = await autosave.saveNow(AGENT_APPLY_SAVE_REASON, {
+      agentRunId: runId,
+    });
     if (saved.saved !== true || saved.version === undefined) {
       // No version ⇒ the gateway is never told "applied". The divergence
       // (engine applied, version not) is surfaced honestly via

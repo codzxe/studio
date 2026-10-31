@@ -83,7 +83,16 @@ export interface EditorSessionClient {
    */
   uploadVersion(
     projectId: string,
-    input: { bytes: Uint8Array; baseVersionId: string | null; sha256: string; label?: string },
+    input: {
+      bytes: Uint8Array;
+      baseVersionId: string | null;
+      sha256: string;
+      label?: string;
+      /** Tags the version row with the owning agent run (the M5 apply scope
+       * guard — the gateway settles ONLY a version whose agentRunId equals
+       * the run; omitted for ordinary saves). */
+      agentRunId?: string;
+    },
   ): Promise<UploadVersionResult>;
 }
 
@@ -108,7 +117,12 @@ export interface SaveOutcome {
 export interface AutosaveController {
   readonly dirty: boolean;
   markDirty(reason?: string): void;
-  saveNow(reason: string): Promise<SaveOutcome>;
+  /**
+   * `options.agentRunId` threads the owning run id into the uploaded version
+   * (the agent-apply moment; the gateway's apply route refuses a version
+   * without it — see routes/apply.ts §9.3 scope guard).
+   */
+  saveNow(reason: string, options?: { agentRunId?: string }): Promise<SaveOutcome>;
   /** The session's current version (the advancing autosave chain head) — the
    * M5 apply/reapply gate's honest source. `null` pre-boot/disposed, or for a
    * fresh project until its first save lands. */

@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
@@ -53,11 +56,19 @@ const DEMO_GRANT_MICROCREDITS = DEMO_GRANT_CREDITS * MICROCREDITS_PER_CREDIT;
  */
 const GRANT_IDEMPOTENCY_KEY = "seed:demo:grant:1000c";
 
-/** Placeholder empty .ecproj fixture bytes (documented; see module docs). */
-const DEMO_ECPROJ = Buffer.from(
-  JSON.stringify({ format: "ecproj", version: 1, compositions: [] }),
-  "utf8",
+/**
+ * The demo .ecproj fixture bytes: the COMMITTED engine-generated project at
+ * `apps/web/demo-project.ecproj` (the same bytes the e2e suite opens — a real
+ * schema-2 EffectCraft project, sha256 aec54404…). The previous placeholder
+ * (`{"format":"ecproj","version":1,"compositions":[]}`) was a fantasy shape
+ * the pinned engine's parser rejects ("missing field `schema`") — the demo
+ * project could never open, dead-ending the product at the front door.
+ */
+const DEMO_FIXTURE_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../apps/web/demo-project.ecproj",
 );
+const DEMO_ECPROJ = await readFile(DEMO_FIXTURE_PATH);
 const DEMO_ECPROJ_SHA256 = createHash("sha256").update(DEMO_ECPROJ).digest("hex");
 
 const EnvSchema = z.object({
@@ -69,6 +80,47 @@ const EnvSchema = z.object({
 function objectKeyFor(versionId: string): string {
   // §9.2 object storage layout
   return `workspaces/${ORG_ID}/projects/${PROJECT_ID}/versions/${versionId}/project.ecproj`;
+}
+
+/**
+ * The local FS storage root the demo blobs are uploaded to, or null when the
+ * seed must NOT touch the filesystem (S3/Postgres deployments upload through
+ * the real storage APIs; Vercel bundles are read-only).
+ *
+ * Resolution mirrors the gateway's `defaultLocalFsRoot()` (services/gateway/
+ * src/storage.ts): an explicit STORAGE_FS_ROOT pins an ABSOLUTE root shared by
+ * every process — gateway, worker, seed — regardless of CWD; a SQLite dev
+ * database (local-only dialect) falls back to the repo-local .local/storage,
+ * anchored to the REPO root (three levels above this script) so the seed and
+ * the gateway agree even when invoked from different CWDs.
+ */
+function localFsStorageRoot(databaseUrl: string): string | null {
+  const pinned = process.env.STORAGE_FS_ROOT;
+  if (pinned !== undefined && pinned.length > 0) return resolve(pinned);
+  if (process.env.VERCEL === "1") return null;
+  if (!isSqliteUrl(databaseUrl)) return null;
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  return resolve(repoRoot, ".local/storage");
+}
+
+/**
+ * Upload the demo version blobs to the local FS storage root (dev only).
+ * The version ROWS describe content-addressed objects (§9.2); without the
+ * bytes the editor's first download 404s — "The project could not open" —
+ * and the whole demo dead-ends before chat. Idempotent: the same bytes are
+ * rewritten to the same content-addressed keys on every seed run.
+ */
+async function seedLocalBlobs(root: string): Promise<number> {
+  let written = 0;
+  for (const versionId of VERSION_IDS) {
+    const path = resolve(root, objectKeyFor(versionId));
+    const contained = path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`);
+    if (!contained) throw new Error(`seed blob path escapes storage root: ${path}`);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, DEMO_ECPROJ);
+    written += 1;
+  }
+  return written;
 }
 
 async function main(): Promise<void> {
@@ -178,6 +230,22 @@ async function main(): Promise<void> {
       .update(t.projects)
       .set({ currentVersionId: lastVersionId })
       .where(eq(t.projects.id, PROJECT_ID));
+
+    // 3b — demo version blobs (local FS storage only; see the helper docs).
+    // A WARNING, never fatal (the seed's contract: a failure must not break
+    // the dev server) — but a missing blob is the "project could not open"
+    // bug, so it is loudly reported.
+    const storageRoot = localFsStorageRoot(env.DATABASE_URL);
+    if (storageRoot !== null) {
+      try {
+        const blobs = await seedLocalBlobs(storageRoot);
+        // biome-ignore lint/suspicious/noConsole: CLI seed script — reports the local blob upload
+        console.info(`[seed] blobs: ${blobs} demo .ecproj objects under ${storageRoot}`);
+      } catch (error) {
+        // biome-ignore lint/suspicious/noConsole: CLI seed script — reports the blob upload failure
+        console.warn(`[seed] WARNING: demo blob upload failed: ${String(error)}`);
+      }
+    }
 
     // 4 — 1,000 demo credits (idempotent grant via the ledger repo)
     const repos = createRepos(db);

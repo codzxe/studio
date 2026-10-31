@@ -38,6 +38,12 @@ DB_URL="${STUDIO_SQLITE_URL:-file:$DB_PATH}"
 DB_PKG="$REPO_ROOT/packages/db"
 export STUDIO_SQLITE_URL="$DB_URL"
 export W1_SQLITE_PATH="$DB_PATH"
+# The demo seed uploads the demo .ecproj blobs to the SAME local FS root the
+# gateway reads (services/gateway/src/storage.ts defaultLocalFsRoot) — a
+# CWD-relative default would split the two processes (packages/db vs
+# services/gateway), and the editor's first version download would 404
+# ("The project could not open"). Pin an absolute, repo-anchored root.
+export STORAGE_FS_ROOT="${STORAGE_FS_ROOT:-$REPO_ROOT/.local/storage}"
 
 log()  { printf 'dev-sqlite: %s\n' "$*" >&2; }
 die()  { printf 'dev-sqlite: ERROR: %s\n' "$*" >&2; exit 1; }

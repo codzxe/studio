@@ -100,7 +100,13 @@ export function createApiSession(options: {
 
     async uploadVersion(
       projectId: string,
-      input: { bytes: Uint8Array; baseVersionId: string | null; sha256: string; label?: string },
+      input: {
+        bytes: Uint8Array;
+        baseVersionId: string | null;
+        sha256: string;
+        label?: string;
+        agentRunId?: string;
+      },
     ): Promise<UploadVersionResult> {
       try {
         return await uploadVersionCall(payload.workspaceId, projectId, input, options);
@@ -171,7 +177,13 @@ async function downloadSigned(
 async function uploadVersionCall(
   workspaceId: string,
   projectId: string,
-  input: { bytes: Uint8Array; baseVersionId: string | null; sha256: string; label?: string },
+  input: {
+    bytes: Uint8Array;
+    baseVersionId: string | null;
+    sha256: string;
+    label?: string;
+    agentRunId?: string;
+  },
   options: {
     readonly fetch?: (input: string, init?: RequestInit) => Promise<Response>;
     readonly idempotencyKey?: () => string;
@@ -184,6 +196,9 @@ async function uploadVersionCall(
     baseVersionId: input.baseVersionId,
     sha256: input.sha256,
     label: input.label,
+    // The agent-apply moment tags the version row with its owning run — the
+    // gateway's apply route settles ONLY that version (routes/apply.ts §9.3).
+    ...(input.agentRunId !== undefined ? { agentRunId: input.agentRunId } : {}),
     sizeBytes: input.bytes.byteLength,
   };
   const form = new FormData();

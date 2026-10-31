@@ -148,7 +148,7 @@ export function createAutosaveController(
    * Conflicts resolve (never throw); every other failure throws for the
    * retry chain. Never uploads when nothing is dirty.
    */
-  async function saveOnce(reason: string): Promise<SaveOutcome> {
+  async function saveOnce(reason: string, agentRunId?: string): Promise<SaveOutcome> {
     const summary = await readProjectSummary(o.bridge);
     editorDirty = summary.dirty === true;
     const path = summary.path;
@@ -199,6 +199,7 @@ export function createAutosaveController(
         baseVersionId: currentVersion?.id ?? null,
         sha256,
         label: labelForSaveReason(reason),
+        ...(agentRunId !== undefined ? { agentRunId } : {}),
       }),
     );
 
@@ -224,11 +225,11 @@ export function createAutosaveController(
   }
 
   /** The save attempt + up to `immediateRetries` immediate retries (backoff = next tick). */
-  async function attemptSaveWithRetries(reason: string): Promise<SaveOutcome> {
+  async function attemptSaveWithRetries(reason: string, agentRunId?: string): Promise<SaveOutcome> {
     let lastError: unknown = undefined;
     for (let attempt = 0; attempt <= o.immediateRetries; attempt++) {
       try {
-        return await saveOnce(reason);
+        return await saveOnce(reason, agentRunId);
       } catch (err) {
         lastError = err;
         safeNotify(hooks.onError, err);
@@ -262,12 +263,12 @@ export function createAutosaveController(
    * re-enters, so the chained call reads the CURRENT bytes. The tick keeps
    * the plain dedupe — the next tick re-reads the editor anyway.
    */
-  function startSave(reason: string, explicit = false): Promise<SaveOutcome> {
+  function startSave(reason: string, explicit = false, agentRunId?: string): Promise<SaveOutcome> {
     if (inFlight !== null) {
       if (!explicit) return inFlight; // dedup: the tick rides the running save
       return inFlight.then(
-        () => startSave(reason, explicit),
-        () => startSave(reason, explicit),
+        () => startSave(reason, explicit, agentRunId),
+        () => startSave(reason, explicit, agentRunId),
       );
     }
     if (parkedConflict) return Promise.resolve({ saved: false, conflict: true });
@@ -277,7 +278,7 @@ export function createAutosaveController(
         error: new EditorSessionError("disposed", "saveNow: the autosave controller was disposed"),
       });
     }
-    const outcome = attemptSaveWithRetries(reason).finally(() => {
+    const outcome = attemptSaveWithRetries(reason, agentRunId).finally(() => {
       inFlight = null;
       ensureTimer(); // keep the cadence (no-op while parked/disposed)
     });
@@ -303,12 +304,14 @@ export function createAutosaveController(
       proactiveDirty = true;
     },
 
-    saveNow(reason: string): Promise<SaveOutcome> {
+    saveNow(reason: string, options?: { agentRunId?: string }): Promise<SaveOutcome> {
       // Explicit saves (manual/agent-apply/before-close) are allowed while
       // parked on hard errors; a success un-parks. Conflict parks are terminal.
       // Explicit saves never ADOPT an in-flight save's outcome — see
       // startSave (w3-b06): they chain a fresh save that reads current bytes.
-      return startSave(reason, true);
+      // The agent-apply moment threads `agentRunId` so the uploaded version
+      // row carries its owning run (the gateway's apply scope guard, §9.3).
+      return startSave(reason, true, options?.agentRunId);
     },
 
     currentVersion(): VersionRef | null {

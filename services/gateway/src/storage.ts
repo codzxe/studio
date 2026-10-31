@@ -511,12 +511,17 @@ export function createStorage(env: StudioEnv, fsRoot?: string): StorageChoice {
 }
 
 /**
- * The LocalFS default root: an explicit fsRoot (tests) wins; Vercel functions
- * mount a READ-ONLY bundle, so serverless boots write to /tmp — the only
- * writable directory (see the module header for the ephemerality caveat);
- * local dev keeps the repo-local .local/storage.
+ * The LocalFS default root: an explicit fsRoot (tests) wins; STORAGE_FS_ROOT
+ * (dev ops) pins an ABSOLUTE root so every process that touches the local
+ * store — gateway, worker, seed — resolves the SAME files regardless of its
+ * CWD (the demo seed uploads the .ecproj blobs the editor then downloads);
+ * Vercel functions mount a READ-ONLY bundle, so serverless boots write to
+ * /tmp — the only writable directory (see the module header for the
+ * ephemerality caveat); local dev keeps the repo-local .local/storage.
  */
 function defaultLocalFsRoot(): string {
+  const pinned = process.env.STORAGE_FS_ROOT;
+  if (pinned !== undefined && pinned.length > 0) return resolve(pinned);
   return process.env.VERCEL === "1" ? "/tmp/studio-storage" : resolve(".local/storage");
 }
 

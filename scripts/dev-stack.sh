@@ -11,6 +11,9 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$HOME/.local/bin:$PATH"
 export APP_URL=http://localhost:3000 APP_ENV=local MOCK_MODEL=true
 export DATABASE_URL="file:$REPO/.local/studio-dev.db"
+# Same root for gateway + seed blobs (see scripts/dev-sqlite.sh — the demo
+# .ecproj upload and the editor's download must resolve the SAME directory).
+export STORAGE_FS_ROOT="${STORAGE_FS_ROOT:-$REPO/.local/storage}"
 export AUTH_SECRET="${AUTH_SECRET:-dev-local-secret-0123456789abcdef0123456789abcdef}"
 export AUTH_GOOGLE_ID=replace-me AUTH_GOOGLE_SECRET=replace-me AUTH_GITHUB_ID=replace-me AUTH_GITHUB_SECRET=replace-me
 export STRIPE_WEBHOOK_SECRET=whsec_replace_me STRIPE_PRICE_IDS='{"starter":"price_starter","pro":"price_pro","studio":"price_studio"}'
