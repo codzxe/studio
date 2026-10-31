@@ -349,6 +349,12 @@ function childEnv({ webPort, gwPort }) {
     STRIPE_PRICE_IDS: '{"starter":"price_starter","pro":"price_pro","studio":"price_studio"}',
     LITELLM_BASE_URL: process.env.LITELLM_BASE_URL || "http://localhost:4000",
     LITELLM_API_KEY: process.env.LITELLM_API_KEY || "sk-litellm-replace-me",
+    // e4610a6 parity with dev-stack.sh: the gateway spawns with cwd
+    // services/gateway, so its CWD-relative .local/storage default would
+    // MISS the demo seed's repo-root blobs — the editor's first project
+    // download 404'd ("The project could not open"). Pin the ABSOLUTE root
+    // every storage-touching process shares (gateway + worker + seed).
+    STORAGE_FS_ROOT: process.env.STORAGE_FS_ROOT || path.join(REPO, ".local/storage"),
     ASSET_MAX_BYTES: "524288000",
     PROJECT_MAX_BYTES: "262144000",
     CHAT_MAX_STEPS: "50",
