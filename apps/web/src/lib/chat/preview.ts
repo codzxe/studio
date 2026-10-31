@@ -42,7 +42,7 @@
  *      executed, rendered as text by the UI.
  */
 
-import type { EditPlan } from "@studio/contracts";
+import type { AgentBatch, EditPlan } from "@studio/contracts";
 import {
   type AgentBatchInput,
   type EditorBridge,
@@ -396,6 +396,26 @@ export function firstAffectedTimeTicks(plan: EditPlan): number | null {
   for (const layer of plan.affectedLayers) {
     const seconds = textSeconds(layer.change);
     if (seconds !== null) candidates.push(secondsToTicks(seconds));
+  }
+  let best: number | null = null;
+  for (const ticks of candidates) {
+    if (ticks >= 0 && (best === null || ticks < best)) best = ticks;
+  }
+  return best;
+}
+
+/**
+ * The FIRST AFFECTED TIME of a COMPILED BATCH, in engine ticks — the
+ * batch-only arm of {@link firstAffectedTimeTicks} for callers that hold the
+ * `engine.batch` payload without the model-facing plan (the apply flow's
+ * `apply.completed` event): the compiled `steps[].params` carry the same
+ * times the plan's args name, so the same curated-key scan applies. Null
+ * when the batch names no usable time (→ keep the playhead).
+ */
+export function firstAffectedTimeTicksOfBatch(batch: AgentBatch): number | null {
+  const candidates: number[] = [];
+  for (const step of batch.steps) {
+    collectTimeTicks(step.params, candidates);
   }
   let best: number | null = null;
   for (const ticks of candidates) {

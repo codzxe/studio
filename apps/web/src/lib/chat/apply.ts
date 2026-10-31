@@ -322,6 +322,10 @@ export type ApplyEngineEvent =
       readonly runId: string;
       readonly versionId: string;
       readonly creditsCommitted?: number;
+      /** The applied compiled batch — the host's post-apply canvas reveal
+       * (comp.open + time.set + ui.playback) reads it. Absent on the F-L1
+       * retrySave path (no batch re-executed there). */
+      readonly batch?: AgentBatch;
     }
   | { readonly type: "apply.failed"; readonly runId: string; readonly outcome: ApplyOutcome }
   | { readonly type: "undo.started"; readonly runId: string }
@@ -927,7 +931,11 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
    * upload the applied state as a NEW version (awaited BEFORE the applyRun
    * report so the gateway always sees a version that exists), then report.
    */
-  const saveAndReport = async (runId: string, record: RunApplyRecord): Promise<ApplyOutcome> => {
+  const saveAndReport = async (
+    runId: string,
+    record: RunApplyRecord,
+    context?: { readonly batch?: AgentBatch },
+  ): Promise<ApplyOutcome> => {
     const saved: SaveOutcome = await autosave.saveNow(AGENT_APPLY_SAVE_REASON, {
       agentRunId: runId,
     });
@@ -976,6 +984,7 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
         runId,
         versionId: outcome.versionId,
         creditsCommitted: outcome.creditsCommitted,
+        ...(context?.batch !== undefined ? { batch: context.batch } : {}),
       });
       return outcome;
     } catch (error) {
@@ -1264,8 +1273,12 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
 
     // 5. D-6: upload the applied state as a NEW version, then report (the
     // shared steps 5+6 — also the whole of the F-L1 re-save-only retry).
+    // The batch rides the completed event so the host can REVEAL the result
+    // on the canvas (comp.open + time.set + playback) — the apply pipeline
+    // repaints one still at a stale playhead, which reads as "nothing
+    // happened" even though the engine state changed.
     autosave.markDirty?.(AGENT_APPLY_SAVE_REASON);
-    return await saveAndReport(plan.runId, record);
+    return await saveAndReport(plan.runId, record, { batch: compiled });
   };
 
   /** The verified-pops → gateway-report tail shared by both undo paths. */

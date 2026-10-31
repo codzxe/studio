@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { ApplyEngineEvent } from "@/lib/chat/apply";
 import type { ChatApplyPorts } from "@/lib/chat/provider";
+import { revealAppliedPlan } from "@/lib/chat/reveal-applied";
 import {
   activateGpuFallback,
   clearGpuFallback,
@@ -645,6 +647,17 @@ export function useEditorSession(options: UseEditorSessionOptions): EditorSessio
       session: {
         currentVersionId: (): string | null =>
           autosaveRef.current?.currentVersion()?.id ?? manifestVersionId,
+      },
+      onEvent: (event: ApplyEngineEvent): void => {
+        // POST-APPLY CANVAS REVEAL (the "nothing moves after Apply" fix):
+        // the batch executed + saved — now make the result VISIBLE on the
+        // canvas (open the comp, seek to the plan's first named time, press
+        // play). The session bridge (NOT the chat's lease-gated wrapper)
+        // drives these view-state commands; best-effort + quiet inside.
+        if (event.type !== "apply.completed" || event.batch === undefined) return;
+        const bridge = bridgeRef.current;
+        if (bridge === null) return;
+        void revealAppliedPlan(bridge, event.batch);
       },
     }),
     [manifestVersionId],
