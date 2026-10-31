@@ -18,4 +18,6 @@ export STRIPE_WEBHOOK_SECRET=whsec_replace_me STRIPE_PRICE_IDS='{"starter":"pric
 export LITELLM_BASE_URL="${LITELLM_BASE_URL:-http://localhost:4000}" LITELLM_API_KEY="${LITELLM_API_KEY:-sk-litellm-replace-me}"
 export ASSET_MAX_BYTES=524288000 PROJECT_MAX_BYTES=262144000 CHAT_MAX_STEPS=50
 cd "$REPO/services/worker"
-exec corepack pnpm dev
+# Plain tsx (no `watch`): the dev watcher exhausts the sandbox's inotify
+# quota (ENOSPC crash on boot) and a queue drainer needs no hot reload.
+exec corepack pnpm exec tsx src/index.ts
