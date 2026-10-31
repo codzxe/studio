@@ -137,13 +137,35 @@ describe("ChatMessageView — streaming", () => {
 });
 
 describe("ChatMessageView — cards, plan and credits", () => {
-  it("renders the message's tool cards", () => {
+  it("renders the tool calls under the collapsible bar: folded when settled, one click opens the cards (round 13)", () => {
     const cards: ToolCardState[] = [
       { toolCallId: "tc_1", name: "studio.list_layers", status: "done", result: { layers: 3 } },
     ];
     render(<ChatMessageView message={assistant({ toolCards: cards })} isStreaming={false} />);
+    // Settled run ⇒ the summary line, cards folded.
+    const header = screen.getByTestId("chat-tools-header");
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(header.textContent).toContain("Used 1 tool call");
+    expect(screen.queryByTestId("tool-card")).not.toBeInTheDocument();
+    // One click opens the full cards.
+    fireEvent.click(header);
     expect(screen.getByTestId("tool-card")).toHaveAttribute("data-tool", "studio.list_layers");
     expect(screen.getByText("List layers")).toBeInTheDocument();
+  });
+
+  it("keeps the tool bar OPEN while the run streams (live activity, round 13)", () => {
+    const cards: ToolCardState[] = [
+      { toolCallId: "tc_1", name: "studio.create_text", status: "running" },
+      { toolCallId: "tc_2", name: "studio.set_properties", status: "done", result: { ok: true } },
+    ];
+    render(<ChatMessageView message={assistant({ toolCards: cards })} isStreaming />);
+    expect(screen.getByTestId("chat-tools-header")).toHaveAttribute("aria-expanded", "true");
+    // Every tool is labelled (write tools no longer render raw studio.* ids).
+    // The header names the RUNNING call, so labels can appear twice.
+    expect(screen.getAllByTestId("tool-card")).toHaveLength(2);
+    expect(screen.getAllByText("Create text layer").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Set properties").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("chat-tools-spinner")).toBeInTheDocument();
   });
 
   it("renders the message's plan as the M4 informational card", () => {

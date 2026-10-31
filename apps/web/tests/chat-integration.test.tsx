@@ -80,7 +80,7 @@ import type { EditPlan, StudioStreamEvent, Thread, TurnToolCall } from "@studio/
 import type { ContextSelection } from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { type FakeEditor, attachFakeBridge, createFakeEditor } from "@studio/editor-bridge/fake";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -834,6 +834,9 @@ describe("M4-L web chat integration — full read-agent loop (flagship, round 12
     // every executed tool call through the existing §7.4 fold, so the card
     // settles with its result the moment the turn's calls are processed
     // (never spins "running" forever like the pre-fix wire gap did).
+    // ROUND 13: the settled run's tool calls fold under the collapsible bar —
+    // open it, then the card + its result are reachable as before.
+    fireEvent.click(screen.getByTestId("chat-tools-header"));
     const card = screen.getByTestId("tool-card");
     expect(card.dataset.tool).toBe("studio.get_context");
     expect(card.dataset.status).toBe("done");

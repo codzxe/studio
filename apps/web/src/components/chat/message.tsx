@@ -90,7 +90,7 @@ import {
 } from "./plan-card";
 import { PlanPreview } from "./plan-preview";
 import { ReasoningBlock } from "./reasoning-block";
-import { ToolCard } from "./tool-card";
+import { ToolCallsBlock } from "./tool-calls-block";
 
 /**
  * The M5-Q wiring the thread layer hands each message (built in thread.tsx
@@ -537,13 +537,10 @@ export function ChatMessageView({
           {showCaret ? <StreamingCaret /> : null}
         </div>
       )}
-      {message.toolCards.length > 0 ? (
-        <div className="flex w-full min-w-0 flex-col gap-1.5">
-          {message.toolCards.map((card) => (
-            <ToolCard key={card.toolCallId} card={card} />
-          ))}
-        </div>
-      ) : null}
+      {/* ROUND 13: the tool calls live under ONE collapsible bar — open while
+       * the run streams (the user watches each call land live), folded to a
+       * tidy summary line once the run settles; the user's toggle wins. */}
+      <ToolCallsBlock cards={message.toolCards} streaming={isStreaming && !isUser} />
       {plan !== undefined && derived !== null ? (
         <div ref={cardRef} className="flex w-full min-w-0 flex-col items-start">
           {preArmed ? (

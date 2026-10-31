@@ -21,13 +21,35 @@ import { Button, Spinner } from "@studio/ui";
 import { ChevronDown } from "lucide-react";
 import { type ReactElement, useState } from "react";
 
-/** Friendly names for the 5 registered M4 tools (unknown ids fall back to the raw name). */
+/** Friendly names for the registered tools (unknown ids fall back to the raw
+ * name). ROUND 13: every tool is labelled — write tools used to render their
+ * raw `studio.*` id in the collapsed bar. */
 export const TOOL_CARD_LABELS: Readonly<Record<string, string>> = {
+  // reads
   "studio.get_context": "Inspect project",
   "studio.list_layers": "List layers",
   "studio.get_properties": "Read properties",
-  "studio.plan_edit": "Plan edit",
   "studio.render_preview": "Render preview",
+  "studio.list_commands": "List commands",
+  "studio.describe_command": "Describe command",
+  "studio.web_search": "Web search",
+  // writes
+  "studio.create_composition": "Create composition",
+  "studio.create_text": "Create text layer",
+  "studio.set_properties": "Set properties",
+  "studio.add_effect": "Add effect",
+  "studio.set_keyframes": "Set keyframes",
+  "studio.apply_preset": "Apply preset",
+  "studio.undo_run": "Undo run",
+  "studio.save_version": "Save version",
+  "studio.engine_commands": "Engine commands",
+  "studio.run_script": "Run script",
+  "studio.add_asset": "Add asset",
+  // generative
+  "studio.render_audio": "Render audio",
+  "studio.generate_image": "Generate image",
+  // planning
+  "studio.plan_edit": "Plan edit",
 };
 
 export interface ToolCardProps {
@@ -42,6 +64,8 @@ function toolLabel(name: string): string {
   if (mapped !== undefined) return mapped;
   return name.length > 0 ? name : "Tool call";
 }
+
+export { toolLabel };
 
 /** Recursively replace image blobs with a short marker (never render base64 as text). */
 function redactForDisplay(value: unknown): unknown {
