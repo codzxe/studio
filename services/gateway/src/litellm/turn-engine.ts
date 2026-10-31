@@ -120,8 +120,8 @@ export interface TurnHistoryRow {
 }
 
 /** History is capped by BOTH count and chars (loadThreadHistory defaults). */
-export const TURN_HISTORY_MAX_MESSAGES = 40;
-export const TURN_HISTORY_MAX_CHARS = 24_000;
+export const TURN_HISTORY_MAX_MESSAGES = 2_000;
+export const TURN_HISTORY_MAX_CHARS = 1_600_000;
 
 /** Tool-result bodies are compacted to this size inside history. */
 const HISTORY_TOOL_RESULT_CHARS = 2_000;

@@ -1262,4 +1262,49 @@ d("M4-K gateway agent-loop E2E — the real turn engine over the real SSE wire",
     expect(fake.calls.length).toBe(0);
     expect((await runsOfThread(fx.workspaceId, fx.threadId)).length).toBe(0);
   });
+
+  // w8 stop-context fix — the route the chat controller fire-and-forgets the
+  // undelivered steers onto. Without it the next run's model history (built by
+  // loadThreadHistory) never sees the words a stop cancelled.
+  it("11. POST /v1/threads/:id/messages persists a user message outside any run; it rides the NEXT turn's history", async () => {
+    const fx = await newFixture("stop-ctx");
+    const response = await api(server.base, `/v1/threads/${fx.threadId}/messages`, {
+      method: "POST",
+      jar: fx.jar,
+      headers: {
+        "x-workspace-id": fx.workspaceId,
+        // Mutations require an Idempotency-Key (the api-client auto-keys).
+        "idempotency-key": `stop-ctx-${unique("msg")}`,
+      },
+      body: { message: "use a bold font instead", note: "sent while the agent was working — the run was stopped before it was answered" },
+    });
+    expect(response.status).toBe(201);
+    const rows = await listMessages(fx);
+    const steered = rows.find(
+      (row) =>
+        row.role === "user" &&
+        typeof row.content === "object" &&
+        row.content !== null &&
+        (row.content as Record<string, unknown>).message === "use a bold font instead",
+    );
+    expect(steered).toBeDefined();
+    expect((steered?.content as Record<string, unknown>).note).toContain("stopped");
+    // And the history a NEXT turn builds carries it: drive one scripted
+    // turn (a fresh run) and read the prompt the provider actually received.
+    fake.enqueue(textRound("ok"));
+    const runId = unique("run");
+    const turn = await turnStream(fx, {
+      runId,
+      stepIndex: 0,
+      messages: [{ role: "user", text: "go on with what I said" }],
+    });
+    expect(turn.status).toBe(200);
+    await turn.arrayBuffer(); // drain the SSE stream
+    const prompt = (fake.calls.at(-1)?.body.messages ?? [])
+      .filter((m) => m.role === "user")
+      .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
+      .join(" ");
+    expect(prompt).toContain("use a bold font instead");
+    expect(prompt).toContain("go on with what I said");
+  });
 });

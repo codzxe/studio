@@ -39,6 +39,7 @@ import {
   CREATE_COMMENT_SCHEMA,
   CREATE_PROJECT_SCHEMA,
   CREATE_SHARE_COMMENT_SCHEMA,
+  CREATE_THREAD_MESSAGE_SCHEMA,
   CREATE_THREAD_SCHEMA,
   CREATE_WORKSPACE_SCHEMA,
   type CancelRenderRequest,
@@ -54,6 +55,7 @@ import {
   type CreateCommentRequest,
   type CreateProjectRequest,
   type CreateShareCommentRequest,
+  type CreateThreadMessageRequest,
   type CreateThreadRequest,
   type CreateWorkspaceRequest,
   type CreatedApiKey,
@@ -636,8 +638,9 @@ export interface ApiClient {
   readonly settings: {
     /**
      * GET /v1/me/settings — the signed-in user's preferences. The row is
-     * per USER (no workspace context); `autoApplyEnabled` reads false until
-     * the first opt-in PATCH (D-22: apply is always your explicit click).
+     * per USER (no workspace context); `autoApplyEnabled` defaults TRUE
+     * (absent row = the schema default — the agent does the work until the
+     * user opts out; w8 corrected the stale D-22 note).
      */
     get(options?: CallOptions): Promise<SettingsResponse>;
     /** PATCH /v1/me/settings — upsert; echoes the stored value. */
@@ -847,6 +850,17 @@ export interface ApiClient {
       query?: PaginationQueryInput,
       options?: CallOptions,
     ): Promise<Page<ThreadMessage>>;
+    /**
+     * POST /v1/threads/:id/messages — persist a user message OUTSIDE any run
+     * turn (w8 stop-context fix). The chat controller fire-and-forgets this
+     * for the steers a stop cancelled so the NEXT run's model history keeps
+     * them (the bubble was already rendered; now the thread carries it too).
+     */
+    addMessage(
+      threadId: string,
+      body: CreateThreadMessageRequest,
+      options?: CallOptions,
+    ): Promise<ThreadMessage>;
   };
   readonly chat: {
     /** POST /v1/threads/:id/chat — AI SDK UI stream + §7.4 data parts. See ./sse.ts. */
@@ -1508,6 +1522,14 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
           PAGE_MESSAGES_SCHEMA,
           options?.signal,
         ),
+      addMessage: async (threadId, body, options) =>
+        impl.mutate("POST", `/threads/${encodeId(threadId)}/messages`, {
+          body,
+          bodySchema: CREATE_THREAD_MESSAGE_SCHEMA,
+          responseSchema: THREAD_MESSAGE_SCHEMA,
+          idempotencyKey: mutationKey(options) ?? impl.autoKey(),
+          signal: options?.signal,
+        }),
     },
     chat: {
       stream: (threadId, body, handlers) =>

@@ -713,9 +713,12 @@ describe("buildTurnMessages", () => {
     expect(fromHistory[2]?.content.length).toBe(2_000);
   });
 
-  it("documents the loadThreadHistory budget caps (40 messages / 24k chars)", () => {
-    expect(TURN_HISTORY_MAX_MESSAGES).toBe(40);
-    expect(TURN_HISTORY_MAX_CHARS).toBe(24_000);
+  it("documents the loadThreadHistory budget caps (unlimited-for-now: 2000 messages / 1.6M chars)", () => {
+    // w8 harness fix — the old 40/24k window made the model amnesiac; the
+    // new "unlimited for now" defaults keep the whole thread until the
+    // provider's own context window is the bound.
+    expect(TURN_HISTORY_MAX_MESSAGES).toBe(2_000);
+    expect(TURN_HISTORY_MAX_CHARS).toBe(1_600_000);
   });
 });
 

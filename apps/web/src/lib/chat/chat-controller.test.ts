@@ -1366,3 +1366,231 @@ describe("createChatController v2 — the client-driven loop", () => {
     expect(typeCheck).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// w8 LIVE-APPLY + STOP-CONTEXT — the harness fixes
+// ---------------------------------------------------------------------------
+
+describe("w8 live-apply (per-turn, canvas-visible)", () => {
+  it("applyLive fires per TURN boundary, before the run's plan POST; run-end never re-executes", async () => {
+    const write0 = writeProposal("studio.create_text", { name: "Title", text: "Hi" }, "call_w0");
+    const engine = makeApplyEngine();
+    const liveCalls: ApplicablePlan[] = [];
+    const liveEngine: ApplyController = {
+      ...engine,
+      applyLive: async (plan) => {
+        liveCalls.push(plan);
+        return { ok: true, versionId: "ver_live_1" } as ApplyOutcome;
+      },
+    };
+    const { client, planPosts } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_live", 0),
+              turnStarted("run_live", 1, 0),
+              toolStarted("run_live", 2, "call_w0", "studio.create_text", write0.args),
+              turnCompleted("run_live", 3, 0, { toolCalls: [write0] }),
+            ],
+          },
+          1: {
+            frames: () => [turnCompleted("run_live", 4, 1, { assistantText: "Done." })],
+          },
+        },
+      },
+      planResponse: (runId, plan) => ({
+        runId,
+        plan,
+        compiledBatch: undefined,
+        autoApply: { mode: "auto", reason: "low risk" },
+      }),
+    });
+    const controller = createChatController({
+      client,
+      workspaceId: "ws",
+      projectId: "prj",
+      threadId: "th",
+      apply: liveEngine,
+      toolExecutor: () => makeExecutor(),
+    });
+    controller.send({ message: "make a title", context: {} as ContextSelection, pinned: [] });
+    await until(controller, () => controller.getSnapshot().phase === "done", "phase");
+    // THE moment-each-turn-finishes property: the turn's batch ran live.
+    expect(liveCalls).toHaveLength(1);
+    // The plan rides the CONTROLLER's run id (the one the plan POST uses).
+    expect(planPosts[0]?.runId).toBe(liveCalls[0]?.runId);
+    // The run-end apply NEVER re-executed it (no duplicate layers).
+    expect(engine.calls.apply).toHaveLength(0);
+    // The run-end plan POST still happened (the gateway end marker + card).
+    expect(planPosts.length).toBeGreaterThanOrEqual(1);
+    controller.dispose();
+  });
+
+  it("a live failure marks the run live-broken and surfaces it, never re-executes", async () => {
+    const write0 = writeProposal("studio.set_properties", { layer: "Title", props: {} }, "call_w0");
+    const engine = makeApplyEngine();
+    const liveEngine: ApplyController = {
+      ...engine,
+      applyLive: async () =>
+        ({ ok: false, reason: "save-failed", message: "could not save" }) as ApplyOutcome,
+    };
+    const errors: Array<{ code: string; message: string }> = [];
+    const { client } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_live2", 0),
+              turnStarted("run_live2", 1, 0),
+              toolStarted("run_live2", 2, "call_w0", "studio.set_properties", write0.args),
+              turnCompleted("run_live2", 3, 0, { toolCalls: [write0] }),
+            ],
+          },
+          1: { frames: () => [turnCompleted("run_live2", 4, 1, { assistantText: "Done." })] },
+        },
+      },
+    });
+    const controller = createChatController({
+      client,
+      workspaceId: "ws",
+      projectId: "prj",
+      threadId: "th",
+      apply: liveEngine,
+      onError: (error) => errors.push(error),
+      toolExecutor: () => makeExecutor(),
+    });
+    controller.send({ message: "style it", context: {} as ContextSelection, pinned: [] });
+    await until(controller, () => controller.getSnapshot().phase === "done", "phase");
+    expect(errors.some((error) => error.code === "LIVE_APPLY_FAILED")).toBe(true);
+    // The run-end flow did NOT silently re-execute the broken plan either.
+    expect(engine.calls.apply).toHaveLength(0);
+    controller.dispose();
+  });
+
+  it("autoApplyPref === false (the user opted out) keeps everything for the plan card", async () => {
+    const write0 = writeProposal("studio.create_text", { name: "Title", text: "Hi" }, "call_w0");
+    const engine = makeApplyEngine();
+    const liveEngine: ApplyController = {
+      ...engine,
+      applyLive: async (plan) => {
+        engine.calls.apply.push(plan);
+        return { ok: true, versionId: "ver_x" } as ApplyOutcome;
+      },
+    };
+    const { client } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_live3", 0),
+              turnCompleted("run_live3", 1, 0, { toolCalls: [write0] }),
+            ],
+          },
+          1: { frames: () => [turnCompleted("run_live3", 2, 1, { assistantText: "Done." })] },
+        },
+      },
+    });
+    const controller = createChatController({
+      client,
+      workspaceId: "ws",
+      projectId: "prj",
+      threadId: "th",
+      apply: liveEngine,
+      autoApplyPref: () => false,
+      toolExecutor: () => makeExecutor(),
+    });
+    controller.send({ message: "make a title", context: {} as ContextSelection, pinned: [] });
+    await until(controller, () => controller.getSnapshot().phase === "done", "phase");
+    expect(engine.calls.apply).toHaveLength(0);
+    controller.dispose();
+  });
+});
+
+describe("w8 stop-context (steers persist as thread history)", () => {
+  it("stop() persists undelivered steers through threads.addMessage — the next run sees them", async () => {
+    const write0 = writeProposal("studio.create_text", { name: "A", text: "a" }, "call_s0");
+    const persisted: Array<{ threadId: string; message: string; note?: string }> = [];
+    const { client } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_stop", 0),
+              turnStarted("run_stop", 1, 0),
+              toolStarted("run_stop", 2, "call_s0", "studio.create_text", write0.args),
+              turnCompleted("run_stop", 3, 0, { toolCalls: [write0] }),
+            ],
+            hangAfter: 3,
+          },
+        },
+      },
+    });
+    const withThreads: ChatControllerClient = {
+      ...client,
+      threads: {
+        addMessage: async (threadId, body) => {
+          persisted.push({ threadId, message: body.message, note: body.note });
+          return { id: "msg_x" } as never;
+        },
+      },
+    };
+    const controller = createChatController({
+      client: withThreads,
+      workspaceId: "ws",
+      projectId: "prj",
+      threadId: "th_stop",
+      toolExecutor: () => makeExecutor(),
+    });
+    controller.send({ message: "start", context: {} as ContextSelection, pinned: [] });
+    await until(controller, () => controller.getSnapshot().phase === "streaming", "phase");
+    // Steer the live run, then stop it before the turn POSTs.
+    controller.send({ message: "actually use a bold font", context: {} as ContextSelection, pinned: [] });
+    controller.stop();
+    await until(controller, () => controller.getSnapshot().phase === "cancelled", "phase");
+    expect(persisted).toEqual([
+      {
+        threadId: "th_stop",
+        message: "actually use a bold font",
+        note: "sent while the agent was working — the run was stopped before it was answered",
+      },
+    ]);
+    controller.dispose();
+  });
+
+  it("stop() with NO undelivered sends persists nothing", async () => {
+    const persisted: unknown[] = [];
+    const { client } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [runStarted("run_stop2", 0), turnStarted("run_stop2", 1, 0)],
+            hangAfter: 2,
+          },
+        },
+      },
+    });
+    const withThreads: ChatControllerClient = {
+      ...client,
+      threads: {
+        addMessage: async (_threadId, body) => {
+          persisted.push(body);
+          return { id: "msg_y" } as never;
+        },
+      },
+    };
+    const controller = createChatController({
+      client: withThreads,
+      workspaceId: "ws",
+      projectId: "prj",
+      threadId: "th_stop2",
+      toolExecutor: () => makeExecutor(),
+    });
+    controller.send({ message: "hello", context: {} as ContextSelection, pinned: [] });
+    await until(controller, () => controller.getSnapshot().phase === "streaming", "phase");
+    controller.stop();
+    await until(controller, () => controller.getSnapshot().phase === "cancelled", "phase");
+    expect(persisted).toHaveLength(0);
+    controller.dispose();
+  });
+});

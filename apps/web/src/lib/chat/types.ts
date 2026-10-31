@@ -289,6 +289,20 @@ export interface ChatControllerClient {
       options?: { readonly signal?: AbortSignal; readonly idempotencyKey?: string },
     ): Promise<null>;
   };
+  /**
+   * w8 stop-context fix — POST /v1/threads/:id/messages persists a user
+   * message OUTSIDE any run turn. stop() fire-and-forgets it for the steers
+   * the stop cancelled so the NEXT run's model history keeps the words.
+   * Structural: the real ApiClient satisfies this; fakes may omit it (the
+   * controller guards).
+   */
+  readonly threads?: {
+    addMessage(
+      threadId: string,
+      body: { readonly message: string; readonly note?: string },
+      options?: { readonly signal?: AbortSignal; readonly idempotencyKey?: string },
+    ): Promise<unknown>;
+  };
 }
 
 /** One send: §7.2 message + context selection + pinned chips + optional model. */

@@ -50,7 +50,11 @@
  * the canvas snapshot.
  */
 
-import { EDIT_PLAN_SCHEMA, mergeEditPlans } from "@studio/contracts";
+import {
+  EDIT_PLAN_SCHEMA,
+  isAutoApplicable,
+  mergeEditPlans,
+} from "@studio/contracts";
 
 import type { TurnStreamHandle } from "@studio/api-client";
 import type {
@@ -313,6 +317,12 @@ export interface CreateChatControllerOptions {
    */
   readonly apply?: ApplyController;
   /**
+   * w8 live-apply — the user's auto-apply preference (GET /v1/me/settings
+   * `autoApplyEnabled`; the provider wires a cached getter). `undefined`
+   * (unknown / not wired) defaults ON — the product's default is auto-apply.
+   */
+  readonly autoApplyPref?: () => boolean | undefined;
+  /**
    * ROUND 12 (pinned seam with i5's tool-executor.ts): builds the per-run
    * client tool executor (read/generative tools execute LOCALLY against the
    * live bridge / gateway tool endpoints). Called once per run with the
@@ -501,6 +511,16 @@ interface ActiveRun {
   canvasEverIncluded: boolean;
   /** The last `turn.completed` seen by the event handler (the loop reads it). */
   completed: TurnCompletedEvent | null;
+  /** w8 live-apply: ≥1 turn's compiled batch already executed + saved live. */
+  liveApplied: boolean;
+  /** w8 live-apply: a live apply FAILED — no further live attempts this run
+   * (the run-end flow must NEVER re-execute the merged plan: the earlier
+   * live-applied turns would duplicate their layers). */
+  liveBroken: boolean;
+  /** w8 live-apply: the last live apply's saved version id (the card fold). */
+  liveVersionId: string | null;
+  /** w8 live-apply: serialization chain — turn batches execute in order. */
+  liveChain: Promise<void>;
 }
 
 /**
@@ -747,6 +767,8 @@ export function createChatController(options: CreateChatControllerOptions): Chat
       if ((completed.assistantText ?? "") !== "") {
         run.transcript.push({ role: "assistant", text: completed.assistantText ?? "" });
       }
+      // w8 live-apply: THIS turn's write carriers (proposal.compiled present).
+      const turnWriteCalls: TurnToolCall[] = [];
       let repeatedThrice = false;
       for (const call of completed.toolCalls) {
         run.transcript.push({
@@ -770,6 +792,7 @@ export function createChatController(options: CreateChatControllerOptions): Chat
           // WRITE tool: accumulate the carrier; echo the propose-only result.
           // The client NEVER executes write tools during the run.
           run.proposals.push(carrierEditPlan(call));
+          turnWriteCalls.push(call);
           run.transcript.push({
             role: "tool_result",
             toolCallId: call.toolCallId,
@@ -828,6 +851,18 @@ export function createChatController(options: CreateChatControllerOptions): Chat
         return;
       }
 
+      // w8 live-apply — THE MOMENT the turn finishes, apply THIS turn's
+      // reversible compiled batches (the user watches the canvas build up;
+      // every turn saves its own version so nothing is ever rebuilt). Only
+      // when the apply engine supports applyLive, the user's auto-apply
+      // setting is on, and each carrier is server-compiled low/medium risk
+      // with no ambiguous layer names. A failure marks the run live-broken:
+      // no further live attempts, and the run-end flow never re-executes the
+      // merged plan (the earlier turns' layers would duplicate).
+      if (turnWriteCalls.length > 0) {
+        await driveLiveApply(run, turnWriteCalls);
+      }
+
       if (completed.toolCalls.length === 0) {
         // Run end (TURN WIRE CONTRACT): no tool calls ⇒ the model finished.
         await finishRun(run);
@@ -851,6 +886,65 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     if (disposed || run.stopped) return;
     run.seqBase += 1;
     emit({ type: "tool.result", runId: run.runId, seq: run.seqBase, toolCallId, result });
+  };
+
+  // -----------------------------------------------------------------------
+  // w8 live-apply: apply each turn's compiled batches the moment the turn
+  // finishes — the canvas comes ALIVE during the run instead of at the end,
+  // and every turn saves its own version (nothing is ever rebuilt).
+  // -----------------------------------------------------------------------
+
+  /**
+   * One turn's write carriers, applied in order through the apply engine's
+   * `applyLive` (resolve→patch→engine.batch→saveNow, NO gateway report).
+   * Gates per carrier: the engine must support applyLive, the user's
+   * auto-apply setting must not be off, the carrier must be server-compiled
+   * low/medium risk with no ambiguous layer names, and its intent must be
+   * auto-applyable (the same contracts gate the run-end verdict uses). Any
+   * failure marks the run live-broken — later turns stop trying, and
+   * finishRun never re-executes the merged plan (earlier live-applied turns
+   * would duplicate their layers).
+   */
+  const driveLiveApply = async (run: ActiveRun, calls: readonly TurnToolCall[]): Promise<void> => {
+    const engine = options.apply;
+    if (engine === undefined || engine.applyLive === undefined) return;
+    if (run.liveBroken || run.stopped || disposed) return;
+    if (options.autoApplyPref?.() === false) return;
+    const liveApply = engine.applyLive.bind(engine);
+    for (const call of calls) {
+      const compiled = call.proposal?.compiled;
+      if (compiled === undefined || compiled === null) continue;
+      // The same §7.3 shape gate the run-end verdict uses (risk ≠ high,
+      // no approval flag, auto-applyable intent) on the carrier plan.
+      if (!isAutoApplicable(carrierEditPlan(call))) continue;
+      if (compiled.resolutionRequests.length > 0) continue;
+      const plan: ApplicablePlan = {
+        runId: run.runId,
+        compiledBatch: compiled.batch,
+      };
+      run.liveChain = run.liveChain.then(async () => {
+        if (disposed || run.stopped || run.liveBroken) return;
+        try {
+          const outcome = await liveApply(plan);
+          if (outcome.ok) {
+            run.liveApplied = true;
+            run.liveVersionId = outcome.versionId;
+          } else {
+            run.liveBroken = true;
+            fireOnError({
+              code: "LIVE_APPLY_FAILED",
+              message: `Live apply failed (${outcome.reason}) — remaining changes will wait for the plan card.`,
+            });
+          }
+        } catch {
+          // The apply engine never throws; a rejection here is a broken
+          // engine — stop live-applying, the run-end flow stays the safety
+          // net (without re-executing what already landed).
+          run.liveBroken = true;
+        }
+      });
+    }
+    await run.liveChain;
   };
 
   const finishRun = async (run: ActiveRun): Promise<void> => {
@@ -899,6 +993,24 @@ export function createChatController(options: CreateChatControllerOptions): Chat
         };
         run.seqBase += 1;
         emit(planEvent);
+        // w8 live-apply: the turns' batches ALREADY executed + saved live —
+        // the run-end flow must NEVER re-execute the merged plan (earlier
+        // turns' layers would duplicate). Fold the card straight to applied
+        // with the last live version: maybeAutoApply's outcome guard skips
+        // it, Undo pops every live batch label (the liveRuns ledger), and
+        // the version timeline holds one saved state per turn.
+        if (run.liveApplied) {
+          autoAppliedRuns.add(run.runId);
+          if (!run.liveBroken && run.liveVersionId !== null) {
+            commit(
+              applyClientAction(snapshot, {
+                type: "chat.plan.applied",
+                runId: run.runId,
+                versionId: run.liveVersionId,
+              }),
+            );
+          }
+        }
       } catch (error) {
         // The plan POST is the ONE run-end mutation that must never eat the
         // run: the text/tool folds stand, the error surfaces, the phase
@@ -976,6 +1088,10 @@ export function createChatController(options: CreateChatControllerOptions): Chat
       lastCanvasHash: null,
       canvasEverIncluded: false,
       completed: null,
+      liveApplied: false,
+      liveBroken: false,
+      liveVersionId: null,
+      liveChain: Promise.resolve(),
     };
     lastInput = input;
     activeRun = run;
@@ -1029,6 +1145,27 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     // (the provider's own queue-death posture: surface + drop), never a
     // silent strand that leaks until dispose().
     const dropped = queue.length + run.pendingSteers.length;
+    // w8 stop-context fix — "when I stop it forgot all chat context": the
+    // steers that never rode a turn POST lived only in this tab, so every
+    // LATER run's model history lost the user's words. Persist each as a
+    // thread user row (fire-and-forget, honest note): the bubble stays, and
+    // the gateway history now carries it too. Same for queued sends that
+    // raced the run's end. Failures stay silent — the local transcript is
+    // the source of truth for the UI; the note explains what the model saw.
+    const notes = [...run.pendingSteers, ...queue.map((entry) => entry.message)].filter(
+      (text) => text.length > 0,
+    );
+    const threads = options.client.threads;
+    if (threads !== undefined) {
+      for (const text of notes) {
+        void threads
+          .addMessage(options.threadId, {
+            message: text,
+            note: "sent while the agent was working — the run was stopped before it was answered",
+          })
+          .catch(() => undefined);
+      }
+    }
     queue.length = 0;
     run.pendingSteers = [];
     if (dropped > 0) {

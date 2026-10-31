@@ -998,3 +998,71 @@ describe("apply seam type pins", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// w8 live-apply — applyLive: per-turn execution, no gateway report, whole-run
+// undo through the multi-pop ledger (one of the reasons it exists).
+// ---------------------------------------------------------------------------
+
+describe("createApplyController.applyLive (w8)", () => {
+  it("executes + saves per turn but NEVER reports applyRun (the run is still streaming)", async () => {
+    const h = await makeHarness();
+    const outcome = await h.controller.applyLive?.(helloPlan());
+    expect(outcome?.ok).toBe(true);
+    if (outcome?.ok !== true) throw new Error("live apply failed");
+    // The batch ran and a version saved — the work persists immediately.
+    expect(
+      h.recorded.executeCalls.some(
+        (call) => call.command === "engine.batch" && call.params != null,
+      ),
+    ).toBe(true);
+    expect(h.autosaveReasons).toContain("agent-apply");
+    expect(outcome.versionId).toMatch(/^ver_applied_/);
+    // THE defining property: the gateway's run-keyed report NEVER fired.
+    expect(h.applyCalls).toHaveLength(0);
+    // apply.completed rides the batch so the host reveals + plays the canvas.
+    const completed = h.events.find((event) => event.type === "apply.completed");
+    expect(completed).toBeDefined();
+    expect(completed?.type === "apply.completed" && completed.batch?.label).toBe(
+      "Agent: dim the headline",
+    );
+  });
+
+  it("two turns: each saves its own version; undo pops BOTH top-first and skips undoRun", async () => {
+    const h = await makeHarness();
+    const first = await h.controller.applyLive?.(helloPlan({ runId: "run_live" }));
+    expect(first?.ok).toBe(true);
+    const second = await h.controller.applyLive?.(
+      helloPlan({
+        runId: "run_live",
+        compiledBatch: {
+          label: "Agent: nudge the headline",
+          atomic: true,
+          steps: [
+            { command: "prop.set", params: { layer: "$request:r1", path: "transform/position", value: [120, 0] } },
+          ],
+        },
+      }),
+    );
+    expect(second?.ok).toBe(true);
+    // Two versions saved — nothing is ever rebuilt.
+    expect(h.autosaveReasons.filter((reason) => reason === "agent-apply")).toHaveLength(2);
+    // Undo reverts the WHOLE run through the multi-pop ledger, label-verified.
+    const undone = await h.controller.undo("run_live", {
+      batchLabel: "Agent: nudge the headline",
+    });
+    expect(undone.ok).toBe(true);
+    // Never told the gateway — the run was never reported applied.
+    expect(h.undoCalls).toHaveLength(0);
+    expect(h.autosaveReasons.filter((reason) => reason === "agent-apply")).toHaveLength(3);
+    const undoDone = h.events.at(-1);
+    expect(undoDone?.type).toBe("undo.completed");
+  });
+
+  it("a live save failure keeps the batchApplied vocabulary (the edit is in the editor only)", async () => {
+    const h = await makeHarness({ saveOutcome: "error" });
+    const outcome = await h.controller.applyLive?.(helloPlan());
+    expect(outcome).toMatchObject({ ok: false, reason: "save-failed", batchApplied: true });
+    expect(h.applyCalls).toHaveLength(0);
+  });
+});

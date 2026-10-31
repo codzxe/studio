@@ -329,7 +329,7 @@ export type ApplyEngineEvent =
     }
   | { readonly type: "apply.failed"; readonly runId: string; readonly outcome: ApplyOutcome }
   | { readonly type: "undo.started"; readonly runId: string }
-  | { readonly type: "undo.completed"; readonly runId: string }
+  | { readonly type: "undo.completed"; readonly runId: string; readonly versionId?: string }
   | { readonly type: "undo.failed"; readonly runId: string; readonly outcome: UndoOutcome };
 
 // ---------------------------------------------------------------------------
@@ -437,6 +437,18 @@ export interface ApplyController {
    * nothing is retained (the plan card's save-failed state wires this).
    */
   retrySave(runId: string): Promise<ApplyOutcome>;
+  /**
+   * w8 live-apply (optional — older engines answer undefined and the chat
+   * controller degrades to the run-end apply): execute one turn's compiled
+   * batch THE MOMENT the turn finishes, WITHOUT the gateway's run-keyed
+   * applyRun report — the run is still streaming, so reporting now would
+   * 409 (RUN_ALREADY_APPLIED) and waiting would show the user nothing until
+   * the run ends. The batch still runs resolve→patch→engine.batch→saveNow
+   * (one version per turn — the work persists), the undo ledger keeps every
+   * turn's label (one Undo pops the whole run), and apply.completed fires so
+   * the host reveals + plays the canvas (d820265 wiring).
+   */
+  applyLive?(plan: ApplicablePlan): Promise<ApplyOutcome>;
 }
 
 // ---------------------------------------------------------------------------
@@ -909,6 +921,11 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
    * so `undo` can revert the WHOLE gesture, label-verified, not just the
    * folded batch entry. Cleared with the labels on a verified undo. */
   const prePhaseRecords = new Map<string, PrePhaseLedger>();
+  /** w8 live-apply: runs whose turns were applied LIVE (per-turn, no gateway
+   * applyRun report). Their undo pops every turn's label then skips the
+   * gateway undoRun (the run was never reported applied — undoRun would 409
+   * "run not applied"); a saveNow freezes the reverted state as a version. */
+  const liveRuns = new Set<string>();
 
   const notify = (event: ApplyEngineEvent): void => {
     const callback = options.onEvent;
@@ -1044,7 +1061,7 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
   };
 
   /** The shared execute-then-save-then-report path (apply + reapply). */
-  const runApply = async (plan: ApplicablePlan): Promise<ApplyOutcome> => {
+  const runApply = async (plan: ApplicablePlan, live = false): Promise<ApplyOutcome> => {
     notify({ type: "apply.started", runId: plan.runId });
 
     const compiled = validCompiledBatch(plan.compiledBatch);
@@ -1264,11 +1281,32 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
     // The gesture executed: retain the key + report pieces for retries
     // (F-L1/F-L2), the label for the undo verification (F-L4), and the
     // pre-phase ledger so undo reverts the WHOLE gesture.
-    const record: RunApplyRecord = { idempotencyKey, batchSha256, resolvedForWire };
-    runRecords.set(plan.runId, record);
+    // w8 live-apply: the run-keyed record is NOT retained (the gateway is
+    // never told per-turn — reporting would 409 RUN_ALREADY_APPLIED while the
+    // run is still streaming), but the undo ledger still accumulates every
+    // turn's label: appliedLabels holds the LATEST turn's batch, and the
+    // pre-phase ledger holds every EARLIER turn's — the existing multi-pop
+    // undo loop reverts the whole run, top-first.
+    let record: RunApplyRecord | undefined;
+    const earlierLiveLabels: string[] = [];
+    if (live) {
+      const previous = prePhaseRecords.get(plan.runId);
+      const previousLabel = appliedLabels.get(plan.runId);
+      if (previous !== undefined && previousLabel !== undefined) {
+        // Earlier live turns, newest-first, skipping unverifiable null labels.
+        earlierLiveLabels.push(previousLabel, ...previous.labels.filter((l): l is string => l !== null));
+      }
+      liveRuns.add(plan.runId);
+    } else {
+      record = { idempotencyKey, batchSha256, resolvedForWire };
+      runRecords.set(plan.runId, record);
+    }
     appliedLabels.set(plan.runId, compiled.label);
-    if (preLabels.length > 0) {
-      prePhaseRecords.set(plan.runId, { labels: [...preLabels], batchRan });
+    if (live || preLabels.length > 0) {
+      prePhaseRecords.set(plan.runId, {
+        labels: live ? [...earlierLiveLabels, ...preLabels] : [...preLabels],
+        batchRan: live ? true : batchRan,
+      });
     }
 
     // 5. D-6: upload the applied state as a NEW version, then report (the
@@ -1278,7 +1316,64 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
     // repaints one still at a stale playhead, which reads as "nothing
     // happened" even though the engine state changed.
     autosave.markDirty?.(AGENT_APPLY_SAVE_REASON);
+    // w8 live-apply: the version IS saved per turn (the work persists — no
+    // rebuild), but the gateway's run-keyed applyRun report is SKIPPED (the
+    // run is still streaming; it would 409 RUN_ALREADY_APPLIED).
+    if (live) return await saveLive(plan.runId, { batch: compiled });
+    if (record === undefined) {
+      // Unreachable (the non-live branch always sets the record) — kept as a
+      // typed guard instead of a non-null assertion.
+      return failApply(plan.runId, {
+        ok: false,
+        reason: "failed",
+        message: "The apply gesture lost its retry record — nothing was re-executed.",
+      });
+    }
     return await saveAndReport(plan.runId, record, { batch: compiled });
+  };
+
+  /**
+   * w8 live-apply — the D-6 save WITHOUT the gateway report. Identical
+   * outcome vocabulary to saveAndReport's save arms (the batch DID run, so
+   * every failure is a save-failure with batchApplied: true); the success
+   * notify still carries the batch so the host's reveal + playback wiring
+   * (d820265) makes the canvas come alive the moment the turn lands.
+   */
+  const saveLive = async (
+    runId: string,
+    context?: { readonly batch?: AgentBatch },
+  ): Promise<ApplyOutcome> => {
+    const saved: SaveOutcome = await autosave.saveNow(AGENT_APPLY_SAVE_REASON, {
+      agentRunId: runId,
+    });
+    if (saved.saved !== true || saved.version === undefined) {
+      return failApply(
+        runId,
+        saved.conflict === true
+          ? {
+              ok: false,
+              reason: "save-conflict",
+              batchApplied: true,
+              message:
+                "The project changed elsewhere while the agent was working. Reload the latest version to continue — the edit is in the editor only.",
+            }
+          : {
+              ok: false,
+              reason: "save-failed",
+              batchApplied: true,
+              message:
+                "The edit was applied but could not be saved as a version. It is in the editor only.",
+            },
+      );
+    }
+    const outcome: ApplyOutcome = { ok: true, versionId: saved.version.id };
+    notify({
+      type: "apply.completed",
+      runId,
+      versionId: saved.version.id,
+      ...(context?.batch !== undefined ? { batch: context.batch } : {}),
+    });
+    return outcome;
   };
 
   /** The verified-pops → gateway-report tail shared by both undo paths. */
@@ -1327,6 +1422,15 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
 
   return {
     apply: (plan: ApplicablePlan): Promise<ApplyOutcome> => runApply(plan),
+
+    /**
+     * w8 live-apply — one turn's compiled batch, applied THE MOMENT the turn
+     * finishes (the user watches the canvas build up live; every turn saves
+     * its own version so nothing is ever rebuilt). Same execute path as
+     * {@link runApply} with `live: true` — resolve→patch→engine.batch→
+     * saveNow, NO gateway applyRun report (see the liveRuns doc).
+     */
+    applyLive: async (plan: ApplicablePlan): Promise<ApplyOutcome> => runApply(plan, true),
 
     /**
      * F-L1 — the RE-SAVE-ONLY recovery: the engine step is not in question
@@ -1427,6 +1531,24 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
         // The whole gesture verified-popped: the retained state is spent.
         appliedLabels.delete(runId);
         prePhaseRecords.delete(runId);
+        // w8 live-apply: the run was never reported applied (the per-turn
+        // applies skipped the gateway report) — undoRun would 409 "run not
+        // applied". Pop is verified; freeze the reverted state as a version
+        // and fold the card locally.
+        if (liveRuns.has(runId)) {
+          liveRuns.delete(runId);
+          const saved: SaveOutcome = await autosave.saveNow(AGENT_APPLY_SAVE_REASON, {
+            agentRunId: runId,
+          });
+          notify({
+            type: "undo.completed",
+            runId,
+            ...(saved.saved === true && saved.version !== undefined
+              ? { versionId: saved.version.id }
+              : {}),
+          });
+          return { ok: true, undone: true };
+        }
         return await reportUndo(runId);
       }
 

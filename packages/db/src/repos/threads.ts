@@ -126,7 +126,9 @@ export interface ThreadsRepo {
   linkUserMessageToRun(input: LinkUserMessageInput): Promise<AgentMessage>;
   /**
    * Full transcript window for a model call: newest `maxMessages` rows
-   * (default 40), further trimmed to `maxChars` (default 24000) — stop before
+   * (default 2000 — "unlimited" for real threads; the provider's own context
+   * window is the true bound), further trimmed to `maxChars` (default
+   * 1,600,000 ≈ ~400k tokens) — stop before
    * exceeding either cap — returned OLDEST-first, tool rows included.
    */
   loadThreadHistory(
@@ -402,8 +404,13 @@ export function createThreadsRepo(db: StudioDb): ThreadsRepo {
 
     async loadThreadHistory(threadId, options) {
       const id = requireNonEmpty(threadId, "threadId");
-      const maxMessages = requirePositiveInt(options?.maxMessages ?? 40, "maxMessages");
-      const maxChars = requirePositiveInt(options?.maxChars ?? 24_000, "maxChars");
+      // w8 harness fix — "unlimited context": the old defaults (40 messages /
+      // 24k chars) threw away everything but the last couple of tool-heavy
+      // turns, so the model looked amnesiac ("it forgot all chat context").
+      // 2000 rows / 1.6M chars is effectively unlimited for real threads
+      // while still refusing to serialize a pathological dump.
+      const maxMessages = requirePositiveInt(options?.maxMessages ?? 2_000, "maxMessages");
+      const maxChars = requirePositiveInt(options?.maxChars ?? 1_600_000, "maxChars");
       await requireThreadById(db, id);
 
       // Newest-first window (same keyset order as listMessages), then reversed.

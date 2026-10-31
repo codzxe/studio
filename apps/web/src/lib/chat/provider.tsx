@@ -349,6 +349,27 @@ export function ChatProvider({
   //
   const canvasRef = useRef<TurnCanvas | null>(null);
 
+  // -- w8 live-apply: the user's auto-apply preference, fetched ONCE per
+  //    session (GET /v1/me/settings) and cached in a ref — the controller
+  //    reads it SYNCHRONOUSLY at every turn boundary through the stable
+  //    closure. Unfetched/failed ⇒ undefined ⇒ the controller's default ON
+  //    (the schema default: the agent works until the user opts out).
+  const autoApplyRef = useRef<boolean | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    // Optional chaining: test fakes build partial clients (the real ApiClient
+    // always has settings); a missing seam must never break the provider.
+    void client.settings
+      ?.get()
+      .then((response) => {
+        if (!cancelled) autoApplyRef.current = response.autoApplyEnabled;
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
   // -------------------------------------------------------------------------
   // M5-Q: ONE ApplyController per session (BUILD_PLAN §M5.4/§M5.5). Built
   // from the host's apply ports: the REAL bridge (ONE atomic engine.batch per
@@ -486,6 +507,8 @@ export function ChatProvider({
         }),
       // ROUND 12: the compact canvas snapshot — step 0 + hash change.
       canvasSnapshot: () => canvasRef.current,
+      // w8 live-apply: the cached auto-apply preference (undefined ⇒ ON).
+      autoApplyPref: () => autoApplyRef.current,
     });
     controllerRef.current = created;
     setController(created);

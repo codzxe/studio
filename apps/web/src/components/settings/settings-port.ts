@@ -93,8 +93,9 @@ export interface SettingsPort {
   readonly listModels: (options?: CallOptions) => Promise<ModelsResponse>;
   /**
    * GET /v1/me/settings — the signed-in user's preferences. The row is
-   * per USER (no workspace context); `autoApplyEnabled` reads false until
-   * the first opt-in PATCH (D-22: apply is always your explicit click).
+   * per USER (no workspace context); `autoApplyEnabled` defaults TRUE
+   * (absent row = the schema default — the agent does the work until the
+   * user opts out; w8 corrected the stale D-22 note here too).
    */
   readonly getSettings: (options?: CallOptions) => Promise<SettingsResponse>;
   /** PATCH /v1/me/settings — upsert; echoes the stored value. */
