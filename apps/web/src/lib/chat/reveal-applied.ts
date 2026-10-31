@@ -16,8 +16,14 @@
  *                      session's active comp (the viewer shows the work);
  *   2. `time.set`    — the batch's first named time (preview.ts's curated
  *                      scanner, batch arm). No time named → keep playhead;
- *   3. `ui.playback` — `{action:"play"}`: PLAY the result on the canvas.
+ *   3. `ui.playback` — `{action:"play"}` via the RAW control channel:
+ *                      PLAY the result on the canvas.
  *
+ * TRANSPORT PIN (verified live on the SwiftShader engine): `comp.open` and
+ * `time.set` ride the `engine.execute` envelope (`bridge.execute`), but
+ * `ui.playback` is a UI CONTROL method — through `engine.execute` it
+ * silently no-ops; only the raw `bridge.request("ui.playback", …)` starts
+ * playback.
  * Best-effort by contract: every arm fails quiet — the reveal is a
  * convenience, never a gate, and it never mutates project data (no undo
  * step, no version, no save).
@@ -58,8 +64,10 @@ export async function revealAppliedPlan(
   }
   // 3. Playback: a seek only matters if time MOVES — press play so the
   // applied animation runs on the canvas without a second user click.
+  // RAW control channel (bridge.request): through the engine.execute
+  // envelope ui.playback silently no-ops (live-verified w9).
   try {
-    await bridge.execute("ui.playback", { action: "play" });
+    await bridge.request("ui.playback", { action: "play" });
   } catch {
     // Quiet best-effort (older engines without ui.playback stay silent).
   }

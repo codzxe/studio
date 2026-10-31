@@ -19,18 +19,24 @@ import type { EditorBridge } from "@studio/editor-bridge";
 import { revealAppliedPlan } from "./reveal-applied";
 
 interface RecordedCall {
+  readonly kind: "execute" | "request";
   readonly command: string;
   readonly params: unknown;
 }
 
-/** Scripted bridge fake: records execute calls; inspect() returns activeComp. */
+/** Scripted bridge fake: records execute + request calls; inspect() returns activeComp. */
 function fakeBridge(options?: { readonly activeComp?: number; readonly failOn?: string }) {
   const calls: RecordedCall[] = [];
   const bridge = {
     execute: async (command: string, params?: unknown): Promise<unknown> => {
       if (options?.failOn === command) throw new Error("bridge boom");
-      calls.push({ command, params });
+      calls.push({ kind: "execute", command, params });
       return { ok: true };
+    },
+    request: async (method: string, params?: unknown): Promise<unknown> => {
+      if (options?.failOn === method) throw new Error("bridge boom");
+      calls.push({ kind: "request", command: method, params });
+      return { playing: true, time: 0 };
     },
     inspect: async (): Promise<unknown> => ({ activeComp: options?.activeComp ?? 7 }),
   };
@@ -56,10 +62,12 @@ describe("revealAppliedPlan", () => {
   it("reveals the new comp by name, seeks to the first named time, and plays", async () => {
     const { bridge, calls } = fakeBridge();
     await revealAppliedPlan(bridge, COMPOSE_BATCH);
+    // TRANSPORT PIN: comp.open + time.set ride engine.execute; ui.playback
+    // rides the RAW control channel (through engine.execute it no-ops).
     expect(calls).toEqual([
-      { command: "comp.open", params: { comp: "Neon Typography" } },
-      { command: "time.set", params: { time: 2.5 } },
-      { command: "ui.playback", params: { action: "play" } },
+      { kind: "execute", command: "comp.open", params: { comp: "Neon Typography" } },
+      { kind: "execute", command: "time.set", params: { time: 2.5 } },
+      { kind: "request", command: "ui.playback", params: { action: "play" } },
     ]);
   });
 
@@ -70,8 +78,9 @@ describe("revealAppliedPlan", () => {
       atomic: true,
       steps: [{ command: "layer.set_text", params: { layer: "Headline", text: "New" } }],
     });
-    expect(calls[0]).toEqual({ command: "comp.open", params: { comp: 7 } });
+    expect(calls[0]).toEqual({ kind: "execute", command: "comp.open", params: { comp: 7 } });
     expect(calls[calls.length - 1]).toEqual({
+      kind: "request",
       command: "ui.playback",
       params: { action: "play" },
     });
@@ -91,7 +100,7 @@ describe("revealAppliedPlan", () => {
   it("fails quiet: a comp.open failure still presses play, never throws", async () => {
     const { bridge, calls } = fakeBridge({ activeComp: 5, failOn: "comp.open" });
     await expect(revealAppliedPlan(bridge, COMPOSE_BATCH)).resolves.toBeUndefined();
-    expect(calls).toEqual([{ command: "ui.playback", params: { action: "play" } }]);
+    expect(calls).toEqual([{ kind: "request", command: "ui.playback", params: { action: "play" } }]);
   });
 
   it("fails quiet: a ui.playback failure resolves without throwing", async () => {
