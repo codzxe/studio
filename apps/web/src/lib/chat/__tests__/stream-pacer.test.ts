@@ -78,7 +78,7 @@ describe("stream pacer", () => {
     const out: StudioStreamEvent[] = [];
     const pacer = createStreamPacer((event) => out.push(event), {
       setInterval: timers.vi.setInterval as unknown as typeof setInterval,
-      clearInterval: timers.vi.clearInterval as unknown as typeof clearInterval,
+      clearInterval: timers.vi.clearInterval as unknown as (handle: unknown) => void,
     });
 
     // A single 30-char burst (the "whole reply in one chunk" case).
@@ -100,7 +100,7 @@ describe("stream pacer", () => {
     const out: StudioStreamEvent[] = [];
     const pacer = createStreamPacer((event) => out.push(event), {
       setInterval: timers.vi.setInterval as unknown as typeof setInterval,
-      clearInterval: timers.vi.clearInterval as unknown as typeof clearInterval,
+      clearInterval: timers.vi.clearInterval as unknown as (handle: unknown) => void,
     });
 
     const big = "x".repeat(3200);
@@ -123,7 +123,7 @@ describe("stream pacer", () => {
     const out: StudioStreamEvent[] = [];
     const pacer = createStreamPacer((event) => out.push(event), {
       setInterval: timers.vi.setInterval as unknown as typeof setInterval,
-      clearInterval: timers.vi.clearInterval as unknown as typeof clearInterval,
+      clearInterval: timers.vi.clearInterval as unknown as (handle: unknown) => void,
     });
 
     pacer.push(textDelta(0, "Building the composition now"));
@@ -143,7 +143,7 @@ describe("stream pacer", () => {
     const out: StudioStreamEvent[] = [];
     const pacer = createStreamPacer((event) => out.push(event), {
       setInterval: timers.vi.setInterval as unknown as typeof setInterval,
-      clearInterval: timers.vi.clearInterval as unknown as typeof clearInterval,
+      clearInterval: timers.vi.clearInterval as unknown as (handle: unknown) => void,
     });
 
     pacer.push(reasoningDelta(0, "Plan: one comp, one text layer."));
@@ -165,7 +165,7 @@ describe("stream pacer", () => {
     const out: StudioStreamEvent[] = [];
     const pacer = createStreamPacer((event) => out.push(event), {
       setInterval: timers.vi.setInterval as unknown as typeof setInterval,
-      clearInterval: timers.vi.clearInterval as unknown as typeof clearInterval,
+      clearInterval: timers.vi.clearInterval as unknown as (handle: unknown) => void,
     });
 
     pacer.push(reasoningDelta(0, "thinking-"));
@@ -197,7 +197,7 @@ describe("stream pacer", () => {
     const out: StudioStreamEvent[] = [];
     const pacer = createStreamPacer((event) => out.push(event), {
       setInterval: timers.vi.setInterval as unknown as typeof setInterval,
-      clearInterval: timers.vi.clearInterval as unknown as typeof clearInterval,
+      clearInterval: timers.vi.clearInterval as unknown as (handle: unknown) => void,
     });
 
     pacer.push(textDelta(0, "half-streamed"));
@@ -215,7 +215,7 @@ describe("stream pacer", () => {
     const out: StudioStreamEvent[] = [];
     const pacer = createStreamPacer((event) => out.push(event), {
       setInterval: timers.vi.setInterval as unknown as typeof setInterval,
-      clearInterval: timers.vi.clearInterval as unknown as typeof clearInterval,
+      clearInterval: timers.vi.clearInterval as unknown as (handle: unknown) => void,
     });
 
     // First event sets the cursor at 100.
@@ -226,7 +226,7 @@ describe("stream pacer", () => {
     pacer.push(textDelta(102, "there"));
     pacer.flush();
     const seqs = out.map((event) => event.seq);
-    expect(seqs.every((seq, index) => index === 0 || seq > seqs[index - 1])).toBe(true);
+    expect(seqs.every((seq, index) => index === 0 || seq > (seqs[index - 1] ?? seq))).toBe(true);
   });
 
   it("empty deltas never enqueue work", () => {
@@ -234,7 +234,7 @@ describe("stream pacer", () => {
     const out: StudioStreamEvent[] = [];
     const pacer = createStreamPacer((event) => out.push(event), {
       setInterval: timers.vi.setInterval as unknown as typeof setInterval,
-      clearInterval: timers.vi.clearInterval as unknown as typeof clearInterval,
+      clearInterval: timers.vi.clearInterval as unknown as (handle: unknown) => void,
     });
     pacer.push(textDelta(0, ""));
     expect(timers.activeTimers()).toBe(0);

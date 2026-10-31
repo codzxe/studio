@@ -50,7 +50,7 @@ import {
 } from "@studio/contracts";
 
 import { StudioError } from "@studio/config";
-import { deriveIdempotencyKey } from "@studio/db";
+import { deriveIdempotencyKey, isDbError } from "@studio/db";
 import { AUTO_APPLY_SETTING_UNAVAILABLE, autoApplyDecision } from "../auto-apply.js";
 import type { AppContext, GatewayDeps } from "../context.js";
 import { creditsToLedgerMicrocredits } from "../credits-display.js";
@@ -292,10 +292,29 @@ export function turnRoutes(deps: GatewayDeps): Hono {
       committedSoFar = run.committedCredits;
       await settleEchoedToolResults(deps, threadId, request);
     }
-    await deps.repos.runs.touchRunHeartbeat({
-      runId: request.runId,
-      lastStepIndex: request.stepIndex,
-    });
+    // GRACEFUL RUN-STATE RECOVERY (round 13): the run can go terminal
+    // (abandon/cancel) in the window between the liveness gate above and this
+    // heartbeat — assertRunTransition then throws DbError CONFLICT ("Illegal
+    // run transition: cancelled → running"). Answer with the TYPED
+    // RUN_NOT_ACTIVE (retryable: false) the client already folds cleanly;
+    // the raw DbError CONFLICT envelope carries retryable-undefined, which the
+    // turn transport treats as a retryable drop → 3 same-key re-POSTs →
+    // TURN_PAUSED noise right after a stop. Never again.
+    try {
+      await deps.repos.runs.touchRunHeartbeat({
+        runId: request.runId,
+        lastStepIndex: request.stepIndex,
+      });
+    } catch (error) {
+      if (isDbError(error) && error.code === "CONFLICT") {
+        throw new GatewayError("RUN_NOT_ACTIVE", "This run already finished.", {
+          status: 409,
+          hint: "Start a new run to keep working.",
+          requestId,
+        });
+      }
+      throw error;
+    }
 
     // §8.8 per-turn reserve: estimate from the assembled prompt size; the
     // authoritative commit is actual usage at turn end.
@@ -687,11 +706,30 @@ async function runTurn(
       uncapped: true,
       metadata: { turnKey: input.turnKey, stepIndex: request.stepIndex },
     });
-    await deps.repos.runs.touchRunHeartbeat({
-      runId: request.runId,
-      lastStepIndex: request.stepIndex,
-      creditsCommitted: input.committedSoFar + committed,
-    });
+    // GRACEFUL RUN-STATE RECOVERY (round 13): the run went terminal
+    // (abandon/cancel) while this turn's model call was in flight — the
+    // heartbeat's assertRunTransition throws DbError CONFLICT. The durable
+    // outcome + the settle above ALREADY landed, so the turn completes
+    // normally and the terminal run row is LEFT terminal (nothing to
+    // heartbeat). Pre-fix this crash surfaced as turn.failed INTERNAL
+    // ("Something went wrong on our side.") after every stop that raced a
+    // finishing turn.
+    try {
+      await deps.repos.runs.touchRunHeartbeat({
+        runId: request.runId,
+        lastStepIndex: request.stepIndex,
+        creditsCommitted: input.committedSoFar + committed,
+      });
+    } catch (error) {
+      if (isDbError(error) && error.code === "CONFLICT") {
+        input.logger.warn("turn_heartbeat_skipped_terminal_run", {
+          turnKey: input.turnKey,
+          runId: request.runId,
+        });
+      } else {
+        throw error;
+      }
+    }
 
     log.emit({
       type: "turn.completed",
@@ -704,7 +742,16 @@ async function runTurn(
       toolCalls,
     });
   } catch (error) {
-    const aborted = input.signal.aborted || (error instanceof Error && error.name === "AbortError");
+    // GRACEFUL RUN-STATE RECOVERY (round 13): a DbError CONFLICT here means a
+    // run-state write hit a TERMINAL run row ("Illegal run transition") — the
+    // user stopped/abandoned the run. That is a cancellation, not an internal
+    // error: classify it TURN_CANCELLED so the fold + credits posture match a
+    // user stop instead of surfacing "Something went wrong on our side.".
+    const runWentTerminal = isDbError(error) && error.code === "CONFLICT";
+    const aborted =
+      input.signal.aborted ||
+      (error instanceof Error && error.name === "AbortError") ||
+      runWentTerminal;
     const code = aborted
       ? "TURN_CANCELLED"
       : error instanceof Error && error.name === "ModelUnavailableError"

@@ -315,12 +315,14 @@ interface FakeDeps {
   readonly script: FakeScript;
   readonly planResponse?: (runId: string, plan: EditPlan) => Record<string, unknown>;
   readonly planFails?: boolean;
+  /** ROUND 13: submitPlan throws this typed code (e.g. RUN_NOT_ACTIVE). */
+  readonly planErrorCode?: string;
   /** Blocks the plan POST until resolved (stop-vs-queue race tests, w3-b06). */
   readonly planGate?: Promise<void>;
 }
 
 /** Builds the ChatControllerClient fake: turn transport + plan + abandon. */
-function makeClient({ script, planResponse, planFails, planGate }: FakeDeps) {
+function makeClient({ script, planResponse, planFails, planGate, planErrorCode }: FakeDeps) {
   const posts: RecordedPost[] = [];
   const planPosts: Array<{ runId: string; plan: EditPlan }> = [];
   const abandons: string[] = [];
@@ -387,6 +389,16 @@ function makeClient({ script, planResponse, planFails, planGate }: FakeDeps) {
             message: "The run is gone.",
             retryable: false,
             status: 404,
+          });
+        }
+        if (planErrorCode !== undefined) {
+          // ROUND 13 graceful recovery: the gateway's typed answer when the
+          // run was already ended server-side (stop/abandon raced the POST).
+          throw new ApiError({
+            code: planErrorCode,
+            message: "This run already finished.",
+            retryable: false,
+            status: 409,
           });
         }
         return (planResponse?.(runId, body.plan) ?? {
@@ -1234,6 +1246,50 @@ describe("createChatController v2 — the client-driven loop", () => {
     controller.dispose();
   });
 
+  it("round 13: a plan POST answered RUN_NOT_ACTIVE (stop raced the run end) is swallowed — no error, the run completes", async () => {
+    const write = writeProposal("studio.save_version", { label: "v2" }, "call_s1");
+    const errors: Array<{ code: string; message: string }> = [];
+    const { client, planPosts } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_stoppedrace", 0),
+              turnCompleted("run_stoppedrace", 1, 0, { assistantText: "", toolCalls: [write] }),
+            ],
+          },
+          1: {
+            frames: () => [
+              runStarted("run_stoppedrace", 0),
+              turnCompleted("run_stoppedrace", 1, 1, {
+                assistantText: "Proposing.",
+                toolCalls: [],
+              }),
+            ],
+          },
+        },
+      },
+      planErrorCode: "RUN_NOT_ACTIVE",
+    });
+    const controller = createChatController({
+      client,
+      workspaceId: "ws_1",
+      projectId: "prj_1",
+      threadId: THREAD,
+      onError: (error) => errors.push(error),
+    });
+
+    controller.send(input("Save it."));
+    await until(controller, (s) => s.phase === "done", "run completes anyway");
+    expect(planPosts).toHaveLength(1); // the POST was attempted once
+    // GRACEFUL RECOVERY: the stopped run's answer is EXPECTED, never surfaced.
+    expect(errors).toHaveLength(0);
+    expect(controller.getSnapshot().error).toBeUndefined();
+    // The text folds stand.
+    expect(controller.getSnapshot().messages.at(-1)?.text).toBe("Proposing.");
+    controller.dispose();
+  });
+
   it("canvas: included on step 0 and again only when the snapshot hash changed", async () => {
     const read = readCall("studio.get_context", {}, "call_cv");
     let canvas: TurnCanvas | null = {
@@ -1545,7 +1601,11 @@ describe("w8 stop-context (steers persist as thread history)", () => {
     controller.send({ message: "start", context: {} as ContextSelection, pinned: [] });
     await until(controller, () => controller.getSnapshot().phase === "streaming", "phase");
     // Steer the live run, then stop it before the turn POSTs.
-    controller.send({ message: "actually use a bold font", context: {} as ContextSelection, pinned: [] });
+    controller.send({
+      message: "actually use a bold font",
+      context: {} as ContextSelection,
+      pinned: [],
+    });
     controller.stop();
     await until(controller, () => controller.getSnapshot().phase === "cancelled", "phase");
     expect(persisted).toEqual([

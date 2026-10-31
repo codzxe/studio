@@ -1015,13 +1015,22 @@ export function createChatController(options: CreateChatControllerOptions): Chat
           }
         }
       } catch (error) {
-        // The plan POST is the ONE run-end mutation that must never eat the
-        // run: the text/tool folds stand, the error surfaces, the phase
-        // still settles through the local run.completed below.
-        fireOnError({
-          code: toUiError(error).code,
-          message: "The plan could not be submitted.",
-        });
+        // GRACEFUL RUN-STATE RECOVERY (round 13): the run was already ended
+        // server-side (stop()/abandon raced the final turn's plan POST) — the
+        // gateway answers RUN_NOT_ACTIVE. That is the EXPECTED answer for a
+        // run the user stopped, not an error to surface: the text/tool folds
+        // stand, live-applied batches stand, and the local run.completed below
+        // still settles the phase. Pre-fix this surfaced "The plan could not
+        // be submitted." after every stop that raced the run's end.
+        if (toUiError(error).code !== "RUN_NOT_ACTIVE") {
+          // The plan POST is the ONE run-end mutation that must never eat the
+          // run: the text/tool folds stand, the error surfaces, the phase
+          // still settles through the local run.completed below.
+          fireOnError({
+            code: toUiError(error).code,
+            message: "The plan could not be submitted.",
+          });
+        }
       }
     } else {
       // End marker (12-w6-e2 finding; w3-b06 extends it past all-undo_run

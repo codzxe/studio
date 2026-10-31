@@ -259,6 +259,13 @@ function makeTurnRepos() {
   }
   let assistantGate: AssistantInsertGate | null = null;
 
+  // ROUND 13 (graceful run-state recovery): scripted heartbeat failures —
+  // `failHeartbeatOnCall(n, err)` throws on the Nth touchRunHeartbeat call
+  // (1 = pre-stream, 2 = post-model for a one-turn step), mirroring the real
+  // repo's assertRunTransition DbError on a terminal run row.
+  let heartbeatCallCount = 0;
+  const heartbeatFailures = new Map<number, Error>();
+
   function gateAssistantInsert(failFirst: boolean): {
     readonly reached: Promise<void>;
     release(): void;
@@ -518,6 +525,9 @@ function makeTurnRepos() {
         return { ...row };
       },
       async touchRunHeartbeat(input: TouchRunHeartbeatInput) {
+        heartbeatCallCount += 1;
+        const scripted = heartbeatFailures.get(heartbeatCallCount);
+        if (scripted !== undefined) throw scripted;
         heartbeats.push({ ...input });
         const run = requireRunRow(input.runId);
         run.status = "running";
@@ -640,6 +650,10 @@ function makeTurnRepos() {
     // the spy surface (read-only by convention in tests)
     runCreates,
     heartbeats,
+    /** ROUND 13: throw `error` on the Nth touchRunHeartbeat call. */
+    failHeartbeatOnCall(call: number, error: Error): void {
+      heartbeatFailures.set(call, error);
+    },
     toolStepCalls,
     stepCompletions,
     toolMessageInserts,
@@ -821,6 +835,8 @@ interface TurnCompletedData {
   readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
   readonly credits: { readonly committed: number };
   readonly assistantText?: string;
+  /** ROUND 13: the turn's full thinking text (authoritative replay payload). */
+  readonly reasoningText?: string;
   readonly toolCalls: readonly TurnToolCall[];
 }
 
@@ -1492,6 +1508,66 @@ describe("turn failure semantics (failed turns refund and never persist the turn
       status: "failed",
     });
     expect(contentOf(fakes.assistantRows()[0]).turnKey).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // ROUND 13 — graceful run-state recovery (a stop/abandon racing a turn must
+  // never surface a DbError crash)
+  // -------------------------------------------------------------------------
+
+  it("round 13: a PRE-STREAM heartbeat on a terminal run answers 409 RUN_NOT_ACTIVE (never a raw DbError CONFLICT envelope)", async () => {
+    const runId = unique("run");
+    // The abandon lands in the window between the liveness gate and the
+    // heartbeat — assertRunTransition throws DbError CONFLICT.
+    fakes.failHeartbeatOnCall(1, DbError.conflict("Illegal run transition: cancelled → running"));
+    const response = await postTurn(
+      THREAD_MAIN,
+      turnBody(runId, 0, [{ role: "user", text: USER_TEXT }]),
+      `${runId}:0`,
+    );
+    // The TYPED envelope (retryable: false) — the raw DbError CONFLICT carries
+    // retryable-undefined, which the client transport would treat as a
+    // retryable drop → same-key re-POSTs → TURN_PAUSED noise after a stop.
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: { code: string; retryable: boolean } };
+    expect(body.error.code).toBe("RUN_NOT_ACTIVE");
+    expect(body.error.retryable).toBe(false);
+    // No model turn ran: no durable outcome, no reserve.
+    expect(fakes.assistantRows()).toHaveLength(0);
+    expect(fakes.ledgerOps.some((op) => op.op === "reserve")).toBe(false);
+  });
+
+  it("round 13: a run abandoned while the MODEL CALL was in flight still completes its turn (post-model heartbeat skipped, never turn.failed INTERNAL)", async () => {
+    const runId = unique("run");
+    // Call 1 (pre-stream) succeeds; call 2 (post-model) hits the row the
+    // abandon flipped to cancelled mid-flight.
+    fakes.failHeartbeatOnCall(2, DbError.conflict("Illegal run transition: cancelled → running"));
+    const response = await postTurn(
+      THREAD_MAIN,
+      turnBody(runId, 0, [{ role: "user", text: USER_TEXT }]),
+      `${runId}:0`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+    const events = await readSse(response);
+    expectValidStream(events, runId);
+    // The turn COMPLETED — the durable outcome + the settle already landed,
+    // the terminal run row is left terminal, and the failure the user used to
+    // see ("Something went wrong on our side.") never happens.
+    const completed = completedOf(events);
+    expect(completed.assistantText).toBe(STEP0_TEXT);
+    expect(completed.reasoningText).toBe(STEP0_REASONING);
+    expect(events.some((event) => event.data.type === "turn.failed")).toBe(false);
+    // The durable outcome + the honest settle both stand.
+    expect(fakes.assistantRows()).toHaveLength(1);
+    expect(
+      fakes.ledgerOps.some(
+        (op) => op.op === "settle" && op.idempotencyKey === `turn:${runId}:0:settle`,
+      ),
+    ).toBe(true);
+    // NO refund followed the settle (the turn delivered real output).
+    expect(fakes.ledgerOps.some((op) => op.op === "refundAll" && op.runId === runId)).toBe(false);
   });
 });
 
