@@ -194,6 +194,7 @@ interface RecordedPost {
   readonly messages: ReadonlyArray<Record<string, unknown>>;
   readonly canvas: TurnCanvas | null | undefined;
   readonly model: unknown;
+  readonly applyNotes: readonly string[] | undefined;
   readonly seqBase: number;
   readonly replayCursor: number | undefined;
 }
@@ -338,6 +339,7 @@ function makeClient({ script, planResponse, planFails, planGate, planErrorCode }
           messages: Array<Record<string, unknown>>;
           canvas?: TurnCanvas | null;
           model?: unknown;
+          applyNotes?: string[];
         };
         const key = `${parsed.runId}:${parsed.stepIndex}`;
         const nth = (postCounts.get(key) ?? 0) + 1;
@@ -352,6 +354,7 @@ function makeClient({ script, planResponse, planFails, planGate, planErrorCode }
           messages: JSON.parse(JSON.stringify(parsed.messages)) as Array<Record<string, unknown>>,
           canvas: parsed.canvas,
           model: parsed.model,
+          applyNotes: parsed.applyNotes,
           seqBase: (handlers as { seqBase?: number } | undefined)?.seqBase ?? 0,
           replayCursor: (handlers as { replayCursor?: number } | undefined)?.replayCursor,
         });
@@ -1492,7 +1495,7 @@ describe("w8 live-apply (per-turn, canvas-visible)", () => {
         ({ ok: false, reason: "save-failed", message: "could not save" }) as ApplyOutcome,
     };
     const errors: Array<{ code: string; message: string }> = [];
-    const { client } = makeClient({
+    const { client, posts } = makeClient({
       script: {
         steps: {
           0: {
@@ -1521,6 +1524,14 @@ describe("w8 live-apply (per-turn, canvas-visible)", () => {
     expect(errors.some((error) => error.code === "LIVE_APPLY_FAILED")).toBe(true);
     // The run-end flow did NOT silently re-execute the broken plan either.
     expect(engine.calls.apply).toHaveLength(0);
+    // APPLY FEEDBACK (2026-11-01 root-cause fix): the model finally learns
+    // WHY — the failure rides the NEXT turn POST as applyNotes (sent once),
+    // instead of the model just watching the canvas regress and re-proposing.
+    expect(posts[0]?.applyNotes).toBeUndefined();
+    expect(posts[1]?.applyNotes).toEqual([
+      "Live apply of this proposal failed (save-failed): could not save",
+    ]);
+    expect(posts[1]?.messages).toBeDefined();
     controller.dispose();
   });
 

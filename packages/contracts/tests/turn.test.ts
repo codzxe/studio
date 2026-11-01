@@ -133,6 +133,32 @@ describe("turn: TURN_REQUEST_SCHEMA (runId, stepIndex, messages, context, canvas
     expect(TURN_REQUEST_SCHEMA.safeParse({ ...BASE, surprise: true }).success).toBe(false);
   });
 
+  // APPLY FEEDBACK (2026-11-01 root-cause fix): the client's live-apply
+  // failure messages ride the next turn so the model finally learns WHY its
+  // proposal did not land (previously: canvas regresses, model re-proposes).
+  it("accepts up to 3 bounded applyNotes and rejects the overflow shapes", () => {
+    expect(
+      TURN_REQUEST_SCHEMA.safeParse({
+        ...BASE,
+        applyNotes: ['Live apply failed (resolution-failed): No layer named "X"'],
+      }).success,
+    ).toBe(true);
+    expect(
+      TURN_REQUEST_SCHEMA.safeParse({
+        ...BASE,
+        applyNotes: ["one", "two", "three"],
+      }).success,
+    ).toBe(true);
+    // > 3 notes, empty notes, oversized notes — all rejected (prompt-inflation bound).
+    expect(
+      TURN_REQUEST_SCHEMA.safeParse({ ...BASE, applyNotes: ["a", "b", "c", "d"] }).success,
+    ).toBe(false);
+    expect(TURN_REQUEST_SCHEMA.safeParse({ ...BASE, applyNotes: [""] }).success).toBe(false);
+    expect(
+      TURN_REQUEST_SCHEMA.safeParse({ ...BASE, applyNotes: ["x".repeat(401)] }).success,
+    ).toBe(false);
+  });
+
   it("caps messages at 64 parts and rejects empty transcripts", () => {
     const fill = (count: number) =>
       Array.from({ length: count }, () => ({ role: "assistant", text: "ok" }));

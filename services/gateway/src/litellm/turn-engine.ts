@@ -44,6 +44,7 @@ import {
   MAX_PLAN_SUMMARY_LENGTH,
   MODEL_CATALOG,
   type ModelId,
+  AUTO_APPLY_BATCH_NOTE,
   PROPOSED_BATCH_NOTE,
   type PinnedContextItem,
   type PlanIntent,
@@ -57,6 +58,7 @@ import {
   batchCreatedCompositionNames,
   batchCreatedLayerNames,
   estimateCredits,
+  isAutoApplicable,
 } from "@studio/contracts";
 
 import { type Logger, nullLogger } from "../logger.js";
@@ -277,14 +279,38 @@ export interface BuildTurnMessagesInput {
    * part of the run).
    */
   readonly currentRunId?: string;
+  /**
+   * APPLY FEEDBACK (2026-11-01 root-cause fix): the client's apply-engine
+   * failure messages for earlier turns of THIS run. Without them the model
+   * never learns a proposal failed to apply — it only sees the canvas revert
+   * and re-proposes the same thing (run 59cead8c: the model apologized and
+   * re-created the composition verbatim). Rendered as a system note with a
+   * fix-it instruction.
+   */
+  readonly applyNotes?: readonly string[];
 }
 
 /**
  * The full prompt for one turn: system prompt, thread history (capped, tool
  * parts included — the round-12 "the model never sees chat/tool history" fix),
- * the canvas + context notes (system role; toSdkPrompt folds them into the
- * instructions), then the CURRENT RUN transcript verbatim.
+ * the canvas + context + apply-feedback notes (system role; toSdkPrompt folds
+ * them into the instructions), then the CURRENT RUN transcript verbatim.
  */
+function applyFeedbackNote(notes: readonly string[]): string {
+  const lines = notes
+    .filter((note) => typeof note === "string" && note.length > 0)
+    .slice(0, 3)
+    .map((note) => `- ${note.slice(0, 400)}`);
+  if (lines.length === 0) return "";
+  return [
+    "APPLY FEEDBACK — this proposal FAILED to apply, so the canvas did NOT change:",
+    ...lines,
+    "Read the failure, FIX its cause (reference real layer names, use grouped property " +
+      "paths, valid colors), and continue the plan. NEVER re-propose the identical change " +
+      "verbatim — it will fail again.",
+  ].join("\n");
+}
+
 export function buildTurnMessages(input: BuildTurnMessagesInput): OpenAIChatMessage[] {
   const messages: OpenAIChatMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
   for (const row of input.history) {
@@ -296,6 +322,9 @@ export function buildTurnMessages(input: BuildTurnMessagesInput): OpenAIChatMess
   if (input.context !== undefined) notes.push(contextFlagsNote(input.context));
   const pinnedLine = input.pinned === undefined ? "" : pinnedNote(input.pinned);
   if (pinnedLine !== "") notes.push(pinnedLine);
+  const applyFeedbackLine =
+    input.applyNotes === undefined ? "" : applyFeedbackNote(input.applyNotes);
+  if (applyFeedbackLine !== "") notes.push(applyFeedbackLine);
   if (notes.length > 0) {
     messages.push({ role: "system", content: notes.join("\n\n") });
   }
@@ -561,9 +590,17 @@ export function writeToolCarrierPlan(tool: ToolDefinition, args: unknown): EditP
 /** The propose-only tool result the MODEL sees (§8.4 rules 1-5). */
 export function proposedBatchResult(carrier: EditPlan): unknown {
   const step = carrier.steps[0];
+  // 2026-11-01 root-cause fix: the note must tell the model what ACTUALLY
+  // happens next. Auto-applicable carriers (the §7.3 shape gate passes
+  // them — every create/edit/style/animate tool) apply automatically at the
+  // turn's end; only the organize-intent carriers (undo_run / save_version)
+  // genuinely wait for the user. The old single "nothing is executed until
+  // the user applies" note contradicted the live-apply pipeline and taught
+  // the model its work never landed (run 59cead8c's duplicate re-proposals).
+  const note = isAutoApplicable(carrier) ? AUTO_APPLY_BATCH_NOTE : PROPOSED_BATCH_NOTE;
   return WRITE_TOOL_RESULT_SCHEMA.parse({
     proposedBatch: step?.batch ?? { label: carrier.summary, steps: [] },
-    note: PROPOSED_BATCH_NOTE,
+    note,
   });
 }
 

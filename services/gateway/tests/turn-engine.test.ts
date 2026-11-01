@@ -27,6 +27,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AGENT_BATCH_SCHEMA,
+  AUTO_APPLY_BATCH_NOTE,
   MODEL_CATALOG,
   PROPOSED_BATCH_NOTE,
   TOOL_CATALOG,
@@ -56,6 +57,7 @@ import {
   resolveWriteToolCall,
   serverSidePlan,
   turnOpenAiToolSpecs,
+  proposedBatchResult,
   validateToolCall,
   writeToolCarrierPlan,
 } from "../src/litellm/turn-engine.js";
@@ -918,12 +920,16 @@ describe("writeToolCarrierPlan + resolveWriteToolCall (PROPOSE-ONLY carriers)", 
       name: "Greeting",
     });
     // The model sees its OWN proposed batch (the pseudo step), never the compiled one.
+    // 2026-11-01: the note is TRUTHFUL per carrier — an auto-applicable
+    // carrier (create_text is low-risk create) says it applies at turn end,
+    // killing the old "nothing is executed until the user applies"
+    // contradiction that drove the duplicate re-proposals.
     expect(resolved.resultForModel).toEqual({
       proposedBatch: {
         label: 'Agent: Add text layer "Greeting"',
         steps: [{ command: "create_text", params: { text: "Hello world", name: "Greeting" } }],
       },
-      note: PROPOSED_BATCH_NOTE,
+      note: AUTO_APPLY_BATCH_NOTE,
     });
     expect(WRITE_TOOL_RESULT_SCHEMA.safeParse(resolved.resultForModel).success).toBe(true);
     // The compiled output rides the proposal for the client's plan accumulator.
@@ -935,6 +941,41 @@ describe("writeToolCarrierPlan + resolveWriteToolCall (PROPOSE-ONLY carriers)", 
     expect(resolved.proposal.compiled.risk).toBe("low");
     expect(resolved.proposal.compiled.estimatedCredits).toBe(1.5);
     expect(resolved.proposal.compiled.resolutionRequests).toEqual([]);
+  });
+
+  it("an organize-intent carrier (undo_run/save_version) keeps the review-waiting note", () => {
+    const undoRun = TOOL_CATALOG["studio.undo_run"];
+    const carrier = writeToolCarrierPlan(undoRun, {});
+    expect(carrier.intent).toBe("organize");
+    expect(isAutoApplicable(carrier)).toBe(false);
+    expect(proposedBatchResult(carrier)).toMatchObject({ note: PROPOSED_BATCH_NOTE });
+  });
+
+  it("buildTurnMessages renders APPLY FEEDBACK as the model's fix-it system note", () => {
+    const messages = buildTurnMessages({
+      history: [],
+      transcript: [{ role: "user", text: "continue" }],
+      applyNotes: [
+        'Live apply of this proposal failed (resolution-failed): No layer named "X" is in the composition.',
+      ],
+    });
+    const note = messages.find(
+      (message) => message.role === "system" && message.content.includes("APPLY FEEDBACK"),
+    );
+    expect(note).toBeDefined();
+    expect(note?.content).toContain("FAILED to apply");
+    expect(note?.content).toContain('No layer named "X"');
+    expect(note?.content).toContain("NEVER re-propose the identical change");
+  });
+
+  it("buildTurnMessages omits the apply-feedback note when there are no notes", () => {
+    const messages = buildTurnMessages({
+      history: [],
+      transcript: [{ role: "user", text: "continue" }],
+    });
+    expect(
+      messages.some((message) => message.content?.includes("APPLY FEEDBACK")),
+    ).toBe(false);
   });
 
   it("compiles an engine_commands carrier to its verbatim catalog steps in ONE atomic batch", async () => {
@@ -1561,7 +1602,7 @@ describe("layerReferenceVerdict — unknown layer refs reject at TURN time, not 
 });
 
 describe("turn symbol table — canvas seed + fold of accepted creations", () => {
-  const canvas = {
+  const canvas: import("@studio/contracts").TurnCanvas = {
     activeComp: "Main",
     layers: [
       { id: 1, name: "Headline", type: "text" },
@@ -1571,7 +1612,7 @@ describe("turn symbol table — canvas seed + fold of accepted creations", () =>
     playhead: 0,
     fps: 30,
     duration: 8,
-  } as const;
+  };
 
   it("seeds layers from the canvas and the active composition name", () => {
     const table = seedTurnSymbolTable(canvas);

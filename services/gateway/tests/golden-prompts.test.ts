@@ -572,6 +572,19 @@ describe("golden prompts — the v3 system prompt (catalog v3 + client-driven lo
 
   it("pins the execution discipline: PLAN FIRST (all steps up front), then one step per turn", () => {
     expect(SYSTEM_PROMPT).toContain("HOW TO WORK — execution discipline");
+    // OPERATING RULES (2026-11-01, run 59cead8c): the discipline bullets lived
+    // mid-prompt and the model skimmed past them (turn 0 dove into
+    // get_context with no plan; failed calls were re-proposed verbatim). The
+    // non-negotiable trio now leads the prompt, before any tool catalog.
+    expect(SYSTEM_PROMPT).toContain("OPERATING RULES — non-negotiable, in order:");
+    expect(SYSTEM_PROMPT.indexOf("OPERATING RULES")).toBeLessThan(
+      SYSTEM_PROMPT.indexOf("Read tools (call them via the provided tool interface):"),
+    );
+    expect(SYSTEM_PROMPT).toContain(
+      "1. PLAN FIRST. For ANY build or multi-step change, your FIRST reply's text opens with the complete numbered plan",
+    );
+    expect(SYSTEM_PROMPT).toContain("3. NEVER repeat a failed call verbatim");
+    expect(SYSTEM_PROMPT).toContain("it means 'fix it'");
     // PLAN FIRST (2026-11-01 user report: the old "START BUILDING
     // IMMEDIATELY / write tool calls in your first turn" opener fought the
     // plan-first bullet and the model skipped the plan entirely — 5 failed

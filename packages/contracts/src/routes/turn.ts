@@ -156,6 +156,16 @@ export const TURN_REQUEST_SCHEMA = z
     pinned: z.array(PINNED_CONTEXT_ITEM_SCHEMA).max(20).optional(),
     /** Compact canvas snapshot; `null` when unchanged (client's call). */
     canvas: TURN_CANVAS_SCHEMA.nullable().optional(),
+    /**
+     * APPLY FEEDBACK (2026-11-01 root-cause fix): why an earlier turn's
+     * proposal failed to apply, straight from the client's apply engine —
+     * live-apply failures the model would otherwise NEVER see (the old loop:
+     * the apply fails client-side, the canvas regresses, the model reads an
+     * empty canvas, concludes its proposal vanished, and re-proposes it
+     * verbatim). Bounded: ≤ 3 notes, ≤ 400 chars each; rendered into the
+     * model's per-turn notes with a fix-it instruction by the gateway.
+     */
+    applyNotes: z.array(z.string().min(1).max(400)).max(3).optional(),
   })
   .superRefine((body, ctx) => {
     let serialized: string | undefined;

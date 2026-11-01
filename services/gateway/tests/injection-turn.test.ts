@@ -53,6 +53,7 @@
 import {
   AGENT_BATCH_SCHEMA,
   AGENT_COMMAND_IDS,
+  AUTO_APPLY_BATCH_NOTE,
   EDIT_PLAN_SCHEMA,
   type EditPlan,
   PROPOSED_BATCH_NOTE,
@@ -710,7 +711,14 @@ describe("injection-turn — E. the F-5 drift probes compile through the carrier
       expect(batch.steps.map((step) => step.command)).toEqual([fixture.expectedCommand]);
       expect(batch.atomic).toBe(true); // one carrier, one atomic undo step
       expect(WRITE_TOOL_RESULT_SCHEMA.safeParse(resolved.resultForModel).success).toBe(true);
-      expect(JSON.stringify(resolved.resultForModel)).toContain(PROPOSED_BATCH_NOTE);
+      // The note is truthful per carrier (2026-11-01): auto-applicable
+      // carriers promise the turn-end application; organize carriers keep the
+      // review-waiting note. Either way the §8.4 envelope holds a note.
+      expect(JSON.stringify(resolved.resultForModel)).toContain(
+        [PROPOSED_BATCH_NOTE, AUTO_APPLY_BATCH_NOTE].find((note) =>
+          JSON.stringify(resolved.resultForModel).includes(note),
+        ) ?? "",
+      );
 
       const serializedBatch = JSON.stringify(batch);
       if (fixture.needleRidesBatch) {

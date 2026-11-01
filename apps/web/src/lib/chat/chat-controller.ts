@@ -521,6 +521,13 @@ interface ActiveRun {
   liveVersionId: string | null;
   /** w8 live-apply: serialization chain — turn batches execute in order. */
   liveChain: Promise<void>;
+  /** APPLY FEEDBACK (2026-11-01 root-cause fix): why a live apply failed,
+   * verbatim from the apply engine. Rides the NEXT turn POST as applyNotes
+   * so the model finally learns its proposal did not land — without it the
+   * model only sees the canvas regress and re-proposes the same change
+   * (run 59cead8c apologized and re-created the composition verbatim).
+   * Bounded to the last 3 (TURN_REQUEST_SCHEMA caps the wire). */
+  liveApplyNotes: string[];
 }
 
 /**
@@ -696,6 +703,11 @@ export function createChatController(options: CreateChatControllerOptions): Chat
         pinned: run.input.pinned,
         ...(run.input.model !== undefined ? { model: run.input.model } : {}),
         ...(includeCanvas ? { canvas } : {}),
+        // APPLY FEEDBACK: the previous turn's live-apply failures, sent ONCE —
+        // the gateway renders them as the model's fix-it system note.
+        ...(run.liveApplyNotes.length > 0
+          ? { applyNotes: run.liveApplyNotes.splice(0) }
+          : {}),
       };
 
       // --- ONE bounded turn POST (the api-client owns same-key recovery) ---
@@ -948,6 +960,16 @@ export function createChatController(options: CreateChatControllerOptions): Chat
             run.liveVersionId = outcome.versionId;
           } else {
             run.liveBroken = true;
+            // APPLY FEEDBACK (2026-11-01): record WHY — the next turn POST
+            // carries it to the model, which otherwise never learns the
+            // proposal failed and re-proposes it blindly.
+            run.liveApplyNotes.push(
+              `Live apply of this proposal failed (${outcome.reason}): ${outcome.message}`.slice(
+                0,
+                400,
+              ),
+            );
+            if (run.liveApplyNotes.length > 3) run.liveApplyNotes.splice(0, 1);
             fireOnError({
               code: "LIVE_APPLY_FAILED",
               message: `Live apply failed (${outcome.reason}) — remaining changes will wait for the plan card.`,
@@ -1128,6 +1150,7 @@ export function createChatController(options: CreateChatControllerOptions): Chat
       liveBroken: false,
       liveVersionId: null,
       liveChain: Promise.resolve(),
+      liveApplyNotes: [],
     };
     lastInput = input;
     activeRun = run;

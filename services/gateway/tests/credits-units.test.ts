@@ -412,8 +412,10 @@ d("M6-K mixed-unit journey — µc ledger, whole-credit display, exact conservat
   });
 
   it("an odd-µc balance displays rounded to 2 decimals while the ledger keeps the exact integer", async () => {
-    // 5 credits minus 1 µc — enough for the 3-credit hold, NOT a whole credit.
-    const GRANT = 5_000_000 - 1;
+    // 6 credits minus 1 µc — enough for the per-turn hold (the prompt-size
+    // estimate grew to 4 credits ≈ 5-credit reserve when the 2026-11-01
+    // OPERATING RULES block lengthened the system prompt), NOT a whole credit.
+    const GRANT = 6_000_000 - 1;
     const fx = await newFixture(GRANT);
     const { runId } = await singleTurnJourney(fx, "tweak the sub");
 
@@ -426,10 +428,10 @@ d("M6-K mixed-unit journey — µc ledger, whole-credit display, exact conservat
     expect(byKind.refund).toEqual(reserveRows.map((amount) => -amount));
 
     // The raw balance keeps every µc; the DISPLAY converts at 2 decimals:
-    // 3_999_999 µc = 3.999999 credits → 4.00 on the whole-credit surface.
+    // 4_999_999 µc = 4.999999 credits → 5.00 on the whole-credit surface.
     const balance = await server.deps.repos.ledger.balance(fx.workspaceId);
-    expect(balance).toBe(3_999_999);
-    expect(microcreditsToDisplayCredits(balance)).toBe(4);
+    expect(balance).toBe(4_999_999);
+    expect(microcreditsToDisplayCredits(balance)).toBe(5);
 
     // /v1/credits keeps the exact integer µc — no rounding on the raw wire.
     const creditsSummaryResponse = await api(server.base, "/v1/credits", {
@@ -437,7 +439,7 @@ d("M6-K mixed-unit journey — µc ledger, whole-credit display, exact conservat
       headers: { "x-workspace-id": fx.workspaceId },
     });
     const summary = ((await creditsSummaryResponse.json()) as { data: { balance: number } }).data;
-    expect(summary.balance).toBe(3_999_999);
+    expect(summary.balance).toBe(4_999_999);
   });
 
   it("N sequential runs each release the FULL µc hold — the balance conserved across the whole journey", async () => {

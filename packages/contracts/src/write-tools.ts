@@ -828,3 +828,20 @@ export type WriteToolResult = z.infer<typeof WRITE_TOOL_RESULT_SCHEMA>;
 /** Canonical note for write-tool results (always ≤ MAX_RESULT_NOTE_LENGTH). */
 export const PROPOSED_BATCH_NOTE =
   "Proposed batch only — nothing is executed until the user applies the plan.";
+
+/**
+ * The TRUTHFUL note for auto-applicable carriers (2026-11-01 root-cause fix).
+ *
+ * The old single note told the model "nothing is executed until the user
+ * applies the plan" on EVERY write result — while the live-apply pipeline was
+ * applying reversible carriers automatically at each turn's end. The model
+ * read the contradiction, watched the canvas, and when a proposal failed to
+ * apply it concluded its work had vanished and re-proposed the composition
+ * from scratch (run 59cead8c: steps 10-11 duplicated steps 1-2 verbatim).
+ * Auto-applicable carriers (create/edit/style/animate — everything the §7.3
+ * gate passes) now say what actually happens; the review-waiting note stays
+ * for the organize-intent carriers (undo_run / save_version) and anywhere
+ * auto-apply genuinely cannot run.
+ */
+export const AUTO_APPLY_BATCH_NOTE =
+  "Proposed batch — it applies automatically when this turn finishes (one Undo reverts it).";
