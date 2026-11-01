@@ -648,6 +648,14 @@ function extractJsonObject(text: string): unknown {
 }
 
 function planValidationError(raw: unknown): string {
+  // No JSON object extracted at all (prose without braces, "nope"): the
+  // schema's safeParse(undefined) reports a "(root): Invalid input: expected
+  // object, received undefined" issue — a Zod artifact that leaked into the
+  // user's plan card AND the model's repair prompt, where it explains
+  // nothing (there was no object to validate). Return "" so the caller's
+  // parsed===undefined branch reports the honest "The plan was not valid
+  // JSON." (both the final message and the retry-repair instruction).
+  if (raw === undefined) return "";
   const checked = EDIT_PLAN_SCHEMA.safeParse(coerceStringifiedJson(raw));
   if (checked.success) return "";
   return checked.error.issues

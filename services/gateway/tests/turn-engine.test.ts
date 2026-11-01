@@ -1391,7 +1391,15 @@ describe("serverSidePlan (§8.6 structured-output side call)", () => {
       signal: noAbort(),
     });
     expect(result.plan).toBeNull();
-    expect(result.errorMessage).toMatch(/^The proposed plan failed validation: /);
+    // Prose with NO braces → no JSON object extracted → the honest
+    // "not valid JSON" message, never the Zod "(root): expected object,
+    // received undefined" artifact (that leak once surfaced verbatim in a
+    // real GLM run's plan card).
+    expect(result.errorMessage).toBe("The plan was not valid JSON.");
+    // The repair prompt names the REAL problem for attempt 2.
+    const repair = recordedMessages(fetchStub.calls[1]).at(-1)?.content ?? "";
+    expect(String(repair)).toContain("not valid JSON");
+    expect(String(repair)).not.toContain("(root)");
     expect(fetchStub.calls).toHaveLength(2);
   });
 

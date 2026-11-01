@@ -357,6 +357,11 @@ function extractJsonObject(text: string): unknown {
 }
 
 function planValidationError(raw: unknown): string {
+  // No JSON object extracted at all: safeParse(undefined) would leak the
+  // Zod "(root): expected object, received undefined" artifact into the plan
+  // card + repair prompt. "" keeps the caller's "The plan was not valid
+  // JSON." branch reachable (turn-engine twin; see its longer comment).
+  if (raw === undefined) return "";
   const checked = EDIT_PLAN_SCHEMA.safeParse(raw);
   if (checked.success) return "";
   return checked.error.issues
