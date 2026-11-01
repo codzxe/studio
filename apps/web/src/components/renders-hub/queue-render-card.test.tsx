@@ -243,15 +243,19 @@ describe("estimate", () => {
     fireEvent.change(screen.getByTestId("renders-hub-range-from"), { target: { value: "2" } });
     fireEvent.change(screen.getByTestId("renders-hub-range-to"), { target: { value: "12.5" } });
 
+    // RACE-PROOF (CI run 41338366639): on a slow runner the form's OPEN
+    // estimate (default settings) fires before these changes land — calls[0]
+    // is then the STALE call and `toHaveBeenCalledTimes(1)` passes early.
+    // The component's cleanup chain guarantees the LAST scheduled timer
+    // carries the LAST built settings, so assert the LAST call.
     await waitFor(() => {
-      expect(api.estimateRender).toHaveBeenCalledTimes(1);
+      const last = vi.mocked(api.estimateRender).mock.calls.at(-1)?.[0];
+      expect(last?.settings?.width).toBe(1080);
+      expect(last?.settings?.height).toBe(1920);
+      expect(last?.settings?.frameRate).toBe(30);
+      expect(last?.settings?.timeFrom).toBe(2);
+      expect(last?.settings?.timeTo).toBe(12.5);
     });
-    const settings = vi.mocked(api.estimateRender).mock.calls[0]?.[0].settings;
-    expect(settings?.width).toBe(1080);
-    expect(settings?.height).toBe(1920);
-    expect(settings?.frameRate).toBe(30);
-    expect(settings?.timeFrom).toBe(2);
-    expect(settings?.timeTo).toBe(12.5);
 
     await waitFor(() => {
       expect(screen.getByTestId("renders-hub-estimate")).toHaveTextContent(
