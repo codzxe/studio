@@ -1400,13 +1400,16 @@ describe("M4-L web chat integration — read-only guarantees (M4.6, round 12)", 
 
     // THE REAL WIRE (user-reported '!"studio.create_text" cannot run in this
     // session'): the model proposed create_text with args the strict schema
-    // rejects (empty text, an unrecognized "opacity" key). The gateway
-    // settles the call SERVER-side — INVALID_TOOL_CALL, no compiled
-    // proposal — and the loop must echo THAT verdict: it is the chip's real
-    // error and the model's repair signal. The old fall-through executed it
-    // locally, surfaced the misleading '"studio.create_text" cannot run in
-    // this session' chip, fed the model a FALSE CLIENT_TOOL_UNAVAILABLE, and
-    // the repetition guard then killed the run.
+    // rejects (an empty `text`). The gateway settles the call SERVER-side —
+    // INVALID_TOOL_CALL, no compiled proposal — and the loop must echo THAT
+    // verdict: it is the chip's real error and the model's repair signal. The
+    // old fall-through executed it locally, surfaced the misleading
+    // '"studio.create_text" cannot run in this session' chip, fed the model a
+    // FALSE CLIENT_TOOL_UNAVAILABLE, and the repetition guard then killed the
+    // run. (The fixture once also carried `opacity` as an UNRECOGNIZED key —
+    // the signature of the stale-bundle regression the runtime fix shipped;
+    // `opacity` is a legal, even string-repairable, key since the bundle was
+    // rebuilt, so the fixture keeps only the still-invalid empty text.)
     act(() => {
       harness.getApi().send({ message: "add a background text layer" });
     });
@@ -1415,7 +1418,7 @@ describe("M4-L web chat integration — read-only guarantees (M4.6, round 12)", 
     const verdict = {
       error: "INVALID_TOOL_CALL",
       message:
-        'Invalid arguments for studio.create_text: text: Too small: expected string to have >=1 characters; opacity: Unrecognized key "opacity"',
+        "Invalid arguments for studio.create_text: text: Too small: expected string to have >=1 characters",
     };
     harness.wire.feed(
       runStarted(0),
@@ -1423,14 +1426,14 @@ describe("M4-L web chat integration — read-only guarantees (M4.6, round 12)", 
         1,
         "call_text_invalid",
         "studio.create_text",
-        { text: "", name: "Background Void", position: [1920, 1080], size: 1, opacity: "0" },
+        { text: "", name: "Background Void", position: [1920, 1080], size: 1 },
       ),
       turnCompleted(2, 0, {
         toolCalls: [
           {
             toolCallId: "call_text_invalid",
             tool: "studio.create_text",
-            args: { text: "", name: "Background Void", position: [1920, 1080], size: 1, opacity: "0" },
+            args: { text: "", name: "Background Void", position: [1920, 1080], size: 1 },
             resultForModel: verdict,
             proposal: null,
           },
