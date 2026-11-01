@@ -214,20 +214,27 @@ describe("estimate", () => {
     fireEvent.change(screen.getByTestId("renders-hub-quality"), { target: { value: "best" } });
     fireEvent.change(screen.getByTestId("renders-hub-quality"), { target: { value: "draft" } });
     fireEvent.change(screen.getByTestId("renders-hub-quality"), { target: { value: "best" } });
+    // RACE-PROOF (sibling of CI run 41338366639): a slow runner can fire the
+    // form-OPEN estimate (default quality "good") before these changes land,
+    // so both "data-state ready" and calls[0] can be the stale call. Assert
+    // the LAST call's body (the cleanup chain guarantees the last timer
+    // carries the last built settings) and pin the coalescing as "the three
+    // changes add AT MOST one call" — the open estimate may legitimately
+    // have fired first on a slow runner, but never one call per change.
     await waitFor(() => {
-      expect(screen.getByTestId("renders-hub-estimate")).toHaveAttribute("data-state", "ready");
+      const body = vi.mocked(api.estimateRender).mock.calls.at(-1)?.[0];
+      expect(body?.projectId).toBe("prj_demo");
+      expect(body?.compId).toBe("cmp_main");
+      expect(body?.format).toBe("mp4");
+      expect(body?.settings.quality).toBe("best");
+      expect(body?.settings.width).toBe(1920);
+      expect(body?.settings.height).toBe(1080);
+      expect(body?.settings.frameRate).toBe(24);
+      expect(body?.settings.timeFrom).toBeUndefined();
+      expect(body?.settings.timeTo).toBeUndefined();
     });
-    expect(api.estimateRender).toHaveBeenCalledTimes(1);
-    const body = vi.mocked(api.estimateRender).mock.calls[0]?.[0];
-    expect(body?.projectId).toBe("prj_demo");
-    expect(body?.compId).toBe("cmp_main");
-    expect(body?.format).toBe("mp4");
-    expect(body?.settings.quality).toBe("best");
-    expect(body?.settings.width).toBe(1920);
-    expect(body?.settings.height).toBe(1080);
-    expect(body?.settings.frameRate).toBe(24);
-    expect(body?.settings.timeFrom).toBeUndefined();
-    expect(body?.settings.timeTo).toBeUndefined();
+    // The three changes coalesced: at most the open estimate + ONE re-estimate.
+    expect(vi.mocked(api.estimateRender).mock.calls.length).toBeLessThanOrEqual(2);
   });
 
   it("resolution + fps + range ride the settings; minApplied appends its note", async () => {
@@ -276,7 +283,18 @@ describe("estimate", () => {
         "The range end must come after its start.",
       );
     });
-    expect(api.estimateRender).not.toHaveBeenCalled();
+    // RACE-PROOF (CI run 41339339071): on a slow runner the form-open
+    // estimate (valid default settings) fires BEFORE the inverted range
+    // lands, so "never called at all" is not assertable. What IS assertable:
+    // the count is FROZEN once the client-side error renders (an invalid
+    // built never schedules a timer), and every call that did happen carried
+    // a VALID (non-inverted) range — the estimate engine never saw garbage.
+    const callsAtError = vi.mocked(api.estimateRender).mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 50)); // outlive the debounce
+    expect(vi.mocked(api.estimateRender).mock.calls.length).toBe(callsAtError);
+    for (const call of vi.mocked(api.estimateRender).mock.calls) {
+      expect(call[0]?.settings?.timeFrom ?? 0).toBeLessThan(call[0]?.settings?.timeTo ?? Infinity);
+    }
     expect(screen.getByTestId("renders-hub-queue-submit")).toBeDisabled();
   });
 
