@@ -293,7 +293,9 @@ describe("estimate", () => {
     await new Promise((resolve) => setTimeout(resolve, 50)); // outlive the debounce
     expect(vi.mocked(api.estimateRender).mock.calls.length).toBe(callsAtError);
     for (const call of vi.mocked(api.estimateRender).mock.calls) {
-      expect(call[0]?.settings?.timeFrom ?? 0).toBeLessThan(call[0]?.settings?.timeTo ?? Infinity);
+      expect(call[0]?.settings?.timeFrom ?? 0).toBeLessThan(
+        call[0]?.settings?.timeTo ?? Number.POSITIVE_INFINITY,
+      );
     }
     expect(screen.getByTestId("renders-hub-queue-submit")).toBeDisabled();
   });
