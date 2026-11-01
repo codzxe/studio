@@ -8,16 +8,19 @@
 #   - Ownership: this file covers apps/web, services/*, packages/*, editor/ gates
 #     only as described per job; nothing here mutates the repo.
 #
-# RUNNER POLICY (2026-10-31): every job runs on SELF-HOSTED runners only —
-# NO GitHub-hosted (billed) machines. Zero Actions minutes are consumed.
-#   - Runner registration + prerequisites: docs/runbooks/self-hosted-ci.md
-#     (node >=22, corepack/pnpm, Docker for the postgres `services:` jobs,
-#     rustup for editor-cargo).
-#   - The same gates run WITHOUT GitHub at all: `bash scripts/ci-local.sh`
-#     (add --e2e for the full-stack Playwright suite).
-#   - The weekly e2e `schedule:` was removed with the hosted runners — a
-#     self-hosted box may be offline at any fixed cron slot; e2e stays
-#     available via workflow_dispatch (or ci-local.sh --e2e).
+# RUNNER POLICY (2026-11-01): GITHUB-HOSTED runners (ubuntu-latest) again.
+#   The 2026-10-31 self-hosted-only policy was adopted to stop billed
+#   Actions minutes when the repo was PRIVATE (2000 free/mo burned in 4
+#   days). The repo is PUBLIC now — public repositories get UNLIMITED FREE
+#   minutes on standard GitHub-hosted runners, so the constraint is void.
+#   Worse: no self-hosted runner was ever registered, so every job sat
+#   "queued" forever and the cancel-in-progress concurrency group kept
+#   cancelling each run on the next push — 20+ runs, ZERO results, ever.
+#   Jobs below are already hosted-portable (actions/setup-node, pnpm/action-
+#   setup, dtolnay/rust-toolchain, service containers).
+#   - Self-hosted runners still work if one is registered later
+#     (docs/runbooks/self-hosted-ci.md); `bash scripts/ci-local.sh` runs the
+#     same gates without GitHub (add --e2e for the full Playwright suite).
 #
 # HONESTY LEDGER (what this first workflow deliberately does NOT claim):
 #   - The e2e job is `continue-on-error: true` — the boot recipe has never run in
@@ -64,7 +67,7 @@ jobs:
   # commands: docs/runbooks/self-hosted-ci.md.
   runner-preflight:
     name: "runner preflight: node · pnpm · docker · cargo (informational)"
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     continue-on-error: true
     steps:
@@ -81,8 +84,8 @@ jobs:
   # ── apps/web ────────────────────────────────────────────────────────────────
   web:
     name: "web: typegen · tsc · lint · test · build"
-    runs-on: self-hosted
-    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     env:
       # ASSUMPTION: web unit tests (jsdom) and `next build` import @studio/config,
       # whose optional vars fall back permissively when APP_ENV=local (the dev
@@ -122,8 +125,8 @@ jobs:
   # ── services/gateway ────────────────────────────────────────────────────────
   gateway:
     name: "gateway: tsc · vitest (postgres:16 service)"
-    runs-on: self-hosted
-    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       # Recon (services/gateway/tests/helpers.ts resolveDatabaseUrl): suites gate
       # on DATABASE_URL — with no DB they SKIP (postgres-specific suites carry the
@@ -167,7 +170,7 @@ jobs:
   # ── services/worker ─────────────────────────────────────────────────────────
   worker:
     name: "worker: tsc · vitest"
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -190,7 +193,7 @@ jobs:
   # ── packages/* ──────────────────────────────────────────────────────────────
   typecheck-packages:
     name: "packages/*: tsc --noEmit (all 7)"
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -211,7 +214,7 @@ jobs:
   # ── gateway bundle drift gate (SEC-01 recurrence prevention) ───────────────
   gateway-bundle-drift:
     name: "gateway bundle: rebuild == committed (SEC-01 gate)"
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -265,7 +268,7 @@ jobs:
   # ── licence gate ────────────────────────────────────────────────────────────
   licence-gate:
     name: "licence gate: check:licenses"
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     # Licence gate is GREEN on main since W3-C4 cleared the manifest/fonts
     # violations (17 → 0 on a fresh checkout); blocking again as intended.
@@ -287,8 +290,8 @@ jobs:
   # ── editor/ (vendored Rust workspace — tracked in git, pin 9db7f3b2) ────────
   editor-cargo:
     name: "editor: cargo check --release -p studio-cli"
-    runs-on: self-hosted
-    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       # Recon: `git ls-files editor/` shows the vendored tree IS tracked, so this
@@ -338,7 +341,7 @@ jobs:
   # ── e2e (Playwright chromium, full stack) ───────────────────────────────────
   e2e:
     name: "e2e: playwright chromium (full stack boot)"
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     # MANUAL ONLY (2026-10-31, self-hosted migration): this job is
     # continue-on-error (never gated the run), has never gone green on a GH
     # runner (visual baselines are runner-image-dependent, README §5), and at
