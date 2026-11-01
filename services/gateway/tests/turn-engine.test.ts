@@ -47,6 +47,7 @@ import {
   type TurnHistoryRow,
   buildTurnMessages,
   committedCreditsFor,
+  createdNamesFromSteps,
   executeModelTurn,
   foldCreationsInto,
   isClientExecutedTool,
@@ -1645,5 +1646,110 @@ describe("turn symbol table — canvas seed + fold of accepted creations", () =>
       batchCreatedLayers: new Set(),
     });
     expect(verdict?.message).toContain("is a COMPOSITION, not a layer");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Durable run-created names + read-tool numeric repair (e2e run bba72d51)
+// ---------------------------------------------------------------------------
+
+describe("createdNamesFromSteps — the run's durable record of what it created", () => {
+  it("extracts layer and composition names from accepted proposals", () => {
+    const created = createdNamesFromSteps([
+      {
+        tool: "studio.create_composition",
+        argsJson: JSON.stringify({ name: "Google Launch Sequence", width: 3840 }),
+        resultJson: JSON.stringify({ proposedBatch: { label: "x", steps: [] } }),
+      },
+      {
+        tool: "studio.create_text",
+        argsJson: JSON.stringify({ text: "G", name: "Google G Shape", opacity: 0 }),
+        resultJson: JSON.stringify({ proposedBatch: { label: "x", steps: [] } }),
+      },
+      {
+        tool: "studio.engine_commands",
+        argsJson: JSON.stringify({
+          steps: [
+            { command: "layer.newSolid", params: { name: "Background", color: "#fff" } },
+            { command: "prop.set", params: { layer: "Background", path: "transform/opacity", value: 0 } },
+          ],
+        }),
+        resultJson: JSON.stringify({ proposedBatch: { label: "x", steps: [] } }),
+      },
+    ]);
+    expect([...created.layers].sort()).toEqual(["Background", "Google G Shape"]);
+    expect([...created.compositions]).toEqual(["Google Launch Sequence"]);
+  });
+
+  it("synthesizes the text-derived name for an unnamed create_text WITH opacity (compiler parity)", () => {
+    const created = createdNamesFromSteps([
+      {
+        tool: "studio.create_text",
+        argsJson: JSON.stringify({ text: "Ask anything.", opacity: 0.5 }),
+        resultJson: JSON.stringify({ proposedBatch: { label: "x", steps: [] } }),
+      },
+    ]);
+    expect([...created.layers]).toEqual(["Ask anything."]);
+  });
+
+  it("excludes rejected calls — a rejected create created nothing", () => {
+    const created = createdNamesFromSteps([
+      {
+        tool: "studio.create_text",
+        argsJson: JSON.stringify({ text: "Ghost", name: "Ghost Layer" }),
+        resultJson: JSON.stringify({ error: "INVALID_TOOL_CALL", message: "no" }),
+      },
+      {
+        tool: "studio.create_text",
+        argsJson: "not json",
+        resultJson: JSON.stringify({ proposedBatch: { label: "x", steps: [] } }),
+      },
+    ]);
+    expect(created.layers.size).toBe(0);
+  });
+
+  it("the e2e bba72d51 scenario: prior-created names unblock a cross-turn reference on a stale canvas", () => {
+    // Turn N created "Google G Shape" (accepted proposal, live-applied). Turn
+    // N+1's canvas lagged one apply (still lists only the particles) — the
+    // durable names must carry the reference.
+    const table = seedTurnSymbolTable({
+      activeComp: "Google Launch Sequence",
+      layers: [
+        { id: 1, name: "Blue Particle", type: "text" },
+        { id: 2, name: "Red Particle", type: "text" },
+      ],
+      selection: [],
+      playhead: 0,
+      fps: 24,
+      duration: 10,
+    });
+    const prior = createdNamesFromSteps([
+      {
+        tool: "studio.create_text",
+        argsJson: JSON.stringify({ text: "G", name: "Google G Shape", opacity: 0 }),
+        resultJson: JSON.stringify({ proposedBatch: { label: "x", steps: [] } }),
+      },
+    ]);
+    foldCreationsInto(table, prior.layers, prior.compositions);
+    const verdict = layerReferenceVerdict({
+      toolId: "studio.set_keyframes",
+      references: ["Google G Shape"],
+      canvasLayerNames: [...table.layers],
+      compositionNames: [...table.compositions],
+      batchCreatedLayers: new Set(),
+    });
+    expect(verdict).toBeNull();
+  });
+});
+
+describe("read-tool numeric arg repair (e2e bba72d51: list_layers depth:\"2\" x3)", () => {
+  it("coerces a stringified depth on a read tool at the gateway", () => {
+    const checked = validateToolCall({
+      id: "call_depth",
+      index: 0,
+      name: "studio.list_layers",
+      arguments: JSON.stringify({ depth: "2" }),
+    });
+    expect(checked).toEqual({ ok: true, name: "studio.list_layers", args: { depth: 2 } });
   });
 });

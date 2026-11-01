@@ -66,6 +66,7 @@ import {
   type TurnSymbolTable,
   buildTurnMessages,
   committedCreditsFor,
+  createdNamesFromSteps,
   executeModelTurn,
   foldCreationsInto,
   isClientExecutedTool,
@@ -229,6 +230,11 @@ export function turnRoutes(deps: GatewayDeps): Hono {
     // Step 0 creates the run (client-owned id) + persists the user turn.
     // Steps > 0 verify the run + heartbeat + settle echoed tool results.
     let committedSoFar = 0;
+    // Names the run's EARLIER turns created (durable agent_steps rows) — the
+    // e2e bba72d51 fix: the canvas snapshot can lag one live apply, so the
+    // turn-time layer-ref validation needs the run's own record as well.
+    let priorCreatedLayers: ReadonlySet<string> = new Set();
+    let priorCreatedCompositions: ReadonlySet<string> = new Set();
     if (request.stepIndex === 0) {
       // THE RUN ROW FIRST (12-w5-t2 bug pin): linkUserMessageToRun 404s
       // unless the run exists, so the user turn persists only after a live
@@ -279,7 +285,7 @@ export function turnRoutes(deps: GatewayDeps): Hono {
         }
       }
     } else {
-      const { run } = await deps.repos.runs.get(workspace.id, request.runId);
+      const { run, steps } = await deps.repos.runs.get(workspace.id, request.runId);
       if (run.threadId !== threadId) {
         throw new GatewayError("RUN_NOT_ACTIVE", "This run belongs to another thread.", {
           status: 404,
@@ -298,6 +304,18 @@ export function turnRoutes(deps: GatewayDeps): Hono {
       }
       committedSoFar = run.committedCredits;
       await settleEchoedToolResults(deps, threadId, request);
+      // The run's durable record of what it created (e2e bba72d51): the
+      // canvas snapshot can lag one live apply, so layer-ref validation also
+      // seeds from the run's own accepted proposals.
+      const created = createdNamesFromSteps(
+        steps.map((step) => ({
+          tool: step.tool,
+          argsJson: step.argsJson,
+          resultJson: step.resultJson,
+        })),
+      );
+      priorCreatedLayers = created.layers;
+      priorCreatedCompositions = created.compositions;
     }
     // GRACEFUL RUN-STATE RECOVERY (round 13): the run can go terminal
     // (abandon/cancel) in the window between the liveness gate above and this
@@ -413,6 +431,8 @@ export function turnRoutes(deps: GatewayDeps): Hono {
             promptMessages,
             reserveAmount,
             committedSoFar,
+            priorCreatedLayers,
+            priorCreatedCompositions,
             signal: controller.signal,
             logger: deps.logger,
           });
@@ -567,6 +587,11 @@ async function runTurn(
     readonly promptMessages: readonly OpenAIChatMessage[];
     readonly reserveAmount: number;
     readonly committedSoFar: number;
+    /** Names the run's earlier turns created (durable agent_steps rows) —
+     * e2e bba72d51: the canvas can lag one live apply, so layer-ref
+     * validation also seeds from the run's own accepted proposals. */
+    readonly priorCreatedLayers: ReadonlySet<string>;
+    readonly priorCreatedCompositions: ReadonlySet<string>;
     readonly signal: AbortSignal;
     readonly logger: import("../logger.js").Logger;
   },
@@ -641,6 +666,8 @@ async function runTurn(
         signal: input.signal,
         log,
         canvas: request.canvas ?? null,
+        priorCreatedLayers: input.priorCreatedLayers,
+        priorCreatedCompositions: input.priorCreatedCompositions,
         onSideUsage: (used: { inputTokens: number; outputTokens: number }) => {
           sideUsage = {
             inputTokens: sideUsage.inputTokens + used.inputTokens,
@@ -856,15 +883,26 @@ async function resolveToolCalls(
      * present (the client omits it on hash-unchanged turns; the gateway is
      * stateless per turn, so absence means skip, never assume-empty). */
     readonly canvas?: TurnCanvas | null;
+    /** Layer/composition names the run's EARLIER turns created, extracted
+     * from the durable agent_steps rows (e2e bba72d51: the canvas can lag one
+     * live apply, so the canvas alone must never be the whole truth). */
+    readonly priorCreatedLayers?: ReadonlySet<string>;
+    readonly priorCreatedCompositions?: ReadonlySet<string>;
     readonly onSideUsage: (usage: { inputTokens: number; outputTokens: number }) => void;
   },
 ): Promise<TurnToolCall[]> {
   const resolved: TurnToolCall[] = [];
   // 2026-11-01 root-cause fix: a turn-local symbol table of layers/comps the
   // gateway can prove exist — canvas snapshot ∪ names earlier calls in THIS
-  // turn created. Write calls referencing anything else are rejected HERE
-  // (repairable, same-turn) instead of failing the run-end atomic apply.
+  // turn created ∪ names the run's EARLIER turns created (durable rows). Write
+  // calls referencing anything else are rejected HERE (repairable,
+  // same-turn) instead of failing the run-end atomic apply.
   const symbols: TurnSymbolTable = seedTurnSymbolTable(input.canvas);
+  foldCreationsInto(
+    symbols,
+    input.priorCreatedLayers ?? new Set<string>(),
+    input.priorCreatedCompositions ?? new Set<string>(),
+  );
   const hasCanvas = input.canvas != null;
   for (const call of input.calls) {
     const tool = registeredToolFor(call.name);

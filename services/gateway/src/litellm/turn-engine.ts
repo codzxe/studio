@@ -801,6 +801,100 @@ export function foldCreationsInto(
 }
 
 // ---------------------------------------------------------------------------
+// Durable run-created names (e2e run bba72d51, 2026-11-01: the canvas snapshot
+// lagged one live apply — a set_keyframes on the layer the PREVIOUS turn just
+// created was falsely rejected because the turn-local table only knew the
+// canvas. The run's OWN durable step rows are the complete truth.)
+// ---------------------------------------------------------------------------
+
+/** A durable agent_steps row, narrowed to what the extraction needs. */
+export interface StepRowForNames {
+  readonly tool: string;
+  readonly argsJson?: unknown;
+  readonly resultJson?: unknown;
+}
+
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value !== "string" || value === "") return value === "" ? undefined : value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function isAcceptedProposal(result: unknown): boolean {
+  if (typeof result !== "string") {
+    return (
+      typeof result === "object" &&
+      result !== null &&
+      "proposedBatch" in (result as Record<string, unknown>)
+    );
+  }
+  return result.includes('"proposedBatch"');
+}
+
+/**
+ * Layer/composition names THIS RUN created, extracted from its durable
+ * agent_steps rows (the model's own args — the compiled batches are client
+ * state, but the model's create calls carry the names it will reference).
+ * Only ACCEPTED proposals count (a result with a proposedBatch); rejected
+ * calls created nothing.
+ */
+export function createdNamesFromSteps(
+  rows: readonly StepRowForNames[],
+): { layers: ReadonlySet<string>; compositions: ReadonlySet<string> } {
+  const layers = new Set<string>();
+  const compositions = new Set<string>();
+  for (const row of rows) {
+    if (!isAcceptedProposal(row.resultJson)) continue;
+    const args = parseMaybeJson(row.argsJson);
+    if (typeof args !== "object" || args === null) continue;
+    const record = args as Record<string, unknown>;
+    const addLayer = (name: unknown): void => {
+      if (typeof name === "string" && name.length > 0) layers.add(name);
+    };
+    const addComp = (name: unknown): void => {
+      if (typeof name === "string" && name.length > 0) compositions.add(name);
+    };
+    switch (row.tool) {
+      case "studio.create_text": {
+        // Mirrors the compiler: an explicit name, else (with opacity) the
+        // synthesized text-derived name the follow-up prop.set references.
+        const name = record.name;
+        if (typeof name === "string" && name.length > 0) {
+          addLayer(name);
+        } else if (record.opacity !== undefined && typeof record.text === "string") {
+          addLayer(record.text.slice(0, 60));
+        }
+        break;
+      }
+      case "studio.create_composition":
+        addComp(record.name);
+        break;
+      case "studio.engine_commands": {
+        const steps = record.steps;
+        if (!Array.isArray(steps)) break;
+        for (const step of steps) {
+          if (typeof step !== "object" || step === null) continue;
+          const { command, params } = step as { command?: unknown; params?: unknown };
+          if (typeof command !== "string" || typeof params !== "object" || params === null) {
+            continue;
+          }
+          const name = (params as Record<string, unknown>).name;
+          if (command === "comp.new") addComp(name);
+          else if (/^layer\.new/.test(command)) addLayer(name);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return { layers, compositions };
+}
+
+// ---------------------------------------------------------------------------
 // studio.plan_edit — the structured-output side call (§8.4/§8.6, server-side)
 // ---------------------------------------------------------------------------
 
@@ -1024,6 +1118,10 @@ const NUMERIC_ARG_FIELDS: ReadonlySet<string> = new Set([
   "leading",
   "timeSeconds",
   "duration",
+  // Read-tool numeric leaves (e2e bba72d51: the model sent list_layers
+  // {depth:"2"} three times — each bounced RUN_INVALID_TOOL and the
+  // repetition guard had to kill the run).
+  "depth",
 ]);
 
 /** Write tools are exactly the catalog's kind:"write" entries. */
