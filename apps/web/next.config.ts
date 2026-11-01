@@ -87,7 +87,12 @@ const nextConfig: NextConfig = {
   // default, so the one entry below covers 127.0.0.1 on ANY port (the edge's
   // 3100, a direct 3000, whatever the fleet picks). Dev-only: the check
   // exists solely inside the dev server; `next build` ignores this key.
-  allowedDevOrigins: ["127.0.0.1"],
+  // `*.space-z.ai` covers the sandbox Preview Panel proxy
+  // (preview-chat-<chat-id>.space-z.ai): the FC proxy may forward the browser's
+  // origin while rewriting Host to the container, which the matcher would
+  // read as cross-site — allowlisting the wildcard keeps /_next/* chunks + the
+  // HMR socket flowing so the previewed page actually hydrates.
+  allowedDevOrigins: ["127.0.0.1", "space-z.ai", "*.space-z.ai"],
 
   turbopack: {
     rules: {
@@ -135,8 +140,19 @@ const nextConfig: NextConfig = {
           // the Vercel serving path shipped none of these. HSTS pins TLS;
           // XFO SAMEORIGIN blocks cross-site framing of authenticated pages
           // (clickjacking) while keeping the same-origin editor iframe.
-          { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
-          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          //
+          // XFO + HSTS are PRODUCTION-ONLY: the sandbox Preview Panel frames
+          // the app from preview-chat-<chat-id>.space-z.ai (a different origin
+          // than the panel host), and an unconditional SAMEORIGIN made Chrome
+          // render its "refused to connect" blank frame. `next dev` boots
+          // (NODE_ENV=development — the only way the dev/preview stack runs)
+          // drop both; `next build` + the Caddy edge keep the full set.
+          ...(process.env.NODE_ENV === "production"
+            ? [
+                { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+                { key: "X-Frame-Options", value: "SAMEORIGIN" },
+              ]
+            : []),
         ],
       },
     ];
