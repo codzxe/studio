@@ -705,9 +705,7 @@ export function createChatController(options: CreateChatControllerOptions): Chat
         ...(includeCanvas ? { canvas } : {}),
         // APPLY FEEDBACK: the previous turn's live-apply failures, sent ONCE —
         // the gateway renders them as the model's fix-it system note.
-        ...(run.liveApplyNotes.length > 0
-          ? { applyNotes: run.liveApplyNotes.splice(0) }
-          : {}),
+        ...(run.liveApplyNotes.length > 0 ? { applyNotes: run.liveApplyNotes.splice(0) } : {}),
       };
 
       // --- ONE bounded turn POST (the api-client owns same-key recovery) ---
@@ -819,7 +817,10 @@ export function createChatController(options: CreateChatControllerOptions): Chat
           // synthesizes one through the EXISTING §7.4 fold so the card
           // settles with the proposed-batch payload.
           emitToolResult(run, call.toolCallId, call.resultForModel);
-        } else if (call.tool === "studio.plan_edit" || WRITE_TOOL_INTENTS[call.tool] !== undefined) {
+        } else if (
+          call.tool === "studio.plan_edit" ||
+          WRITE_TOOL_INTENTS[call.tool] !== undefined
+        ) {
           // SERVER-SETTLED (§8.4): plan_edit AND every write tool resolve on
           // the gateway — the client NEVER executes them locally. A compiled
           // carrier rides the write branch above; WITHOUT one the gateway has

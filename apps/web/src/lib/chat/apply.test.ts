@@ -1039,7 +1039,10 @@ describe("createApplyController.applyLive (w8)", () => {
           label: "Agent: nudge the headline",
           atomic: true,
           steps: [
-            { command: "prop.set", params: { layer: "$request:r1", path: "transform/position", value: [120, 0] } },
+            {
+              command: "prop.set",
+              params: { layer: "$request:r1", path: "transform/position", value: [120, 0] },
+            },
           ],
         },
       }),

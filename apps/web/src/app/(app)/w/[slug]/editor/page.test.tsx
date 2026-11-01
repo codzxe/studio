@@ -10,10 +10,10 @@
  * natural unsupported state to prove the gate blocks the host.
  */
 
-import { render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorHostPayload } from "@/components/editor-host/types";
 import { __resetEditorWarmupForTests } from "@/lib/editor-warmup";
+import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   notFound: () => {
@@ -38,7 +38,9 @@ vi.mock("@/lib/gateway", () => ({
       this.code = init.code;
     }
     get isNotFound(): boolean {
-      return this.status === 404 || this.code === "NOT_FOUND" || this.code === "WORKSPACE_NOT_FOUND";
+      return (
+        this.status === 404 || this.code === "NOT_FOUND" || this.code === "WORKSPACE_NOT_FOUND"
+      );
     }
   },
   isGatewayHttpError: (error: unknown): boolean =>
@@ -61,7 +63,9 @@ let lastHostPayload: EditorHostPayload | null = null;
 vi.mock("@/components/editor-host/editor-host", () => ({
   EditorHost: (props: { payload: EditorHostPayload }) => {
     lastHostPayload = props.payload;
-    return <div data-testid="editor-host-stub" data-project={props.payload.manifest.project.name} />;
+    return (
+      <div data-testid="editor-host-stub" data-project={props.payload.manifest.project.name} />
+    );
   },
 }));
 
@@ -194,7 +198,7 @@ describe("editor RSC route", () => {
   it("resolves the project by slug in ONE gateway call and passes the mapped payload", async () => {
     scriptHappyPath();
     const page = await renderPage("launch-film");
-    render(<>{page}</>);
+    render(page);
 
     // The gate's probe is async (one adapter request) — the host appears once
     // the verdict lands.
@@ -241,7 +245,7 @@ describe("editor RSC route", () => {
     stubWebgl2(null);
     scriptHappyPath();
     const page = await renderPage("launch-film");
-    render(<>{page}</>);
+    render(page);
 
     // The gate replaces the canvas page with the §8.11 full-page state; the
     // host (and its wasm boot) never runs — `lastHostPayload` stays null.
@@ -277,7 +281,11 @@ describe("editor RSC route", () => {
   it("redirects an expired session to /sign-in with a next round-trip", async () => {
     gatewayMock.mockImplementation(() =>
       Promise.reject(
-        new GatewayHttpError({ status: 401, code: "UNAUTHORIZED", message: "Sign in to continue." }),
+        new GatewayHttpError({
+          status: 401,
+          code: "UNAUTHORIZED",
+          message: "Sign in to continue.",
+        }),
       ),
     );
     await expect(renderPage("launch-film")).rejects.toThrow(
@@ -296,7 +304,7 @@ describe("editor RSC route", () => {
       throw new Error(`unexpected gateway path: ${path}`);
     });
     const page = await renderPage("launch-film");
-    render(<>{page}</>);
+    render(page);
     // No dead-end empty state: the host renders and receives the null-version
     // payload (first save creates v1 through the root-upload path, W3-G3).
     expect(await screen.findByTestId("editor-host-stub")).toBeInTheDocument();

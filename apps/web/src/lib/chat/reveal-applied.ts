@@ -34,10 +34,7 @@ import type { EditorBridge } from "@studio/editor-bridge";
 
 import { firstAffectedTimeTicksOfBatch, ticksToSeconds } from "./preview";
 
-export async function revealAppliedPlan(
-  bridge: EditorBridge,
-  batch: AgentBatch,
-): Promise<void> {
+export async function revealAppliedPlan(bridge: EditorBridge, batch: AgentBatch): Promise<void> {
   // 1+2. Reveal: the affected comp at the plan's first named time (the
   // exact moves of the plan card's manual reveal, driven by the apply flow).
   try {

@@ -5,10 +5,10 @@ import { cache } from "react";
 import { EditorCapabilityGate } from "@/components/editor-host/capability-gate";
 import { EditorHost } from "@/components/editor-host/editor-host";
 import type { EditorHostPayload } from "@/components/editor-host/types";
-import type { ProjectResolve } from "@studio/contracts";
-import { gatewayCall, isGatewayHttpError } from "@/lib/gateway";
 import { parseManifest } from "@/lib/editor-session";
+import { gatewayCall, isGatewayHttpError } from "@/lib/gateway";
 import { pageMetadata } from "@/lib/seo";
+import type { ProjectResolve } from "@studio/contracts";
 
 /**
  * The editor route (M3.5): `/w/:projectSlug/editor`.

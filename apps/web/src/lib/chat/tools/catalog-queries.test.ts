@@ -66,9 +66,7 @@ describe("studio.list_commands (w8 read-query tier)", () => {
   it("includes a readQueries group in the LOCAL fallback (old dists surface them too)", async () => {
     const result = await runListCommands({}, deadRegistryBridge());
     expect(result.source).toBe("local");
-    const flat = (result.readQueries ?? []).flatMap((group) =>
-      group.commands.map((row) => row.id),
-    );
+    const flat = (result.readQueries ?? []).flatMap((group) => group.commands.map((row) => row.id));
     // The ids the params docs reference are all there now.
     expect(flat).toContain("anim.builtinPresets");
     expect(flat).toContain("text.presets");
@@ -92,10 +90,7 @@ describe("studio.list_commands (w8 read-query tier)", () => {
 
 describe("studio.describe_command (w8 read-query tier)", () => {
   it("ANSWERS for anim.builtinPresets with readOnly: true — never the dead-end refusal", async () => {
-    const described = await runDescribeCommand(
-      { command: "anim.builtinPresets" },
-      presetsBridge(),
-    );
+    const described = await runDescribeCommand({ command: "anim.builtinPresets" }, presetsBridge());
     expect(described.command).toBe("anim.builtinPresets");
     expect(described.readOnly).toBe(true);
     expect(described.title).toBe("Built-in Animation Presets");
@@ -121,7 +116,9 @@ describe("studio.describe_command (w8 read-query tier)", () => {
     // unknown-command → TOOL_FAILED; the GATE must answer first with
     // UNKNOWN_COMMAND (exact ids only, fail-closed).
     const bridge = presetsBridge();
-    await expect(runDescribeCommand({ command: "anim.builtinpreset" }, bridge)).rejects.toMatchObject({
+    await expect(
+      runDescribeCommand({ command: "anim.builtinpreset" }, bridge),
+    ).rejects.toMatchObject({
       code: "UNKNOWN_COMMAND",
     });
   });

@@ -1288,7 +1288,10 @@ export function createApplyController(options: CreateApplyControllerOptions): Ap
       const previousLabel = appliedLabels.get(plan.runId);
       if (previous !== undefined && previousLabel !== undefined) {
         // Earlier live turns, newest-first, skipping unverifiable null labels.
-        earlierLiveLabels.push(previousLabel, ...previous.labels.filter((l): l is string => l !== null));
+        earlierLiveLabels.push(
+          previousLabel,
+          ...previous.labels.filter((l): l is string => l !== null),
+        );
       }
       liveRuns.add(plan.runId);
     } else {

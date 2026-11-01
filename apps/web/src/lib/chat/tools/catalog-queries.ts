@@ -188,38 +188,37 @@ export async function runListCommands(
   const readQueryGroups = (): CatalogListResult["readQueries"] => {
     const toRows = (ids: readonly string[]): Array<{ id: string; title: string | null }> =>
       ids.map((id) => ({ id, title: null }));
-    const grouped: Map<string, Array<{ id: string; title: string | null }>> =
-      live === null
-        ? (() => {
-            const out = new Map<string, Array<{ id: string; title: string | null }>>();
-            for (const [prefix, ids] of readQueryIdsByCategory()) {
-              if (category !== undefined && prefix !== category) continue;
-              out.set(prefix, toRows(ids));
-            }
-            return out;
-          })()
-        : (() => {
-            const groups = new Map<string, Array<{ id: string; title: string | null }>>();
-            for (const entry of live ?? []) {
-              const id = typeof entry.id === "string" ? entry.id : null;
-              if (id === null || !isReadEngineQuery(id)) continue;
-              if (category !== undefined && !id.startsWith(`${category}.`)) continue;
-              const label =
-                typeof entry.label === "string" && entry.label.length > 0 ? entry.label : null;
-              const prefix = id.split(".")[0] ?? "";
-              const bucket = groups.get(prefix);
-              const row = { id, title: label };
-              if (bucket === undefined) groups.set(prefix, [row]);
-              else bucket.push(row);
-            }
-            if (groups.size > 0) return groups;
-            const out = new Map<string, Array<{ id: string; title: string | null }>>();
-            for (const [prefix, ids] of readQueryIdsByCategory()) {
-              if (category !== undefined && prefix !== category) continue;
-              out.set(prefix, toRows(ids));
-            }
-            return out;
-          })();
+    const grouped: Map<string, Array<{ id: string; title: string | null }>> = live === null
+      ? (() => {
+          const out = new Map<string, Array<{ id: string; title: string | null }>>();
+          for (const [prefix, ids] of readQueryIdsByCategory()) {
+            if (category !== undefined && prefix !== category) continue;
+            out.set(prefix, toRows(ids));
+          }
+          return out;
+        })()
+      : (() => {
+          const groups = new Map<string, Array<{ id: string; title: string | null }>>();
+          for (const entry of live ?? []) {
+            const id = typeof entry.id === "string" ? entry.id : null;
+            if (id === null || !isReadEngineQuery(id)) continue;
+            if (category !== undefined && !id.startsWith(`${category}.`)) continue;
+            const label =
+              typeof entry.label === "string" && entry.label.length > 0 ? entry.label : null;
+            const prefix = id.split(".")[0] ?? "";
+            const bucket = groups.get(prefix);
+            const row = { id, title: label };
+            if (bucket === undefined) groups.set(prefix, [row]);
+            else bucket.push(row);
+          }
+          if (groups.size > 0) return groups;
+          const out = new Map<string, Array<{ id: string; title: string | null }>>();
+          for (const [prefix, ids] of readQueryIdsByCategory()) {
+            if (category !== undefined && prefix !== category) continue;
+            out.set(prefix, toRows(ids));
+          }
+          return out;
+        })();
     if (grouped.size === 0) return undefined;
     return [...grouped.entries()]
       .map(([cat, commands]) => ({

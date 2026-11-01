@@ -100,7 +100,9 @@ describe("revealAppliedPlan", () => {
   it("fails quiet: a comp.open failure still presses play, never throws", async () => {
     const { bridge, calls } = fakeBridge({ activeComp: 5, failOn: "comp.open" });
     await expect(revealAppliedPlan(bridge, COMPOSE_BATCH)).resolves.toBeUndefined();
-    expect(calls).toEqual([{ kind: "request", command: "ui.playback", params: { action: "play" } }]);
+    expect(calls).toEqual([
+      { kind: "request", command: "ui.playback", params: { action: "play" } },
+    ]);
   });
 
   it("fails quiet: a ui.playback failure resolves without throwing", async () => {

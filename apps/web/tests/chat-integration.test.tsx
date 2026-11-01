@@ -1422,12 +1422,12 @@ describe("M4-L web chat integration — read-only guarantees (M4.6, round 12)", 
     };
     harness.wire.feed(
       runStarted(0),
-      toolStarted(
-        1,
-        "call_text_invalid",
-        "studio.create_text",
-        { text: "", name: "Background Void", position: [1920, 1080], size: 1 },
-      ),
+      toolStarted(1, "call_text_invalid", "studio.create_text", {
+        text: "",
+        name: "Background Void",
+        position: [1920, 1080],
+        size: 1,
+      }),
       turnCompleted(2, 0, {
         toolCalls: [
           {
