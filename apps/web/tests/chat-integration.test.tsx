@@ -1393,6 +1393,86 @@ describe("M4-L web chat integration — read-only guarantees (M4.6, round 12)", 
     harness.wire.finishTurn();
     await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
   });
+
+  it("echoes the gateway's INVALID_TOOL_CALL verdict for a rejected write call — never a local refusal", async () => {
+    const { harness } = await mountSeeded();
+    await waitForModels(harness);
+
+    // THE REAL WIRE (user-reported '!"studio.create_text" cannot run in this
+    // session'): the model proposed create_text with args the strict schema
+    // rejects (empty text, an unrecognized "opacity" key). The gateway
+    // settles the call SERVER-side — INVALID_TOOL_CALL, no compiled
+    // proposal — and the loop must echo THAT verdict: it is the chip's real
+    // error and the model's repair signal. The old fall-through executed it
+    // locally, surfaced the misleading '"studio.create_text" cannot run in
+    // this session' chip, fed the model a FALSE CLIENT_TOOL_UNAVAILABLE, and
+    // the repetition guard then killed the run.
+    act(() => {
+      harness.getApi().send({ message: "add a background text layer" });
+    });
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(1));
+    const queriesBefore = harness.bridgeCalls.queries.length;
+    const verdict = {
+      error: "INVALID_TOOL_CALL",
+      message:
+        'Invalid arguments for studio.create_text: text: Too small: expected string to have >=1 characters; opacity: Unrecognized key "opacity"',
+    };
+    harness.wire.feed(
+      runStarted(0),
+      toolStarted(
+        1,
+        "call_text_invalid",
+        "studio.create_text",
+        { text: "", name: "Background Void", position: [1920, 1080], size: 1, opacity: "0" },
+      ),
+      turnCompleted(2, 0, {
+        toolCalls: [
+          {
+            toolCallId: "call_text_invalid",
+            tool: "studio.create_text",
+            args: { text: "", name: "Background Void", position: [1920, 1080], size: 1, opacity: "0" },
+            resultForModel: verdict,
+            proposal: null,
+          },
+        ],
+      }),
+    );
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
+    const transcript = harness.wire.posts[1]?.body.messages as Array<Record<string, unknown>>;
+    expect(transcript[2]).toEqual({
+      role: "tool_result",
+      toolCallId: "call_text_invalid",
+      tool: "studio.create_text",
+      result: verdict,
+    });
+    // The chip settles FAILED with the gateway's REAL message — the user
+    // sees WHY the write was refused, never "cannot run in this session".
+    const card = screen.getByTestId("tool-card");
+    expect(card.dataset.status).toBe("failed");
+    expect(card.dataset.tool).toBe("studio.create_text");
+    expect(screen.getByTestId("tool-card-summary").textContent).toContain("Invalid arguments");
+    expect(screen.getByTestId("tool-card-summary").textContent).not.toContain(
+      "cannot run in this session",
+    );
+    // ZERO new bridge activity: a server-settled write never touches the editor.
+    expect(harness.bridgeCalls.queries).toHaveLength(queriesBefore);
+    expect(harness.bridgeCalls.executes).toEqual([]);
+    expect(harness.bridgeCalls.batches).toBe(0);
+    // No plan card: an uncompiled call contributes NO proposal to apply.
+    expect(screen.queryByTestId("plan-card")).not.toBeInTheDocument();
+
+    // The model repairs the args (the verdict told it exactly what broke)
+    // and the run completes.
+    harness.wire.feed(
+      runStarted(0),
+      turnCompleted(4, 1, {
+        assistantText: "Let me fix the layer text and try again.",
+      }),
+    );
+    harness.wire.finishTurn();
+    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("done"));
+  });
 });
 
 // ---------------------------------------------------------------------------

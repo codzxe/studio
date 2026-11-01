@@ -807,23 +807,37 @@ export function createChatController(options: CreateChatControllerOptions): Chat
           // synthesizes one through the EXISTING §7.4 fold so the card
           // settles with the proposed-batch payload.
           emitToolResult(run, call.toolCallId, call.resultForModel);
-        } else if (call.tool === "studio.plan_edit") {
-          // SERVER-SETTLED (§8.4): plan_edit is the gateway's structured
-          // side-call — it NEVER executes locally. A compiled proposal rides
-          // the write branch above; a DEGRADED entry (server compile failed,
-          // proposal absent) must still echo the gateway's verdict — its
-          // resultForModel carries {note, plan} on success or
-          // {error:"PLAN_INVALID"} on failure. Attempting a local run instead
-          // yields the misleading CLIENT_TOOL_UNAVAILABLE chip ("cannot run
-          // in this session") and feeds the model a FALSE failure on the
-          // next turn (w8 plan_edit-chip fix).
+        } else if (call.tool === "studio.plan_edit" || WRITE_TOOL_INTENTS[call.tool] !== undefined) {
+          // SERVER-SETTLED (§8.4): plan_edit AND every write tool resolve on
+          // the gateway — the client NEVER executes them locally. A compiled
+          // carrier rides the write branch above; WITHOUT one the gateway has
+          // already settled the call with its verdict in resultForModel
+          // (INVALID_TOOL_CALL for args the strict schema rejected — e.g. an
+          // empty create_text text or an unrecognized "opacity" key —
+          // UNKNOWN_TOOL, PLAN_INVALID for a degraded plan_edit), and no
+          // proposal can ever exist for such a call. Echo THAT verdict
+          // verbatim: it is both the chip's real error and the model's real
+          // repair signal on the next turn. Attempting a local run instead
+          // yields the misleading '"studio.create_text" cannot run in this
+          // session' chip and feeds the model a FALSE CLIENT_TOOL_UNAVAILABLE
+          // that breaks the repair loop — the repetition guard then kills the
+          // run ("kept proposing the same change") (w8 fix, generalized past
+          // plan_edit). Only a verdict-LESS write call (a wire that never
+          // settled it) keeps the typed fail-closed refusal.
+          const verdict =
+            call.resultForModel === undefined || call.resultForModel === null
+              ? {
+                  error: "CLIENT_TOOL_UNAVAILABLE",
+                  message: `"${call.tool}" cannot run in this session.`,
+                }
+              : call.resultForModel;
           run.transcript.push({
             role: "tool_result",
             toolCallId: call.toolCallId,
             tool: call.tool,
-            result: call.resultForModel,
+            result: verdict,
           });
-          emitToolResult(run, call.toolCallId, call.resultForModel);
+          emitToolResult(run, call.toolCallId, verdict);
         } else {
           // READ/GENERATIVE tool: execute locally, echo the real result.
           const executed = await executeTool(run, call);
