@@ -90,11 +90,14 @@ import type {
 // Loop guards (PINNED — docs/research/round12-design.md "Battle-testing")
 // ---------------------------------------------------------------------------
 
-/** Per-run step cap (design doc: CHAT_MAX_STEPS default 24). */
-export const CHAT_MAX_CLIENT_STEPS = 24;
+/** Per-run step cap (design doc: CHAT_MAX_STEPS default 24; round 14: 48 —
+ * the 21-tool Google-launch run died at 24 with sections still unbuild, and
+ * an agent that stops is an agent that loses its user's work). */
+export const CHAT_MAX_CLIENT_STEPS = 48;
 
-/** Whole-run wall-clock cap (10 minutes; abort code RUN_TIMEOUT). */
-export const CHAT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
+/** Whole-run wall-clock cap (15 minutes; abort code RUN_TIMEOUT; round 14:
+ * 10 → 15 — long real builds with per-turn applies outgrew 10 minutes). */
+export const CHAT_RUN_TIMEOUT_MS = 15 * 60 * 1000;
 
 /** The §7.3-style abort code when the step cap fires. */
 export const RUN_STEP_LIMIT_CODE = "RUN_STEP_LIMIT";
@@ -115,12 +118,27 @@ const REPETITION_NUDGE_AT = 2;
 /** Repetition guard: this occurrence aborts with RUN_STEP_LIMIT. */
 const REPETITION_ABORT_AT = 3;
 
+/**
+ * Round 14 — how many times ONE user message may auto-continue after the
+ * loop's caps fire. The step cap, the wall clock and the repetition guard no
+ * longer END the work: they salvage every unapplied carrier (live-apply or
+ * the remainder plan), fold a clean run.completed, and start a continuation
+ * run so the build goes on — bounded here so a pathological loop still
+ * terminates (each continuation re-enters with the FULL thread history + a
+ * fresh canvas snapshot, and the caps still guard every run).
+ */
+export const MAX_AUTO_CONTINUATIONS = 3;
+
+/** The continuation user message (the model reads it as the resume order). */
+export const continuationMessage = (depth: number, reason: string): string =>
+  `Continue the plan from its first INCOMPLETE step (the run hit its ${reason}; automatic continuation ${depth} of ${MAX_AUTO_CONTINUATIONS}). Everything already applied is saved in the canvas — extend it, never re-create it.`;
+
 /** The steer nudge injected at the repetition guard's 2nd occurrence. */
 export const repetitionNudge = (tool: string): string =>
   `You already proposed ${tool}; continue with the next step.`;
 
 /** Turn transcript parts bound (contracts TURN_REQUEST_SCHEMA; mirrored). */
-const MAX_TURN_MESSAGE_PARTS = 64;
+const MAX_TURN_MESSAGE_PARTS = 160;
 
 /** Contracts `MAX_BATCH_LABEL_LENGTH` (engine-batch) — batch label clamp. */
 const MAX_BATCH_LABEL_LENGTH = 280;
@@ -140,6 +158,8 @@ const MAX_PLAN_SUMMARY_LENGTH = 280;
 const WRITE_TOOL_INTENTS: Readonly<Record<string, PlanIntent>> = {
   "studio.create_composition": "create",
   "studio.create_text": "create",
+  "studio.create_solid": "create",
+  "studio.create_camera": "create",
   "studio.set_properties": "edit",
   "studio.add_effect": "style",
   "studio.set_keyframes": "animate",
@@ -219,6 +239,10 @@ export function writeToolSummary(toolId: string, args: Record<string, unknown>):
       return `Run an engine script (${str(args.code).length} chars)`;
     case "studio.add_asset":
       return `Add ${str(args.kind)} asset "${str(args.name)}"`;
+    case "studio.create_solid":
+      return `Add solid layer "${str(args.name)}"`;
+    case "studio.create_camera":
+      return `Add camera layer "${str(args.name)}"`;
     case "studio.undo_run":
       return "Undo the most recent applied agent run";
     case "studio.save_version":
@@ -477,8 +501,13 @@ interface ActiveRun {
   transcript: TurnMessage[];
   /** §3.4 steer texts waiting for the next turn POST. */
   pendingSteers: string[];
-  /** Accumulated write-tool carrier EditPlans (merged at run end). */
-  proposals: EditPlan[];
+  /**
+   * Accumulated write-tool carriers WITH their originating calls (round 14:
+   * the call rides along so salvage can live-apply the still-unapplied
+   * remainder and finishRun can merge ONLY the unapplied carriers — the
+   * merged-plan re-execute that duplicated live-applied layers).
+   */
+  proposals: Array<{ call: TurnToolCall; plan: EditPlan }>;
   /** Next model call index (the idempotency key's stepIndex). */
   step: number;
   /** Repetition guard counts: `${tool}:${JSON.stringify(args)}` → occurrences. */
@@ -528,6 +557,16 @@ interface ActiveRun {
    * (run 59cead8c apologized and re-created the composition verbatim).
    * Bounded to the last 3 (TURN_REQUEST_SCHEMA caps the wire). */
   liveApplyNotes: string[];
+  /** Round 14: toolCallIds whose carriers CONFIRMED live-applied (the
+   * remainder merge + salvage both read this — never re-execute applied
+   * work). */
+  readonly liveAppliedCalls: Set<string>;
+  /** Round 14: APPLY RECEIPTS — one line per confirmed apply (summary +
+   * version), sent once on the next turn body so the model can VERIFY its
+   * work instead of assuming (bounded ≤ 8 on the wire). */
+  liveApplyReceipts: string[];
+  /** Round 14: how many AUTO-continuations this run chain already spent. */
+  continuationDepth: number;
 }
 
 /**
@@ -652,25 +691,13 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     for (;;) {
       if (disposed || run.stopped) return;
 
-      // --- loop guards (PINNED) ---
+      // --- loop guards (round 14: SALVAGE + AUTO-CONTINUE, never a hard stop) ---
       if (run.step >= CHAT_MAX_CLIENT_STEPS || run.transcript.length > MAX_TURN_MESSAGE_PARTS) {
-        raiseError({
-          code: RUN_STEP_LIMIT_CODE,
-          message: "The run reached its step limit.",
-          retryable: false,
-        });
-        run.finished = true;
-        flushQueue();
+        await endRunAtLimit(run, "step limit", true);
         return;
       }
       if (now() - run.startedAt > CHAT_RUN_TIMEOUT_MS) {
-        raiseError({
-          code: RUN_TIMEOUT_CODE,
-          message: "The run took too long and was stopped.",
-          retryable: false,
-        });
-        run.finished = true;
-        flushQueue();
+        await endRunAtLimit(run, "time limit", true);
         return;
       }
 
@@ -706,6 +733,11 @@ export function createChatController(options: CreateChatControllerOptions): Chat
         // APPLY FEEDBACK: the previous turn's live-apply failures, sent ONCE —
         // the gateway renders them as the model's fix-it system note.
         ...(run.liveApplyNotes.length > 0 ? { applyNotes: run.liveApplyNotes.splice(0) } : {}),
+        // APPLY RECEIPTS (round 14): the previous turns' CONFIRMED applies —
+        // the model's verification signal (what exists, saved, never re-create).
+        ...(run.liveApplyReceipts.length > 0
+          ? { applyReceipts: run.liveApplyReceipts.splice(0, 8) }
+          : {}),
       };
 
       // --- ONE bounded turn POST (the api-client owns same-key recovery) ---
@@ -802,9 +834,11 @@ export function createChatController(options: CreateChatControllerOptions): Chat
         run.repetition.set(repetitionKey, occurrences);
 
         if (call.proposal?.compiled !== undefined && call.proposal?.compiled !== null) {
-          // WRITE tool: accumulate the carrier; echo the propose-only result.
-          // The client NEVER executes write tools during the run.
-          run.proposals.push(carrierEditPlan(call));
+          // WRITE tool: accumulate the carrier WITH its call (round 14 — the
+          // salvage + remainder flows need the call, not just the plan); echo
+          // the propose-only result. The client NEVER executes write tools
+          // during the turn itself — driveLiveApply lands them right after.
+          run.proposals.push({ call, plan: carrierEditPlan(call) });
           turnWriteCalls.push(call);
           run.transcript.push({
             role: "tool_result",
@@ -871,13 +905,7 @@ export function createChatController(options: CreateChatControllerOptions): Chat
         }
       }
       if (repeatedThrice) {
-        raiseError({
-          code: RUN_STEP_LIMIT_CODE,
-          message: "The run kept proposing the same change.",
-          retryable: false,
-        });
-        run.finished = true;
-        flushQueue();
+        await endRunAtLimit(run, "repetition guard", false);
         return;
       }
 
@@ -928,12 +956,26 @@ export function createChatController(options: CreateChatControllerOptions): Chat
    * One turn's write carriers, applied in order through the apply engine's
    * `applyLive` (resolve→patch→engine.batch→saveNow, NO gateway report).
    * Gates per carrier: the engine must support applyLive, the user's
-   * auto-apply setting must not be off, the carrier must be server-compiled
-   * low/medium risk with no ambiguous layer names, and its intent must be
-   * auto-applyable (the same contracts gate the run-end verdict uses). Any
-   * failure marks the run live-broken — later turns stop trying, and
-   * finishRun never re-executes the merged plan (earlier live-applied turns
-   * would duplicate their layers).
+   * auto-apply setting must not be off, and its intent must be
+   * auto-applyable (the same contracts gate the run-end verdict uses).
+   *
+   * ROUND 14 — THE CONTINUOUS-APPLY FIX: carriers WITH layer-name resolution
+   * requests are NO LONGER SKIPPED. The old gate
+   * (`resolutionRequests.length > 0 → continue`) silently excluded every
+   * carrier that references a layer by name — add_effect, set_keyframes,
+   * set_properties, apply_preset — so only creation tools ever applied
+   * during the run and every style/animation change waited for the end.
+   * The client apply engine resolves names against the LIVE project at
+   * apply time, and this chain runs AFTER the earlier carriers of the same
+   * turn — so a same-turn create_text → add_effect pair resolves the fresh
+   * layer (the settle-order fix, at the apply seam). A name that genuinely
+   * fails resolution surfaces as a typed applyLive failure → liveApplyNotes
+   * → the model's fix-it note next turn.
+   *
+   * Any failure marks the run live-broken — later turns stop trying, and
+   * finishRun merges ONLY the un-applied remainder (the liveAppliedCalls
+   * ledger below), so the end-of-run plan can never re-execute what already
+   * landed (the old full-merge duplicated live-applied layers).
    */
   const driveLiveApply = async (run: ActiveRun, calls: readonly TurnToolCall[]): Promise<void> => {
     const engine = options.apply;
@@ -947,11 +989,11 @@ export function createChatController(options: CreateChatControllerOptions): Chat
       // The same §7.3 shape gate the run-end verdict uses (risk ≠ high,
       // no approval flag, auto-applyable intent) on the carrier plan.
       if (!isAutoApplicable(carrierEditPlan(call))) continue;
-      if (compiled.resolutionRequests.length > 0) continue;
       const plan: ApplicablePlan = {
         runId: run.runId,
         compiledBatch: compiled.batch,
       };
+      const carrierSummary = carrierEditPlan(call).summary;
       run.liveChain = run.liveChain.then(async () => {
         if (disposed || run.stopped || run.liveBroken) return;
         try {
@@ -959,6 +1001,14 @@ export function createChatController(options: CreateChatControllerOptions): Chat
           if (outcome.ok) {
             run.liveApplied = true;
             run.liveVersionId = outcome.versionId;
+            run.liveAppliedCalls.add(call.toolCallId);
+            // APPLY RECEIPT (round 14): the model's verification signal —
+            // exactly what landed, with the saved version. Rides the next
+            // turn body; bounded ≤ 8 on the wire.
+            run.liveApplyReceipts.push(
+              `Applied: ${carrierSummary} (saved ${outcome.versionId})`.slice(0, 300),
+            );
+            if (run.liveApplyReceipts.length > 8) run.liveApplyReceipts.splice(0, 1);
           } else {
             run.liveBroken = true;
             // APPLY FEEDBACK (2026-11-01): record WHY — the next turn POST
@@ -987,16 +1037,83 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     await run.liveChain;
   };
 
+  // -----------------------------------------------------------------------
+  // Round 14 — SALVAGE + AUTO-CONTINUE: the caps no longer end the work.
+  // -----------------------------------------------------------------------
+
+  /**
+   * The step cap / wall clock / repetition guard no longer hard-stop the
+   * run ("The run reached its step limit." + everything after it wasted).
+   * They now: (1) SALVAGE every un-applied carrier through the same live
+   * chain the turns use — the work lands even though the loop stops; (2)
+   * fold the SAME clean run-end a natural finish uses (remainder plan +
+   * end marker + run.completed — the thread stays usable, no error phase);
+   * (3) surface ONE informational notice (not a failure fold — the work
+   * landed); (4) AUTO-CONTINUE the build with a fresh run that inherits the
+   * full thread history + a fresh canvas snapshot, so the model resumes its
+   * plan instead of the user re-prompting and the model re-creating. Bounded
+   * by MAX_AUTO_CONTINUATIONS; a queued user send always wins.
+   */
+  const endRunAtLimit = async (
+    run: ActiveRun,
+    reason: string,
+    continueRun: boolean,
+  ): Promise<void> => {
+    const unapplied = run.proposals
+      .filter((entry) => !run.liveAppliedCalls.has(entry.call.toolCallId))
+      .map((entry) => entry.call);
+    if (unapplied.length > 0 && !run.liveBroken) {
+      await driveLiveApply(run, unapplied);
+    }
+    const hadQueuedSends = queue.length > 0;
+    await finishRun(run);
+    if (disposed || run.stopped) return;
+    fireOnError({
+      code: reason === "time limit" ? RUN_TIMEOUT_CODE : RUN_STEP_LIMIT_CODE,
+      message: `The run reached its ${reason} — everything proposed so far was applied and saved${continueRun ? "; continuing automatically." : "."}`,
+    });
+    // The repetition guard signals a BROKEN loop, not an unfinished plan —
+    // auto-continuing it would repeat the malfunction in a fresh run (the
+    // repetition map is per-run). Only a genuine cap (steps / time) continues.
+    if (
+      continueRun &&
+      !hadQueuedSends &&
+      queue.length === 0 &&
+      run.continuationDepth < MAX_AUTO_CONTINUATIONS
+    ) {
+      const depth = run.continuationDepth + 1;
+      const text = continuationMessage(depth, reason);
+      commit(applyUserMessage(snapshot, { id: crypto.randomUUID(), text }));
+      startRun({ ...run.input, message: text }, { continuationDepth: depth });
+      return;
+    }
+    flushQueue();
+  };
+
   const finishRun = async (run: ActiveRun): Promise<void> => {
     run.ending = true;
 
-    // mergeEditPlans is null for ZERO mergeable carriers — both a
-    // proposal-less run AND one whose every carrier is a `studio.undo_run`
-    // proposal (mergeEditPlans filters those out; null is a DESIGNED value,
-    // contracts/edit-plan.ts mergedCarrierPlan parity comment). Either way
-    // there is no plan to POST, but the gateway row still needs the end
-    // marker.
-    const merged = mergeEditPlans(run.proposals);
+    // ROUND 14 — REMAINDER MERGE: only the carriers that did NOT confirm
+    // live-applied enter the run-end plan. The old code merged EVERY carrier
+    // — when a mid-run apply failure marked the run live-broken, the run-end
+    // plan still contained the already-applied creates, and the user's next
+    // Apply (or the auto-apply drive on a NOT-liveApplied run) re-executed
+    // them: duplicated compositions/layers, the exact "it made everything
+    // twice" complaint. mergeEditPlans is null for ZERO mergeable carriers —
+    // both a fully-applied run AND a proposal-less one (undo_run-only runs
+    // filter out; null is a DESIGNED value, contracts/edit-plan.ts
+    // mergedCarrierPlan parity comment) — the end marker still posts.
+    const remainder = run.proposals.filter(
+      (entry) => !run.liveAppliedCalls.has(entry.call.toolCallId),
+    );
+    const allApplied = run.proposals.length > 0 && remainder.length === 0;
+    // All-applied runs still submit the FULL merge — display-only (the
+    // autoAppliedRuns ledger + the applied fold below keep the auto-apply
+    // drive and the verdict from re-executing it; the card is the run's
+    // honest "here is everything that landed" record and its Undo surface).
+    const merged = allApplied
+      ? mergeEditPlans(run.proposals.map((entry) => entry.plan))
+      : mergeEditPlans(remainder.map((entry) => entry.plan));
     if (merged !== null) {
       try {
         // A plan-bearing submit always answers the RunPlanResponse arm —
@@ -1110,7 +1227,7 @@ export function createChatController(options: CreateChatControllerOptions): Chat
     startRun(next);
   };
 
-  const startRun = (input: ChatSendInput): void => {
+  const startRun = (input: ChatSendInput, opts?: { readonly continuationDepth?: number }): void => {
     const runId = newRunId();
     const run: ActiveRun = {
       runId,
@@ -1152,6 +1269,9 @@ export function createChatController(options: CreateChatControllerOptions): Chat
       liveVersionId: null,
       liveChain: Promise.resolve(),
       liveApplyNotes: [],
+      liveAppliedCalls: new Set<string>(),
+      liveApplyReceipts: [],
+      continuationDepth: opts?.continuationDepth ?? 0,
     };
     lastInput = input;
     activeRun = run;

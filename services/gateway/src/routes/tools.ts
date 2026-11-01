@@ -246,7 +246,8 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
       // AUD-C5: the charge lands BEFORE the Tavily call — the ledger's replay
       // is the durable execution gate (a same-key retry after the in-memory
       // TTL answers 409 instead of re-running the provider for free).
-      const idempotencyHeader = c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key");
+      const idempotencyHeader =
+        c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key");
       await chargeToolCreditsUpfront({
         deps,
         workspaceId: workspace.id,
@@ -383,7 +384,8 @@ export function registerToolRoutes(deps: GatewayDeps): Hono<AppBindings> {
       // AUD-C5: atomic charge BEFORE the provider call — the ledger's replay
       // is the durable execution gate (same-key retry after the in-memory
       // TTL → 409, never a free second generation).
-      const idempotencyHeader = c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key");
+      const idempotencyHeader =
+        c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key");
       await chargeToolCreditsUpfront({
         deps,
         workspaceId: workspace.id,

@@ -501,11 +501,11 @@ const V3_NEW_TOOL_IDS = [
 ] as const;
 
 describe("golden prompts — the v3 system prompt (catalog v3 + client-driven loop)", () => {
-  it("names EVERY catalog tool: all 10 read ids, all 11 write ids, the 8 new ids verbatim", () => {
-    // Round-12 "tool catalog v3": 10 read + 11 write = 21 on the wire.
-    expect(TOOL_LIST).toHaveLength(21);
+  it("names EVERY catalog tool: all 10 read ids, all 13 write ids, the new ids verbatim", () => {
+    // Round-12 v3 + round-14 specific tools: 10 read + 13 write = 23 on the wire.
+    expect(TOOL_LIST).toHaveLength(23);
     expect(TOOL_LIST.filter((tool) => tool.kind === "read")).toHaveLength(10);
-    expect(WRITE_TOOL_IDS).toHaveLength(11);
+    expect(WRITE_TOOL_IDS).toHaveLength(13);
     for (const tool of TOOL_LIST) {
       expect(SYSTEM_PROMPT, tool.id).toContain(tool.id);
     }
@@ -515,7 +515,7 @@ describe("golden prompts — the v3 system prompt (catalog v3 + client-driven lo
     for (const id of V3_NEW_TOOL_IDS) {
       expect(SYSTEM_PROMPT, id).toContain(id);
     }
-    expect(SYSTEM_PROMPT).toContain("Write tools (11)");
+    expect(SYSTEM_PROMPT).toContain("Write tools (13)");
     expect(SYSTEM_PROMPT).toContain("PROPOSE-ONLY");
   });
 
@@ -821,7 +821,18 @@ describe("golden prompts — REAL compiler + REAL contracts deps (compile covera
     const fx = fixtureById("gp-11-lower-third-compound");
     const ok = expectOk(compileFixture(fx));
     expect(fx.scriptedModelPlan.steps).toHaveLength(3);
-    expect(commandIds(ok.batch)).toEqual(["layer.newText", "prop.addKey", "prop.addKey"]);
+    expect(commandIds(ok.batch)).toEqual([
+      "layer.newText",
+      "prop.addKey",
+      "prop.addKey",
+      // The 2026-11-01 interpolation fix: the eased slide-in keys
+      // compile their interpolation pass (keys.select + keys.easyEase
+      // per value) — the easing lands IN THE ENGINE.
+      "keys.select",
+      "keys.easyEase",
+      "keys.select",
+      "keys.easyEase",
+    ]);
     // The set_keyframes step now COMPILES (M5-A shape): no unusable_args,
     // no zero-command drop — what the card shows is what Apply performs.
     expect(warnCodes(ok)).not.toContain("unusable_args");
@@ -1029,7 +1040,20 @@ const CARRIER_TRUTH: Record<string, readonly CarrierTruth[]> = {
   ],
   "gp-11-lower-third-compound": [
     { tool: "studio.create_text", commands: ["layer.newText"] },
-    { tool: "studio.set_keyframes", commands: ["prop.addKey", "prop.addKey"] },
+    {
+      // The 2026-11-01 interpolation fix on the WIRE: the eased slide-in keys
+      // (easeOut → easeIn) compile their interpolation pass — exact
+      // keys.select + keys.easyEase {which} per value — instead of warning.
+      tool: "studio.set_keyframes",
+      commands: [
+        "prop.addKey",
+        "prop.addKey",
+        "keys.select",
+        "keys.easyEase",
+        "keys.select",
+        "keys.easyEase",
+      ],
+    },
     { tool: "studio.save_version", commands: ["save_version"], planInvalid: true },
   ],
 };
@@ -1120,7 +1144,18 @@ describe("golden prompts — the turn-engine seam proof (scripted plan_edit side
 
     const ok = expectOk(compilePlan(plan, defaultCompileDeps()));
     expect(plan.steps).toHaveLength(3);
-    expect(commandIds(ok.batch)).toEqual(["layer.newText", "prop.addKey", "prop.addKey"]);
+    expect(commandIds(ok.batch)).toEqual([
+      "layer.newText",
+      "prop.addKey",
+      "prop.addKey",
+      // The 2026-11-01 interpolation fix: the eased slide-in keys
+      // compile their interpolation pass (keys.select + keys.easyEase
+      // per value) — the easing lands IN THE ENGINE.
+      "keys.select",
+      "keys.easyEase",
+      "keys.select",
+      "keys.easyEase",
+    ]);
     expect(ok.batch.steps[1]?.params).toMatchObject({
       layer: "Speaker Lower Third",
       path: "transform/position",
@@ -1177,6 +1212,19 @@ describe("golden prompts — the turn-engine seam proof (scripted plan_edit side
           value: [120, 940],
         },
       },
+      // …AND the interpolation pass the eased keys ask for (2026-11-01 fix):
+      // exact keys.select of the marked key + keys.easyEase {which} — the
+      // easing lands IN THE ENGINE, no more editor-side-state warning.
+      {
+        command: "keys.select",
+        params: { keys: [{ layer: "Speaker Lower Third", path: "transform/position", time: 0 }] },
+      },
+      { command: "keys.easyEase", params: { which: "out" } },
+      {
+        command: "keys.select",
+        params: { keys: [{ layer: "Speaker Lower Third", path: "transform/position", time: 0.6 }] },
+      },
+      { command: "keys.easyEase", params: { which: "in" } },
     ]);
     expect(keysCarrier.proposal.compiled.resolutionRequests.map((r) => r.layerName)).toEqual([
       "Speaker Lower Third",
@@ -1483,7 +1531,18 @@ describe("golden prompts — the TURN wire proof (real POST /v1/threads/:id/turn
     // performs post-G-3-fix: EXACTLY those edits — the create_text step,
     // BOTH slide-in keyframes, and the save_version step as the annotation
     // (never a batch step). No silent partial drop.
-    expect(commandIds(compiled.batch)).toEqual(["layer.newText", "prop.addKey", "prop.addKey"]);
+    expect(commandIds(compiled.batch)).toEqual([
+      "layer.newText",
+      "prop.addKey",
+      "prop.addKey",
+      // The 2026-11-01 interpolation fix: the eased slide-in keys
+      // compile their interpolation pass (keys.select + keys.easyEase
+      // per value) — the easing lands IN THE ENGINE.
+      "keys.select",
+      "keys.easyEase",
+      "keys.select",
+      "keys.easyEase",
+    ]);
     expect(compiled.batch.steps[1]?.params).toMatchObject({
       layer: "Speaker Lower Third",
       path: "transform/position",

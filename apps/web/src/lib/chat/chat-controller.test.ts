@@ -28,6 +28,7 @@ import {
   CHAT_MAX_CLIENT_STEPS,
   CHAT_RUN_TIMEOUT_MS,
   type ChatController,
+  MAX_AUTO_CONTINUATIONS,
   createChatController,
 } from "./chat-controller";
 import type {
@@ -138,6 +139,11 @@ function writeProposal(
   tool: string,
   args: Record<string, unknown>,
   toolCallId: string,
+  resolutionRequests: Array<{
+    requestId: string;
+    layerName: string;
+    disambiguation: string[];
+  }> = [],
 ): TurnToolCall {
   return {
     toolCallId,
@@ -153,7 +159,7 @@ function writeProposal(
         },
         risk: "low",
         estimatedCredits: 1.5,
-        resolutionRequests: [],
+        resolutionRequests,
       },
     },
   };
@@ -195,6 +201,7 @@ interface RecordedPost {
   readonly canvas: TurnCanvas | null | undefined;
   readonly model: unknown;
   readonly applyNotes: readonly string[] | undefined;
+  readonly applyReceipts: readonly string[] | undefined;
   readonly seqBase: number;
   readonly replayCursor: number | undefined;
 }
@@ -340,6 +347,7 @@ function makeClient({ script, planResponse, planFails, planGate, planErrorCode }
           canvas?: TurnCanvas | null;
           model?: unknown;
           applyNotes?: string[];
+          applyReceipts?: string[];
         };
         const key = `${parsed.runId}:${parsed.stepIndex}`;
         const nth = (postCounts.get(key) ?? 0) + 1;
@@ -355,6 +363,7 @@ function makeClient({ script, planResponse, planFails, planGate, planErrorCode }
           canvas: parsed.canvas,
           model: parsed.model,
           applyNotes: parsed.applyNotes,
+          applyReceipts: parsed.applyReceipts,
           seqBase: (handlers as { seqBase?: number } | undefined)?.seqBase ?? 0,
           replayCursor: (handlers as { replayCursor?: number } | undefined)?.replayCursor,
         });
@@ -645,8 +654,11 @@ describe("createChatController v2 — the client-driven loop", () => {
     controller.dispose();
   });
 
-  it("step cap: RUN_STEP_LIMIT after CHAT_MAX_CLIENT_STEPS turns, no further POSTs", async () => {
-    // Vary the args per step so the repetition guard never fires first.
+  it("step cap: SALVAGE + clean end + AUTO-CONTINUE (bounded) — never a failed phase", async () => {
+    // Vary the args per step so the repetition guard never fires first. The
+    // script serves EVERY step (reads only — no carriers to salvage), so each
+    // run caps at CHAT_MAX_CLIENT_STEPS turns, folds run.completed, and the
+    // loop auto-continues until MAX_AUTO_CONTINUATIONS is spent: 4 runs total.
     const { client, posts } = makeClient({
       script: {
         steps: {
@@ -674,16 +686,47 @@ describe("createChatController v2 — the client-driven loop", () => {
     });
 
     controller.send(input("Never finishes."));
-    await until(controller, (s) => s.phase === "failed", "step-cap failure");
+    // 4 runs × 48 turns ≈ ~25 ticks/turn on the harness — 30k ticks is ample.
+    for (let attempt = 0; attempt < 30_000; attempt += 1) {
+      const s = controller.getSnapshot();
+      if (s.phase === "done" && errors.length === MAX_AUTO_CONTINUATIONS + 1) break;
+      await tick();
+    }
+    if (
+      !(controller.getSnapshot().phase === "done" && errors.length === MAX_AUTO_CONTINUATIONS + 1)
+    ) {
+      const s = controller.getSnapshot();
+      throw new Error(
+        `settled wrong: phase=${s.phase} errors=${errors.length} posts=${posts.length} runs=${new Set(posts.map((p) => p.runId)).size}`,
+      );
+    }
 
-    expect(posts).toHaveLength(CHAT_MAX_CLIENT_STEPS);
-    expect(posts.at(-1)?.stepIndex).toBe(CHAT_MAX_CLIENT_STEPS - 1);
-    expect(controller.getSnapshot().error?.code).toBe("RUN_STEP_LIMIT");
-    expect(errors.at(-1)?.code).toBe("RUN_STEP_LIMIT");
+    // One run per continuation: the initial + MAX_AUTO_CONTINUATIONS more.
+    const runIds = new Set(posts.map((post) => post.runId));
+    expect(runIds.size).toBe(MAX_AUTO_CONTINUATIONS + 1);
+    // Every run exhausted the cap before ending; NO run entered an error phase.
+    for (const runId of runIds) {
+      const runPosts = posts.filter((post) => post.runId === runId);
+      expect(runPosts).toHaveLength(CHAT_MAX_CLIENT_STEPS);
+      expect(runPosts.at(-1)?.stepIndex).toBe(CHAT_MAX_CLIENT_STEPS - 1);
+    }
+    // The cap fires as an INFORMATIONAL notice (the work landed) — the phase
+    // is done, never failed, and the error surface stays clean.
+    expect(controller.getSnapshot().error).toBeUndefined();
+    expect(errors).toHaveLength(MAX_AUTO_CONTINUATIONS + 1);
+    expect(errors.every((error) => error.code === "RUN_STEP_LIMIT")).toBe(true);
+    // Each continuation re-enters with the resume order as a user message.
+    const userTexts = controller
+      .getSnapshot()
+      .messages.filter((message) => message.role === "user")
+      .map((message) => message.text);
+    expect(userTexts.length).toBe(MAX_AUTO_CONTINUATIONS + 1);
+    expect(userTexts[1]).toContain("automatic continuation 1 of 3");
+    expect(userTexts[1]).toContain("first INCOMPLETE step");
     controller.dispose();
-  });
+  }, 30_000);
 
-  it("wall clock: RUN_TIMEOUT once the run exceeds CHAT_RUN_TIMEOUT_MS, no further POSTs", async () => {
+  it("wall clock: SALVAGE + clean end + one AUTO-CONTINUE that finishes the job", async () => {
     const read = readCall("studio.list_layers", {}, "call_slow");
     // Same holder-object pattern as the steer test: TS's control-flow
     // analysis keeps a bare `let x = null` narrowed to `null` at the call.
@@ -735,17 +778,28 @@ describe("createChatController v2 — the client-driven loop", () => {
       "turn 0 completed",
     );
 
-    clock += CHAT_RUN_TIMEOUT_MS + 1; // ten minutes pass while the executor parks
+    clock += CHAT_RUN_TIMEOUT_MS + 1; // fifteen minutes pass while the executor parks
     release.gate();
-    await until(controller, (s) => s.phase === "failed", "wall-clock abort");
+    // The timeout SALVAGES (no carriers — reads only), folds a clean
+    // run.completed and AUTO-CONTINUES: the continuation run's step 0 POST
+    // goes out and its script (step 1) answers with a no-tool turn — done.
+    await until(controller, (s) => s.phase === "done", "continuation completed");
 
-    expect(controller.getSnapshot().error?.code).toBe("RUN_TIMEOUT");
+    // The timeout fired as an INFORMATIONAL notice — no error phase.
+    expect(controller.getSnapshot().error).toBeUndefined();
     expect(errors.at(-1)?.code).toBe("RUN_TIMEOUT");
-    expect(posts).toHaveLength(1); // the step 1 POST never went out
+    expect(posts).toHaveLength(3); // the parked step 0 + the continuation's 2-turn run
+    const continued = posts[1];
+    if (continued === undefined) throw new Error("the continuation run never POSTed");
+    expect(continued.runId).not.toBe(posts[0]?.runId); // a fresh run
+    expect(continued.messages[0]).toMatchObject({
+      role: "user",
+      text: expect.stringContaining("first INCOMPLETE step"),
+    });
     controller.dispose();
   });
 
-  it("repetition guard: nudge at the 2nd identical call, RUN_STEP_LIMIT at the 3rd", async () => {
+  it("repetition guard: nudge at the 2nd identical call, SALVAGE + clean end (no auto-continue) at the 3rd", async () => {
     const repeated = () =>
       readCall("studio.set_properties", { properties: [{ path: "x", value: 1 }] }, "call_same");
     const { client, posts } = makeClient({
@@ -769,7 +823,7 @@ describe("createChatController v2 — the client-driven loop", () => {
     });
 
     controller.send(input("Do the same thing."));
-    await until(controller, (s) => s.phase === "failed", "repetition abort");
+    await until(controller, (s) => s.phase === "done", "guard end");
 
     expect(posts).toHaveLength(3); // the three occurrences
     // The 3rd turn's body carries the nudge injected after the 2nd.
@@ -781,7 +835,162 @@ describe("createChatController v2 — the client-driven loop", () => {
           part.text === "You already proposed studio.set_properties; continue with the next step.",
       ),
     ).toBe(true);
-    expect(controller.getSnapshot().error?.code).toBe("RUN_STEP_LIMIT");
+    // The guard ends the run CLEANLY (informational notice, done phase) and
+    // does NOT auto-continue: a broken loop would repeat in a fresh run.
+    expect(controller.getSnapshot().error).toBeUndefined();
+    expect(controller.getSnapshot().phase).toBe("done");
+    expect(posts.filter((post) => post.runId === posts[0]?.runId)).toHaveLength(3);
+    controller.dispose();
+  });
+
+  it("round-14 salvage: a pending high-risk carrier rides the run-end plan when the guard fires — never lost", async () => {
+    // The high-risk carrier never live-applies (the §7.3 gate skips it during
+    // the run) — before round 14 it ALSO never entered the run-end plan POST
+    // unless the model finished naturally: a step-cap/guard end DROPPED it.
+    const pending = writeProposal(
+      "studio.create_composition",
+      { name: "Google Launch Sequence" },
+      "call_pending",
+    );
+    const pendingCompiled = pending.proposal?.compiled;
+    if (pendingCompiled !== undefined && pendingCompiled !== null) {
+      pendingCompiled.risk = "high";
+    }
+    const repeated = () =>
+      readCall("studio.set_properties", { properties: [{ path: "x", value: 1 }] }, "call_same");
+    const engine = makeApplyEngine();
+    const { client, planPosts } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: (step: number) => [
+              runStarted("run_salvage", 0),
+              turnCompleted("run_salvage", 1, step, {
+                assistantText: "",
+                toolCalls: step === 0 ? [pending, repeated()] : [repeated()],
+              }),
+            ],
+          },
+        },
+      },
+      planResponse: (runId, plan) => ({
+        runId,
+        plan,
+        autoApply: { mode: "propose", reason: "manual review" },
+      }),
+    });
+    const controller = createChatController({
+      client,
+      workspaceId: "ws_1",
+      projectId: "prj_1",
+      threadId: THREAD,
+      apply: engine,
+      toolExecutor: executorFactory(() => makeExecutor({ ok: true })),
+    });
+    controller.send(input("Build it."));
+    await until(controller, (s) => s.phase === "done", "guard end");
+
+    // The pending carrier reached the run-end plan (the salvage path).
+    expect(planPosts.length).toBeGreaterThanOrEqual(1);
+    const salvaged = planPosts[0]?.plan.steps.some(
+      (step) => step.tool === "studio.create_composition",
+    );
+    expect(salvaged).toBe(true);
+    // The high-risk carrier never live-applied (the gate held).
+    expect(engine.calls.apply).toHaveLength(0);
+    controller.dispose();
+  });
+
+  it("round-14 receipts: a confirmed live apply rides the NEXT turn body as applyReceipts", async () => {
+    const write0 = writeProposal("studio.create_text", { name: "Title", text: "Hi" }, "call_w0");
+    const engine = makeApplyEngine();
+    const liveEngine: ApplyController = {
+      ...engine,
+      applyLive: async () => ({ ok: true, versionId: "ver_live_1" }) as ApplyOutcome,
+    };
+    const { client, posts } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_receipt", 0),
+              turnCompleted("run_receipt", 1, 0, { toolCalls: [write0] }),
+            ],
+          },
+          1: {
+            frames: () => [turnCompleted("run_receipt", 2, 1, { assistantText: "Done." })],
+          },
+        },
+      },
+    });
+    const controller = createChatController({
+      client,
+      workspaceId: "ws_1",
+      projectId: "prj_1",
+      threadId: THREAD,
+      apply: liveEngine,
+      toolExecutor: () => makeExecutor(),
+    });
+    controller.send(input("make a title"));
+    await until(controller, (s) => s.phase === "done", "run done");
+
+    // The step-1 turn body carries the VERIFICATION receipt for the model.
+    const receipts = posts[1]?.applyReceipts ?? [];
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toContain('Applied: Add text layer "Title"');
+    expect(receipts[0]).toContain("ver_live_1");
+    controller.dispose();
+  });
+
+  it("round-14 continuous apply: a layer-referencing carrier (resolution requests) LIVE-APPLIES", async () => {
+    // THE settle-order fix at the apply seam: the old gate skipped every
+    // carrier that references a layer by name (add_effect / set_keyframes /
+    // set_properties), so only creation tools ever applied during the run.
+    // The client apply engine resolves names against the LIVE project at
+    // apply time — the gate is gone.
+    const style = writeProposal(
+      "studio.add_effect",
+      { layers: [{ name: "Green Particle" }], effect: { name: "Glow" } },
+      "call_style",
+      [{ requestId: "lr-1", layerName: "Green Particle", disambiguation: [] }],
+    );
+    const engine = makeApplyEngine();
+    const liveCalls: ApplicablePlan[] = [];
+    const liveEngine: ApplyController = {
+      ...engine,
+      applyLive: async (plan) => {
+        liveCalls.push(plan);
+        return { ok: true, versionId: "ver_live_2" } as ApplyOutcome;
+      },
+    };
+    const { client } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_style", 0),
+              turnCompleted("run_style", 1, 0, { toolCalls: [style] }),
+            ],
+          },
+          1: {
+            frames: () => [turnCompleted("run_style", 2, 1, { assistantText: "Done." })],
+          },
+        },
+      },
+    });
+    const controller = createChatController({
+      client,
+      workspaceId: "ws_1",
+      projectId: "prj_1",
+      threadId: THREAD,
+      apply: liveEngine,
+      toolExecutor: () => makeExecutor(),
+    });
+    controller.send(input("glow it"));
+    await until(controller, (s) => s.phase === "done", "run done");
+
+    expect(liveCalls).toHaveLength(1);
+    expect(liveCalls[0]?.compiledBatch.steps[0]?.command).toBe("add_effect");
     controller.dispose();
   });
 

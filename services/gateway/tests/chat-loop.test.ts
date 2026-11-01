@@ -64,7 +64,7 @@ import {
   type TurnMessage,
   WRITE_TOOL_IDS,
 } from "@studio/contracts";
-import { RUN_ABANDONED_ERROR_CODE, type AgentRun } from "@studio/db";
+import { type AgentRun, RUN_ABANDONED_ERROR_CODE } from "@studio/db";
 
 import { wireToolName } from "../src/litellm/openai.js";
 import { createRunnerForEnv } from "../src/runner.js";
@@ -803,7 +803,7 @@ d("M4-K gateway agent-loop E2E — the real turn engine over the real SSE wire",
     expect(fake.calls[0]?.authorization).toBe("Bearer sk-test-litellm-fake");
     const toolNames = (fake.calls[0]?.body.tools ?? []).map((tool) => tool.function.name).sort();
     expect(toolNames).toEqual(WIRE_TOOL_IDS);
-    expect(WIRE_TOOL_IDS).toHaveLength(21);
+    expect(WIRE_TOOL_IDS).toHaveLength(23);
 
     // §8.8 ledger (µc, D-12): one HOLD per turn (prompt-derived whole-credit
     // multiples) and one −1_000_000 commit per turn — the usage-based commit
@@ -1049,9 +1049,7 @@ d("M4-K gateway agent-loop E2E — the real turn engine over the real SSE wire",
     expect(refunds.length).toBe(1);
     expect(refunds[0]?.idempotencyKey).toBe(`turn:${runId}:0:refund`);
     expect(
-      runEntries.some(
-        (entry) => entry.idempotencyKey === `turn:${runId}:abandon:refund`,
-      ),
+      runEntries.some((entry) => entry.idempotencyKey === `turn:${runId}:abandon:refund`),
     ).toBe(false);
     expect(runEntries.filter((entry) => entry.kind === "commit").length).toBe(0);
     expect(await balanceOf(fx.workspaceId)).toBe(100 * MICRO); // full refund
@@ -1276,7 +1274,10 @@ d("M4-K gateway agent-loop E2E — the real turn engine over the real SSE wire",
         // Mutations require an Idempotency-Key (the api-client auto-keys).
         "idempotency-key": `stop-ctx-${unique("msg")}`,
       },
-      body: { message: "use a bold font instead", note: "sent while the agent was working — the run was stopped before it was answered" },
+      body: {
+        message: "use a bold font instead",
+        note: "sent while the agent was working — the run was stopped before it was answered",
+      },
     });
     expect(response.status).toBe(201);
     const rows = await listMessages(fx);

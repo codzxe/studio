@@ -2,6 +2,47 @@
 
 Next entry:
 
+## 2026-11-02 (round 14) — specific tools, continuous apply, receipts, salvage + auto-continue
+
+Context: the deployed gateway ran the PRE-fix bundle (the committed
+gateway.mjs is the runtime), so the user's Google-launch trace still showed
+the exact failures round-13 fixed — plus three real round-14 bugs found by
+reading the w8 live-apply path end to end. All suites green (contracts 285,
+api-client 186, gateway 1204, web 1767); bundle rebuilt in the same commit.
+
+- **Specific tools.** studio.create_solid (layer.newSolid + follow-up
+  transform prop.set steps) and studio.create_camera (the curated
+  layer.newCamera subset) replace the studio.engine_commands detour every
+  real run took; the prompt narrows engine_commands to ops with no dedicated
+  tool and forbids raw effect.* ids (the invented effect.add failure).
+- **Continuous apply (the settle-order kill at the apply seam).**
+  driveLiveApply's `resolutionRequests.length > 0 → continue` gate silently
+  excluded EVERY carrier that references a layer by name — add_effect,
+  set_keyframes, set_properties, apply_preset — so only creation tools ever
+  applied during a run. The client apply engine resolves names against the
+  LIVE project at apply time, and the chain runs after the earlier carriers
+  of the same turn: a same-turn create_text → add_effect pair now lands both.
+- **The remainder ledger.** liveAppliedCalls records exactly which carriers
+  confirmed applied; finishRun merges ONLY the un-applied remainder into the
+  run-end plan. The old full merge re-executed live-applied creates after a
+  mid-run failure — duplicated compositions, the "it made everything twice"
+  report.
+- **Verification receipts.** every confirmed apply records
+  "Applied: <summary> (saved <version>)"; the next turn POST carries
+  applyReceipts and the gateway renders the APPLY RECEIPTS system note
+  (extend it, never re-create it). Prompt: VERIFY AS YOU GO +
+  CONTINUITY discipline (never re-create; resume the plan from its first
+  incomplete step).
+- **No more hard stops.** step cap 24→48, wall clock 10→15 min, turn wire
+  64 parts/64 KB → 160 parts/192 KB. Step cap / wall clock now SALVAGE every
+  un-applied carrier, fold a clean run.completed, and AUTO-CONTINUE the build
+  with a bounded continuation run (MAX_AUTO_CONTINUATIONS=3) that inherits
+  the full thread history + a fresh canvas. The repetition guard salvages
+  but never continues (a broken loop would repeat in a fresh run).
+- **Recovered the lost interpolation fix** (f1a9f4b — eased keyframe names
+  with alias repair, keys.select/keys.interpolation) on top of the fresh
+  0f7e3ec clone, and removed the committed probe scratch files.
+
 ## 2026-10-31 (round 13) — the harness feels like a harness: live thinking, fluid pacing, graceful stops, plan-first execution
 
 Context: the user ran the agent against a real model and caught it red-handed — 20+ read-only

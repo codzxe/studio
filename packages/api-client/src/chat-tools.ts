@@ -132,6 +132,8 @@ function firstIssueMessage(error: ZodError): string {
 export const WRITE_TOOL_PLAN_INTENTS: Readonly<Record<string, PlanIntent>> = {
   "studio.create_composition": "create",
   "studio.create_text": "create",
+  "studio.create_solid": "create",
+  "studio.create_camera": "create",
   "studio.set_properties": "edit",
   "studio.add_effect": "style",
   "studio.set_keyframes": "animate",

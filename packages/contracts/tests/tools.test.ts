@@ -31,11 +31,14 @@ const SPEC_TOOLS: readonly { id: string; kind: "read" | "write" }[] = [
 
 /** Round-12 "Tool catalog v3" additions (docs/research/round12-design.md), appended
  * after the §8.4 table: writes first (they auto-register from write-tools.ts),
- * then the client-executed reads/generative tools. */
+ * then the client-executed reads/generative tools. Round 14 appends the two
+ * specific layer writes (create_solid / create_camera) behind the v3 block. */
 const ROUND12_TOOLS: readonly { id: string; kind: "read" | "write" }[] = [
   { id: "studio.engine_commands", kind: "write" },
   { id: "studio.run_script", kind: "write" },
   { id: "studio.add_asset", kind: "write" },
+  { id: "studio.create_solid", kind: "write" },
+  { id: "studio.create_camera", kind: "write" },
   { id: "studio.list_commands", kind: "read" },
   { id: "studio.describe_command", kind: "read" },
   { id: "studio.web_search", kind: "read" },
@@ -122,6 +125,9 @@ const VALID_ARGS: Record<string, unknown> = {
     name: "Logo",
     svg: '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10H0z"/></svg>',
   },
+  // -- round-14 "specific tools" ---------------------------------------------
+  "studio.create_solid": { name: "Void", color: "#0A0A0B", width: 1920, height: 1080 },
+  "studio.create_camera": { name: "Cinematic Camera", preset: "35mm", zoom: 1.5 },
 };
 
 /** One invalid mutation per tool. */
@@ -157,6 +163,9 @@ const INVALID_ARGS: Record<string, unknown> = {
   "studio.engine_commands": { steps: [] }, // 1..50 steps
   "studio.run_script": { code: "x".repeat(20_001) }, // ≤ 20000 chars
   "studio.add_asset": { kind: "png", name: "Icon", svg: "<svg/>" }, // kind must be svg
+  // -- round-14 "specific tools" ----------------------------------------------
+  "studio.create_solid": { name: "Void", color: "void" }, // color must be hex/channels
+  "studio.create_camera": { name: "Cam", preset: "85mm", zoom: 0 }, // zoom ≥ 0.01
 };
 
 describe("tools: §8.4 catalog completeness", () => {

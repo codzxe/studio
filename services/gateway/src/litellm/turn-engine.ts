@@ -36,6 +36,7 @@
 import { z } from "zod";
 
 import {
+  AUTO_APPLY_BATCH_NOTE,
   type ContextSelection,
   EDIT_PLAN_SCHEMA,
   type EditPlan,
@@ -44,7 +45,6 @@ import {
   MAX_PLAN_SUMMARY_LENGTH,
   MODEL_CATALOG,
   type ModelId,
-  AUTO_APPLY_BATCH_NOTE,
   PROPOSED_BATCH_NOTE,
   type PinnedContextItem,
   type PlanIntent,
@@ -288,6 +288,14 @@ export interface BuildTurnMessagesInput {
    * fix-it instruction.
    */
   readonly applyNotes?: readonly string[];
+  /**
+   * APPLY RECEIPTS (round 14 — the verification half of the loop): what the
+   * client's apply engine CONFIRMED applied since the last turn. Rendered as
+   * a system note that tells the model exactly what is ALREADY in the canvas
+   * — the anti-duplicate, anti-ghost signal: never re-create these, build on
+   * them, and verify visually (render_preview) instead of assuming.
+   */
+  readonly applyReceipts?: readonly string[];
 }
 
 /**
@@ -311,6 +319,31 @@ function applyFeedbackNote(notes: readonly string[]): string {
   ].join("\n");
 }
 
+/**
+ * Round 14 — the receipts side of the apply loop. Every line is a change the
+ * client's apply engine EXECUTED and SAVED (summary + version). The note is
+ * phrased as ground truth: this work exists NOW, extending it is the only
+ * valid move — re-creating any of it duplicates layers, the exact failure
+ * mode the continuity rule below exists for.
+ */
+export function applyReceiptsNote(receipts: readonly string[]): string {
+  const lines = receipts
+    .filter((receipt) => typeof receipt === "string" && receipt.length > 0)
+    .slice(0, 8)
+    .map((receipt) => `- ${receipt.slice(0, 300)}`);
+  if (lines.length === 0) return "";
+  return [
+    "APPLY RECEIPTS — these proposals were APPLIED to the project and SAVED " +
+      "(they are in the canvas now):",
+    ...lines,
+    "Treat every receipt as existing work: build on it, NEVER re-create or duplicate it. " +
+      "When a receipt names a layer you still need to style or animate, reference that " +
+      "exact name. Before you claim a visual milestone is done, verify it with " +
+      "studio.render_preview or studio.get_properties — a proposed-and-applied tool result " +
+      "is the apply engine's word, your eyes are yours.",
+  ].join("\n");
+}
+
 export function buildTurnMessages(input: BuildTurnMessagesInput): OpenAIChatMessage[] {
   const messages: OpenAIChatMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
   for (const row of input.history) {
@@ -325,6 +358,9 @@ export function buildTurnMessages(input: BuildTurnMessagesInput): OpenAIChatMess
   const applyFeedbackLine =
     input.applyNotes === undefined ? "" : applyFeedbackNote(input.applyNotes);
   if (applyFeedbackLine !== "") notes.push(applyFeedbackLine);
+  const applyReceiptsLine =
+    input.applyReceipts === undefined ? "" : applyReceiptsNote(input.applyReceipts);
+  if (applyReceiptsLine !== "") notes.push(applyReceiptsLine);
   if (notes.length > 0) {
     messages.push({ role: "system", content: notes.join("\n\n") });
   }
@@ -460,6 +496,8 @@ export function committedCreditsFor(
 const WRITE_TOOL_INTENTS: Readonly<Record<string, PlanIntent>> = {
   "studio.create_composition": "create",
   "studio.create_text": "create",
+  "studio.create_solid": "create",
+  "studio.create_camera": "create",
   "studio.set_properties": "edit",
   "studio.add_effect": "style",
   "studio.set_keyframes": "animate",
@@ -533,6 +571,10 @@ export function writeToolSummary(toolId: string, args: Record<string, unknown>):
       return `Run an engine script (${str(args.code).length} chars)`;
     case "studio.add_asset":
       return `Add ${str(args.kind)} asset "${str(args.name)}"`;
+    case "studio.create_solid":
+      return `Add solid layer "${str(args.name)}"`;
+    case "studio.create_camera":
+      return `Add camera layer "${str(args.name)}"`;
     case "studio.undo_run":
       return "Undo the most recent applied agent run";
     case "studio.save_version":
@@ -786,7 +828,9 @@ export interface TurnSymbolTable {
 export function seedTurnSymbolTable(canvas: TurnCanvas | null | undefined): TurnSymbolTable {
   return {
     layers: new Set(canvasLayerNames(canvas)),
-    compositions: new Set(canvas?.activeComp != null && canvas.activeComp !== "" ? [canvas.activeComp] : []),
+    compositions: new Set(
+      canvas?.activeComp != null && canvas.activeComp !== "" ? [canvas.activeComp] : [],
+    ),
   };
 }
 
@@ -841,9 +885,10 @@ function isAcceptedProposal(result: unknown): boolean {
  * Only ACCEPTED proposals count (a result with a proposedBatch); rejected
  * calls created nothing.
  */
-export function createdNamesFromSteps(
-  rows: readonly StepRowForNames[],
-): { layers: ReadonlySet<string>; compositions: ReadonlySet<string> } {
+export function createdNamesFromSteps(rows: readonly StepRowForNames[]): {
+  layers: ReadonlySet<string>;
+  compositions: ReadonlySet<string>;
+} {
   const layers = new Set<string>();
   const compositions = new Set<string>();
   for (const row of rows) {

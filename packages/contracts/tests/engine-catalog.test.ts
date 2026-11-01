@@ -53,6 +53,7 @@ const PROPERTY_PATH_EXCEPTIONS = new Set([
   "prop.toggleKey",
   "prop.reset",
   "keys.set",
+  "keys.select",
   "anim.applyPreset",
 ]);
 
@@ -144,8 +145,8 @@ describe("engine-catalog: allowlist policy (deny classes are excluded)", () => {
     expect(hasPathAllowed.sort()).toEqual([...PROPERTY_PATH_EXCEPTIONS].sort());
   });
 
-  it("the curated 37 command ids remain a subset of the allowed list (mission law)", () => {
-    expect(AGENT_COMMAND_IDS.length).toBe(37);
+  it("the curated 39 command ids remain a subset of the allowed list (mission law)", () => {
+    expect(AGENT_COMMAND_IDS.length).toBe(39);
     const missing = AGENT_COMMAND_IDS.filter((id) => !isAllowedEngineCommand(id));
     expect(missing, "curated ids missing from the allowed catalog").toEqual([]);
   });

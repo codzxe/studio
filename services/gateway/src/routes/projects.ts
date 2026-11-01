@@ -113,99 +113,89 @@ export function projectsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     return ok(c, toDto(project), 201);
   });
 
-  app.get(
-    "/v1/projects/resolve/:slug",
-    async (c: AppContext): Promise<Response> => {
-      // The TTFB fix (perf round): by-slug resolution in ONE call — one auth
-      // pass, one joined SQL, the manifest included. Replaces the RSC fan-out
-      // (`/v1/me` + per-workspace project pages + manifest, each call paying
-      // the auth+workspace middleware and better-auth's per-org lookups — a
-      // measured 7-10s editor TTFB on many-workspace accounts).
-      const { user } = c.get("auth");
-      const slugParam = pathParam(c, "slug");
-      // The history page's `?ws=` scoping: id or slug, narrowed in the repo's
-      // joined query (a foreign workspace never leaks — the join only ever
-      // follows the caller's own memberships).
-      const workspaceFilter = c.req.query("workspace") ?? null;
-      const resolved = await deps.repos.projects.resolveBySlug(
-        user.id,
-        slugParam,
-        workspaceFilter,
-      );
-      if (resolved === null) {
-        throw new GatewayError("PROJECT_NOT_FOUND", "We couldn't find that project.", {
-          status: 404,
-          hint: "It may have been deleted or archived, or belong to another workspace.",
-          requestId: c.get("requestId"),
-        });
-      }
+  app.get("/v1/projects/resolve/:slug", async (c: AppContext): Promise<Response> => {
+    // The TTFB fix (perf round): by-slug resolution in ONE call — one auth
+    // pass, one joined SQL, the manifest included. Replaces the RSC fan-out
+    // (`/v1/me` + per-workspace project pages + manifest, each call paying
+    // the auth+workspace middleware and better-auth's per-org lookups — a
+    // measured 7-10s editor TTFB on many-workspace accounts).
+    const { user } = c.get("auth");
+    const slugParam = pathParam(c, "slug");
+    // The history page's `?ws=` scoping: id or slug, narrowed in the repo's
+    // joined query (a foreign workspace never leaks — the join only ever
+    // follows the caller's own memberships).
+    const workspaceFilter = c.req.query("workspace") ?? null;
+    const resolved = await deps.repos.projects.resolveBySlug(user.id, slugParam, workspaceFilter);
+    if (resolved === null) {
+      throw new GatewayError("PROJECT_NOT_FOUND", "We couldn't find that project.", {
+        status: 404,
+        hint: "It may have been deleted or archived, or belong to another workspace.",
+        requestId: c.get("requestId"),
+      });
+    }
 
-      const manifest = await deps.repos.projects.manifest(
-        resolved.workspaceId,
-        resolved.project.id,
+    const manifest = await deps.repos.projects.manifest(resolved.workspaceId, resolved.project.id);
+    const currentVersion = manifest.currentVersion;
+    let versionBlock: ProjectManifest["currentVersion"] = null;
+    if (currentVersion !== null) {
+      const signed = await deps.storage.getSignedUrl(
+        currentVersion.objectKey,
+        SIGNED_URL_TTL_SECONDS,
+        { method: "GET" },
       );
-      const currentVersion = manifest.currentVersion;
-      let versionBlock: ProjectManifest["currentVersion"] = null;
-      if (currentVersion !== null) {
-        const signed = await deps.storage.getSignedUrl(
-          currentVersion.objectKey,
-          SIGNED_URL_TTL_SECONDS,
-          { method: "GET" },
-        );
-        versionBlock = {
-          id: currentVersion.id,
-          version: currentVersion.version,
-          sha256: currentVersion.sha256,
-          label: currentVersion.label,
-          sizeBytes: currentVersion.sizeBytes,
-          createdAt: currentVersion.createdAt.toISOString(),
+      versionBlock = {
+        id: currentVersion.id,
+        version: currentVersion.version,
+        sha256: currentVersion.sha256,
+        label: currentVersion.label,
+        sizeBytes: currentVersion.sizeBytes,
+        createdAt: currentVersion.createdAt.toISOString(),
+        url: signed.url,
+      };
+    }
+    const assets: ManifestAsset[] = await Promise.all(
+      manifest.assets.map(async (asset): Promise<ManifestAsset> => {
+        const signed = await deps.storage.getSignedUrl(asset.objectKey, SIGNED_URL_TTL_SECONDS, {
+          method: "GET",
+        });
+        return {
+          id: asset.id,
+          name: asset.name,
+          mime: asset.mime,
+          sizeBytes: asset.sizeBytes,
+          width: asset.width,
+          height: asset.height,
+          durationTicks: asset.durationTicks,
           url: signed.url,
         };
-      }
-      const assets: ManifestAsset[] = await Promise.all(
-        manifest.assets.map(async (asset): Promise<ManifestAsset> => {
-          const signed = await deps.storage.getSignedUrl(asset.objectKey, SIGNED_URL_TTL_SECONDS, {
-            method: "GET",
-          });
-          return {
-            id: asset.id,
-            name: asset.name,
-            mime: asset.mime,
-            sizeBytes: asset.sizeBytes,
-            width: asset.width,
-            height: asset.height,
-            durationTicks: asset.durationTicks,
-            url: signed.url,
-          };
-        }),
-      );
+      }),
+    );
 
-      const body: ProjectResolve = {
-        workspaceId: resolved.workspaceId,
-        workspace: {
-          id: resolved.workspaceId,
-          name: resolved.workspaceName,
-          slug: resolved.workspaceSlug,
-        },
-        viewerId: user.id,
-        role:
-          resolved.role === "owner" ||
-          resolved.role === "admin" ||
-          resolved.role === "editor" ||
-          resolved.role === "viewer"
-            ? resolved.role
-            : "viewer",
-        project: toDto(resolved.project),
-        manifest: {
-          projectId: manifest.project.id,
-          currentVersion: versionBlock,
-          assets,
-          updatedAt: manifest.project.updatedAt.toISOString(),
-        },
-      };
-      return ok(c, body);
-    },
-  );
+    const body: ProjectResolve = {
+      workspaceId: resolved.workspaceId,
+      workspace: {
+        id: resolved.workspaceId,
+        name: resolved.workspaceName,
+        slug: resolved.workspaceSlug,
+      },
+      viewerId: user.id,
+      role:
+        resolved.role === "owner" ||
+        resolved.role === "admin" ||
+        resolved.role === "editor" ||
+        resolved.role === "viewer"
+          ? resolved.role
+          : "viewer",
+      project: toDto(resolved.project),
+      manifest: {
+        projectId: manifest.project.id,
+        currentVersion: versionBlock,
+        assets,
+        updatedAt: manifest.project.updatedAt.toISOString(),
+      },
+    };
+    return ok(c, body);
+  });
 
   app.get(
     "/v1/projects/:id/manifest",

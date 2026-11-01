@@ -4,7 +4,7 @@
 // The client-driven agent loop: the browser owns the loop and the engine, the
 // gateway is STATELESS per turn (auth → load thread → credit RESERVE → ONE
 // model call → persist → commit). Each POST carries the CURRENT RUN transcript
-// (≤ 64 message parts, ≤ 64 KB serialized — enforced by the schema) plus the
+// (≤ 160 message parts, ≤ 192 KB serialized — enforced by the schema) plus the
 // compact canvas snapshot (client includes it on step 0 and whenever its hash
 // changed). Idempotency rides the `Idempotency-Key: ${runId}:${stepIndex}`
 // HEADER (not the body): a duplicate POST for the same key must return the
@@ -22,14 +22,19 @@ import { MODEL_ID_SCHEMA } from "../models.js";
 import { CONTEXT_SELECTION_SCHEMA, PINNED_CONTEXT_ITEM_SCHEMA } from "./common.js";
 
 // ---------------------------------------------------------------------------
-// Bounds (design doc: "≤64 parts, ≤64KB" — enforced here, at the boundary)
+// Bounds (design doc: "≤64 parts, ≤64KB" — raised 2026-11-02, round 14:
+// long real builds (the 21-tool Google-launch run) blew past both — a
+// 10-section build carries ~3 transcript parts per turn (assistant + tool
+// pairs) plus steer/apply parts, so 64 parts capped a run at ~20 turns and
+// 64 KB serialized at fewer. ≤ 160 parts / ≤ 192 KB keeps every legitimate
+// long build under the wire while still bounding abuse.)
 // ---------------------------------------------------------------------------
 
-/** Message parts per turn request (design doc: ≤ 64). */
-export const MAX_TURN_MESSAGE_PARTS = 64;
+/** Message parts per turn request (design doc: ≤ 64; round 14: ≤ 160). */
+export const MAX_TURN_MESSAGE_PARTS = 160;
 
-/** Serialized `messages` ceiling in bytes (design doc: ≤ 64 KB). */
-export const MAX_TURN_MESSAGES_BYTES = 64 * 1024;
+/** Serialized `messages` ceiling in bytes (design doc: ≤ 64 KB; round 14: 192 KB). */
+export const MAX_TURN_MESSAGES_BYTES = 192 * 1024;
 
 /** Canvas layers per snapshot (design doc: ≤ 80). */
 export const MAX_TURN_CANVAS_LAYERS = 80;
@@ -135,7 +140,7 @@ export type TurnCanvas = z.infer<typeof TURN_CANVAS_SCHEMA>;
 
 /**
  * `POST /v1/threads/:id/turn` body (TURN WIRE CONTRACT, exact shape). The
- * `messages` caps — ≤ 64 parts AND ≤ 64 KB serialized — are enforced via
+ * `messages` caps — ≤ 160 parts AND ≤ 192 KB serialized — are enforced via
  * superRefine so the gateway can reject oversized transcripts with a precise
  * issue instead of a platform 413.
  */
@@ -144,9 +149,10 @@ export const TURN_REQUEST_SCHEMA = z
     /** Client-generated uuid, stable for the whole run. */
     runId: z.string().min(1).max(128),
     /** 0-based; increments per model call. Server-side abuse bound
-     * (AUD-M5): the client loop caps at 24 steps — a scripted caller must
-     * not mint unbounded steps on one run row. */
-    stepIndex: z.number().int().min(0).max(63),
+     * (AUD-M5): the client loop caps its steps — a scripted caller must
+     * not mint unbounded steps on one run row. Round 14: 63 → 159 so the
+     * raised 160-part cap is reachable (a step costs ≥ 1 part). */
+    stepIndex: z.number().int().min(0).max(159),
     model: MODEL_ID_SCHEMA.optional(),
     /** The CURRENT RUN transcript only (never the whole thread history). */
     messages: z.array(TURN_MESSAGE_SCHEMA).min(1).max(MAX_TURN_MESSAGE_PARTS),
@@ -166,6 +172,15 @@ export const TURN_REQUEST_SCHEMA = z
      * model's per-turn notes with a fix-it instruction by the gateway.
      */
     applyNotes: z.array(z.string().min(1).max(400)).max(3).optional(),
+    /**
+     * APPLY RECEIPTS (round 14 — the verification half of the feedback loop):
+     * what the client's apply engine CONFIRMED applied since the last turn
+     * (carrier summary + saved version). Without them the model cannot tell
+     * applied work from lost work, re-creates existing layers after a pause,
+     * and never actually VERIFIES anything — the "it says done but nothing
+     * changed" complaint. Bounded: ≤ 8 receipts, ≤ 300 chars each.
+     */
+    applyReceipts: z.array(z.string().min(1).max(300)).max(8).optional(),
   })
   .superRefine((body, ctx) => {
     let serialized: string | undefined;

@@ -57,10 +57,14 @@
 //     filesystem `path` (or an inline preset OBJECT), and a model-supplied
 //     path breaks law #5 ("the model never sees filesystem paths"). Path-like
 //     preset strings emit a `warn` and compile as builtin preset names.
-//   * add_effect `params` and set_keyframes `easing` are CLIENT STATE (the
-//     effect instance index and keyframe interpolation live in the editor);
-//     they cannot be compiled server-side without guessing ids. They emit
-//     `warn` issues instead of being silently dropped or fabricated.
+//   * add_effect `params` are CLIENT STATE (the effect instance index lives
+//     in the editor; it cannot be compiled server-side without guessing ids —
+//     it emits a `warn` issue instead of being silently dropped or
+//     fabricated). set_keyframes `interpolation` is NOT client state anymore
+//     (2026-11-01 Google-launch fix): the engine's keys.interpolation dialog
+//     command and keys.easyEase family make it REAL, settable document state,
+//     and the compiler emits an exact keys.select + interpolation pass after
+//     the addKeys (see KEYFRAME_INTERPOLATION_COMPILE below).
 //   * Layer references stay NAME strings in the compiled batch (the engine
 //     accepts id|name|#n); `placeholders` + `resolutionRequests` let the
 //     client (M5-F) substitute resolved ids before Apply. The compiler NEVER
@@ -369,6 +373,35 @@ function readString(source: Record<string, unknown>, key: string): string | unde
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/**
+ * How each canonical set_keyframes interpolation value compiles (the
+ * 2026-11-01 Google-launch fix). The engine's keyframe interpolation is
+ * REAL, settable document state — the keys.interpolation dialog command
+ * (linear|bezier|hold|continuousBezier|autoBezier, both sides per key) and
+ * the keys.easyEase family (the After Effects Easy Ease curves: bezier with
+ * influence 1/3 and zero speed). All of them are SELECTION-scoped, so the
+ * compiler first selects the exact keys it just added — keys.select
+ * {keys: [{layer, path, time}]} targets keys precisely (its time snaps to
+ * the nearest STORED key, so frame-snapped addKey times still resolve) and
+ * pre-existing keys of the same property are never touched (the
+ * "approve N edits, get N" law, G-3's spirit).
+ */
+const KEYFRAME_INTERPOLATION_COMPILE: Readonly<
+  Record<string, { readonly command: string; readonly params: Record<string, unknown> }>
+> = {
+  linear: { command: "keys.interpolation", params: { interpolation: "linear" } },
+  bezier: { command: "keys.interpolation", params: { interpolation: "bezier" } },
+  hold: { command: "keys.interpolation", params: { interpolation: "hold" } },
+  continuousBezier: {
+    command: "keys.interpolation",
+    params: { interpolation: "continuousBezier" },
+  },
+  autoBezier: { command: "keys.interpolation", params: { interpolation: "autoBezier" } },
+  easeIn: { command: "keys.easyEase", params: { which: "in" } },
+  easeOut: { command: "keys.easyEase", params: { which: "out" } },
+  easeInOut: { command: "keys.easyEase", params: {} },
+};
+
 /** Own-property registry lookup — a "__proto__" command id must NOT resolve
  * through the prototype chain (M4-N F-1 defense, applied to the registry). */
 function registryHas(registry: CommandSchema, id: string): boolean {
@@ -406,7 +439,10 @@ export function normalizeTransformUnitForPath(
   path: string,
   value: unknown,
 ): { value: unknown; converted: boolean } {
-  const segments = path.toLowerCase().split("/").filter((s) => s.length > 0);
+  const segments = path
+    .toLowerCase()
+    .split("/")
+    .filter((s) => s.length > 0);
   const leaf = segments[segments.length - 1];
   const isOpacity = leaf === "opacity";
   const isScale = leaf === "scale";
@@ -841,6 +877,88 @@ class Compiler {
         break;
       }
 
+      case "create_solid": {
+        // Round-14 specific tool: the SOLID layer the models kept proposing
+        // through studio.engine_commands layer.newSolid. Same shape rules as
+        // create_text; `position`/`opacity` compile to follow-up prop.set
+        // steps (layer.newSolid takes neither).
+        const params: Record<string, unknown> = {};
+        const name = readString(argsObj, "name");
+        if (name !== undefined) params.name = name;
+        const colorValue = argsObj.color;
+        if (colorValue !== undefined) {
+          const color = engineColor(colorValue);
+          if (color !== undefined) params.color = color;
+          else {
+            this.warn(
+              "unusable_args",
+              "field `color` is not a #hex color string or a [r, g, b(, a)] channel array",
+              { step: planStep, tool, param: "color" },
+            );
+          }
+        }
+        for (const key of ["width", "height"] as const) {
+          const value = argsObj[key];
+          if (isFiniteNumber(value)) params[key] = value;
+          else if (value !== undefined) unusable(key, "is not a finite number");
+        }
+        if (params.color === undefined) {
+          compilesToNothing();
+          break;
+        }
+        const position = argsObj.position;
+        const positionPair = ((): [number, number] | undefined => {
+          if (position === undefined) return undefined;
+          const [x, y] = Array.isArray(position) ? position : [];
+          if (isFiniteNumber(x) && isFiniteNumber(y)) return [x, y];
+          unusable("position", "is not a [x, y] number pair");
+          return undefined;
+        })();
+        const opacity = argsObj.opacity;
+        if (opacity !== undefined && !isFiniteNumber(opacity)) {
+          unusable("opacity", "is not a finite number");
+        }
+        add("layer.newSolid", params);
+        if (positionPair !== undefined) {
+          add("prop.set", {
+            layer: params.name,
+            path: "transform/position",
+            value: positionPair,
+          });
+        }
+        if (isFiniteNumber(opacity)) {
+          const unit = normalizeTransformUnitForPath("transform/opacity", opacity);
+          add("prop.set", {
+            layer: params.name,
+            path: "transform/opacity",
+            value: unit.value,
+          });
+        }
+        break;
+      }
+
+      case "create_camera": {
+        // Round-14 specific tool: the cinematic camera the Google-launch run
+        // proposed via studio.engine_commands layer.newCamera (raw engine
+        // params, an invented effect.add for the glow afterwards). Curated
+        // subset of layer.newCamera; no follow-ups — animating the camera is
+        // set_keyframes' job.
+        const params: Record<string, unknown> = {};
+        const name = readString(argsObj, "name");
+        if (name !== undefined) params.name = name;
+        const type = readString(argsObj, "type");
+        if (type !== undefined) params.type = type;
+        const preset = readString(argsObj, "preset");
+        if (preset !== undefined) params.preset = preset;
+        for (const key of ["zoom", "focalLength", "focusDistance", "aperture", "fStop"] as const) {
+          const value = argsObj[key];
+          if (isFiniteNumber(value)) params[key] = value;
+          else if (value !== undefined) unusable(key, "is not a finite number");
+        }
+        add("layer.newCamera", params);
+        break;
+      }
+
       case "set_properties": {
         // M5-A shape: {layers: [{name}], properties: [{path, value}]} ->
         // cross-product prop.set per layer x property; a "name" path maps to
@@ -903,7 +1021,9 @@ class Compiler {
 
       case "set_keyframes": {
         // M5-A shape: {layers: [{name}], propertyPath, keys: [{timeSeconds,
-        // value, interpolation?}]} -> cross-product prop.addKey per layer x key.
+        // value, interpolation?}]} -> cross-product prop.addKey per layer x key,
+        // then the interpolation pass: one exact keys.select + one
+        // interpolation / Easy Ease command per (layer x value) group.
         const layers = readLayerNames(argsObj.layers);
         const keys = argsObj.keys;
         const propertyPath = readString(argsObj, "propertyPath");
@@ -917,6 +1037,9 @@ class Compiler {
           compilesToNothing();
           break;
         }
+        // layer -> interpolation value -> the key times carrying it (finite
+        // times only — a key without a usable time can't be targeted).
+        const interpolationGroups = new Map<string, Map<string, number[]>>();
         for (const key of keys) {
           if (!isPlainObject(key)) {
             unusable("keys", "contains a non-object entry (skipped)");
@@ -947,15 +1070,48 @@ class Compiler {
                 );
               }
             }
-            if (interpolation !== undefined && interpolation !== "linear") {
-              this.warn(
-                "uncompilable_arg",
-                `interpolation \`${clip(interpolation, 24)}\` is editor-side keyframe state; the key compiles with the engine default (set it via the timeline after apply)`,
-                { step: planStep, tool, param: "interpolation" },
-              );
+            if (interpolation !== undefined && isFiniteNumber(time)) {
+              let byValue = interpolationGroups.get(layer);
+              if (byValue === undefined) {
+                byValue = new Map();
+                interpolationGroups.set(layer, byValue);
+              }
+              const times = byValue.get(interpolation);
+              if (times === undefined) byValue.set(interpolation, [time]);
+              else times.push(time);
             }
             add("prop.addKey", params);
             addSite("layer", layer);
+          }
+        }
+        // The interpolation pass — AFTER every addKey (keys must exist before
+        // selection; selection replaces, so grouping per (layer x value)
+        // keeps the final selection exactly the eased keys). keys.select's
+        // time snaps to the nearest STORED key, so the nominal timeSeconds
+        // still resolve after the engine's frame snapping. Layer names inside
+        // the key refs resolve engine-side (resolve_layer accepts names), so
+        // no layer-site marking for these steps.
+        for (const [layer, byValue] of interpolationGroups) {
+          const normalizedPath =
+            propertyPath !== undefined ? normalizePropertyPath(propertyPath) : undefined;
+          for (const [value, times] of byValue) {
+            const compiled = KEYFRAME_INTERPOLATION_COMPILE[value];
+            if (compiled === undefined) {
+              this.warn(
+                "uncompilable_arg",
+                `interpolation \`${clip(value, 24)}\` is not an engine interpolation (linear|bezier|hold|easeIn|easeOut|easeInOut|continuousBezier|autoBezier are accepted); the key compiles with the engine default`,
+                { step: planStep, tool, param: "interpolation" },
+              );
+              continue;
+            }
+            add("keys.select", {
+              keys: times.map((time) => ({
+                layer,
+                ...(normalizedPath !== undefined ? { path: normalizedPath } : {}),
+                time,
+              })),
+            });
+            add(compiled.command, { ...compiled.params });
           }
         }
         if (steps.length === 0) compilesToNothing();

@@ -58,6 +58,13 @@ export const WRITE_TOOL_IDS = [
   "engine_commands",
   "run_script",
   "add_asset",
+  // Round-14 "specific tools" (2026-11-02): the two most-misused generic
+  // engine_commands shapes get dedicated curated tools. Real Google-launch
+  // runs reached for studio.engine_commands with layer.newSolid and
+  // layer.newCamera (and invented effect.add for effects); specific tools
+  // with taught schemas remove both detours and the wasted repair rounds.
+  "create_solid",
+  "create_camera",
 ] as const satisfies readonly string[];
 
 export type WriteToolId = (typeof WRITE_TOOL_IDS)[number];
@@ -107,6 +114,11 @@ export const MAX_COORD = 1_000_000;
 export const MAX_STROKE_WIDTH = 1000;
 export const MAX_TRACKING = 10_000;
 export const MAX_LEADING = 10_000;
+/** Camera focal-length bounds in mm (the engine's preset span 15..200). */
+export const MIN_CAMERA_FOCAL_LENGTH_MM = 1;
+export const MAX_CAMERA_FOCAL_LENGTH_MM = 10_000;
+/** Camera zoom factor bounds (engine has none; curated). */
+export const MAX_CAMERA_ZOOM = 100;
 /** Tool-result note bound (the "proposed, never executed" note). */
 export const MAX_RESULT_NOTE_LENGTH = 1000;
 /**
@@ -313,11 +325,7 @@ const NUMERIC_STRING_RE = /^-?\d+(?:\.\d+)?$/;
 
 function repairColorish(raw: unknown): unknown {
   if (!Array.isArray(raw)) return raw;
-  if (
-    raw.length === 1 &&
-    typeof raw[0] === "string" &&
-    HEX_COLOR_RE.test(raw[0].trim())
-  ) {
+  if (raw.length === 1 && typeof raw[0] === "string" && HEX_COLOR_RE.test(raw[0].trim())) {
     return raw[0].trim();
   }
   return raw.map((channel) =>
@@ -457,13 +465,77 @@ export const ADD_EFFECT_ARGS_SCHEMA = withArgsSizeBound(
   }),
 );
 
-/** Keyframe interpolation (the engine's core trio — prop.rs Interp). */
-export const KEYFRAME_INTERPOLATION_SCHEMA = z.enum(["linear", "bezier", "hold"]);
+/**
+ * Keyframe interpolation — the engine's core trio (prop.rs Interp:
+ * linear|bezier|hold) PLUS the eased macros and dialog modes the engine
+ * itself ships: keys.easyEase / keys.easyEaseIn / keys.easyEaseOut (the
+ * After Effects Easy Ease family — bezier with influence 1/3 and zero
+ * speed) and keys.interpolation's continuousBezier|autoBezier modes.
+ *
+ * Why the widened vocabulary (2026-11-01 Google-launch runs): real models
+ * write `easeOut` / `easeIn` on keys — the AE vocabulary they were trained
+ * on — and the trio-only enum hard-rejected the WHOLE set_keyframes call
+ * (INVALID_TOOL_CALL, "nothing in the project changed", a retry burned per
+ * key). The eased names are now first-class and compile to the engine's own
+ * easyEase commands — the real AE curve, not a lossy approximation.
+ */
+export const KEYFRAME_INTERPOLATION_SCHEMA = z.enum([
+  "linear",
+  "bezier",
+  "hold",
+  "easeIn",
+  "easeOut",
+  "easeInOut",
+  "continuousBezier",
+  "autoBezier",
+]);
+
+/**
+ * Interpolation INPUT with repair (the COLOR_INPUT_SCHEMA pattern): models
+ * spell the eased names a dozen ways — `ease-out`, `Ease In`, `easein`,
+ * `easyEase`, `smooth`, `spline`, `auto`, `continuous`, `step` — and one
+ * deterministic preprocess pass canonicalizes them (trim, lowercase, strip
+ * [-_\s], alias map) BEFORE the strict enum above has the final say. Unknown
+ * spellings (`bounce`, `elastic`) still hard-reject — the enum error then
+ * lists the eight accepted names, so the model can repair in one retry.
+ */
+const INTERPOLATION_ALIAS_MAP: Readonly<Record<string, string>> = {
+  // Folded spellings of the canonical values (case/separator tolerant).
+  easein: "easeIn",
+  easeout: "easeOut",
+  easeinout: "easeInOut",
+  continuousbezier: "continuousBezier",
+  autobezier: "autoBezier",
+  // The generic eased names models reach for.
+  ease: "easeInOut",
+  easyease: "easeInOut",
+  smooth: "easeInOut",
+  spline: "bezier",
+  auto: "autoBezier",
+  continuous: "continuousBezier",
+  step: "hold",
+  discrete: "hold",
+};
+
+function repairInterpolationish(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  const folded = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  if (folded === "") return raw;
+  return INTERPOLATION_ALIAS_MAP[folded] ?? raw;
+}
+
+const KEYFRAME_INTERPOLATION_INPUT_SCHEMA = z.preprocess(
+  repairInterpolationish,
+  KEYFRAME_INTERPOLATION_SCHEMA,
+);
 
 const KEYFRAME_SCHEMA = z.strictObject({
   timeSeconds: z.number().min(0).max(MAX_TIME_SECONDS),
   value: z.unknown(),
-  interpolation: KEYFRAME_INTERPOLATION_SCHEMA.optional(),
+  interpolation: KEYFRAME_INTERPOLATION_INPUT_SCHEMA.optional(),
 });
 
 const KEYFRAMES_SCHEMA = z
@@ -570,6 +642,71 @@ export const ADD_ASSET_ARGS_SCHEMA = withArgsSizeBound(
   }),
 );
 
+/**
+ * `studio.create_solid` — the dedicated SOLID-layer tool (round 14). Real runs
+ * reached for studio.engine_commands with layer.newSolid for every background,
+ * void and color field (the create_text description even TOLD them to); a
+ * curated tool with the engine's real params removes the detour. `position`
+ * and `opacity` compile to follow-up prop.set steps in the SAME atomic batch
+ * (the create_text pattern) — layer.newSolid itself takes neither.
+ */
+export const CREATE_SOLID_ARGS_SCHEMA = withArgsSizeBound(
+  z.strictObject({
+    name: SAFE_NAME_SCHEMA,
+    color: COLOR_INPUT_SCHEMA,
+    width: z
+      .number()
+      .int()
+      .min(MIN_COMPOSITION_DIMENSION)
+      .max(MAX_COMPOSITION_DIMENSION)
+      .optional(),
+    height: z
+      .number()
+      .int()
+      .min(MIN_COMPOSITION_DIMENSION)
+      .max(MAX_COMPOSITION_DIMENSION)
+      .optional(),
+    position: z.tuple([COORD_SCHEMA, COORD_SCHEMA]).optional(),
+    opacity: z
+      .number()
+      .min(0, "opacity cannot be negative")
+      .max(
+        100,
+        "opacity is 0..1 as a fraction (0.5 = half) or 1..100 as a percent (100 = fully opaque)",
+      )
+      .optional(),
+  }),
+);
+
+/**
+ * `studio.create_camera` — the dedicated CAMERA-layer tool (round 14). The
+ * Google-launch run proposed its cinematic camera via
+ * studio.engine_commands layer.newCamera with raw engine params (and invented
+ * effect.add when it then wanted glow on it). Curated subset of the REAL
+ * layer.newCamera params (layer.rs): two-node default, the focal presets, zoom
+ * and focus controls. Depth-of-field effects on OTHER layers still go through
+ * studio.add_effect / studio.set_properties — a camera is a layer, not a
+ * look.
+ */
+export const CREATE_CAMERA_ARGS_SCHEMA = withArgsSizeBound(
+  z.strictObject({
+    name: SAFE_NAME_SCHEMA,
+    type: z.enum(["oneNode", "twoNode"]).optional(),
+    preset: z
+      .enum(["15mm", "20mm", "24mm", "28mm", "35mm", "50mm", "80mm", "135mm", "200mm"])
+      .optional(),
+    zoom: z.number().min(0.01).max(MAX_CAMERA_ZOOM).optional(),
+    focalLength: z
+      .number()
+      .min(MIN_CAMERA_FOCAL_LENGTH_MM)
+      .max(MAX_CAMERA_FOCAL_LENGTH_MM)
+      .optional(),
+    focusDistance: z.number().min(0).max(MAX_COORD).optional(),
+    aperture: z.number().min(0).max(100).optional(),
+    fStop: z.number().min(0.1).max(100).optional(),
+  }),
+);
+
 export type CreateCompositionArgs = z.infer<typeof CREATE_COMPOSITION_ARGS_SCHEMA>;
 export type CreateTextArgs = z.infer<typeof CREATE_TEXT_ARGS_SCHEMA>;
 export type SetPropertiesArgs = z.infer<typeof SET_PROPERTIES_ARGS_SCHEMA>;
@@ -580,6 +717,8 @@ export type SaveVersionArgs = z.infer<typeof SAVE_VERSION_ARGS_SCHEMA>;
 export type EngineCommandsArgs = z.infer<typeof ENGINE_COMMANDS_ARGS_SCHEMA>;
 export type RunScriptArgs = z.infer<typeof RUN_SCRIPT_ARGS_SCHEMA>;
 export type AddAssetArgs = z.infer<typeof ADD_ASSET_ARGS_SCHEMA>;
+export type CreateSolidArgs = z.infer<typeof CREATE_SOLID_ARGS_SCHEMA>;
+export type CreateCameraArgs = z.infer<typeof CREATE_CAMERA_ARGS_SCHEMA>;
 
 // ---------------------------------------------------------------------------
 // Registry: id → args schema (M5-SEAMS seam; every entry is a STRICT ZodObject)
@@ -597,6 +736,8 @@ export const WRITE_TOOL_ARGS_SCHEMAS = {
   engine_commands: ENGINE_COMMANDS_ARGS_SCHEMA,
   run_script: RUN_SCRIPT_ARGS_SCHEMA,
   add_asset: ADD_ASSET_ARGS_SCHEMA,
+  create_solid: CREATE_SOLID_ARGS_SCHEMA,
+  create_camera: CREATE_CAMERA_ARGS_SCHEMA,
 } as const satisfies Readonly<Record<WriteToolId, z.ZodObject>>;
 
 // ---------------------------------------------------------------------------
@@ -689,9 +830,11 @@ export const WRITE_TOOLS: readonly WriteToolDefinition[] = [
     returns: "proposed-batch",
     description:
       "Propose keyframes for one property path on existing layers referenced BY NAME: 1..500 " +
-      "keys, each with a time in seconds, a JSON value and an optional interpolation of linear, " +
-      "bezier or hold. The result is a PROPOSED batch for the user to review — never executed " +
-      "until the user applies the plan.",
+      "keys, each with a time in seconds, a JSON value and an optional interpolation — linear, " +
+      "bezier, hold, or the eased forms easeIn / easeOut / easeInOut (After Effects Easy Ease; " +
+      "`ease-out` / `ease-in-out` style spellings are accepted and canonicalized). Eased keys " +
+      "compile to the engine's real Easy Ease curve. The result is a PROPOSED batch for the " +
+      "user to review — never executed until the user applies the plan.",
     inputSchema: WRITE_TOOL_ARGS_SCHEMAS.set_keyframes,
   },
   {
@@ -770,6 +913,35 @@ export const WRITE_TOOLS: readonly WriteToolDefinition[] = [
       "to review — never executed until the user applies the plan, and the applied change lands " +
       "as one undo step.",
     inputSchema: WRITE_TOOL_ARGS_SCHEMAS.add_asset,
+  },
+  // -- round-14 additions ("specific tools") --------------------------------
+  {
+    id: "create_solid",
+    kind: "write",
+    risk: "low",
+    returns: "proposed-batch",
+    description:
+      "Propose adding a SOLID color layer to the active composition: a name, a fill color " +
+      "(#rrggbb or [r, g, b] channels), optional width/height in pixels (default the whole " +
+      "frame — the standard background/void layer), an optional position, and an optional " +
+      "starting opacity (0..1 fraction or 1..100 percent). This is THE tool for backgrounds, " +
+      "voids and color fields — never use an empty text layer for those. The result is a " +
+      "PROPOSED batch for the user to review — never executed until the user applies the plan.",
+    inputSchema: WRITE_TOOL_ARGS_SCHEMAS.create_solid,
+  },
+  {
+    id: "create_camera",
+    kind: "write",
+    risk: "low",
+    returns: "proposed-batch",
+    description:
+      "Propose adding a camera layer to the active composition: a name plus optional camera " +
+      "type (oneNode or twoNode — twoNode is the default and the right choice for orbit and " +
+      "push-in moves), a focal-length preset (15mm..200mm), a zoom factor, a focal length in mm, " +
+      "a focus distance, an aperture and an f-stop. Animate the camera afterwards with " +
+      "studio.set_keyframes on its transform properties. The result is a PROPOSED batch for the " +
+      "user to review — never executed until the user applies the plan.",
+    inputSchema: WRITE_TOOL_ARGS_SCHEMAS.create_camera,
   },
 ];
 

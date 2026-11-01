@@ -1208,7 +1208,7 @@ describe("LiteLLM runner — cancellation", () => {
 // ---------------------------------------------------------------------------
 
 describe("LiteLLM runner — tool registry + redaction (M4.6 → M5.1 / M4.3)", () => {
-  it("registers exactly the 21 v3 tools on the provider wire — 10 read + 11 write (ids from TOOL_LIST/WRITE_TOOL_IDS)", async () => {
+  it("registers exactly the 23 v3+round14 tools on the provider wire — 10 read + 13 write (ids from TOOL_LIST/WRITE_TOOL_IDS)", async () => {
     const { runner, fetchStub, stream } = makeRunner([
       sseResponse([textDelta("hi"), finish("stop"), DONE]),
     ]);
@@ -1223,7 +1223,7 @@ describe("LiteLLM runner — tool registry + redaction (M4.6 → M5.1 / M4.3)", 
     );
     // Round-13 re-pin (w3-b03): the registry derives LIVE from contracts
     // (TOOL_LIST.filter(read) + WRITE_TOOL_IDS), so the round-12 tool-catalog
-    // v3 grew it to 10 read + 11 write = 21 — the same truth turn-engine.test.ts
+    // v3+round-14 grew it to 10 read + 13 write = 23 — the same truth turn-engine.test.ts
     // and golden-prompts.test.ts pin. The retired-runner suite itself stays
     // (see the file header): routes/chat.ts + injection*.test.ts still import
     // this module, so deleting it is a coordinated wave, not this file's call.
@@ -1233,9 +1233,9 @@ describe("LiteLLM runner — tool registry + redaction (M4.6 → M5.1 / M4.3)", 
     expect(RUNNER_WRITE_TOOLS.map((tool) => tool.id).sort()).toEqual(
       [...WRITE_TOOL_IDS].map((id) => `studio.${id}`).sort(),
     );
-    expect(RUNNER_TOOLS).toHaveLength(21);
+    expect(RUNNER_TOOLS).toHaveLength(23);
     // 10 read + 11 write = 21, and nothing else (no invented id, no raw entrypoint).
-    expect(new Set(RUNNER_TOOLS.map((tool) => tool.id)).size).toBe(21);
+    expect(new Set(RUNNER_TOOLS.map((tool) => tool.id)).size).toBe(23);
     for (const call of fetchStub.calls) {
       const serialized = JSON.stringify(call.body);
       expect(serialized.includes("engine.execute")).toBe(false);
@@ -1355,7 +1355,7 @@ describe("prompt.ts (§8.3 / §5.4)", () => {
     expect(SYSTEM_PROMPT.toLowerCase()).toContain("motion-graphics");
   });
 
-  it("states the v3 tool surface truth: 11 write tools, proposal→apply pipeline, agent DOES the work (AUD-2 / round-10 v2)", () => {
+  it("states the v3 tool surface truth: 13 write tools, proposal→apply pipeline, agent DOES the work (AUD-2 / round-10 v2)", () => {
     // The stale M4 line is GONE — the prompt may never deny the write tools the
     // runner registers on the provider wire (runner.ts RUNNER_TOOLS: 10 read +
     // 11 write = 21, tool_choice auto; catalog v3, round-12).
@@ -1366,10 +1366,10 @@ describe("prompt.ts (§8.3 / §5.4)", () => {
     for (const id of WRITE_TOOL_IDS) {
       expect(SYSTEM_PROMPT).toContain(`studio.${id}`);
     }
-    expect(SYSTEM_PROMPT).toContain("Write tools (11)");
+    expect(SYSTEM_PROMPT).toContain("Write tools (13)");
     expect(SYSTEM_PROMPT).toContain("Read tools (call them via the provided tool interface):");
-    expect(RUNNER_WRITE_TOOLS).toHaveLength(11);
-    expect(RUNNER_TOOLS).toHaveLength(21);
+    expect(RUNNER_WRITE_TOOLS).toHaveLength(13);
+    expect(RUNNER_TOOLS).toHaveLength(23);
 
     // Round-10 v2 semantics: the agent is ordered to DO THE WORK (call the
     // write tools for the complete change), eligible plans APPLY THEMSELVES,

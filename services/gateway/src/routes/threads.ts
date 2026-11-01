@@ -120,9 +120,7 @@ export function threadsRoutes(deps: GatewayDeps): Hono<AppBindings> {
     async (c: AppContext): Promise<Response> => {
       const workspaceId = c.get("workspace").id;
       const threadId = pathParam(c, "id");
-      const parsed = CREATE_THREAD_MESSAGE_SCHEMA.safeParse(
-        await c.req.json().catch(() => ({})),
-      );
+      const parsed = CREATE_THREAD_MESSAGE_SCHEMA.safeParse(await c.req.json().catch(() => ({})));
       if (!parsed.success) {
         throw new GatewayError("VALIDATION_FAILED", "That request didn't look right.", {
           status: 400,

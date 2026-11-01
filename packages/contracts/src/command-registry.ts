@@ -386,6 +386,24 @@ const AGENT_COMMAND_SOURCES: Readonly<Record<string, CommandSource>> = {
     title: "Easy Ease",
     params: "{which?: both|in|out}",
   },
+  // The keyframe-interpolation workflow (2026-11-01 Google-launch fix): the
+  // set_keyframes write tool compiles eased keys to these commands, and the
+  // model can compose them directly via studio.engine_commands —
+  // keys.select targets exact keys, then keys.interpolation / keys.easyEase
+  // (which: both|in|out — the engine's easyEaseIn/Out are the same command)
+  // applies to the selection. Two ids keep the digest inside its band.
+  "keys.select": {
+    source: "apps/editor/crates/engine/src/commands/prop.rs:1354",
+    title: "Select Keyframes",
+    params:
+      "{keys: [{layer, prop: uid | path (or `path`), time (layer s by default)}], timeBase?: layer|comp, add?, toggle?: bool, selectProperties?: bool}",
+  },
+  "keys.interpolation": {
+    source: "apps/editor/crates/engine/src/commands/prop.rs:1372",
+    title: "Keyframe Interpolation...",
+    params:
+      "{interpolation?: linear|bezier|continuousBezier|autoBezier|hold, in?|out?: linear|bezier|hold, autoBezier?, continuous?, spatial?: linear|bezier|continuousBezier|autoBezier, roving?}",
+  },
 
   // -- effects ---------------------------------------------------------------
   "effect.apply": {

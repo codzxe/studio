@@ -21,7 +21,7 @@
 //      reasons, the retry budget, abort semantics.
 //   6. serverSidePlan     — the studio.plan_edit structured-output side call
 //      (strict-JSON first attempt, the pinned retry message, typed failure).
-//   7. TURN_TOOLS          — the 21-tool v3 catalog sanity + client/writes split.
+//   7. TURN_TOOLS          — the 23-tool v3+round14 catalog sanity + client/writes split.
 
 import { describe, expect, it } from "vitest";
 
@@ -53,12 +53,12 @@ import {
   isClientExecutedTool,
   isWriteTool,
   layerReferenceVerdict,
+  proposedBatchResult,
   registeredToolFor,
-  seedTurnSymbolTable,
   resolveWriteToolCall,
+  seedTurnSymbolTable,
   serverSidePlan,
   turnOpenAiToolSpecs,
-  proposedBatchResult,
   validateToolCall,
   writeToolCarrierPlan,
 } from "../src/litellm/turn-engine.js";
@@ -263,6 +263,8 @@ describe("TURN_TOOLS catalog sanity (§8.4 tool catalog v3)", () => {
     "studio.engine_commands",
     "studio.run_script",
     "studio.add_asset",
+    "studio.create_solid",
+    "studio.create_camera",
     "studio.list_commands",
     "studio.describe_command",
     "studio.web_search",
@@ -270,9 +272,9 @@ describe("TURN_TOOLS catalog sanity (§8.4 tool catalog v3)", () => {
     "studio.generate_image",
   ];
 
-  it("registers exactly the 21 v3 tools, in contracts registry order", () => {
-    expect(TURN_TOOLS).toHaveLength(21);
-    expect(TOOL_LIST).toHaveLength(21);
+  it("registers exactly the 23 v3+round14 tools, in contracts registry order", () => {
+    expect(TURN_TOOLS).toHaveLength(23);
+    expect(TOOL_LIST).toHaveLength(23);
     expect(TURN_TOOLS.map((tool) => tool.id)).toEqual(EXPECTED_IDS);
     expect(TURN_TOOLS.map((tool) => tool.id)).toEqual([...TOOL_IDS]);
   });
@@ -336,7 +338,7 @@ describe("TURN_TOOLS catalog sanity (§8.4 tool catalog v3)", () => {
 
   it("turnOpenAiToolSpecs registers every tool under its dotted id with a JSON schema", () => {
     const specs = turnOpenAiToolSpecs();
-    expect(specs).toHaveLength(21);
+    expect(specs).toHaveLength(23);
     expect(specs[0]?.function.name).toBe("studio.get_context");
     for (const spec of specs) {
       expect(spec.type).toBe("function");
@@ -755,7 +757,7 @@ describe("validateToolCall (§8.9)", () => {
       ]) {
         expect(verdict.message).toContain(id);
       }
-      expect(verdict.message.split(", ")).toHaveLength(21);
+      expect(verdict.message.split(", ")).toHaveLength(23);
     }
   });
 
@@ -974,8 +976,41 @@ describe("writeToolCarrierPlan + resolveWriteToolCall (PROPOSE-ONLY carriers)", 
       history: [],
       transcript: [{ role: "user", text: "continue" }],
     });
+    expect(messages.some((message) => message.content?.includes("APPLY FEEDBACK"))).toBe(false);
+  });
+
+  it("buildTurnMessages renders APPLY RECEIPTS as the model's verification ground truth (round 14)", () => {
+    const messages = buildTurnMessages({
+      history: [],
+      transcript: [{ role: "user", text: "continue" }],
+      applyReceipts: [
+        'Applied: Add text layer "Green Particle" (saved ver_91)',
+        'Applied: Add effect "Glow" to 1 layer (saved ver_92)',
+      ],
+    });
+    // The prompt ITSELF mentions the receipts note (the VERIFY section) — the
+    // note message is the system row AFTER the prompt.
+    const note = messages
+      .filter((message) => message.role === "system")
+      .slice(1)
+      .find((message) => message.content.includes("APPLY RECEIPTS"));
+    expect(note).toBeDefined();
+    expect(note?.content).toContain("APPLIED to the project and SAVED");
+    expect(note?.content).toContain('Green Particle" (saved ver_91)');
+    expect(note?.content).toContain("NEVER re-create or duplicate it");
+    expect(note?.content).toContain("verify it with");
+  });
+
+  it("buildTurnMessages omits the receipts note when there are none", () => {
+    const messages = buildTurnMessages({
+      history: [],
+      transcript: [{ role: "user", text: "continue" }],
+    });
     expect(
-      messages.some((message) => message.content?.includes("APPLY FEEDBACK")),
+      messages
+        .filter((message) => message.role === "system")
+        .slice(1)
+        .some((message) => message.content?.includes("APPLY RECEIPTS")),
     ).toBe(false);
   });
 
@@ -1257,9 +1292,9 @@ describe("executeModelTurn (fake OpenAI SSE)", () => {
     expect(result.outputTokens).toBe(30);
     expect(result.usageSeen).toBe(true);
     expect(result.finishReason).toBe("tool_calls");
-    // The wire registration is the sanitized 21-tool catalog (the toolSeam).
+    // The wire registration is the sanitized 23-tool catalog (the toolSeam).
     const tools = (fetchStub.calls[0]?.body.tools ?? []) as Array<{ function: { name: string } }>;
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(23);
     expect(tools[0]?.function.name).toBe("studio_get_context");
     expect(tools.some((t) => t.function.name === "studio_engine_commands")).toBe(true);
     expect(tools.some((t) => t.function.name === "studio_run_script")).toBe(true);
@@ -1629,11 +1664,7 @@ describe("turn symbol table — canvas seed + fold of accepted creations", () =>
 
   it("folds an accepted call's creations in so LATER calls in the same turn can reference them", () => {
     const table = seedTurnSymbolTable(canvas);
-    foldCreationsInto(
-      table,
-      new Set(["G Logo Element"]),
-      new Set(["Google Launch Sequence"]),
-    );
+    foldCreationsInto(table, new Set(["G Logo Element"]), new Set(["Google Launch Sequence"]));
     expect(table.layers.has("G Logo Element")).toBe(true);
     expect(table.compositions.has("Google Launch Sequence")).toBe(true);
     // The comp created THIS TURN is now known — a later set_properties on it
@@ -1671,7 +1702,10 @@ describe("createdNamesFromSteps — the run's durable record of what it created"
         argsJson: JSON.stringify({
           steps: [
             { command: "layer.newSolid", params: { name: "Background", color: "#fff" } },
-            { command: "prop.set", params: { layer: "Background", path: "transform/opacity", value: 0 } },
+            {
+              command: "prop.set",
+              params: { layer: "Background", path: "transform/opacity", value: 0 },
+            },
           ],
         }),
         resultJson: JSON.stringify({ proposedBatch: { label: "x", steps: [] } }),
@@ -1742,7 +1776,7 @@ describe("createdNamesFromSteps — the run's durable record of what it created"
   });
 });
 
-describe("read-tool numeric arg repair (e2e bba72d51: list_layers depth:\"2\" x3)", () => {
+describe('read-tool numeric arg repair (e2e bba72d51: list_layers depth:"2" x3)', () => {
   it("coerces a stringified depth on a read tool at the gateway", () => {
     const checked = validateToolCall({
       id: "call_depth",

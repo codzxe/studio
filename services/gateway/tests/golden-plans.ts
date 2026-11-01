@@ -325,15 +325,17 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
     },
     expected: {
       // M5-S FLIP: compiles post-G-1-fix — one prop.addKey per key (1 layer ×
-      // 2 keys, key-major order); the bezier interpolations warn (editor-side
-      // keyframe state, uncompilable_arg).
+      // 2 keys, key-major order). The 2026-11-01 interpolation fix: both
+      // bezier keys group into ONE exact keys.select (2 refs) + ONE
+      // keys.interpolation — the easing now lands IN THE ENGINE instead of
+      // warning as editor-side state.
       compile: "compiled",
-      commands: ["prop.addKey", "prop.addKey"],
-      batchStepRange: [2, 2],
+      commands: ["prop.addKey", "prop.addKey", "keys.select", "keys.interpolation"],
+      batchStepRange: [4, 4],
       risk: "low",
       estimatedCredits: 1.5,
       resolutionRequests: ["Headline"],
-      warningCodes: ["uncompilable_arg", "unknown_command", "batch_mismatch"],
+      warningCodes: ["unknown_command", "batch_mismatch"],
       findings: [],
     },
   },
@@ -828,8 +830,11 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
             layers: [{ name: "Speaker Lower Third" }],
             propertyPath: "transform/position",
             keys: [
-              { timeSeconds: 0, value: [-400, 940] },
-              { timeSeconds: 0.6, value: [120, 940] },
+              // The eased spellings a real model writes for a slide-in
+              // (the 2026-11-01 Google-launch vocabulary) — they must ride
+              // the wire carrier and compile to the Easy Ease commands.
+              { timeSeconds: 0, value: [-400, 940], interpolation: "easeOut" },
+              { timeSeconds: 0.6, value: [120, 940], interpolation: "easeIn" },
             ],
           },
           { layerName: "Speaker Lower Third", property: "transform/position", keyframeCount: 2 },
@@ -847,12 +852,22 @@ export const GOLDEN_PROMPT_FIXTURES: readonly GoldenPromptFixture[] = [
     expected: {
       // M5-S FLIP: G-3 is FIXED — every step of the compound plan compiles:
       // the create_text typography lands 1:1, the slide-in keyframes compile
-      // (2 × prop.addKey, key-major), and save_version stays the ANNOTATION.
-      // What the card shows (3 steps) is exactly what the batch performs (3
-      // commands). G-8 REMAINS: the orphan request for the created layer.
+      // (2 × prop.addKey, key-major) and — since the 2026-11-01 interpolation
+      // fix — the eased keys compile their interpolation pass too (keys.select
+      // + keys.easyEase per value). save_version stays the ANNOTATION. What
+      // the card shows (3 steps) is what the batch performs. G-8 REMAINS: the
+      // orphan request for the created layer.
       compile: "compiled",
-      commands: ["layer.newText", "prop.addKey", "prop.addKey"],
-      batchStepRange: [3, 3],
+      commands: [
+        "layer.newText",
+        "prop.addKey",
+        "prop.addKey",
+        "keys.select",
+        "keys.easyEase",
+        "keys.select",
+        "keys.easyEase",
+      ],
+      batchStepRange: [7, 7],
       risk: "low",
       // 3 plan steps ⇒ (1 + 3×0.5) × 1 — the annotation step still counts.
       estimatedCredits: 2.5,

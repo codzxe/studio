@@ -54,6 +54,10 @@ export const TOOL_IDS = [
   "studio.engine_commands",
   "studio.run_script",
   "studio.add_asset",
+  // Round-14 "specific tools" (2026-11-02): the dedicated solid/camera layer
+  // writes (they ride WRITE_TOOL_DEFS with the other writes).
+  "studio.create_solid",
+  "studio.create_camera",
   "studio.list_commands",
   "studio.describe_command",
   "studio.web_search",

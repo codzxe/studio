@@ -70,6 +70,7 @@ const REGISTRY: CommandSchema = {
     ],
   },
   "layer.newText": { id: "layer.newText", title: "Text", params: [] },
+  "layer.newCamera": { id: "layer.newCamera", title: "Camera…", params: [] },
   "prop.set": {
     id: "prop.set",
     title: "Set Property Value",
@@ -125,6 +126,39 @@ const REGISTRY: CommandSchema = {
     ],
   },
   "layer.newSolid": { id: "layer.newSolid", title: "Solid…", params: [] },
+  // The keyframe interpolation pass (2026-11-01 Google-launch fix): the
+  // engine's keys.* family the set_keyframes translation now emits.
+  "keys.select": {
+    id: "keys.select",
+    title: "Select Keyframes",
+    params: [
+      { name: "keys", required: true, type: "array" },
+      { name: "timeBase", required: false, type: "string" },
+      { name: "add", required: false },
+      { name: "toggle", required: false },
+      { name: "selectProperties", required: false },
+    ],
+  },
+  "keys.interpolation": {
+    id: "keys.interpolation",
+    title: "Keyframe Interpolation…",
+    params: [
+      { name: "interpolation", required: false, type: "string" },
+      { name: "in", required: false, type: "string" },
+      { name: "out", required: false, type: "string" },
+      { name: "autoBezier", required: false },
+      { name: "continuous", required: false },
+      { name: "spatial", required: false, type: "string" },
+      { name: "roving", required: false },
+    ],
+  },
+  "keys.easyEase": {
+    id: "keys.easyEase",
+    title: "Easy Ease",
+    params: [{ name: "which", required: false, type: "string" }],
+  },
+  "keys.easyEaseIn": { id: "keys.easyEaseIn", title: "Easy Ease In", params: [] },
+  "keys.easyEaseOut": { id: "keys.easyEaseOut", title: "Easy Ease Out", params: [] },
 };
 
 // The M5-A write-tool surface + the round-12 additions — mirrors the LANDED
@@ -145,6 +179,9 @@ const WRITE_TOOL_IDS = [
   "engine_commands",
   "run_script",
   "add_asset",
+  // Round-14 "specific tools" (real schemas mirrored from write-tools.ts):
+  "create_solid",
+  "create_camera",
 ] as const;
 
 type FixtureToolId = (typeof WRITE_TOOL_IDS)[number];
@@ -198,6 +235,32 @@ const WRITE_TOOLS: Record<FixtureToolId, WriteToolDef> = {
     }),
     risk: "low",
   },
+  create_solid: {
+    args: z.object({
+      name: SAFE_NAME_FIXTURE,
+      color: COLOR_FIXTURE,
+      width: z.number().int().min(1).max(8192).optional(),
+      height: z.number().int().min(1).max(8192).optional(),
+      position: z.tuple([COORD_FIXTURE, COORD_FIXTURE]).optional(),
+      opacity: z.number().min(0).max(100).optional(),
+    }),
+    risk: "low",
+  },
+  create_camera: {
+    args: z.object({
+      name: SAFE_NAME_FIXTURE,
+      type: z.enum(["oneNode", "twoNode"]).optional(),
+      preset: z
+        .enum(["15mm", "20mm", "24mm", "28mm", "35mm", "50mm", "80mm", "135mm", "200mm"])
+        .optional(),
+      zoom: z.number().min(0.01).max(100).optional(),
+      focalLength: z.number().min(1).max(10_000).optional(),
+      focusDistance: z.number().min(0).max(1_000_000).optional(),
+      aperture: z.number().min(0).max(100).optional(),
+      fStop: z.number().min(0.1).max(100).optional(),
+    }),
+    risk: "low",
+  },
   set_properties: {
     args: z.object({
       layers: LAYER_REFS_FIXTURE,
@@ -217,7 +280,18 @@ const WRITE_TOOLS: Record<FixtureToolId, WriteToolDef> = {
           z.object({
             timeSeconds: z.number().min(0).max(36_000),
             value: z.unknown(),
-            interpolation: z.enum(["linear", "bezier", "hold"]).optional(),
+            interpolation: z
+              .enum([
+                "linear",
+                "bezier",
+                "hold",
+                "easeIn",
+                "easeOut",
+                "easeInOut",
+                "continuousBezier",
+                "autoBezier",
+              ])
+              .optional(),
           }),
         )
         .min(1)
@@ -434,7 +508,12 @@ describe("golden compiles per tool", () => {
         plan([
           step(
             "create_composition",
-            { name: "Google Launch Sequence", width: 3840, height: 2160, background: [66, 133, 244] },
+            {
+              name: "Google Launch Sequence",
+              width: 3840,
+              height: 2160,
+              background: [66, 133, 244],
+            },
             [
               {
                 command: "comp.new",
@@ -469,7 +548,13 @@ describe("golden compiles per tool", () => {
         plan([
           step(
             "create_text",
-            { text: "G", name: "G Logo Element", position: [1920, 1080], fill: "#4285F4", opacity: 0 },
+            {
+              text: "G",
+              name: "G Logo Element",
+              position: [1920, 1080],
+              fill: "#4285F4",
+              opacity: 0,
+            },
             [],
           ),
         ]),
@@ -498,7 +583,71 @@ describe("golden compiles per tool", () => {
     );
     expect(result.batch.steps).toEqual([
       { command: "layer.newText", params: { text: "Ask anything.", name: "Ask anything." } },
-      { command: "prop.set", params: { layer: "Ask anything.", path: "transform/opacity", value: 50 } },
+      {
+        command: "prop.set",
+        params: { layer: "Ask anything.", path: "transform/opacity", value: 50 },
+      },
+    ]);
+  });
+
+  it("create_solid (round 14) → layer.newSolid with the color; position/opacity compile as follow-up prop.set steps", () => {
+    const result = expectOk(
+      compile(
+        plan([
+          step(
+            "create_solid",
+            { name: "Studio Void", color: "#0A0A0B", width: 3840, height: 2160, opacity: 0.9 },
+            [],
+          ),
+        ]),
+      ),
+    );
+    expect(result.batch.steps).toEqual([
+      {
+        command: "layer.newSolid",
+        params: { name: "Studio Void", color: "#0A0A0B", width: 3840, height: 2160 },
+      },
+      {
+        command: "prop.set",
+        params: { layer: "Studio Void", path: "transform/opacity", value: 90 },
+      },
+    ]);
+  });
+
+  it("create_solid REQUIRES a color (the background tool) — no color compiles to nothing", () => {
+    const result = compile(plan([step("create_solid", { name: "No Color" }, [])]));
+    expect(result.ok).toBe(false);
+  });
+
+  it("create_camera (round 14) → layer.newCamera with the curated param subset", () => {
+    const result = expectOk(
+      compile(
+        plan([
+          step(
+            "create_camera",
+            {
+              name: "Cinematic Camera",
+              type: "twoNode",
+              preset: "35mm",
+              zoom: 1.5,
+              focalLength: 85,
+            },
+            [],
+          ),
+        ]),
+      ),
+    );
+    expect(result.batch.steps).toEqual([
+      {
+        command: "layer.newCamera",
+        params: {
+          name: "Cinematic Camera",
+          type: "twoNode",
+          preset: "35mm",
+          zoom: 1.5,
+          focalLength: 85,
+        },
+      },
     ]);
   });
 
@@ -516,9 +665,7 @@ describe("golden compiles per tool", () => {
 
   it("create_text WITHOUT opacity emits no prop.set and no synthesized name (unchanged golden)", () => {
     const result = expectOk(compile(plan([step("create_text", { text: "Plain" }, [])])));
-    expect(result.batch.steps).toEqual([
-      { command: "layer.newText", params: { text: "Plain" } },
-    ]);
+    expect(result.batch.steps).toEqual([{ command: "layer.newText", params: { text: "Plain" } }]);
   });
 
   it("create_text (minimal) → layer.newText {text} only", () => {
@@ -625,7 +772,7 @@ describe("golden compiles per tool", () => {
     ]);
   });
 
-  it("set_keyframes → cross-product prop.addKey per layer × key; interpolation warns (client state)", () => {
+  it("set_keyframes → cross-product prop.addKey per layer × key + the interpolation pass", () => {
     const args = {
       layers: [{ name: "Headline" }],
       propertyPath: "transform/position",
@@ -634,33 +781,7 @@ describe("golden compiles per tool", () => {
         { timeSeconds: 1, value: [960, 540, 0], interpolation: "bezier" },
       ],
     };
-    const result = expectOk(
-      compile(
-        plan([
-          step("set_keyframes", args, [
-            {
-              command: "prop.addKey",
-              params: {
-                layer: "Headline",
-                path: "transform/position",
-                time: 0,
-                value: [0, 540, 0],
-              },
-            },
-            {
-              command: "prop.addKey",
-              params: {
-                layer: "Headline",
-                path: "transform/position",
-                time: 1,
-                value: [960, 540, 0],
-              },
-            },
-          ]),
-        ]),
-      ),
-    );
-    expect(result.batch.steps).toEqual([
+    const expected = [
       {
         command: "prop.addKey",
         params: { layer: "Headline", path: "transform/position", time: 0, value: [0, 540, 0] },
@@ -669,11 +790,148 @@ describe("golden compiles per tool", () => {
         command: "prop.addKey",
         params: { layer: "Headline", path: "transform/position", time: 1, value: [960, 540, 0] },
       },
-    ]);
-    // timeSeconds → time, and a non-linear interpolation is editor-side state.
-    const interpolationWarnings = result.warnings.filter((w) => w.code === "uncompilable_arg");
-    expect(interpolationWarnings).toHaveLength(1);
-    expect(interpolationWarnings[0]?.param).toBe("interpolation");
+      // The interpolation pass: exact keys.select + the dialog command — the
+      // key the model marked bezier gets bezier IN THE ENGINE (it used to be
+      // dropped with an "editor-side state" warning).
+      {
+        command: "keys.select",
+        params: { keys: [{ layer: "Headline", path: "transform/position", time: 1 }] },
+      },
+      { command: "keys.interpolation", params: { interpolation: "bezier" } },
+    ];
+    const result = expectOk(compile(plan([step("set_keyframes", args, expected)])));
+    expect(result.batch.steps).toEqual(expected);
+    expect(warningCodes(result)).toEqual([]);
+  });
+
+  it("set_keyframes eased values compile to the engine's Easy Ease commands (2026-11-01 Google-launch fix)", () => {
+    // The exact shape the Google-launch run emitted — keys.0 easeOut,
+    // keys.1 easeIn on transform/position across two particle layers. The
+    // trio-only enum hard-rejected the whole call as INVALID_TOOL_CALL
+    // ("nothing in the project changed"); the eased names now compile to
+    // keys.easyEase {which} (the engine's easyEaseIn/Out wrappers are the
+    // same command) via exact keys.select targeting.
+    const args = {
+      layers: [{ name: "Blue Particle" }, { name: "Red Particle" }],
+      propertyPath: "transform/position",
+      keys: [
+        { timeSeconds: 0, value: [-1800, -1000, 0], interpolation: "easeOut" },
+        { timeSeconds: 1.5, value: [0, 0, 0], interpolation: "easeIn" },
+      ],
+    };
+    const expected = [
+      {
+        command: "prop.addKey",
+        params: {
+          layer: "Blue Particle",
+          path: "transform/position",
+          time: 0,
+          value: [-1800, -1000, 0],
+        },
+      },
+      {
+        command: "prop.addKey",
+        params: {
+          layer: "Red Particle",
+          path: "transform/position",
+          time: 0,
+          value: [-1800, -1000, 0],
+        },
+      },
+      {
+        command: "prop.addKey",
+        params: { layer: "Blue Particle", path: "transform/position", time: 1.5, value: [0, 0, 0] },
+      },
+      {
+        command: "prop.addKey",
+        params: { layer: "Red Particle", path: "transform/position", time: 1.5, value: [0, 0, 0] },
+      },
+      {
+        command: "keys.select",
+        params: { keys: [{ layer: "Blue Particle", path: "transform/position", time: 0 }] },
+      },
+      { command: "keys.easyEase", params: { which: "out" } },
+      {
+        command: "keys.select",
+        params: { keys: [{ layer: "Blue Particle", path: "transform/position", time: 1.5 }] },
+      },
+      { command: "keys.easyEase", params: { which: "in" } },
+      {
+        command: "keys.select",
+        params: { keys: [{ layer: "Red Particle", path: "transform/position", time: 0 }] },
+      },
+      { command: "keys.easyEase", params: { which: "out" } },
+      {
+        command: "keys.select",
+        params: { keys: [{ layer: "Red Particle", path: "transform/position", time: 1.5 }] },
+      },
+      { command: "keys.easyEase", params: { which: "in" } },
+    ];
+    const result = expectOk(
+      compile(
+        plan([step("set_keyframes", args, expected)], {
+          affectedLayers: [
+            { id: 1, name: "Blue Particle", change: "Fly in" },
+            { id: 2, name: "Red Particle", change: "Fly in" },
+          ],
+        }),
+      ),
+    );
+    expect(result.batch.steps).toEqual(expected);
+    expect(warningCodes(result)).toEqual([]);
+  });
+
+  it("every accepted interpolation value compiles to its engine command (the enum ↔ compile-table sync guard)", () => {
+    // If KEYFRAME_INTERPOLATION_SCHEMA ever gains a value without a
+    // KEYFRAME_INTERPOLATION_COMPILE mapping (or vice versa), this fails —
+    // the vocabulary and the compilation can never silently drift apart.
+    const expectedCommand: Record<string, { command: string; params: Record<string, unknown> }> = {
+      linear: { command: "keys.interpolation", params: { interpolation: "linear" } },
+      bezier: { command: "keys.interpolation", params: { interpolation: "bezier" } },
+      hold: { command: "keys.interpolation", params: { interpolation: "hold" } },
+      continuousBezier: {
+        command: "keys.interpolation",
+        params: { interpolation: "continuousBezier" },
+      },
+      autoBezier: { command: "keys.interpolation", params: { interpolation: "autoBezier" } },
+      easeIn: { command: "keys.easyEase", params: { which: "in" } },
+      easeOut: { command: "keys.easyEase", params: { which: "out" } },
+      easeInOut: { command: "keys.easyEase", params: {} },
+    };
+    for (const [value, command] of Object.entries(expectedCommand)) {
+      if (command === undefined) throw new Error(`missing expected command for ${value}`);
+      const args = {
+        layers: [{ name: "Headline" }],
+        propertyPath: "transform/rotation",
+        keys: [{ timeSeconds: 0, value: 45, interpolation: value }],
+      };
+      const expected = [
+        {
+          command: "prop.addKey",
+          params: { layer: "Headline", path: "transform/rotation", time: 0, value: 45 },
+        },
+        {
+          command: "keys.select",
+          params: { keys: [{ layer: "Headline", path: "transform/rotation", time: 0 }] },
+        },
+        command,
+      ];
+      const result = expectOk(compile(plan([step("set_keyframes", args, expected)])));
+      expect(result.batch.steps, `interpolation "${value}"`).toEqual(expected);
+      expect(warningCodes(result), `interpolation "${value}"`).toEqual([]);
+    }
+  });
+
+  it("set_keyframes unknown interpolation is rejected by the live schema (defense in depth)", () => {
+    // The args fail the tool's Zod schema BEFORE translation — the compiler's
+    // unknown-value warn branch is the second line of defense for looser
+    // surfaces, and the enum error names the eight accepted values.
+    const args = {
+      layers: [{ name: "Headline" }],
+      propertyPath: "transform/opacity",
+      keys: [{ timeSeconds: 0, value: 0, interpolation: "warp" }],
+    };
+    expectFatal(compile(plan([step("set_keyframes", args)])), "invalid_args");
   });
 
   it("add_effect → effect.apply {effect, layers:[names]}; effect params warn", () => {

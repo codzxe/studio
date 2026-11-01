@@ -31,11 +31,11 @@ import type { AppBindings, AppContext, GatewayDeps } from "../context.js";
 import { creditsToLedgerMicrocredits, microcreditsToWholeCredits } from "../credits-display.js";
 import { GatewayError } from "../errors.js";
 import { ok, pathParam } from "../http.js";
-import { requireAuth, requireWorkspace } from "../middleware.js";
 import { requireLeaseForMutation } from "../lease-guard.js";
+import { requireAuth, requireWorkspace } from "../middleware.js";
 import { snapshotKey } from "../storage.js";
-import { hasInFlightTurns } from "./turn.js";
 import { audit } from "./projects.js";
+import { hasInFlightTurns } from "./turn.js";
 
 export function runsRoutes(deps: GatewayDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();

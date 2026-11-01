@@ -22,6 +22,7 @@ import {
   MAX_TURN_CANVAS_LAYERS,
   MAX_TURN_MESSAGES_BYTES,
   MAX_TURN_MESSAGE_PARTS,
+  MAX_TURN_MESSAGE_TEXT_LENGTH,
   TURN_MESSAGE_SCHEMA,
   TURN_REQUEST_SCHEMA,
 } from "../src/routes/turn.js";
@@ -154,15 +155,15 @@ describe("turn: TURN_REQUEST_SCHEMA (runId, stepIndex, messages, context, canvas
       TURN_REQUEST_SCHEMA.safeParse({ ...BASE, applyNotes: ["a", "b", "c", "d"] }).success,
     ).toBe(false);
     expect(TURN_REQUEST_SCHEMA.safeParse({ ...BASE, applyNotes: [""] }).success).toBe(false);
-    expect(
-      TURN_REQUEST_SCHEMA.safeParse({ ...BASE, applyNotes: ["x".repeat(401)] }).success,
-    ).toBe(false);
+    expect(TURN_REQUEST_SCHEMA.safeParse({ ...BASE, applyNotes: ["x".repeat(401)] }).success).toBe(
+      false,
+    );
   });
 
-  it("caps messages at 64 parts and rejects empty transcripts", () => {
+  it("caps messages at the schema bound and rejects empty transcripts", () => {
     const fill = (count: number) =>
       Array.from({ length: count }, () => ({ role: "assistant", text: "ok" }));
-    expect(fill(MAX_TURN_MESSAGE_PARTS).length).toBe(64);
+    expect(fill(MAX_TURN_MESSAGE_PARTS).length).toBe(MAX_TURN_MESSAGE_PARTS);
     expect(
       TURN_REQUEST_SCHEMA.safeParse({ ...BASE, messages: fill(MAX_TURN_MESSAGE_PARTS) }).success,
     ).toBe(true);
@@ -173,18 +174,15 @@ describe("turn: TURN_REQUEST_SCHEMA (runId, stepIndex, messages, context, canvas
     expect(TURN_REQUEST_SCHEMA.safeParse({ ...BASE, messages: [] }).success).toBe(false);
   });
 
-  it("enforces the 64 KB serialized messages cap via superRefine", () => {
-    const bigText = "x".repeat(32_000);
+  it("enforces the 192 KB serialized messages cap via superRefine", () => {
+    // Per-part text caps at 32k, so "over" needs SEVEN maxed parts (> 192 KB).
+    const bigText = "x".repeat(MAX_TURN_MESSAGE_TEXT_LENGTH);
     const within = { ...BASE, messages: [{ role: "assistant", text: bigText }] };
     expect(JSON.stringify(within.messages).length).toBeLessThanOrEqual(MAX_TURN_MESSAGES_BYTES);
     expect(TURN_REQUEST_SCHEMA.safeParse(within).success).toBe(true);
     const over = {
       ...BASE,
-      messages: [
-        { role: "assistant", text: bigText },
-        { role: "assistant", text: bigText },
-        { role: "assistant", text: bigText },
-      ],
+      messages: Array.from({ length: 7 }, () => ({ role: "assistant", text: bigText })),
     };
     expect(JSON.stringify(over.messages).length).toBeGreaterThan(MAX_TURN_MESSAGES_BYTES);
     const parsed = TURN_REQUEST_SCHEMA.safeParse(over);

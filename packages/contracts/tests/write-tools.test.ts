@@ -57,6 +57,8 @@ const MINIMAL_VALID: Record<WriteToolId, unknown> = {
     name: "Logo",
     svg: '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10H0z"/></svg>',
   },
+  create_solid: { name: "Void", color: "#0A0A0B" },
+  create_camera: { name: "Cinematic Camera", preset: "35mm", zoom: 1.5 },
 };
 
 function validResult(): Record<string, unknown> {
@@ -89,7 +91,7 @@ describe("write-tools: identity and registry", () => {
     expect(new Set(WRITE_TOOL_IDS).size).toBe(WRITE_TOOL_IDS.length);
   });
 
-  it("round-12 additions: the full id list is the §M5.1 eight + engine_commands, run_script, add_asset", () => {
+  it("round-14 additions: the full id list is the §M5.1 eight + engine_commands, run_script, add_asset, create_solid, create_camera", () => {
     expect([...WRITE_TOOL_IDS]).toEqual([
       "create_composition",
       "create_text",
@@ -102,6 +104,8 @@ describe("write-tools: identity and registry", () => {
       "engine_commands",
       "run_script",
       "add_asset",
+      "create_solid",
+      "create_camera",
     ]);
   });
 
@@ -219,9 +223,7 @@ describe("write-tools: create_composition args", () => {
   it("accepts a background color in both forms (#hex and [r, g, b] channels)", () => {
     expect(schema.safeParse({ name: "Main", background: "#0B0D10" }).success).toBe(true);
     expect(schema.safeParse({ name: "Main", background: [66, 133, 244] }).success).toBe(true);
-    expect(
-      schema.safeParse({ name: "Main", background: [66, 133, 244, 255] }).success,
-    ).toBe(true);
+    expect(schema.safeParse({ name: "Main", background: [66, 133, 244, 255] }).success).toBe(true);
     expect(schema.safeParse({ name: "Main", background: "black" }).success).toBe(false);
     expect(schema.safeParse({ name: "Main", background: [300, 0, 0] }).success).toBe(false);
   });
@@ -229,9 +231,7 @@ describe("write-tools: create_composition args", () => {
   it("repairs the model's near-miss color shapes (run 59cead8c, verbatim)", () => {
     // The gateway's stringified-JSON repair turns the raw strings into these;
     // COLOR_INPUT then fixes the leftovers the strict union used to bounce.
-    expect(schema.safeParse({ name: "Main", background: ["66", "133", "244"] }).success).toBe(
-      true,
-    );
+    expect(schema.safeParse({ name: "Main", background: ["66", "133", "244"] }).success).toBe(true);
     expect(schema.safeParse({ name: "Main", background: ["#0B0D10"] }).success).toBe(true);
   });
 });
@@ -506,11 +506,68 @@ describe("write-tools: set_keyframes args", () => {
     ).toBe(false);
   });
 
-  it("interpolation is exactly linear|bezier|hold (the engine trio)", () => {
-    expect(KEYFRAME_INTERPOLATION_SCHEMA.options).toEqual(["linear", "bezier", "hold"]);
+  it("interpolation is the engine trio + the eased macros and dialog modes", () => {
+    expect(KEYFRAME_INTERPOLATION_SCHEMA.options).toEqual([
+      "linear",
+      "bezier",
+      "hold",
+      "easeIn",
+      "easeOut",
+      "easeInOut",
+      "continuousBezier",
+      "autoBezier",
+    ]);
     expect(schema.safeParse({ ...base, keys: [{ timeSeconds: 0, value: 1 }] }).success).toBe(true);
+  });
+
+  it("interpolation aliases canonicalize (2026-11-01 Google-launch fix: real models write easeOut/easeIn)", () => {
+    // The trio-only enum hard-rejected the model's AE vocabulary — the WHOLE
+    // set_keyframes call bounced as INVALID_TOOL_CALL ("nothing in the
+    // project changed"). One deterministic preprocess pass canonicalizes the
+    // spellings; the strict enum keeps the final say on everything else.
+    const canonical: Record<string, string> = {
+      // The exact values the Google-launch run emitted.
+      easeOut: "easeOut",
+      easeIn: "easeIn",
+      easeInOut: "easeInOut",
+      // Case / separator variants.
+      "ease-out": "easeOut",
+      "Ease In": "easeIn",
+      easeinout: "easeInOut",
+      EASE_IN_OUT: "easeInOut",
+      // Generic eased names models reach for.
+      ease: "easeInOut",
+      easyEase: "easeInOut",
+      smooth: "easeInOut",
+      spline: "bezier",
+      auto: "autoBezier",
+      autoBezier: "autoBezier",
+      continuous: "continuousBezier",
+      continuousBezier: "continuousBezier",
+      step: "hold",
+      discrete: "hold",
+    };
+    for (const [input, expected] of Object.entries(canonical)) {
+      const parsed = schema.safeParse({
+        ...base,
+        keys: [{ timeSeconds: 0, value: 1, interpolation: input }],
+      });
+      expect(parsed.success, `interpolation "${input}" should parse`).toBe(true);
+      if (parsed.success) {
+        const keys = parsed.data.keys as Array<{ interpolation?: string }>;
+        expect(keys[0]?.interpolation, `"${input}" should canonicalize to "${expected}"`).toBe(
+          expected,
+        );
+      }
+    }
+    // Unknown easing names still hard-reject — the enum error lists the eight
+    // accepted names so the model can repair in one retry.
     expect(
-      schema.safeParse({ ...base, keys: [{ timeSeconds: 0, value: 1, interpolation: "ease-in" }] })
+      schema.safeParse({ ...base, keys: [{ timeSeconds: 0, value: 1, interpolation: "bounce" }] })
+        .success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({ ...base, keys: [{ timeSeconds: 0, value: 1, interpolation: "elastic" }] })
         .success,
     ).toBe(false);
   });

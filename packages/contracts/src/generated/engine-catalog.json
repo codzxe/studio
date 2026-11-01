@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-26T16:32:05.014Z",
+  "generatedAt": "2026-11-01T10:12:24.047Z",
   "commands": [
     {
       "id": "anim.addKeyframe",
@@ -1560,8 +1560,7 @@
       "title": "Select Keyframes",
       "category": "keys",
       "paramsDoc": "{keys: [{layer, prop: uid | path (or `path`), time (layer s by default)}], timeBase?: layer|comp, add?, toggle?: bool (Shift+click: in or out of the selection), selectProperties?: bool (their properties and layers too, as a Timeline click does)}",
-      "hasPath": true,
-      "deny": "path-param"
+      "hasPath": true
     },
     {
       "id": "keys.selectAll",

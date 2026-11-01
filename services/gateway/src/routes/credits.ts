@@ -144,15 +144,11 @@ export function creditsRoutes(deps: GatewayDeps): Hono<AppBindings> {
         });
       }
       if (parsed.data.mode === "reconcile" && !isAdminRole(c.get("auth").user.role)) {
-        throw new GatewayError(
-          "FORBIDDEN",
-          "Destructive reconciliation is a platform operation.",
-          {
-            status: 403,
-            hint: "Workspace admins can run mode \"report\"; true-ups are staff-only.",
-            requestId: c.get("requestId"),
-          },
-        );
+        throw new GatewayError("FORBIDDEN", "Destructive reconciliation is a platform operation.", {
+          status: 403,
+          hint: 'Workspace admins can run mode "report"; true-ups are staff-only.',
+          requestId: c.get("requestId"),
+        });
       }
       const sinceTs = new Date(parsed.data.sinceTs);
       const uptoTs = new Date(parsed.data.uptoTs);

@@ -168,6 +168,7 @@ const ALLOW_ADDITIONS = new Set([
   "prop.toggleKey",
   "prop.reset",
   "keys.set",
+  "keys.select",
   "anim.applyPreset",
 ]);
 

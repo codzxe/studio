@@ -351,6 +351,7 @@ export function turnRoutes(deps: GatewayDeps): Hono {
       pinned: request.pinned,
       currentRunId: request.runId,
       applyNotes: request.applyNotes,
+      applyReceipts: request.applyReceipts,
     });
     const estimate = Math.max(
       1,
