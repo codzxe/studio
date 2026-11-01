@@ -1156,9 +1156,28 @@ export function createChatController(options: CreateChatControllerOptions): Chat
         // with the last live version: maybeAutoApply's outcome guard skips
         // it, Undo pops every live batch label (the liveRuns ledger), and
         // the version timeline holds one saved state per turn.
+        //
+        // ROUND-14 HOTFIX (local-smoke regression): the fold is TWO-STEP —
+        // run-state drops `chat.plan.applied` unless the card is already in
+        // outcome "applying" (the same two-step collapse round 13 pinned for
+        // the auto-drive), and a fresh run-end card sits at "idle". The old
+        // direct `applied` commit was a NO-OP: the card stayed "idle" with
+        // live Apply/Cancel buttons on work that had ALREADY landed (the
+        // engine showed the layers, the card asked to apply them again) —
+        // and pressing Apply re-executed the full merge against the live
+        // versions: 409 VERSION_CONFLICT ("The edit didn't apply — nothing
+        // changed.") or duplicate layers. Commit `apply` (idle → applying)
+        // and THEN `applied` (applying → applied) — the exact sequence the
+        // maybeAutoApply and salvage paths already run.
         if (run.liveApplied) {
           autoAppliedRuns.add(run.runId);
           if (!run.liveBroken && run.liveVersionId !== null) {
+            commit(
+              applyClientAction(snapshot, {
+                type: "chat.plan.apply",
+                runId: run.runId,
+              }),
+            );
             commit(
               applyClientAction(snapshot, {
                 type: "chat.plan.applied",

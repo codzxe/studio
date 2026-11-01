@@ -994,6 +994,76 @@ describe("createChatController v2 — the client-driven loop", () => {
     controller.dispose();
   });
 
+  it("round-14 hotfix: an all-live-applied run folds its plan card to APPLIED — no stranded Apply, no re-apply", async () => {
+    // The finishRun all-applied path used to commit `chat.plan.applied`
+    // DIRECTLY on an "idle" card — the run-state fold only collapses from
+    // "applying", so the commit was a NO-OP: the card stayed idle with live
+    // Apply/Cancel buttons on work that had already landed (the engine showed
+    // the layers, the card asked to apply them again), and pressing Apply
+    // re-executed the full merge against the live versions (409
+    // VERSION_CONFLICT — "The edit didn't apply — nothing changed." — or
+    // duplicate layers). The fold must run the SAME two-step the auto-drive
+    // and salvage paths run: chat.plan.apply → chat.plan.applied.
+    const write0 = writeProposal("studio.create_text", { name: "Title", text: "Hi" }, "call_all0");
+    const engine = makeApplyEngine();
+    const liveEngine: ApplyController = {
+      ...engine,
+      applyLive: async () => ({ ok: true, versionId: "ver_live_all" }) as ApplyOutcome,
+    };
+    const { client, planPosts } = makeClient({
+      script: {
+        steps: {
+          0: {
+            frames: () => [
+              runStarted("run_liveall", 0),
+              turnCompleted("run_liveall", 1, 0, { toolCalls: [write0] }),
+            ],
+          },
+          1: {
+            frames: () => [turnCompleted("run_liveall", 2, 1, { assistantText: "Done." })],
+          },
+        },
+      },
+      // Auto-apply armed: if the card stayed "idle", the drive — or a user
+      // pressing Apply — would re-execute what already landed. compiledBatch
+      // mirrors the real RunPlanResponse wire (without it the card has no M5
+      // runtime at all and the fold target doesn't exist).
+      planResponse: (runId, plan) => ({
+        runId,
+        plan,
+        autoApply: { mode: "auto", reason: "low risk additive batch" },
+        compiledBatch: {
+          label: 'Agent: Add text layer "Title"',
+          steps: [{ command: "create_text", params: { name: "Title", text: "Hi" } }],
+        },
+        risk: "low",
+        estimatedCredits: 1.5,
+        resolutionRequests: [],
+        baseVersionId: "ver_base_1",
+      }),
+    });
+    const controller = createChatController({
+      client,
+      workspaceId: "ws_1",
+      projectId: "prj_1",
+      threadId: THREAD,
+      apply: liveEngine,
+      toolExecutor: () => makeExecutor(),
+    });
+    controller.send(input("make a title"));
+    await until(controller, (s) => s.phase === "done", "run done");
+
+    // The display-only plan POST still happened (the run's honest record).
+    expect(planPosts).toHaveLength(1);
+    // THE PIN: the card settled "applied" with the live version — not "idle".
+    const last = controller.getSnapshot().messages.at(-1);
+    expect(last?.planRuntime?.outcome).toBe("applied");
+    expect(last?.planRuntime?.versionId).toBe("ver_live_all");
+    // The run-end flow NEVER re-executed the merged plan.
+    expect(engine.calls.apply).toHaveLength(0);
+    controller.dispose();
+  });
+
   it("stop (§8.3): folds cancelled at once, aborts the fetch, abandons ONCE, never continues", async () => {
     const { client, posts, abandons } = makeClient({
       script: {

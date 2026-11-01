@@ -176,3 +176,34 @@ CI runs them) · biome clean on every touched file · bundle rebuilt + smoke PAS
 Still open (product decisions, not code): BIL-08 negative-balance posture, PERF-10
 retention, PERF-02 O(1) balance (needs a monotonic seq design), PERF-04 streaming zip,
 PERF-07/09 request cache + Valkey, SEC-02 token rotation, ENG-01/03/04 engine work.
+
+## Round 14 hotfix — 2026-11-01 (local-smoke, live browser)
+
+**Found by driving the REAL stack end-to-end** (headless browser: sign-in → editor →
+chat send → engine + DB assertions), not by reading tests. The pipeline held
+(carriers live-applied, 2 "Agent apply" versions saved, engine showed the layers)
+but the run-end plan card stayed "proposed" with live Apply/Cancel buttons on work
+that had ALREADY landed, under the hint "Auto-apply is on — review the plan, then
+press Apply."
+
+Root cause: finishRun's all-live-applied branch committed `chat.plan.applied`
+DIRECTLY. The run-state fold only collapses `applied` from outcome "applying"
+(the round-13 two-step pin), and a fresh run-end card sits at "idle" — so the
+commit was a silent no-op. The stranded card was a re-apply trap: auto-drive
+skips it (autoAppliedRuns) and a user pressing Apply re-executed the full merge
+against the live versions → 409 VERSION_CONFLICT ("The edit didn't apply —
+nothing changed.") or duplicate layers. This is also the most plausible carrier
+of the user-reported "pressed Apply, nothing happened" reports.
+
+Fix: finishRun now runs the SAME two-step the maybeAutoApply and salvage paths
+run — `chat.plan.apply` (idle → applying) then `chat.plan.applied` (applying →
+applied with the last live versionId). Pinned by a new chat-controller test
+("round-14 hotfix: an all-live-applied run folds its plan card to APPLIED");
+mutation-verified (pin fails on the old code), 1,768/1,768 web green, typecheck +
+biome clean. Verified live in the browser: the card settles "Applied — Version
+ver_… · one undo step" with Undo / View in timeline / Version history.
+
+Deployments note: the user-facing screenshot ("step limit" + empty engine +
+successful tool chips) came from the DEPLOYED instance still running pre-round-14
+code — the local dev DB had zero user runs. The fixes exist on main; the deploy
+must pull + rebuild.
