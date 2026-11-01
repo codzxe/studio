@@ -54,6 +54,8 @@ import {
   type TurnMessage,
   type TurnToolCall,
   WRITE_TOOL_RESULT_SCHEMA,
+  batchCreatedCompositionNames,
+  batchCreatedLayerNames,
   estimateCredits,
 } from "@studio/contracts";
 
@@ -635,6 +637,130 @@ export async function resolveWriteToolCall(
       },
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Turn-time layer-reference validation (2026-11-01 root-cause fix)
+// ---------------------------------------------------------------------------
+
+/** How many known layer names the rejection message lists (bounded prompt). */
+const LAYER_REF_LIST_LIMIT = 12;
+
+/** The verdict a write call with unresolvable layer references settles with. */
+export interface LayerRefVerdict {
+  readonly error: "INVALID_TOOL_CALL";
+  readonly message: string;
+}
+
+/**
+ * Validate one compiled write call's layer references against everything the
+ * gateway KNOWS exists at this point in the turn: the client's canvas
+ * snapshot, the layer/composition names earlier calls in THIS turn already
+ * created, and the carrier's own batch creations.
+ *
+ * Why this exists (run 59cead8c): the compiler defers every layer-name site
+ * to apply-time resolution, so `set_properties` on the COMPOSITION's name —
+ * the model reaching for a background the tool surface never exposed —
+ * compiled cleanly, rode the run-end plan card, failed resolution CLIENT-side
+ * ("No layer named X is in the composition") and rolled back the ENTIRE
+ * atomic batch: every good step died with it ("The edit didn't apply —
+ * nothing changed.", 13 credits, empty canvas). The model never saw a repair
+ * signal — the failure surfaced after the run had ended.
+ *
+ * Failing HERE instead is cheap, early and repairable: the verdict echoes to
+ * the model in the same turn's tool result, it fixes the reference, and the
+ * run continues. Unknown-name rejections list the real layer names; a name
+ * that matches a known COMPOSITION gets the background teaching (comp.new
+ * takes a background color; layer.newSolid covers the frame).
+ *
+ * Pure and total — never throws, never mutates its inputs. Returns null when
+ * every reference resolves (the call proceeds normally).
+ */
+export function layerReferenceVerdict(input: {
+  readonly toolId: string;
+  readonly references: readonly string[];
+  readonly canvasLayerNames: readonly string[];
+  readonly compositionNames: readonly string[];
+  readonly batchCreatedLayers: ReadonlySet<string>;
+}): LayerRefVerdict | null {
+  const known = new Set(input.canvasLayerNames);
+  const unknown = input.references.filter(
+    (name) => !known.has(name) && !input.batchCreatedLayers.has(name),
+  );
+  if (unknown.length === 0) return null;
+  const first = unknown[0] as string;
+  const more = unknown.length > 1 ? ` (+${unknown.length - 1} more unknown names)` : "";
+  const compositions = new Set(input.compositionNames);
+  if (compositions.has(first)) {
+    return {
+      error: "INVALID_TOOL_CALL",
+      message:
+        `Invalid arguments for ${input.toolId}: "${first}" is a COMPOSITION, not a layer — ` +
+        "layer tools target layers by name. Set the composition's background when creating it " +
+        "(studio.create_composition accepts a background color), or cover the frame with a " +
+        "SOLID layer (studio.engine_commands layer.newSolid {name, color, width, height})" +
+        `${more}.`,
+    };
+  }
+  const listed = input.canvasLayerNames.slice(0, LAYER_REF_LIST_LIMIT).join(", ");
+  const knownPart =
+    listed.length > 0
+      ? ` — current layers: ${listed}${
+          input.canvasLayerNames.length > LAYER_REF_LIST_LIMIT
+            ? ` (+${input.canvasLayerNames.length - LAYER_REF_LIST_LIMIT} more)`
+            : ""
+        }`
+      : " — the composition has no layers yet";
+  return {
+    error: "INVALID_TOOL_CALL",
+    message:
+      `Invalid arguments for ${input.toolId}: no layer named "${first}" exists${knownPart}. ` +
+      "Create the layer first (studio.create_text, or layer.newSolid via " +
+      "studio.engine_commands), or reference an existing layer by its exact name" +
+      `${more}.`,
+  };
+}
+
+/** Layer names the client's canvas snapshot reports (empty when absent). */
+export function canvasLayerNames(canvas: TurnCanvas | null | undefined): readonly string[] {
+  if (canvas == null) return [];
+  return canvas.layers.map((layer) => layer.name);
+}
+
+/** Composition names known this turn: the active comp (canvas) + comp.new names. */
+export function compositionNames(
+  canvas: TurnCanvas | null | undefined,
+  batchCreatedCompositions: ReadonlySet<string>,
+): readonly string[] {
+  const names = new Set<string>(batchCreatedCompositions);
+  if (canvas?.activeComp != null && canvas.activeComp !== "") names.add(canvas.activeComp);
+  return [...names];
+}
+
+/** Everything a turn needs to track for layer-reference validation. */
+export interface TurnSymbolTable {
+  /** Layer names that exist (canvas ∪ created by earlier calls this turn). */
+  readonly layers: ReadonlySet<string>;
+  /** Composition names that exist (activeComp ∪ comp.new earlier this turn). */
+  readonly compositions: ReadonlySet<string>;
+}
+
+/** Seed the turn-local symbol table from the request's canvas snapshot. */
+export function seedTurnSymbolTable(canvas: TurnCanvas | null | undefined): TurnSymbolTable {
+  return {
+    layers: new Set(canvasLayerNames(canvas)),
+    compositions: new Set(canvas?.activeComp != null && canvas.activeComp !== "" ? [canvas.activeComp] : []),
+  };
+}
+
+/** Fold one ACCEPTED write call's creations into the turn symbol table. */
+export function foldCreationsInto(
+  table: TurnSymbolTable,
+  createdLayers: ReadonlySet<string>,
+  createdCompositions: ReadonlySet<string>,
+): void {
+  for (const name of createdLayers) (table.layers as Set<string>).add(name);
+  for (const name of createdCompositions) (table.compositions as Set<string>).add(name);
 }
 
 // ---------------------------------------------------------------------------

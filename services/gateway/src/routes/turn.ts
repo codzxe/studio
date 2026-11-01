@@ -42,9 +42,12 @@ import {
   type PlanId,
   type StudioStreamEvent,
   TURN_REQUEST_SCHEMA,
+  type TurnCanvas,
   type TurnMessage,
   type TurnRequestBody,
   type TurnToolCall,
+  batchCreatedCompositionNames,
+  batchCreatedLayerNames,
   defaultModelForPlan,
   modelAllowedForPlan,
 } from "@studio/contracts";
@@ -60,12 +63,16 @@ import type { AggregatedToolCall, OpenAIChatMessage } from "../litellm/openai.js
 import {
   type OpenAITurnDeps,
   type TurnHistoryRow,
+  type TurnSymbolTable,
   buildTurnMessages,
   committedCreditsFor,
   executeModelTurn,
+  foldCreationsInto,
   isClientExecutedTool,
+  layerReferenceVerdict,
   registeredToolFor,
   resolveWriteToolCall,
+  seedTurnSymbolTable,
   serverSidePlan,
   validateToolCall,
 } from "../litellm/turn-engine.js";
@@ -632,6 +639,7 @@ async function runTurn(
         modelDeps,
         signal: input.signal,
         log,
+        canvas: request.canvas ?? null,
         onSideUsage: (used: { inputTokens: number; outputTokens: number }) => {
           sideUsage = {
             inputTokens: sideUsage.inputTokens + used.inputTokens,
@@ -843,10 +851,20 @@ async function resolveToolCalls(
     readonly modelDeps: OpenAITurnDeps;
     readonly signal: AbortSignal;
     readonly log: RunLog;
+    /** The request's canvas snapshot — layer-ref validation ONLY runs when
+     * present (the client omits it on hash-unchanged turns; the gateway is
+     * stateless per turn, so absence means skip, never assume-empty). */
+    readonly canvas?: TurnCanvas | null;
     readonly onSideUsage: (usage: { inputTokens: number; outputTokens: number }) => void;
   },
 ): Promise<TurnToolCall[]> {
   const resolved: TurnToolCall[] = [];
+  // 2026-11-01 root-cause fix: a turn-local symbol table of layers/comps the
+  // gateway can prove exist — canvas snapshot ∪ names earlier calls in THIS
+  // turn created. Write calls referencing anything else are rejected HERE
+  // (repairable, same-turn) instead of failing the run-end atomic apply.
+  const symbols: TurnSymbolTable = seedTurnSymbolTable(input.canvas);
+  const hasCanvas = input.canvas != null;
   for (const call of input.calls) {
     const tool = registeredToolFor(call.name);
     const validation = validateToolCall(call);
@@ -934,6 +952,31 @@ async function resolveToolCalls(
     }
     // Write tools: PROPOSE-ONLY — validate + compile the carrier server-side.
     const proposal = await resolveWriteToolCall(tool, validation.args);
+    // Turn-time layer-reference validation (2026-11-01 root-cause fix — see
+    // layerReferenceVerdict). Only with a canvas snapshot in the request: a
+    // hash-unchanged turn carries none, and absence must never reject.
+    if (hasCanvas) {
+      const compiled = proposal.proposal.compiled;
+      const batchLayers = batchCreatedLayerNames(compiled.batch.steps);
+      const batchComps = batchCreatedCompositionNames(compiled.batch.steps);
+      const verdict = layerReferenceVerdict({
+        toolId: tool.id,
+        references: compiled.resolutionRequests.map((request) => request.layerName),
+        canvasLayerNames: [...symbols.layers],
+        compositionNames: [...symbols.compositions, ...batchComps],
+        batchCreatedLayers: batchLayers,
+      });
+      if (verdict !== null) {
+        resolved.push({
+          toolCallId: call.id,
+          tool: call.name,
+          args: safeJson(call.arguments),
+          resultForModel: verdict,
+        });
+        continue;
+      }
+      foldCreationsInto(symbols, batchLayers, batchComps);
+    }
     resolved.push({
       toolCallId: call.id,
       tool: tool.id,

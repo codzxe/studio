@@ -9,6 +9,8 @@ import {
   MAX_BATCH_BYTES,
   MAX_BATCH_STEPS,
   MAX_BATCH_TIMEOUT_MS,
+  batchCreatedCompositionNames,
+  batchCreatedLayerNames,
   checkBatchCommands,
   collectRefs,
   validateBatchRefs,
@@ -199,5 +201,36 @@ describe("engine-batch: live-registry command validation (§8.5)", () => {
   it("passes a fully-described batch", () => {
     const batch = { steps: [step("comp.new", { name: "Main", width: 1920, height: 1080 })] };
     expect(checkBatchCommands(batch, registry)).toEqual([]);
+  });
+});
+
+describe("engine-batch: batch-created names (turn-time layer-ref validation)", () => {
+  it("collects layer names from every layer.new* step with a params.name", () => {
+    const created = batchCreatedLayerNames([
+      step("comp.new", { name: "Main" }),
+      step("layer.newText", { text: "Hi", name: "Headline" }),
+      step("layer.newSolid", { name: "Background", color: "#0B0D10" }),
+      step("layer.newCamera", { name: "Cam 1" }),
+      step("prop.set", { layer: "Headline", path: "transform/opacity", value: 100 }),
+    ]);
+    expect([...created].sort()).toEqual(["Background", "Cam 1", "Headline"]);
+  });
+
+  it("ignores layer.new* steps without a usable name and non-creation commands", () => {
+    const created = batchCreatedLayerNames([
+      step("layer.newText", { text: "unnamed" }),
+      step("layer.rename", { layer: "X", name: "Renamed" }),
+      step("layer.newNull", {}),
+    ]);
+    expect(created.size).toBe(0);
+  });
+
+  it("collects composition names from comp.new steps only", () => {
+    const created = batchCreatedCompositionNames([
+      step("comp.new", { name: "Google Launch Sequence", width: 3840, height: 2160 }),
+      step("comp.open", { comp: "Google Launch Sequence" }),
+      step("layer.newSolid", { name: "comp.new" }),
+    ]);
+    expect([...created]).toEqual(["Google Launch Sequence"]);
   });
 });

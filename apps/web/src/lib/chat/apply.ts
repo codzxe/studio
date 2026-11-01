@@ -112,7 +112,11 @@
 import type { SaveOutcome } from "@/lib/editor-session";
 import { isReadOnlyLeaseError, sha256Hex } from "@/lib/editor-session";
 import type { AgentBatch, BatchStep } from "@studio/contracts";
-import { ALLOWED_COMMAND_IDS, isAllowedEngineCommand } from "@studio/contracts";
+import {
+  ALLOWED_COMMAND_IDS,
+  batchCreatedLayerNames,
+  isAllowedEngineCommand,
+} from "@studio/contracts";
 import type { EditorBridge } from "@studio/editor-bridge";
 import { isBridgeError, messageOf } from "@studio/editor-bridge";
 
@@ -536,20 +540,10 @@ async function listLayers(bridge: EditorBridge): Promise<readonly CompLayerEntry
  * through AS THE NAME: it binds deterministically to the step that just
  * made it. Anything else still resolves live (ambiguous/unknown = typed
  * failure before any engine traffic — unchanged safety default).
+ *
+ * 2026-11-01: the extraction moved to contracts (batchCreatedLayerNames) so
+ * the gateway's turn-time validation and this deferral agree on ONE regex.
  */
-function batchCreatedLayerNames(steps: readonly BatchStep[]): ReadonlySet<string> {
-  const created = new Set<string>();
-  for (const step of steps) {
-    if (!BATCH_LAYER_CREATION_RE.test(step.command)) continue;
-    const name = (step.params as Record<string, unknown>).name;
-    if (typeof name === "string" && name.length > 0) created.add(name);
-  }
-  return created;
-}
-
-/** Engine commands whose params.name CREATES a layer with that name. */
-const BATCH_LAYER_CREATION_RE =
-  /^(?:layer\.new(?:3dPrimitive|Adjustment|Camera|Light|Model|Null|Primitive|Shape|Solid|Text))$/;
 
 /**
  * Resolves every request against the live layer list. Read-only: the only

@@ -47,9 +47,12 @@ import {
   buildTurnMessages,
   committedCreditsFor,
   executeModelTurn,
+  foldCreationsInto,
   isClientExecutedTool,
   isWriteTool,
+  layerReferenceVerdict,
   registeredToolFor,
+  seedTurnSymbolTable,
   resolveWriteToolCall,
   serverSidePlan,
   turnOpenAiToolSpecs,
@@ -1452,5 +1455,154 @@ describe("serverSidePlan (§8.6 structured-output side call)", () => {
     const result = await planTurn(turnDeps(fetchStub), "dim the headline", AbortSignal.abort());
     expect(result).toEqual({ plan: null, cancelled: true });
     expect(fetchStub.calls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Turn-time layer-reference validation (2026-11-01 root-cause fix)
+// ---------------------------------------------------------------------------
+
+describe("layerReferenceVerdict — unknown layer refs reject at TURN time, not apply time", () => {
+  const base = {
+    toolId: "studio.set_properties",
+  };
+
+  it("returns null when every reference is a known canvas layer", () => {
+    expect(
+      layerReferenceVerdict({
+        ...base,
+        references: ["Headline", "Background"],
+        canvasLayerNames: ["Headline", "Background", "Glow"],
+        compositionNames: ["Main"],
+        batchCreatedLayers: new Set(),
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null for names the carrier's own batch creates earlier in the same batch", () => {
+    expect(
+      layerReferenceVerdict({
+        ...base,
+        references: ["Background"],
+        canvasLayerNames: [],
+        compositionNames: [],
+        batchCreatedLayers: new Set(["Background"]),
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects an unknown name and LISTS the real layers (the model's repair signal)", () => {
+    const verdict = layerReferenceVerdict({
+      ...base,
+      references: ["Glow"],
+      canvasLayerNames: ["Headline", "Background"],
+      compositionNames: ["Main"],
+      batchCreatedLayers: new Set(),
+    });
+    expect(verdict).not.toBeNull();
+    expect(verdict?.error).toBe("INVALID_TOOL_CALL");
+    expect(verdict?.message).toContain('no layer named "Glow" exists');
+    expect(verdict?.message).toContain("current layers: Headline, Background");
+    expect(verdict?.message).toContain("Create the layer first");
+  });
+
+  it("rejects with the empty-canvas wording when no layers exist yet", () => {
+    const verdict = layerReferenceVerdict({
+      ...base,
+      references: ["Anything"],
+      canvasLayerNames: [],
+      compositionNames: [],
+      batchCreatedLayers: new Set(),
+    });
+    expect(verdict?.message).toContain("the composition has no layers yet");
+  });
+
+  // The EXACT shape of run 59cead8c: the model set `background` on the
+  // COMPOSITION's name — it compiled cleanly, then rolled back the whole
+  // run-end atomic batch ("The edit didn't apply — nothing changed.").
+  it("a reference matching a known COMPOSITION gets the background teaching, not a generic miss", () => {
+    const verdict = layerReferenceVerdict({
+      toolId: "studio.set_properties",
+      references: ["Google Launch Sequence"],
+      canvasLayerNames: [],
+      compositionNames: ["Google Launch Sequence"],
+      batchCreatedLayers: new Set(),
+    });
+    expect(verdict?.error).toBe("INVALID_TOOL_CALL");
+    expect(verdict?.message).toContain('"Google Launch Sequence" is a COMPOSITION, not a layer');
+    expect(verdict?.message).toContain("studio.create_composition accepts a background color");
+    expect(verdict?.message).toContain("layer.newSolid");
+  });
+
+  it("counts additional unknown names without listing them all", () => {
+    const verdict = layerReferenceVerdict({
+      ...base,
+      references: ["A", "B", "C"],
+      canvasLayerNames: [],
+      compositionNames: [],
+      batchCreatedLayers: new Set(),
+    });
+    expect(verdict?.message).toContain("+2 more unknown names");
+  });
+
+  it("caps the listed layer names at 12 with a +N tail", () => {
+    const layers = Array.from({ length: 15 }, (_, index) => `Layer ${index + 1}`);
+    const verdict = layerReferenceVerdict({
+      ...base,
+      references: ["Nope"],
+      canvasLayerNames: layers,
+      compositionNames: [],
+      batchCreatedLayers: new Set(),
+    });
+    expect(verdict?.message).toContain("Layer 12");
+    expect(verdict?.message).not.toContain("Layer 13,");
+    expect(verdict?.message).toContain("+3 more");
+  });
+});
+
+describe("turn symbol table — canvas seed + fold of accepted creations", () => {
+  const canvas = {
+    activeComp: "Main",
+    layers: [
+      { id: 1, name: "Headline", type: "text" },
+      { id: 2, name: "Background", type: "solid" },
+    ],
+    selection: [],
+    playhead: 0,
+    fps: 30,
+    duration: 8,
+  } as const;
+
+  it("seeds layers from the canvas and the active composition name", () => {
+    const table = seedTurnSymbolTable(canvas);
+    expect([...table.layers].sort()).toEqual(["Background", "Headline"]);
+    expect([...table.compositions]).toEqual(["Main"]);
+  });
+
+  it("seeds empty tables for an absent canvas (validation must skip, not assume empty)", () => {
+    const table = seedTurnSymbolTable(null);
+    expect(table.layers.size).toBe(0);
+    expect(table.compositions.size).toBe(0);
+  });
+
+  it("folds an accepted call's creations in so LATER calls in the same turn can reference them", () => {
+    const table = seedTurnSymbolTable(canvas);
+    foldCreationsInto(
+      table,
+      new Set(["G Logo Element"]),
+      new Set(["Google Launch Sequence"]),
+    );
+    expect(table.layers.has("G Logo Element")).toBe(true);
+    expect(table.compositions.has("Google Launch Sequence")).toBe(true);
+    // The comp created THIS TURN is now known — a later set_properties on it
+    // takes the composition teaching arm, not the generic unknown arm.
+    const verdict = layerReferenceVerdict({
+      toolId: "studio.set_properties",
+      references: ["Google Launch Sequence"],
+      canvasLayerNames: [...table.layers],
+      compositionNames: [...table.compositions],
+      batchCreatedLayers: new Set(),
+    });
+    expect(verdict?.message).toContain("is a COMPOSITION, not a layer");
   });
 });

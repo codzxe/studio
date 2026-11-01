@@ -187,6 +187,48 @@ export const AGENT_BATCH_SCHEMA = z
 export type AgentBatch = z.infer<typeof AGENT_BATCH_SCHEMA>;
 
 // ---------------------------------------------------------------------------
+// Batch-created names (2026-11-01 root-cause fix: turn-time layer-ref checks)
+// ---------------------------------------------------------------------------
+
+/**
+ * Engine commands whose `params.name` CREATES a layer with that name. Shared
+ * single source of truth: the gateway uses it to build the turn-local symbol
+ * table for turn-time layer-reference validation (an unknown name is a
+ * repairable INVALID verdict INSTEAD of an apply-time atomic rollback), and
+ * the web apply engine uses it to defer resolution of names the batch itself
+ * creates (apply.ts — the names ride through as strings for the engine to
+ * resolve at each step's execution time). The two MUST agree, so the regex
+ * lives here, not in either consumer.
+ */
+const BATCH_LAYER_CREATION_RE =
+  /^(?:layer\.new(?:3dPrimitive|Adjustment|Camera|Light|Model|Null|Primitive|Shape|Solid|Text))$/;
+
+/** Engine commands whose `params.name` CREATES a composition with that name. */
+const BATCH_COMPOSITION_CREATION_RE = /^comp\.new$/;
+
+/** Layer names a batch's own steps create (`layer.new*` with a params.name). */
+export function batchCreatedLayerNames(steps: readonly BatchStep[]): ReadonlySet<string> {
+  const created = new Set<string>();
+  for (const step of steps) {
+    if (!BATCH_LAYER_CREATION_RE.test(step.command)) continue;
+    const name = step.params.name;
+    if (typeof name === "string" && name.length > 0) created.add(name);
+  }
+  return created;
+}
+
+/** Composition names a batch's own steps create (`comp.new` with params.name). */
+export function batchCreatedCompositionNames(steps: readonly BatchStep[]): ReadonlySet<string> {
+  const created = new Set<string>();
+  for (const step of steps) {
+    if (!BATCH_COMPOSITION_CREATION_RE.test(step.command)) continue;
+    const name = step.params.name;
+    if (typeof name === "string" && name.length > 0) created.add(name);
+  }
+  return created;
+}
+
+// ---------------------------------------------------------------------------
 // Live-registry types (§8.5: validated against command.describe / JSON Schema)
 // ---------------------------------------------------------------------------
 
