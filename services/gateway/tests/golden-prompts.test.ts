@@ -354,6 +354,10 @@ function expectNoCompiledCommandsLeak(calls: ReadonlyArray<{ body: ChatCompletio
     // DYNAMIC: the known static prompt is stripped, then no compiled registry
     // command id may appear in any other message (tool results, history,
     // notes) — a hostile project still cannot smuggle engine ids in.
+    // Tool DEFINITIONS stay under the law (contracts "descriptions are
+    // model-facing ... no raw command ids"): the 2026-11-01 create_text
+    // guidance teaches alternatives in PROSE ("a SOLID layer via
+    // studio.engine_commands"), never a raw registry id.
     const dynamic = (call.body.messages ?? []).filter(
       (message) => !(message.role === "system" && message.content === SYSTEM_PROMPT),
     );
@@ -566,19 +570,30 @@ describe("golden prompts — the v3 system prompt (catalog v3 + client-driven lo
     );
   });
 
-  it("pins the ROUND-13 execution discipline: write tools immediately, plan-first, one step per turn", () => {
+  it("pins the execution discipline: PLAN FIRST (all steps up front), then one step per turn", () => {
     expect(SYSTEM_PROMPT).toContain("HOW TO WORK — execution discipline");
-    // START BUILDING IMMEDIATELY — the catalog is inline, discovery loops are
-    // banned (the 20x describe_command inspection loop the user caught).
-    expect(SYSTEM_PROMPT).toContain("START BUILDING IMMEDIATELY");
-    expect(SYSTEM_PROMPT).toContain("WRITE tool calls in your first turn");
-    expect(SYSTEM_PROMPT).toContain("no studio.describe_command chains");
-    expect(SYSTEM_PROMPT).toContain("At most ONE read call before your first write");
-    // PLAN FIRST, then ONE STEP PER TURN — small live-applied steps.
+    // PLAN FIRST (2026-11-01 user report: the old "START BUILDING
+    // IMMEDIATELY / write tool calls in your first turn" opener fought the
+    // plan-first bullet and the model skipped the plan entirely — 5 failed
+    // tool calls, no plan). The plan streams BEFORE anything is built; the
+    // build starts in the same turn (the turn wire ends a run on a
+    // no-tool-call turn).
     expect(SYSTEM_PROMPT).toContain("PLAN FIRST, THEN BUILD ONE STEP PER TURN");
-    expect(SYSTEM_PROMPT).toContain("short numbered plan as plain text");
+    expect(SYSTEM_PROMPT).toContain("your FIRST reply's text IS the complete numbered plan");
+    expect(SYSTEM_PROMPT).toContain("never start building against an unstated plan");
     expect(SYSTEM_PROMPT).toContain("ONE step per turn");
     expect(SYSTEM_PROMPT).toContain("NEVER dump everything in one giant turn");
+    // Discovery loops stay banned (the 20x describe_command inspection loop
+    // the user caught) — subordinated to plan-first.
+    expect(SYSTEM_PROMPT).toContain("AFTER THE PLAN, BUILD NONSTOP");
+    expect(SYSTEM_PROMPT).toContain("no studio.describe_command chains");
+    expect(SYSTEM_PROMPT).toContain("At most ONE read call before your first write");
+    // The empty-text / background-void loop (5x create_text text:"" in the
+    // same run) — the discipline names the alternative explicitly.
+    expect(SYSTEM_PROMPT).toContain("TEXT LAYERS ARE FOR VISIBLE TEXT");
+    expect(SYSTEM_PROMPT).toContain("layer.newSolid");
+    expect(SYSTEM_PROMPT).toContain("PROPERTY PATHS ARE GROUPED");
+    expect(SYSTEM_PROMPT).toContain("text/sourceText");
     // plan_edit demoted to LAST RESORT (never the default path).
     expect(SYSTEM_PROMPT).toContain("studio.plan_edit — LAST RESORT ONLY");
     expect(SYSTEM_PROMPT).not.toContain("Prefer one studio.plan_edit");

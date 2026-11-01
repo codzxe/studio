@@ -340,7 +340,19 @@ export const CREATE_COMPOSITION_ARGS_SCHEMA = z.strictObject({
  * mirror or tighten those. `leading` is a number (omit it for Auto).
  */
 export const CREATE_TEXT_ARGS_SCHEMA = z.strictObject({
-  text: z.string().min(1).max(MAX_TEXT_LENGTH),
+  // The teaching message (2026-11-01: a real run burned 5 tool calls on
+  // text:"" — the generic zod min() message never told the model WHY or what
+  // to do instead). validateToolCall surfaces issue messages verbatim. Prose
+  // only — the description law keeps raw registry ids out of tool surface.
+  text: z
+    .string()
+    .min(
+      1,
+      "text is REQUIRED — the visible content (1..2000 chars); never empty or placeholder " +
+        "(an empty-text layer is always rejected — for a background/void layer propose a " +
+        "SOLID layer via studio.engine_commands instead)",
+    )
+    .max(MAX_TEXT_LENGTH),
   name: SAFE_NAME_SCHEMA.optional(),
   position: z.tuple([COORD_SCHEMA, COORD_SCHEMA]).optional(),
   box: z.tuple([COORD_SCHEMA, COORD_SCHEMA, BOX_SIZE_SCHEMA, BOX_SIZE_SCHEMA]).optional(),
@@ -581,9 +593,13 @@ export const WRITE_TOOLS: readonly WriteToolDefinition[] = [
     risk: "low",
     returns: "proposed-batch",
     description:
-      "Propose adding an editable text layer to the active composition: the text content plus " +
-      "optional layer name, position, paragraph box, font, style, size, fill and stroke colors, " +
-      "stroke width, tracking and leading. The result is a PROPOSED batch for the user to review — " +
+      "Propose adding an editable text layer to the active composition: REQUIRED `text` — " +
+      "the visible content (1..2000 chars, never empty or placeholder; an empty text is " +
+      "always rejected — for a background/void propose a SOLID layer via " +
+      "studio.engine_commands instead) — plus optional layer name, position, paragraph box, " +
+      "font, style, size, fill and stroke colors, stroke width, tracking and leading. There " +
+      "is no `opacity` key here; set the layer's opacity afterwards via " +
+      "studio.set_properties. The result is a PROPOSED batch for the user to review — " +
       "never executed until the user applies the plan.",
     inputSchema: WRITE_TOOL_ARGS_SCHEMAS.create_text,
   },
