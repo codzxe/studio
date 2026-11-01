@@ -93,7 +93,7 @@ jobs:
       # No secrets are provisioned: nothing in this job should call out.
       APP_ENV: local
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4 # reads packageManager: pnpm@9.15.9
       - uses: actions/setup-node@v4
         with:
@@ -152,7 +152,7 @@ jobs:
       #   DATABASE_URL=… MOCK_MODEL=true pnpm --filter @studio/gateway test
       MOCK_MODEL: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -173,7 +173,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -196,7 +196,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -217,7 +217,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The bundle diff needs the FULL history-agnostic checkout (default
           # shallow fetch is fine — only the working tree is compared).
@@ -273,7 +273,7 @@ jobs:
     # Licence gate is GREEN on main since W3-C4 cleared the manifest/fonts
     # violations (17 → 0 on a fresh checkout); blocking again as intended.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -296,7 +296,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -377,7 +377,7 @@ jobs:
     env:
       DATABASE_URL: postgres://studio:studio@127.0.0.1:5432/studio
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
