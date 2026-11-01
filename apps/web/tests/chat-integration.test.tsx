@@ -1073,7 +1073,14 @@ describe("M4-L web chat integration — resilience (replay, reconnect, pause, st
     // the paused attempt's cursor riding replayCursor (the transcript is
     // UNCHANGED — the turn never settled, so nothing re-sends).
     await user.click(screen.getByTestId("chat-banner-action"));
-    await waitFor(() => expect(harness.getApi().snapshot.phase).toBe("reconnecting"));
+    // Race-proof phase check: reconnecting → streaming can complete inside a
+    // single act flush on a slow runner (run #164: expected 'streaming' to be
+    // 'reconnecting' — the POST dispatched before waitFor's first sample).
+    // Either way the run is LIVE again; the stable, behavioral assertions
+    // follow (same turn key, same step, replay cursor, no re-send).
+    await waitFor(() =>
+      expect(["reconnecting", "streaming"]).toContain(harness.getApi().snapshot.phase),
+    );
     await waitFor(() => expect(harness.wire.posts).toHaveLength(2));
     const resumed = harness.wire.posts[1];
     expect(resumed?.turnKey).toBe(key);
