@@ -6,12 +6,22 @@ import { organizationClient } from "better-auth/client/plugins";
  * gateway's better-auth setup, and both MUST stay on the same better-auth
  * version: ^1.7.12).
  *
- * baseURL points at the auth API root: `${NEXT_PUBLIC_APP_URL}/v1/auth`
+ * baseURL points at the auth API root: `${APP_URL}/v1/auth`
  * (docs/PRODUCT_ARCHITECTURE.md §7.1/§7.2 — auth is mounted under /v1/auth).
  * better-auth validates the URL at module-evaluation time (new URL(...) —
  * it must be absolute even in the browser bundle), so a missing env var
  * falls back to the dev origin below. Production builds set
  * NEXT_PUBLIC_APP_URL to the canonical origin.
+ *
+ * BROWSER precedence: `window.location.origin` WINS. The app is always
+ * served same-origin with its /v1/* seam (Next dev rewrite; the Caddy edge
+ * in production), so the origin the page was actually served from is the
+ * only origin that reliably reaches the auth API. The baked
+ * NEXT_PUBLIC_APP_URL broke the sandbox Preview Panel: the panel serves the
+ * app from preview-chat-<chat-id>.space-z.ai while the env pins
+ * http://localhost:3000 — the sign-in POST then targeted the VIEWER'S OWN
+ * localhost (nothing there → fetch throws → "Sign-in failed — the service
+ * may be unreachable").
  *
  * Fallback posture (seo.ts parity, w3-b06): LOCAL DEVELOPMENT stays silent —
  * the env is intentionally optional there. ANY OTHER BUILD falls back but
@@ -35,6 +45,8 @@ function isLocalDevelopment(): boolean {
 }
 
 const APP_URL = (() => {
+  // Browser: the serving origin is the truth (see the doc block above).
+  if (typeof window !== "undefined") return window.location.origin;
   const configured = process.env.NEXT_PUBLIC_APP_URL;
   if (configured !== undefined && configured.length > 0) return configured;
   if (!isLocalDevelopment()) {

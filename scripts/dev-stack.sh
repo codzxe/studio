@@ -20,6 +20,10 @@ export DATABASE_URL="file:$REPO/.local/studio-dev.db"
 export STORAGE_FS_ROOT="${STORAGE_FS_ROOT:-$REPO/.local/storage}"
 export AUTH_SECRET="${AUTH_SECRET:-dev-local-secret-0123456789abcdef0123456789abcdef}"
 export AUTH_GOOGLE_ID=replace-me AUTH_GOOGLE_SECRET=replace-me AUTH_GITHUB_ID=replace-me AUTH_GITHUB_SECRET=replace-me
+# better-auth trusted-origin wildcard for the sandbox Preview Panel (browser
+# Origin https://preview-chat-<chat-id>.space-z.ai ≠ APP_URL). Pre-exported
+# env wins; see packages/config/src/env.ts auth.trustedOrigins.
+export AUTH_TRUSTED_ORIGINS="${AUTH_TRUSTED_ORIGINS:-https://*.space-z.ai}"
 export STRIPE_WEBHOOK_SECRET=whsec_replace_me STRIPE_PRICE_IDS='{"starter":"price_starter","pro":"price_pro","studio":"price_studio"}'
 export LITELLM_BASE_URL="${LITELLM_BASE_URL:-http://localhost:4000}" LITELLM_API_KEY="${LITELLM_API_KEY:-sk-litellm-replace-me}"
 export LITELLM_MODEL_MAP="${LITELLM_MODEL_MAP:-}"

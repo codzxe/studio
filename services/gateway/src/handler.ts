@@ -44,6 +44,7 @@ async function buildOnce(): Promise<GatewayApp> {
       // internal basePath comes from this URL's path.
       appUrl: authBaseFor(env),
       secret: env.auth.secret,
+      trustedOrigins: env.auth.trustedOrigins,
       google: { clientId: env.auth.google.id, clientSecret: env.auth.google.secret },
       github: { clientId: env.auth.github.id, clientSecret: env.auth.github.secret },
       db,

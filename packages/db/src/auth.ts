@@ -31,6 +31,14 @@ export interface AuthEnv {
   readonly databaseUrl: string;
   /** Public app origin, e.g. https://app.studio.internal — used as baseURL + trusted origin. */
   readonly appUrl: string;
+  /**
+   * Extra trusted origin PATTERNS (better-auth 1.7 wildcard syntax, e.g.
+   * `https://*.space-z.ai`) appended to appUrl in better-auth's
+   * `trustedOrigins`. For proxies/previews whose browser origin differs from
+   * appUrl (sandbox Preview Panel) — without them better-auth's origin check
+   * 403s every auth POST. Never needed in the same-origin production shape.
+   */
+  readonly trustedOrigins?: readonly string[];
   /** Session/CSRF secret. */
   readonly secret: string;
   /** Force `Secure` session cookies (default: https app URL). */
@@ -116,7 +124,7 @@ export function createAuth(env: AuthEnv): Auth {
   return betterAuth({
     baseURL: env.appUrl,
     secret: env.secret,
-    trustedOrigins: [env.appUrl],
+    trustedOrigins: [env.appUrl, ...(env.trustedOrigins ?? [])],
     database: drizzleAdapter(db, {
       provider: isSqlite ? "sqlite" : "pg",
       transaction: !isSqlite,

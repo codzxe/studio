@@ -345,6 +345,12 @@ function childEnv({ webPort, gwPort }) {
     AUTH_GOOGLE_SECRET: "replace-me",
     AUTH_GITHUB_ID: "replace-me",
     AUTH_GITHUB_SECRET: "replace-me",
+    // The sandbox Preview Panel serves the app from
+    // https://preview-chat-<chat-id>.space-z.ai (browser Origin ≠ APP_URL),
+    // and better-auth's origin check would 403 every auth POST. Trust the
+    // preview wildcard (better-auth 1.7 wildcard syntax); explicit overrides
+    // pass through.
+    AUTH_TRUSTED_ORIGINS: process.env.AUTH_TRUSTED_ORIGINS || "https://*.space-z.ai",
     STRIPE_WEBHOOK_SECRET: "whsec_replace_me",
     STRIPE_PRICE_IDS: '{"starter":"price_starter","pro":"price_pro","studio":"price_studio"}',
     LITELLM_BASE_URL: process.env.LITELLM_BASE_URL || "http://localhost:4000",

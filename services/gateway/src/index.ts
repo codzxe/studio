@@ -53,6 +53,7 @@ export async function startServer(): Promise<RunningServer> {
       // installed better-auth 1.7.12; see auth.ts).
       appUrl: authBaseFor(env),
       secret: env.auth.secret,
+      trustedOrigins: env.auth.trustedOrigins,
       google: { clientId: env.auth.google.id, clientSecret: env.auth.google.secret },
       github: { clientId: env.auth.github.id, clientSecret: env.auth.github.secret },
       db,

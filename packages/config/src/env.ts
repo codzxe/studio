@@ -274,6 +274,16 @@ export const ENV_VAR_SPECS: readonly EnvVarMeta[] = [
     hasDefault: false,
     example: "replace-me",
   },
+  {
+    name: "AUTH_TRUSTED_ORIGINS",
+    purpose:
+      "Optional comma-separated better-auth trusted-origin wildcard patterns (e.g. https://*.space-z.ai) for proxies/previews whose browser origin differs from APP_URL.",
+    group: "auth",
+    required: false,
+    secret: false,
+    hasDefault: false,
+    example: "https://*.space-z.ai",
+  },
   // ── litellm ──────────────────────────────────────────────────────────────
   {
     name: "LITELLM_BASE_URL",
@@ -671,6 +681,9 @@ export const envSchema = z.object({
   AUTH_GOOGLE_SECRET: z.string().min(1),
   AUTH_GITHUB_ID: z.string().min(1),
   AUTH_GITHUB_SECRET: z.string().min(1),
+  // comma-separated better-auth trusted-origin wildcard patterns (see the
+  // auth.trustedOrigins doc above). Parsed leniently: blanks dropped.
+  AUTH_TRUSTED_ORIGINS: z.string().min(1).optional(),
   // litellm
   LITELLM_BASE_URL: httpUrl,
   LITELLM_API_KEY: z.string().min(1),
@@ -738,6 +751,15 @@ export interface StudioEnv {
     readonly secret: string;
     readonly google: { readonly id: string; readonly secret: string };
     readonly github: { readonly id: string; readonly secret: string };
+    /**
+     * Extra better-auth trusted origin patterns (better-auth 1.7 wildcard
+     * syntax, e.g. `https://*.space-z.ai`) appended to APP_URL. Needed whenever
+     * the browser origin differs from APP_URL — the sandbox Preview Panel
+     * frames/proxies the app from preview-chat-<chat-id>.space-z.ai while
+     * APP_URL stays http://localhost:3000, and better-auth's origin check
+     * would otherwise 403 every auth POST (sign-in included).
+     */
+    readonly trustedOrigins: readonly string[] | undefined;
   };
   readonly litellm: {
     readonly baseUrl: string;
@@ -979,6 +1001,9 @@ function groupEnv(flat: FlatEnv): StudioEnv {
       secret: flat.AUTH_SECRET,
       google: { id: flat.AUTH_GOOGLE_ID, secret: flat.AUTH_GOOGLE_SECRET },
       github: { id: flat.AUTH_GITHUB_ID, secret: flat.AUTH_GITHUB_SECRET },
+      trustedOrigins: flat.AUTH_TRUSTED_ORIGINS?.split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
     },
     litellm: {
       baseUrl: flat.LITELLM_BASE_URL,
