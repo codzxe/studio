@@ -278,7 +278,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+          # NO cache: pnpm here — this job never runs `pnpm install`, so the
+          # pnpm store path does not exist and setup-node's post-step cache
+          # save fails the whole job ("Path Validation Error", run #161).
+          # Nothing to cache: check:licenses is zero-dependency.
       # Root script name verified in package.json: check:licenses →
       # node scripts/check-licenses.mjs. The script is zero-dependency and reads
       # only the checkout's manifests (9 package.json + licenses.overrides.json
@@ -294,6 +297,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          # no cache: pnpm — no `pnpm install` happens in this job (see
+          # licence-gate note); fonts:web is zero-dependency.
       # Recon: `git ls-files editor/` shows the vendored tree IS tracked, so this
       # gate belongs in CI (root script `editor:cli` = `cd editor && cargo build
       # -p studio-cli`; crate name confirmed in root package.json).
@@ -303,33 +311,26 @@ jobs:
           workspaces: apps/editor
       # Fonts are NEVER committed (spec §1.5 rule 9, licence gate enforced) — but
       # crates/text/src/fonts.rs `include_bytes!`s editor/assets/fonts/*.ttf at
-      # compile time, so a fresh checkout cannot compile studio-text at all
-      # (the 2026-10-25 + 2026-10-26 editor-cargo failures; worklog "fresh CI
-      # checkouts no longer contain the fonts"). Fetch the exact bytes our
-      # vendored pin ships — upstream storytold/effectcraft @ 9db7f3b2, the pin
-      # in apps/editor/UPSTREAM.md — sha256-verified, so the fetch is integrity-pinned
-      # even though raw.githubusercontent is not content-addressed. No font
-      # binary ever lands in THIS repo's history; the files live only on the
-      # runner workspace for this job.
-      - name: "Provision editor fonts (from the upstream pin, sha256-verified)"
-        run: |
-          set -euo pipefail
-          mkdir -p apps/editor/assets/fonts
-          cd apps/editor/assets/fonts
-          base="https://raw.githubusercontent.com/storytold/effectcraft/9db7f3b21700fd821f215782ed1c82afe077880f/assets/fonts"
-          while read -r sum name; do
-            printf '%s  %s\n' "$sum" "$name" >> SHA256SUMS
-            curl -fsSL --retry 3 --max-time 60 -o "$name" "$base/$name"
-          done <<'FONTS'
-          40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82  Inter-Regular.ttf
-          97ad806f526e41546d46365bb3a393145f75b7b1568913db74549ad8b8dba872  Inter-Medium.ttf
-          78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3  Inter-SemiBold.ttf
-          288316099b1e0a47a4716d159098005eef7c0066921f34e3200393dbdb01947f  Inter-Bold.ttf
-          bbc051dd204b5019a1aa0bc0ae2aa8a05ab13e7a3f979fa357631dc7feb6833a  Inter-Italic.ttf
-          e6fd0d7e91550b3ed2b735d4312474362c4716edc4fc0577a0f61ed782d5aed1  JetBrainsMono-Regular.ttf
-          a15cfbbc1539d707115111d672d590a3d70d4f74b4c0a315956da20ae19a14e1  NotoSerif-Regular.ttf
-          FONTS
-          sha256sum -c SHA256SUMS
+      # compile time (InstrumentSans Regular/Medium/SemiBold, InstrumentSerif,
+      # JetBrainsMono), so a fresh checkout cannot compile studio-text at all.
+      #
+      # The upstream-pin curl list this step replaced (Inter ×5 + NotoSerif,
+      # run #161) predated the Instrument rebrand and produced exit 101:
+      #   error: couldn't read `assets/fonts/InstrumentSans-Regular.ttf` …
+      # Canonical pipeline instead (same provenance as the web app):
+      #   1. fetch-web-fonts.mjs — pinned google/fonts commit e7db6ca6, the
+      #      variable fonts, sha256-verified, zero-dependency node script;
+      #   2. provision-editor-fonts.py — fonttools varLib.instancer pins the
+      #      static weights (wdth=100 + wght=400/500/600) and copies the
+      #      static-only Instrument Serif; verifies sfnt magic on each output.
+      # No font binary ever lands in THIS repo's history; the files live only
+      # on the runner workspace for this job.
+      - name: "Web fonts (sha256-pinned fetch — instancing source)"
+        run: corepack pnpm fonts:web
+      - name: "fonttools (static-weight instancing)"
+        run: python3 -m pip install --user fonttools
+      - name: "Provision editor fonts (variable → static weights)"
+        run: python3 scripts/provision-editor-fonts.py
       - name: "cargo check (release, cli crate only)"
         working-directory: apps/editor
         run: cargo check --release -p studio-cli
