@@ -33,6 +33,7 @@ import {
   TOOL_IDS,
   TOOL_LIST,
   WRITE_TOOL_RESULT_SCHEMA,
+  isAutoApplicable,
 } from "@studio/contracts";
 
 import { ModelUnavailableError, type OpenAIChatMessage } from "../src/litellm/openai.js";
@@ -882,6 +883,30 @@ describe("writeToolCarrierPlan + resolveWriteToolCall (PROPOSE-ONLY carriers)", 
     expect(writeToolCarrierPlan(addAsset, { kind: "svg", name: "B", svg: "<svg/>" }).intent).toBe(
       "create",
     );
+  });
+
+  // 2026-11-01 root-cause regression: the old `requiresApproval: risk !== "low"`
+  // kept EVERY medium tool (create_composition above all) out of the per-turn
+  // live-apply gate, so the canvas stayed empty for whole runs while the prompt
+  // promised live application — the model re-proposed the composition verbatim
+  // (run 59cead8c steps 10-11) and the run-end batch then failed atomically.
+  it("medium-risk carriers never demand approval — they stay live-applicable (mergeEditPlans ruling)", () => {
+    const createComp = TOOL_CATALOG["studio.create_composition"];
+    expect(createComp.risk).toBe("medium");
+    for (const [tool, args] of [
+      [createComp, { name: "Google Launch Sequence", width: 3840, height: 2160 }],
+      [engineCommands, { steps: [{ command: "layer.newSolid", params: { name: "BG" } }] }],
+      [runScript, { code: "x" }],
+      [addAsset, { kind: "svg", name: "B", svg: "<svg/>" }],
+    ] as const) {
+      const carrier = writeToolCarrierPlan(tool, args as unknown);
+      expect(carrier.requiresApproval).toBe(false);
+      // The §7.3 shape gate the client's live apply uses must now pass for
+      // every create/edit/style/animate carrier (undo/save stay out via intent).
+      if (carrier.intent !== "organize") {
+        expect(isAutoApplicable(carrier)).toBe(true);
+      }
+    }
   });
 
   it("resolves a valid write call: compiled batch + the §8.4 propose-only resultForModel", async () => {

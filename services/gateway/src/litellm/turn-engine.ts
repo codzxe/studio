@@ -521,7 +521,23 @@ export function writeToolCarrierPlan(tool: ToolDefinition, args: unknown): EditP
     intent: WRITE_TOOL_INTENTS[tool.id] ?? "edit",
     summary,
     risk: tool.risk,
-    requiresApproval: tool.risk !== "low",
+    // 2026-11-01 root-cause fix: carriers NEVER demand approval — the exact
+    // ruling contracts' mergeEditPlans documents for the merged plan ("no
+    // curated write tool is high-risk; the compiler recomputes risk and the
+    // auto-apply policy re-judges the COMPILED batch, never these self-declared
+    // fields"). The old `tool.risk !== "low"` made EVERY medium tool —
+    // including studio.create_composition, the foundation of any build —
+    // fail the per-turn live-apply gate (isAutoApplicable checks
+    // !requiresApproval), so the canvas stayed empty for the whole run while
+    // the system prompt promised "low/medium plans APPLY THEMSELVES". The
+    // model, seeing an eternally-empty canvas state note, concluded its
+    // proposals had failed and re-proposed the composition from scratch
+    // (run 59cead8c: steps 10-11 duplicated steps 1-2 verbatim), burning
+    // turns and credits. Safety is unchanged: the write-tool catalog contains
+    // no high-risk tool, and the apply-time walls (server-recomputed risk,
+    // reversible-command classification, credit/step ceilings, run-end
+    // autoApplyDecision rule 4) all still re-judge every batch.
+    requiresApproval: false,
     affectedLayers: [],
     estimatedCredits: estimateCredits({ risk: tool.risk, steps: [{}] }),
     steps: [
