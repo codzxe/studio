@@ -19,7 +19,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "biome check src tests",
-    "bundle:gateway": "esbuild --bundle api-src/gateway.ts --tsconfig=api-src/tsconfig.json --platform=node --format=esm --target=node22 --banner:js=\"import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);\" --outfile=api/gateway.mjs"
+    "bundle:gateway": "node ../../scripts/build-gateway-bundle.mjs"
   },
   "dependencies": {
     "@studio/api-client": "workspace:*",
