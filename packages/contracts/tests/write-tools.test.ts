@@ -213,6 +213,27 @@ describe("write-tools: create_composition args", () => {
     expect(schema.safeParse({ name: "M", durationSeconds: 36001 }).success).toBe(false);
     expect(schema.safeParse({ name: "" }).success).toBe(false);
   });
+
+  // 2026-11-01 root-cause fix: both failing runs tried to set the composition
+  // background right after creation — the surface never exposed it.
+  it("accepts a background color in both forms (#hex and [r, g, b] channels)", () => {
+    expect(schema.safeParse({ name: "Main", background: "#0B0D10" }).success).toBe(true);
+    expect(schema.safeParse({ name: "Main", background: [66, 133, 244] }).success).toBe(true);
+    expect(
+      schema.safeParse({ name: "Main", background: [66, 133, 244, 255] }).success,
+    ).toBe(true);
+    expect(schema.safeParse({ name: "Main", background: "black" }).success).toBe(false);
+    expect(schema.safeParse({ name: "Main", background: [300, 0, 0] }).success).toBe(false);
+  });
+
+  it("repairs the model's near-miss color shapes (run 59cead8c, verbatim)", () => {
+    // The gateway's stringified-JSON repair turns the raw strings into these;
+    // COLOR_INPUT then fixes the leftovers the strict union used to bounce.
+    expect(schema.safeParse({ name: "Main", background: ["66", "133", "244"] }).success).toBe(
+      true,
+    );
+    expect(schema.safeParse({ name: "Main", background: ["#0B0D10"] }).success).toBe(true);
+  });
 });
 
 describe("write-tools: create_text args (real layer.newText subset)", () => {
@@ -234,8 +255,30 @@ describe("write-tools: create_text args (real layer.newText subset)", () => {
         strokeWidth: 2,
         tracking: 10,
         leading: 80,
+        opacity: 0,
       }).success,
     ).toBe(true);
+  });
+
+  // 2026-11-01 root-cause fix: the #1 rejected key across both failing runs
+  // (8 burned calls) — opacity at CREATION now validates instead of bouncing.
+  it("accepts opacity as a 0..1 fraction or a 1..100 percent, rejects the rest", () => {
+    expect(schema.safeParse({ text: "G", opacity: 0 }).success).toBe(true);
+    expect(schema.safeParse({ text: "G", opacity: 1 }).success).toBe(true);
+    expect(schema.safeParse({ text: "G", opacity: 0.35 }).success).toBe(true);
+    expect(schema.safeParse({ text: "G", opacity: 100 }).success).toBe(true);
+    expect(schema.safeParse({ text: "G", opacity: -1 }).success).toBe(false);
+    expect(schema.safeParse({ text: "G", opacity: 101 }).success).toBe(false);
+  });
+
+  it("repairs the model's near-miss fill shapes (run 59cead8c, verbatim)", () => {
+    // Post stringified-JSON repair the raw calls became these; the color
+    // input repair now finishes the job instead of bouncing a retry.
+    expect(schema.safeParse({ text: "G", fill: ["66", "133", "244"] }).success).toBe(true);
+    expect(schema.safeParse({ text: "G", fill: ["#4285F4"] }).success).toBe(true);
+    expect(schema.safeParse({ text: "G", fill: "#4285F4" }).success).toBe(true);
+    expect(schema.safeParse({ text: "G", fill: [66, 133, 244] }).success).toBe(true);
+    expect(schema.safeParse({ text: "G", fill: "not-a-color" }).success).toBe(false);
   });
 
   it("bounds: text ≤ 2000, positions/box/size/colors/tracking/leading bounded", () => {

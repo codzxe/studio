@@ -733,6 +733,16 @@ class Compiler {
         const duration = argsObj.durationSeconds;
         if (isFiniteNumber(duration)) params.duration = duration;
         else if (duration !== undefined) unusable("durationSeconds", "is not a finite number");
+        // 2026-11-01: comp.new takes `background` (#hex | [r,g,b]) — the
+        // create_composition tool surface now exposes it (both failing runs
+        // tried to set the background right after creation and had nowhere to
+        // put it). engineColor normalizes channel arrays to hex.
+        const background = argsObj.background;
+        if (background !== undefined) {
+          const color = engineColor(background);
+          if (color !== undefined) params.background = color;
+          else unusable("background", "is not a #hex color string or a [r, g, b] channel array");
+        }
         if (params.name === undefined) {
           compilesToNothing();
           break;
@@ -802,7 +812,32 @@ class Compiler {
           compilesToNothing();
           break;
         }
+        // 2026-11-01 root-cause fix: `opacity` at CREATION — the #1 rejected
+        // key across both failing runs (8 burned calls; motion-graphics
+        // briefs demand fade-ins). layer.newText takes no opacity, so the
+        // starting opacity compiles to a follow-up transform/opacity set in
+        // the SAME atomic batch, resolved BY NAME: the prop.set step runs
+        // right after the layer.newText step that created it (the engine
+        // resolves layer names at each step's execution time; the client's
+        // apply defers batch-created names). The name must be deterministic —
+        // when the model sent none, the text itself becomes the layer name.
+        const opacity = argsObj.opacity;
+        if (opacity !== undefined && !isFiniteNumber(opacity)) {
+          unusable("opacity", "is not a finite number");
+        } else if (isFiniteNumber(opacity)) {
+          if (typeof params.name !== "string" || params.name.length === 0) {
+            params.name = (text ?? "Text").slice(0, 60);
+          }
+        }
         add("layer.newText", params);
+        if (isFiniteNumber(opacity)) {
+          const unit = normalizeTransformUnitForPath("transform/opacity", opacity);
+          add("prop.set", {
+            layer: params.name,
+            path: "transform/opacity",
+            value: unit.value,
+          });
+        }
         break;
       }
 

@@ -298,6 +298,37 @@ const COLOR_SCHEMA = z.union([
   ]),
 ]);
 
+/**
+ * Color INPUT with repair (2026-11-01 root-cause fix): real runs kept
+ * emitting near-miss color shapes — `fill: "[\"66\", \"133\", \"244\"]"` (the
+ * gateway's stringified-JSON repair un-wraps the string but leaves numeric
+ * STRINGS inside the array) and `"[\"#4285F4\"]"` (a hex string wrapped in a
+ * one-element array). Both bounced off the strict union and burned a retry
+ * each. One deterministic preprocess pass repairs exactly those two shapes
+ * — numeric-string channels become numbers, a lone hex string unwraps — and
+ * then the STRICT union above still has the final say on everything else.
+ */
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/;
+const NUMERIC_STRING_RE = /^-?\d+(?:\.\d+)?$/;
+
+function repairColorish(raw: unknown): unknown {
+  if (!Array.isArray(raw)) return raw;
+  if (
+    raw.length === 1 &&
+    typeof raw[0] === "string" &&
+    HEX_COLOR_RE.test(raw[0].trim())
+  ) {
+    return raw[0].trim();
+  }
+  return raw.map((channel) =>
+    typeof channel === "string" && NUMERIC_STRING_RE.test(channel.trim())
+      ? Number(channel.trim())
+      : channel,
+  );
+}
+
+const COLOR_INPUT_SCHEMA = z.preprocess(repairColorish, COLOR_SCHEMA);
+
 const COORD_SCHEMA = z.number().min(-MAX_COORD).max(MAX_COORD);
 const BOX_SIZE_SCHEMA = z.number().min(1).max(MAX_COORD);
 
@@ -330,6 +361,12 @@ export const CREATE_COMPOSITION_ARGS_SCHEMA = z.strictObject({
   height: z.number().int().min(MIN_COMPOSITION_DIMENSION).max(MAX_COMPOSITION_DIMENSION).optional(),
   frameRate: z.number().min(MIN_FRAME_RATE).max(MAX_FRAME_RATE).optional(),
   durationSeconds: z.number().min(MIN_DURATION_SECONDS).max(MAX_DURATION_SECONDS).optional(),
+  // 2026-11-01 root-cause fix: both failing runs immediately tried to set the
+  // composition's background AFTER creating it — set_properties on the
+  // composition's name (comp.new has taken `background` all along, but the
+  // tool surface never exposed it). Meet the model at its natural expression
+  // point: the background rides composition creation directly.
+  background: COLOR_INPUT_SCHEMA.optional(),
 });
 
 /**
@@ -359,11 +396,25 @@ export const CREATE_TEXT_ARGS_SCHEMA = z.strictObject({
   font: z.string().min(1).max(MAX_FONT_LENGTH).optional(),
   style: z.string().min(1).max(MAX_FONT_LENGTH).optional(),
   size: z.number().min(MIN_TEXT_SIZE).max(MAX_TEXT_SIZE).optional(),
-  fill: COLOR_SCHEMA.optional(),
-  stroke: COLOR_SCHEMA.optional(),
+  fill: COLOR_INPUT_SCHEMA.optional(),
+  stroke: COLOR_INPUT_SCHEMA.optional(),
   strokeWidth: z.number().min(0).max(MAX_STROKE_WIDTH).optional(),
   tracking: z.number().min(-MAX_TRACKING).max(MAX_TRACKING).optional(),
   leading: z.number().min(0).max(MAX_LEADING).optional(),
+  // 2026-11-01 root-cause fix: the #1 rejected key across BOTH failing runs
+  // (8 calls burned). Motion-graphics briefs demand fade-ins, so models reach
+  // for `opacity` at CREATION time. The engine's layer.newText takes no
+  // opacity — the plan compiler emits a follow-up transform/opacity set in
+  // the same atomic batch, using the same 0..1-fraction → percent convention
+  // as set_properties (normalizeTransformUnitForPath).
+  opacity: z
+    .number()
+    .min(0, "opacity cannot be negative")
+    .max(
+      100,
+      "opacity is 0..1 as a fraction (0.5 = half) or 1..100 as a percent (100 = fully opaque)",
+    )
+    .optional(),
 });
 
 /** Property updates for the named layers: 1..100 {path ≤ 200, JSON value}. */
@@ -582,9 +633,11 @@ export const WRITE_TOOLS: readonly WriteToolDefinition[] = [
     returns: "proposed-batch",
     description:
       "Propose creating a new composition with a name, optional pixel width/height, optional " +
-      "frame rate and optional duration in seconds. The result is a PROPOSED batch of steps for " +
-      "the user to review — nothing is executed until the user applies the plan, and the applied " +
-      "change lands as one undo step.",
+      "frame rate, optional duration in seconds, and an optional background color (#rrggbb or " +
+      "[r, g, b] channels) — the matte behind every layer (a deep void, a white studio). Set the " +
+      "background HERE rather than trying to edit the composition afterwards. The result is a " +
+      "PROPOSED batch of steps for the user to review — nothing is executed until the user " +
+      "applies the plan, and the applied change lands as one undo step.",
     inputSchema: WRITE_TOOL_ARGS_SCHEMAS.create_composition,
   },
   {
@@ -597,9 +650,10 @@ export const WRITE_TOOLS: readonly WriteToolDefinition[] = [
       "the visible content (1..2000 chars, never empty or placeholder; an empty text is " +
       "always rejected — for a background/void propose a SOLID layer via " +
       "studio.engine_commands instead) — plus optional layer name, position, paragraph box, " +
-      "font, style, size, fill and stroke colors, stroke width, tracking and leading. There " +
-      "is no `opacity` key here; set the layer's opacity afterwards via " +
-      "studio.set_properties. The result is a PROPOSED batch for the user to review — " +
+      "font, style, size, fill and stroke colors (#rrggbb or [r, g, b] channels), stroke width, " +
+      "tracking, leading, and an optional starting `opacity` (0..1 fraction, or 1..100 as " +
+      "percent — the fade-in starting point; animate it afterwards with " +
+      "studio.set_keyframes). The result is a PROPOSED batch for the user to review — " +
       "never executed until the user applies the plan.",
     inputSchema: WRITE_TOOL_ARGS_SCHEMAS.create_text,
   },

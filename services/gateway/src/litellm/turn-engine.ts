@@ -971,7 +971,9 @@ export function coerceStringifiedJson(value: unknown, depth = 0): unknown {
  * stringified by weak models ("width":"1920"). Only clean integer/decimal
  * strings under these names coerce — a bare scalar repair, never applied to
  * names, paths, or free-form values (those stay strings so the strict schema
- * still rejects genuinely wrong shapes).
+ * still rejects genuinely wrong shapes). 2026-11-01: gained the create_text
+ * numeric leaves (opacity, strokeWidth, tracking, leading) — the model sent
+ * size:"400" and opacity:"0" as strings in run 59cead8c.
  */
 const NUMERIC_ARG_FIELDS: ReadonlySet<string> = new Set([
   "width",
@@ -979,6 +981,10 @@ const NUMERIC_ARG_FIELDS: ReadonlySet<string> = new Set([
   "frameRate",
   "durationSeconds",
   "size",
+  "opacity",
+  "strokeWidth",
+  "tracking",
+  "leading",
   "timeSeconds",
   "duration",
 ]);

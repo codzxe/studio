@@ -425,6 +425,102 @@ describe("golden compiles per tool", () => {
     expect(result.batch.steps).toEqual([expected]);
   });
 
+  // 2026-11-01 root-cause fix: the model's natural expression points, verbatim
+  // from run 59cead8c — background rides composition creation, opacity rides
+  // text creation as a same-batch transform/opacity set.
+  it("create_composition with background → comp.new {background} (channel arrays normalize to hex)", () => {
+    const result = expectOk(
+      compile(
+        plan([
+          step(
+            "create_composition",
+            { name: "Google Launch Sequence", width: 3840, height: 2160, background: [66, 133, 244] },
+            [
+              {
+                command: "comp.new",
+                params: {
+                  name: "Google Launch Sequence",
+                  width: 3840,
+                  height: 2160,
+                  background: "#4285f4",
+                },
+              },
+            ],
+          ),
+        ]),
+      ),
+    );
+    expect(result.batch.steps).toEqual([
+      {
+        command: "comp.new",
+        params: {
+          name: "Google Launch Sequence",
+          width: 3840,
+          height: 2160,
+          background: "#4285f4",
+        },
+      },
+    ]);
+  });
+
+  it("create_text with a named layer + opacity → layer.newText then prop.set transform/opacity (percent)", () => {
+    const result = expectOk(
+      compile(
+        plan([
+          step(
+            "create_text",
+            { text: "G", name: "G Logo Element", position: [1920, 1080], fill: "#4285F4", opacity: 0 },
+            [],
+          ),
+        ]),
+      ),
+    );
+    expect(result.batch.steps).toEqual([
+      {
+        command: "layer.newText",
+        params: {
+          text: "G",
+          name: "G Logo Element",
+          position: [1920, 1080],
+          fill: "#4285F4",
+        },
+      },
+      {
+        command: "prop.set",
+        params: { layer: "G Logo Element", path: "transform/opacity", value: 0 },
+      },
+    ]);
+  });
+
+  it("create_text with opacity but NO name synthesizes the layer name from the text", () => {
+    const result = expectOk(
+      compile(plan([step("create_text", { text: "Ask anything.", opacity: 0.5 }, [])])),
+    );
+    expect(result.batch.steps).toEqual([
+      { command: "layer.newText", params: { text: "Ask anything.", name: "Ask anything." } },
+      { command: "prop.set", params: { layer: "Ask anything.", path: "transform/opacity", value: 50 } },
+    ]);
+  });
+
+  it("create_text opacity 1 (fraction) and 100 (percent) both land at 100", () => {
+    for (const opacity of [1, 100]) {
+      const result = expectOk(
+        compile(plan([step("create_text", { text: "X", name: "L", opacity }, [])])),
+      );
+      expect(result.batch.steps[1]).toEqual({
+        command: "prop.set",
+        params: { layer: "L", path: "transform/opacity", value: 100 },
+      });
+    }
+  });
+
+  it("create_text WITHOUT opacity emits no prop.set and no synthesized name (unchanged golden)", () => {
+    const result = expectOk(compile(plan([step("create_text", { text: "Plain" }, [])])));
+    expect(result.batch.steps).toEqual([
+      { command: "layer.newText", params: { text: "Plain" } },
+    ]);
+  });
+
   it("create_text (minimal) → layer.newText {text} only", () => {
     const result = expectOk(
       compile(
