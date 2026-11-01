@@ -163773,6 +163773,68 @@ function foldCreationsInto(table2, createdLayers, createdCompositions) {
   for (const name5 of createdLayers) table2.layers.add(name5);
   for (const name5 of createdCompositions) table2.compositions.add(name5);
 }
+function parseMaybeJson(value) {
+  if (typeof value !== "string" || value === "") return value === "" ? void 0 : value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return void 0;
+  }
+}
+function isAcceptedProposal(result) {
+  if (typeof result !== "string") {
+    return typeof result === "object" && result !== null && "proposedBatch" in result;
+  }
+  return result.includes('"proposedBatch"');
+}
+function createdNamesFromSteps(rows) {
+  const layers = /* @__PURE__ */ new Set();
+  const compositions = /* @__PURE__ */ new Set();
+  for (const row of rows) {
+    if (!isAcceptedProposal(row.resultJson)) continue;
+    const args = parseMaybeJson(row.argsJson);
+    if (typeof args !== "object" || args === null) continue;
+    const record2 = args;
+    const addLayer = (name5) => {
+      if (typeof name5 === "string" && name5.length > 0) layers.add(name5);
+    };
+    const addComp = (name5) => {
+      if (typeof name5 === "string" && name5.length > 0) compositions.add(name5);
+    };
+    switch (row.tool) {
+      case "studio.create_text": {
+        const name5 = record2.name;
+        if (typeof name5 === "string" && name5.length > 0) {
+          addLayer(name5);
+        } else if (record2.opacity !== void 0 && typeof record2.text === "string") {
+          addLayer(record2.text.slice(0, 60));
+        }
+        break;
+      }
+      case "studio.create_composition":
+        addComp(record2.name);
+        break;
+      case "studio.engine_commands": {
+        const steps = record2.steps;
+        if (!Array.isArray(steps)) break;
+        for (const step of steps) {
+          if (typeof step !== "object" || step === null) continue;
+          const { command: command5, params } = step;
+          if (typeof command5 !== "string" || typeof params !== "object" || params === null) {
+            continue;
+          }
+          const name5 = params.name;
+          if (command5 === "comp.new") addComp(name5);
+          else if (/^layer\.new/.test(command5)) addLayer(name5);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return { layers, compositions };
+}
 function extractJsonObject(text4) {
   let candidate = text4.trim();
   if (candidate.startsWith("```")) {
@@ -163906,7 +163968,11 @@ var NUMERIC_ARG_FIELDS = /* @__PURE__ */ new Set([
   "tracking",
   "leading",
   "timeSeconds",
-  "duration"
+  "duration",
+  // Read-tool numeric leaves (e2e bba72d51: the model sent list_layers
+  // {depth:"2"} three times — each bounced RUN_INVALID_TOOL and the
+  // repetition guard had to kill the run).
+  "depth"
 ]);
 
 // ../../services/gateway/src/runner.ts
@@ -164266,6 +164332,8 @@ function turnRoutes(deps) {
     });
     const model = resolveChatModel({ requested: request.model, plan, requestId });
     let committedSoFar = 0;
+    let priorCreatedLayers = /* @__PURE__ */ new Set();
+    let priorCreatedCompositions = /* @__PURE__ */ new Set();
     if (request.stepIndex === 0) {
       let runExisted = false;
       try {
@@ -164305,7 +164373,7 @@ function turnRoutes(deps) {
         }
       }
     } else {
-      const { run } = await deps.repos.runs.get(workspace.id, request.runId);
+      const { run, steps } = await deps.repos.runs.get(workspace.id, request.runId);
       if (run.threadId !== threadId) {
         throw new GatewayError("RUN_NOT_ACTIVE", "This run belongs to another thread.", {
           status: 404,
@@ -164321,6 +164389,15 @@ function turnRoutes(deps) {
       }
       committedSoFar = run.committedCredits;
       await settleEchoedToolResults(deps, threadId, request);
+      const created = createdNamesFromSteps(
+        steps.map((step) => ({
+          tool: step.tool,
+          argsJson: step.argsJson,
+          resultJson: step.resultJson
+        }))
+      );
+      priorCreatedLayers = created.layers;
+      priorCreatedCompositions = created.compositions;
     }
     try {
       await deps.repos.runs.touchRunHeartbeat({
@@ -164414,6 +164491,8 @@ function turnRoutes(deps) {
             promptMessages,
             reserveAmount,
             committedSoFar,
+            priorCreatedLayers,
+            priorCreatedCompositions,
             signal: controller.signal,
             logger: deps.logger
           });
@@ -164568,6 +164647,8 @@ async function runTurn(deps, input2) {
         signal: input2.signal,
         log,
         canvas: request.canvas ?? null,
+        priorCreatedLayers: input2.priorCreatedLayers,
+        priorCreatedCompositions: input2.priorCreatedCompositions,
         onSideUsage: (used) => {
           sideUsage = {
             inputTokens: sideUsage.inputTokens + used.inputTokens,
@@ -164707,6 +164788,11 @@ async function runTurn(deps, input2) {
 async function resolveToolCalls(deps, input2) {
   const resolved = [];
   const symbols = seedTurnSymbolTable(input2.canvas);
+  foldCreationsInto(
+    symbols,
+    input2.priorCreatedLayers ?? /* @__PURE__ */ new Set(),
+    input2.priorCreatedCompositions ?? /* @__PURE__ */ new Set()
+  );
   const hasCanvas = input2.canvas != null;
   for (const call of input2.calls) {
     const tool2 = registeredToolFor(call.name);
