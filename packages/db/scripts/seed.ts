@@ -46,6 +46,7 @@ const MICROCREDITS_PER_CREDIT = 1_000_000;
 /** 1,000 demo credits, in µc — the mock chat run reserves ~2 credits per run. */
 const DEMO_GRANT_CREDITS = 1_000;
 const DEMO_GRANT_MICROCREDITS = DEMO_GRANT_CREDITS * MICROCREDITS_PER_CREDIT;
+
 /**
  * Keyed "…:1000c" (credits, not raw µc): the pre-M6-E seed granted `amount:
  * 1000` when the ledger column was whole credits; M6-E widened the column to
@@ -55,6 +56,21 @@ const DEMO_GRANT_MICROCREDITS = DEMO_GRANT_CREDITS * MICROCREDITS_PER_CREDIT;
  * never re-add).
  */
 const GRANT_IDEMPOTENCY_KEY = "seed:demo:grant:1000c";
+
+/**
+ * The demo workspace rides the TOP tier with an effectively-unlimited
+ * spendable balance (user brief: "give this id top plan and unlimited token"):
+ * subscriptions row → plan 'studio' (chat/render gates read the EFFECTIVE
+ * plan from this row — plans.ts D-4/D-12), and the ledger topped up to
+ * DEMO_UNLIMITED_CREDITS in SPLIT rows — credit_ledger.amount is drizzle
+ * `integer` (int32: max ≈ 2,147 credits per row, plans.ts MONEY NOTE), so the
+ * top-up is chunked at 2,000,000,000 µc per row under idempotency keys
+ * "seed:demo:unlimited:<n>" (re-runs never double-grant). 1,000,000 credits
+ * at the chat gate's ~2-credit reserve ≈ 500,000 model runs.
+ */
+const DEMO_PLAN = "studio" as const;
+const DEMO_UNLIMITED_CREDITS = 1_000_000;
+const UNLIMITED_CHUNK_MICROCREDITS = 2_000_000_000;
 
 /**
  * The demo .ecproj fixture bytes: the COMMITTED engine-generated project at
@@ -258,6 +274,45 @@ async function main(): Promise<void> {
     // biome-ignore lint/suspicious/noConsole: CLI seed script — reports the credit grant + resulting balance
     console.info(
       `[seed] credits: grant ${grant.replayed ? "(replayed)" : "created"}, balance=${balance}`,
+    );
+
+    // 4b — top plan (subscriptions row: the ONE plan seam the gates read) +
+    // an effectively-unlimited spendable balance in int32-safe split rows.
+    await db
+      .insert(t.subscriptions)
+      .values({
+        id: "sub_demo_studio",
+        organizationId: ORG_ID,
+        planId: DEMO_PLAN,
+        status: "active",
+        cancelAtPeriodEnd: false,
+      })
+      .onConflictDoUpdate({
+        target: t.subscriptions.organizationId,
+        set: { planId: DEMO_PLAN, status: "active", cancelAtPeriodEnd: false },
+      });
+    const targetMicro = DEMO_UNLIMITED_CREDITS * MICROCREDITS_PER_CREDIT;
+    let unlimitedGranted = 0;
+    let unlimitedChunk = 0;
+    while (balance + unlimitedGranted < targetMicro) {
+      unlimitedChunk += 1;
+      const amount = Math.min(
+        UNLIMITED_CHUNK_MICROCREDITS,
+        targetMicro - (balance + unlimitedGranted),
+      );
+      const chunk = await repos.ledger.grant(ORG_ID, {
+        amount,
+        idempotencyKey: `seed:demo:unlimited:${unlimitedChunk}`,
+        metadata: { source: "seed:unlimited", chunk: unlimitedChunk },
+      });
+      if (!chunk.replayed) unlimitedGranted += amount;
+    }
+    const unlimitedBalance = await repos.ledger.balance(ORG_ID);
+    // biome-ignore lint/suspicious/noConsole: CLI seed script — reports the plan + unlimited balance
+    console.info(
+      `[seed] plan: ${DEMO_PLAN}/active · unlimited top-up: ${
+        unlimitedGranted > 0 ? `+${unlimitedGranted} µc` : "(replayed)"
+      }, balance=${unlimitedBalance} µc`,
     );
 
     // 5 — demo thread + greeting message
