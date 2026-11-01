@@ -497,6 +497,38 @@ describe("golden compiles per tool", () => {
     expect(warningCodes(result)).toContain("unusable_args");
   });
 
+  it("bare leaf paths repair to grouped engine paths (2026-11-01: sourceText → engine rollback)", () => {
+    // The Google-launch run compiled prop.set path "sourceText" — the engine
+    // answered "no property `sourceText`" and rolled the WHOLE batch back.
+    // Bare text leaves now alias to the engine's grouped truth; dotted forms
+    // already dot→slash; bare transform leaves keep their established alias.
+    const args = {
+      layers: [{ name: "Headline" }],
+      properties: [
+        { path: "sourceText", value: "New copy" },
+        { path: "text", value: "Newer copy" },
+        { path: "opacity", value: 40 },
+        { path: "text.sourceText", value: "Dotted copy" },
+      ],
+    };
+    const result = expectOk(compile(plan([step("set_properties", args)])));
+    expect(result.batch.steps).toEqual([
+      {
+        command: "prop.set",
+        params: { layer: "Headline", path: "text/sourceText", value: "New copy" },
+      },
+      {
+        command: "prop.set",
+        params: { layer: "Headline", path: "text/sourceText", value: "Newer copy" },
+      },
+      { command: "prop.set", params: { layer: "Headline", path: "transform/opacity", value: 40 } },
+      {
+        command: "prop.set",
+        params: { layer: "Headline", path: "text/sourceText", value: "Dotted copy" },
+      },
+    ]);
+  });
+
   it("set_keyframes → cross-product prop.addKey per layer × key; interpolation warns (client state)", () => {
     const args = {
       layers: [{ name: "Headline" }],
@@ -725,6 +757,28 @@ describe("round-12 golden compiles — studio.engine_commands", () => {
     expect(live.allowsEngineCommand).toBe(isAllowedEngineCommand);
     const result = expectOk(compile(plan([step("engine_commands", { steps: verbatim })]), live));
     expect(result.batch.steps).toEqual(verbatim);
+  });
+
+  it("engine_commands prop.set paths repair bare leaves; every other step rides verbatim", () => {
+    // 2026-11-01 Google-launch run: an engine_commands prop.set carried path
+    // "sourceText" verbatim → the engine rejected the whole atomic batch
+    // ("no property `sourceText`"). The path-bearing commands get the same
+    // bare-leaf repair set_properties always had; grouped paths and all
+    // other commands are untouched.
+    const steps = [
+      { command: "prop.set", params: { layer: "Headline", path: "sourceText", value: "New copy" } },
+      { command: "prop.set", params: { layer: "Headline", path: "transform/opacity", value: 40 } },
+      { command: "layer.newSolid", params: { name: "BG", color: "#FFFFFF" } },
+    ];
+    const result = expectOk(compile(plan([step("engine_commands", { steps })])));
+    expect(result.batch.steps).toEqual([
+      {
+        command: "prop.set",
+        params: { layer: "Headline", path: "text/sourceText", value: "New copy" },
+      },
+      { command: "prop.set", params: { layer: "Headline", path: "transform/opacity", value: 40 } },
+      { command: "layer.newSolid", params: { name: "BG", color: "#FFFFFF" } },
+    ]);
   });
 
   it("an unknown engine command id is a typed command_not_allowed fatal with the pinned message", () => {

@@ -297,6 +297,14 @@ const BARE_LEAF_PROPERTY_ALIASES: Readonly<Record<string, string>> = {
   position: "transform/position",
   rotation: "transform/rotation",
   anchor: "transform/anchor",
+  // The text group (2026-11-01 Google-launch run: a compiled plan carried
+  // prop.set path "sourceText" — the engine answered "no property
+  // `sourceText`" and rolled the WHOLE batch back). Bare `text`,
+  // `sourceText` and `source_text` all mean the text layer's content
+  // property; the grouped form is the engine truth.
+  text: "text/sourceText",
+  sourcetext: "text/sourceText",
+  source_text: "text/sourceText",
 };
 
 /**
@@ -1103,7 +1111,20 @@ class Compiler {
             unusable("steps", `entry ${index + 1} has no params record (skipped)`);
             continue;
           }
-          add(command, { ...params });
+          // The same bare-leaf repair set_properties gets (2026-11-01:
+          // engine_commands prop.set path "sourceText" reached the engine
+          // verbatim and rolled the batch back — "no property
+          // `sourceText`"). Only the two path-bearing commands are
+          // normalized, and only a string `path` param is touched; every
+          // other step rides verbatim.
+          if (
+            (command === "prop.set" || command === "prop.addKey") &&
+            typeof params.path === "string"
+          ) {
+            add(command, { ...params, path: normalizePropertyPath(params.path) });
+          } else {
+            add(command, { ...params });
+          }
         }
         if (steps.length === 0 && !denied) compilesToNothing();
         break;
