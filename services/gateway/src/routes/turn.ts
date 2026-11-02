@@ -603,14 +603,15 @@ async function runTurn(
   const mockModel = deps.env.app.mockModel === true;
   // AUD-C1: hoisted so the abort path can bill the tokens the side calls
   // (studio.plan_edit) already spent before the stream was cut.
-  let sideUsage: { inputTokens: number; outputTokens: number } = {
+  let sideUsage: { inputTokens: number; outputTokens: number; cachedInputTokens: number } = {
     inputTokens: 0,
     outputTokens: 0,
+    cachedInputTokens: 0,
   };
   try {
     let text: string;
     let toolCalls: TurnToolCall[];
-    let usage: { inputTokens: number; outputTokens: number };
+    let usage: { inputTokens: number; outputTokens: number; cachedInputTokens: number };
     let committed: number;
     // ROUND 13 (live thinking): the turn's full reasoning text — re-emitted on
     // the terminal so a durable replay restores the thinking block without
@@ -635,7 +636,7 @@ async function runTurn(
       text = mock.text;
       turnReasoning = reasoningDeltas.join("");
       toolCalls = mock.toolCalls;
-      usage = { inputTokens: 900, outputTokens: 200 };
+      usage = { inputTokens: 900, outputTokens: 200, cachedInputTokens: 0 };
       committed = 1;
     } else {
       const modelDeps: OpenAITurnDeps = {
@@ -643,6 +644,7 @@ async function runTurn(
         apiKey: deps.env.litellm.apiKey,
         virtualKey: deps.env.litellm.virtualKey,
         modelMap: deps.env.litellm.modelMap,
+        logger: input.logger,
       };
       const round = await executeModelTurn(modelDeps, {
         model: input.model,
@@ -658,7 +660,11 @@ async function runTurn(
       });
       text = round.text;
       turnReasoning = round.reasoning;
-      usage = { inputTokens: round.inputTokens, outputTokens: round.outputTokens };
+      usage = {
+        inputTokens: round.inputTokens,
+        outputTokens: round.outputTokens,
+        cachedInputTokens: round.cachedInputTokens,
+      };
       const resolvedCalls = await resolveToolCalls(deps, {
         calls: round.calls,
         model: input.model,
@@ -669,10 +675,15 @@ async function runTurn(
         canvas: request.canvas ?? null,
         priorCreatedLayers: input.priorCreatedLayers,
         priorCreatedCompositions: input.priorCreatedCompositions,
-        onSideUsage: (used: { inputTokens: number; outputTokens: number }) => {
+        onSideUsage: (used: {
+          inputTokens: number;
+          outputTokens: number;
+          cachedInputTokens: number;
+        }) => {
           sideUsage = {
             inputTokens: sideUsage.inputTokens + used.inputTokens,
             outputTokens: sideUsage.outputTokens + used.outputTokens,
+            cachedInputTokens: sideUsage.cachedInputTokens + used.cachedInputTokens,
           };
         },
       });
@@ -681,13 +692,22 @@ async function runTurn(
       usage = {
         inputTokens: usage.inputTokens + sideUsage.inputTokens,
         outputTokens: usage.outputTokens + sideUsage.outputTokens,
+        cachedInputTokens: usage.cachedInputTokens + sideUsage.cachedInputTokens,
       };
       // §8.8: bill the turn's TOTAL usage — the main call + the plan_edit
       // side call's tokens are both real model spend (12-w7-r2 bug pin:
       // spreading `round` here silently dropped the side-folded usage).
+      // Cached input tokens (provider prompt-cache hits) bill at the
+      // discounted rate inside committedCreditsFor — users pay ~1/5 for
+      // tokens the provider served from cache, matching real spend.
       committed = committedCreditsFor(
         input.model,
-        { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, usageSeen: true },
+        {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cachedInputTokens: usage.cachedInputTokens,
+          usageSeen: true,
+        },
         input.promptMessages,
       );
       toolCalls = resolvedCalls;
@@ -772,7 +792,12 @@ async function runTurn(
       type: "turn.completed",
       stepIndex: request.stepIndex,
       finishReason: toolCalls.length > 0 ? "tool-calls" : "stop",
-      usage,
+      // The wire frame keeps the §-contract 2-field usage; cachedInputTokens
+      // rides the durable payload + the model.call.usage log line instead.
+      usage: {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+      },
       credits: { committed },
       ...(text !== "" ? { assistantText: text } : {}),
       ...(turnReasoning !== "" ? { reasoningText: turnReasoning } : {}),
@@ -830,6 +855,8 @@ async function runTurn(
           inputTokens:
             Math.ceil(JSON.stringify(input.promptMessages).length / 4) + sideUsage.inputTokens,
           outputTokens: Math.ceil(partialText.length / 4) + sideUsage.outputTokens,
+          // Chars/4 estimate — no cache information, so nothing is discounted.
+          cachedInputTokens: 0,
           usageSeen: true,
         },
         input.promptMessages,
@@ -889,7 +916,11 @@ async function resolveToolCalls(
      * live apply, so the canvas alone must never be the whole truth). */
     readonly priorCreatedLayers?: ReadonlySet<string>;
     readonly priorCreatedCompositions?: ReadonlySet<string>;
-    readonly onSideUsage: (usage: { inputTokens: number; outputTokens: number }) => void;
+    readonly onSideUsage: (usage: {
+      inputTokens: number;
+      outputTokens: number;
+      cachedInputTokens: number;
+    }) => void;
   },
 ): Promise<TurnToolCall[]> {
   const resolved: TurnToolCall[] = [];
@@ -1200,7 +1231,11 @@ interface ReplayOutcome {
   readonly text: string;
   readonly reasoning: string;
   readonly toolCalls: TurnToolCall[];
-  readonly usage: { inputTokens: number; outputTokens: number };
+  readonly usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cachedInputTokens: number;
+  };
   readonly committed: number;
   readonly model?: string;
 }
@@ -1232,6 +1267,11 @@ function findReplayTurn(rows: readonly TurnHistoryRow[], turnKey: string): Repla
           typeof payload.usage === "object" && payload.usage !== null
             ? Number((payload.usage as { outputTokens?: unknown }).outputTokens ?? 0)
             : 0,
+        // Pre-round-15 rows persisted without the field — replay shows 0.
+        cachedInputTokens:
+          typeof payload.usage === "object" && payload.usage !== null
+            ? Number((payload.usage as { cachedInputTokens?: unknown }).cachedInputTokens ?? 0)
+            : 0,
       },
       committed: typeof payload.committed === "number" ? payload.committed : 0,
       model: typeof payload.model === "string" ? payload.model : undefined,
@@ -1257,7 +1297,10 @@ function replayTurnOutcome(
     type: "turn.completed",
     stepIndex: request.stepIndex,
     finishReason: outcome.toolCalls.length > 0 ? "tool-calls" : "stop",
-    usage: outcome.usage,
+    usage: {
+      inputTokens: outcome.usage.inputTokens,
+      outputTokens: outcome.usage.outputTokens,
+    },
     credits: { committed: 0 }, // already committed by the original turn
     ...(outcome.text !== "" ? { assistantText: outcome.text } : {}),
     ...(outcome.reasoning !== "" ? { reasoningText: outcome.reasoning } : {}),

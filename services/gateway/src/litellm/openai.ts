@@ -115,6 +115,13 @@ export type ModelStreamEvent =
 export interface ModelUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** Tokens served from the provider's prompt cache (Z.ai GLM implicit
+   * context caching, OpenAI automatic prefix caching, Anthropic cache
+   * reads). Providers report it in the same usage frame
+   * (prompt_tokens_details.cached_tokens → the SDK's cachedInputTokens);
+   * 0 when unreported — billing then treats every input token as
+   * full-price, never negative. */
+  readonly cachedInputTokens: number;
 }
 
 /** Provider/proxy failure after the retry budget (§8.9 RUN_MODEL_UNAVAILABLE). */
@@ -407,13 +414,33 @@ function wireFinishReason(reason: string): string {
 
 /** Usage event only when the provider actually reported tokens (> 0). */
 function usageOf(
-  usage: { readonly inputTokens?: number; readonly outputTokens?: number } | undefined,
+  usage:
+    | {
+        readonly inputTokens?: number;
+        readonly outputTokens?: number;
+        readonly cachedInputTokens?: number;
+        readonly inputTokenDetails?: {
+          readonly cacheReadTokens?: number;
+        };
+      }
+    | undefined,
 ): ModelUsage | null {
   const inputTokens = usage?.inputTokens;
   const outputTokens = usage?.outputTokens;
   if (typeof inputTokens !== "number" || typeof outputTokens !== "number") return null;
   if (inputTokens <= 0 && outputTokens <= 0) return null;
-  return { inputTokens, outputTokens };
+  // AI SDK v7 surfaces prompt-cache reads on inputTokenDetails.cacheReadTokens
+  // (mapped from prompt_tokens_details.cached_tokens); older flat shapes are
+  // accepted as a fallback. Clamp to [0, inputTokens]: a provider reporting
+  // cached > input must never push billable input negative.
+  const rawCached =
+    usage?.inputTokenDetails?.cacheReadTokens ?? usage?.cachedInputTokens ?? 0;
+  return {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens:
+      typeof rawCached === "number" && rawCached > 0 ? Math.min(rawCached, inputTokens) : 0,
+  };
 }
 
 /** Wire model id for a request: the mapped provider id, else the alias as-is. */

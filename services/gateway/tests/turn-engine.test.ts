@@ -34,6 +34,7 @@ import {
   TOOL_IDS,
   TOOL_LIST,
   WRITE_TOOL_RESULT_SCHEMA,
+  type TurnMessage,
   isAutoApplicable,
 } from "@studio/contracts";
 
@@ -709,7 +710,9 @@ describe("buildTurnMessages", () => {
     expect(content.length).toBe(2_000);
     expect(content.endsWith("…")).toBe(true);
     expect(content.slice(0, 10)).toBe(serialized.slice(0, 10));
-    // The same ceiling applies to history tool rows.
+    // History rows (and transcript results beyond the recent 8) compact to
+    // the 480-char tier — the token-management round's answer to "every call
+    // re-sends the whole thread as full-price input".
     const fromHistory = buildTurnMessages({
       history: [
         {
@@ -719,7 +722,7 @@ describe("buildTurnMessages", () => {
       ],
       transcript: [],
     });
-    expect(fromHistory[2]?.content.length).toBe(2_000);
+    expect(fromHistory[2]?.content.length).toBe(480);
   });
 
   it("documents the loadThreadHistory budget caps (unlimited-for-now: 2000 messages / 1.6M chars)", () => {
@@ -728,6 +731,146 @@ describe("buildTurnMessages", () => {
     // provider's own context window is the bound.
     expect(TURN_HISTORY_MAX_MESSAGES).toBe(2_000);
     expect(TURN_HISTORY_MAX_CHARS).toBe(1_600_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b. PROMPT BUDGET — the token-management round (2026-11-02)
+// ---------------------------------------------------------------------------
+
+describe("buildTurnMessages prompt budget (token-management round)", () => {
+  const bigToolRow = (index: number, resultChars: number): TurnHistoryRow => ({
+    role: "tool",
+    runId: `run_old_${index}`,
+    contentJson: {
+      kind: "tool",
+      toolCallId: `call_${index}`,
+      tool: "studio.get_context",
+      payload: { args: { i: index }, result: { blob: "x".repeat(resultChars) } },
+    },
+  });
+
+  it("history: keeps only the newest 60 prior-run rows when the thread is longer", () => {
+    const rows: TurnHistoryRow[] = Array.from({ length: 200 }, (_, index) => ({
+      role: "user" as const,
+      text: `m${index}`,
+      runId: `run_old_${index}`,
+    }));
+    const messages = buildTurnMessages({ history: rows, transcript: [] });
+    const users = messages.filter((message) => message.role === "user");
+    expect(users).toHaveLength(60);
+    expect(users[0]?.content).toBe("m140");
+    expect(users.at(-1)?.content).toBe("m199");
+  });
+
+  it("history: current-run rows are dropped BEFORE the window so they never crowd out prior context", () => {
+    const oldRows: TurnHistoryRow[] = Array.from({ length: 50 }, (_, index) => ({
+      role: "user" as const,
+      text: `old${index}`,
+      runId: `run_old_${index}`,
+    }));
+    const currentRows: TurnHistoryRow[] = Array.from({ length: 150 }, (_, index) => ({
+      role: "user" as const,
+      text: `cur${index}`,
+      runId: "run_current",
+    }));
+    const messages = buildTurnMessages({
+      history: [...oldRows, ...currentRows],
+      transcript: [],
+      currentRunId: "run_current",
+    });
+    const users = messages.filter((message) => message.role === "user");
+    expect(users).toHaveLength(50);
+    expect(users[0]?.content).toBe("old0");
+  });
+
+  it("history: the char cap drops oldest-first (a few huge rows still leave a usable window)", () => {
+    const huge: TurnHistoryRow = {
+      role: "user",
+      text: "h".repeat(70_000),
+      runId: "run_old_huge",
+    };
+    const rows: TurnHistoryRow[] = [
+      { role: "user", text: "first", runId: "run_old_0" },
+      huge,
+      { role: "user", text: "last", runId: "run_old_2" },
+    ];
+    const messages = buildTurnMessages({ history: rows, transcript: [] });
+    const users = messages.filter((message) => message.role === "user");
+    expect(users.map((message) => message.content)).toEqual(["last"]);
+  });
+
+  it("history: kept tool results compact to the 480-char tier", () => {
+    const messages = buildTurnMessages({
+      history: [bigToolRow(0, 5_000), { role: "user", text: "next", runId: "run_old_1" }],
+      transcript: [],
+    });
+    const toolMessage = messages.find(
+      (message) => message.role === "tool" && message.tool_call_id === "call_0",
+    );
+    expect(toolMessage?.content.length).toBe(480);
+  });
+
+  it("transcript: only the 8 most recent tool results keep 2000 chars, older ones compact to 480", () => {
+    const parts: TurnMessage[] = [];
+    for (let index = 0; index < 12; index += 1) {
+      parts.push({ role: "tool_call", toolCallId: `c${index}`, tool: "studio.get_context", args: {} });
+      parts.push({
+        role: "tool_result",
+        toolCallId: `c${index}`,
+        tool: "studio.get_context",
+        result: { blob: "y".repeat(3_000) },
+      });
+    }
+    const messages = buildTurnMessages({ history: [], transcript: parts });
+    const results = messages.filter((message) => message.role === "tool");
+    expect(results).toHaveLength(12);
+    // results[0..3] are old tier, results[4..11] recent tier
+    for (let index = 0; index < 12; index += 1) {
+      const length = results[index]?.content.length ?? 0;
+      expect(length).toBe(index < 4 ? 480 : 2_000);
+    }
+  });
+
+  it("transcript: a >160-part transcript keeps a window that never starts on a tool_result", () => {
+    const parts: TurnMessage[] = [];
+    for (let index = 0; index < 200; index += 1) {
+      parts.push({ role: "tool_call", toolCallId: `c${index}`, tool: "studio.get_context", args: {} });
+      parts.push({
+        role: "tool_result",
+        toolCallId: `c${index}`,
+        tool: "studio.get_context",
+        result: { ok: true, i: index },
+      });
+    }
+    const messages = buildTurnMessages({ history: [], transcript: parts });
+    const toolResults = messages.filter((message) => message.role === "tool");
+    expect(toolResults.length).toBeLessThanOrEqual(80); // ≤ 160 parts, pairs
+    // The FIRST wire message after the system prompt is never an orphan tool
+    // result: every kept tool result is preceded by its own tool_call pair.
+    for (const message of toolResults) {
+      const id = message.tool_call_id;
+      const paired = messages.some(
+        (candidate) =>
+          candidate.role === "assistant" &&
+          candidate.tool_calls?.some((call) => call.id === id),
+      );
+      expect(paired).toBe(true);
+    }
+  });
+
+  it("rendering is DETERMINISTIC across builds — the prefix a provider can cache (no Math.random ids)", () => {
+    const history: TurnHistoryRow[] = [
+      { role: "user", text: "make a title", runId: "run_a" },
+      {
+        role: "tool",
+        contentJson: { kind: "tool", tool: "studio.get_context", payload: { args: {}, result: { ok: 1 } } },
+      },
+    ];
+    const first = buildTurnMessages({ history, transcript: [] });
+    const second = buildTurnMessages({ history, transcript: [] });
+    expect(first).toEqual(second);
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
   });
 });
 
@@ -1141,6 +1284,61 @@ describe("committedCreditsFor (§8.8 usage → credits)", () => {
     ).toBe(1);
   });
 
+  it("cached input tokens bill at 20% of the input rate (prompt-cache pass-through)", () => {
+    // studio-fast: 0.01 credits/1k input, 0.03/1k output.
+    // 500k input, 400k cached → billable 100k×0.01/1k = 1.0 +
+    // cached 400k×0.01×0.2/1k = 0.8 → 1.8 → 2 credits (5 uncached).
+    expect(
+      committedCreditsFor(
+        "studio-fast",
+        { inputTokens: 500_000, outputTokens: 0, cachedInputTokens: 400_000, usageSeen: true },
+        [],
+      ),
+    ).toBe(2);
+    // The identical call with NO cache state still bills full price.
+    expect(
+      committedCreditsFor(
+        "studio-fast",
+        { inputTokens: 500_000, outputTokens: 0, usageSeen: true },
+        [],
+      ),
+    ).toBe(5);
+    // Mixed with output: 10k in / 8k cached / 1k out →
+    // 2k×0.01/1k=0.02 + 8k×0.01×0.2/1k=0.016 + 1k×0.03/1k=0.03 → 0.066 → 1.
+    expect(
+      committedCreditsFor(
+        "studio-fast",
+        { inputTokens: 10_000, outputTokens: 1_000, cachedInputTokens: 8_000, usageSeen: true },
+        [],
+      ),
+    ).toBe(1);
+  });
+
+  it("cached above input clamps (never negative billable input); estimate path ignores cached", () => {
+    expect(
+      committedCreditsFor(
+        "studio-fast",
+        { inputTokens: 1_000, outputTokens: 0, cachedInputTokens: 9_999, usageSeen: true },
+        [],
+      ),
+    ).toBe(1);
+    // usageSeen=false → chars/4 estimate, no cache info → the cached field
+    // must not move the number.
+    const messages: OpenAIChatMessage[] = [{ role: "user", content: "u".repeat(40_000) }];
+    const expected = committedCreditsFor(
+      "studio-fast",
+      { inputTokens: 0, outputTokens: 0, usageSeen: false },
+      messages,
+    );
+    expect(
+      committedCreditsFor(
+        "studio-fast",
+        { inputTokens: 0, outputTokens: 0, usageSeen: false, cachedInputTokens: 9_999 },
+        messages,
+      ),
+    ).toBe(expected);
+  });
+
   it("falls back to studio-fast rates for an unknown model alias", () => {
     expect(
       committedCreditsFor(
@@ -1223,6 +1421,7 @@ describe("executeModelTurn (fake OpenAI SSE)", () => {
       calls: [],
       inputTokens: 0,
       outputTokens: 0,
+      cachedInputTokens: 0,
       usageSeen: false,
       finishReason: "stop",
     });

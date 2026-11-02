@@ -158969,7 +158969,12 @@ function usageOf(usage) {
   const outputTokens = usage?.outputTokens;
   if (typeof inputTokens !== "number" || typeof outputTokens !== "number") return null;
   if (inputTokens <= 0 && outputTokens <= 0) return null;
-  return { inputTokens, outputTokens };
+  const rawCached = usage?.inputTokenDetails?.cacheReadTokens ?? usage?.cachedInputTokens ?? 0;
+  return {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens: typeof rawCached === "number" && rawCached > 0 ? Math.min(rawCached, inputTokens) : 0
+  };
 }
 function wireModelOf(deps, alias) {
   return deps.modelMap?.[alias] ?? alias;
@@ -163606,11 +163611,25 @@ function toolParametersSchema(tool2) {
   const schema3 = external_exports.toJSONSchema(tool2.args, { io: "input" });
   return Object.fromEntries(Object.entries(schema3).filter(([key]) => key !== "$schema"));
 }
-var HISTORY_TOOL_RESULT_CHARS = 2e3;
-function compactForHistory(value) {
+var TURN_PROMPT_MAX_HISTORY_MESSAGES = 60;
+var TURN_PROMPT_MAX_HISTORY_CHARS = 6e4;
+var TURN_PROMPT_MAX_TRANSCRIPT_PARTS = 160;
+var TURN_PROMPT_MAX_TRANSCRIPT_CHARS = 8e4;
+var HISTORY_TOOL_RESULT_CHARS = 480;
+var TRANSCRIPT_RECENT_RESULTS = 8;
+var TRANSCRIPT_RECENT_RESULT_CHARS = 2e3;
+function compactForHistory(value, maxChars) {
   const text4 = JSON.stringify(value) ?? "null";
-  if (text4.length <= HISTORY_TOOL_RESULT_CHARS) return text4;
-  return `${text4.slice(0, HISTORY_TOOL_RESULT_CHARS - 1)}\u2026`;
+  if (text4.length <= maxChars) return text4;
+  return `${text4.slice(0, maxChars - 1)}\u2026`;
+}
+function stableFallbackToolCallId(tool2, args) {
+  const basis = `${tool2}:${JSON.stringify(args) ?? ""}`;
+  let hash2 = 5381;
+  for (let index3 = 0; index3 < basis.length; index3 += 1) {
+    hash2 = ((hash2 << 5) + hash2 + basis.charCodeAt(index3) | 0) >>> 0;
+  }
+  return `hist_${hash2.toString(36)}`;
 }
 function canvasNote(canvas) {
   const layers = canvas.layers.length === 0 ? "no layers" : `${canvas.layers.length} layers: ${canvas.layers.slice(0, 40).map((layer) => `${layer.name} (${layer.type})`).join(", ")}`;
@@ -163642,8 +163661,8 @@ function historyRowToMessages(row) {
   }
   const payload = row.contentJson ?? {};
   if (payload.kind !== "tool" || typeof payload.tool !== "string") return [];
-  const toolCallId = typeof payload.toolCallId === "string" && payload.toolCallId !== "" ? payload.toolCallId : `hist_${Math.random().toString(36).slice(2, 10)}`;
   const nested = typeof payload.payload === "object" && payload.payload !== null ? payload.payload : {};
+  const toolCallId = typeof payload.toolCallId === "string" && payload.toolCallId !== "" ? payload.toolCallId : stableFallbackToolCallId(payload.tool, nested.args ?? payload.args ?? {});
   const args = typeof nested.args === "object" && nested.args !== null ? nested.args : typeof payload.args === "object" && payload.args !== null ? payload.args : {};
   const result = nested.result !== void 0 ? nested.result : payload.result ?? null;
   return [
@@ -163658,10 +163677,10 @@ function historyRowToMessages(row) {
         }
       ]
     },
-    { role: "tool", tool_call_id: toolCallId, content: compactForHistory(result) }
+    { role: "tool", tool_call_id: toolCallId, content: compactForHistory(result, HISTORY_TOOL_RESULT_CHARS) }
   ];
 }
-function transcriptPartToMessages(part) {
+function transcriptPartToMessages(part, resultMaxChars) {
   switch (part.role) {
     case "user":
     case "steer":
@@ -163687,7 +163706,7 @@ function transcriptPartToMessages(part) {
         {
           role: "tool",
           tool_call_id: part.toolCallId,
-          content: compactForHistory(part.result)
+          content: compactForHistory(part.result, resultMaxChars)
         }
       ];
   }
@@ -163710,10 +163729,61 @@ function applyReceiptsNote(receipts) {
     "Treat every receipt as existing work: build on it, NEVER re-create or duplicate it. When a receipt names a layer you still need to style or animate, reference that exact name. Before you claim a visual milestone is done, verify it with studio.render_preview or studio.get_properties \u2014 a proposed-and-applied tool result is the apply engine's word, your eyes are yours."
   ].join("\n");
 }
+function boundedHistory(rows, currentRunId) {
+  const eligible = currentRunId === void 0 ? rows : rows.filter((row) => row.runId !== currentRunId);
+  if (eligible.length <= TURN_PROMPT_MAX_HISTORY_MESSAGES) {
+    let total = 0;
+    for (const row of eligible) total += historyRowChars(row);
+    if (total <= TURN_PROMPT_MAX_HISTORY_CHARS) return eligible;
+  }
+  const kept = [];
+  let chars2 = 0;
+  for (let index3 = eligible.length - 1; index3 >= 0; index3 -= 1) {
+    const row = eligible[index3];
+    if (kept.length >= TURN_PROMPT_MAX_HISTORY_MESSAGES) break;
+    const cost = historyRowChars(row);
+    if (kept.length > 0 && chars2 + cost > TURN_PROMPT_MAX_HISTORY_CHARS) break;
+    kept.unshift(row);
+    chars2 += cost;
+  }
+  return kept;
+}
+function historyRowChars(row) {
+  if (row.role !== "tool") return (row.text ?? "").length;
+  return JSON.stringify(row.contentJson ?? {}).length;
+}
+function boundedTranscript(parts) {
+  if (parts.length <= TURN_PROMPT_MAX_TRANSCRIPT_PARTS && parts.reduce((total, part) => total + JSON.stringify(part).length, 0) <= TURN_PROMPT_MAX_TRANSCRIPT_CHARS) {
+    return parts;
+  }
+  const kept = [];
+  let chars2 = 0;
+  for (let index3 = parts.length - 1; index3 >= 0; index3 -= 1) {
+    const part = parts[index3];
+    if (kept.length >= TURN_PROMPT_MAX_TRANSCRIPT_PARTS) break;
+    const cost = JSON.stringify(part).length;
+    if (kept.length > 0 && chars2 + cost > TURN_PROMPT_MAX_TRANSCRIPT_CHARS) break;
+    kept.unshift(part);
+    chars2 += cost;
+  }
+  while (kept.length > 1 && kept[0]?.role === "tool_result") {
+    kept.shift();
+  }
+  return kept;
+}
+function recentResultTierStart(parts) {
+  let seen = 0;
+  for (let index3 = parts.length - 1; index3 >= 0; index3 -= 1) {
+    if (parts[index3]?.role === "tool_result") {
+      seen += 1;
+      if (seen === TRANSCRIPT_RECENT_RESULTS) return index3;
+    }
+  }
+  return 0;
+}
 function buildTurnMessages(input2) {
   const messages2 = [{ role: "system", content: SYSTEM_PROMPT }];
-  for (const row of input2.history) {
-    if (input2.currentRunId !== void 0 && row.runId === input2.currentRunId) continue;
+  for (const row of boundedHistory(input2.history, input2.currentRunId)) {
     messages2.push(...historyRowToMessages(row));
   }
   const notes = [];
@@ -163728,8 +163798,15 @@ function buildTurnMessages(input2) {
   if (notes.length > 0) {
     messages2.push({ role: "system", content: notes.join("\n\n") });
   }
-  for (const part of input2.transcript) {
-    messages2.push(...transcriptPartToMessages(part));
+  const transcript = boundedTranscript(input2.transcript);
+  const recentTierStart = recentResultTierStart(transcript);
+  for (const [index3, part] of transcript.entries()) {
+    messages2.push(
+      ...transcriptPartToMessages(
+        part,
+        index3 >= recentTierStart ? TRANSCRIPT_RECENT_RESULT_CHARS : HISTORY_TOOL_RESULT_CHARS
+      )
+    );
   }
   return messages2;
 }
@@ -163746,6 +163823,7 @@ async function executeModelTurn(deps, input2) {
   const calls = [];
   let inputTokens = 0;
   let outputTokens = 0;
+  let cachedInputTokens = 0;
   let usageSeen = false;
   let finishReason = "stop";
   for await (const event of streamChatCompletion(
@@ -163769,17 +163847,35 @@ async function executeModelTurn(deps, input2) {
     } else if (event.type === "usage") {
       inputTokens += event.usage.inputTokens;
       outputTokens += event.usage.outputTokens;
+      cachedInputTokens += event.usage.cachedInputTokens;
       usageSeen = true;
     } else if (event.type === "finish") {
       finishReason = event.reason;
     }
   }
-  return { text: text4, reasoning, calls, inputTokens, outputTokens, usageSeen, finishReason };
+  deps.logger?.debug("model.call.usage", {
+    model: input2.model,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    toolCalls: calls.length
+  });
+  return {
+    text: text4,
+    reasoning,
+    calls,
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    usageSeen,
+    finishReason
+  };
 }
 function messageChars(message2) {
   const serialized = JSON.stringify(message2);
   return serialized === void 0 ? 0 : serialized.length;
 }
+var CACHED_INPUT_CREDIT_RATE = 0.2;
 function committedCreditsFor(model, usage, messages2) {
   const descriptor = MODEL_CATALOG[model] ?? MODEL_CATALOG["studio-fast"];
   let inputTokens = usage.inputTokens;
@@ -163794,7 +163890,9 @@ function committedCreditsFor(model, usage, messages2) {
     inputTokens = Math.ceil(inputChars / 4);
     outputTokens = Math.ceil(outputChars / 4);
   }
-  const cost = inputTokens / 1e3 * descriptor.creditsPer1kInput + outputTokens / 1e3 * descriptor.creditsPer1kOutput;
+  const cachedTokens = usage.usageSeen ? Math.max(0, Math.min(usage.cachedInputTokens ?? 0, inputTokens)) : 0;
+  const billableInput = inputTokens - cachedTokens;
+  const cost = billableInput / 1e3 * descriptor.creditsPer1kInput + cachedTokens / 1e3 * descriptor.creditsPer1kInput * CACHED_INPUT_CREDIT_RATE + outputTokens / 1e3 * descriptor.creditsPer1kOutput;
   return Math.max(1, Math.ceil(cost));
 }
 var WRITE_TOOL_INTENTS = {
@@ -164100,7 +164198,7 @@ function planValidationError(raw2) {
   return checked.error.issues.slice(0, 3).map((issue2) => `${issue2.path.join(".") || "(root)"}: ${issue2.message}`).join("; ");
 }
 async function serverSidePlan(deps, input2) {
-  let usageAccumulator = { inputTokens: 0, outputTokens: 0 };
+  let usageAccumulator = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
   const attemptMessages = [
     ...input2.conversation,
     { role: "user", content: planInstruction(input2.goal) }
@@ -164124,7 +164222,8 @@ async function serverSidePlan(deps, input2) {
     }
     usageAccumulator = {
       inputTokens: usageAccumulator.inputTokens + round.inputTokens,
-      outputTokens: usageAccumulator.outputTokens + round.outputTokens
+      outputTokens: usageAccumulator.outputTokens + round.outputTokens,
+      cachedInputTokens: usageAccumulator.cachedInputTokens + round.cachedInputTokens
     };
     const parsed = coerceStringifiedJson(extractJsonObject(round.text));
     const validation = planValidationError(parsed);
@@ -164830,7 +164929,8 @@ async function runTurn(deps, input2) {
   const mockModel = deps.env.app.mockModel === true;
   let sideUsage = {
     inputTokens: 0,
-    outputTokens: 0
+    outputTokens: 0,
+    cachedInputTokens: 0
   };
   try {
     let text4;
@@ -164854,14 +164954,15 @@ async function runTurn(deps, input2) {
       text4 = mock.text;
       turnReasoning = reasoningDeltas.join("");
       toolCalls = mock.toolCalls;
-      usage = { inputTokens: 900, outputTokens: 200 };
+      usage = { inputTokens: 900, outputTokens: 200, cachedInputTokens: 0 };
       committed = 1;
     } else {
       const modelDeps = {
         baseUrl: deps.env.litellm.baseUrl,
         apiKey: deps.env.litellm.apiKey,
         virtualKey: deps.env.litellm.virtualKey,
-        modelMap: deps.env.litellm.modelMap
+        modelMap: deps.env.litellm.modelMap,
+        logger: input2.logger
       };
       const round = await executeModelTurn(modelDeps, {
         model: input2.model,
@@ -164877,7 +164978,11 @@ async function runTurn(deps, input2) {
       });
       text4 = round.text;
       turnReasoning = round.reasoning;
-      usage = { inputTokens: round.inputTokens, outputTokens: round.outputTokens };
+      usage = {
+        inputTokens: round.inputTokens,
+        outputTokens: round.outputTokens,
+        cachedInputTokens: round.cachedInputTokens
+      };
       const resolvedCalls = await resolveToolCalls(deps, {
         calls: round.calls,
         model: input2.model,
@@ -164891,17 +164996,24 @@ async function runTurn(deps, input2) {
         onSideUsage: (used) => {
           sideUsage = {
             inputTokens: sideUsage.inputTokens + used.inputTokens,
-            outputTokens: sideUsage.outputTokens + used.outputTokens
+            outputTokens: sideUsage.outputTokens + used.outputTokens,
+            cachedInputTokens: sideUsage.cachedInputTokens + used.cachedInputTokens
           };
         }
       });
       usage = {
         inputTokens: usage.inputTokens + sideUsage.inputTokens,
-        outputTokens: usage.outputTokens + sideUsage.outputTokens
+        outputTokens: usage.outputTokens + sideUsage.outputTokens,
+        cachedInputTokens: usage.cachedInputTokens + sideUsage.cachedInputTokens
       };
       committed = committedCreditsFor(
         input2.model,
-        { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, usageSeen: true },
+        {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cachedInputTokens: usage.cachedInputTokens,
+          usageSeen: true
+        },
         input2.promptMessages
       );
       toolCalls = resolvedCalls;
@@ -164965,7 +165077,12 @@ async function runTurn(deps, input2) {
       type: "turn.completed",
       stepIndex: request.stepIndex,
       finishReason: toolCalls.length > 0 ? "tool-calls" : "stop",
-      usage,
+      // The wire frame keeps the §-contract 2-field usage; cachedInputTokens
+      // rides the durable payload + the model.call.usage log line instead.
+      usage: {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens
+      },
       credits: { committed },
       ...text4 !== "" ? { assistantText: text4 } : {},
       ...turnReasoning !== "" ? { reasoningText: turnReasoning } : {},
@@ -164993,6 +165110,8 @@ async function runTurn(deps, input2) {
         {
           inputTokens: Math.ceil(JSON.stringify(input2.promptMessages).length / 4) + sideUsage.inputTokens,
           outputTokens: Math.ceil(partialText.length / 4) + sideUsage.outputTokens,
+          // Chars/4 estimate — no cache information, so nothing is discounted.
+          cachedInputTokens: 0,
           usageSeen: true
         },
         input2.promptMessages
@@ -165267,7 +165386,9 @@ function findReplayTurn(rows, turnKey) {
       toolCalls: Array.isArray(payload.toolCalls) ? payload.toolCalls : [],
       usage: {
         inputTokens: typeof payload.usage === "object" && payload.usage !== null ? Number(payload.usage.inputTokens ?? 0) : 0,
-        outputTokens: typeof payload.usage === "object" && payload.usage !== null ? Number(payload.usage.outputTokens ?? 0) : 0
+        outputTokens: typeof payload.usage === "object" && payload.usage !== null ? Number(payload.usage.outputTokens ?? 0) : 0,
+        // Pre-round-15 rows persisted without the field — replay shows 0.
+        cachedInputTokens: typeof payload.usage === "object" && payload.usage !== null ? Number(payload.usage.cachedInputTokens ?? 0) : 0
       },
       committed: typeof payload.committed === "number" ? payload.committed : 0,
       model: typeof payload.model === "string" ? payload.model : void 0
@@ -165288,7 +165409,10 @@ function replayTurnOutcome(c5, request, outcome) {
     type: "turn.completed",
     stepIndex: request.stepIndex,
     finishReason: outcome.toolCalls.length > 0 ? "tool-calls" : "stop",
-    usage: outcome.usage,
+    usage: {
+      inputTokens: outcome.usage.inputTokens,
+      outputTokens: outcome.usage.outputTokens
+    },
     credits: { committed: 0 },
     // already committed by the original turn
     ...outcome.text !== "" ? { assistantText: outcome.text } : {},

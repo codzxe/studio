@@ -54,6 +54,23 @@ function usageFrame(promptTokens: number, completionTokens: number): string {
   });
 }
 
+/** Usage WITH the provider's cache state (Z.ai GLM / OpenAI report
+ * prompt_tokens_details.cached_tokens on cache-hitting prompts). */
+function cachedUsageFrame(
+  promptTokens: number,
+  completionTokens: number,
+  cachedTokens: number,
+): string {
+  return frame({
+    choices: [],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      prompt_tokens_details: { cached_tokens: cachedTokens },
+    },
+  });
+}
+
 const DONE = "data: [DONE]\n\n";
 
 function sseResponse(frames: readonly string[]): Response {
@@ -194,8 +211,53 @@ describe("streamChatCompletion", () => {
         call: { index: 1, id: "call_b", name: "studio.list_layers", arguments: "{}" },
       },
       { type: "finish", reason: "tool_calls" },
-      { type: "usage", usage: { inputTokens: 120, outputTokens: 30 } },
+      { type: "usage", usage: { inputTokens: 120, outputTokens: 30, cachedInputTokens: 0 } },
     ]);
+  });
+
+  it("surfaces the provider's prompt-cache hits (prompt_tokens_details.cached_tokens) in the usage event", async () => {
+    // Z.ai GLM implicit context caching / OpenAI automatic prefix caching
+    // report cached tokens inside the SAME usage frame — the harness bills
+    // them at the discounted rate, so the adapter must carry them through
+    // instead of dropping the field (the pre-round-15 behavior).
+    const fetch = scriptedFetch([
+      sseResponse([
+        frame({ choices: [{ delta: { content: "ok" } }] }),
+        finish("stop"),
+        cachedUsageFrame(50_000, 500, 47_000),
+        DONE,
+      ]),
+    ]);
+    const events = await collect(
+      streamChatCompletion(clientDeps({ fetch }), {
+        model: "studio-fast",
+        messages,
+        signal: new AbortController().signal,
+      }),
+    );
+    expect(events).toEqual([
+      { type: "text", delta: "ok" },
+      { type: "finish", reason: "stop" },
+      {
+        type: "usage",
+        usage: { inputTokens: 50_000, outputTokens: 500, cachedInputTokens: 47_000 },
+      },
+    ]);
+  });
+
+  it("clamps an impossible cached report (cached > input) to the input total", async () => {
+    const fetch = scriptedFetch([
+      sseResponse([finish("stop"), cachedUsageFrame(1_000, 10, 5_000), DONE]),
+    ]);
+    const events = await collect(
+      streamChatCompletion(clientDeps({ fetch }), {
+        model: "studio-fast",
+        messages,
+        signal: new AbortController().signal,
+      }),
+    );
+    const usage = events.find((event) => event.type === "usage");
+    expect(usage).toMatchObject({ usage: { inputTokens: 1_000, cachedInputTokens: 1_000 } });
   });
 
   it("tolerates CRLF line endings", async () => {

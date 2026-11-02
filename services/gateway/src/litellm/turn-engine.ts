@@ -123,12 +123,47 @@ export interface TurnHistoryRow {
   readonly runId?: string | null;
 }
 
-/** History is capped by BOTH count and chars (loadThreadHistory defaults). */
+/** History is capped by BOTH count and chars (loadThreadHistory defaults —
+ * the DB window stays wide because the durable REPLAY lookup scans it; the
+ * MODEL-facing budget is applied in buildTurnMessages, not here). */
 export const TURN_HISTORY_MAX_MESSAGES = 2_000;
 export const TURN_HISTORY_MAX_CHARS = 1_600_000;
 
-/** Tool-result bodies are compacted to this size inside history. */
-const HISTORY_TOOL_RESULT_CHARS = 2_000;
+// ---------------------------------------------------------------------------
+// PROMPT BUDGET (2026-11-02 token-management round).
+//
+// f62251b raised the DB history window to "unlimited", so every model call
+// re-sent the ENTIRE thread — every past user message, tool call and tool
+// result — as full-price input (real deployment: ~50k input tokens per step,
+// the complaint this budget answers). The loader keeps the wide window for
+// replay; the prompt assembler applies the real budget:
+//
+//   1. HISTORY WINDOW — at most the newest 60 rows / 60k chars of PRIOR
+//      conversation reach the model (≈15k tokens). Durable work lives in the
+//      project (the canvas note + apply receipts summarize it), not in an
+//      ever-growing transcript.
+//   2. TIERED RESULT COMPACTION — history tool results and transcript tool
+//      results older than the recent window compact to 480 chars; only the
+//      CURRENT run's 8 most recent tool results keep the full 2000-char
+//      window the model is actively acting on.
+//   3. CACHE-STABLE RENDERING — compaction is a pure function of row
+//      content and the fallback tool-call ids are deterministic (djb2, no
+//      Math.random), so as the thread grows the rendered prefix stays
+//      byte-identical and the provider's implicit prompt cache (Z.ai GLM
+//      context caching, OpenAI automatic prefix caching) actually HITS:
+//      cached input bills at ~18-20% of full price on those providers.
+// ---------------------------------------------------------------------------
+export const TURN_PROMPT_MAX_HISTORY_MESSAGES = 60;
+export const TURN_PROMPT_MAX_HISTORY_CHARS = 60_000;
+export const TURN_PROMPT_MAX_TRANSCRIPT_PARTS = 160;
+export const TURN_PROMPT_MAX_TRANSCRIPT_CHARS = 80_000;
+
+/** Tool-result bodies compact to this size in history and in the transcript
+ * beyond the recent window. */
+const HISTORY_TOOL_RESULT_CHARS = 480;
+/** The current run's most recent tool results keep this richer window. */
+const TRANSCRIPT_RECENT_RESULTS = 8;
+const TRANSCRIPT_RECENT_RESULT_CHARS = 2_000;
 
 interface ToolRowPayload {
   readonly kind?: unknown;
@@ -139,10 +174,25 @@ interface ToolRowPayload {
   readonly args?: unknown;
 }
 
-function compactForHistory(value: unknown): string {
+function compactForHistory(value: unknown, maxChars: number): string {
   const text = JSON.stringify(value) ?? "null";
-  if (text.length <= HISTORY_TOOL_RESULT_CHARS) return text;
-  return `${text.slice(0, HISTORY_TOOL_RESULT_CHARS - 1)}…`;
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars - 1)}…`;
+}
+
+/**
+ * Deterministic fallback tool-call id for legacy history rows that persisted
+ * without one. A Math.random id here would re-render every replayed prompt
+ * differently and defeat the provider's prefix cache; djb2 over the row's
+ * own content keeps the rendering byte-stable across calls.
+ */
+function stableFallbackToolCallId(tool: string, args: unknown): string {
+  const basis = `${tool}:${JSON.stringify(args) ?? ""}`;
+  let hash = 5381;
+  for (let index = 0; index < basis.length; index += 1) {
+    hash = (((hash << 5) + hash + basis.charCodeAt(index)) | 0) >>> 0;
+  }
+  return `hist_${hash.toString(36)}`;
 }
 
 function canvasNote(canvas: TurnCanvas): string {
@@ -200,16 +250,16 @@ function historyRowToMessages(row: TurnHistoryRow): OpenAIChatMessage[] {
   // WHAT it called and WHAT came back.
   const payload = (row.contentJson ?? {}) as ToolRowPayload;
   if (payload.kind !== "tool" || typeof payload.tool !== "string") return [];
-  const toolCallId =
-    typeof payload.toolCallId === "string" && payload.toolCallId !== ""
-      ? payload.toolCallId
-      : `hist_${Math.random().toString(36).slice(2, 10)}`;
   // The turn route persists contentJson = {kind,toolCallId,tool,payload:{args,result}}
   // (12-w5-t3/t7 pin). Legacy pre-round-12 rows degrade to result-only.
   const nested =
     typeof payload.payload === "object" && payload.payload !== null
       ? (payload.payload as { args?: unknown; result?: unknown })
       : {};
+  const toolCallId =
+    typeof payload.toolCallId === "string" && payload.toolCallId !== ""
+      ? payload.toolCallId
+      : stableFallbackToolCallId(payload.tool, nested.args ?? payload.args ?? {});
   const args =
     typeof nested.args === "object" && nested.args !== null
       ? nested.args
@@ -229,12 +279,16 @@ function historyRowToMessages(row: TurnHistoryRow): OpenAIChatMessage[] {
         },
       ],
     },
-    { role: "tool", tool_call_id: toolCallId, content: compactForHistory(result) },
+    { role: "tool", tool_call_id: toolCallId, content: compactForHistory(result, HISTORY_TOOL_RESULT_CHARS) },
   ];
 }
 
-/** Map one transcript part → OpenAI wire message(s). */
-function transcriptPartToMessages(part: TurnMessage): OpenAIChatMessage[] {
+/** Map one transcript part → OpenAI wire message(s). `resultMaxChars` is the
+ * compaction tier for tool_result bodies (recent results keep more). */
+function transcriptPartToMessages(
+  part: TurnMessage,
+  resultMaxChars: number,
+): OpenAIChatMessage[] {
   switch (part.role) {
     case "user":
     case "steer":
@@ -260,7 +314,7 @@ function transcriptPartToMessages(part: TurnMessage): OpenAIChatMessage[] {
         {
           role: "tool",
           tool_call_id: part.toolCallId,
-          content: compactForHistory(part.result),
+          content: compactForHistory(part.result, resultMaxChars),
         },
       ];
   }
@@ -344,10 +398,90 @@ export function applyReceiptsNote(receipts: readonly string[]): string {
   ].join("\n");
 }
 
+/** Prior-conversation rows that reach the model: newest-wins window over the
+ * (already current-run-filtered) rows, capped by BOTH count and rendered
+ * chars. Rows are self-contained when rendered (each tool row expands to its
+ * own assistant-tool_call + tool-result pair), so any window is a valid
+ * OpenAI message sequence — no orphan risk at the cut. */
+function boundedHistory(
+  rows: readonly TurnHistoryRow[],
+  currentRunId: string | undefined,
+): readonly TurnHistoryRow[] {
+  const eligible =
+    currentRunId === undefined
+      ? rows
+      : rows.filter((row) => row.runId !== currentRunId);
+  if (eligible.length <= TURN_PROMPT_MAX_HISTORY_MESSAGES) {
+    // Fast path — but the char cap can still bite (a few huge rows).
+    let total = 0;
+    for (const row of eligible) total += historyRowChars(row);
+    if (total <= TURN_PROMPT_MAX_HISTORY_CHARS) return eligible;
+  }
+  const kept: TurnHistoryRow[] = [];
+  let chars = 0;
+  for (let index = eligible.length - 1; index >= 0; index -= 1) {
+    const row = eligible[index] as TurnHistoryRow;
+    if (kept.length >= TURN_PROMPT_MAX_HISTORY_MESSAGES) break;
+    const cost = historyRowChars(row);
+    if (kept.length > 0 && chars + cost > TURN_PROMPT_MAX_HISTORY_CHARS) break;
+    kept.unshift(row);
+    chars += cost;
+  }
+  return kept;
+}
+
+/** Rendered-cost model for one history row (mirrors the DB loader's
+ * JSON.stringify budget; text rows cost their text). */
+function historyRowChars(row: TurnHistoryRow): number {
+  if (row.role !== "tool") return (row.text ?? "").length;
+  return JSON.stringify(row.contentJson ?? {}).length;
+}
+
+/** Transcript parts that reach the model: newest-wins window capped by BOTH
+ * count and chars, with the start aligned off leading tool_result parts (a
+ * tool result whose tool_call part was cut would reference a missing call id
+ * and the provider would 400 the whole prompt). */
+function boundedTranscript(parts: readonly TurnMessage[]): readonly TurnMessage[] {
+  if (
+    parts.length <= TURN_PROMPT_MAX_TRANSCRIPT_PARTS &&
+    parts.reduce((total, part) => total + JSON.stringify(part).length, 0) <=
+      TURN_PROMPT_MAX_TRANSCRIPT_CHARS
+  ) {
+    return parts;
+  }
+  const kept: TurnMessage[] = [];
+  let chars = 0;
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index] as TurnMessage;
+    if (kept.length >= TURN_PROMPT_MAX_TRANSCRIPT_PARTS) break;
+    const cost = JSON.stringify(part).length;
+    if (kept.length > 0 && chars + cost > TURN_PROMPT_MAX_TRANSCRIPT_CHARS) break;
+    kept.unshift(part);
+    chars += cost;
+  }
+  while (kept.length > 1 && kept[0]?.role === "tool_result") {
+    kept.shift();
+  }
+  return kept;
+}
+
+/** Index in `parts` where the recent-results tier begins: the last
+ * TRANSCRIPT_RECENT_RESULTS tool_result parts keep the full window; older
+ * ones compact. Everything before that index is the "old" tier. */
+function recentResultTierStart(parts: readonly TurnMessage[]): number {
+  let seen = 0;
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    if (parts[index]?.role === "tool_result") {
+      seen += 1;
+      if (seen === TRANSCRIPT_RECENT_RESULTS) return index;
+    }
+  }
+  return 0;
+}
+
 export function buildTurnMessages(input: BuildTurnMessagesInput): OpenAIChatMessage[] {
   const messages: OpenAIChatMessage[] = [{ role: "system", content: SYSTEM_PROMPT }];
-  for (const row of input.history) {
-    if (input.currentRunId !== undefined && row.runId === input.currentRunId) continue;
+  for (const row of boundedHistory(input.history, input.currentRunId)) {
     messages.push(...historyRowToMessages(row));
   }
   const notes: string[] = [];
@@ -364,8 +498,15 @@ export function buildTurnMessages(input: BuildTurnMessagesInput): OpenAIChatMess
   if (notes.length > 0) {
     messages.push({ role: "system", content: notes.join("\n\n") });
   }
-  for (const part of input.transcript) {
-    messages.push(...transcriptPartToMessages(part));
+  const transcript = boundedTranscript(input.transcript);
+  const recentTierStart = recentResultTierStart(transcript);
+  for (const [index, part] of transcript.entries()) {
+    messages.push(
+      ...transcriptPartToMessages(
+        part,
+        index >= recentTierStart ? TRANSCRIPT_RECENT_RESULT_CHARS : HISTORY_TOOL_RESULT_CHARS,
+      ),
+    );
   }
   return messages;
 }
@@ -392,6 +533,10 @@ export interface ModelTurnResult {
   readonly calls: readonly AggregatedToolCall[];
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** Provider-reported prompt-cache hits inside inputTokens (0 when the
+   * provider does not report cache state). Billing and observability only —
+   * never used to change what the model sees. */
+  readonly cachedInputTokens: number;
   readonly usageSeen: boolean;
   readonly finishReason: string;
 }
@@ -422,6 +567,7 @@ export async function executeModelTurn(
   const calls: AggregatedToolCall[] = [];
   let inputTokens = 0;
   let outputTokens = 0;
+  let cachedInputTokens = 0;
   let usageSeen = false;
   let finishReason = "stop";
   for await (const event of streamChatCompletion(
@@ -445,12 +591,32 @@ export async function executeModelTurn(
     } else if (event.type === "usage") {
       inputTokens += event.usage.inputTokens;
       outputTokens += event.usage.outputTokens;
+      cachedInputTokens += event.usage.cachedInputTokens;
       usageSeen = true;
     } else if (event.type === "finish") {
       finishReason = event.reason;
     }
   }
-  return { text, reasoning, calls, inputTokens, outputTokens, usageSeen, finishReason };
+  // The one number that proves the token-management round works: when the
+  // cache is healthy, cachedInputTokens ≈ inputTokens on every step after
+  // the first (stable prefix) — log it so regressions are visible.
+  deps.logger?.debug("model.call.usage", {
+    model: input.model,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    toolCalls: calls.length,
+  });
+  return {
+    text,
+    reasoning,
+    calls,
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    usageSeen,
+    finishReason,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -462,10 +628,26 @@ function messageChars(message: OpenAIChatMessage): number {
   return serialized === undefined ? 0 : serialized.length;
 }
 
-/** ceil(input/1000×rateIn + output/1000×rateOut), min 1 (§8.8). */
+/**
+ * Cached input tokens bill at this fraction of the full input rate — the
+ * harness passes the provider's cache discount through instead of charging
+ * users full price for tokens the provider served from its prompt cache
+ * (Z.ai GLM: cached input ≈ 18% of input; 0.2 is the conservative round-up).
+ */
+export const CACHED_INPUT_CREDIT_RATE = 0.2;
+
+/** ceil(input/1000×rateIn + output/1000×rateOut), min 1 (§8.8). Cached input
+ * tokens (when the provider reports them) bill at CACHED_INPUT_CREDIT_RATE ×
+ * the input rate; the estimate path (usage not seen) is unchanged — it has
+ * no cache information. */
 export function committedCreditsFor(
   model: string,
-  usage: { inputTokens: number; outputTokens: number; usageSeen: boolean },
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    usageSeen: boolean;
+    cachedInputTokens?: number;
+  },
   messages: readonly OpenAIChatMessage[],
 ): number {
   const descriptor = MODEL_CATALOG[model as ModelId] ?? MODEL_CATALOG["studio-fast"];
@@ -481,8 +663,13 @@ export function committedCreditsFor(
     inputTokens = Math.ceil(inputChars / 4);
     outputTokens = Math.ceil(outputChars / 4);
   }
+  const cachedTokens = usage.usageSeen
+    ? Math.max(0, Math.min(usage.cachedInputTokens ?? 0, inputTokens))
+    : 0;
+  const billableInput = inputTokens - cachedTokens;
   const cost =
-    (inputTokens / 1000) * descriptor.creditsPer1kInput +
+    (billableInput / 1000) * descriptor.creditsPer1kInput +
+    (cachedTokens / 1000) * descriptor.creditsPer1kInput * CACHED_INPUT_CREDIT_RATE +
     (outputTokens / 1000) * descriptor.creditsPer1kOutput;
   return Math.max(1, Math.ceil(cost));
 }
@@ -987,7 +1174,11 @@ export interface ServerSidePlanResult {
   readonly errorMessage?: string;
   readonly cancelled?: true;
   /** §8.8 honesty (12-w6-g1): the side call's tokens, billed with the turn. */
-  readonly usage?: { inputTokens: number; outputTokens: number };
+  readonly usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cachedInputTokens: number;
+  };
 }
 
 /**
@@ -1005,7 +1196,7 @@ export async function serverSidePlan(
     readonly signal: AbortSignal;
   },
 ): Promise<ServerSidePlanResult> {
-  let usageAccumulator = { inputTokens: 0, outputTokens: 0 };
+  let usageAccumulator = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
   const attemptMessages: OpenAIChatMessage[] = [
     ...input.conversation,
     { role: "user", content: planInstruction(input.goal) },
@@ -1030,6 +1221,7 @@ export async function serverSidePlan(
     usageAccumulator = {
       inputTokens: usageAccumulator.inputTokens + round.inputTokens,
       outputTokens: usageAccumulator.outputTokens + round.outputTokens,
+      cachedInputTokens: usageAccumulator.cachedInputTokens + round.cachedInputTokens,
     };
     const parsed = coerceStringifiedJson(extractJsonObject(round.text));
     const validation = planValidationError(parsed);
