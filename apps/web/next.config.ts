@@ -47,9 +47,13 @@ const EDITOR_DEV_SERVER_URL =
 // `/v1/:path*` → the same GATEWAY_INTERNAL_URL origin the RSC seam
 // (src/lib/gateway.ts) already uses. Dev only; `next build` never emits it.
 const GATEWAY_INTERNAL_URL = (
-  process.env.NODE_ENV === "production"
-    ? undefined
-    : (process.env.GATEWAY_INTERNAL_URL ?? "http://127.0.0.1:8787")
+  process.env.STUDIO_V1_PROXY === "1"
+    ? // Local sandbox override: no Caddy in front, so keep the dev /v1 proxy
+      // even in production builds (opt-in, off by default).
+      (process.env.GATEWAY_INTERNAL_URL ?? "http://127.0.0.1:8787")
+    : process.env.NODE_ENV === "production"
+      ? undefined
+      : (process.env.GATEWAY_INTERNAL_URL ?? "http://127.0.0.1:8787")
 )?.replace(/\/+$/, "");
 
 // W3-I: Turbopack still lacks webpack's `extensionAlias` (".js" → ".ts"),
