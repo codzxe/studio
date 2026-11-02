@@ -149,6 +149,22 @@ interface WidthDragState {
 /** ECUX §2.2 sidebar width bounds (min honors the pinned MIN_PANEL floor). */
 const SIDEBAR_MAX_W = 560;
 
+/**
+ * A pointer press-and-release on the header chrome that travels less than
+ * this many px is a CLICK (dock/undock toggle), not a drag — Chat UI v3:
+ * "click the top of the chat and it slides into the sidebar".
+ */
+const CLICK_SLOP_PX = 5;
+
+/**
+ * The rail width a small floating panel docks at (Chat UI v3): docking from
+ * the 380px floating default with the remembered width would render a rail
+ * barely wider than the floater; an explicit dock widens to a comfortable
+ * reading sidebar (still user-resizable via the rail grip, still ≤ §2.2's
+ * SIDEBAR_MAX_W and the store's viewport clamp).
+ */
+const DOCK_DEFAULT_W = 460;
+
 /** Drag further than this from the rail and the sidebar detaches to floating. */
 const DETACH_THRESHOLD_PX = 8;
 
@@ -283,6 +299,29 @@ export function ChatPanel({
     // by the store, so re-detaching restores w/h).
     if (d !== null && d.kind === "move" && dockHintRef.current) {
       setMode("sidebar");
+      endDrag();
+      return;
+    }
+    // Click-vs-drag (Chat UI v3): a press-and-release on the chrome that
+    // never travelled past the slop toggles the dock — clicking the top of
+    // a floating panel slides it into the sidebar, clicking the docked
+    // rail's chrome floats it back. Interactive children (buttons/menus)
+    // were already excluded at pointerdown; sidebar width drags never
+    // enter this handler. Double-click maximize keeps working: the two
+    // toggles cancel out before the dblclick fires.
+    if (
+      d !== null &&
+      d.kind === "move" &&
+      !d.detached &&
+      Math.abs(e.clientX - d.startX) < CLICK_SLOP_PX &&
+      Math.abs(e.clientY - d.startY) < CLICK_SLOP_PX
+    ) {
+      if (layout.mode === "floating") {
+        resize(Math.max(layout.w, Math.min(DOCK_DEFAULT_W, SIDEBAR_MAX_W)), layout.h);
+        setMode("sidebar");
+      } else {
+        setMode("floating");
+      }
     }
     endDrag();
   };
@@ -319,6 +358,13 @@ export function ChatPanel({
   };
 
   const floating = layout.mode === "floating";
+  // Chat UI v3: the mode change SLIDES — left/top/width/height transition
+  // while the user isn't dragging (a transition during a captured drag would
+  // lag the panel behind the pointer). motion-safe: reduced-motion users get
+  // the instant jump the rest of the shell already gives them.
+  const slideClass = dragging
+    ? ""
+    : "motion-safe:transition-[left,top,width,height] motion-safe:duration-200 motion-safe:ease-out";
   // ROUND 12 (Chat UI v3): the settings knobs — background alpha + the
   // font-size var ride the aside's inline style (absent/default settings =
   // no style, byte-identical M4); density rides a data attribute the
@@ -372,9 +418,9 @@ export function ChatPanel({
           floating
             ? // Floating: the §2.1 box — one soft elevation + hairline border
               // (§9 letter-spec: radius-md, 10px — not radius-lg).
-              "absolute z-[35] flex flex-col overflow-hidden rounded-md border border-border bg-panel shadow-modal"
+              `absolute z-[35] flex flex-col overflow-hidden rounded-md border border-border bg-panel shadow-modal ${slideClass}`
             : // Sidebar: the §2.2 right rail — docked flat, 100% height.
-              "absolute top-0 right-0 bottom-0 z-[35] flex flex-col overflow-hidden border-l border-border bg-panel"
+              `absolute top-0 right-0 bottom-0 z-[35] flex flex-col overflow-hidden border-l border-border bg-panel ${slideClass}`
         }
         style={style}
       >

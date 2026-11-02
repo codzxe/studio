@@ -15,7 +15,7 @@
 
 import { type RenderResult, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type ChatLayout, MIN_PANEL, saveLayout } from "./layout";
+import { type ChatLayout, MIN_PANEL, loadLayout, saveLayout } from "./layout";
 import { ChatPanel, type ChatPanelProps } from "./panel";
 
 // ---------------------------------------------------------------------------
@@ -387,13 +387,29 @@ describe("ChatPanel — drag & drop (grab bar, detach, drop-to-dock)", () => {
     expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-dragging", "false");
   });
 
-  it("a plain sidebar header CLICK (no travel) never detaches", async () => {
-    saveLayout({ mode: "sidebar", x: 0, y: 0, w: 380, h: 520 });
+  // Chat UI v3: a plain header CLICK toggles the dock both ways — clicking
+  // the top of a floating panel slides it into the sidebar (widening to the
+  // comfortable rail), clicking the docked rail's chrome floats it back.
+  // Drags past the slop never trigger the toggle (pinned above).
+  it("a plain floating header CLICK (no travel) DOCKS to the sidebar at the comfortable width", async () => {
+    saveLayout({ mode: "floating", x: 100, y: 100, w: 380, h: 520 });
     await renderHarness();
     const handle = screen.getByTestId("chat-panel-drag-handle");
     fireEvent.pointerDown(handle, { button: 0, clientX: 500, clientY: 300, pointerId: 1 });
     fireEvent.pointerUp(handle, { clientX: 502, clientY: 301, pointerId: 1 });
     expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-chat-mode", "sidebar");
+    // The dock widened the remembered geometry to the comfortable rail width.
+    expect(loadLayout()?.w).toBe(460);
+    expect(loadLayout()?.mode).toBe("sidebar");
+  });
+
+  it("a plain sidebar header CLICK (no travel) floats the panel back", async () => {
+    saveLayout({ mode: "sidebar", x: 0, y: 0, w: 460, h: 520 });
+    await renderHarness();
+    const handle = screen.getByTestId("chat-panel-drag-handle");
+    fireEvent.pointerDown(handle, { button: 0, clientX: 500, clientY: 300, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientX: 502, clientY: 301, pointerId: 1 });
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-chat-mode", "floating");
   });
 
   it("dropping a floating drag at the right edge DOCKS to the sidebar (zone preview armed)", async () => {

@@ -738,7 +738,16 @@ export function ChatPanelSlot({
         const action = nextLayoutAction(layout, "toggleChat");
         if (action.type === "setMode") setMode(action.mode);
       }}
-      onToggleDock={() => setMode(layout.mode === "sidebar" ? "floating" : "sidebar")}
+      onToggleDock={() => {
+        // Chat UI v3: docking widens to the comfortable reading rail (the
+        // panel's own click-to-dock does the same); undocking keeps the
+        // remembered floating geometry.
+        if (layout.mode === "sidebar") setMode("floating");
+        else {
+          resize(Math.max(layout.w, 460), layout.h);
+          setMode("sidebar");
+        }
+      }}
       onClose={() => setMode("collapsed")}
       onNewChat={startNewChat}
       onResetPosition={resetGeometry}

@@ -833,8 +833,14 @@ export const WRITE_TOOLS: readonly WriteToolDefinition[] = [
       "keys, each with a time in seconds, a JSON value and an optional interpolation — linear, " +
       "bezier, hold, or the eased forms easeIn / easeOut / easeInOut (After Effects Easy Ease; " +
       "`ease-out` / `ease-in-out` style spellings are accepted and canonicalized). Eased keys " +
-      "compile to the engine's real Easy Ease curve. The result is a PROPOSED batch for the " +
-      "user to review — never executed until the user applies the plan.",
+      "compile to the engine's real Easy Ease curve. Motion only reads when the values CHANGE " +
+      "between keys — identical values render a static property (nothing moves on screen). " +
+      "Choreograph visibly: move transform/position between distinct points ([400,540] then " +
+      "[1500,540]), fade layers in and out with transform/opacity (0 → 100 → 0), and give every " +
+      "full-frame scene background its own 0 → 100 → 0 opacity keys spanning ONLY its scene's " +
+      "seconds, so stacked scenes crossfade instead of covering each other. Spread elements' " +
+      "keys across the whole timeline so the film plays as a sequence. The result is a PROPOSED " +
+      "batch for the user to review — never executed until the user applies the plan.",
     inputSchema: WRITE_TOOL_ARGS_SCHEMAS.set_keyframes,
   },
   {
@@ -923,10 +929,15 @@ export const WRITE_TOOLS: readonly WriteToolDefinition[] = [
     description:
       "Propose adding a SOLID color layer to the active composition: a name, a fill color " +
       "(#rrggbb or [r, g, b] channels), optional width/height in pixels (default the whole " +
-      "frame — the standard background/void layer), an optional position, and an optional " +
-      "starting opacity (0..1 fraction or 1..100 percent). This is THE tool for backgrounds, " +
-      "voids and color fields — never use an empty text layer for those. The result is a " +
-      "PROPOSED batch for the user to review — never executed until the user applies the plan.",
+      "frame), an optional position (the layer's CENTER), and an optional starting opacity " +
+      "(0..1 fraction or 1..100 percent). Full-frame solids are for BACKGROUNDS only; to DRAW " +
+      "an element pass small sizes — a line or stroke is a thin strip (e.g. width 900, height " +
+      "10), a dot or bead is about 30×30 — positioned with `position`, then animate it with " +
+      "studio.set_keyframes on transform/position, transform/scale and transform/opacity so it " +
+      "actually moves and appears on screen. A drawn protagonist at full-frame size covers the " +
+      "whole frame — never do that. This is THE tool for backgrounds, voids and color fields — " +
+      "never use an empty text layer for those. The result is a PROPOSED batch for the user to " +
+      "review — never executed until the user applies the plan.",
     inputSchema: WRITE_TOOL_ARGS_SCHEMAS.create_solid,
   },
   {
