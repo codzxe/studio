@@ -4,7 +4,7 @@
  *
  * Pure geometry + persistence for the chat overlay shell (EDITOR_CHAT_UX.md
  * §2 layout modes, §2.5 persistence, DECISIONS.md D-10/D-18):
- * - floating (default) / sidebar (right rail) / collapsed pill;
+ * - sidebar (default — docked right rail) / floating / collapsed pill;
  * - clamped to the editor viewport — the host is `fixed inset-0`, so the
  *   window viewport IS the editor viewport (verified in editor-host.tsx);
  * - persisted per USER (not per project) in localStorage
@@ -38,16 +38,20 @@ export interface ChatLayout {
 export const LAYOUT_STORAGE_KEY = "studio.chat.layout.v1";
 
 /**
- * Floating default ~380×520 near the bottom-right (pinned contract). The
- * coordinates target the design viewport (1440×900) with the §2.1 default
- * 16px edge margin; `clampLayout` pulls them toward the bottom-right of ANY
+ * The chat lives DOCKED in the right sidebar from the first editor open
+ * (round 15: "keep chat in sidebar from starting") — a NARROW 320px rail so
+ * the engine canvas keeps the width it needs to read as the hero of the
+ * screen. x/y/w/h remain the remembered FLOATING geometry (the §2.1 default
+ * ~380×520 near the bottom-right of the 1440×900 design viewport with the
+ * 16px edge margin); `clampLayout` pulls them toward the bottom-right of ANY
  * smaller viewport on first use, so the default never lands off-screen.
+ * Undocking (chat-dock-button / drag-out) restores exactly that geometry.
  */
 export const DEFAULT_LAYOUT: ChatLayout = {
-  mode: "floating",
+  mode: "sidebar",
   x: 1044,
   y: 364,
-  w: 380,
+  w: 320,
   h: 520,
 };
 

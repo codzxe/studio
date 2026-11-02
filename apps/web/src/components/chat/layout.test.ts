@@ -56,10 +56,10 @@ describe("clampLayout", () => {
 
   it("pulls DEFAULT_LAYOUT into a viewport smaller than itself (ECUX §2.5)", () => {
     const out = clampLayout(DEFAULT_LAYOUT, SMALL_VP);
-    // w 380 fits (cap 540); h 520 caps at 90% of 400 → 360; position shifts in.
-    expect(out.w).toBe(380);
+    // w 320 fits (cap 540); h 520 caps at 90% of 400 → 360; position shifts in.
+    expect(out.w).toBe(320);
     expect(out.h).toBe(360);
-    expect(out.x).toBe(SMALL_VP.w - out.w); // 220
+    expect(out.x).toBe(SMALL_VP.w - out.w); // 280
     expect(out.y).toBe(SMALL_VP.h - out.h); // 40
     expect(out.x + out.w).toBeLessThanOrEqual(SMALL_VP.w);
     expect(out.y + out.h).toBeLessThanOrEqual(SMALL_VP.h);
@@ -98,7 +98,9 @@ describe("clampLayout", () => {
       }),
       VP,
     );
-    expect(out).toEqual(clampLayout(DEFAULT_LAYOUT, VP));
+    // Geometry falls back to DEFAULT fields; the MODE comes from the input
+    // (floating) — DEFAULT_LAYOUT now ships mode "sidebar" (round 16).
+    expect(out).toEqual({ ...clampLayout(DEFAULT_LAYOUT, VP), mode: "floating" });
   });
 
   it("preserves the mode and returns a new object", () => {

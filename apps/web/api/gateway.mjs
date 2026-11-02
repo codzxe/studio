@@ -131164,6 +131164,528 @@ var Brand = {
 
 // ../../packages/config/src/env.ts
 init_zod();
+
+// ../../packages/config/src/errors.ts
+init_zod();
+
+// ../../packages/config/src/ids.ts
+var ID_PREFIXES = {
+  /** Project (`prj_`). */
+  project: "prj",
+  /** Immutable project version snapshot (`ver_`). */
+  version: "ver",
+  /** Uploaded asset (`ast_`). */
+  asset: "ast",
+  /** Chat thread (`thr_`). */
+  thread: "thr",
+  /** Agent run (`run_`). */
+  run: "run",
+  /** Render job (`rnd_`). */
+  render: "rnd",
+  /** API request id (`req_`) — also the default `requestId` of a StudioError. */
+  request: "req"
+};
+function defaultIdGenerator() {
+  const uuid5 = globalThis.crypto?.randomUUID?.();
+  if (uuid5 !== void 0) return uuid5.replace(/-/g, "");
+  throw new Error(
+    "@studio/config ids: globalThis.crypto.randomUUID() is unavailable \u2014 it ships in Node 22+, every evergreen browser and worker runtimes"
+  );
+}
+function newId(kind, generate = defaultIdGenerator) {
+  return `${ID_PREFIXES[kind]}_${generate()}`;
+}
+function newRequestId() {
+  return newId("request");
+}
+
+// ../../packages/config/src/errors.ts
+var ERROR_CATALOG = {
+  /** Version conflict on save/upload — never overwrite; offer compare/restore (§9.3). */
+  PROJECT_VERSION_CONFLICT: {
+    message: "This project changed while you were working.",
+    hint: "Open the latest version, or restore yours from version history. Nothing was overwritten.",
+    retryable: false
+  },
+  /** Zero/negative balance — run never starts (§8.8); upgrade CTA. */
+  INSUFFICIENT_CREDITS: {
+    message: "This workspace is out of credits.",
+    hint: "Top up credits or upgrade your plan to continue.",
+    retryable: false
+  },
+  /** Single-writer lease owned by another editor (§11). */
+  LEASE_HELD: {
+    message: "Someone else is editing this project right now.",
+    hint: "You can open it read-only, or take over once the lease is released.",
+    retryable: true
+  },
+  /** Own lease expired mid-session — re-acquire to continue (§11). */
+  LEASE_EXPIRED: {
+    message: "Your editing lease on this project expired.",
+    hint: "Reacquire the lease to continue editing.",
+    retryable: true
+  },
+  /** Model provider down and no fallback available (§8.9); no charge. */
+  RUN_MODEL_UNAVAILABLE: {
+    message: "The model service is unavailable right now.",
+    hint: "Try again in a moment. You were not charged for this run.",
+    retryable: true
+  },
+  /** Tool args failed validation twice (repair turn exhausted, §8.9). */
+  RUN_INVALID_TOOL: {
+    message: "The agent requested a tool call we can't validate.",
+    hint: "Nothing was applied. Rephrase the request and try again.",
+    retryable: false
+  },
+  /** Batch validation failed before execution; no editor change (§8.9). */
+  RUN_INVALID_COMMAND: {
+    message: "The planned edit didn't pass validation.",
+    hint: "Nothing was applied. Ask for a smaller, more specific edit.",
+    retryable: false
+  },
+  /** Step failed mid-batch → atomic rollback, no commit (§8.9). */
+  RUN_BATCH_ROLLED_BACK: {
+    message: "Part of the edit failed, so the whole edit was rolled back.",
+    hint: "Nothing was applied. Ask the agent to split the edit into smaller steps.",
+    retryable: false
+  },
+  /** User cancelled the run; reserve released (§8.9). */
+  RUN_CANCELLED: {
+    message: "The run was cancelled.",
+    hint: "Nothing was applied. Reserved credits were refunded.",
+    retryable: false
+  },
+  /** Editor iframe/connection dropped; retried once (§8.9). */
+  EDITOR_DISCONNECTED: {
+    message: "The editor connection dropped.",
+    hint: "Reconnect the editor, then retry the step.",
+    retryable: true
+  },
+  /** Render exceeded its timeout; preview remains optional (§8.9). */
+  RENDER_TIMEOUT: {
+    message: "Rendering took too long and was stopped.",
+    hint: "Retry, or render a shorter range at a lower resolution.",
+    retryable: true
+  },
+  /** Render pipeline failed. */
+  RENDER_FAILED: {
+    message: "Rendering failed.",
+    hint: "Check the composition for unsupported features, then retry.",
+    retryable: true
+  },
+  /**
+   * 415 — declared-but-disabled render format refused at queue time (D-2
+   * gate; client-shaped like ASSET_REJECTED). ProRes/GIF/WAV stay reserved.
+   */
+  RENDER_UNSUPPORTED_FORMAT: {
+    message: "This render format isn't available yet.",
+    hint: "Choose MP4 or PNG sequence for now.",
+    retryable: false
+  },
+  /** 429 — workspace out of render minutes this cycle (mirrors QUOTA_EXCEEDED). */
+  RENDER_QUOTA_EXCEEDED: {
+    message: "This workspace used all its render minutes.",
+    hint: "The quota resets with your billing cycle, or you can upgrade now.",
+    retryable: false
+  },
+  /** 500 — worker cannot find the studio-cli binary (operator action needed). */
+  RENDER_CLI_MISSING: {
+    message: "The rendering tool isn't available right now.",
+    hint: "We're on it. You were not charged for this render.",
+    retryable: false
+  },
+  /** 500 — studio-cli ran but exited non-zero; safe to retry (mirrors RENDER_FAILED). */
+  RENDER_CLI_FAILED: {
+    message: "The render worker couldn't finish this job.",
+    hint: "Retry the render, or contact support if it keeps failing. You were not charged.",
+    retryable: true
+  },
+  /** 409 — user cancelled the render; the credit reserve is released (mirrors RUN_CANCELLED). */
+  RENDER_CANCELLED: {
+    message: "The render was cancelled.",
+    hint: "Nothing was rendered. Reserved credits were refunded.",
+    retryable: false
+  },
+  /** 400 — project snapshot failed render validation; client-shaped (mirrors RUN_INVALID_COMMAND). */
+  RENDER_PROJECT_INVALID: {
+    message: "This project can't be rendered as-is.",
+    hint: "The composition didn't pass render validation. Fix the reported problem and try again.",
+    retryable: false
+  },
+  /** 400 — the render input references an asset that is no longer available. */
+  RENDER_ASSET_MISSING: {
+    message: "A media asset this render needs is missing.",
+    hint: "Re-upload or relink the missing asset, then render again.",
+    retryable: false
+  },
+  /** 429 — workspace already runs its maxConcurrentRenders (mirrors RATE_LIMITED). */
+  RENDER_CONCURRENCY_LIMIT: {
+    message: "Too many renders are already running.",
+    hint: "Wait for one to finish, then try again.",
+    retryable: true
+  },
+  /** 500 — unexpected render-pipeline failure; details never leak (mirrors INTERNAL). */
+  RENDER_INTERNAL: {
+    message: "Something went wrong during rendering.",
+    hint: "We're on it. Try again in a moment.",
+    retryable: true
+  },
+  /** Upload above the plan/size cap (ASSET_MAX_BYTES). */
+  ASSET_TOO_LARGE: {
+    message: "This file is larger than your plan allows.",
+    hint: "Compress the file, or upgrade for bigger uploads.",
+    retryable: false
+  },
+  /** MIME/extension rejected by the upload allowlist (§12.3). */
+  ASSET_REJECTED: {
+    message: "This file type isn't supported.",
+    hint: "Use a supported media format: video, image, audio, font, LUT, SVG or PDF.",
+    retryable: false
+  },
+  /** Workspace hit a plan quota (storage, runs/day, seats…). */
+  QUOTA_EXCEEDED: {
+    message: "This workspace hit a usage quota.",
+    hint: "The quota resets with your billing cycle, or you can upgrade now.",
+    retryable: false
+  },
+  /** Unknown workspace — never confirms existence to strangers (§12.1). */
+  WORKSPACE_NOT_FOUND: {
+    message: "Workspace not found.",
+    hint: "Check the link, or ask the workspace owner to invite you.",
+    retryable: false
+  },
+  PROJECT_NOT_FOUND: {
+    message: "Project not found.",
+    hint: "It may have been deleted, or you may not have access.",
+    retryable: false
+  },
+  VERSION_NOT_FOUND: {
+    message: "Version not found.",
+    hint: "Refresh the version list and try again.",
+    retryable: false
+  },
+  THREAD_NOT_FOUND: {
+    message: "Thread not found.",
+    hint: "Start a new thread in this project.",
+    retryable: false
+  },
+  RUN_NOT_FOUND: {
+    message: "Run not found.",
+    hint: "Refresh the page, or open the project's run history.",
+    retryable: false
+  },
+  /** Per-IP/user/workspace rate limit (§7.1). */
+  RATE_LIMITED: {
+    message: "Too many requests.",
+    hint: "Slow down for a moment, then retry.",
+    retryable: true
+  },
+  /** 401 — missing/invalid session or API key. */
+  AUTH_REQUIRED: {
+    message: "Sign in to continue.",
+    hint: "Your session may have expired.",
+    retryable: false
+  },
+  /** 403 — authenticated but not allowed (RBAC role, read-only lease). */
+  FORBIDDEN: {
+    message: "You don't have permission to do that.",
+    hint: "Ask a workspace admin for access.",
+    retryable: false
+  },
+  /** Payload failed schema validation at the boundary. */
+  VALIDATION_FAILED: {
+    message: "That request didn't look right.",
+    hint: "Check the input and try again.",
+    retryable: false
+  },
+  /** Unexpected failure — details never leak to clients. */
+  INTERNAL: {
+    message: "Something went wrong on our side.",
+    hint: "We're on it. Try again in a moment.",
+    retryable: true
+  }
+};
+var ERROR_CODES = Object.freeze(
+  Object.keys(ERROR_CATALOG)
+);
+var ERROR_CODE_SCHEMA = external_exports.enum(
+  // The catalog is a frozen const object; its keys are the exhaustive enum.
+  Object.keys(ERROR_CATALOG)
+);
+function okEnvelope(data, meta3) {
+  return meta3 === void 0 ? { data } : { data, meta: meta3 };
+}
+var StudioError = class extends Error {
+  code;
+  hint;
+  retryable;
+  requestId;
+  constructor(code, options = {}) {
+    const entry = ERROR_CATALOG[code];
+    super(options.message ?? entry.message, { cause: options.cause });
+    this.name = "StudioError";
+    this.code = code;
+    this.hint = options.hint ?? entry.hint;
+    this.retryable = options.retryable ?? entry.retryable;
+    this.requestId = options.requestId ?? newRequestId();
+  }
+  /** §7.3 Err envelope for this error. */
+  toEnvelope() {
+    const body = {
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+      requestId: this.requestId
+    };
+    const hint = this.hint;
+    if (hint !== void 0) {
+      body.hint = hint;
+    }
+    return { error: body };
+  }
+  /** JSON.stringify hook — same wire shape as {@link toEnvelope}. */
+  toJSON() {
+    return this.toEnvelope();
+  }
+};
+
+// ../../packages/config/src/plans.ts
+var PLAN_ID_UNION = ["trial", "starter", "pro", "studio"];
+var PLAUSIBLE_PLAN_IDS = Object.freeze([...PLAN_ID_UNION]);
+var PRICING_PAGE_PLANS = ["starter", "pro", "studio"];
+function isPlausiblePlanId(value) {
+  return PLAUSIBLE_PLAN_IDS.includes(value);
+}
+function isPaidPlan(id) {
+  return PRICING_PAGE_PLANS.includes(id);
+}
+var MICROCREDITS_PER_CREDIT = 1e6;
+function creditsToMicrocredits(credits) {
+  const micro = Math.round(credits * MICROCREDITS_PER_CREDIT);
+  if (!Number.isFinite(credits) || credits < 0 || Math.abs(micro / MICROCREDITS_PER_CREDIT - credits) > 1e-9) {
+    throw new StudioError("VALIDATION_FAILED", {
+      message: "Credit amounts must be whole microcredits.",
+      hint: "Use at most 2 decimals of a credit; finer amounts are rejected."
+    });
+  }
+  return micro;
+}
+var SIGNUP_WELCOME_GRANT_MICROCREDITS = 1e6 * MICROCREDITS_PER_CREDIT;
+var GIB = 1024 ** 3;
+var TIB = 1024 ** 4;
+var RAW_PLAN_CATALOG = {
+  // D-4: trial is a subscription STATE (`status='trialing'`) on the Starter
+  // row — 14 days, card required (BP §M6.1). Entitlements below are what a
+  // trialing workspace gets; there is no checkout target and no price.
+  trial: {
+    id: "trial",
+    name: "Trial",
+    seats: 1,
+    models: ["studio-fast"],
+    maxProjects: 3,
+    storageBytes: 1 * GIB,
+    renderMinutesPerMonth: 5,
+    maxConcurrentRenders: 1,
+    maxRenderLongEdgePx: 1920,
+    renderRetentionDays: 3,
+    monthlyCreditAllowance: 50 * MICROCREDITS_PER_CREDIT,
+    trialDays: 14,
+    monthlyPriceCents: 0,
+    stripePriceKey: null
+  },
+  starter: {
+    id: "starter",
+    name: "Starter",
+    seats: 2,
+    models: ["studio-fast", "studio-smart"],
+    maxProjects: 10,
+    storageBytes: 20 * GIB,
+    renderMinutesPerMonth: 60,
+    maxConcurrentRenders: 1,
+    maxRenderLongEdgePx: 1920,
+    renderRetentionDays: 7,
+    monthlyCreditAllowance: 500 * MICROCREDITS_PER_CREDIT,
+    trialDays: null,
+    monthlyPriceCents: 1200,
+    // BUSINESS-PENDING: $12/mo placeholder
+    stripePriceKey: "starter"
+  },
+  pro: {
+    id: "pro",
+    name: "Pro",
+    seats: 5,
+    models: ["studio-fast", "studio-smart"],
+    maxProjects: 50,
+    storageBytes: 200 * GIB,
+    renderMinutesPerMonth: 600,
+    maxConcurrentRenders: 3,
+    maxRenderLongEdgePx: 3840,
+    renderRetentionDays: 30,
+    monthlyCreditAllowance: 2e3 * MICROCREDITS_PER_CREDIT,
+    trialDays: null,
+    monthlyPriceCents: 3900,
+    // BUSINESS-PENDING: $39/mo placeholder
+    stripePriceKey: "pro"
+  },
+  studio: {
+    id: "studio",
+    name: "Studio",
+    seats: 15,
+    models: ["studio-fast", "studio-smart"],
+    maxProjects: 200,
+    storageBytes: 1 * TIB,
+    renderMinutesPerMonth: 3e3,
+    maxConcurrentRenders: 8,
+    maxRenderLongEdgePx: 3840,
+    renderRetentionDays: 90,
+    // 10,000 credits = 10,000,000,000 µc — EXCEEDS int32; see MONEY NOTE in
+    // the module header: credit_ledger.amount needs bigint before this
+    // allowance is written as a single grant row.
+    monthlyCreditAllowance: 1e4 * MICROCREDITS_PER_CREDIT,
+    trialDays: null,
+    monthlyPriceCents: 9900,
+    // BUSINESS-PENDING: $99/mo placeholder
+    stripePriceKey: "studio"
+  }
+};
+var PLAN_CATALOG = deepFreeze(RAW_PLAN_CATALOG);
+function deepFreeze(value) {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const key of Object.keys(value)) {
+      deepFreeze(value[key]);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+function getPlan(id) {
+  if (!isPlausiblePlanId(id)) {
+    throw new StudioError("VALIDATION_FAILED", {
+      message: "Unknown plan id.",
+      hint: "Expected one of: trial, starter, pro, studio."
+    });
+  }
+  return PLAN_CATALOG[id];
+}
+function entitlementsFor(id) {
+  const plan = getPlan(id);
+  return Object.freeze({
+    seats: plan.seats,
+    models: plan.models,
+    maxProjects: plan.maxProjects,
+    storageBytes: plan.storageBytes,
+    renderMinutesPerMonth: plan.renderMinutesPerMonth,
+    maxConcurrentRenders: plan.maxConcurrentRenders,
+    maxRenderLongEdgePx: plan.maxRenderLongEdgePx,
+    renderRetentionDays: plan.renderRetentionDays,
+    monthlyCreditAllowance: plan.monthlyCreditAllowance
+  });
+}
+function renderMinutesRemaining(planId, minutesUsedThisMonth) {
+  const plan = getPlan(planId);
+  if (!Number.isFinite(minutesUsedThisMonth) || minutesUsedThisMonth < 0) {
+    throw new StudioError("VALIDATION_FAILED", {
+      message: "Render minutes used must be a non-negative number.",
+      hint: "Pass the workspace's billed render minutes for the current cycle."
+    });
+  }
+  return Math.max(0, plan.renderMinutesPerMonth - minutesUsedThisMonth);
+}
+var RENDER_FORMATS = deepFreeze([
+  { id: "mp4", label: "MP4 (H.264)", enabled: true },
+  { id: "png-seq", label: "PNG sequence", enabled: true },
+  { id: "prores", label: "ProRes", enabled: false },
+  { id: "gif", label: "GIF", enabled: false },
+  { id: "wav", label: "WAV audio", enabled: false }
+]);
+var ENABLED_RENDER_FORMATS = deepFreeze(
+  RENDER_FORMATS.filter((format2) => format2.enabled).map((format2) => format2.id)
+);
+function isRenderFormatEnabled(id) {
+  return ENABLED_RENDER_FORMATS.includes(id);
+}
+function parseStripePriceIds(envValue) {
+  if (envValue === void 0 || envValue.trim().length === 0) {
+    return {
+      ok: false,
+      problem: {
+        kind: "missing-env",
+        message: "STRIPE_PRICE_IDS is not set."
+      }
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(envValue);
+  } catch {
+    return {
+      ok: false,
+      problem: {
+        kind: "invalid-json",
+        message: "STRIPE_PRICE_IDS must be valid JSON mapping plan names to Stripe price ids."
+      }
+    };
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      ok: false,
+      problem: {
+        kind: "invalid-map",
+        message: "STRIPE_PRICE_IDS must be a JSON object of plan name to price id."
+      }
+    };
+  }
+  const record2 = parsed;
+  for (const value of Object.values(record2)) {
+    if (typeof value !== "string" || value.trim().length === 0) {
+      return {
+        ok: false,
+        problem: {
+          kind: "invalid-map",
+          message: "STRIPE_PRICE_IDS values must be non-empty Stripe price id strings."
+        }
+      };
+    }
+  }
+  return { ok: true, priceIds: Object.freeze({ ...record2 }) };
+}
+function stripePriceIdFor(planId, envValue) {
+  if (!isPlausiblePlanId(planId)) {
+    return {
+      ok: false,
+      problem: {
+        kind: "unknown-plan",
+        message: "Unknown plan id \u2014 price lookups expect starter, pro or studio."
+      }
+    };
+  }
+  if (!isPaidPlan(planId)) {
+    return {
+      ok: false,
+      problem: {
+        kind: "plan-not-purchasable",
+        message: "Trial is a subscription state on the Starter row, never a checkout target (DECISIONS D-4)."
+      }
+    };
+  }
+  const parsed = parseStripePriceIds(envValue);
+  if (!parsed.ok) {
+    return parsed;
+  }
+  const priceId = parsed.priceIds[planId];
+  if (priceId === void 0) {
+    return {
+      ok: false,
+      problem: {
+        kind: "plan-without-price",
+        message: `The STRIPE_PRICE_IDS map has no price id for the "${planId}" plan.`
+      }
+    };
+  }
+  return { ok: true, priceId };
+}
+
+// ../../packages/config/src/env.ts
 var ENV_VAR_SPECS = [
   // ── app ──────────────────────────────────────────────────────────────────
   {
@@ -131202,6 +131724,15 @@ var ENV_VAR_SPECS = [
     hasDefault: true,
     example: "false",
     condition: 'Rejected when APP_ENV is "production" \u2014 it would bypass real model routing and billing.'
+  },
+  {
+    name: "SIGNUP_WELCOME_GRANT_MICROCREDITS",
+    purpose: "Spendable microcredit balance granted once to every NEW workspace at creation (the signup welcome grant). 0 disables the grant \u2014 use it when real card-gated billing is live.",
+    group: "app",
+    required: false,
+    secret: false,
+    hasDefault: true,
+    example: String(SIGNUP_WELCOME_GRANT_MICROCREDITS)
   },
   // ── db ───────────────────────────────────────────────────────────────────
   {
@@ -131663,6 +132194,9 @@ var envSchema = external_exports.object({
   APP_ENV: appEnvSchema,
   LOG_LEVEL: logLevelSchema.default("info"),
   MOCK_MODEL: envBool.default(false),
+  // The signup welcome grant (plans.ts) — 1,000,000 credits in µc by default;
+  // "0" disables the grant entirely (real-billing posture).
+  SIGNUP_WELCOME_GRANT_MICROCREDITS: wholeNumber(0).default(SIGNUP_WELCOME_GRANT_MICROCREDITS),
   // db — Postgres everywhere except local dev, where a SQLite file URL
   // (file:…/sqlite:…, pnpm dev:sqlite) is the PG-free alternative.
   DATABASE_URL: databaseUrl,
@@ -131834,22 +132368,23 @@ function crossCheckProblems(env3) {
   }
   return problems;
 }
-function deepFreeze(value) {
+function deepFreeze2(value) {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     for (const key of Object.keys(value)) {
-      deepFreeze(value[key]);
+      deepFreeze2(value[key]);
     }
     Object.freeze(value);
   }
   return value;
 }
 function groupEnv(flat) {
-  return deepFreeze({
+  return deepFreeze2({
     app: {
       url: flat.APP_URL,
       env: flat.APP_ENV,
       logLevel: flat.LOG_LEVEL,
-      mockModel: flat.MOCK_MODEL
+      mockModel: flat.MOCK_MODEL,
+      signupWelcomeGrantMicrocredits: flat.SIGNUP_WELCOME_GRANT_MICROCREDITS
     },
     db: { url: flat.DATABASE_URL },
     queue: { url: flat.VALKEY_URL },
@@ -131927,525 +132462,6 @@ function getEnv(source = process.env) {
   const parsed = parseEnv(source);
   envCache.set(source, parsed);
   return parsed;
-}
-
-// ../../packages/config/src/errors.ts
-init_zod();
-
-// ../../packages/config/src/ids.ts
-var ID_PREFIXES = {
-  /** Project (`prj_`). */
-  project: "prj",
-  /** Immutable project version snapshot (`ver_`). */
-  version: "ver",
-  /** Uploaded asset (`ast_`). */
-  asset: "ast",
-  /** Chat thread (`thr_`). */
-  thread: "thr",
-  /** Agent run (`run_`). */
-  run: "run",
-  /** Render job (`rnd_`). */
-  render: "rnd",
-  /** API request id (`req_`) — also the default `requestId` of a StudioError. */
-  request: "req"
-};
-function defaultIdGenerator() {
-  const uuid5 = globalThis.crypto?.randomUUID?.();
-  if (uuid5 !== void 0) return uuid5.replace(/-/g, "");
-  throw new Error(
-    "@studio/config ids: globalThis.crypto.randomUUID() is unavailable \u2014 it ships in Node 22+, every evergreen browser and worker runtimes"
-  );
-}
-function newId(kind, generate = defaultIdGenerator) {
-  return `${ID_PREFIXES[kind]}_${generate()}`;
-}
-function newRequestId() {
-  return newId("request");
-}
-
-// ../../packages/config/src/errors.ts
-var ERROR_CATALOG = {
-  /** Version conflict on save/upload — never overwrite; offer compare/restore (§9.3). */
-  PROJECT_VERSION_CONFLICT: {
-    message: "This project changed while you were working.",
-    hint: "Open the latest version, or restore yours from version history. Nothing was overwritten.",
-    retryable: false
-  },
-  /** Zero/negative balance — run never starts (§8.8); upgrade CTA. */
-  INSUFFICIENT_CREDITS: {
-    message: "This workspace is out of credits.",
-    hint: "Top up credits or upgrade your plan to continue.",
-    retryable: false
-  },
-  /** Single-writer lease owned by another editor (§11). */
-  LEASE_HELD: {
-    message: "Someone else is editing this project right now.",
-    hint: "You can open it read-only, or take over once the lease is released.",
-    retryable: true
-  },
-  /** Own lease expired mid-session — re-acquire to continue (§11). */
-  LEASE_EXPIRED: {
-    message: "Your editing lease on this project expired.",
-    hint: "Reacquire the lease to continue editing.",
-    retryable: true
-  },
-  /** Model provider down and no fallback available (§8.9); no charge. */
-  RUN_MODEL_UNAVAILABLE: {
-    message: "The model service is unavailable right now.",
-    hint: "Try again in a moment. You were not charged for this run.",
-    retryable: true
-  },
-  /** Tool args failed validation twice (repair turn exhausted, §8.9). */
-  RUN_INVALID_TOOL: {
-    message: "The agent requested a tool call we can't validate.",
-    hint: "Nothing was applied. Rephrase the request and try again.",
-    retryable: false
-  },
-  /** Batch validation failed before execution; no editor change (§8.9). */
-  RUN_INVALID_COMMAND: {
-    message: "The planned edit didn't pass validation.",
-    hint: "Nothing was applied. Ask for a smaller, more specific edit.",
-    retryable: false
-  },
-  /** Step failed mid-batch → atomic rollback, no commit (§8.9). */
-  RUN_BATCH_ROLLED_BACK: {
-    message: "Part of the edit failed, so the whole edit was rolled back.",
-    hint: "Nothing was applied. Ask the agent to split the edit into smaller steps.",
-    retryable: false
-  },
-  /** User cancelled the run; reserve released (§8.9). */
-  RUN_CANCELLED: {
-    message: "The run was cancelled.",
-    hint: "Nothing was applied. Reserved credits were refunded.",
-    retryable: false
-  },
-  /** Editor iframe/connection dropped; retried once (§8.9). */
-  EDITOR_DISCONNECTED: {
-    message: "The editor connection dropped.",
-    hint: "Reconnect the editor, then retry the step.",
-    retryable: true
-  },
-  /** Render exceeded its timeout; preview remains optional (§8.9). */
-  RENDER_TIMEOUT: {
-    message: "Rendering took too long and was stopped.",
-    hint: "Retry, or render a shorter range at a lower resolution.",
-    retryable: true
-  },
-  /** Render pipeline failed. */
-  RENDER_FAILED: {
-    message: "Rendering failed.",
-    hint: "Check the composition for unsupported features, then retry.",
-    retryable: true
-  },
-  /**
-   * 415 — declared-but-disabled render format refused at queue time (D-2
-   * gate; client-shaped like ASSET_REJECTED). ProRes/GIF/WAV stay reserved.
-   */
-  RENDER_UNSUPPORTED_FORMAT: {
-    message: "This render format isn't available yet.",
-    hint: "Choose MP4 or PNG sequence for now.",
-    retryable: false
-  },
-  /** 429 — workspace out of render minutes this cycle (mirrors QUOTA_EXCEEDED). */
-  RENDER_QUOTA_EXCEEDED: {
-    message: "This workspace used all its render minutes.",
-    hint: "The quota resets with your billing cycle, or you can upgrade now.",
-    retryable: false
-  },
-  /** 500 — worker cannot find the studio-cli binary (operator action needed). */
-  RENDER_CLI_MISSING: {
-    message: "The rendering tool isn't available right now.",
-    hint: "We're on it. You were not charged for this render.",
-    retryable: false
-  },
-  /** 500 — studio-cli ran but exited non-zero; safe to retry (mirrors RENDER_FAILED). */
-  RENDER_CLI_FAILED: {
-    message: "The render worker couldn't finish this job.",
-    hint: "Retry the render, or contact support if it keeps failing. You were not charged.",
-    retryable: true
-  },
-  /** 409 — user cancelled the render; the credit reserve is released (mirrors RUN_CANCELLED). */
-  RENDER_CANCELLED: {
-    message: "The render was cancelled.",
-    hint: "Nothing was rendered. Reserved credits were refunded.",
-    retryable: false
-  },
-  /** 400 — project snapshot failed render validation; client-shaped (mirrors RUN_INVALID_COMMAND). */
-  RENDER_PROJECT_INVALID: {
-    message: "This project can't be rendered as-is.",
-    hint: "The composition didn't pass render validation. Fix the reported problem and try again.",
-    retryable: false
-  },
-  /** 400 — the render input references an asset that is no longer available. */
-  RENDER_ASSET_MISSING: {
-    message: "A media asset this render needs is missing.",
-    hint: "Re-upload or relink the missing asset, then render again.",
-    retryable: false
-  },
-  /** 429 — workspace already runs its maxConcurrentRenders (mirrors RATE_LIMITED). */
-  RENDER_CONCURRENCY_LIMIT: {
-    message: "Too many renders are already running.",
-    hint: "Wait for one to finish, then try again.",
-    retryable: true
-  },
-  /** 500 — unexpected render-pipeline failure; details never leak (mirrors INTERNAL). */
-  RENDER_INTERNAL: {
-    message: "Something went wrong during rendering.",
-    hint: "We're on it. Try again in a moment.",
-    retryable: true
-  },
-  /** Upload above the plan/size cap (ASSET_MAX_BYTES). */
-  ASSET_TOO_LARGE: {
-    message: "This file is larger than your plan allows.",
-    hint: "Compress the file, or upgrade for bigger uploads.",
-    retryable: false
-  },
-  /** MIME/extension rejected by the upload allowlist (§12.3). */
-  ASSET_REJECTED: {
-    message: "This file type isn't supported.",
-    hint: "Use a supported media format: video, image, audio, font, LUT, SVG or PDF.",
-    retryable: false
-  },
-  /** Workspace hit a plan quota (storage, runs/day, seats…). */
-  QUOTA_EXCEEDED: {
-    message: "This workspace hit a usage quota.",
-    hint: "The quota resets with your billing cycle, or you can upgrade now.",
-    retryable: false
-  },
-  /** Unknown workspace — never confirms existence to strangers (§12.1). */
-  WORKSPACE_NOT_FOUND: {
-    message: "Workspace not found.",
-    hint: "Check the link, or ask the workspace owner to invite you.",
-    retryable: false
-  },
-  PROJECT_NOT_FOUND: {
-    message: "Project not found.",
-    hint: "It may have been deleted, or you may not have access.",
-    retryable: false
-  },
-  VERSION_NOT_FOUND: {
-    message: "Version not found.",
-    hint: "Refresh the version list and try again.",
-    retryable: false
-  },
-  THREAD_NOT_FOUND: {
-    message: "Thread not found.",
-    hint: "Start a new thread in this project.",
-    retryable: false
-  },
-  RUN_NOT_FOUND: {
-    message: "Run not found.",
-    hint: "Refresh the page, or open the project's run history.",
-    retryable: false
-  },
-  /** Per-IP/user/workspace rate limit (§7.1). */
-  RATE_LIMITED: {
-    message: "Too many requests.",
-    hint: "Slow down for a moment, then retry.",
-    retryable: true
-  },
-  /** 401 — missing/invalid session or API key. */
-  AUTH_REQUIRED: {
-    message: "Sign in to continue.",
-    hint: "Your session may have expired.",
-    retryable: false
-  },
-  /** 403 — authenticated but not allowed (RBAC role, read-only lease). */
-  FORBIDDEN: {
-    message: "You don't have permission to do that.",
-    hint: "Ask a workspace admin for access.",
-    retryable: false
-  },
-  /** Payload failed schema validation at the boundary. */
-  VALIDATION_FAILED: {
-    message: "That request didn't look right.",
-    hint: "Check the input and try again.",
-    retryable: false
-  },
-  /** Unexpected failure — details never leak to clients. */
-  INTERNAL: {
-    message: "Something went wrong on our side.",
-    hint: "We're on it. Try again in a moment.",
-    retryable: true
-  }
-};
-var ERROR_CODES = Object.freeze(
-  Object.keys(ERROR_CATALOG)
-);
-var ERROR_CODE_SCHEMA = external_exports.enum(
-  // The catalog is a frozen const object; its keys are the exhaustive enum.
-  Object.keys(ERROR_CATALOG)
-);
-function okEnvelope(data, meta3) {
-  return meta3 === void 0 ? { data } : { data, meta: meta3 };
-}
-var StudioError = class extends Error {
-  code;
-  hint;
-  retryable;
-  requestId;
-  constructor(code, options = {}) {
-    const entry = ERROR_CATALOG[code];
-    super(options.message ?? entry.message, { cause: options.cause });
-    this.name = "StudioError";
-    this.code = code;
-    this.hint = options.hint ?? entry.hint;
-    this.retryable = options.retryable ?? entry.retryable;
-    this.requestId = options.requestId ?? newRequestId();
-  }
-  /** §7.3 Err envelope for this error. */
-  toEnvelope() {
-    const body = {
-      code: this.code,
-      message: this.message,
-      retryable: this.retryable,
-      requestId: this.requestId
-    };
-    const hint = this.hint;
-    if (hint !== void 0) {
-      body.hint = hint;
-    }
-    return { error: body };
-  }
-  /** JSON.stringify hook — same wire shape as {@link toEnvelope}. */
-  toJSON() {
-    return this.toEnvelope();
-  }
-};
-
-// ../../packages/config/src/plans.ts
-var PLAN_ID_UNION = ["trial", "starter", "pro", "studio"];
-var PLAUSIBLE_PLAN_IDS = Object.freeze([...PLAN_ID_UNION]);
-var PRICING_PAGE_PLANS = ["starter", "pro", "studio"];
-function isPlausiblePlanId(value) {
-  return PLAUSIBLE_PLAN_IDS.includes(value);
-}
-function isPaidPlan(id) {
-  return PRICING_PAGE_PLANS.includes(id);
-}
-var MICROCREDITS_PER_CREDIT = 1e6;
-function creditsToMicrocredits(credits) {
-  const micro = Math.round(credits * MICROCREDITS_PER_CREDIT);
-  if (!Number.isFinite(credits) || credits < 0 || Math.abs(micro / MICROCREDITS_PER_CREDIT - credits) > 1e-9) {
-    throw new StudioError("VALIDATION_FAILED", {
-      message: "Credit amounts must be whole microcredits.",
-      hint: "Use at most 2 decimals of a credit; finer amounts are rejected."
-    });
-  }
-  return micro;
-}
-var GIB = 1024 ** 3;
-var TIB = 1024 ** 4;
-var RAW_PLAN_CATALOG = {
-  // D-4: trial is a subscription STATE (`status='trialing'`) on the Starter
-  // row — 14 days, card required (BP §M6.1). Entitlements below are what a
-  // trialing workspace gets; there is no checkout target and no price.
-  trial: {
-    id: "trial",
-    name: "Trial",
-    seats: 1,
-    models: ["studio-fast"],
-    maxProjects: 3,
-    storageBytes: 1 * GIB,
-    renderMinutesPerMonth: 5,
-    maxConcurrentRenders: 1,
-    maxRenderLongEdgePx: 1920,
-    renderRetentionDays: 3,
-    monthlyCreditAllowance: 50 * MICROCREDITS_PER_CREDIT,
-    trialDays: 14,
-    monthlyPriceCents: 0,
-    stripePriceKey: null
-  },
-  starter: {
-    id: "starter",
-    name: "Starter",
-    seats: 2,
-    models: ["studio-fast", "studio-smart"],
-    maxProjects: 10,
-    storageBytes: 20 * GIB,
-    renderMinutesPerMonth: 60,
-    maxConcurrentRenders: 1,
-    maxRenderLongEdgePx: 1920,
-    renderRetentionDays: 7,
-    monthlyCreditAllowance: 500 * MICROCREDITS_PER_CREDIT,
-    trialDays: null,
-    monthlyPriceCents: 1200,
-    // BUSINESS-PENDING: $12/mo placeholder
-    stripePriceKey: "starter"
-  },
-  pro: {
-    id: "pro",
-    name: "Pro",
-    seats: 5,
-    models: ["studio-fast", "studio-smart"],
-    maxProjects: 50,
-    storageBytes: 200 * GIB,
-    renderMinutesPerMonth: 600,
-    maxConcurrentRenders: 3,
-    maxRenderLongEdgePx: 3840,
-    renderRetentionDays: 30,
-    monthlyCreditAllowance: 2e3 * MICROCREDITS_PER_CREDIT,
-    trialDays: null,
-    monthlyPriceCents: 3900,
-    // BUSINESS-PENDING: $39/mo placeholder
-    stripePriceKey: "pro"
-  },
-  studio: {
-    id: "studio",
-    name: "Studio",
-    seats: 15,
-    models: ["studio-fast", "studio-smart"],
-    maxProjects: 200,
-    storageBytes: 1 * TIB,
-    renderMinutesPerMonth: 3e3,
-    maxConcurrentRenders: 8,
-    maxRenderLongEdgePx: 3840,
-    renderRetentionDays: 90,
-    // 10,000 credits = 10,000,000,000 µc — EXCEEDS int32; see MONEY NOTE in
-    // the module header: credit_ledger.amount needs bigint before this
-    // allowance is written as a single grant row.
-    monthlyCreditAllowance: 1e4 * MICROCREDITS_PER_CREDIT,
-    trialDays: null,
-    monthlyPriceCents: 9900,
-    // BUSINESS-PENDING: $99/mo placeholder
-    stripePriceKey: "studio"
-  }
-};
-var PLAN_CATALOG = deepFreeze2(RAW_PLAN_CATALOG);
-function deepFreeze2(value) {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const key of Object.keys(value)) {
-      deepFreeze2(value[key]);
-    }
-    Object.freeze(value);
-  }
-  return value;
-}
-function getPlan(id) {
-  if (!isPlausiblePlanId(id)) {
-    throw new StudioError("VALIDATION_FAILED", {
-      message: "Unknown plan id.",
-      hint: "Expected one of: trial, starter, pro, studio."
-    });
-  }
-  return PLAN_CATALOG[id];
-}
-function entitlementsFor(id) {
-  const plan = getPlan(id);
-  return Object.freeze({
-    seats: plan.seats,
-    models: plan.models,
-    maxProjects: plan.maxProjects,
-    storageBytes: plan.storageBytes,
-    renderMinutesPerMonth: plan.renderMinutesPerMonth,
-    maxConcurrentRenders: plan.maxConcurrentRenders,
-    maxRenderLongEdgePx: plan.maxRenderLongEdgePx,
-    renderRetentionDays: plan.renderRetentionDays,
-    monthlyCreditAllowance: plan.monthlyCreditAllowance
-  });
-}
-function renderMinutesRemaining(planId, minutesUsedThisMonth) {
-  const plan = getPlan(planId);
-  if (!Number.isFinite(minutesUsedThisMonth) || minutesUsedThisMonth < 0) {
-    throw new StudioError("VALIDATION_FAILED", {
-      message: "Render minutes used must be a non-negative number.",
-      hint: "Pass the workspace's billed render minutes for the current cycle."
-    });
-  }
-  return Math.max(0, plan.renderMinutesPerMonth - minutesUsedThisMonth);
-}
-var RENDER_FORMATS = deepFreeze2([
-  { id: "mp4", label: "MP4 (H.264)", enabled: true },
-  { id: "png-seq", label: "PNG sequence", enabled: true },
-  { id: "prores", label: "ProRes", enabled: false },
-  { id: "gif", label: "GIF", enabled: false },
-  { id: "wav", label: "WAV audio", enabled: false }
-]);
-var ENABLED_RENDER_FORMATS = deepFreeze2(
-  RENDER_FORMATS.filter((format2) => format2.enabled).map((format2) => format2.id)
-);
-function isRenderFormatEnabled(id) {
-  return ENABLED_RENDER_FORMATS.includes(id);
-}
-function parseStripePriceIds(envValue) {
-  if (envValue === void 0 || envValue.trim().length === 0) {
-    return {
-      ok: false,
-      problem: {
-        kind: "missing-env",
-        message: "STRIPE_PRICE_IDS is not set."
-      }
-    };
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(envValue);
-  } catch {
-    return {
-      ok: false,
-      problem: {
-        kind: "invalid-json",
-        message: "STRIPE_PRICE_IDS must be valid JSON mapping plan names to Stripe price ids."
-      }
-    };
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return {
-      ok: false,
-      problem: {
-        kind: "invalid-map",
-        message: "STRIPE_PRICE_IDS must be a JSON object of plan name to price id."
-      }
-    };
-  }
-  const record2 = parsed;
-  for (const value of Object.values(record2)) {
-    if (typeof value !== "string" || value.trim().length === 0) {
-      return {
-        ok: false,
-        problem: {
-          kind: "invalid-map",
-          message: "STRIPE_PRICE_IDS values must be non-empty Stripe price id strings."
-        }
-      };
-    }
-  }
-  return { ok: true, priceIds: Object.freeze({ ...record2 }) };
-}
-function stripePriceIdFor(planId, envValue) {
-  if (!isPlausiblePlanId(planId)) {
-    return {
-      ok: false,
-      problem: {
-        kind: "unknown-plan",
-        message: "Unknown plan id \u2014 price lookups expect starter, pro or studio."
-      }
-    };
-  }
-  if (!isPaidPlan(planId)) {
-    return {
-      ok: false,
-      problem: {
-        kind: "plan-not-purchasable",
-        message: "Trial is a subscription state on the Starter row, never a checkout target (DECISIONS D-4)."
-      }
-    };
-  }
-  const parsed = parseStripePriceIds(envValue);
-  if (!parsed.ok) {
-    return parsed;
-  }
-  const priceId = parsed.priceIds[planId];
-  if (priceId === void 0) {
-    return {
-      ok: false,
-      problem: {
-        kind: "plan-without-price",
-        message: `The STRIPE_PRICE_IDS map has no price id for the "${planId}" plan.`
-      }
-    };
-  }
-  return { ok: true, priceId };
 }
 
 // ../../packages/config/src/render-pricing.ts
@@ -134560,7 +134576,7 @@ var WRITE_TOOLS = [
     kind: "write",
     risk: "low",
     returns: "proposed-batch",
-    description: "Propose keyframes for one property path on existing layers referenced BY NAME: 1..500 keys, each with a time in seconds, a JSON value and an optional interpolation \u2014 linear, bezier, hold, or the eased forms easeIn / easeOut / easeInOut (After Effects Easy Ease; `ease-out` / `ease-in-out` style spellings are accepted and canonicalized). Eased keys compile to the engine's real Easy Ease curve. The result is a PROPOSED batch for the user to review \u2014 never executed until the user applies the plan.",
+    description: "Propose keyframes for one property path on existing layers referenced BY NAME: 1..500 keys, each with a time in seconds, a JSON value and an optional interpolation \u2014 linear, bezier, hold, or the eased forms easeIn / easeOut / easeInOut (After Effects Easy Ease; `ease-out` / `ease-in-out` style spellings are accepted and canonicalized). Eased keys compile to the engine's real Easy Ease curve. Motion only reads when the values CHANGE between keys \u2014 identical values render a static property (nothing moves on screen). Choreograph visibly: move transform/position between distinct points ([400,540] then [1500,540]), fade layers in and out with transform/opacity (0 \u2192 100 \u2192 0), and give every full-frame scene background its own 0 \u2192 100 \u2192 0 opacity keys spanning ONLY its scene's seconds, so stacked scenes crossfade instead of covering each other. Spread elements' keys across the whole timeline so the film plays as a sequence. The result is a PROPOSED batch for the user to review \u2014 never executed until the user applies the plan.",
     inputSchema: WRITE_TOOL_ARGS_SCHEMAS.set_keyframes
   },
   {
@@ -134619,7 +134635,7 @@ var WRITE_TOOLS = [
     kind: "write",
     risk: "low",
     returns: "proposed-batch",
-    description: "Propose adding a SOLID color layer to the active composition: a name, a fill color (#rrggbb or [r, g, b] channels), optional width/height in pixels (default the whole frame \u2014 the standard background/void layer), an optional position, and an optional starting opacity (0..1 fraction or 1..100 percent). This is THE tool for backgrounds, voids and color fields \u2014 never use an empty text layer for those. The result is a PROPOSED batch for the user to review \u2014 never executed until the user applies the plan.",
+    description: "Propose adding a SOLID color layer to the active composition: a name, a fill color (#rrggbb or [r, g, b] channels), optional width/height in pixels (default the whole frame), an optional position (the layer's CENTER), and an optional starting opacity (0..1 fraction or 1..100 percent). Full-frame solids are for BACKGROUNDS only; to DRAW an element pass small sizes \u2014 a line or stroke is a thin strip (e.g. width 900, height 10), a dot or bead is about 30\xD730 \u2014 positioned with `position`, then animate it with studio.set_keyframes on transform/position, transform/scale and transform/opacity so it actually moves and appears on screen. A drawn protagonist at full-frame size covers the whole frame \u2014 never do that. This is THE tool for backgrounds, voids and color fields \u2014 never use an empty text layer for those. The result is a PROPOSED batch for the user to review \u2014 never executed until the user applies the plan.",
     inputSchema: WRITE_TOOL_ARGS_SCHEMAS.create_solid
   },
   {
@@ -163551,7 +163567,17 @@ var SYSTEM_PROMPT = [
   "",
   "DO THE WORK. When the user asks for something to be made or changed, build the COMPLETE change in this one run \u2014 every composition, layer, keyframe and effect the request needs \u2014 spread across your plan steps, one step per turn. Don't stop at a plan, a question or a minimal sketch; don't ask the user to confirm steps that are reversible writes. Reference layers by name (never invent ids, command names or property paths).",
   "",
-  'Full-video asks. A "make a motion graphics video" style request means: build the COMPLETE piece in ONE run, step by step. Open with the numbered plan (composition, background, typography, shapes, effects, keyframes, audio), then execute it one step per turn. Create the composition with a real duration and framerate; add a background; typographic layers with text animators; shape layers; effects; keyframes with easing on transform and opacity. When audio is asked, call studio.render_audio first, then reference the resulting asset. Never stop at a plan; never ask when the request is concrete.',
+  'Full-film asks. A "make a motion graphics video" style request means: build the COMPLETE piece in ONE run, step by step \u2014 EVERY scene of the requested timeline, not just the opening one. Open with the numbered plan (composition, background, typography, shapes, effects, keyframes, audio), then execute it one step per turn. Create the composition with a real duration and framerate; add a background; typographic layers with text animators; shape layers; effects; keyframes with easing on transform and opacity. When audio is asked, call studio.render_audio first, then reference the resulting asset. Never stop at a plan; never ask when the request is concrete.',
+  "",
+  "FULL-FILM CHOREOGRAPHY \u2014 what separates real motion graphics from a static sketch:",
+  "- COVERAGE. If the brief names N scenes/beats across a timeline, ALL N must exist as built, animated layers before you may stop. A 5-scene film built as 2 scenes is an unfinished failure \u2014 keep going turn after turn until the last scene lands.",
+  "- BUDGET. A rich 10-second piece is typically 25-45 layers and 15+ set_keyframes calls. If you are under ~15 layers for a multi-scene film, you are NOT done \u2014 build the missing scenes.",
+  "- SCENE ANATOMY. Each scene = ONE full-frame background solid whose transform/opacity keys span ONLY that scene's seconds (0 \u2192 100 \u2192 0 so stacked scenes crossfade instead of covering each other) + 2-6 foreground elements that each ENTER and EXIT with their own position/scale/rotation/opacity keys.",
+  "- THE PROTAGONIST NEVER RESTS. The hero element (the line, the character, the logo) appears in EVERY scene with motion keys \u2014 position/scale/rotation that CHANGE between keyframes, leading each transition. A hero that sits still for 8 seconds reads as a screenshot, not a film.",
+  "- STAGGERED MULTIPLES. Crowds, filaments, windows, threads, ripples: build 8-16 small copies as separate thin/small solids with STAGGERED keyframe times (each entering a few tenths of a second apart) so the frame fills with motion. One static layer is never a crowd.",
+  "- MATERIALS ARE EFFECTS. Flat color solids look like wireframe. Give layers material with studio.add_effect: ec.stylize.glow on every luminous/emissive element, ec.generate.gradientramp on skies and backdrops, ec.blur.gaussian for depth-of-field planes, ec.distort.turbulentdisplace for water/smoke/fog, ec.stylize.roughenedges for paper/grunge, ec.generate.cellpattern for circuitry and texture. Name real effects \u2014 never invent one.",
+  "- TRANSITIONS. Match the brief's transition language (crossfade, whip, match-morph): the outgoing scene's opacity falls while the incoming rises at the SAME timestamps, and the hero's position/scale keys bridge the cut so the eye never lands on a jump.",
+  "- FINISH THE LAST BEAT. End cards, wordmarks, logos fading in at the final second count as layers too \u2014 build and animate them (opacity 0 \u2192 100 at the named time).",
   "",
   `How changes land: while the run is live, each turn's reversible changes are applied to the project AUTOMATICALLY the moment that turn finishes (the user's auto-apply setting is on by default) \u2014 the user watches the canvas build up as you work, and every applied turn saves its own version, so nothing has to be rebuilt later. Destructive or export-heavy plans (deleting layers, replacing footage, rendering) always wait for the user to review and apply the plan card themselves. So: describe what you built as DONE ("I created X, animated Y") \u2014 and mention that one Undo reverts it if they don't like it. Never claim a change you did not propose through a write tool.`,
   "",
@@ -166885,6 +166911,21 @@ function workspacesRoutes(deps) {
       userId: user3.id
     });
     await audit2(c5, workspace.id, "workspace.created", workspace.id, "workspace");
+    const welcomeGrant = deps.env.app.signupWelcomeGrantMicrocredits;
+    if (welcomeGrant > 0) {
+      try {
+        await deps.repos.ledger.grant(workspace.id, {
+          amount: welcomeGrant,
+          idempotencyKey: `signup-welcome:${workspace.id}`,
+          metadata: { kind: "signup-welcome" }
+        });
+      } catch (error64) {
+        deps.logger.warn("signup_welcome_grant_failed", {
+          workspaceId: workspace.id,
+          detail: error64 instanceof Error ? error64.message : "unknown"
+        });
+      }
+    }
     return ok2(c5, toWorkspace(workspace), 201);
   });
   app.get("/v1/workspaces/:id", async (c5) => {

@@ -42,7 +42,7 @@ describe("createChatLayoutStore", () => {
   it("initializes from DEFAULT_LAYOUT (clamped to the viewport) when nothing is stored", () => {
     const store = createChatLayoutStore({ viewport: () => VP });
     expect(store.getSnapshot()).toEqual(clampLayout(DEFAULT_LAYOUT, VP));
-    expect(store.getSnapshot().mode).toBe("floating");
+    expect(store.getSnapshot().mode).toBe("sidebar"); // round 16: docked by default
   });
 
   it("clamps an explicit initial layout (mode preserved, geometry in-bounds)", () => {
@@ -217,13 +217,13 @@ describe("useChatLayout", () => {
     const mod = await import("./use-layout");
     const first = renderHook(() => mod.useChatLayout());
     const second = renderHook(() => mod.useChatLayout());
-    expect(first.result.current.layout.mode).toBe("floating");
+    expect(first.result.current.layout.mode).toBe("sidebar"); // round 16: docked by default
 
     act(() => {
-      first.result.current.setMode("sidebar");
+      first.result.current.setMode("floating");
     });
     // The panel's internal useChatLayout() sees the same mutation M4-J does.
-    expect(second.result.current.layout.mode).toBe("sidebar");
+    expect(second.result.current.layout.mode).toBe("floating");
   });
 });
 
