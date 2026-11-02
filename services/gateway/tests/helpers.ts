@@ -122,6 +122,12 @@ export function testEnvSource(overrides: EnvOverrides = {}): EnvOverrides {
     LITELLM_BASE_URL: "http://127.0.0.1:4000",
     LITELLM_API_KEY: "sk-test-not-configured",
     CHAT_MAX_STEPS: "20",
+    // The signup welcome grant is DISABLED in tests: the shared suites grant
+    // their own exact amounts and assert exact balances / the 402
+    // INSUFFICIENT_CREDITS path against a ZERO baseline. The grant itself is
+    // covered by the dedicated "signup welcome grant" suite (auth-workspace
+    // tests), which boots its own server with the override re-enabled.
+    SIGNUP_WELCOME_GRANT_MICROCREDITS: "0",
   };
   for (const [key, value] of Object.entries(overrides)) {
     if (value === undefined) continue;

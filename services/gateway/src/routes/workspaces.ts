@@ -66,6 +66,30 @@ export function workspacesRoutes(deps: GatewayDeps): Hono<AppBindings> {
       userId: user.id,
     });
     await audit(c, workspace.id, "workspace.created", workspace.id, "workspace");
+
+    // Signup welcome grant: every NEW workspace starts with a spendable
+    // balance (env-overridable SIGNUP_WELCOME_GRANT_MICROCREDITS — the
+    // effectively-unlimited first-run posture). Without it a fresh signup
+    // reads "0.00 credits — Out of credits" and the FIRST chat turn fails 402
+    // INSUFFICIENT_CREDITS (§8.8). Idempotency-keyed per workspace, so a
+    // retried create can never double-grant. A grant failure must NEVER block
+    // workspace creation — the billing page still renders and support can
+    // re-grant. 0 disables the grant entirely (real-billing posture).
+    const welcomeGrant = deps.env.app.signupWelcomeGrantMicrocredits;
+    if (welcomeGrant > 0) {
+      try {
+        await deps.repos.ledger.grant(workspace.id, {
+          amount: welcomeGrant,
+          idempotencyKey: `signup-welcome:${workspace.id}`,
+          metadata: { kind: "signup-welcome" },
+        });
+      } catch (error) {
+        deps.logger.warn("signup_welcome_grant_failed", {
+          workspaceId: workspace.id,
+          detail: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
     return ok(c, toWorkspace(workspace), 201);
   });
 

@@ -33,6 +33,14 @@ export NEXT_PUBLIC_APP_URL=http://localhost:3000 GATEWAY_INTERNAL_URL=http://127
 # gateway default port is already 8787 (services/gateway/src/env.ts parsePort).
 case "${1:-start}" in
 start)
+  # Web fonts (layout.tsx next/font/local) are NEVER committed (spec §1.5
+  # rule 9) and are provisioned from the pinned google/fonts commit. dev:ready
+  # does this in stage [3/4]; the stack script must too — pre-fix a FRESH
+  # clone booted via dev-stack.sh 500'd on every page (next/font/local cannot
+  # resolve the missing .ttf files). Idempotent + hash-verified, so this is a
+  # no-op when the fonts are already present.
+  node "$REPO/scripts/fetch-web-fonts.mjs" || \
+    echo "dev-stack: WARN — web fonts missing and the fetch failed; the web app will 500 until 'corepack pnpm fonts:web' succeeds"
   (cd "$REPO/services/gateway" && nohup env PORT=8787 corepack pnpm dev >"$REPO/.local/gateway-dev.log" 2>&1 &)
   (cd "$REPO/apps/web" && nohup corepack pnpm dev >"$REPO/.local/web-dev.log" 2>&1 &)
   for _ in $(seq 1 60); do curl -sf -m 2 http://127.0.0.1:8787/v1/health >/dev/null && break; sleep 1; done

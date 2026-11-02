@@ -77,6 +77,16 @@ export function formatShellCredits(microcredits: number): string {
   return formatCreditsDisplay(microcreditsToCreditsDisplay(microcredits));
 }
 
+/**
+ * µc → credits for the CreditMeter's numeric props (D-12). The billing-kit
+ * converter answers null on hostile input (never a lie); the meter needs a
+ * number, so it degrades to 0 there — the meter is decorative next to the
+ * ALWAYS-visible numeric link above (§7.11), which renders "—" honestly.
+ */
+function meterCredits(microcredits: number): number {
+  return microcreditsToCreditsDisplay(microcredits) ?? 0;
+}
+
 /** Avatar name: the display name, or the email handle (initials fallback). */
 function avatarName(name: string | null, email: string): string {
   if (name !== null && name.trim() !== "") return name;
@@ -267,8 +277,11 @@ export function TopBar({
             </Link>
             {monthlyAllowanceMicrocredits === null ? null : (
               <CreditMeter
-                used={Math.max(monthlyAllowanceMicrocredits - credits.balance, 0)}
-                included={monthlyAllowanceMicrocredits}
+                used={Math.max(
+                  meterCredits(monthlyAllowanceMicrocredits) - meterCredits(credits.balance),
+                  0,
+                )}
+                included={meterCredits(monthlyAllowanceMicrocredits)}
                 className="hidden w-28 lg:flex"
               />
             )}

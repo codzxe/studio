@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { entitlementsFor } from "@studio/config";
+import { SIGNUP_WELCOME_GRANT_MICROCREDITS, entitlementsFor } from "@studio/config";
 
 import {
   CookieJar,
@@ -188,6 +188,8 @@ d("GET /v1/me plan summary — real subscription data (W1-04)", () => {
     expect(plan.includedCredits).toBe(entitlementsFor("pro").monthlyCreditAllowance);
     expect(plan.includedCredits).toBe(2_000_000_000); // 2,000 credits, µc (D-12)
     expect(plan.renewsAt).toBe(periodEnd.toISOString());
+    // The shared harness DISABLES the signup welcome grant (testEnvSource) —
+    // the balance is exactly this test's own ledger grant.
     expect(plan.creditsBalance).toBe(3_200_000_000);
   });
 
@@ -382,5 +384,129 @@ d("Invite → accept → role matrix (§7.1, §3.3)", () => {
     };
     const membership = me.data.memberships.find((m) => m.workspaceId === ws.id);
     expect(membership?.role).toBe("viewer");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Signup welcome grant (§8.8 — "never start a turn on a zero balance").
+//
+// Regression: pre-fix a fresh signup (no card, no trial start) reached the
+// dashboard with 0.00 credits and the FIRST chat turn failed 402
+// INSUFFICIENT_CREDITS. POST /v1/workspaces now grants
+// SIGNUP_WELCOME_GRANT_MICROCREDITS exactly once (ledger idempotency key
+// `signup-welcome:<id>`), and a grant failure must never block creation.
+//
+// The shared harness zeroes the grant (see testEnvSource) so every other
+// suite keeps its exact-balance math — this suite boots its OWN server with
+// the override re-enabled to test the grant end to end.
+// ─────────────────────────────────────────────────────────────────────────────
+d("POST /v1/workspaces — signup welcome grant", () => {
+  let wsServer: RunningTestServer;
+
+  beforeAll(async () => {
+    wsServer = await bootServer({
+      env: { SIGNUP_WELCOME_GRANT_MICROCREDITS: String(SIGNUP_WELCOME_GRANT_MICROCREDITS) },
+    });
+  }, 30_000);
+
+  afterAll(async () => {
+    await wsServer?.close();
+  });
+
+  async function welcomeSignUp(base: string): Promise<CookieJar> {
+    const jar = new CookieJar();
+    const response = await api(base, "/v1/auth/sign-up/email", {
+      method: "POST",
+      jar,
+      body: { email: uniqueEmail(), password: "Passw0rd!longenough", name: "Welcome User" },
+    });
+    expect(response.status).toBe(200);
+    return jar;
+  }
+
+  async function welcomeCreateWorkspace(
+    base: string,
+    jar: CookieJar,
+    name: string,
+  ): Promise<{ id: string; slug: string }> {
+    const response = await api(base, "/v1/workspaces", {
+      method: "POST",
+      jar,
+      headers: { "idempotency-key": unique("ws-create") },
+      body: { name, slug: unique("ws") },
+    });
+    const body = (await response.json()) as { data: { id: string; slug: string } };
+    expect(response.status).toBe(201);
+    return body.data;
+  }
+
+  it("a new workspace starts with the welcome balance, as one idempotent ledger row", async () => {
+    const jar = await welcomeSignUp(wsServer.base);
+    const ws = await welcomeCreateWorkspace(wsServer.base, jar, unique("Welcome WS"));
+
+    // /v1/me reports the spendable balance immediately (µc, D-12).
+    const meResponse = await api(wsServer.base, "/v1/me", { jar });
+    expect(meResponse.status).toBe(200);
+    const me = (await meResponse.json()) as { data: { plan: { creditsBalance: number } } };
+    expect(me.data.plan.creditsBalance).toBe(SIGNUP_WELCOME_GRANT_MICROCREDITS);
+
+    // The ledger shows EXACTLY ONE welcome row — the amount granted once,
+    // keyed signup-welcome:<id>, so a retried create can never double-grant.
+    const ledgerResponse = await api(wsServer.base, "/v1/credits/ledger?limit=50", {
+      jar,
+      headers: { "x-workspace-id": ws.id },
+    });
+    expect(ledgerResponse.status).toBe(200);
+    const ledger = (await ledgerResponse.json()) as {
+      data: {
+        items: {
+          kind: string;
+          amount: number;
+          idempotencyKey: string;
+          metadata: Record<string, unknown>;
+        }[];
+      };
+    };
+    const welcomeRows = ledger.data.items.filter(
+      (row) => row.idempotencyKey === `signup-welcome:${ws.id}`,
+    );
+    expect(welcomeRows).toHaveLength(1);
+    const [welcomeRow] = welcomeRows;
+    expect(welcomeRow?.kind).toBe("grant");
+    expect(welcomeRow?.amount).toBe(SIGNUP_WELCOME_GRANT_MICROCREDITS);
+    expect(welcomeRow?.metadata.kind).toBe("signup-welcome");
+  });
+
+  it("a second workspace for the same user gets its own welcome grant", async () => {
+    const jar = await welcomeSignUp(wsServer.base);
+    const first = await welcomeCreateWorkspace(wsServer.base, jar, unique("First WS"));
+    const second = await welcomeCreateWorkspace(wsServer.base, jar, unique("Second WS"));
+
+    for (const ws of [first, second]) {
+      const creditsResponse = await api(wsServer.base, "/v1/credits", {
+        jar,
+        headers: { "x-workspace-id": ws.id },
+      });
+      expect(creditsResponse.status).toBe(200);
+      const credits = (await creditsResponse.json()) as { data: { balance: number } };
+      expect(credits.data.balance).toBe(SIGNUP_WELCOME_GRANT_MICROCREDITS);
+    }
+  });
+
+  it("a workspace created with the grant DISABLED starts at zero (real-billing posture)", async () => {
+    const zeroServer = await bootServer({ env: { SIGNUP_WELCOME_GRANT_MICROCREDITS: "0" } });
+    try {
+      const jar = await welcomeSignUp(zeroServer.base);
+      const ws = await welcomeCreateWorkspace(zeroServer.base, jar, unique("Zero WS"));
+      const creditsResponse = await api(zeroServer.base, "/v1/credits", {
+        jar,
+        headers: { "x-workspace-id": ws.id },
+      });
+      expect(creditsResponse.status).toBe(200);
+      const credits = (await creditsResponse.json()) as { data: { balance: number } };
+      expect(credits.data.balance).toBe(0);
+    } finally {
+      await zeroServer.close();
+    }
   });
 });

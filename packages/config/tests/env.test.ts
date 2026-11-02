@@ -6,6 +6,7 @@ import {
   ENV_VAR_NAMES,
   EnvFatalError,
   SECRET_ENV_VARS,
+  SIGNUP_WELCOME_GRANT_MICROCREDITS,
   envSchema,
   getEnv,
   isEnvFatalError,
@@ -73,6 +74,7 @@ describe("env: valid parse", () => {
       env: "local",
       logLevel: "info",
       mockModel: false,
+      signupWelcomeGrantMicrocredits: SIGNUP_WELCOME_GRANT_MICROCREDITS, // the plans.ts default (µc)
     });
     expect(env.db.url).toBe(localFixture.DATABASE_URL);
     expect(env.storage).toEqual({
@@ -384,7 +386,9 @@ describe("env: render worker variables (M8)", () => {
 
   it("STUDIO_ENGINE_CLI_PATH is optional; blank or whitespace counts as unset", () => {
     expect(parseEnv(localFixture).render.cliPath).toBeUndefined();
-    expect(parseEnv({ ...localFixture, STUDIO_ENGINE_CLI_PATH: "" }).render.cliPath).toBeUndefined();
+    expect(
+      parseEnv({ ...localFixture, STUDIO_ENGINE_CLI_PATH: "" }).render.cliPath,
+    ).toBeUndefined();
     expect(
       parseEnv({ ...localFixture, STUDIO_ENGINE_CLI_PATH: "   " }).render.cliPath,
     ).toBeUndefined();

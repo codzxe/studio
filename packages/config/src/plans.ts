@@ -149,6 +149,29 @@ export function microcreditsToCredits(microcredits: number): number {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Signup welcome grant
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * The spendable balance every NEW workspace starts with — granted exactly
+ * once by POST /v1/workspaces (idempotency key `signup-welcome:<id>`).
+ *
+ * WHY IT EXISTS: the trial allowance previously reached the ledger only via
+ * the card-required trial start (`POST /v1/billing/trial`) or a paid Stripe
+ * invoice — a fresh signup without a card had a ZERO balance, the shell read
+ * "0.00 credits — Out of credits", and the FIRST chat turn failed 402
+ * INSUFFICIENT_CREDITS (§8.8 "never start a turn on a zero balance"). The
+ * first-run journey dead-ended at the front door.
+ *
+ * MAGNITUDE: 1,000,000 credits (1e12 µc) — the seed's documented
+ * "effectively-unlimited" top-up (scripts/seed.ts DEMO_UNLIMITED_CREDITS):
+ * a chat turn commits single-digit credits, so this is ~500k model runs per
+ * workspace. Single int64 ledger row (the per-entry SEC-10 ceiling is 1e15
+ * µc), a safe JS integer, and far below any int64 concern.
+ */
+export const SIGNUP_WELCOME_GRANT_MICROCREDITS: number = 1_000_000 * MICROCREDITS_PER_CREDIT;
+
+// ───────────────────────────────────────────────────────────────────────────
 // The catalog
 // ───────────────────────────────────────────────────────────────────────────
 

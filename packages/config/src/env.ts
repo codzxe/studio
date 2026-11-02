@@ -7,6 +7,7 @@
 // raw input before they can reach a log line.
 import { z } from "zod";
 import { Brand } from "./brand.js";
+import { SIGNUP_WELCOME_GRANT_MICROCREDITS } from "./plans.js";
 
 /** Structurally compatible with `process.env`. */
 export type EnvSource = Record<string, string | undefined>;
@@ -106,6 +107,16 @@ export const ENV_VAR_SPECS: readonly EnvVarMeta[] = [
     example: "false",
     condition:
       'Rejected when APP_ENV is "production" — it would bypass real model routing and billing.',
+  },
+  {
+    name: "SIGNUP_WELCOME_GRANT_MICROCREDITS",
+    purpose:
+      "Spendable microcredit balance granted once to every NEW workspace at creation (the signup welcome grant). 0 disables the grant — use it when real card-gated billing is live.",
+    group: "app",
+    required: false,
+    secret: false,
+    hasDefault: true,
+    example: String(SIGNUP_WELCOME_GRANT_MICROCREDITS),
   },
   // ── db ───────────────────────────────────────────────────────────────────
   {
@@ -656,6 +667,9 @@ export const envSchema = z.object({
   APP_ENV: appEnvSchema,
   LOG_LEVEL: logLevelSchema.default("info"),
   MOCK_MODEL: envBool.default(false),
+  // The signup welcome grant (plans.ts) — 1,000,000 credits in µc by default;
+  // "0" disables the grant entirely (real-billing posture).
+  SIGNUP_WELCOME_GRANT_MICROCREDITS: wholeNumber(0).default(SIGNUP_WELCOME_GRANT_MICROCREDITS),
   // db — Postgres everywhere except local dev, where a SQLite file URL
   // (file:…/sqlite:…, pnpm dev:sqlite) is the PG-free alternative.
   DATABASE_URL: databaseUrl,
@@ -723,6 +737,12 @@ export interface StudioEnv {
     readonly env: AppEnv;
     readonly logLevel: LogLevel;
     readonly mockModel: boolean;
+    /**
+     * Microcredits granted once to every NEW workspace at creation
+     * (POST /v1/workspaces). 0 = no grant. Default: the plans.ts constant
+     * (1,000,000 credits — the effectively-unlimited first-run posture).
+     */
+    readonly signupWelcomeGrantMicrocredits: number;
   };
   readonly db: {
     readonly url: string;
@@ -980,6 +1000,7 @@ function groupEnv(flat: FlatEnv): StudioEnv {
       env: flat.APP_ENV,
       logLevel: flat.LOG_LEVEL,
       mockModel: flat.MOCK_MODEL,
+      signupWelcomeGrantMicrocredits: flat.SIGNUP_WELCOME_GRANT_MICROCREDITS,
     },
     db: { url: flat.DATABASE_URL },
     queue: { url: flat.VALKEY_URL },
