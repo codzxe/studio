@@ -21,7 +21,7 @@
     "lint": "biome check src tests scripts drizzle.config.ts"
   },
   "dependencies": {
-    "@better-auth/api-key": "^1.7.12",
+    "@better-auth/api-key": "^1.7.14",
     "better-auth": "^1.7.12",
     "drizzle-orm": "^0.45.4",
     "postgres": "^3.4.9",
