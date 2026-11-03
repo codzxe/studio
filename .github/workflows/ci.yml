@@ -94,7 +94,7 @@ jobs:
       APP_ENV: local
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4 # reads packageManager: pnpm@9.15.9
+      - uses: pnpm/action-setup@v6 # reads packageManager: pnpm@9.15.9
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -153,7 +153,7 @@ jobs:
       MOCK_MODEL: "true"
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -174,7 +174,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -197,7 +197,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -222,7 +222,7 @@ jobs:
           # The bundle diff needs the FULL history-agnostic checkout (default
           # shallow fetch is fine — only the working tree is compared).
           fetch-depth: 1
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -274,7 +274,7 @@ jobs:
     # violations (17 → 0 on a fresh checkout); blocking again as intended.
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -378,7 +378,7 @@ jobs:
       DATABASE_URL: postgres://studio:studio@127.0.0.1:5432/studio
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
