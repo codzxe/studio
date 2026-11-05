@@ -76,7 +76,12 @@ export interface EditorHostProps {
   readonly onApplyPorts?: (ports: ChatApplyPorts) => void;
 }
 
-export function EditorHost({ payload, sessionFactory, shortcutBus, onApplyPorts }: EditorHostProps) {
+export function EditorHost({
+  payload,
+  sessionFactory,
+  shortcutBus,
+  onApplyPorts,
+}: EditorHostProps) {
   // M4-J: the host materializes the session ONCE (the hook previously built it
   // inside its own useState initializer) so the chat overlay can reach the
   // session's api client. Behavior is unchanged: exactly one session per page

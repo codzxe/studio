@@ -200,7 +200,7 @@ export function ChatThread({
             <div data-testid="chat-empty-state" className="flex flex-col gap-4 px-4 py-8">
               <h2 className="font-display text-title-m text-primary">What should we build?</h2>
               {emptyQuickActions.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
+                <div className="mo-stagger-pop flex flex-wrap gap-2">
                   {emptyQuickActions.map((action) => (
                     <button
                       key={action.label}
@@ -230,21 +230,22 @@ export function ChatThread({
                 />
               ) : null}
               {windowed.map((message) => (
-                <ChatMessageView
-                  key={message.id}
-                  message={message}
-                  planWiring={planWiring}
-                  isStreaming={
-                    liveStream && message.role === "assistant" && message.runId === activeRunId
-                  }
-                  onRetryFrom={onRetryFrom}
-                  onEditResend={onEditResend}
-                  assistantToolbar={
-                    message.role === "assistant" && renderAssistantToolbar !== undefined
-                      ? renderAssistantToolbar(message)
-                      : undefined
-                  }
-                />
+                <div key={message.id} className="mo-msg-in">
+                  <ChatMessageView
+                    message={message}
+                    planWiring={planWiring}
+                    isStreaming={
+                      liveStream && message.role === "assistant" && message.runId === activeRunId
+                    }
+                    onRetryFrom={onRetryFrom}
+                    onEditResend={onEditResend}
+                    assistantToolbar={
+                      message.role === "assistant" && renderAssistantToolbar !== undefined
+                        ? renderAssistantToolbar(message)
+                        : undefined
+                    }
+                  />
+                </div>
               ))}
             </div>
           )}
@@ -255,7 +256,7 @@ export function ChatThread({
             data-testid="chat-scroll-to-bottom"
             aria-label="Scroll to bottom"
             onClick={scrollToBottom}
-            className="absolute bottom-3 left-1/2 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-pill border border-subtle bg-elevated text-secondary shadow-pop duration-120 ease-out hover:text-primary"
+            className="mo-pill-in absolute bottom-3 left-1/2 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-pill border border-subtle bg-elevated text-secondary shadow-pop duration-120 ease-out hover:text-primary"
           >
             <ArrowDown size={15} strokeWidth={1.9} aria-hidden="true" />
           </button>

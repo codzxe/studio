@@ -23,7 +23,7 @@
 
 import type { Thread } from "@studio/contracts";
 import { Clapperboard, MessageSquarePlus, Search, X } from "lucide-react";
-import { type ReactElement, useMemo, useState } from "react";
+import { type CSSProperties, type ReactElement, useMemo, useState } from "react";
 
 export interface ChatSidebarProps {
   /** The project's threads, NEWEST first (the hook's list). */
@@ -118,7 +118,7 @@ export function ChatSidebar({
       data-testid="studio-sidebar"
       data-variant={variant}
       className={`flex h-full flex-col bg-panel ${
-        variant === "drawer" ? "w-72 border-r border-subtle shadow-modal" : "w-full"
+        variant === "drawer" ? "mo-drawer-in w-72 border-r border-subtle shadow-modal" : "w-full"
       }`}
     >
       {/* -- header: brand row + close (drawer) ------------------------------ */}
@@ -154,7 +154,7 @@ export function ChatSidebar({
             onNewThread();
             onClose?.();
           }}
-          className="flex h-9 w-full items-center gap-2 rounded-sm border border-subtle bg-elevated px-2.5 text-label text-primary duration-120 ease-out hover:border-strong disabled:cursor-not-allowed disabled:opacity-50"
+          className="mo-press flex h-9 w-full items-center gap-2 rounded-sm border border-subtle bg-elevated px-2.5 text-label text-primary duration-120 ease-out hover:border-strong disabled:cursor-not-allowed disabled:opacity-50"
         >
           <MessageSquarePlus
             size={15}
@@ -215,7 +215,10 @@ export function ChatSidebar({
             <h3 className="px-2 pt-2 pb-1 text-hint text-muted uppercase tracking-wide">
               {group.label}
             </h3>
-            <ul className="flex flex-col gap-0.5">
+            <ul
+              className="mo-stagger-pop flex flex-col gap-0.5"
+              style={{ "--mo-stagger-base": "30ms" } as CSSProperties}
+            >
               {group.items.map((thread) => {
                 const active = thread.id === activeThreadId;
                 return (
@@ -239,7 +242,7 @@ export function ChatSidebar({
                       {active ? (
                         <span
                           aria-hidden="true"
-                          className="ml-2 h-1.5 w-1.5 shrink-0 rounded-pill bg-signal"
+                          className="mo-ping-dot ml-2 h-1.5 w-1.5 shrink-0 rounded-pill bg-signal"
                         />
                       ) : null}
                     </button>
@@ -257,7 +260,7 @@ export function ChatSidebar({
           type="button"
           data-testid="studio-sidebar-open-engine"
           onClick={onOpenEngine}
-          className="flex h-9 w-full items-center gap-2 rounded-sm px-2.5 text-label text-secondary duration-120 ease-out hover:bg-elevated hover:text-primary"
+          className="mo-press flex h-9 w-full items-center gap-2 rounded-sm px-2.5 text-label text-secondary duration-120 ease-out hover:bg-elevated hover:text-primary"
         >
           <Clapperboard
             size={15}

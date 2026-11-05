@@ -212,14 +212,28 @@ function EngineWaiting({ failed }: { readonly failed: boolean }): ReactElement {
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 horizon-glow"
       />
-      <p className="font-display text-display-m text-primary" data-testid="studio-engine-waiting">
+      {!failed ? <span aria-hidden="true" className="mo-orbit mb-5" /> : null}
+      <p
+        className="mo-fade-soft font-display text-display-m text-primary"
+        data-testid="studio-engine-waiting"
+      >
         {failed ? "The engine could not wake up" : "Waking the engine…"}
       </p>
-      <p className="mt-2 max-w-md text-center text-body-s text-secondary">
+      <p
+        className="mo-rise-in mt-2 max-w-md text-center text-body-s text-secondary"
+        style={{ animationDelay: "180ms" }}
+      >
         {failed
           ? "The motion engine did not become ready in time. Reload the page to try again."
           : "One moment — the motion engine boots in the background so the agent can build your film."}
       </p>
+      {!failed ? (
+        <span aria-hidden="true" className="mo-dots mt-5">
+          <span />
+          <span />
+          <span />
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -519,7 +533,7 @@ function ChatStudioInner({
   const composerStack = (
     <div data-testid="studio-chat-composer-stack" className="mx-auto w-full max-w-3xl px-4 pb-3">
       {clarifyPlan !== null ? (
-        <div className="mb-2">
+        <div className="mo-pop-in mb-2">
           <ClarifyCard
             plan={clarifyPlan}
             onAnswer={seedComposer}
@@ -530,7 +544,7 @@ function ChatStudioInner({
         </div>
       ) : null}
       {failureVisible && failedShape !== null ? (
-        <div className="mb-2">
+        <div className="mo-pop-in mb-2">
           <EditErrorCard
             failure={failedShape}
             onRetry={failureRetryable ? api.retry : undefined}
@@ -543,7 +557,7 @@ function ChatStudioInner({
       {showEngineCta ? (
         <div
           data-testid="studio-open-engine-cta"
-          className="mb-2 flex items-center gap-3 rounded-md border border-signal/40 bg-elevated px-3 py-2"
+          className="mo-glow-pulse mo-pop-in mb-2 flex items-center gap-3 rounded-md border border-signal/40 bg-elevated px-3 py-2"
         >
           <p className="min-w-0 flex-1 truncate text-caption text-secondary">
             The film just changed — it plays in the Engine.
@@ -551,7 +565,7 @@ function ChatStudioInner({
           <button
             type="button"
             onClick={onOpenEngine}
-            className="flex h-7 shrink-0 items-center rounded-pill bg-signal px-3 text-label text-signal-ink duration-120 ease-out hover:bg-signal-hover"
+            className="mo-press flex h-7 shrink-0 items-center rounded-pill bg-signal px-3 text-label text-signal-ink duration-120 ease-out hover:bg-signal-hover"
           >
             Open Engine
           </button>
@@ -565,28 +579,30 @@ function ChatStudioInner({
           </button>
         </div>
       ) : null}
-      <ChatComposer
-        streaming={streaming}
-        onSend={(message) => api.send({ message })}
-        onStop={api.stop}
-        onSlashCommand={(command) => {
-          // The chat-first surface keeps the editor slot's local gestures:
-          // /undo and /redo drive the apply controller when idle.
-          if (LIVE_RUN_PHASES.has(snapshot.phase)) {
-            showNotice("The agent is still working — stop it first.");
-            return;
-          }
-          if (command === "undo" || command === "redo") {
-            showNotice(
-              command === "undo" ? "Nothing applied to undo here yet." : "Nothing to redo.",
-            );
-            return;
-          }
-          showNotice("That command is not available on this surface.");
-        }}
-        mentionItems={mentionItems}
-        creditHint={modelDisplayName(api.activeModelId ?? "studio-fast")}
-      />
+      <div className="mo-beam-frame">
+        <ChatComposer
+          streaming={streaming}
+          onSend={(message) => api.send({ message })}
+          onStop={api.stop}
+          onSlashCommand={(command) => {
+            // The chat-first surface keeps the editor slot's local gestures:
+            // /undo and /redo drive the apply controller when idle.
+            if (LIVE_RUN_PHASES.has(snapshot.phase)) {
+              showNotice("The agent is still working — stop it first.");
+              return;
+            }
+            if (command === "undo" || command === "redo") {
+              showNotice(
+                command === "undo" ? "Nothing applied to undo here yet." : "Nothing to redo.",
+              );
+              return;
+            }
+            showNotice("That command is not available on this surface.");
+          }}
+          mentionItems={mentionItems}
+          creditHint={modelDisplayName(api.activeModelId ?? "studio-fast")}
+        />
+      </div>
       <div className="mt-2 px-1">
         <RunProgressStrip phase={snapshot.phase} chips={progress.chips} />
       </div>
@@ -618,8 +634,8 @@ function ChatStudioInner({
   return (
     <div
       data-testid="studio-chat-page"
-      className={`relative h-full overflow-hidden bg-page ${
-        settings.reduceMotion ? "[&_*]:transition-none" : ""
+      className={`mo-crossfade relative h-full overflow-hidden bg-page ${
+        settings.reduceMotion ? "mo-user-reduced [&_*]:transition-none" : ""
       }`}
     >
       {/* The PauseVFX horizon: a soft orange glow rising from the bottom —
@@ -629,12 +645,20 @@ function ChatStudioInner({
         className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 horizon-glow"
       />
 
+      {/* The AE ambient: three pre-blurred washes drifting behind the chat
+          (transform-only, compositor-safe; flattened by reduced motion). */}
+      <div aria-hidden="true" className="mo-aurora-field pointer-events-none">
+        <span className="mo-blob mo-blob-a" />
+        <span className="mo-blob mo-blob-b" />
+        <span className="mo-blob mo-blob-c" />
+      </div>
+
       <div className="relative flex h-full">
         {/* -- the rail (md+): a real layout column ------------------------- */}
         {railVisible ? (
           <aside
             data-testid="studio-sidebar-rail"
-            className="hidden h-full w-[264px] shrink-0 border-r border-subtle md:block"
+            className="mo-rail-in hidden h-full w-[264px] shrink-0 border-r border-subtle md:block"
           >
             {sidebarNode}
           </aside>
@@ -647,9 +671,9 @@ function ChatStudioInner({
               type="button"
               aria-label="Close sidebar"
               onClick={onToggleSidebar}
-              className="absolute inset-0 h-full w-full cursor-default bg-black/50"
+              className="mo-fade-soft absolute inset-0 h-full w-full cursor-default bg-black/50"
             />
-            <div className="absolute inset-y-0 left-0">{sidebarNode}</div>
+            <div className="mo-drawer-in absolute inset-y-0 left-0">{sidebarNode}</div>
           </div>
         ) : null}
 

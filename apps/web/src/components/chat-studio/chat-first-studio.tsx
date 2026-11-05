@@ -313,7 +313,7 @@ export function ChatFirstStudio({ payload, sessionFactory }: ChatFirstStudioProp
             Sessions without an api-client (test fakes) mount no chat, the
             same rule the editor host applies. */}
         {mode === "chat" && sessionHandle.api !== undefined ? (
-          <div data-testid="studio-chat-layer" className="absolute inset-0 z-10">
+          <div data-testid="studio-chat-layer" className="mo-crossfade absolute inset-0 z-10">
             <ChatSurface
               payload={payload}
               client={sessionHandle.api}

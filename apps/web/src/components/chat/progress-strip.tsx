@@ -130,7 +130,7 @@ export function RunProgressStrip({
     <div
       data-testid="chat-progress-strip"
       data-phase={phase}
-      className="flex w-full items-center gap-2 rounded-sm border border-border bg-elevated px-2.5 py-1.5"
+      className="mo-pop-in relative flex w-full items-center gap-2 rounded-sm border border-border bg-elevated px-2.5 py-1.5"
     >
       <Spinner data-testid="chat-progress-spinner" />
       <p className="min-w-0 shrink-0 text-caption font-medium text-primary">
@@ -148,7 +148,7 @@ export function RunProgressStrip({
               data-tool={chip.name}
               data-status={chip.status}
               title={`${chip.name} — ${chip.status}`}
-              className={`flex shrink-0 items-center gap-1 rounded-pill border px-1.5 py-0.5 text-caption ${
+              className={`mo-pop-in flex shrink-0 items-center gap-1 rounded-pill border px-1.5 py-0.5 text-caption ${
                 chip.status === "error"
                   ? "border-danger/40 text-danger"
                   : chip.status === "running"
@@ -164,6 +164,7 @@ export function RunProgressStrip({
           ))}
         </ul>
       ) : null}
+      <span aria-hidden="true" className="mo-flow-line" />
     </div>
   );
 }

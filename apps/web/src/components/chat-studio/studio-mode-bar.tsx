@@ -81,7 +81,7 @@ export function StudioModeBar({
           aria-pressed={false}
           data-testid="studio-sidebar-toggle"
           onClick={onToggleSidebar}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xs text-secondary duration-120 ease-out hover:bg-panel hover:text-primary"
+          className="mo-press flex h-8 w-8 shrink-0 items-center justify-center rounded-xs text-secondary duration-120 ease-out hover:bg-panel hover:text-primary"
         >
           <PanelLeft size={16} strokeWidth={1.75} aria-hidden="true" />
         </button>
@@ -98,7 +98,8 @@ export function StudioModeBar({
       </Link>
 
       <span
-        className="min-w-0 truncate text-label font-medium text-primary"
+        key={title}
+        className="mo-title-swap min-w-0 truncate text-label font-medium text-primary"
         title={chatChrome && threadTitle ? threadTitle : undefined}
       >
         {title}
@@ -143,7 +144,7 @@ export function StudioModeBar({
           title="New chat (⌘⇧O)"
           data-testid="studio-new-chat"
           onClick={onNewChat}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xs text-secondary duration-120 ease-out hover:bg-panel hover:text-primary"
+          className="mo-press flex h-8 w-8 shrink-0 items-center justify-center rounded-xs text-secondary duration-120 ease-out hover:bg-panel hover:text-primary"
         >
           <MessageSquarePlus size={16} strokeWidth={1.75} aria-hidden="true" />
         </button>
@@ -161,7 +162,7 @@ export function StudioModeBar({
               aria-pressed={active}
               data-testid={`studio-mode-${entry.id}`}
               onClick={() => onModeChange(entry.id)}
-              className={`flex h-7 items-center rounded-pill px-3.5 text-label duration-120 ease-out ${
+              className={`mo-press flex h-7 items-center rounded-pill px-3.5 text-label duration-120 ease-out ${
                 active ? "bg-signal text-signal-ink" : "text-secondary hover:text-primary"
               }`}
             >

@@ -26,7 +26,7 @@
  * `data-thread-id`).
  */
 
-import type { ReactElement, ReactNode } from "react";
+import type { CSSProperties, ReactElement, ReactNode } from "react";
 
 export interface StudioWelcomeSuggestion {
   readonly icon?: ReactNode;
@@ -54,6 +54,30 @@ export interface StudioWelcomeProps {
 /** The Recent row never grows past three chips (the recency glance, not a list). */
 const MAX_RECENT = 3;
 
+/** Kinetic-word stagger index → the CSS custom property the motion layer reads. */
+function wordDelay(index: number): CSSProperties {
+  return { "--mo-w": index } as CSSProperties;
+}
+
+/** A masked kinetic word (the AE headline reveal — see styles/motion.css). */
+function KineticWord({
+  index,
+  children,
+  className,
+}: {
+  readonly index: number;
+  readonly children: ReactNode;
+  readonly className?: string;
+}): ReactElement {
+  return (
+    <span className="mo-kw" aria-hidden="true">
+      <span className={`mo-kw-inner ${className ?? ""}`} style={wordDelay(index)}>
+        {children}
+      </span>
+    </span>
+  );
+}
+
 export function StudioWelcome({
   projectName,
   suggestions,
@@ -72,7 +96,7 @@ export function StudioWelcome({
       {/* -- eyebrow ---------------------------------------------------------- */}
       <p
         data-testid="studio-welcome-eyebrow"
-        className="text-hint text-muted uppercase tracking-wide select-none"
+        className="mo-fade-soft text-hint text-muted uppercase tracking-wide select-none"
       >
         <span aria-hidden="true" className="text-signal">
           ✦{" "}
@@ -80,12 +104,23 @@ export function StudioWelcome({
         STUDIO — {projectName.toUpperCase()}
       </p>
 
-      {/* -- the fixed display headline ---------------------------------------- */}
-      <h1 className="max-w-2xl text-center font-display text-display-xl text-primary">
-        What are we <em className="italic text-signal">making</em>?
+      {/* -- the fixed display headline (kinetic masked word reveal) ----------- */}
+      <h1
+        className="max-w-2xl text-center font-display text-display-xl text-primary"
+        aria-label="What are we making?"
+      >
+        <KineticWord index={0}>What</KineticWord> <KineticWord index={1}>are</KineticWord>{" "}
+        <KineticWord index={2}>we</KineticWord>{" "}
+        <KineticWord index={3}>
+          <em className="italic text-signal">making</em>
+        </KineticWord>
+        <KineticWord index={4}>?</KineticWord>
       </h1>
 
-      <p className="max-w-xl text-center text-body-s text-secondary">
+      <p
+        className="mo-rise-in max-w-xl text-center text-body-s text-secondary"
+        style={{ animationDelay: "560ms" }}
+      >
         Describe the motion piece. The agent builds every layer, keyframe and effect — the engine
         stays out of sight until you want it.
       </p>
@@ -93,15 +128,15 @@ export function StudioWelcome({
       {/* -- the composer stack (the caller's stack, in the middle) ------------ */}
       {children}
 
-      {/* -- suggestion grid ---------------------------------------------------- */}
-      <div className="grid w-full max-w-2xl grid-cols-1 gap-2 sm:grid-cols-2">
+      {/* -- suggestion grid (staggered cascade + hover lift + light sweep) ----- */}
+      <div className="mo-stagger grid w-full max-w-2xl grid-cols-1 gap-2 sm:grid-cols-2">
         {suggestions.map((suggestion) => (
           <button
             key={suggestion.testid}
             type="button"
             data-testid={`studio-welcome-suggestion-${suggestion.testid}`}
             onClick={() => onPickSuggestion(suggestion.testid)}
-            className="group flex items-start gap-3 rounded-md border border-subtle bg-panel/70 px-3.5 py-3 text-left duration-120 ease-out hover:border-strong hover:bg-panel"
+            className="mo-hover-lift mo-press mo-sweep group flex items-start gap-3 rounded-md border border-subtle bg-panel/70 px-3.5 py-3 text-left duration-120 ease-out hover:border-strong hover:bg-panel"
           >
             {suggestion.icon !== undefined ? (
               <span aria-hidden="true" className="mt-0.5 shrink-0 text-signal">
@@ -120,7 +155,7 @@ export function StudioWelcome({
       {recent.length > 0 ? (
         <div
           data-testid="studio-welcome-recent"
-          className="flex flex-wrap items-center justify-center gap-1.5"
+          className="mo-stagger-pop flex flex-wrap items-center justify-center gap-1.5"
         >
           <span className="text-caption text-muted">Recent</span>
           {recent.map((thread) => (
@@ -130,7 +165,7 @@ export function StudioWelcome({
               data-testid="studio-welcome-recent-chip"
               data-thread-id={thread.id}
               onClick={() => onOpenThread(thread.id)}
-              className="rounded-pill border border-subtle px-2.5 py-1 text-caption text-secondary duration-120 ease-out hover:bg-elevated hover:text-primary"
+              className="mo-press rounded-pill border border-subtle px-2.5 py-1 text-caption text-secondary duration-120 ease-out hover:bg-elevated hover:text-primary"
             >
               {thread.title}
             </button>

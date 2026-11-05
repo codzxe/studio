@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@studio/ui/src/styles/theme.css";
+@import "../styles/motion.css";
 @source "../../../../packages/ui/src";
 
 /*
