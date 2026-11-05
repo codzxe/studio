@@ -1,14 +1,10 @@
 import { IdleCommentsRegion } from "@/components/comments/idle-comments-region";
-import { notFound, redirect } from "next/navigation";
-import { cache } from "react";
 
 import { EditorCapabilityGate } from "@/components/editor-host/capability-gate";
 import { EditorHost } from "@/components/editor-host/editor-host";
+import { loadEditorProject } from "@/components/editor-host/resolve-project";
 import type { EditorHostPayload } from "@/components/editor-host/types";
-import { parseManifest } from "@/lib/editor-session";
-import { gatewayCall, isGatewayHttpError } from "@/lib/gateway";
 import { pageMetadata } from "@/lib/seo";
-import type { ProjectResolve } from "@studio/contracts";
 
 /**
  * The editor route (M3.5): `/w/:projectSlug/editor`.
@@ -34,65 +30,11 @@ import type { ProjectResolve } from "@studio/contracts";
  *   you could not save a first version without opening the editor.)
  */
 
-/**
- * Resolve the project by slug across the user's workspaces (manifest
- * included). Wrapped in `cache()` so `generateMetadata` and the page share
- * ONE resolution per request.
- */
-const resolveEditorProject = cache(async (slug: string): Promise<EditorHostPayload> => {
-  const resolved = await gatewayCall<ProjectResolve>(
-    `/v1/projects/resolve/${encodeURIComponent(slug)}`,
-  );
-  const currentVersion = resolved.manifest.currentVersion;
-  const payload: EditorHostPayload = {
-    workspaceId: resolved.workspaceId,
-    manifest: {
-      project: {
-        id: resolved.project.id,
-        slug: resolved.project.slug,
-        name: resolved.project.name,
-      },
-      currentVersion:
-        currentVersion === null
-          ? null
-          : {
-              id: currentVersion.id,
-              label: currentVersion.label,
-              sha256: currentVersion.sha256,
-              sizeBytes: currentVersion.sizeBytes,
-            },
-      assets: resolved.manifest.assets.map((asset) => ({
-        id: asset.id,
-        name: asset.name,
-        // §6.3 stable virtual path (the bridge derives the same shape):
-        virtualPath: `/assets/${asset.id}/${asset.name}`,
-        downloadUrl: asset.url,
-        sizeBytes: asset.sizeBytes,
-      })),
-      projectFileUrl: currentVersion === null ? null : currentVersion.url,
-    },
-  };
-  // The client serves this payload through `getManifest`; validate it with
-  // the engine's own parser so a wire drift fails HERE, not mid-open.
-  parseManifest(payload.manifest);
-  return payload;
-});
-
-async function loadEditorPage(slug: string): Promise<EditorHostPayload> {
-  try {
-    return await resolveEditorProject(slug);
-  } catch (error) {
-    if (isGatewayHttpError(error)) {
-      if (error.status === 401 || error.code === "UNAUTHORIZED") {
-        redirect(`/sign-in?next=${encodeURIComponent(`/w/${slug}/editor`)}`);
-      }
-      if (error.isNotFound) notFound();
-      // Other gateway failures: sanitized typed error → the Next error boundary.
-      throw error;
-    }
-    throw error;
-  }
-}
+// The resolve + auth/tenant mapping lives in `resolve-project.ts`, shared with
+// the chat-first `/w/[slug]` studio route (one resolution shape, one behavior
+// for both surfaces).
+const loadEditorPage = (slug: string): Promise<EditorHostPayload> =>
+  loadEditorProject(slug, `/w/${slug}/editor`);
 
 interface EditorPageProps {
   readonly params: Promise<{ readonly slug: string }>;

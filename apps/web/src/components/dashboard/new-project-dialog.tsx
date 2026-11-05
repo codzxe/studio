@@ -93,7 +93,9 @@ export function NewProjectDialog({ open, onOpenChange, createProject }: NewProje
     createProject({ name: trimmed }, { idempotencyKey: crypto.randomUUID() })
       .then((project) => {
         onOpenChange(false);
-        router.push(`/w/${project.slug}/history`);
+        // Round 16 (chat-first studio): a NEW project lands in the chat —
+        // the product's main surface (no engine visible until asked for).
+        router.push(`/w/${project.slug}`);
       })
       .catch((cause: unknown) => {
         setSubmitting(false);

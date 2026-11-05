@@ -104,7 +104,7 @@ describe("NewProjectDialog", () => {
     await USER.type(screen.getByLabelText(/^Project name/), "Launch film");
     await USER.click(screen.getByTestId("new-project-create"));
 
-    await vi.waitFor(() => expect(routerPush).toHaveBeenCalledWith("/w/launch-film/history"));
+    await vi.waitFor(() => expect(routerPush).toHaveBeenCalledWith("/w/launch-film"));
     expect(create).toHaveBeenCalledTimes(1);
     const [body, options] = create.mock.calls[0] as [CreateProjectRequest, CallOptions | undefined];
     expect(body).toEqual({ name: "Launch film" });
@@ -140,7 +140,7 @@ describe("NewProjectDialog", () => {
     expect(screen.getByTestId("new-project-create")).toBeEnabled();
 
     await USER.click(screen.getByTestId("new-project-create"));
-    await vi.waitFor(() => expect(routerPush).toHaveBeenCalledWith("/w/launch-film/history"));
+    await vi.waitFor(() => expect(routerPush).toHaveBeenCalledWith("/w/launch-film"));
     expect(create).toHaveBeenCalledTimes(2);
     const firstKey = (create.mock.calls[0]?.[1] as CallOptions).idempotencyKey;
     const secondKey = (create.mock.calls[1]?.[1] as CallOptions).idempotencyKey;

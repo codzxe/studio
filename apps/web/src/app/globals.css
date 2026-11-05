@@ -57,3 +57,18 @@
 .callout-line {
   background: var(--border-strong);
 }
+
+/*
+ * Chat-first studio route (`/w/[slug]`) — the PauseVFX-style horizon glow:
+ * a decorative radial wash rising from the bottom edge (dark-warm center,
+ * signal-tinted rim). Purely presentational — never interactive, always
+ * behind content (aria-hidden in the markup).
+ */
+.horizon-glow {
+  background: radial-gradient(
+    120% 90% at 50% 118%,
+    color-mix(in srgb, var(--signal) 26%, transparent) 0%,
+    color-mix(in srgb, var(--signal) 10%, transparent) 36%,
+    transparent 68%
+  );
+}

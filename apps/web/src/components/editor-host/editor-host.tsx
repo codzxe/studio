@@ -3,7 +3,7 @@
 import { PresenceStrip } from "@/components/presence/presence-strip";
 import { type PresenceBeatContext, usePresence } from "@/components/presence/use-presence";
 import type { MentionItem } from "@/lib/chat/mentions";
-import { ChatProvider } from "@/lib/chat/provider";
+import { type ChatApplyPorts, ChatProvider } from "@/lib/chat/provider";
 import { activateGpuFallback } from "@/lib/editor-gpu-fallback";
 import {
   type ReadOnlyGateHandle,
@@ -64,9 +64,19 @@ export interface EditorHostProps {
   readonly sessionFactory?: (payload: EditorHostPayload) => EditorSessionFactory;
   /** Test seam for the shortcut bus (default: the module singleton). */
   readonly shortcutBus?: ChatShortcutBus;
+  /**
+   * Chat-first studio seam (round 16): hands the session's apply ports to the
+   * page ONCE they exist, so the page's OWN ChatProvider (the full-page chat)
+   * can apply + autosave agent batches exactly like the editor's sidebar
+   * chat does. Without it the chat-first run ends "proposed" — compiled and
+   * charged but never applied to the engine, never saved as a version.
+   * The ports are a stable useMemo (the hook pins identity), so the effect
+   * fires once per session.
+   */
+  readonly onApplyPorts?: (ports: ChatApplyPorts) => void;
 }
 
-export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostProps) {
+export function EditorHost({ payload, sessionFactory, shortcutBus, onApplyPorts }: EditorHostProps) {
   // M4-J: the host materializes the session ONCE (the hook previously built it
   // inside its own useState initializer) so the chat overlay can reach the
   // session's api client. Behavior is unchanged: exactly one session per page
@@ -80,6 +90,12 @@ export function EditorHost({ payload, sessionFactory, shortcutBus }: EditorHostP
     shortcutBus,
   });
   const { state } = session;
+  // Chat-first studio seam: publish the stable apply ports upward once.
+  const onApplyPortsRef = useRef(onApplyPorts);
+  onApplyPortsRef.current = onApplyPorts;
+  useEffect(() => {
+    onApplyPortsRef.current?.(session.applyPorts);
+  }, [session.applyPorts]);
   const projectName = payload.manifest.project.name;
   const bus = shortcutBus ?? editorChatShortcutBus;
 
