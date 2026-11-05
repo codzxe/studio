@@ -125,6 +125,12 @@ export interface ChatMessageViewProps {
   onRetryFrom?: (messageId: string) => void;
   /** ROUND 12 (Chat UI v3): edit-and-resend (absent ⇒ Edit hides). */
   onEditResend?: (messageId: string, nextText: string) => void;
+  /**
+   * ChatGPT-class surface affordance (chat-first studio): a pre-rendered
+   * hover toolbar node for ASSISTANT rows (copy / export / run chip).
+   * Absent ⇒ nothing renders (the editor panel keeps its exact shape).
+   */
+  assistantToolbar?: ReactNode;
 }
 
 /**
@@ -444,6 +450,7 @@ export function ChatMessageView({
   planWiring,
   onRetryFrom,
   onEditResend,
+  assistantToolbar,
 }: ChatMessageViewProps): ReactElement {
   const isUser = message.role === "user";
   const showCaret = isStreaming && !isUser;
@@ -482,7 +489,8 @@ export function ChatMessageView({
     <article
       data-testid="chat-message"
       data-role={message.role}
-      className={`flex min-w-0 flex-col items-start gap-1.5 ${isUser ? "group" : ""}`}
+      data-message-id={message.id}
+      className={"flex min-w-0 flex-col items-start gap-1.5 group"}
     >
       {isUser ? (
         <p data-testid="chat-message-label" className="text-label text-muted uppercase">
@@ -537,6 +545,9 @@ export function ChatMessageView({
           {showCaret ? <StreamingCaret /> : null}
         </div>
       )}
+      {/* Chat-first studio: the assistant hover toolbar (copy / export /
+       * run chip) — the host renders it; absent on editor-panel mounts. */}
+      {!isUser && assistantToolbar !== undefined ? assistantToolbar : null}
       {/* ROUND 13: the tool calls live under ONE collapsible bar — open while
        * the run streams (the user watches each call land live), folded to a
        * tidy summary line once the run settles; the user's toggle wins. */}

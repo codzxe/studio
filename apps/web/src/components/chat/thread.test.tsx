@@ -343,3 +343,57 @@ describe("ChatThread — scroll anchoring (§3.3: only while already at the bott
     expect(scroller.scrollTop).toBe(1000);
   });
 });
+
+describe("ChatThread — scroll-to-bottom pill (chat-first opt-in)", () => {
+  function pinMetrics(scroller: HTMLElement): void {
+    // jsdom has no layout: pin deterministic metrics on the scroll container.
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scroller, "scrollTop", { configurable: true, writable: true, value: 0 });
+  }
+
+  it("is hidden by default (the editor panel keeps its exact M4 behavior)", () => {
+    render(
+      <ChatThread {...baseProps({ messages: [user("u1", "one"), assistant("a1", "run-1")] })} />,
+    );
+    const scroller = screen.getByTestId("chat-thread-scroll");
+    pinMetrics(scroller);
+    scroller.scrollTop = 100; // scrolled up…
+    fireEvent.scroll(scroller); // …but the pill is opt-in
+    expect(screen.queryByTestId("chat-scroll-to-bottom")).not.toBeInTheDocument();
+  });
+
+  it("appears when scrolled up and scrolls back down on click", () => {
+    render(
+      <ChatThread
+        {...baseProps({
+          messages: [user("u1", "one"), assistant("a1", "run-1")],
+          scrollButton: true,
+        })}
+      />,
+    );
+    const scroller = screen.getByTestId("chat-thread-scroll");
+    pinMetrics(scroller);
+
+    // At the bottom: no pill.
+    scroller.scrollTop = 600;
+    fireEvent.scroll(scroller);
+    expect(screen.queryByTestId("chat-scroll-to-bottom")).not.toBeInTheDocument();
+
+    // Scrolled up: the pill appears.
+    scroller.scrollTop = 100;
+    fireEvent.scroll(scroller);
+    const pill = screen.getByTestId("chat-scroll-to-bottom");
+    expect(pill).toHaveAttribute("aria-label", "Scroll to bottom");
+
+    // Click scrolls to the bottom and hides the pill.
+    const scrollTo = vi.fn();
+    (scroller as unknown as { scrollTo: unknown }).scrollTo = scrollTo;
+    fireEvent.click(pill);
+    expect(scrollTo).toHaveBeenCalledWith({
+      top: 1000,
+      behavior: "smooth",
+    });
+    expect(screen.queryByTestId("chat-scroll-to-bottom")).not.toBeInTheDocument();
+  });
+});

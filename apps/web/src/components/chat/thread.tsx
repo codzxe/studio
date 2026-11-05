@@ -23,7 +23,8 @@
 
 import { ChatApiContext } from "@/lib/chat/provider";
 import type { ChatUiError, ChatUiMessage, RunPhase } from "@/lib/chat/types";
-import { type ReactElement, useContext, useEffect, useRef } from "react";
+import { ArrowDown } from "lucide-react";
+import { type ReactElement, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { ChatBanner, RunPausedBanner } from "./banners";
 import { ChatMessageView, type PlanMessageWiring } from "./message";
 import type { ChatPanelDensity } from "./panel-settings";
@@ -51,6 +52,19 @@ export interface ChatThreadProps {
   onEditResend?: (messageId: string, nextText: string) => void;
   /** ROUND 12 (Chat UI v3): the settings knob's spacing mode. */
   density?: ChatPanelDensity;
+  /**
+   * ChatGPT-class surface affordance (chat-first studio): a floating
+   * scroll-to-bottom pill while the reader has scrolled up. Default OFF —
+   * the editor panel keeps its exact M4 behavior; only the full-page chat
+   * surface opts in.
+   */
+  scrollButton?: boolean;
+  /**
+   * ChatGPT-class surface affordance (chat-first studio): renders a hover
+   * toolbar node under each ASSISTANT message (copy / export / run chip).
+   * Absent ⇒ nothing renders (the editor panel keeps its exact shape).
+   */
+  renderAssistantToolbar?: (message: ChatUiMessage) => ReactNode;
 }
 
 // Re-exported for the thread layer's consumers (the wiring type is part of the
@@ -77,9 +91,14 @@ export function ChatThread({
   onRetryFrom,
   onEditResend,
   density = "normal",
+  scrollButton = false,
+  renderAssistantToolbar,
 }: ChatThreadProps): ReactElement {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
+  // The scroll pill mirrors the anchor ref into render state (only when the
+  // affordance is on — the editor panel keeps zero extra renders).
+  const [showJump, setShowJump] = useState(false);
 
   // M5-Q: the plan-card wiring — read straight from the ChatProvider context
   // (NULL-TOLERANT: a provider-less mount — the M4 thread tests, embeds — reads
@@ -126,6 +145,15 @@ export function ChatThread({
     const el = scrollRef.current;
     if (el == null) return;
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_THRESHOLD;
+    if (scrollButton) setShowJump(!atBottomRef.current);
+  };
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (el == null) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    atBottomRef.current = true;
+    setShowJump(false);
   };
 
   const onQuickAction = (prompt: string) => {
@@ -158,62 +186,80 @@ export function ChatThread({
        * message is announced too (a list that mounts with its first child
        * would miss it).
        */}
-      <div
-        ref={scrollRef}
-        data-testid="chat-thread-scroll"
-        role="log"
-        aria-live="polite"
-        aria-label="Agent conversation"
-        onScroll={onScroll}
-        className="scrollbar-thin min-h-0 flex-1 overflow-y-auto"
-      >
-        {messages.length === 0 ? (
-          <div data-testid="chat-empty-state" className="flex flex-col gap-4 px-4 py-8">
-            <h2 className="font-display text-title-m text-primary">What should we build?</h2>
-            {emptyQuickActions.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {emptyQuickActions.map((action) => (
-                  <button
-                    key={action.label}
-                    type="button"
-                    data-testid="chat-quick-action"
-                    data-prompt={action.prompt}
-                    onClick={() => onQuickAction(action.prompt)}
-                    className="h-8 rounded-pill border border-border bg-elevated px-3 text-body-s text-secondary transition-colors duration-120 hover:border-border-strong hover:text-primary"
-                  >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <div
-            data-testid="chat-thread-list"
-            className={`flex flex-col px-3 py-4 ${density === "compact" ? "gap-2.5" : "gap-4"}`}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          data-testid="chat-thread-scroll"
+          role="log"
+          aria-live="polite"
+          aria-label="Agent conversation"
+          onScroll={onScroll}
+          className="scrollbar-thin h-full overflow-y-auto"
+        >
+          {messages.length === 0 ? (
+            <div data-testid="chat-empty-state" className="flex flex-col gap-4 px-4 py-8">
+              <h2 className="font-display text-title-m text-primary">What should we build?</h2>
+              {emptyQuickActions.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {emptyQuickActions.map((action) => (
+                    <button
+                      key={action.label}
+                      type="button"
+                      data-testid="chat-quick-action"
+                      data-prompt={action.prompt}
+                      onClick={() => onQuickAction(action.prompt)}
+                      className="h-8 rounded-pill border border-border bg-elevated px-3 text-body-s text-secondary transition-colors duration-120 hover:border-border-strong hover:text-primary"
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div
+              data-testid="chat-thread-list"
+              className={`flex flex-col px-3 py-4 ${density === "compact" ? "gap-2.5" : "gap-4"}`}
+            >
+              {virtualize ? (
+                <div
+                  data-testid="chat-window-spacer"
+                  data-hidden-count={hiddenCount}
+                  aria-hidden="true"
+                  className="h-5 shrink-0"
+                />
+              ) : null}
+              {windowed.map((message) => (
+                <ChatMessageView
+                  key={message.id}
+                  message={message}
+                  planWiring={planWiring}
+                  isStreaming={
+                    liveStream && message.role === "assistant" && message.runId === activeRunId
+                  }
+                  onRetryFrom={onRetryFrom}
+                  onEditResend={onEditResend}
+                  assistantToolbar={
+                    message.role === "assistant" && renderAssistantToolbar !== undefined
+                      ? renderAssistantToolbar(message)
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </div>
+        {scrollButton && showJump ? (
+          <button
+            type="button"
+            data-testid="chat-scroll-to-bottom"
+            aria-label="Scroll to bottom"
+            onClick={scrollToBottom}
+            className="absolute bottom-3 left-1/2 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-pill border border-subtle bg-elevated text-secondary shadow-pop duration-120 ease-out hover:text-primary"
           >
-            {virtualize ? (
-              <div
-                data-testid="chat-window-spacer"
-                data-hidden-count={hiddenCount}
-                aria-hidden="true"
-                className="h-5 shrink-0"
-              />
-            ) : null}
-            {windowed.map((message) => (
-              <ChatMessageView
-                key={message.id}
-                message={message}
-                planWiring={planWiring}
-                isStreaming={
-                  liveStream && message.role === "assistant" && message.runId === activeRunId
-                }
-                onRetryFrom={onRetryFrom}
-                onEditResend={onEditResend}
-              />
-            ))}
-          </div>
-        )}
+            <ArrowDown size={15} strokeWidth={1.9} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
     </div>
   );
